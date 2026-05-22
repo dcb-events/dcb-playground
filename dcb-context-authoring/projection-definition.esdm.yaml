@@ -1,0 +1,424 @@
+# Projection definitions inside a DCB Context: events, DCBs, commands.
+# Identified within the context by `name`.
+# References event-definitions and custom-type-definitions (by name);
+# referenced in turn by constraint-definitions.
+#
+# Distinctive aspects of this kind:
+#   - addition / update must verify referenced event- and custom-type-
+#     definitions exist (DCB consults those kinds' events).
+#   - rename / removal must check inbound references from constraint-
+#     definitions and rewrite/refuse accordingly (DCB consults
+#     constraint-definition events).
+
+apiVersion: schema.esdm.io/core/v1
+kind: event
+name: projection-definition-added
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+data:
+  type: object
+  properties:
+    dcb-context-id:
+      type: string
+    name:
+      type: string
+    body:
+      type: object
+      description: |
+        Authored content of the projection — including the names of
+        event-definitions and custom-type-definitions it references.
+        Body shape is owned by the DCB Context schema, not by this
+        domain model.
+  required: [dcb-context-id, name, body]
+  additionalProperties: false
+---
+apiVersion: schema.esdm.io/core/v1
+kind: event
+name: projection-definition-updated
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+data:
+  type: object
+  properties:
+    dcb-context-id:
+      type: string
+    name:
+      type: string
+    body:
+      type: object
+  required: [dcb-context-id, name, body]
+  additionalProperties: false
+---
+apiVersion: schema.esdm.io/core/v1
+kind: event
+name: projection-definition-renamed
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+data:
+  type: object
+  properties:
+    dcb-context-id:
+      type: string
+    previous-name:
+      type: string
+    name:
+      type: string
+  required: [dcb-context-id, previous-name, name]
+  additionalProperties: false
+---
+apiVersion: schema.esdm.io/core/v1
+kind: event
+name: projection-definition-removed
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+data:
+  type: object
+  properties:
+    dcb-context-id:
+      type: string
+    name:
+      type: string
+  required: [dcb-context-id, name]
+  additionalProperties: false
+---
+apiVersion: schema.esdm.io/core/v1
+kind: dynamic-consistency-boundary
+name: projection-definition-addition
+description: |
+  Guards the addition of a new projection-definition. In addition to
+  the usual "context active + name not in use" checks, consults
+  event-definition and custom-type-definition lifecycle events so the
+  referential-integrity invariant ("every referenced name exists")
+  can be enforced in the same append.
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+identifiedBy:
+  - name: dcb-context-id
+    source: command-payload
+    field: dcb-context-id
+  - name: projection-definition-name
+    source: command-payload
+    field: name
+consults:
+  - boundedContext: dcb-context-authoring
+    event: dcb-context-created
+    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
+  - boundedContext: dcb-context-authoring
+    event: dcb-context-deleted
+    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
+  - boundedContext: dcb-context-authoring
+    event: projection-definition-added
+    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `projection-definition-name`
+  - boundedContext: dcb-context-authoring
+    event: projection-definition-renamed
+    criteria: events with matching `dcb-context-id` whose new `name` or `previous-name` equals this instance's `projection-definition-name`
+  - boundedContext: dcb-context-authoring
+    event: projection-definition-removed
+    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `projection-definition-name`
+  - boundedContext: dcb-context-authoring
+    event: event-definition-added
+    criteria: every event-definition added in this context — needed to resolve outbound references in the new projection's body
+  - boundedContext: dcb-context-authoring
+    event: event-definition-renamed
+    criteria: every event-definition rename in this context
+  - boundedContext: dcb-context-authoring
+    event: event-definition-removed
+    criteria: every event-definition removal in this context
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-added
+    criteria: every custom-type-definition added in this context
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-renamed
+    criteria: every custom-type-definition rename in this context
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-removed
+    criteria: every custom-type-definition removal in this context
+invariants:
+  - name: context-active
+    rule: The context has been created and has not been deleted.
+  - name: name-not-in-use
+    rule: No projection-definition currently goes by this name in this context.
+  - name: references-resolve
+    rule: |
+      Every event-definition name and custom-type-definition name
+      referenced from the new projection's body currently exists in
+      this context (i.e. there is a live definition by that name
+      after folding the consulted add/rename/remove events).
+---
+apiVersion: schema.esdm.io/core/v1
+kind: dynamic-consistency-boundary
+name: projection-definition-update
+description: |
+  Guards body updates to an existing projection-definition. Same
+  consult surface as addition (outbound references must still
+  resolve); the uniqueness check flips to "definition exists".
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+identifiedBy:
+  - name: dcb-context-id
+    source: command-payload
+    field: dcb-context-id
+  - name: projection-definition-name
+    source: command-payload
+    field: name
+consults:
+  - boundedContext: dcb-context-authoring
+    event: dcb-context-created
+    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
+  - boundedContext: dcb-context-authoring
+    event: dcb-context-deleted
+    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
+  - boundedContext: dcb-context-authoring
+    event: projection-definition-added
+    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `projection-definition-name`
+  - boundedContext: dcb-context-authoring
+    event: projection-definition-renamed
+    criteria: events with matching `dcb-context-id` whose new `name` or `previous-name` equals this instance's `projection-definition-name`
+  - boundedContext: dcb-context-authoring
+    event: projection-definition-removed
+    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `projection-definition-name`
+  - boundedContext: dcb-context-authoring
+    event: event-definition-added
+    criteria: every event-definition added in this context
+  - boundedContext: dcb-context-authoring
+    event: event-definition-renamed
+    criteria: every event-definition rename in this context
+  - boundedContext: dcb-context-authoring
+    event: event-definition-removed
+    criteria: every event-definition removal in this context
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-added
+    criteria: every custom-type-definition added in this context
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-renamed
+    criteria: every custom-type-definition rename in this context
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-removed
+    criteria: every custom-type-definition removal in this context
+invariants:
+  - name: context-active
+    rule: The context has been created and has not been deleted.
+  - name: definition-exists
+    rule: A projection-definition currently goes by this name in this context.
+  - name: references-resolve
+    rule: |
+      Every event-definition name and custom-type-definition name
+      referenced from the updated body currently exists in this
+      context.
+---
+apiVersion: schema.esdm.io/core/v1
+kind: dynamic-consistency-boundary
+name: projection-definition-rename
+description: |
+  Guards renaming a projection-definition. Consults constraint
+  lifecycle events alongside its own so referencing constraints
+  can be rewritten atomically in the same append.
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+identifiedBy:
+  - name: dcb-context-id
+    source: command-payload
+    field: dcb-context-id
+  - name: previous-name
+    source: command-payload
+    field: previous-name
+  - name: name
+    source: command-payload
+    field: name
+consults:
+  - boundedContext: dcb-context-authoring
+    event: dcb-context-created
+    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
+  - boundedContext: dcb-context-authoring
+    event: dcb-context-deleted
+    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
+  - boundedContext: dcb-context-authoring
+    event: projection-definition-added
+    criteria: events with matching `dcb-context-id` whose `name` equals `previous-name` or `name`
+  - boundedContext: dcb-context-authoring
+    event: projection-definition-renamed
+    criteria: events with matching `dcb-context-id` whose new `name` or `previous-name` equals `previous-name` or `name`
+  - boundedContext: dcb-context-authoring
+    event: projection-definition-removed
+    criteria: events with matching `dcb-context-id` whose `name` equals `previous-name` or `name`
+  - boundedContext: dcb-context-authoring
+    event: constraint-definition-added
+    criteria: every constraint-definition added in this context — needed to find references to rewrite
+  - boundedContext: dcb-context-authoring
+    event: constraint-definition-updated
+    criteria: every constraint-definition update in this context
+  - boundedContext: dcb-context-authoring
+    event: constraint-definition-renamed
+    criteria: every constraint-definition rename in this context
+  - boundedContext: dcb-context-authoring
+    event: constraint-definition-removed
+    criteria: every constraint-definition removal in this context
+invariants:
+  - name: context-active
+    rule: The context has been created and has not been deleted.
+  - name: previous-name-in-use
+    rule: A projection-definition currently goes by `previous-name` in this context.
+  - name: new-name-free
+    rule: No projection-definition currently goes by `name` in this context.
+---
+apiVersion: schema.esdm.io/core/v1
+kind: dynamic-consistency-boundary
+name: projection-definition-removal
+description: |
+  Guards removal of a projection-definition. Consults constraint
+  lifecycle events to refuse removal while any constraint still
+  references the projection.
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+identifiedBy:
+  - name: dcb-context-id
+    source: command-payload
+    field: dcb-context-id
+  - name: projection-definition-name
+    source: command-payload
+    field: name
+consults:
+  - boundedContext: dcb-context-authoring
+    event: dcb-context-created
+    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
+  - boundedContext: dcb-context-authoring
+    event: dcb-context-deleted
+    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
+  - boundedContext: dcb-context-authoring
+    event: projection-definition-added
+    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `projection-definition-name`
+  - boundedContext: dcb-context-authoring
+    event: projection-definition-renamed
+    criteria: events with matching `dcb-context-id` whose new `name` or `previous-name` equals this instance's `projection-definition-name`
+  - boundedContext: dcb-context-authoring
+    event: projection-definition-removed
+    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `projection-definition-name`
+  - boundedContext: dcb-context-authoring
+    event: constraint-definition-added
+    criteria: every constraint-definition added in this context — needed to check for inbound references
+  - boundedContext: dcb-context-authoring
+    event: constraint-definition-updated
+    criteria: every constraint-definition update in this context
+  - boundedContext: dcb-context-authoring
+    event: constraint-definition-removed
+    criteria: every constraint-definition removal in this context
+invariants:
+  - name: context-active
+    rule: The context has been created and has not been deleted.
+  - name: definition-exists
+    rule: A projection-definition currently goes by this name in this context.
+  - name: no-inbound-references
+    rule: |
+      No constraint-definition currently in the context references
+      this projection-definition by name.
+---
+apiVersion: schema.esdm.io/core/v1
+kind: command
+name: add-projection-definition
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+  dynamicConsistencyBoundary: projection-definition-addition
+data:
+  type: object
+  properties:
+    dcb-context-id:
+      type: string
+    name:
+      type: string
+    body:
+      type: object
+  required: [dcb-context-id, name, body]
+  additionalProperties: false
+publishes:
+  - projection-definition-added
+actors:
+  - modeler
+---
+apiVersion: schema.esdm.io/core/v1
+kind: command
+name: update-projection-definition
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+  dynamicConsistencyBoundary: projection-definition-update
+data:
+  type: object
+  properties:
+    dcb-context-id:
+      type: string
+    name:
+      type: string
+    body:
+      type: object
+  required: [dcb-context-id, name, body]
+  additionalProperties: false
+publishes:
+  - projection-definition-updated
+actors:
+  - modeler
+---
+apiVersion: schema.esdm.io/core/v1
+kind: command
+name: rename-projection-definition
+description: |
+  Renames a projection-definition. Atomically emits the rename event
+  plus one `constraint-definition-updated` for every constraint
+  whose body referenced `previous-name`, with the reference
+  rewritten to `name`.
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+  dynamicConsistencyBoundary: projection-definition-rename
+data:
+  type: object
+  properties:
+    dcb-context-id:
+      type: string
+    previous-name:
+      type: string
+    name:
+      type: string
+  required: [dcb-context-id, previous-name, name]
+  additionalProperties: false
+publishes:
+  - projection-definition-renamed
+  - constraint-definition-updated
+constraints:
+  - name: rewrite-constraint-references
+    rule: |
+      Emit exactly one `constraint-definition-updated` for every
+      constraint-definition currently in the context whose body
+      references the projection-definition under `previous-name`,
+      with every occurrence of `previous-name` replaced by `name`.
+actors:
+  - modeler
+---
+apiVersion: schema.esdm.io/core/v1
+kind: command
+name: remove-projection-definition
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+  dynamicConsistencyBoundary: projection-definition-removal
+data:
+  type: object
+  properties:
+    dcb-context-id:
+      type: string
+    name:
+      type: string
+  required: [dcb-context-id, name]
+  additionalProperties: false
+publishes:
+  - projection-definition-removed
+actors:
+  - modeler

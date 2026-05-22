@@ -1,0 +1,22 @@
+apiVersion: schema.esdm.io/core/v1
+kind: actor
+name: modeler
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+type: human
+responsibilities:
+  - Creates, renames and deletes DCB Contexts.
+  - Adds, updates, renames and removes the four kinds of definitions
+    inside a DCB Context.
+---
+apiVersion: schema.esdm.io/core/v1
+kind: actor
+name: viewer
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+type: human
+responsibilities:
+  - Inspects an existing DCB Context — its definitions and their
+    bodies — without changing anything.

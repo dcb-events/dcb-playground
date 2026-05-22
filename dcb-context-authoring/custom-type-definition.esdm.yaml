@@ -1,0 +1,346 @@
+# Custom-type definitions inside a DCB Context: events, DCBs, commands.
+# Identified within the context by `name`.
+# Referenced by projection definitions; structurally identical to
+# event-definition (same reference relationships).
+
+apiVersion: schema.esdm.io/core/v1
+kind: event
+name: custom-type-definition-added
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+data:
+  type: object
+  properties:
+    dcb-context-id:
+      type: string
+    name:
+      type: string
+    body:
+      type: object
+  required: [dcb-context-id, name, body]
+  additionalProperties: false
+---
+apiVersion: schema.esdm.io/core/v1
+kind: event
+name: custom-type-definition-updated
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+data:
+  type: object
+  properties:
+    dcb-context-id:
+      type: string
+    name:
+      type: string
+    body:
+      type: object
+  required: [dcb-context-id, name, body]
+  additionalProperties: false
+---
+apiVersion: schema.esdm.io/core/v1
+kind: event
+name: custom-type-definition-renamed
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+data:
+  type: object
+  properties:
+    dcb-context-id:
+      type: string
+    previous-name:
+      type: string
+    name:
+      type: string
+  required: [dcb-context-id, previous-name, name]
+  additionalProperties: false
+---
+apiVersion: schema.esdm.io/core/v1
+kind: event
+name: custom-type-definition-removed
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+data:
+  type: object
+  properties:
+    dcb-context-id:
+      type: string
+    name:
+      type: string
+  required: [dcb-context-id, name]
+  additionalProperties: false
+---
+apiVersion: schema.esdm.io/core/v1
+kind: dynamic-consistency-boundary
+name: custom-type-definition-addition
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+identifiedBy:
+  - name: dcb-context-id
+    source: command-payload
+    field: dcb-context-id
+  - name: custom-type-definition-name
+    source: command-payload
+    field: name
+consults:
+  - boundedContext: dcb-context-authoring
+    event: dcb-context-created
+    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
+  - boundedContext: dcb-context-authoring
+    event: dcb-context-deleted
+    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-added
+    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `custom-type-definition-name`
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-renamed
+    criteria: events with matching `dcb-context-id` whose new `name` or `previous-name` equals this instance's `custom-type-definition-name`
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-removed
+    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `custom-type-definition-name`
+invariants:
+  - name: context-active
+    rule: The context has been created and has not been deleted.
+  - name: name-not-in-use
+    rule: No custom-type-definition currently goes by this name in this context.
+---
+apiVersion: schema.esdm.io/core/v1
+kind: dynamic-consistency-boundary
+name: custom-type-definition-update
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+identifiedBy:
+  - name: dcb-context-id
+    source: command-payload
+    field: dcb-context-id
+  - name: custom-type-definition-name
+    source: command-payload
+    field: name
+consults:
+  - boundedContext: dcb-context-authoring
+    event: dcb-context-created
+    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
+  - boundedContext: dcb-context-authoring
+    event: dcb-context-deleted
+    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-added
+    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `custom-type-definition-name`
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-renamed
+    criteria: events with matching `dcb-context-id` whose new `name` or `previous-name` equals this instance's `custom-type-definition-name`
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-removed
+    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `custom-type-definition-name`
+invariants:
+  - name: context-active
+    rule: The context has been created and has not been deleted.
+  - name: definition-exists
+    rule: A custom-type-definition currently goes by this name in this context.
+---
+apiVersion: schema.esdm.io/core/v1
+kind: dynamic-consistency-boundary
+name: custom-type-definition-rename
+description: |
+  Guards renaming a custom-type-definition. Consults projection
+  lifecycle events alongside its own so referencing projections can
+  be rewritten atomically in the same append.
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+identifiedBy:
+  - name: dcb-context-id
+    source: command-payload
+    field: dcb-context-id
+  - name: previous-name
+    source: command-payload
+    field: previous-name
+  - name: name
+    source: command-payload
+    field: name
+consults:
+  - boundedContext: dcb-context-authoring
+    event: dcb-context-created
+    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
+  - boundedContext: dcb-context-authoring
+    event: dcb-context-deleted
+    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-added
+    criteria: events with matching `dcb-context-id` whose `name` equals `previous-name` or `name`
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-renamed
+    criteria: events with matching `dcb-context-id` whose new `name` or `previous-name` equals `previous-name` or `name`
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-removed
+    criteria: events with matching `dcb-context-id` whose `name` equals `previous-name` or `name`
+  - boundedContext: dcb-context-authoring
+    event: projection-definition-added
+    criteria: every projection-definition added in this context — needed to find references to rewrite
+  - boundedContext: dcb-context-authoring
+    event: projection-definition-updated
+    criteria: every projection-definition update in this context
+  - boundedContext: dcb-context-authoring
+    event: projection-definition-renamed
+    criteria: every projection-definition rename in this context
+  - boundedContext: dcb-context-authoring
+    event: projection-definition-removed
+    criteria: every projection-definition removal in this context
+invariants:
+  - name: context-active
+    rule: The context has been created and has not been deleted.
+  - name: previous-name-in-use
+    rule: A custom-type-definition currently goes by `previous-name` in this context.
+  - name: new-name-free
+    rule: No custom-type-definition currently goes by `name` in this context.
+---
+apiVersion: schema.esdm.io/core/v1
+kind: dynamic-consistency-boundary
+name: custom-type-definition-removal
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+identifiedBy:
+  - name: dcb-context-id
+    source: command-payload
+    field: dcb-context-id
+  - name: custom-type-definition-name
+    source: command-payload
+    field: name
+consults:
+  - boundedContext: dcb-context-authoring
+    event: dcb-context-created
+    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
+  - boundedContext: dcb-context-authoring
+    event: dcb-context-deleted
+    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-added
+    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `custom-type-definition-name`
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-renamed
+    criteria: events with matching `dcb-context-id` whose new `name` or `previous-name` equals this instance's `custom-type-definition-name`
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-removed
+    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `custom-type-definition-name`
+  - boundedContext: dcb-context-authoring
+    event: projection-definition-added
+    criteria: every projection-definition added in this context — needed to check for inbound references
+  - boundedContext: dcb-context-authoring
+    event: projection-definition-updated
+    criteria: every projection-definition update in this context
+  - boundedContext: dcb-context-authoring
+    event: projection-definition-removed
+    criteria: every projection-definition removal in this context
+invariants:
+  - name: context-active
+    rule: The context has been created and has not been deleted.
+  - name: definition-exists
+    rule: A custom-type-definition currently goes by this name in this context.
+  - name: no-inbound-references
+    rule: |
+      No projection-definition currently in the context references
+      this custom-type-definition by name.
+---
+apiVersion: schema.esdm.io/core/v1
+kind: command
+name: add-custom-type-definition
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+  dynamicConsistencyBoundary: custom-type-definition-addition
+data:
+  type: object
+  properties:
+    dcb-context-id:
+      type: string
+    name:
+      type: string
+    body:
+      type: object
+  required: [dcb-context-id, name, body]
+  additionalProperties: false
+publishes:
+  - custom-type-definition-added
+actors:
+  - modeler
+---
+apiVersion: schema.esdm.io/core/v1
+kind: command
+name: update-custom-type-definition
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+  dynamicConsistencyBoundary: custom-type-definition-update
+data:
+  type: object
+  properties:
+    dcb-context-id:
+      type: string
+    name:
+      type: string
+    body:
+      type: object
+  required: [dcb-context-id, name, body]
+  additionalProperties: false
+publishes:
+  - custom-type-definition-updated
+actors:
+  - modeler
+---
+apiVersion: schema.esdm.io/core/v1
+kind: command
+name: rename-custom-type-definition
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+  dynamicConsistencyBoundary: custom-type-definition-rename
+data:
+  type: object
+  properties:
+    dcb-context-id:
+      type: string
+    previous-name:
+      type: string
+    name:
+      type: string
+  required: [dcb-context-id, previous-name, name]
+  additionalProperties: false
+publishes:
+  - custom-type-definition-renamed
+  - projection-definition-updated
+constraints:
+  - name: rewrite-projection-references
+    rule: |
+      Emit exactly one `projection-definition-updated` for every
+      projection-definition currently in the context whose body
+      references the custom-type-definition under `previous-name`,
+      with every occurrence of `previous-name` replaced by `name`.
+actors:
+  - modeler
+---
+apiVersion: schema.esdm.io/core/v1
+kind: command
+name: remove-custom-type-definition
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+  dynamicConsistencyBoundary: custom-type-definition-removal
+data:
+  type: object
+  properties:
+    dcb-context-id:
+      type: string
+    name:
+      type: string
+  required: [dcb-context-id, name]
+  additionalProperties: false
+publishes:
+  - custom-type-definition-removed
+actors:
+  - modeler

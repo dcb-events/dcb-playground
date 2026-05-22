@@ -1,0 +1,277 @@
+---
+"$schema": https://json-schema.org/draft/2020-12/schema
+"$id": https://dcb.events/context.schema.json
+title: DCB Context Schema
+description: Schema describing a DCB context including all definitions and constraints
+type: object
+additionalProperties: false
+properties:
+  customTypeDefinitions:
+    description: Custom types that can be used in projections and constraints. Custom types are required to partition projections (i.e. DCB tags)
+    type: array
+    items:
+      "$ref": "#/$defs/CustomTypeDefinition"
+  eventDefinitions:
+    description: Domain Events that can be used in projections and constraints
+    type: array
+    items:
+      "$ref": "#/$defs/EventDefinition"
+  projectionDefinitions:
+    type: array
+    items:
+      "$ref": "#/$defs/ProjectionDefinition"
+  constraintDefinitions:
+    type: array
+    items:
+      "$ref": "#/$defs/ConstraintDefinition"
+  commandDefinitions:
+    description: Commands that modelers may issue against the modeled system. Each command carries a payload (properties), declares the constraints it must satisfy (the DCB consult surface), and the events it publishes on success.
+    type: array
+    items:
+      "$ref": "#/$defs/CommandDefinition"
+required:
+- customTypeDefinitions
+- eventDefinitions
+- projectionDefinitions
+- constraintDefinitions
+- commandDefinitions
+"$defs":
+  UnaryCondition:
+    type: object
+    properties:
+      leftHandSide:
+        "$ref": "#/$defs/Operand"
+      predicate:
+        enum:
+        - isEmpty
+        - isNotEmpty
+        - isTrue
+        - isFalse
+    required:
+    - leftHandSide
+    - predicate
+    additionalProperties: false
+  BinaryCondition:
+    type: object
+    properties:
+      leftHandSide:
+        "$ref": "#/$defs/Operand"
+      predicate:
+        enum:
+        - equals
+        - countEquals
+        - countLessThan
+        - countGreaterThan
+        - contains
+        - lessThan
+        - lessThanOrEquals
+        - greaterThan
+        - greaterThanOrEquals
+        - startsWith
+        - endsWith
+      rightHandSide:
+        "$ref": "#/$defs/Operand"
+    required:
+    - leftHandSide
+    - predicate
+    - rightHandSide
+    additionalProperties: false
+  Condition:
+    oneOf:
+    - "$ref": "#/$defs/UnaryCondition"
+    - "$ref": "#/$defs/BinaryCondition"
+  ConstraintDefinition:
+    type: object
+    additionalProperties: false
+    properties:
+      name:
+        "$ref": "#/$defs/ConstraintName"
+      properties:
+        type: array
+        items:
+          "$ref": "#/$defs/PropertyDefinition"
+      condition:
+        "$ref": "#/$defs/Condition"
+    required:
+    - name
+    - properties
+    - condition
+  ConstraintName:
+    type: string
+    minLength: 2
+    maxLength: 100
+    pattern: "^[A-Z][A-Za-z0-9]+$"
+    examples:
+    - CourseExists
+  CommandDefinition:
+    type: object
+    additionalProperties: false
+    properties:
+      name:
+        "$ref": "#/$defs/CommandName"
+      properties:
+        type: array
+        items:
+          "$ref": "#/$defs/PropertyDefinition"
+      constraints:
+        description: Names of constraint definitions the command must satisfy before it may emit any events. Together they form the command's dynamic consistency boundary.
+        type: array
+        items:
+          "$ref": "#/$defs/ConstraintName"
+      publishes:
+        description: Names of event definitions the command emits on success.
+        type: array
+        items:
+          "$ref": "#/$defs/EventName"
+    required:
+    - name
+    - publishes
+  CommandName:
+    type: string
+    minLength: 2
+    maxLength: 100
+    pattern: "^[A-Z][A-Za-z0-9]+$"
+    examples:
+    - SubscribeStudentToCourse
+  CustomTypeDefinition:
+    type: object
+    additionalProperties: false
+    properties:
+      name:
+        "$ref": "#/$defs/CustomTypeName"
+      schema:
+        "$ref": https://json-schema.org/draft/2020-12/schema
+      isTag:
+        type: boolean
+        default: false
+    required:
+    - name
+    - schema
+  CustomTypeName:
+    type: string
+    minLength: 2
+    maxLength: 100
+    pattern: "^[A-Z][A-Za-z0-9]+$"
+    examples:
+    - CourseId
+  EventDefinition:
+    type: object
+    additionalProperties: false
+    properties:
+      name:
+        "$ref": "#/$defs/EventName"
+      properties:
+        type: array
+        items:
+          "$ref": "#/$defs/PropertyDefinition"
+    required:
+    - name
+    - properties
+  EventName:
+    type: string
+    minLength: 2
+    maxLength: 100
+    pattern: "^[A-Z][A-Za-z0-9]+$"
+    examples:
+    - CourseDefined
+    - StudentSubscribedToCourse
+  Operand:
+    oneOf:
+    - "$ref": "#/$defs/ParameterValue"
+    - "$ref": "#/$defs/ProjectionResult"
+    - "$ref": "#/$defs/StaticValue"
+  ParameterValue:
+    type: object
+    additionalProperties: false
+    properties:
+      parameterName:
+        "$ref": "#/$defs/PropertyName"
+    required:
+    - parameterName
+  ProjectionDefinition:
+    type: object
+    additionalProperties: false
+    properties:
+      name:
+        "$ref": "#/$defs/ProjectionName"
+      partition:
+        "$ref": "#/$defs/CustomTypeName"
+      projectionType:
+        "$ref": "#/$defs/SimpleTypeOrCustomTypeName"
+      isOptional:
+        type: boolean
+        default: false
+      isList:
+        type: boolean
+        default: false
+      initialState:
+        type: string
+      handlers:
+        type: object
+        propertyNames:
+          "$ref": "#/$defs/EventName"
+        additionalProperties:
+          type: string
+    required:
+    - name
+    - partition
+    - projectionType
+    - initialState
+    - handlers
+  ProjectionName:
+    type: string
+    minLength: 2
+    maxLength: 100
+    pattern: "^[A-Z][A-Za-z0-9]+$"
+    examples:
+    - CourseCapacity
+    - NumberOfCourseSubscriptions
+  ProjectionResult:
+    type: object
+    additionalProperties: false
+    properties:
+      projectionName:
+        "$ref": "#/$defs/ProjectionName"
+      parameterName:
+        "$ref": "#/$defs/PropertyName"
+    required:
+    - projectionName
+    - parameterName
+  PropertyDefinition:
+    type: object
+    additionalProperties: false
+    properties:
+      name:
+        "$ref": "#/$defs/PropertyName"
+      propertyType:
+        "$ref": "#/$defs/SimpleTypeOrCustomTypeName"
+      isOptional:
+        type: boolean
+        default: false
+      isList:
+        type: boolean
+        default: false
+    required:
+    - name
+    - propertyType
+  PropertyName:
+    type: string
+    minLength: 2
+    maxLength: 100
+    pattern: "^[a-z][A-Za-z0-9]+$"
+    examples:
+    - someProperty
+  SimpleTypeOrCustomTypeName:
+    type: string
+    anyOf:
+    - enum:
+      - boolean
+      - integer
+      - string
+    - "$ref": "#/$defs/CustomTypeName"
+  StaticValue:
+    oneOf:
+    - type: string
+    - type: integer
+    - type: number
+    - type: boolean

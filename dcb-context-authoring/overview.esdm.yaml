@@ -1,0 +1,225 @@
+# Read side: a single read-model materialising every DCB Context
+# with its full set of definitions, and two queries — one to list
+# all contexts (id + name) and one to fetch a single context's
+# detail. Both queries are open to the modeler and the viewer.
+
+apiVersion: schema.esdm.io/core/v1
+kind: read-model
+name: dcb-context-overview
+description: |
+  One record per currently-live DCB Context, carrying the context's
+  display name and the four definition collections in their latest
+  state.
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+paradigm: document
+projections:
+  - boundedContext: dcb-context-authoring
+    event: dcb-context-created
+    rule: Insert a new record keyed by `dcb-context-id` with the carried `name` and four empty definition collections.
+  - boundedContext: dcb-context-authoring
+    event: dcb-context-renamed
+    rule: Update the matching record's `name` to the carried value.
+  - boundedContext: dcb-context-authoring
+    event: dcb-context-deleted
+    rule: Drop the matching record from the materialised collection.
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-added
+    rule: Append the new definition (`name`, `body`) to the matching context's `custom-type-definitions` collection.
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-updated
+    rule: Replace the `body` of the entry identified by `name` in the matching context's `custom-type-definitions` collection.
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-renamed
+    rule: Replace the `name` of the entry identified by `previous-name` with the carried `name` in the matching context's `custom-type-definitions` collection.
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-removed
+    rule: Drop the entry identified by `name` from the matching context's `custom-type-definitions` collection.
+  - boundedContext: dcb-context-authoring
+    event: event-definition-added
+    rule: Append the new definition to the matching context's `event-definitions` collection.
+  - boundedContext: dcb-context-authoring
+    event: event-definition-updated
+    rule: Replace the `body` of the entry identified by `name` in the matching context's `event-definitions` collection.
+  - boundedContext: dcb-context-authoring
+    event: event-definition-renamed
+    rule: Replace the `name` of the entry identified by `previous-name` with the carried `name` in the matching context's `event-definitions` collection.
+  - boundedContext: dcb-context-authoring
+    event: event-definition-removed
+    rule: Drop the entry identified by `name` from the matching context's `event-definitions` collection.
+  - boundedContext: dcb-context-authoring
+    event: projection-definition-added
+    rule: Append the new definition to the matching context's `projection-definitions` collection.
+  - boundedContext: dcb-context-authoring
+    event: projection-definition-updated
+    rule: Replace the `body` of the entry identified by `name` in the matching context's `projection-definitions` collection.
+  - boundedContext: dcb-context-authoring
+    event: projection-definition-renamed
+    rule: Replace the `name` of the entry identified by `previous-name` with the carried `name` in the matching context's `projection-definitions` collection.
+  - boundedContext: dcb-context-authoring
+    event: projection-definition-removed
+    rule: Drop the entry identified by `name` from the matching context's `projection-definitions` collection.
+  - boundedContext: dcb-context-authoring
+    event: constraint-definition-added
+    rule: Append the new definition to the matching context's `constraint-definitions` collection.
+  - boundedContext: dcb-context-authoring
+    event: constraint-definition-updated
+    rule: Replace the `body` of the entry identified by `name` in the matching context's `constraint-definitions` collection.
+  - boundedContext: dcb-context-authoring
+    event: constraint-definition-renamed
+    rule: Replace the `name` of the entry identified by `previous-name` with the carried `name` in the matching context's `constraint-definitions` collection.
+  - boundedContext: dcb-context-authoring
+    event: constraint-definition-removed
+    rule: Drop the entry identified by `name` from the matching context's `constraint-definitions` collection.
+schema:
+  type: array
+  items:
+    type: object
+    properties:
+      dcb-context-id:
+        type: string
+      name:
+        type: string
+      custom-type-definitions:
+        type: array
+        items:
+          type: object
+          properties:
+            name:
+              type: string
+            body:
+              type: object
+          required: [name, body]
+      event-definitions:
+        type: array
+        items:
+          type: object
+          properties:
+            name:
+              type: string
+            body:
+              type: object
+          required: [name, body]
+      projection-definitions:
+        type: array
+        items:
+          type: object
+          properties:
+            name:
+              type: string
+            body:
+              type: object
+          required: [name, body]
+      constraint-definitions:
+        type: array
+        items:
+          type: object
+          properties:
+            name:
+              type: string
+            body:
+              type: object
+          required: [name, body]
+    required:
+      - dcb-context-id
+      - name
+      - custom-type-definitions
+      - event-definitions
+      - projection-definitions
+      - constraint-definitions
+---
+apiVersion: schema.esdm.io/core/v1
+kind: query
+name: list-dcb-contexts
+description: |
+  Returns a lightweight list of all live DCB Contexts — id and
+  display name only — for selection screens and overviews.
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+readModel: dcb-context-overview
+paradigm: document
+parameters:
+  type: object
+  additionalProperties: false
+result:
+  type: array
+  items:
+    type: object
+    properties:
+      dcb-context-id:
+        type: string
+      name:
+        type: string
+    required: [dcb-context-id, name]
+constraints:
+  - name: light-shape
+    rule: |
+      Each record carries only `dcb-context-id` and `name`; the
+      four definition collections are stripped to keep listings
+      cheap to render.
+  - name: stable-order
+    rule: Sort by `name` ascending; break ties by `dcb-context-id`.
+actors:
+  - modeler
+  - viewer
+---
+apiVersion: schema.esdm.io/core/v1
+kind: query
+name: get-dcb-context
+description: |
+  Returns the full content of one DCB Context — name plus all four
+  definition collections in their latest state.
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+readModel: dcb-context-overview
+paradigm: document
+parameters:
+  type: object
+  properties:
+    dcb-context-id:
+      type: string
+  required: [dcb-context-id]
+  additionalProperties: false
+result:
+  type: object
+  properties:
+    dcb-context-id:
+      type: string
+    name:
+      type: string
+    custom-type-definitions:
+      type: array
+      items:
+        type: object
+    event-definitions:
+      type: array
+      items:
+        type: object
+    projection-definitions:
+      type: array
+      items:
+        type: object
+    constraint-definitions:
+      type: array
+      items:
+        type: object
+  required:
+    - dcb-context-id
+    - name
+    - custom-type-definitions
+    - event-definitions
+    - projection-definitions
+    - constraint-definitions
+constraints:
+  - name: lookup-by-id
+    rule: |
+      Return the single record whose `dcb-context-id` matches the
+      `dcb-context-id` parameter. If no record matches, the query
+      resolves to no result; the precise empty-result encoding is
+      an API-layer concern.
+actors:
+  - modeler
+  - viewer
