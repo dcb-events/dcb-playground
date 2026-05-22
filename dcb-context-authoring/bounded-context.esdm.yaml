@@ -3,7 +3,7 @@ kind: bounded-context
 name: dcb-context-authoring
 description: |
   The editing surface of the playground. Modelers create, edit, rename
-  and delete DCB Contexts and the four kinds of definitions inside
+  and delete DCB Contexts and the five kinds of definitions inside
   them; viewers inspect a context without changing it. The companion
   testing surface (scenarios, runs, assertions) is planned as a
   separate bounded context and is out of scope here.
@@ -13,31 +13,60 @@ ubiquitousLanguage:
   - term: DCB Context
     definition: |
       The complete authoring artifact a modeler builds — a named
-      container of custom-type, event, projection and constraint
-      definitions describing one DCB-based system. Identified by a
-      generated id; its name is a mutable display attribute.
+      container of custom-type, event, projection, constraint and
+      command definitions describing one DCB-based system.
+      Identified by a generated id; its name is a mutable display
+      attribute.
   - term: Custom Type Definition
     definition: |
       A user-defined type declared once within a DCB Context.
-      Referenced by projection definitions.
+      Referenced by event, projection, constraint and command
+      definitions through their property types.
   - term: Event Definition
     definition: |
       A domain event modeled inside a DCB Context. Referenced by
-      projection definitions.
+      projection definitions (as handler keys) and by command
+      definitions (in their `publishes` lists).
   - term: Projection Definition
     definition: |
       A description of state derived from events. References event
       definitions and custom-type definitions within the same DCB
-      Context, and is itself referenced by constraint definitions.
+      Context, and is itself referenced by constraint definitions
+      (in condition operands) and command definitions (in
+      projection-result operands inside parameter bindings).
   - term: Constraint Definition
     definition: |
       A rule expressed over projections within a DCB Context.
-      References projection definitions; is not referenced by anything.
+      References projection definitions in its condition; referenced
+      in turn by command definitions, which name constraints in
+      their `constraints` list.
+  - term: Command Definition
+    definition: |
+      An intent a modeler may issue against the modeled system. Has
+      a payload (properties), declares the constraints it must
+      satisfy (its DCB consult surface) — each optionally negated
+      and parameterised — and the events it publishes on success
+      with their parameter bindings. Not referenced by anything;
+      commands are leaves on the reference graph.
+  - term: Negation
+    definition: |
+      A flag on a constraint reference inside a command's
+      `constraints` list, marking the constraint as required to
+      *not* hold for the DCB to be satisfied. Lets the same
+      constraint (e.g. `CourseExists`) be reused as `not(...)`
+      without duplicating the rule.
+  - term: Parameter Binding
+    definition: |
+      The pairing of a referenced definition's property name with
+      an operand that supplies its value at execution time. Used by
+      command definitions to feed their constraint references and
+      event emissions; operands take values from command parameters,
+      static literals, or projection results.
   - term: Definition
     definition: |
-      Umbrella term for the four kinds above (custom-type, event,
-      projection, constraint). Used wherever a rule applies regardless
-      of which kind is meant.
+      Umbrella term for the five kinds above (custom-type, event,
+      projection, constraint, command). Used wherever a rule applies
+      regardless of which kind is meant.
   - term: Reference
     definition: |
       A name-based pointer from one definition's body to another

@@ -147,9 +147,14 @@ apiVersion: schema.esdm.io/core/v1
 kind: dynamic-consistency-boundary
 name: custom-type-definition-rename
 description: |
-  Guards renaming a custom-type-definition. Consults projection
-  lifecycle events alongside its own so referencing projections can
-  be rewritten atomically in the same append.
+  Guards renaming a custom-type-definition. Custom types are
+  referenced by *every* other definition kind in this BC — events
+  and constraints name them in `properties[].propertyType`,
+  projections name them in `partition`, `projectionType` and
+  `properties[].propertyType`, and commands name them in
+  `properties[].propertyType`. The DCB consults every referencing
+  family's lifecycle events alongside its own so all referrers can
+  be rewritten atomically in a single append.
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -191,6 +196,42 @@ consults:
   - boundedContext: dcb-context-authoring
     event: projection-definition-removed
     criteria: every projection-definition removal in this context
+  - boundedContext: dcb-context-authoring
+    event: event-definition-added
+    criteria: every event-definition added in this context — needed to find references to rewrite via `properties[].propertyType`
+  - boundedContext: dcb-context-authoring
+    event: event-definition-updated
+    criteria: every event-definition update in this context
+  - boundedContext: dcb-context-authoring
+    event: event-definition-renamed
+    criteria: every event-definition rename in this context
+  - boundedContext: dcb-context-authoring
+    event: event-definition-removed
+    criteria: every event-definition removal in this context
+  - boundedContext: dcb-context-authoring
+    event: constraint-definition-added
+    criteria: every constraint-definition added in this context — needed to find references to rewrite via `properties[].propertyType`
+  - boundedContext: dcb-context-authoring
+    event: constraint-definition-updated
+    criteria: every constraint-definition update in this context
+  - boundedContext: dcb-context-authoring
+    event: constraint-definition-renamed
+    criteria: every constraint-definition rename in this context
+  - boundedContext: dcb-context-authoring
+    event: constraint-definition-removed
+    criteria: every constraint-definition removal in this context
+  - boundedContext: dcb-context-authoring
+    event: command-definition-added
+    criteria: every command-definition added in this context — needed to find references to rewrite via `properties[].propertyType`
+  - boundedContext: dcb-context-authoring
+    event: command-definition-updated
+    criteria: every command-definition update in this context
+  - boundedContext: dcb-context-authoring
+    event: command-definition-renamed
+    criteria: every command-definition rename in this context
+  - boundedContext: dcb-context-authoring
+    event: command-definition-removed
+    criteria: every command-definition removal in this context
 invariants:
   - name: context-active
     rule: The context has been created and has not been deleted.
@@ -202,6 +243,11 @@ invariants:
 apiVersion: schema.esdm.io/core/v1
 kind: dynamic-consistency-boundary
 name: custom-type-definition-removal
+description: |
+  Guards removal of a custom-type-definition. Consults every
+  referencing family's lifecycle events (events, projections,
+  constraints, commands) to refuse removal while any definition in
+  the same context still names the type.
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -237,6 +283,33 @@ consults:
   - boundedContext: dcb-context-authoring
     event: projection-definition-removed
     criteria: every projection-definition removal in this context
+  - boundedContext: dcb-context-authoring
+    event: event-definition-added
+    criteria: every event-definition added in this context — needed to check for inbound references via `properties[].propertyType`
+  - boundedContext: dcb-context-authoring
+    event: event-definition-updated
+    criteria: every event-definition update in this context
+  - boundedContext: dcb-context-authoring
+    event: event-definition-removed
+    criteria: every event-definition removal in this context
+  - boundedContext: dcb-context-authoring
+    event: constraint-definition-added
+    criteria: every constraint-definition added in this context — needed to check for inbound references via `properties[].propertyType`
+  - boundedContext: dcb-context-authoring
+    event: constraint-definition-updated
+    criteria: every constraint-definition update in this context
+  - boundedContext: dcb-context-authoring
+    event: constraint-definition-removed
+    criteria: every constraint-definition removal in this context
+  - boundedContext: dcb-context-authoring
+    event: command-definition-added
+    criteria: every command-definition added in this context — needed to check for inbound references via `properties[].propertyType`
+  - boundedContext: dcb-context-authoring
+    event: command-definition-updated
+    criteria: every command-definition update in this context
+  - boundedContext: dcb-context-authoring
+    event: command-definition-removed
+    criteria: every command-definition removal in this context
 invariants:
   - name: context-active
     rule: The context has been created and has not been deleted.
@@ -244,8 +317,10 @@ invariants:
     rule: A custom-type-definition currently goes by this name in this context.
   - name: no-inbound-references
     rule: |
-      No projection-definition currently in the context references
-      this custom-type-definition by name.
+      No definition currently in the context references this
+      custom-type-definition by name: no event-, projection-,
+      constraint- or command-definition names it in any property
+      type slot, partition slot, or projection-type slot.
 ---
 apiVersion: schema.esdm.io/core/v1
 kind: command
@@ -313,14 +388,40 @@ data:
   additionalProperties: false
 publishes:
   - custom-type-definition-renamed
+  - event-definition-updated
   - projection-definition-updated
+  - constraint-definition-updated
+  - command-definition-updated
 constraints:
+  - name: rewrite-event-references
+    rule: |
+      Emit exactly one `event-definition-updated` for every
+      event-definition currently in the context whose body
+      references the custom-type-definition under `previous-name`
+      (via any `properties[].propertyType`), with every occurrence
+      of `previous-name` replaced by `name`.
   - name: rewrite-projection-references
     rule: |
       Emit exactly one `projection-definition-updated` for every
       projection-definition currently in the context whose body
-      references the custom-type-definition under `previous-name`,
-      with every occurrence of `previous-name` replaced by `name`.
+      references the custom-type-definition under `previous-name`
+      (in `partition`, `projectionType`, or any
+      `properties[].propertyType`), with every occurrence of
+      `previous-name` replaced by `name`.
+  - name: rewrite-constraint-references
+    rule: |
+      Emit exactly one `constraint-definition-updated` for every
+      constraint-definition currently in the context whose body
+      references the custom-type-definition under `previous-name`
+      (via any `properties[].propertyType`), with every occurrence
+      of `previous-name` replaced by `name`.
+  - name: rewrite-command-references
+    rule: |
+      Emit exactly one `command-definition-updated` for every
+      command-definition currently in the context whose body
+      references the custom-type-definition under `previous-name`
+      (via any `properties[].propertyType`), with every occurrence
+      of `previous-name` replaced by `name`.
 actors:
   - modeler
 ---

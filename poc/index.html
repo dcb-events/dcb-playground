@@ -427,6 +427,81 @@
   }
   .operand-editor .row:last-child { margin-bottom: 0; }
 
+  .binding-list {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: 8px;
+    background: #fafbfc;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .binding-card {
+    background: #fff;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: 8px 10px;
+  }
+  .binding-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .binding-title {
+    font-weight: 600;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 13px;
+  }
+  .binding-actions {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+  }
+  .binding-actions .inline-check { margin-right: 0; }
+  .binding-warning {
+    font-size: 12px;
+    color: var(--color-danger);
+    padding: 4px 0;
+  }
+  .binding-empty {
+    font-size: 12px;
+    color: var(--color-text-muted);
+    font-style: italic;
+    padding: 4px 0;
+  }
+  .param-bindings {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 4px;
+  }
+  .param-binding-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+  .param-binding-row .param-name {
+    font-size: 12px;
+    color: var(--color-text-muted);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  .param-binding-row .param-type {
+    font-style: italic;
+    color: var(--color-text-muted);
+  }
+  .add-binding select {
+    padding: 6px 10px;
+    font-size: 13px;
+  }
+  .binding-list .empty-rows {
+    color: var(--color-text-muted);
+    font-style: italic;
+    font-size: 13px;
+    padding: 4px;
+  }
+
   .modal .error {
     color: var(--color-danger);
     font-size: 13px;
@@ -495,7 +570,7 @@
 // ============================================================
 // Constants.
 // ============================================================
-const EVENT_LOG_KEY = 'dcb-playground:events:v2';
+const EVENT_LOG_KEY = 'dcb-playground:events:v3';
 
 const DEF_KINDS = [
   'custom-type-definition',
@@ -688,8 +763,18 @@ function computeReferences(kind, body) {
       break;
     case 'command-definition':
       for (const p of body.properties || []) pushTypeRef(refs, p.propertyType);
-      for (const c of body.constraints || []) refs['constraint-definition'].push(c);
-      for (const e of body.publishes || []) refs['event-definition'].push(e);
+      for (const c of body.constraints || []) {
+        if (c && c.name) refs['constraint-definition'].push(c.name);
+        if (c && c.parameters) {
+          for (const v of Object.values(c.parameters)) scanOperandForProjection(v, refs);
+        }
+      }
+      for (const e of body.publishes || []) {
+        if (e && e.name) refs['event-definition'].push(e.name);
+        if (e && e.parameters) {
+          for (const v of Object.values(e.parameters)) scanOperandForProjection(v, refs);
+        }
+      }
       break;
   }
 
@@ -746,10 +831,30 @@ function rewriteReferences(kind, body, targetKind, oldName, newName) {
         }
       }
       if (targetKind === 'event-definition') {
-        next.publishes = (next.publishes || []).map((e) => (e === oldName ? newName : e));
+        next.publishes = (next.publishes || []).map((e) =>
+          e && e.name === oldName ? { ...e, name: newName } : e
+        );
       }
       if (targetKind === 'constraint-definition') {
-        next.constraints = (next.constraints || []).map((c) => (c === oldName ? newName : c));
+        next.constraints = (next.constraints || []).map((c) =>
+          c && c.name === oldName ? { ...c, name: newName } : c
+        );
+      }
+      if (targetKind === 'projection-definition') {
+        for (const c of next.constraints || []) {
+          if (c && c.parameters) {
+            for (const [k, v] of Object.entries(c.parameters)) {
+              c.parameters[k] = rewriteOperand(v, oldName, newName);
+            }
+          }
+        }
+        for (const e of next.publishes || []) {
+          if (e && e.parameters) {
+            for (const [k, v] of Object.entries(e.parameters)) {
+              e.parameters[k] = rewriteOperand(v, oldName, newName);
+            }
+          }
+        }
       }
       break;
   }
@@ -1437,27 +1542,177 @@ function constraintForm({ state, ctx, rerender }) {
   ];
 }
 
+// Renders the binding rows for one constraint reference or event emission.
+// `targetProperties` is the list of properties declared by the referenced
+// definition; `parameters` is the live parameter map on the binding. We
+// reconcile the map with the target shape on every render so that:
+//   - properties newly added to the target appear as fresh slots, and
+//   - properties removed from the target are dropped silently.
+function renderParameterBindings(targetProperties, parameters, ownProperties, ctx, rerender) {
+  if (!parameters || typeof parameters !== 'object') {
+    parameters = {};
+  }
+  const targetNames = new Set(targetProperties.map((p) => p.name));
+  for (const propName of Object.keys(parameters)) {
+    if (!targetNames.has(propName)) delete parameters[propName];
+  }
+  for (const prop of targetProperties) {
+    if (!(prop.name in parameters)) parameters[prop.name] = { parameterName: '' };
+  }
+
+  if (targetProperties.length === 0) {
+    return h('div', { class: 'binding-empty' }, '(no parameters)');
+  }
+
+  return h('div', { class: 'param-bindings' },
+    targetProperties.map((prop) => {
+      const typeText = `${prop.propertyType}${prop.isList ? '[]' : ''}${prop.isOptional ? '?' : ''}`;
+      return h('div', { class: 'param-binding-row' },
+        h('div', { class: 'param-name' },
+          prop.name,
+          ': ',
+          h('span', { class: 'param-type' }, typeText)
+        ),
+        operandEditor2({
+          get: () => parameters[prop.name],
+          set: (v) => { parameters[prop.name] = v; },
+          ownProperties,
+          ctx,
+          rerender,
+        })
+      );
+    })
+  );
+}
+
+function renderConstraintBinding(c, idx, state, ctx, rerender) {
+  const target = ctx['constraint-definitions'][c.name];
+  const targetProperties = target ? (target.properties || []) : [];
+  return h('div', { class: 'binding-card' },
+    h('div', { class: 'binding-header' },
+      h('div', { class: 'binding-title' },
+        c.negate ? 'not(' : '', c.name || '(unknown)', c.negate ? ')' : ''
+      ),
+      h('div', { class: 'binding-actions' },
+        checkboxInput({
+          value: !!c.negate,
+          onchange: (v) => { c.negate = v; rerender(); },
+          label: 'negate',
+        }),
+        h('button', {
+          class: 'btn btn-xs btn-danger',
+          onclick: () => { state.constraints.splice(idx, 1); rerender(); },
+        }, '×')
+      )
+    ),
+    target
+      ? renderParameterBindings(targetProperties, c.parameters || (c.parameters = {}), state.properties, ctx, rerender)
+      : h('div', { class: 'binding-warning' }, `Referenced constraint "${c.name}" no longer exists.`)
+  );
+}
+
+function renderEventBinding(e, idx, state, ctx, rerender) {
+  const target = ctx['event-definitions'][e.name];
+  const targetProperties = target ? (target.properties || []) : [];
+  return h('div', { class: 'binding-card' },
+    h('div', { class: 'binding-header' },
+      h('div', { class: 'binding-title' }, e.name || '(unknown)'),
+      h('button', {
+        class: 'btn btn-xs btn-danger',
+        onclick: () => { state.publishes.splice(idx, 1); rerender(); },
+      }, '×')
+    ),
+    target
+      ? renderParameterBindings(targetProperties, e.parameters || (e.parameters = {}), state.properties, ctx, rerender)
+      : h('div', { class: 'binding-warning' }, `Referenced event "${e.name}" no longer exists.`)
+  );
+}
+
+function renderAddPicker({ available, placeholder, onpick }) {
+  const sel = h('select', {
+    onchange: (e) => {
+      const v = e.target.value;
+      if (v) { onpick(v); sel.value = ''; }
+    },
+  });
+  sel.appendChild(h('option', { value: '' }, placeholder));
+  for (const name of available) sel.appendChild(h('option', { value: name }, name));
+  return h('div', { class: 'add-binding' }, sel);
+}
+
 function commandForm({ state, ctx, rerender }) {
   const customTypes = Object.keys(ctx['custom-type-definitions']).sort();
-  const constraintNames = Object.keys(ctx['constraint-definitions']).sort();
-  const eventNames = Object.keys(ctx['event-definitions']).sort();
+  const allConstraints = Object.keys(ctx['constraint-definitions']).sort();
+  const allEvents = Object.keys(ctx['event-definitions']).sort();
+
+  state.constraints = state.constraints || [];
+  state.publishes = state.publishes || [];
+
+  // Build constraints section. The same constraint can be reused (e.g. once
+  // plain, once negated) — so the picker shows every constraint, not just
+  // unused ones.
+  const constraintRows = [];
+  if (state.constraints.length === 0) {
+    constraintRows.push(h('div', { class: 'empty-rows' }, 'No constraints — pick one below.'));
+  } else {
+    state.constraints.forEach((c, idx) => {
+      constraintRows.push(renderConstraintBinding(c, idx, state, ctx, rerender));
+    });
+  }
+  if (allConstraints.length > 0) {
+    constraintRows.push(renderAddPicker({
+      available: allConstraints,
+      placeholder: '+ Add constraint reference',
+      onpick: (name) => {
+        const target = ctx['constraint-definitions'][name];
+        const parameters = {};
+        for (const prop of (target && target.properties) || []) {
+          parameters[prop.name] = { parameterName: '' };
+        }
+        state.constraints.push({ name, negate: false, parameters });
+        rerender();
+      },
+    }));
+  } else {
+    constraintRows.push(h('div', { class: 'binding-warning' }, 'No constraint definitions exist in this context yet.'));
+  }
+
+  // Publishes section.
+  const publishRows = [];
+  if (state.publishes.length === 0) {
+    publishRows.push(h('div', { class: 'empty-rows' }, 'No events yet — pick at least one below.'));
+  } else {
+    state.publishes.forEach((e, idx) => {
+      publishRows.push(renderEventBinding(e, idx, state, ctx, rerender));
+    });
+  }
+  if (allEvents.length > 0) {
+    publishRows.push(renderAddPicker({
+      available: allEvents,
+      placeholder: '+ Add event emission',
+      onpick: (name) => {
+        const target = ctx['event-definitions'][name];
+        const parameters = {};
+        for (const prop of (target && target.properties) || []) {
+          parameters[prop.name] = { parameterName: '' };
+        }
+        state.publishes.push({ name, parameters });
+        rerender();
+      },
+    }));
+  } else {
+    publishRows.push(h('div', { class: 'binding-warning' }, 'No event definitions exist in this context yet.'));
+  }
+
   return [
     labeled('Properties', '— the command payload',
       propertyListEditor({ properties: state.properties, customTypes, rerender })
     ),
-    labeled('Constraints', '— the constraints that must hold (the DCB consult surface)',
-      checkboxList({
-        available: constraintNames,
-        selected: state.constraints,
-        onchange: (next) => { state.constraints = next; },
-      })
+    labeled('Constraints', '— the DCB consult surface; each reference can bind parameters and be negated',
+      h('div', { class: 'binding-list' }, constraintRows)
     ),
-    labeled('Publishes', '— events emitted on success (at least one required)',
-      checkboxList({
-        available: eventNames,
-        selected: state.publishes,
-        onchange: (next) => { state.publishes = next; },
-      })
+    labeled('Publishes', '— events emitted on success; bind each event\'s properties to operands',
+      h('div', { class: 'binding-list' }, publishRows)
     ),
   ];
 }
@@ -1510,8 +1765,8 @@ function bodyToState(kind, body) {
   if (kind === 'command-definition') {
     return {
       properties: deepClone(body.properties || []),
-      constraints: [...(body.constraints || [])],
-      publishes: [...(body.publishes || [])],
+      constraints: deepClone(body.constraints || []),
+      publishes: deepClone(body.publishes || []),
     };
   }
   return {};
@@ -1554,11 +1809,21 @@ function stateToBody(kind, state) {
     if (!state.publishes || state.publishes.length === 0) {
       throw new DomainError('Command must publish at least one event.');
     }
-    return {
-      properties: cleanProperties(state.properties),
-      constraints: [...state.constraints],
-      publishes: [...state.publishes],
-    };
+    const cleanedProps = cleanProperties(state.properties);
+    const constraints = (state.constraints || []).map((c, i) => {
+      if (!c || !c.name) throw new DomainError(`Constraint reference #${i + 1} is missing a name.`);
+      const out = { name: c.name };
+      if (c.negate) out.negate = true;
+      if (c.parameters && Object.keys(c.parameters).length > 0) out.parameters = c.parameters;
+      return out;
+    });
+    const publishes = (state.publishes || []).map((e, i) => {
+      if (!e || !e.name) throw new DomainError(`Event emission #${i + 1} is missing a name.`);
+      const out = { name: e.name };
+      if (e.parameters && Object.keys(e.parameters).length > 0) out.parameters = e.parameters;
+      return out;
+    });
+    return { properties: cleanedProps, constraints, publishes };
   }
   return {};
 }

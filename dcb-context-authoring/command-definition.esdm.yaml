@@ -1,12 +1,15 @@
-# Constraint definitions inside a DCB Context: events, DCBs, commands.
+# Command definitions inside a DCB Context: events, DCBs, commands.
 # Identified within the context by `name`.
-# References projection-definitions; is not referenced by anything,
-# so removal does not need an inbound-reference check and rename
-# does not need to rewrite anything elsewhere.
+# References custom-type-definitions (via properties), event-definitions
+# (via publishes), constraint-definitions (via constraints), and
+# projection-definitions (via projection-result operands inside parameter
+# bindings). Not referenced by anything — commands are leaves on the
+# reference graph, so rename and removal stay narrow (no rewrite of
+# referencers, no inbound-reference check).
 
 apiVersion: schema.esdm.io/core/v1
 kind: event
-name: constraint-definition-added
+name: command-definition-added
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -20,14 +23,16 @@ data:
     body:
       type: object
       description: |
-        Authored content of the constraint — including the names of
-        projection-definitions it references.
+        Authored content of the command — the payload properties, the
+        list of constraint references that form its DCB consult
+        surface (each optionally negated and with parameter bindings),
+        and the list of event emissions with their parameter bindings.
   required: [dcb-context-id, name, body]
   additionalProperties: false
 ---
 apiVersion: schema.esdm.io/core/v1
 kind: event
-name: constraint-definition-updated
+name: command-definition-updated
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -45,7 +50,7 @@ data:
 ---
 apiVersion: schema.esdm.io/core/v1
 kind: event
-name: constraint-definition-renamed
+name: command-definition-renamed
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -63,7 +68,7 @@ data:
 ---
 apiVersion: schema.esdm.io/core/v1
 kind: event
-name: constraint-definition-removed
+name: command-definition-removed
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -79,12 +84,13 @@ data:
 ---
 apiVersion: schema.esdm.io/core/v1
 kind: dynamic-consistency-boundary
-name: constraint-definition-addition
+name: command-definition-addition
 description: |
-  Guards the addition of a new constraint-definition. Consults
-  projection-definition lifecycle so the referential-integrity
-  invariant ("every referenced projection name exists") holds at
-  append time.
+  Guards the addition of a new command-definition. Consults the four
+  referenced families' lifecycle events so the
+  references-resolve invariant ("every referenced custom-type,
+  event, constraint and projection name exists") holds at append
+  time.
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -92,7 +98,7 @@ identifiedBy:
   - name: dcb-context-id
     source: command-payload
     field: dcb-context-id
-  - name: constraint-definition-name
+  - name: command-definition-name
     source: command-payload
     field: name
 consults:
@@ -103,17 +109,44 @@ consults:
     event: dcb-context-deleted
     criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
   - boundedContext: dcb-context-authoring
+    event: command-definition-added
+    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `command-definition-name`
+  - boundedContext: dcb-context-authoring
+    event: command-definition-renamed
+    criteria: events with matching `dcb-context-id` whose new `name` or `previous-name` equals this instance's `command-definition-name`
+  - boundedContext: dcb-context-authoring
+    event: command-definition-removed
+    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `command-definition-name`
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-added
+    criteria: every custom-type-definition added in this context — needed to resolve property-type references
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-renamed
+    criteria: every custom-type-definition rename in this context
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-removed
+    criteria: every custom-type-definition removal in this context
+  - boundedContext: dcb-context-authoring
+    event: event-definition-added
+    criteria: every event-definition added in this context — needed to resolve publishes references
+  - boundedContext: dcb-context-authoring
+    event: event-definition-renamed
+    criteria: every event-definition rename in this context
+  - boundedContext: dcb-context-authoring
+    event: event-definition-removed
+    criteria: every event-definition removal in this context
+  - boundedContext: dcb-context-authoring
     event: constraint-definition-added
-    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `constraint-definition-name`
+    criteria: every constraint-definition added in this context — needed to resolve constraint references
   - boundedContext: dcb-context-authoring
     event: constraint-definition-renamed
-    criteria: events with matching `dcb-context-id` whose new `name` or `previous-name` equals this instance's `constraint-definition-name`
+    criteria: every constraint-definition rename in this context
   - boundedContext: dcb-context-authoring
     event: constraint-definition-removed
-    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `constraint-definition-name`
+    criteria: every constraint-definition removal in this context
   - boundedContext: dcb-context-authoring
     event: projection-definition-added
-    criteria: every projection-definition added in this context — needed to resolve outbound references
+    criteria: every projection-definition added in this context — needed to resolve projection-result operands inside parameter bindings
   - boundedContext: dcb-context-authoring
     event: projection-definition-renamed
     criteria: every projection-definition rename in this context
@@ -124,15 +157,22 @@ invariants:
   - name: context-active
     rule: The context has been created and has not been deleted.
   - name: name-not-in-use
-    rule: No constraint-definition currently goes by this name in this context.
+    rule: No command-definition currently goes by this name in this context.
   - name: references-resolve
     rule: |
-      Every projection-definition name referenced from the new
-      constraint's body currently exists in this context.
+      Every referenced name resolves to a live definition in this
+      context: custom-type-definitions named by property types,
+      event-definitions named in `publishes`, constraint-definitions
+      named in `constraints`, and projection-definitions named by
+      `projectionName` in any parameter-binding operand.
 ---
 apiVersion: schema.esdm.io/core/v1
 kind: dynamic-consistency-boundary
-name: constraint-definition-update
+name: command-definition-update
+description: |
+  Guards body updates to an existing command-definition. Same wide
+  consult surface as `command-definition-addition`; the uniqueness
+  check flips to "definition exists".
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -140,7 +180,7 @@ identifiedBy:
   - name: dcb-context-id
     source: command-payload
     field: dcb-context-id
-  - name: constraint-definition-name
+  - name: command-definition-name
     source: command-payload
     field: name
 consults:
@@ -151,14 +191,41 @@ consults:
     event: dcb-context-deleted
     criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
   - boundedContext: dcb-context-authoring
+    event: command-definition-added
+    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `command-definition-name`
+  - boundedContext: dcb-context-authoring
+    event: command-definition-renamed
+    criteria: events with matching `dcb-context-id` whose new `name` or `previous-name` equals this instance's `command-definition-name`
+  - boundedContext: dcb-context-authoring
+    event: command-definition-removed
+    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `command-definition-name`
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-added
+    criteria: every custom-type-definition added in this context
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-renamed
+    criteria: every custom-type-definition rename in this context
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-removed
+    criteria: every custom-type-definition removal in this context
+  - boundedContext: dcb-context-authoring
+    event: event-definition-added
+    criteria: every event-definition added in this context
+  - boundedContext: dcb-context-authoring
+    event: event-definition-renamed
+    criteria: every event-definition rename in this context
+  - boundedContext: dcb-context-authoring
+    event: event-definition-removed
+    criteria: every event-definition removal in this context
+  - boundedContext: dcb-context-authoring
     event: constraint-definition-added
-    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `constraint-definition-name`
+    criteria: every constraint-definition added in this context
   - boundedContext: dcb-context-authoring
     event: constraint-definition-renamed
-    criteria: events with matching `dcb-context-id` whose new `name` or `previous-name` equals this instance's `constraint-definition-name`
+    criteria: every constraint-definition rename in this context
   - boundedContext: dcb-context-authoring
     event: constraint-definition-removed
-    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `constraint-definition-name`
+    criteria: every constraint-definition removal in this context
   - boundedContext: dcb-context-authoring
     event: projection-definition-added
     criteria: every projection-definition added in this context
@@ -172,21 +239,20 @@ invariants:
   - name: context-active
     rule: The context has been created and has not been deleted.
   - name: definition-exists
-    rule: A constraint-definition currently goes by this name in this context.
+    rule: A command-definition currently goes by this name in this context.
   - name: references-resolve
     rule: |
-      Every projection-definition name referenced from the updated
-      body currently exists in this context.
+      Every referenced name resolves to a live definition in this
+      context (same conditions as on `command-definition-addition`).
 ---
 apiVersion: schema.esdm.io/core/v1
 kind: dynamic-consistency-boundary
-name: constraint-definition-rename
+name: command-definition-rename
 description: |
-  Guards renaming a constraint-definition. Constraints are
-  referenced by command-definitions through their `constraints`
-  list, so the DCB consults command lifecycle events alongside its
-  own to rewrite every referencing command in the same atomic
-  append.
+  Guards renaming a command-definition. Commands are leaves on the
+  reference graph — nothing references them — so the consult surface
+  stays narrow (just the command's own lifecycle plus the context
+  lifecycle); no rewrite of other definitions is needed.
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -208,41 +274,29 @@ consults:
     event: dcb-context-deleted
     criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
   - boundedContext: dcb-context-authoring
-    event: constraint-definition-added
-    criteria: events with matching `dcb-context-id` whose `name` equals `previous-name` or `name`
-  - boundedContext: dcb-context-authoring
-    event: constraint-definition-renamed
-    criteria: events with matching `dcb-context-id` whose new `name` or `previous-name` equals `previous-name` or `name`
-  - boundedContext: dcb-context-authoring
-    event: constraint-definition-removed
-    criteria: events with matching `dcb-context-id` whose `name` equals `previous-name` or `name`
-  - boundedContext: dcb-context-authoring
     event: command-definition-added
-    criteria: every command-definition added in this context — needed to find references to rewrite
-  - boundedContext: dcb-context-authoring
-    event: command-definition-updated
-    criteria: every command-definition update in this context
+    criteria: events with matching `dcb-context-id` whose `name` equals `previous-name` or `name`
   - boundedContext: dcb-context-authoring
     event: command-definition-renamed
-    criteria: every command-definition rename in this context
+    criteria: events with matching `dcb-context-id` whose new `name` or `previous-name` equals `previous-name` or `name`
   - boundedContext: dcb-context-authoring
     event: command-definition-removed
-    criteria: every command-definition removal in this context
+    criteria: events with matching `dcb-context-id` whose `name` equals `previous-name` or `name`
 invariants:
   - name: context-active
     rule: The context has been created and has not been deleted.
   - name: previous-name-in-use
-    rule: A constraint-definition currently goes by `previous-name` in this context.
+    rule: A command-definition currently goes by `previous-name` in this context.
   - name: new-name-free
-    rule: No constraint-definition currently goes by `name` in this context.
+    rule: No command-definition currently goes by `name` in this context.
 ---
 apiVersion: schema.esdm.io/core/v1
 kind: dynamic-consistency-boundary
-name: constraint-definition-removal
+name: command-definition-removal
 description: |
-  Guards removal of a constraint-definition. Consults command
-  lifecycle events to refuse removal while any command in the same
-  context still names the constraint in its `constraints` list.
+  Guards removal of a command-definition. No inbound-reference check
+  is needed (nothing references commands); only the context-active
+  + definition-exists invariants apply.
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -250,7 +304,7 @@ identifiedBy:
   - name: dcb-context-id
     source: command-payload
     field: dcb-context-id
-  - name: constraint-definition-name
+  - name: command-definition-name
     source: command-payload
     field: name
 consults:
@@ -261,41 +315,27 @@ consults:
     event: dcb-context-deleted
     criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
   - boundedContext: dcb-context-authoring
-    event: constraint-definition-added
-    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `constraint-definition-name`
-  - boundedContext: dcb-context-authoring
-    event: constraint-definition-renamed
-    criteria: events with matching `dcb-context-id` whose new `name` or `previous-name` equals this instance's `constraint-definition-name`
-  - boundedContext: dcb-context-authoring
-    event: constraint-definition-removed
-    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `constraint-definition-name`
-  - boundedContext: dcb-context-authoring
     event: command-definition-added
-    criteria: every command-definition added in this context — needed to check for inbound references via `constraints`
+    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `command-definition-name`
   - boundedContext: dcb-context-authoring
-    event: command-definition-updated
-    criteria: every command-definition update in this context
+    event: command-definition-renamed
+    criteria: events with matching `dcb-context-id` whose new `name` or `previous-name` equals this instance's `command-definition-name`
   - boundedContext: dcb-context-authoring
     event: command-definition-removed
-    criteria: every command-definition removal in this context
+    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `command-definition-name`
 invariants:
   - name: context-active
     rule: The context has been created and has not been deleted.
   - name: definition-exists
-    rule: A constraint-definition currently goes by this name in this context.
-  - name: no-inbound-references
-    rule: |
-      No command-definition currently in the context names this
-      constraint in its `constraints` list (whether plain or
-      negated).
+    rule: A command-definition currently goes by this name in this context.
 ---
 apiVersion: schema.esdm.io/core/v1
 kind: command
-name: add-constraint-definition
+name: add-command-definition
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
-  dynamicConsistencyBoundary: constraint-definition-addition
+  dynamicConsistencyBoundary: command-definition-addition
 data:
   type: object
   properties:
@@ -308,17 +348,17 @@ data:
   required: [dcb-context-id, name, body]
   additionalProperties: false
 publishes:
-  - constraint-definition-added
+  - command-definition-added
 actors:
   - modeler
 ---
 apiVersion: schema.esdm.io/core/v1
 kind: command
-name: update-constraint-definition
+name: update-command-definition
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
-  dynamicConsistencyBoundary: constraint-definition-update
+  dynamicConsistencyBoundary: command-definition-update
 data:
   type: object
   properties:
@@ -331,23 +371,17 @@ data:
   required: [dcb-context-id, name, body]
   additionalProperties: false
 publishes:
-  - constraint-definition-updated
+  - command-definition-updated
 actors:
   - modeler
 ---
 apiVersion: schema.esdm.io/core/v1
 kind: command
-name: rename-constraint-definition
-description: |
-  Renames a constraint-definition. Atomically emits the rename
-  event plus one `command-definition-updated` for every command
-  whose `constraints` list named the constraint under
-  `previous-name`, with the entry rewritten to `name` (preserving
-  any `negate` flag).
+name: rename-command-definition
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
-  dynamicConsistencyBoundary: constraint-definition-rename
+  dynamicConsistencyBoundary: command-definition-rename
 data:
   type: object
   properties:
@@ -360,27 +394,17 @@ data:
   required: [dcb-context-id, previous-name, name]
   additionalProperties: false
 publishes:
-  - constraint-definition-renamed
-  - command-definition-updated
-constraints:
-  - name: rewrite-command-references
-    rule: |
-      Emit exactly one `command-definition-updated` for every
-      command-definition currently in the context whose
-      `constraints` list contains an entry naming the constraint
-      under `previous-name`, with that entry's `name` field
-      rewritten to `name`. The `negate` flag and any parameter
-      bindings on the entry are preserved verbatim.
+  - command-definition-renamed
 actors:
   - modeler
 ---
 apiVersion: schema.esdm.io/core/v1
 kind: command
-name: remove-constraint-definition
+name: remove-command-definition
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
-  dynamicConsistencyBoundary: constraint-definition-removal
+  dynamicConsistencyBoundary: command-definition-removal
 data:
   type: object
   properties:
@@ -391,6 +415,6 @@ data:
   required: [dcb-context-id, name]
   additionalProperties: false
 publishes:
-  - constraint-definition-removed
+  - command-definition-removed
 actors:
   - modeler

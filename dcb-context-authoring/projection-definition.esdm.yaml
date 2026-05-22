@@ -216,9 +216,11 @@ apiVersion: schema.esdm.io/core/v1
 kind: dynamic-consistency-boundary
 name: projection-definition-rename
 description: |
-  Guards renaming a projection-definition. Consults constraint
-  lifecycle events alongside its own so referencing constraints
-  can be rewritten atomically in the same append.
+  Guards renaming a projection-definition. Consults constraint and
+  command lifecycle events alongside its own so referencing
+  constraints (in their condition operands) and commands (in
+  projection-result operands inside parameter bindings) can be
+  rewritten atomically in the same append.
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -260,6 +262,18 @@ consults:
   - boundedContext: dcb-context-authoring
     event: constraint-definition-removed
     criteria: every constraint-definition removal in this context
+  - boundedContext: dcb-context-authoring
+    event: command-definition-added
+    criteria: every command-definition added in this context — needed to find references to rewrite (projection-result operands inside parameter bindings)
+  - boundedContext: dcb-context-authoring
+    event: command-definition-updated
+    criteria: every command-definition update in this context
+  - boundedContext: dcb-context-authoring
+    event: command-definition-renamed
+    criteria: every command-definition rename in this context
+  - boundedContext: dcb-context-authoring
+    event: command-definition-removed
+    criteria: every command-definition removal in this context
 invariants:
   - name: context-active
     rule: The context has been created and has not been deleted.
@@ -273,7 +287,9 @@ kind: dynamic-consistency-boundary
 name: projection-definition-removal
 description: |
   Guards removal of a projection-definition. Consults constraint
-  lifecycle events to refuse removal while any constraint still
+  and command lifecycle events to refuse removal while any
+  constraint (via condition operands) or command (via
+  projection-result operands inside parameter bindings) still
   references the projection.
 scope:
   domain: dcb-playground
@@ -310,6 +326,15 @@ consults:
   - boundedContext: dcb-context-authoring
     event: constraint-definition-removed
     criteria: every constraint-definition removal in this context
+  - boundedContext: dcb-context-authoring
+    event: command-definition-added
+    criteria: every command-definition added in this context — needed to check for inbound references via projection-result operands
+  - boundedContext: dcb-context-authoring
+    event: command-definition-updated
+    criteria: every command-definition update in this context
+  - boundedContext: dcb-context-authoring
+    event: command-definition-removed
+    criteria: every command-definition removal in this context
 invariants:
   - name: context-active
     rule: The context has been created and has not been deleted.
@@ -318,7 +343,9 @@ invariants:
   - name: no-inbound-references
     rule: |
       No constraint-definition currently in the context references
-      this projection-definition by name.
+      this projection-definition by name (via condition operands),
+      and no command-definition references it via projection-result
+      operands inside parameter bindings.
 ---
 apiVersion: schema.esdm.io/core/v1
 kind: command
@@ -372,8 +399,10 @@ name: rename-projection-definition
 description: |
   Renames a projection-definition. Atomically emits the rename event
   plus one `constraint-definition-updated` for every constraint
-  whose body referenced `previous-name`, with the reference
-  rewritten to `name`.
+  whose condition referenced `previous-name`, and one
+  `command-definition-updated` for every command whose parameter
+  bindings contained a projection-result operand naming
+  `previous-name`. All references are rewritten to `name`.
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -392,6 +421,7 @@ data:
 publishes:
   - projection-definition-renamed
   - constraint-definition-updated
+  - command-definition-updated
 constraints:
   - name: rewrite-constraint-references
     rule: |
@@ -399,6 +429,14 @@ constraints:
       constraint-definition currently in the context whose body
       references the projection-definition under `previous-name`,
       with every occurrence of `previous-name` replaced by `name`.
+  - name: rewrite-command-references
+    rule: |
+      Emit exactly one `command-definition-updated` for every
+      command-definition currently in the context whose body
+      references the projection-definition under `previous-name`
+      (via the `projectionName` of any projection-result operand
+      inside a parameter binding), with every occurrence of
+      `previous-name` replaced by `name`.
 actors:
   - modeler
 ---

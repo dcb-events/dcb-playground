@@ -114,15 +114,15 @@ required:
         items:
           "$ref": "#/$defs/PropertyDefinition"
       constraints:
-        description: Names of constraint definitions the command must satisfy before it may emit any events. Together they form the command's dynamic consistency boundary.
+        description: Constraint references the command must satisfy before it may emit any events. Each entry binds a referenced constraint's parameters and may negate it; together the entries form the command's dynamic consistency boundary.
         type: array
         items:
-          "$ref": "#/$defs/ConstraintName"
+          "$ref": "#/$defs/ConstraintReference"
       publishes:
-        description: Names of event definitions the command emits on success.
+        description: Events the command emits on success. Each entry binds the emitted event's properties to operands drawn from the command's payload (or static values, or projection results).
         type: array
         items:
-          "$ref": "#/$defs/EventName"
+          "$ref": "#/$defs/EventEmission"
     required:
     - name
     - publishes
@@ -133,6 +133,38 @@ required:
     pattern: "^[A-Z][A-Za-z0-9]+$"
     examples:
     - SubscribeStudentToCourse
+  ConstraintReference:
+    description: A command's reference to one constraint. Carries the referenced constraint's name, an optional negation flag (so the same constraint can be reused as `not(...)`), and parameter bindings that supply values for the constraint's properties.
+    type: object
+    additionalProperties: false
+    properties:
+      name:
+        "$ref": "#/$defs/ConstraintName"
+      negate:
+        description: When true, the command's DCB is satisfied when the referenced constraint does *not* hold.
+        type: boolean
+        default: false
+      parameters:
+        description: Bindings for the referenced constraint's properties. Keys are the constraint's property names; each value is an Operand describing where the parameter value comes from at command-execution time (typically a property of the command itself).
+        type: object
+        additionalProperties:
+          "$ref": "#/$defs/Operand"
+    required:
+    - name
+  EventEmission:
+    description: A command's emission of one event. Carries the event's name plus parameter bindings that supply values for the event's properties.
+    type: object
+    additionalProperties: false
+    properties:
+      name:
+        "$ref": "#/$defs/EventName"
+      parameters:
+        description: Bindings for the emitted event's properties. Keys are the event's property names; each value is an Operand describing where the value comes from at command-execution time.
+        type: object
+        additionalProperties:
+          "$ref": "#/$defs/Operand"
+    required:
+    - name
   CustomTypeDefinition:
     type: object
     additionalProperties: false

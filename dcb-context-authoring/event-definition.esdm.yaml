@@ -168,10 +168,12 @@ name: event-definition-rename
 description: |
   Guards renaming an event-definition. Parameterised by the context
   id, the previous name and the new name. In addition to the
-  event-definition lifecycle, the DCB consults all projection
-  lifecycle events for the context, so the triggering command can
-  emit the reference-rewrite events for every projection currently
-  referencing `previous-name` in one atomic append.
+  event-definition lifecycle, the DCB consults all projection and
+  command lifecycle events for the context, so the triggering
+  command can emit the reference-rewrite events for every projection
+  (whose handlers key on the event name) and every command (whose
+  `publishes` list names the event) currently referencing
+  `previous-name` in one atomic append.
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -213,6 +215,18 @@ consults:
   - boundedContext: dcb-context-authoring
     event: projection-definition-removed
     criteria: every projection-definition removal in this context
+  - boundedContext: dcb-context-authoring
+    event: command-definition-added
+    criteria: every command-definition added in this context — needed to find references to rewrite
+  - boundedContext: dcb-context-authoring
+    event: command-definition-updated
+    criteria: every command-definition update in this context
+  - boundedContext: dcb-context-authoring
+    event: command-definition-renamed
+    criteria: every command-definition rename in this context
+  - boundedContext: dcb-context-authoring
+    event: command-definition-removed
+    criteria: every command-definition removal in this context
 invariants:
   - name: context-active
     rule: The context has been created and has not been deleted.
@@ -225,9 +239,10 @@ apiVersion: schema.esdm.io/core/v1
 kind: dynamic-consistency-boundary
 name: event-definition-removal
 description: |
-  Guards removal of an event-definition. Consults projection
-  lifecycle events to refuse removal while any projection in the
-  same context still references the name.
+  Guards removal of an event-definition. Consults projection and
+  command lifecycle events to refuse removal while any projection
+  (via handlers) or any command (via `publishes`) in the same
+  context still references the name.
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -263,6 +278,15 @@ consults:
   - boundedContext: dcb-context-authoring
     event: projection-definition-removed
     criteria: every projection-definition removal in this context
+  - boundedContext: dcb-context-authoring
+    event: command-definition-added
+    criteria: every command-definition added in this context — needed to check for inbound references via `publishes`
+  - boundedContext: dcb-context-authoring
+    event: command-definition-updated
+    criteria: every command-definition update in this context
+  - boundedContext: dcb-context-authoring
+    event: command-definition-removed
+    criteria: every command-definition removal in this context
 invariants:
   - name: context-active
     rule: The context has been created and has not been deleted.
@@ -271,8 +295,10 @@ invariants:
   - name: no-inbound-references
     rule: |
       No projection-definition currently in the context references
-      this event-definition by name. References are read from the
-      latest body of each live projection.
+      this event-definition by name (via `handlers`), and no
+      command-definition in the context names it in `publishes`.
+      References are read from the latest body of each live
+      definition.
 ---
 apiVersion: schema.esdm.io/core/v1
 kind: command
@@ -326,10 +352,11 @@ name: rename-event-definition
 description: |
   Renames an event-definition. Atomically emits the rename event
   plus one `projection-definition-updated` for every projection
-  whose body referenced `previous-name`, with the reference
-  rewritten to `name`. The DCB's wide consult surface (projections
-  in addition to event-definitions) is what makes this single
-  append correct.
+  whose `handlers` keyed on `previous-name`, and one
+  `command-definition-updated` for every command whose `publishes`
+  listed `previous-name`. The DCB's wide consult surface
+  (projections and commands in addition to event-definitions) is
+  what makes this single append correct.
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -348,6 +375,7 @@ data:
 publishes:
   - event-definition-renamed
   - projection-definition-updated
+  - command-definition-updated
 constraints:
   - name: rewrite-projection-references
     rule: |
@@ -357,6 +385,13 @@ constraints:
       every occurrence of `previous-name` replaced by `name`. Emit
       no `projection-definition-updated` for projections that do
       not reference the renamed event-definition.
+  - name: rewrite-command-references
+    rule: |
+      Emit exactly one `command-definition-updated` for every
+      command-definition currently in the context whose `publishes`
+      list named the event under `previous-name`, with the entry
+      replaced by `name`. Emit no `command-definition-updated` for
+      commands that did not reference the renamed event.
 actors:
   - modeler
 ---

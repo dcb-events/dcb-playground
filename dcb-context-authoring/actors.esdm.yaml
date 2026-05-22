@@ -7,8 +7,9 @@ scope:
 type: human
 responsibilities:
   - Creates, renames and deletes DCB Contexts.
-  - Adds, updates, renames and removes the four kinds of definitions
-    inside a DCB Context.
+  - Adds, updates, renames and removes the five kinds of definitions
+    inside a DCB Context (custom-type, event, projection, constraint,
+    command).
 ---
 apiVersion: schema.esdm.io/core/v1
 kind: actor

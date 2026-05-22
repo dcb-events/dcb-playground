@@ -8,8 +8,8 @@ kind: read-model
 name: dcb-context-overview
 description: |
   One record per currently-live DCB Context, carrying the context's
-  display name and the four definition collections in their latest
-  state.
+  display name and the five definition collections (custom-type,
+  event, projection, constraint, command) in their latest state.
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -72,6 +72,18 @@ projections:
   - boundedContext: dcb-context-authoring
     event: constraint-definition-removed
     rule: Drop the entry identified by `name` from the matching context's `constraint-definitions` collection.
+  - boundedContext: dcb-context-authoring
+    event: command-definition-added
+    rule: Append the new definition to the matching context's `command-definitions` collection.
+  - boundedContext: dcb-context-authoring
+    event: command-definition-updated
+    rule: Replace the `body` of the entry identified by `name` in the matching context's `command-definitions` collection.
+  - boundedContext: dcb-context-authoring
+    event: command-definition-renamed
+    rule: Replace the `name` of the entry identified by `previous-name` with the carried `name` in the matching context's `command-definitions` collection.
+  - boundedContext: dcb-context-authoring
+    event: command-definition-removed
+    rule: Drop the entry identified by `name` from the matching context's `command-definitions` collection.
 schema:
   type: array
   items:
@@ -121,6 +133,16 @@ schema:
             body:
               type: object
           required: [name, body]
+      command-definitions:
+        type: array
+        items:
+          type: object
+          properties:
+            name:
+              type: string
+            body:
+              type: object
+          required: [name, body]
     required:
       - dcb-context-id
       - name
@@ -128,6 +150,7 @@ schema:
       - event-definitions
       - projection-definitions
       - constraint-definitions
+      - command-definitions
 ---
 apiVersion: schema.esdm.io/core/v1
 kind: query
@@ -157,7 +180,7 @@ constraints:
   - name: light-shape
     rule: |
       Each record carries only `dcb-context-id` and `name`; the
-      four definition collections are stripped to keep listings
+      five definition collections are stripped to keep listings
       cheap to render.
   - name: stable-order
     rule: Sort by `name` ascending; break ties by `dcb-context-id`.
@@ -169,7 +192,7 @@ apiVersion: schema.esdm.io/core/v1
 kind: query
 name: get-dcb-context
 description: |
-  Returns the full content of one DCB Context — name plus all four
+  Returns the full content of one DCB Context — name plus all five
   definition collections in their latest state.
 scope:
   domain: dcb-playground
@@ -206,6 +229,10 @@ result:
       type: array
       items:
         type: object
+    command-definitions:
+      type: array
+      items:
+        type: object
   required:
     - dcb-context-id
     - name
@@ -213,6 +240,7 @@ result:
     - event-definitions
     - projection-definitions
     - constraint-definitions
+    - command-definitions
 constraints:
   - name: lookup-by-id
     rule: |
