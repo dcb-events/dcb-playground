@@ -3,7 +3,7 @@ kind: bounded-context
 name: dcb-context-authoring
 description: |
   The editing surface of the playground. Modelers create, edit, rename
-  and delete DCB Contexts and the five kinds of definitions inside
+  and delete DCB Contexts and the four kinds of definitions inside
   them; viewers inspect a context without changing it. The companion
   testing surface (scenarios, runs, assertions) is planned as a
   separate bounded context and is out of scope here.
@@ -13,65 +13,133 @@ ubiquitousLanguage:
   - term: DCB Context
     definition: |
       The complete authoring artifact a modeler builds — a named
-      container of custom-type, event, projection, constraint and
-      command definitions describing one DCB-based system.
-      Identified by a generated id; its name is a mutable display
-      attribute.
+      container of custom-type, event, entity and command definitions
+      describing one DCB-based system. Identified by a generated id;
+      its name is a mutable display attribute.
+  - term: Entity Definition
+    definition: |
+      A modeled thing with an identity, a lifecycle state and a set of
+      projected properties. The organising unit of a DCB Context:
+      every projection in the context belongs to exactly one entity.
+      References event definitions (through its property handlers),
+      custom-type definitions and other entities (through its property
+      types); referenced in turn by event definitions, command
+      definitions and other entities.
+
+      An entity is *projected state, not a consistency boundary*. It
+      holds no invariants, handles no commands and decides nothing on
+      its own — it is a named identity plus everything the events say
+      about it. Every decision is made by a command, over the
+      instances it binds in its boundary.
+    avoid:
+      - term: Aggregate
+        reason: |
+          An aggregate owns a consistency boundary and enforces its
+          own invariants; an entity here does neither. Dissolving the
+          fixed aggregate is the whole point of DCB — the boundary is
+          dynamic and belongs to the command. Calling these aggregates
+          invites exactly the wrong mental model, and invites reaching
+          for aggregate colours and conventions when modeling them.
+      - term: Read Model
+        reason: |
+          Both are folds over events, but a read model serves queries
+          on the outside of the system, while an entity's properties
+          are consulted to make a write decision inside a command's
+          boundary. Keeping them distinct keeps the DCB story clear.
+  - term: Derived Type
+    definition: |
+      One of the two types an entity brings into existence without
+      anyone declaring them — `<Entity>Id` and `<Entity>State`. Never
+      stored: both are computed from the entity definition and
+      resolved in the same namespace as custom types, which is why
+      adding a custom type and adding an entity can collide.
+  - term: Entity Property
+    definition: |
+      One projection belonging to an entity. Folds the events it
+      handles over the entity's instance — the partition is the
+      entity's identifier and is never authored. Carries an initial
+      value and a handler per event type.
+    avoid:
+      - term: Projection
+        reason: |
+          There is no longer a free-standing projection kind. Saying
+          "property" keeps the entity as the unit a modeler thinks in,
+          while "the property is a projection" stays true underneath.
+  - term: State
+    definition: |
+      The reserved property every entity has, typed `<Entity>State`.
+      Always present, never removable or renameable; its initial value
+      is the first declared state member. Defaults to the two members
+      `NonExistent` and `Existent`, which modelers extend (`Archived`)
+      or rename to fit the domain.
+  - term: Tag
+    definition: |
+      The DCB tag an event carries. Derived, never declared: an event
+      property typed with an entity identifier makes the event carry
+      that entity's tag, so an event may carry several.
   - term: Custom Type Definition
     definition: |
-      A user-defined type declared once within a DCB Context.
-      Referenced by event, projection, constraint and command
-      definitions through their property types.
+      A user-declared *value* type (a pattern-constrained string, a
+      money amount). Never a tag — tags come from entity identifiers
+      alone. Referenced by event, entity and command definitions
+      through their property types.
   - term: Event Definition
     definition: |
-      A domain event modeled inside a DCB Context. Referenced by
-      projection definitions (as handler keys) and by command
-      definitions (in their `publishes` lists).
-  - term: Projection Definition
-    definition: |
-      A description of state derived from events. References event
-      definitions and custom-type definitions within the same DCB
-      Context, and is itself referenced by constraint definitions
-      (in condition operands) and command definitions (in
-      projection-result operands inside parameter bindings).
-  - term: Constraint Definition
-    definition: |
-      A rule expressed over projections within a DCB Context.
-      References projection definitions in its condition; referenced
-      in turn by command definitions, which name constraints in
-      their `constraints` list.
+      A domain event modeled inside a DCB Context. Its property types
+      determine both its payload and its tags. Referenced by entity
+      definitions (a property handler names the event it folds) and by
+      command definitions (in their `publishes` lists).
   - term: Command Definition
     definition: |
-      An intent a modeler may issue against the modeled system. Has
-      a payload (properties), declares the constraints it must
-      satisfy (its DCB consult surface) — each optionally negated
-      and parameterised — and the events it publishes on success
-      with their parameter bindings. Not referenced by anything;
-      commands are leaves on the reference graph.
-  - term: Negation
+      An intent a modeler may issue against the modeled system. Has a
+      payload (properties), a boundary, inline conditions over the
+      bound instances, and the events it publishes on success. Not
+      referenced by anything; commands are leaves on the reference
+      graph.
+  - term: Boundary
     definition: |
-      A flag on a constraint reference inside a command's
-      `constraints` list, marking the constraint as required to
-      *not* hold for the DCB to be satisfied. Lets the same
-      constraint (e.g. `CourseExists`) be reused as `not(...)`
-      without duplicating the rule.
-  - term: Parameter Binding
+      The list of entity instances a command consults, each under a
+      local alias. *This is the command's dynamic consistency
+      boundary*: the append condition's query is the union of the
+      bound instances' tags, restricted to the event types the
+      conditions reach through. Rendered on the command so the DCB is
+      visible rather than inferred.
+  - term: Alias
     definition: |
-      The pairing of a referenced definition's property name with
-      an operand that supplies its value at execution time. Used by
-      command definitions to feed their constraint references and
-      event emissions; operands take values from command parameters,
-      static literals, or projection results.
+      The local name a command gives one bound entity instance
+      (`course`, `sourceCourse`). Defaults to the entity name with a
+      lowercased initial; an explicit alias is needed only when one
+      command binds two instances of the same entity. Local to its
+      command — renaming an entity never rewrites an alias.
+  - term: Condition
+    definition: |
+      A structured predicate over operands, inlined into the command
+      that checks it. All of a command's conditions must hold before
+      any event is emitted. Conditions are not reusable: duplication
+      across commands is accepted in exchange for removing the
+      indirection of a separate constraint kind.
+  - term: Operand
+    definition: |
+      Where a value comes from. Inside a command: a payload property,
+      an alias property (`course.capacity`), an enum member, or a
+      literal. Inside a property handler: a property of the event
+      being folded, the property's current value, an enum member, or a
+      literal.
+  - term: Write Coverage
+    definition: |
+      The rule that every entity-identifier property of every
+      published event must resolve to a binding in the command's
+      boundary — a command may not write a tag it did not consult.
   - term: Definition
     definition: |
-      Umbrella term for the five kinds above (custom-type, event,
-      projection, constraint, command). Used wherever a rule applies
-      regardless of which kind is meant.
+      Umbrella term for the four kinds above (custom-type, event,
+      entity, command). Used wherever a rule applies regardless of
+      which kind is meant.
   - term: Reference
     definition: |
-      A name-based pointer from one definition's body to another
-      (e.g. a projection's body naming the event definition it
-      consumes). References resolve within the same DCB Context.
+      A name-based pointer from one definition's body to another (e.g.
+      an entity's property handler naming the event definition it
+      folds). References resolve within the same DCB Context.
   - term: Modeler
     definition: The human author who issues all editing commands.
   - term: Viewer

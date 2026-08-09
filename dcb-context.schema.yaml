@@ -2,60 +2,520 @@
 "$schema": https://json-schema.org/draft/2020-12/schema
 "$id": https://dcb.events/context.schema.json
 title: DCB Context Schema
-description: Schema describing a DCB context including all definitions and constraints
+description: |
+  Schema describing a DCB context including all definitions.
+
+  The context is organised around **entities**. An entity owns its
+  identifier type, its state enum and every projection describing it —
+  each of the entity's properties *is* a projection, folded over the
+  events tagged with that entity instance. There is no standalone
+  constraint kind: conditions are inlined into the commands that check
+  them.
+
+  **Sequences** are the one deliberate exception. A monotonic numbering
+  is global by nature — it is not *about* any one instance — so it
+  cannot be partitioned by a tag. A `sequenceDefinition` is therefore
+  scoped by event type alone, and is the only thing in this document
+  whose query carries no tag.
 type: object
 additionalProperties: false
 properties:
   customTypeDefinitions:
-    description: Custom types that can be used in projections and constraints. Custom types are required to partition projections (i.e. DCB tags)
+    description: |
+      User-declared *value* types (an email string with a pattern, a
+      money amount, …). Value types are never tags — tags come
+      exclusively from entity identifiers.
     type: array
     items:
       "$ref": "#/$defs/CustomTypeDefinition"
   eventDefinitions:
-    description: Domain Events that can be used in projections and constraints
+    description: |
+      Domain events. An event property whose type is an entity
+      identifier type *is* a tag on that event, so
+      `StudentSubscribedToCourse{courseId: CourseId, studentId: StudentId}`
+      carries the tags `Course:<courseId>` and `Student:<studentId>`.
+      Tags are never declared separately; they are derived from
+      property types.
     type: array
     items:
       "$ref": "#/$defs/EventDefinition"
-  projectionDefinitions:
+  entityDefinitions:
     type: array
     items:
-      "$ref": "#/$defs/ProjectionDefinition"
-  constraintDefinitions:
+      "$ref": "#/$defs/EntityDefinition"
+  sequenceDefinitions:
+    description: |
+      Monotonic value generators — course numbers, invoice references,
+      order numbers. A sequence issues the value that comes after the
+      one its last advancing event carried.
     type: array
     items:
-      "$ref": "#/$defs/ConstraintDefinition"
+      "$ref": "#/$defs/SequenceDefinition"
   commandDefinitions:
-    description: Commands that modelers may issue against the modeled system. Each command carries a payload (properties), declares the constraints it must satisfy (the DCB consult surface), and the events it publishes on success.
+    description: |
+      Commands that modelers may issue against the modeled system.
+      Each command carries a payload (properties), a boundary binding
+      the entity instances it consults, inline conditions over those
+      instances, and the events it publishes on success.
     type: array
     items:
       "$ref": "#/$defs/CommandDefinition"
 required:
 - customTypeDefinitions
 - eventDefinitions
-- projectionDefinitions
-- constraintDefinitions
+- entityDefinitions
+- sequenceDefinitions
 - commandDefinitions
 "$defs":
+
+  # ----------------------------------------------------------------
+  # Entities
+  # ----------------------------------------------------------------
+
+  EntityDefinition:
+    description: |
+      A modeled thing with an identity, a lifecycle state and a set of
+      projected properties.
+
+      An entity is projected state, **not** a consistency boundary. It
+      holds no invariants, handles no commands and decides nothing on
+      its own. Every decision is made by a command over the instances
+      it binds in its `boundary` — dissolving the fixed aggregate is
+      the point of DCB, so an entity is deliberately not one.
+
+      Every entity derives two types that are **not** serialised
+      anywhere in this document — they are computed from the entity and
+      unioned into the type-resolution table at load time:
+
+        - `<name>Id`    — the identifier type, and the only kind of tag
+                          in a DCB context. Its JSON Schema is
+                          `identifierSchema`.
+        - `<name>State` — an enum over `states`.
+
+      Both names are reserved: a `customTypeDefinition` may not claim
+      them, and no other entity may derive the same names.
+    type: object
+    additionalProperties: false
+    properties:
+      name:
+        "$ref": "#/$defs/EntityName"
+      identifierSchema:
+        description: |
+          JSON Schema of the derived `<name>Id` type. Defaults to a
+          plain string; override to model integer keys, UUID patterns
+          and the like.
+        "$ref": https://json-schema.org/draft/2020-12/schema
+        default:
+          type: string
+      states:
+        description: |
+          Members of the derived `<name>State` enum, in declaration
+          order. The **first** member is the entity's initial state —
+          the one an instance is in before any of its events have
+          occurred — and is therefore what `state`'s `initialValue`
+          must name.
+        type: array
+        minItems: 2
+        uniqueItems: true
+        items:
+          "$ref": "#/$defs/EnumMemberName"
+        default:
+        - NonExistent
+        - Existent
+      properties:
+        description: |
+          The entity's projections. Every entry folds the events it
+          handles over the DCB query
+          `tag = <name>:<id> AND type IN (handled event types)`; the
+          partition is implicit and never authored.
+
+          Exactly one entry must be the reserved `state` property:
+          named `state`, typed `<name>State`, neither optional nor a
+          list, with an `initialValue` naming the first member of
+          `states`. It may not be removed or renamed; only its
+          handlers are authored.
+        type: array
+        minItems: 1
+        items:
+          "$ref": "#/$defs/EntityPropertyDefinition"
+    required:
+    - name
+    - states
+    - properties
+
+  EntityName:
+    type: string
+    minLength: 2
+    maxLength: 100
+    pattern: "^[A-Z][A-Za-z0-9]+$"
+    examples:
+    - Course
+    - Student
+
+  EntityPropertyDefinition:
+    description: |
+      One projection belonging to an entity. `initialValue` is the
+      value before any event has been applied; each handler folds one
+      event type into the next value.
+    type: object
+    additionalProperties: false
+    properties:
+      name:
+        "$ref": "#/$defs/PropertyName"
+      propertyType:
+        "$ref": "#/$defs/TypeName"
+      isOptional:
+        type: boolean
+        default: false
+      isList:
+        type: boolean
+        default: false
+      initialValue:
+        "$ref": "#/$defs/InitialValue"
+      handlers:
+        description: |
+          At most one handler per event type. Events not named here
+          leave the property unchanged.
+        type: array
+        items:
+          "$ref": "#/$defs/PropertyHandler"
+    required:
+    - name
+    - propertyType
+    - initialValue
+    - handlers
+
+  InitialValue:
+    description: |
+      A literal. Use `[]` for list properties, `null` for optional
+      ones, and `{"enumMember": "..."}` for enum-typed properties
+      (including `state`) so that renaming a member rewrites the
+      reference instead of silently breaking it.
+    oneOf:
+    - "$ref": "#/$defs/StaticValue"
+    - "$ref": "#/$defs/EnumMemberValue"
+    - type: "null"
+    - type: array
+      maxItems: 0
+
+  # ----------------------------------------------------------------
+  # Sequences
+  # ----------------------------------------------------------------
+
+  SequenceDefinition:
+    description: |
+      A monotonic generator of values — `c1`, `c2`, `c3`, …
+
+      Unlike an entity property, a sequence is **not** partitioned by a
+      tag. Numbering is global by nature: it is not about any one
+      instance, so there is no instance to scope it to. Its query is
+      therefore type-only —
+
+        `type IN (advancedBy events)`
+
+      — and it is the only query in a DCB context that carries no tag.
+
+      **The value.** A sequence reads the *last* event of any advancing
+      type and issues the successor of the property that event carried.
+      With no such event it issues `initialValue`. Nothing is folded and
+      nothing accumulates, so an implementation answers the read with a
+      single backwards lookup (`ORDER BY position DESC LIMIT 1`) rather
+      than a scan. That is a property of the definition, not something a
+      reader has to infer from how the sequence was written.
+
+      **The guard.** A command reading a sequence contributes that
+      type-only query to its append condition, so a concurrent command
+      that advanced the sequence invalidates the append. This is what
+      makes the numbering monotonic, and it is an existence check rather
+      than a fold — the cost is contention, not scanning.
+
+      **Successor.** On an integer, `n + 1`. On a string, the trailing
+      run of digits is incremented and both the prefix and any
+      zero-padding are preserved: `"c1"` → `"c2"`, `"c9"` → `"c10"`,
+      `"c007"` → `"c008"`. The prefix is never declared — it rides on
+      `initialValue`.
+    type: object
+    additionalProperties: false
+    properties:
+      name:
+        "$ref": "#/$defs/SequenceName"
+      valueType:
+        description: |
+          The type of the values issued. Typically an entity's derived
+          identifier type, but a sequence may equally number things
+          that are not identities.
+        "$ref": "#/$defs/TypeName"
+      initialValue:
+        description: |
+          The value issued before any advancing event has occurred, and
+          the only place a prefix is stated.
+        "$ref": "#/$defs/StaticValue"
+      advancedBy:
+        description: |
+          The events that consume values from this sequence, and the
+          property of each carrying the value consumed. Every entry's
+          property must exist on its event and be typed `valueType`.
+
+          More than one event may advance the same sequence; the query
+          then covers all of them.
+        type: array
+        minItems: 1
+        items:
+          "$ref": "#/$defs/SequenceAdvance"
+    required:
+    - name
+    - valueType
+    - initialValue
+    - advancedBy
+
+  SequenceName:
+    type: string
+    minLength: 2
+    maxLength: 100
+    pattern: "^[A-Z][A-Za-z0-9]+$"
+    examples:
+    - CourseNumbering
+    - InvoiceNumbering
+
+  SequenceAdvance:
+    type: object
+    additionalProperties: false
+    properties:
+      event:
+        "$ref": "#/$defs/EventName"
+      property:
+        "$ref": "#/$defs/PropertyName"
+    required:
+    - event
+    - property
+
+  PropertyHandler:
+    description: |
+      How one event type advances one property. The operation
+      vocabulary is constrained by the property's type: `set` for any
+      type, `increment`/`decrement` for integers, `append`/`remove`
+      for lists.
+    type: object
+    additionalProperties: false
+    properties:
+      event:
+        "$ref": "#/$defs/EventName"
+      operation:
+        enum:
+        - set
+        - increment
+        - decrement
+        - append
+        - remove
+      value:
+        "$ref": "#/$defs/HandlerOperand"
+    required:
+    - event
+    - operation
+    - value
+
+  HandlerOperand:
+    description: |
+      Where a handler's value comes from. Resolved while folding a
+      single event, so the only things in scope are that event's
+      properties, the property's own current value, and literals.
+    oneOf:
+    - "$ref": "#/$defs/EventPropertyValue"
+    - "$ref": "#/$defs/CurrentValue"
+    - "$ref": "#/$defs/EnumMemberValue"
+    - "$ref": "#/$defs/StaticValue"
+
+  EventPropertyValue:
+    description: A property of the event being handled.
+    type: object
+    additionalProperties: false
+    properties:
+      eventProperty:
+        "$ref": "#/$defs/PropertyName"
+    required:
+    - eventProperty
+
+  CurrentValue:
+    description: |
+      The property's value before this event is applied — the fold's
+      accumulator.
+    type: object
+    additionalProperties: false
+    properties:
+      currentValue:
+        const: true
+    required:
+    - currentValue
+
+  # ----------------------------------------------------------------
+  # Commands
+  # ----------------------------------------------------------------
+
+  CommandDefinition:
+    type: object
+    additionalProperties: false
+    properties:
+      name:
+        "$ref": "#/$defs/CommandName"
+      properties:
+        description: The command payload.
+        type: array
+        items:
+          "$ref": "#/$defs/PropertyDefinition"
+      boundary:
+        description: |
+          The entity instances this command consults. **This list is
+          the command's dynamic consistency boundary**: the append
+          condition's query is the union of the bound instances' tags,
+          restricted to the event types reachable through the
+          properties the conditions read.
+
+          Every entity-identifier-typed property of every published
+          event must resolve to a binding in this list — a command may
+          not write a tag it did not consult. A property supplied by a
+          `sequence` operand is exempt: the sequence's own query
+          already covers every event that could have issued that value,
+          and a freshly minted identifier has no history to consult.
+
+          **Declaration order is the chain.** A binding may take its
+          identifier from an instance bound *above* it and never from
+          one bound below, so a command can read one projection to
+          learn which instance to bind next. One left-to-right pass
+          resolves the chain, and a cycle is impossible to write.
+
+          The chain reads in phases, but the append condition carries a
+          single position: the one observed before the *first* read.
+        type: array
+        items:
+          "$ref": "#/$defs/EntityBinding"
+      conditions:
+        description: |
+          Conditions over the bound instances, all of which must hold
+          before any event is emitted.
+
+          An empty list does **not** mean the command is unguarded: the
+          append condition is derived from the `boundary` and from the
+          sequences the command reads, not from this list. A command
+          with neither bindings nor conditions can still be strictly
+          serialised — which is what reading a sequence does to it.
+        type: array
+        items:
+          "$ref": "#/$defs/Condition"
+      publishes:
+        description: |
+          Events the command emits on success. Each entry binds the
+          emitted event's properties to operands drawn from the
+          command's payload, a bound instance's properties, or
+          literals.
+        type: array
+        minItems: 1
+        items:
+          "$ref": "#/$defs/EventEmission"
+    required:
+    - name
+    - properties
+    - boundary
+    - conditions
+    - publishes
+
+  CommandName:
+    type: string
+    minLength: 2
+    maxLength: 100
+    pattern: "^[A-Z][A-Za-z0-9]+$"
+    examples:
+    - SubscribeStudentToCourse
+
+  EntityBinding:
+    description: |
+      One entity instance the command consults, under a local alias.
+      The alias defaults to the entity name with a lowercased first
+      letter; an explicit alias is only needed when a command binds
+      two instances of the same entity (e.g. transferring between two
+      courses).
+    type: object
+    additionalProperties: false
+    properties:
+      alias:
+        "$ref": "#/$defs/AliasName"
+      entity:
+        "$ref": "#/$defs/EntityName"
+      id:
+        description: |
+          Supplies the instance's identifier — typically a property of
+          the command payload, but equally a projected property of an
+          instance bound above this one, or a value drawn from a
+          sequence.
+        "$ref": "#/$defs/CommandOperand"
+    required:
+    - alias
+    - entity
+    - id
+
+  AliasName:
+    type: string
+    minLength: 2
+    maxLength: 100
+    pattern: "^[a-z][A-Za-z0-9]*$"
+    examples:
+    - course
+    - sourceCourse
+
+  EventEmission:
+    description: |
+      A command's emission of one event, plus bindings supplying the
+      event's property values.
+    type: object
+    additionalProperties: false
+    properties:
+      name:
+        "$ref": "#/$defs/EventName"
+      parameters:
+        description: |
+          Keys are the event's property names; each value is a
+          `CommandOperand` describing where the value comes from at
+          execution time.
+        type: object
+        additionalProperties:
+          "$ref": "#/$defs/CommandOperand"
+    required:
+    - name
+
+  # ----------------------------------------------------------------
+  # Conditions
+  # ----------------------------------------------------------------
+
+  Condition:
+    oneOf:
+    - "$ref": "#/$defs/UnaryCondition"
+    - "$ref": "#/$defs/BinaryCondition"
+
   UnaryCondition:
     type: object
+    additionalProperties: false
     properties:
       leftHandSide:
-        "$ref": "#/$defs/Operand"
+        "$ref": "#/$defs/CommandOperand"
       predicate:
         enum:
         - isEmpty
         - isNotEmpty
         - isTrue
         - isFalse
+      negate:
+        description: When true the condition holds iff the predicate does *not*.
+        type: boolean
+        default: false
     required:
     - leftHandSide
     - predicate
-    additionalProperties: false
+
   BinaryCondition:
     type: object
+    additionalProperties: false
     properties:
       leftHandSide:
-        "$ref": "#/$defs/Operand"
+        "$ref": "#/$defs/CommandOperand"
       predicate:
         enum:
         - equals
@@ -70,102 +530,89 @@ required:
         - startsWith
         - endsWith
       rightHandSide:
-        "$ref": "#/$defs/Operand"
+        "$ref": "#/$defs/CommandOperand"
+      negate:
+        description: When true the condition holds iff the predicate does *not*.
+        type: boolean
+        default: false
     required:
     - leftHandSide
     - predicate
     - rightHandSide
-    additionalProperties: false
-  Condition:
+
+  CommandOperand:
+    description: |
+      Where a value comes from inside a command — its boundary, its
+      conditions and its event emissions.
     oneOf:
-    - "$ref": "#/$defs/UnaryCondition"
-    - "$ref": "#/$defs/BinaryCondition"
-  ConstraintDefinition:
+    - "$ref": "#/$defs/ParameterValue"
+    - "$ref": "#/$defs/AliasPropertyValue"
+    - "$ref": "#/$defs/SequenceValue"
+    - "$ref": "#/$defs/EnumMemberValue"
+    - "$ref": "#/$defs/StaticValue"
+
+  SequenceValue:
+    description: |
+      The next value from a named sequence. Reading one adds that
+      sequence's type-only query to the command's append condition, so
+      a command that mints an identifier is serialised against every
+      other command that mints from the same sequence.
     type: object
     additionalProperties: false
     properties:
-      name:
-        "$ref": "#/$defs/ConstraintName"
-      properties:
-        type: array
-        items:
-          "$ref": "#/$defs/PropertyDefinition"
-      condition:
-        "$ref": "#/$defs/Condition"
+      sequence:
+        "$ref": "#/$defs/SequenceName"
     required:
-    - name
-    - properties
-    - condition
-  ConstraintName:
-    type: string
-    minLength: 2
-    maxLength: 100
-    pattern: "^[A-Z][A-Za-z0-9]+$"
-    examples:
-    - CourseExists
-  CommandDefinition:
+    - sequence
+
+  ParameterValue:
+    description: A property of the command payload.
     type: object
     additionalProperties: false
     properties:
-      name:
-        "$ref": "#/$defs/CommandName"
-      properties:
-        type: array
-        items:
-          "$ref": "#/$defs/PropertyDefinition"
-      constraints:
-        description: Constraint references the command must satisfy before it may emit any events. Each entry binds a referenced constraint's parameters and may negate it; together the entries form the command's dynamic consistency boundary.
-        type: array
-        items:
-          "$ref": "#/$defs/ConstraintReference"
-      publishes:
-        description: Events the command emits on success. Each entry binds the emitted event's properties to operands drawn from the command's payload (or static values, or projection results).
-        type: array
-        items:
-          "$ref": "#/$defs/EventEmission"
+      parameterName:
+        "$ref": "#/$defs/PropertyName"
     required:
-    - name
-    - publishes
-  CommandName:
-    type: string
-    minLength: 2
-    maxLength: 100
-    pattern: "^[A-Z][A-Za-z0-9]+$"
-    examples:
-    - SubscribeStudentToCourse
-  ConstraintReference:
-    description: A command's reference to one constraint. Carries the referenced constraint's name, an optional negation flag (so the same constraint can be reused as `not(...)`), and parameter bindings that supply values for the constraint's properties.
+    - parameterName
+
+  AliasPropertyValue:
+    description: |
+      A projected property of a bound entity instance — e.g.
+      `course.capacity`. The alias must appear in the command's
+      `boundary`.
     type: object
     additionalProperties: false
     properties:
-      name:
-        "$ref": "#/$defs/ConstraintName"
-      negate:
-        description: When true, the command's DCB is satisfied when the referenced constraint does *not* hold.
-        type: boolean
-        default: false
-      parameters:
-        description: Bindings for the referenced constraint's properties. Keys are the constraint's property names; each value is an Operand describing where the parameter value comes from at command-execution time (typically a property of the command itself).
-        type: object
-        additionalProperties:
-          "$ref": "#/$defs/Operand"
+      alias:
+        "$ref": "#/$defs/AliasName"
+      property:
+        "$ref": "#/$defs/PropertyName"
     required:
-    - name
-  EventEmission:
-    description: A command's emission of one event. Carries the event's name plus parameter bindings that supply values for the event's properties.
+    - alias
+    - property
+
+  EnumMemberValue:
+    description: |
+      A member of an enum type — in practice a member of some entity's
+      `<Entity>State`. Modeled as a reference rather than a bare
+      string so that renaming a state rewrites every use of it.
     type: object
     additionalProperties: false
     properties:
-      name:
-        "$ref": "#/$defs/EventName"
-      parameters:
-        description: Bindings for the emitted event's properties. Keys are the event's property names; each value is an Operand describing where the value comes from at command-execution time.
-        type: object
-        additionalProperties:
-          "$ref": "#/$defs/Operand"
+      enumMember:
+        "$ref": "#/$defs/EnumMemberName"
     required:
-    - name
+    - enumMember
+
+  # ----------------------------------------------------------------
+  # Shared
+  # ----------------------------------------------------------------
+
   CustomTypeDefinition:
+    description: |
+      A value type. Unlike the previous revision of this schema there
+      is no `isTag` flag: tags are derived from entity identifiers and
+      nothing else.
     type: object
     additionalProperties: false
     properties:
@@ -173,19 +620,18 @@ required:
         "$ref": "#/$defs/CustomTypeName"
       schema:
         "$ref": https://json-schema.org/draft/2020-12/schema
-      isTag:
-        type: boolean
-        default: false
     required:
     - name
     - schema
+
   CustomTypeName:
     type: string
     minLength: 2
     maxLength: 100
     pattern: "^[A-Z][A-Za-z0-9]+$"
     examples:
-    - CourseId
+    - EmailAddress
+
   EventDefinition:
     type: object
     additionalProperties: false
@@ -199,6 +645,7 @@ required:
     required:
     - name
     - properties
+
   EventName:
     type: string
     minLength: 2
@@ -207,68 +654,7 @@ required:
     examples:
     - CourseDefined
     - StudentSubscribedToCourse
-  Operand:
-    oneOf:
-    - "$ref": "#/$defs/ParameterValue"
-    - "$ref": "#/$defs/ProjectionResult"
-    - "$ref": "#/$defs/StaticValue"
-  ParameterValue:
-    type: object
-    additionalProperties: false
-    properties:
-      parameterName:
-        "$ref": "#/$defs/PropertyName"
-    required:
-    - parameterName
-  ProjectionDefinition:
-    type: object
-    additionalProperties: false
-    properties:
-      name:
-        "$ref": "#/$defs/ProjectionName"
-      partition:
-        "$ref": "#/$defs/CustomTypeName"
-      projectionType:
-        "$ref": "#/$defs/SimpleTypeOrCustomTypeName"
-      isOptional:
-        type: boolean
-        default: false
-      isList:
-        type: boolean
-        default: false
-      initialState:
-        type: string
-      handlers:
-        type: object
-        propertyNames:
-          "$ref": "#/$defs/EventName"
-        additionalProperties:
-          type: string
-    required:
-    - name
-    - partition
-    - projectionType
-    - initialState
-    - handlers
-  ProjectionName:
-    type: string
-    minLength: 2
-    maxLength: 100
-    pattern: "^[A-Z][A-Za-z0-9]+$"
-    examples:
-    - CourseCapacity
-    - NumberOfCourseSubscriptions
-  ProjectionResult:
-    type: object
-    additionalProperties: false
-    properties:
-      projectionName:
-        "$ref": "#/$defs/ProjectionName"
-      parameterName:
-        "$ref": "#/$defs/PropertyName"
-    required:
-    - projectionName
-    - parameterName
+
   PropertyDefinition:
     type: object
     additionalProperties: false
@@ -276,7 +662,7 @@ required:
       name:
         "$ref": "#/$defs/PropertyName"
       propertyType:
-        "$ref": "#/$defs/SimpleTypeOrCustomTypeName"
+        "$ref": "#/$defs/TypeName"
       isOptional:
         type: boolean
         default: false
@@ -286,6 +672,7 @@ required:
     required:
     - name
     - propertyType
+
   PropertyName:
     type: string
     minLength: 2
@@ -293,7 +680,34 @@ required:
     pattern: "^[a-z][A-Za-z0-9]+$"
     examples:
     - someProperty
-  SimpleTypeOrCustomTypeName:
+
+  StaticValue:
+    description: |
+      A literal operand. Declared as a type union rather than a
+      `oneOf` of separate types: an integer satisfies both `integer`
+      and `number`, which makes a `oneOf` over both reject every whole
+      number.
+    type:
+    - string
+    - number
+    - boolean
+
+  EnumMemberName:
+    type: string
+    minLength: 2
+    maxLength: 100
+    pattern: "^[A-Z][A-Za-z0-9]+$"
+    examples:
+    - NonExistent
+    - Existent
+    - Archived
+
+  TypeName:
+    description: |
+      A simple type, a declared custom (value) type, or one of the
+      types derived from an entity — `<Entity>Id` or `<Entity>State`.
+      The derived types share the custom-type namespace, so a name
+      resolves against the union of both.
     type: string
     anyOf:
     - enum:
@@ -301,9 +715,3 @@ required:
       - integer
       - string
     - "$ref": "#/$defs/CustomTypeName"
-  StaticValue:
-    oneOf:
-    - type: string
-    - type: integer
-    - type: number
-    - type: boolean

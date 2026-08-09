@@ -1,11 +1,18 @@
 # Command definitions inside a DCB Context: events, DCBs, commands.
 # Identified within the context by `name`.
-# References custom-type-definitions (via properties), event-definitions
-# (via publishes), constraint-definitions (via constraints), and
-# projection-definitions (via projection-result operands inside parameter
-# bindings). Not referenced by anything — commands are leaves on the
-# reference graph, so rename and removal stay narrow (no rewrite of
-# referencers, no inbound-reference check).
+#
+# Commands are leaves on the reference graph — nothing references a
+# command — but they have the widest outbound surface of any kind:
+#   - custom-type-definitions and entity-derived types, via the payload
+#     property types;
+#   - entity-definitions, via the boundary bindings, the alias-property
+#     operands in conditions and emissions, and the enum-member
+#     operands naming a state;
+#   - event-definitions, via `publishes`.
+#
+# A command's `boundary` *is* its dynamic consistency boundary: the
+# bound instances supply the tags of the append condition's query. The
+# write-coverage invariant below is what keeps that honest.
 
 apiVersion: schema.esdm.io/core/v1
 kind: event
@@ -23,10 +30,9 @@ data:
     body:
       type: object
       description: |
-        Authored content of the command — the payload properties, the
-        list of constraint references that form its DCB consult
-        surface (each optionally negated and with parameter bindings),
-        and the list of event emissions with their parameter bindings.
+        Authored content of the command — payload properties, boundary
+        bindings, inline conditions and event emissions. Body shape is
+        owned by the DCB Context schema, not by this domain model.
   required: [dcb-context-id, name, body]
   additionalProperties: false
 ---
@@ -86,11 +92,11 @@ apiVersion: schema.esdm.io/core/v1
 kind: dynamic-consistency-boundary
 name: command-definition-addition
 description: |
-  Guards the addition of a new command-definition. Consults the four
-  referenced families' lifecycle events so the
-  references-resolve invariant ("every referenced custom-type,
-  event, constraint and projection name exists") holds at append
-  time.
+  Guards the addition of a new command-definition. Consults the
+  custom-type, entity and event lifecycles so every outbound reference
+  in the new body — property types, boundary bindings, alias
+  properties, enum members and published events — can be resolved in
+  the same append.
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -119,7 +125,7 @@ consults:
     criteria: events with matching `dcb-context-id` and `name` equal to this instance's `command-definition-name`
   - boundedContext: dcb-context-authoring
     event: custom-type-definition-added
-    criteria: every custom-type-definition added in this context — needed to resolve property-type references
+    criteria: every custom-type-definition added in this context
   - boundedContext: dcb-context-authoring
     event: custom-type-definition-renamed
     criteria: every custom-type-definition rename in this context
@@ -127,32 +133,29 @@ consults:
     event: custom-type-definition-removed
     criteria: every custom-type-definition removal in this context
   - boundedContext: dcb-context-authoring
+    event: entity-definition-added
+    criteria: every entity-definition added in this context — needed to resolve boundary bindings, alias properties and enum members
+  - boundedContext: dcb-context-authoring
+    event: entity-definition-updated
+    criteria: every entity-definition update in this context — the property and state lists come from the latest body
+  - boundedContext: dcb-context-authoring
+    event: entity-definition-renamed
+    criteria: every entity-definition rename in this context
+  - boundedContext: dcb-context-authoring
+    event: entity-definition-removed
+    criteria: every entity-definition removal in this context
+  - boundedContext: dcb-context-authoring
     event: event-definition-added
-    criteria: every event-definition added in this context — needed to resolve publishes references
+    criteria: every event-definition added in this context — needed to resolve `publishes` and to derive the tags each emission writes
+  - boundedContext: dcb-context-authoring
+    event: event-definition-updated
+    criteria: every event-definition update in this context
   - boundedContext: dcb-context-authoring
     event: event-definition-renamed
     criteria: every event-definition rename in this context
   - boundedContext: dcb-context-authoring
     event: event-definition-removed
     criteria: every event-definition removal in this context
-  - boundedContext: dcb-context-authoring
-    event: constraint-definition-added
-    criteria: every constraint-definition added in this context — needed to resolve constraint references
-  - boundedContext: dcb-context-authoring
-    event: constraint-definition-renamed
-    criteria: every constraint-definition rename in this context
-  - boundedContext: dcb-context-authoring
-    event: constraint-definition-removed
-    criteria: every constraint-definition removal in this context
-  - boundedContext: dcb-context-authoring
-    event: projection-definition-added
-    criteria: every projection-definition added in this context — needed to resolve projection-result operands inside parameter bindings
-  - boundedContext: dcb-context-authoring
-    event: projection-definition-renamed
-    criteria: every projection-definition rename in this context
-  - boundedContext: dcb-context-authoring
-    event: projection-definition-removed
-    criteria: every projection-definition removal in this context
 invariants:
   - name: context-active
     rule: The context has been created and has not been deleted.
@@ -160,18 +163,31 @@ invariants:
     rule: No command-definition currently goes by this name in this context.
   - name: references-resolve
     rule: |
-      Every referenced name resolves to a live definition in this
-      context: custom-type-definitions named by property types,
-      event-definitions named in `publishes`, constraint-definitions
-      named in `constraints`, and projection-definitions named by
-      `projectionName` in any parameter-binding operand.
+      Every payload property type resolves; every `entity` named in a
+      boundary binding is a live entity-definition; every event named
+      in `publishes` is a live event-definition.
+  - name: aliases-well-formed
+    rule: |
+      Boundary aliases are unique within the command, and every
+      alias-property operand names a bound alias together with a
+      property that the aliased entity currently declares.
+  - name: enum-members-resolve
+    rule: |
+      Every enum-member operand names a state member declared by the
+      entity it is compared against.
+  - name: write-coverage
+    rule: |
+      For every published event, each of its properties typed with an
+      entity identifier is bound to an operand that resolves to a
+      boundary binding of that same entity. A command may not write a
+      tag it did not consult.
 ---
 apiVersion: schema.esdm.io/core/v1
 kind: dynamic-consistency-boundary
 name: command-definition-update
 description: |
-  Guards body updates to an existing command-definition. Same wide
-  consult surface as `command-definition-addition`; the uniqueness
+  Guards body updates to an existing command-definition. Identical
+  consult surface and reference invariants as addition; the uniqueness
   check flips to "definition exists".
 scope:
   domain: dcb-playground
@@ -209,32 +225,29 @@ consults:
     event: custom-type-definition-removed
     criteria: every custom-type-definition removal in this context
   - boundedContext: dcb-context-authoring
+    event: entity-definition-added
+    criteria: every entity-definition added in this context
+  - boundedContext: dcb-context-authoring
+    event: entity-definition-updated
+    criteria: every entity-definition update in this context
+  - boundedContext: dcb-context-authoring
+    event: entity-definition-renamed
+    criteria: every entity-definition rename in this context
+  - boundedContext: dcb-context-authoring
+    event: entity-definition-removed
+    criteria: every entity-definition removal in this context
+  - boundedContext: dcb-context-authoring
     event: event-definition-added
     criteria: every event-definition added in this context
+  - boundedContext: dcb-context-authoring
+    event: event-definition-updated
+    criteria: every event-definition update in this context
   - boundedContext: dcb-context-authoring
     event: event-definition-renamed
     criteria: every event-definition rename in this context
   - boundedContext: dcb-context-authoring
     event: event-definition-removed
     criteria: every event-definition removal in this context
-  - boundedContext: dcb-context-authoring
-    event: constraint-definition-added
-    criteria: every constraint-definition added in this context
-  - boundedContext: dcb-context-authoring
-    event: constraint-definition-renamed
-    criteria: every constraint-definition rename in this context
-  - boundedContext: dcb-context-authoring
-    event: constraint-definition-removed
-    criteria: every constraint-definition removal in this context
-  - boundedContext: dcb-context-authoring
-    event: projection-definition-added
-    criteria: every projection-definition added in this context
-  - boundedContext: dcb-context-authoring
-    event: projection-definition-renamed
-    criteria: every projection-definition rename in this context
-  - boundedContext: dcb-context-authoring
-    event: projection-definition-removed
-    criteria: every projection-definition removal in this context
 invariants:
   - name: context-active
     rule: The context has been created and has not been deleted.
@@ -242,17 +255,31 @@ invariants:
     rule: A command-definition currently goes by this name in this context.
   - name: references-resolve
     rule: |
-      Every referenced name resolves to a live definition in this
-      context (same conditions as on `command-definition-addition`).
+      Every payload property type resolves; every `entity` named in a
+      boundary binding is a live entity-definition; every event named
+      in `publishes` is a live event-definition.
+  - name: aliases-well-formed
+    rule: |
+      Boundary aliases are unique within the command, and every
+      alias-property operand names a bound alias together with a
+      property that the aliased entity currently declares.
+  - name: enum-members-resolve
+    rule: |
+      Every enum-member operand names a state member declared by the
+      entity it is compared against.
+  - name: write-coverage
+    rule: |
+      For every published event, each of its properties typed with an
+      entity identifier is bound to an operand that resolves to a
+      boundary binding of that same entity.
 ---
 apiVersion: schema.esdm.io/core/v1
 kind: dynamic-consistency-boundary
 name: command-definition-rename
 description: |
-  Guards renaming a command-definition. Commands are leaves on the
-  reference graph — nothing references them — so the consult surface
-  stays narrow (just the command's own lifecycle plus the context
-  lifecycle); no rewrite of other definitions is needed.
+  Guards renaming a command-definition. Commands are leaves, so no
+  rewrite events follow: the consult surface is just the context
+  lifecycle plus this kind's own lifecycle for both names.
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -294,9 +321,9 @@ apiVersion: schema.esdm.io/core/v1
 kind: dynamic-consistency-boundary
 name: command-definition-removal
 description: |
-  Guards removal of a command-definition. No inbound-reference check
-  is needed (nothing references commands); only the context-active
-  + definition-exists invariants apply.
+  Guards removal of a command-definition. Nothing references a
+  command, so there is no inbound-reference check — only that the
+  context is active and the definition is live.
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring

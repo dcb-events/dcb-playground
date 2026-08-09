@@ -1,7 +1,14 @@
 # Event definitions inside a DCB Context: events, DCBs, commands.
 # Identified within the context by `name` (the natural key).
-# Referenced by projection definitions; references resolve by name,
-# so renames atomically rewrite referencing projections.
+#
+# References out: custom-type-definitions and entity-derived types via
+# property types. A property typed with an entity identifier is what
+# makes the event carry that entity's tag, so the property-type
+# reference is load-bearing rather than cosmetic.
+#
+# References in: entity-definitions (a property handler names the event
+# it folds) and command-definitions (`publishes`). Renames therefore
+# rewrite entities and commands atomically.
 
 apiVersion: schema.esdm.io/core/v1
 kind: event
@@ -19,10 +26,10 @@ data:
     body:
       type: object
       description: |
-        The event-definition's authored content (payload schema,
-        description, tags, etc.). Kept opaque here — the schema for
-        a `body` is the DCB Context schema this playground edits,
-        which is the subject of the tool, not of this domain model.
+        The event-definition's authored content (its properties, and
+        thereby its tags). Kept opaque here — the schema for a `body`
+        is the DCB Context schema this playground edits, which is the
+        subject of the tool, not of this domain model.
   required: [dcb-context-id, name, body]
   additionalProperties: false
 ---
@@ -84,8 +91,10 @@ name: event-definition-addition
 description: |
   Guards the addition of a new event-definition. Parameterised by
   context id and the candidate name; consults the context lifecycle
-  (must be active) and prior event-definition lifecycle events for
-  the same name (must not currently identify a live definition).
+  (must be active), prior event-definition lifecycle events for the
+  same name (must not currently identify a live definition), and the
+  custom-type and entity lifecycles so the property types in the new
+  body can be resolved in the same append.
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -112,6 +121,24 @@ consults:
   - boundedContext: dcb-context-authoring
     event: event-definition-removed
     criteria: events with matching `dcb-context-id` and `name` equal to this instance's `event-definition-name`
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-added
+    criteria: every custom-type-definition added in this context — needed to resolve value-typed properties
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-renamed
+    criteria: every custom-type-definition rename in this context
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-removed
+    criteria: every custom-type-definition removal in this context
+  - boundedContext: dcb-context-authoring
+    event: entity-definition-added
+    criteria: every entity-definition added in this context — needed to resolve properties typed with a derived `<Entity>Id`
+  - boundedContext: dcb-context-authoring
+    event: entity-definition-renamed
+    criteria: every entity-definition rename in this context
+  - boundedContext: dcb-context-authoring
+    event: entity-definition-removed
+    criteria: every entity-definition removal in this context
 invariants:
   - name: context-active
     rule: The context has been created and has not been deleted.
@@ -120,6 +147,11 @@ invariants:
       No event-definition currently goes by this name in this
       context — folding the consulted add/rename/remove events
       yields no live definition with this name.
+  - name: references-resolve
+    rule: |
+      Every property type resolves to a simple type, a live
+      custom-type-definition, or a type derived from a live
+      entity-definition.
 ---
 apiVersion: schema.esdm.io/core/v1
 kind: dynamic-consistency-boundary
@@ -127,7 +159,11 @@ name: event-definition-update
 description: |
   Guards body updates to an existing event-definition (name
   unchanged). Same consult surface as `event-definition-addition`;
-  the invariant flips to "the name *is* currently in use".
+  the uniqueness invariant flips to "the name *is* currently in use".
+
+  Also consults entity and command lifecycles: dropping a property
+  removes a tag or a value that a folding entity handler or an
+  emitting command may still bind.
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -154,6 +190,36 @@ consults:
   - boundedContext: dcb-context-authoring
     event: event-definition-removed
     criteria: events with matching `dcb-context-id` and `name` equal to this instance's `event-definition-name`
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-added
+    criteria: every custom-type-definition added in this context
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-renamed
+    criteria: every custom-type-definition rename in this context
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-removed
+    criteria: every custom-type-definition removal in this context
+  - boundedContext: dcb-context-authoring
+    event: entity-definition-added
+    criteria: every entity-definition added in this context
+  - boundedContext: dcb-context-authoring
+    event: entity-definition-updated
+    criteria: every entity-definition update in this context
+  - boundedContext: dcb-context-authoring
+    event: entity-definition-renamed
+    criteria: every entity-definition rename in this context
+  - boundedContext: dcb-context-authoring
+    event: entity-definition-removed
+    criteria: every entity-definition removal in this context
+  - boundedContext: dcb-context-authoring
+    event: command-definition-added
+    criteria: every command-definition added in this context
+  - boundedContext: dcb-context-authoring
+    event: command-definition-updated
+    criteria: every command-definition update in this context
+  - boundedContext: dcb-context-authoring
+    event: command-definition-removed
+    criteria: every command-definition removal in this context
 invariants:
   - name: context-active
     rule: The context has been created and has not been deleted.
@@ -161,19 +227,28 @@ invariants:
     rule: |
       An event-definition currently goes by this name in this
       context — the consult history resolves to a live definition.
+  - name: references-resolve
+    rule: |
+      Every property type in the updated body resolves to a simple
+      type, a live custom-type-definition, or a type derived from a
+      live entity-definition.
+  - name: inbound-property-references-survive
+    rule: |
+      Every property of this event that a live entity handler reads
+      (as a handler value) or a live command binds (in an event
+      emission) is still present in the updated body.
 ---
 apiVersion: schema.esdm.io/core/v1
 kind: dynamic-consistency-boundary
 name: event-definition-rename
 description: |
-  Guards renaming an event-definition. Parameterised by the context
-  id, the previous name and the new name. In addition to the
-  event-definition lifecycle, the DCB consults all projection and
-  command lifecycle events for the context, so the triggering
-  command can emit the reference-rewrite events for every projection
-  (whose handlers key on the event name) and every command (whose
-  `publishes` list names the event) currently referencing
-  `previous-name` in one atomic append.
+  Guards renaming an event-definition. In addition to the
+  event-definition lifecycle, the DCB consults all entity and command
+  lifecycle events for the context, so the triggering command can emit
+  the reference-rewrite events for every entity (whose property
+  handlers name the event) and every command (whose `publishes` list
+  names it) currently referencing `previous-name` in one atomic
+  append.
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -204,17 +279,17 @@ consults:
     event: event-definition-removed
     criteria: events with matching `dcb-context-id` whose `name` equals `previous-name` or `name`
   - boundedContext: dcb-context-authoring
-    event: projection-definition-added
-    criteria: every projection-definition added in this context — needed to find references to rewrite
+    event: entity-definition-added
+    criteria: every entity-definition added in this context — needed to find property handlers to rewrite
   - boundedContext: dcb-context-authoring
-    event: projection-definition-updated
-    criteria: every projection-definition update in this context
+    event: entity-definition-updated
+    criteria: every entity-definition update in this context
   - boundedContext: dcb-context-authoring
-    event: projection-definition-renamed
-    criteria: every projection-definition rename in this context
+    event: entity-definition-renamed
+    criteria: every entity-definition rename in this context
   - boundedContext: dcb-context-authoring
-    event: projection-definition-removed
-    criteria: every projection-definition removal in this context
+    event: entity-definition-removed
+    criteria: every entity-definition removal in this context
   - boundedContext: dcb-context-authoring
     event: command-definition-added
     criteria: every command-definition added in this context — needed to find references to rewrite
@@ -239,10 +314,10 @@ apiVersion: schema.esdm.io/core/v1
 kind: dynamic-consistency-boundary
 name: event-definition-removal
 description: |
-  Guards removal of an event-definition. Consults projection and
-  command lifecycle events to refuse removal while any projection
-  (via handlers) or any command (via `publishes`) in the same
-  context still references the name.
+  Guards removal of an event-definition. Consults entity and command
+  lifecycle events to refuse removal while any entity (via a property
+  handler) or any command (via `publishes`) in the same context still
+  references the name.
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -270,14 +345,14 @@ consults:
     event: event-definition-removed
     criteria: events with matching `dcb-context-id` and `name` equal to this instance's `event-definition-name`
   - boundedContext: dcb-context-authoring
-    event: projection-definition-added
-    criteria: every projection-definition added in this context — needed to check for inbound references
+    event: entity-definition-added
+    criteria: every entity-definition added in this context — needed to check for inbound references
   - boundedContext: dcb-context-authoring
-    event: projection-definition-updated
-    criteria: every projection-definition update in this context
+    event: entity-definition-updated
+    criteria: every entity-definition update in this context
   - boundedContext: dcb-context-authoring
-    event: projection-definition-removed
-    criteria: every projection-definition removal in this context
+    event: entity-definition-removed
+    criteria: every entity-definition removal in this context
   - boundedContext: dcb-context-authoring
     event: command-definition-added
     criteria: every command-definition added in this context — needed to check for inbound references via `publishes`
@@ -294,8 +369,8 @@ invariants:
     rule: An event-definition currently goes by this name in this context.
   - name: no-inbound-references
     rule: |
-      No projection-definition currently in the context references
-      this event-definition by name (via `handlers`), and no
+      No entity-definition currently in the context names this
+      event-definition in a property handler, and no
       command-definition in the context names it in `publishes`.
       References are read from the latest body of each live
       definition.
@@ -350,13 +425,13 @@ apiVersion: schema.esdm.io/core/v1
 kind: command
 name: rename-event-definition
 description: |
-  Renames an event-definition. Atomically emits the rename event
-  plus one `projection-definition-updated` for every projection
-  whose `handlers` keyed on `previous-name`, and one
+  Renames an event-definition. Atomically emits the rename event plus
+  one `entity-definition-updated` for every entity with a property
+  handler naming `previous-name`, and one
   `command-definition-updated` for every command whose `publishes`
-  listed `previous-name`. The DCB's wide consult surface
-  (projections and commands in addition to event-definitions) is
-  what makes this single append correct.
+  listed `previous-name`. The DCB's wide consult surface (entities and
+  commands in addition to event-definitions) is what makes this single
+  append correct.
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -374,24 +449,23 @@ data:
   additionalProperties: false
 publishes:
   - event-definition-renamed
-  - projection-definition-updated
+  - entity-definition-updated
   - command-definition-updated
 constraints:
-  - name: rewrite-projection-references
+  - name: rewrite-entity-references
     rule: |
-      Emit exactly one `projection-definition-updated` for every
-      projection-definition currently in the context whose body
-      references the event-definition under `previous-name`, with
-      every occurrence of `previous-name` replaced by `name`. Emit
-      no `projection-definition-updated` for projections that do
-      not reference the renamed event-definition.
+      Emit exactly one `entity-definition-updated` for every
+      entity-definition currently in the context with at least one
+      property handler whose `event` equals `previous-name`, with
+      every occurrence replaced by `name`. Emit nothing for entities
+      that do not handle the renamed event.
   - name: rewrite-command-references
     rule: |
       Emit exactly one `command-definition-updated` for every
       command-definition currently in the context whose `publishes`
       list named the event under `previous-name`, with the entry
-      replaced by `name`. Emit no `command-definition-updated` for
-      commands that did not reference the renamed event.
+      replaced by `name`. Emit nothing for commands that did not
+      reference the renamed event.
 actors:
   - modeler
 ---

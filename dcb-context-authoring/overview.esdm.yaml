@@ -8,8 +8,8 @@ kind: read-model
 name: dcb-context-overview
 description: |
   One record per currently-live DCB Context, carrying the context's
-  display name and the five definition collections (custom-type,
-  event, projection, constraint, command) in their latest state.
+  display name and the four definition collections (custom-type,
+  event, entity, command) in their latest state.
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -49,29 +49,17 @@ projections:
     event: event-definition-removed
     rule: Drop the entry identified by `name` from the matching context's `event-definitions` collection.
   - boundedContext: dcb-context-authoring
-    event: projection-definition-added
-    rule: Append the new definition to the matching context's `projection-definitions` collection.
+    event: entity-definition-added
+    rule: Append the new definition to the matching context's `entity-definitions` collection.
   - boundedContext: dcb-context-authoring
-    event: projection-definition-updated
-    rule: Replace the `body` of the entry identified by `name` in the matching context's `projection-definitions` collection.
+    event: entity-definition-updated
+    rule: Replace the `body` of the entry identified by `name` in the matching context's `entity-definitions` collection.
   - boundedContext: dcb-context-authoring
-    event: projection-definition-renamed
-    rule: Replace the `name` of the entry identified by `previous-name` with the carried `name` in the matching context's `projection-definitions` collection.
+    event: entity-definition-renamed
+    rule: Replace the `name` of the entry identified by `previous-name` with the carried `name` in the matching context's `entity-definitions` collection.
   - boundedContext: dcb-context-authoring
-    event: projection-definition-removed
-    rule: Drop the entry identified by `name` from the matching context's `projection-definitions` collection.
-  - boundedContext: dcb-context-authoring
-    event: constraint-definition-added
-    rule: Append the new definition to the matching context's `constraint-definitions` collection.
-  - boundedContext: dcb-context-authoring
-    event: constraint-definition-updated
-    rule: Replace the `body` of the entry identified by `name` in the matching context's `constraint-definitions` collection.
-  - boundedContext: dcb-context-authoring
-    event: constraint-definition-renamed
-    rule: Replace the `name` of the entry identified by `previous-name` with the carried `name` in the matching context's `constraint-definitions` collection.
-  - boundedContext: dcb-context-authoring
-    event: constraint-definition-removed
-    rule: Drop the entry identified by `name` from the matching context's `constraint-definitions` collection.
+    event: entity-definition-removed
+    rule: Drop the entry identified by `name` from the matching context's `entity-definitions` collection.
   - boundedContext: dcb-context-authoring
     event: command-definition-added
     rule: Append the new definition to the matching context's `command-definitions` collection.
@@ -113,17 +101,7 @@ schema:
             body:
               type: object
           required: [name, body]
-      projection-definitions:
-        type: array
-        items:
-          type: object
-          properties:
-            name:
-              type: string
-            body:
-              type: object
-          required: [name, body]
-      constraint-definitions:
+      entity-definitions:
         type: array
         items:
           type: object
@@ -148,8 +126,7 @@ schema:
       - name
       - custom-type-definitions
       - event-definitions
-      - projection-definitions
-      - constraint-definitions
+      - entity-definitions
       - command-definitions
 ---
 apiVersion: schema.esdm.io/core/v1
@@ -180,7 +157,7 @@ constraints:
   - name: light-shape
     rule: |
       Each record carries only `dcb-context-id` and `name`; the
-      five definition collections are stripped to keep listings
+      four definition collections are stripped to keep listings
       cheap to render.
   - name: stable-order
     rule: Sort by `name` ascending; break ties by `dcb-context-id`.
@@ -192,7 +169,7 @@ apiVersion: schema.esdm.io/core/v1
 kind: query
 name: get-dcb-context
 description: |
-  Returns the full content of one DCB Context — name plus all five
+  Returns the full content of one DCB Context — name plus all four
   definition collections in their latest state.
 scope:
   domain: dcb-playground
@@ -221,11 +198,7 @@ result:
       type: array
       items:
         type: object
-    projection-definitions:
-      type: array
-      items:
-        type: object
-    constraint-definitions:
+    entity-definitions:
       type: array
       items:
         type: object
@@ -238,8 +211,7 @@ result:
     - name
     - custom-type-definitions
     - event-definitions
-    - projection-definitions
-    - constraint-definitions
+    - entity-definitions
     - command-definitions
 constraints:
   - name: lookup-by-id

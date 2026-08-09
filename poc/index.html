@@ -8,9 +8,19 @@
     --color-command: #2563eb;
     --color-command-hover: #1d4ed8;
     --color-event: #f97316;
-    --color-projection: #16a34a;
-    --color-constraint: #9333ea;
+    /* Entities are projected state keyed by an identity — not aggregates.
+       They hold no invariants and handle no commands; the consistency
+       boundary lives on the command's `boundary`. Green is the read/state
+       colour, which is exactly what they are. */
+    --color-entity: #16a34a;
+    --color-entity-edge: #16a34a;
+    --color-entity-soft: #f0fdf4;
+    --color-entity-tint: #dcfce7;
+    --color-entity-ink: #166534;
     --color-custom-type: #6b7280;
+    /* Sequences are the one projection not partitioned by a tag, so they
+       get a colour of their own rather than borrowing the entity green. */
+    --color-sequence: #9333ea;
     --color-bg: #f8fafc;
     --color-surface: #ffffff;
     --color-border: #e2e8f0;
@@ -18,7 +28,9 @@
     --color-text-muted: #475569;
     --color-danger: #dc2626;
     --color-danger-hover: #b91c1c;
+    --color-warning: #b45309;
     --radius: 6px;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
     --shadow: 0 1px 2px rgba(15, 23, 42, 0.06), 0 1px 3px rgba(15, 23, 42, 0.05);
   }
 
@@ -48,7 +60,7 @@
   }
   header.app-header nav a:hover { text-decoration: underline; }
 
-  main { padding: 24px; max-width: 1400px; margin: 0 auto; }
+  main { padding: 24px; max-width: 1200px; margin: 0 auto; }
 
   /* Buttons — commands are always blue. */
   .btn {
@@ -71,28 +83,17 @@
     color: var(--color-command);
     border: 1px solid var(--color-command);
   }
-  .btn-ghost:hover:not(:disabled) {
-    background: var(--color-command);
-    color: #fff;
-  }
+  .btn-ghost:hover:not(:disabled) { background: var(--color-command); color: #fff; }
   .btn-danger { background: var(--color-danger); }
   .btn-danger:hover:not(:disabled) { background: var(--color-danger-hover); }
-  .btn-secondary {
-    background: #e2e8f0;
-    color: var(--color-text);
-  }
-  .btn-secondary:hover:not(:disabled) {
-    background: #cbd5e1;
-  }
+  .btn-secondary { background: #e2e8f0; color: var(--color-text); }
+  .btn-secondary:hover:not(:disabled) { background: #cbd5e1; }
 
   /* List view */
-  .empty-state {
-    text-align: center;
-    padding: 60px 20px;
-    color: var(--color-text-muted);
-  }
+  .empty-state { text-align: center; padding: 60px 20px; color: var(--color-text-muted); }
   .empty-state h2 { margin: 0 0 8px; color: var(--color-text); }
   .empty-state p { margin: 0 0 24px; }
+  .empty-state .actions { display: flex; gap: 8px; justify-content: center; }
 
   .context-list {
     display: grid;
@@ -106,46 +107,22 @@
     padding: 16px;
     box-shadow: var(--shadow);
   }
-  .context-card h3 {
-    margin: 0 0 12px;
-    font-size: 16px;
-    cursor: pointer;
-    color: var(--color-command);
-  }
+  .context-card h3 { margin: 0 0 12px; font-size: 16px; cursor: pointer; color: var(--color-command); }
   .context-card h3:hover { text-decoration: underline; }
-  .context-card .counts {
-    font-size: 11px;
-    margin-bottom: 12px;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-  }
+  .context-card .counts { font-size: 11px; margin-bottom: 12px; display: flex; flex-wrap: wrap; gap: 4px; }
   .count-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 2px 8px;
-    border-radius: 999px;
-    font-weight: 500;
-    color: #fff;
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px; border-radius: 999px; font-weight: 500; color: #fff;
   }
   .pill-custom-type { background: var(--color-custom-type); }
   .pill-event { background: var(--color-event); }
-  .pill-projection { background: var(--color-projection); }
-  .pill-constraint { background: var(--color-constraint); }
+  .pill-entity { background: var(--color-entity); }
   .pill-command { background: var(--color-command); }
-  .context-card .actions {
-    display: flex;
-    gap: 8px;
-  }
+  .context-card .actions { display: flex; gap: 8px; }
 
   .page-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 24px;
-    gap: 16px;
-    flex-wrap: wrap;
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 24px; gap: 16px; flex-wrap: wrap;
   }
   .page-header h2 { margin: 0; }
 
@@ -156,68 +133,45 @@
     border-radius: var(--radius);
     padding: 16px 20px;
     margin-bottom: 24px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+    display: flex; justify-content: space-between; align-items: center;
     box-shadow: var(--shadow);
   }
   .detail-header h2 { margin: 0; font-size: 22px; }
   .detail-header .actions { display: flex; gap: 8px; }
 
-  .definition-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-    gap: 20px;
-  }
+  .definition-sections { display: flex; flex-direction: column; gap: 20px; }
   .definition-section {
     background: var(--color-surface);
     border: 1px solid var(--color-border);
     border-radius: var(--radius);
     overflow: hidden;
     box-shadow: var(--shadow);
-    display: flex;
-    flex-direction: column;
   }
   .definition-section .section-header {
-    padding: 12px 16px;
-    color: #fff;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+    padding: 12px 16px; color: #fff;
+    display: flex; justify-content: space-between; align-items: center;
   }
   .definition-section .section-header h3 {
-    margin: 0;
-    font-size: 13px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    font-weight: 600;
+    margin: 0; font-size: 13px; text-transform: uppercase;
+    letter-spacing: 0.05em; font-weight: 600;
   }
   .definition-section.custom-type .section-header { background: var(--color-custom-type); }
   .definition-section.event .section-header { background: var(--color-event); }
-  .definition-section.projection .section-header { background: var(--color-projection); }
-  .definition-section.constraint .section-header { background: var(--color-constraint); }
+  .definition-section.entity .section-header { background: var(--color-entity); }
   .definition-section.command .section-header { background: var(--color-command); }
+  .definition-section.sequence .section-header { background: var(--color-sequence); }
 
   .definition-section .add-btn {
     background: rgba(255, 255, 255, 0.25);
     color: #fff;
     border: 1px solid rgba(255, 255, 255, 0.5);
   }
-  .definition-section .add-btn:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.4);
-  }
+  .definition-section .add-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.4); }
 
-  .definition-section .body {
-    padding: 12px 16px;
-    flex: 1;
-    min-height: 80px;
-  }
+  .definition-section .body { padding: 12px 16px; }
   .definition-section .empty {
-    color: var(--color-text-muted);
-    font-style: italic;
-    font-size: 13px;
-    padding: 16px 0;
-    text-align: center;
+    color: var(--color-text-muted); font-style: italic; font-size: 13px;
+    padding: 12px 0; text-align: center;
   }
   .definition-card {
     background: var(--color-bg);
@@ -227,328 +181,262 @@
     margin-bottom: 8px;
   }
   .definition-card:last-child { margin-bottom: 0; }
+  .definition-card .name-row {
+    display: flex; align-items: center; gap: 8px; justify-content: space-between;
+  }
   .definition-card .name {
-    font-weight: 600;
-    margin-bottom: 4px;
-    font-family: ui-monospace, "SF Mono", Menlo, monospace;
-    font-size: 13px;
+    font-weight: 600; font-family: var(--mono); font-size: 13px;
+    display: flex; align-items: center; gap: 6px;
   }
-  .definition-card .summary {
-    font-size: 11px;
-    color: var(--color-text-muted);
-    margin-bottom: 6px;
-    line-height: 1.4;
+  .disclosure {
+    background: none; border: none; cursor: pointer; padding: 0;
+    font-size: 11px; color: var(--color-text-muted); width: 14px;
   }
+  .definition-card .summary { font-size: 11px; color: var(--color-text-muted); margin-top: 2px; }
   .definition-card .refs {
-    font-size: 11px;
-    color: var(--color-text-muted);
-    margin-bottom: 6px;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
+    font-size: 11px; color: var(--color-text-muted); margin-top: 6px;
+    display: flex; flex-wrap: wrap; gap: 4px;
   }
   .ref-chip {
-    display: inline-block;
-    padding: 1px 6px;
-    border-radius: 999px;
-    color: #fff;
-    font-family: ui-monospace, "SF Mono", Menlo, monospace;
-    font-size: 10px;
+    display: inline-block; padding: 1px 6px; border-radius: 999px;
+    color: #fff; font-family: var(--mono); font-size: 10px;
   }
   .ref-chip.custom-type-definition { background: var(--color-custom-type); }
   .ref-chip.event-definition { background: var(--color-event); }
-  .ref-chip.projection-definition { background: var(--color-projection); }
-  .ref-chip.constraint-definition { background: var(--color-constraint); }
+  .ref-chip.entity-definition { background: var(--color-entity); }
   .ref-chip.command-definition { background: var(--color-command); }
-  .definition-card .actions {
-    display: flex;
-    gap: 4px;
-    margin-top: 6px;
+  .ref-chip.sequence-definition { background: var(--color-sequence); }
+  .definition-card .actions { display: flex; gap: 4px; margin-top: 8px; }
+
+  /* Expanded entity / command detail */
+  .expanded {
+    margin-top: 10px; padding-top: 10px;
+    border-top: 1px dashed var(--color-border);
+    font-size: 12px;
   }
+  .expanded .block { margin-bottom: 10px; }
+  .expanded .block:last-child { margin-bottom: 0; }
+  .expanded .block-title {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--color-text-muted); font-weight: 600; margin-bottom: 4px;
+  }
+  .kv { font-family: var(--mono); font-size: 12px; }
+  .state-chip {
+    display: inline-block; padding: 1px 8px; border-radius: 999px;
+    background: var(--color-entity-tint); color: var(--color-entity-ink); font-family: var(--mono);
+    font-size: 11px; margin-right: 4px;
+  }
+  .state-chip.initial { background: var(--color-entity); color: #fff; }
+  .prop-row {
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 6px 8px; background: #fff;
+    border: 1px solid var(--color-border); border-radius: var(--radius);
+    margin-bottom: 6px;
+  }
+  .prop-row:last-child { margin-bottom: 0; }
+  .prop-sig { font-family: var(--mono); font-size: 12px; }
+  .prop-sig .reserved {
+    font-family: inherit; font-size: 10px; text-transform: uppercase;
+    letter-spacing: 0.04em; color: var(--color-entity-ink); margin-left: 6px;
+  }
+  .prop-handlers { color: var(--color-text-muted); font-family: var(--mono); font-size: 11px; }
+  .cond-line { font-family: var(--mono); font-size: 12px; }
+
+  /* DCB query panel */
+  .dcb-panel {
+    background: #0f172a; color: #e2e8f0;
+    border-radius: var(--radius); padding: 8px 10px;
+    font-family: var(--mono); font-size: 11px; line-height: 1.6;
+    overflow-x: auto;
+  }
+  .dcb-panel .q-key { color: #94a3b8; }
+  .dcb-panel .q-tag { color: #4ade80; }
+  .dcb-panel .q-type { color: #fdba74; }
+  .dcb-panel .q-none { color: #94a3b8; font-style: italic; }
+  .dcb-panel .q-write { color: #93c5fd; }
 
   /* Modal */
   .modal-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(15, 23, 42, 0.5);
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    z-index: 100;
+    position: fixed; inset: 0; background: rgba(15, 23, 42, 0.5);
+    display: flex; justify-content: center; align-items: flex-start;
+    z-index: 100; padding: 24px; overflow-y: auto;
   }
   .modal {
-    background: var(--color-surface);
-    border-radius: var(--radius);
-    padding: 24px;
-    width: 90%;
-    max-width: 640px;
-    max-height: 90vh;
-    overflow-y: auto;
+    background: var(--color-surface); border-radius: var(--radius);
+    padding: 24px; width: 100%; max-width: 720px;
     box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
   }
   .modal h3 { margin: 0 0 16px; }
   .modal .form-row { margin-bottom: 14px; }
   .modal label {
-    display: block;
-    font-size: 13px;
-    font-weight: 500;
-    margin-bottom: 4px;
-    color: var(--color-text-muted);
+    display: block; font-size: 13px; font-weight: 500;
+    margin-bottom: 4px; color: var(--color-text-muted);
   }
-  .modal label .hint {
-    font-weight: 400;
-    font-style: italic;
-    color: #94a3b8;
-    margin-left: 4px;
+  .modal label .hint { font-weight: 400; font-style: italic; color: #94a3b8; margin-left: 4px; }
+  .modal input[type="text"], .modal select, .modal textarea {
+    width: 100%; padding: 8px 10px;
+    border: 1px solid var(--color-border); border-radius: var(--radius);
+    font-size: 14px; font-family: inherit; background: #fff;
   }
-  .modal input[type="text"],
-  .modal input[type="number"],
-  .modal select,
-  .modal textarea {
-    width: 100%;
-    padding: 8px 10px;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius);
-    font-size: 14px;
-    font-family: inherit;
-    background: #fff;
-  }
-  .modal textarea {
-    font-family: ui-monospace, "SF Mono", Menlo, monospace;
-    font-size: 13px;
-    min-height: 100px;
-    resize: vertical;
-  }
+  .modal textarea { font-family: var(--mono); font-size: 13px; min-height: 90px; resize: vertical; }
   .modal .inline-check {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-weight: 400;
-    color: var(--color-text);
-    font-size: 13px;
-    margin-right: 16px;
-    cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px; font-weight: 400;
+    color: var(--color-text); font-size: 13px; margin-right: 16px; cursor: pointer;
   }
 
   .row-list {
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius);
-    padding: 8px;
-    background: #fafbfc;
+    border: 1px solid var(--color-border); border-radius: var(--radius);
+    padding: 8px; background: #fafbfc;
   }
   .row-list-row {
-    display: grid;
-    grid-template-columns: 1.2fr 1fr auto auto auto;
-    gap: 6px;
-    align-items: center;
-    margin-bottom: 6px;
+    display: grid; grid-template-columns: 1.2fr 1fr auto auto auto;
+    gap: 6px; align-items: center; margin-bottom: 6px;
   }
   .row-list-row:last-child { margin-bottom: 0; }
-  .row-list-row input[type="text"],
-  .row-list-row select {
-    padding: 4px 8px;
-    font-size: 13px;
-  }
-  .row-list .add-row {
-    margin-top: 4px;
-  }
-  .row-list .empty-rows {
-    color: var(--color-text-muted);
-    font-style: italic;
-    font-size: 13px;
-    padding: 4px;
+  .row-list-row input[type="text"], .row-list-row select { padding: 4px 8px; font-size: 13px; }
+  .row-list .add-row { margin-top: 4px; }
+  .row-list .empty-rows { color: var(--color-text-muted); font-style: italic; font-size: 13px; padding: 4px; }
+
+  .state-row { display: grid; grid-template-columns: 1fr auto auto; gap: 6px; align-items: center; margin-bottom: 6px; }
+  .state-row input[type="text"] { padding: 4px 8px; font-size: 13px; }
+  .state-row .initial-badge {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--color-entity-ink); font-weight: 600;
   }
 
+  /* Property cards inside the entity editor */
+  .prop-card {
+    background: #fff; border: 1px solid var(--color-border);
+    border-radius: var(--radius); padding: 10px; margin-bottom: 8px;
+  }
+  .prop-card:last-child { margin-bottom: 0; }
+  .prop-card.reserved-prop { border-color: var(--color-entity-edge); background: var(--color-entity-soft); }
+  .prop-card-head {
+    display: grid; grid-template-columns: 1.1fr 1fr auto auto auto;
+    gap: 6px; align-items: center; margin-bottom: 8px;
+  }
+  .prop-card-head input[type="text"], .prop-card-head select { padding: 4px 8px; font-size: 13px; }
+  .prop-card-head .locked {
+    font-family: var(--mono); font-size: 12px; padding: 4px 8px;
+    background: #e2e8f0; border-radius: var(--radius); color: var(--color-text-muted);
+  }
+  .sub-label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--color-text-muted); font-weight: 600; margin: 6px 0 4px;
+  }
   .handler-row {
-    display: grid;
-    grid-template-columns: minmax(140px, 1fr) 3fr auto;
-    gap: 6px;
-    margin-bottom: 6px;
-    align-items: flex-start;
+    display: grid; grid-template-columns: minmax(150px, 1.2fr) minmax(110px, 0.7fr) 2fr auto;
+    gap: 6px; margin-bottom: 6px; align-items: start;
   }
   .handler-row select { padding: 4px 8px; font-size: 13px; }
-  .handler-row textarea {
-    min-height: 60px;
-    font-size: 12px;
-  }
-  .handler-row .remove-btn {
-    align-self: start;
-  }
 
   .checkbox-list {
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius);
-    padding: 8px;
-    max-height: 140px;
-    overflow-y: auto;
-    background: #fafbfc;
-  }
-  .checkbox-list label {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-weight: 400;
-    color: var(--color-text);
-    margin-bottom: 4px;
-    cursor: pointer;
-    font-size: 13px;
-  }
-  .checkbox-list label:last-child { margin-bottom: 0; }
-  .checkbox-list .empty {
-    color: var(--color-text-muted);
-    font-style: italic;
-    font-size: 13px;
-    padding: 4px;
+    border: 1px solid var(--color-border); border-radius: var(--radius);
+    padding: 8px; max-height: 140px; overflow-y: auto; background: #fafbfc;
   }
 
-  .condition-builder {
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius);
-    padding: 10px;
-    background: #fafbfc;
+  /* Qualified with `.modal label` so it outranks that rule's display:block —
+     otherwise the row is never a flex container and the gap does nothing. */
+  .modal label.collapsible-head {
+    cursor: pointer; display: flex; align-items: center; gap: 6px;
+    user-select: none;
   }
-  .condition-builder .field-row {
-    margin-bottom: 8px;
+  .modal label.collapsible-head .disclosure { width: auto; }
+  .modal label.collapsible-head .hint { margin-left: 0; }
+  .collapsed-summary {
+    font-family: var(--mono); font-size: 12px; color: var(--color-text-muted);
+    background: #fafbfc; border: 1px solid var(--color-border);
+    border-radius: var(--radius); padding: 6px 8px;
+    overflow-x: auto; white-space: nowrap;
   }
-  .condition-builder .field-row:last-child { margin-bottom: 0; }
-  .condition-builder .field-row > label {
-    font-size: 12px;
-    color: var(--color-text-muted);
-    margin-bottom: 4px;
+
+  .condition-card {
+    border: 1px solid var(--color-border); border-radius: var(--radius);
+    padding: 10px; background: #fff; margin-bottom: 8px;
   }
+  .condition-card:last-child { margin-bottom: 0; }
+  .condition-head {
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 8px; margin-bottom: 8px;
+  }
+  .condition-preview {
+    font-family: var(--mono); font-size: 12px; color: var(--color-text);
+    background: var(--color-bg); border-radius: var(--radius); padding: 4px 8px;
+    flex: 1 1 auto; min-width: 0; overflow-x: auto; white-space: nowrap;
+  }
+  /* `.modal select` is width:100%, which in this flex row would swallow the
+     whole line and squeeze the preview to nothing. */
+  .condition-head select { width: auto; flex: 0 0 auto; }
+  .condition-head .inline-check { flex: 0 0 auto; margin-right: 0; }
+  .condition-grid {
+    display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: start;
+  }
+  .condition-grid.unary { grid-template-columns: 1fr auto; }
+  .condition-grid > div > label { font-size: 11px; }
+
   .operand-editor {
-    border: 1px dashed var(--color-border);
-    border-radius: var(--radius);
-    padding: 8px;
-    background: #fff;
+    border: 1px dashed var(--color-border); border-radius: var(--radius);
+    padding: 6px; background: #fafbfc;
+    display: flex; flex-direction: column; gap: 4px;
   }
-  .operand-editor .row {
-    margin-bottom: 6px;
-  }
-  .operand-editor .row:last-child { margin-bottom: 0; }
+  .operand-editor select, .operand-editor input[type="text"] { padding: 4px 8px; font-size: 13px; }
+  /* Aliases are short, property names are long — split the row to match. */
+  .operand-editor .pair { display: grid; grid-template-columns: 0.8fr 1.2fr; gap: 4px; }
 
   .binding-list {
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius);
-    padding: 8px;
-    background: #fafbfc;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
+    border: 1px solid var(--color-border); border-radius: var(--radius);
+    padding: 8px; background: #fafbfc;
+    display: flex; flex-direction: column; gap: 8px;
   }
   .binding-card {
-    background: #fff;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius);
-    padding: 8px 10px;
+    background: #fff; border: 1px solid var(--color-border);
+    border-radius: var(--radius); padding: 8px 10px;
   }
   .binding-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 6px;
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 8px; margin-bottom: 6px;
   }
-  .binding-title {
-    font-weight: 600;
-    font-family: ui-monospace, "SF Mono", Menlo, monospace;
-    font-size: 13px;
-  }
-  .binding-actions {
-    display: flex;
-    gap: 12px;
-    align-items: center;
-  }
-  .binding-actions .inline-check { margin-right: 0; }
-  .binding-warning {
-    font-size: 12px;
-    color: var(--color-danger);
-    padding: 4px 0;
-  }
-  .binding-empty {
-    font-size: 12px;
-    color: var(--color-text-muted);
-    font-style: italic;
-    padding: 4px 0;
-  }
-  .param-bindings {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    margin-top: 4px;
-  }
-  .param-binding-row {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 4px;
-  }
-  .param-binding-row .param-name {
-    font-size: 12px;
-    color: var(--color-text-muted);
-    font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  }
-  .param-binding-row .param-type {
-    font-style: italic;
-    color: var(--color-text-muted);
-  }
-  .add-binding select {
-    padding: 6px 10px;
-    font-size: 13px;
-  }
-  .binding-list .empty-rows {
-    color: var(--color-text-muted);
-    font-style: italic;
-    font-size: 13px;
-    padding: 4px;
+  .binding-title { font-weight: 600; font-family: var(--mono); font-size: 13px; }
+  .binding-actions { display: flex; gap: 12px; align-items: center; }
+  .binding-warning { font-size: 12px; color: var(--color-danger); padding: 4px 0; }
+  .binding-empty { font-size: 12px; color: var(--color-text-muted); font-style: italic; padding: 4px 0; }
+  .boundary-row { display: grid; grid-template-columns: 1fr 1fr 1.4fr auto; gap: 6px; align-items: start; }
+  .boundary-row input[type="text"], .boundary-row select { padding: 4px 8px; font-size: 13px; }
+  .param-bindings { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+  .param-binding-row { display: grid; grid-template-columns: 1fr; gap: 4px; }
+  .param-binding-row .param-name { font-size: 12px; color: var(--color-text-muted); font-family: var(--mono); }
+  .param-binding-row .param-type { font-style: italic; color: var(--color-text-muted); }
+  .add-binding select { padding: 6px 10px; font-size: 13px; }
+  .binding-list .empty-rows { color: var(--color-text-muted); font-style: italic; font-size: 13px; padding: 4px; }
+
+  .coverage-issue {
+    background: #fef3c7; border: 1px solid #fde68a; color: var(--color-warning);
+    border-radius: var(--radius); padding: 6px 8px; font-size: 12px;
+    margin-top: 6px; display: flex; justify-content: space-between;
+    align-items: center; gap: 8px;
   }
 
   .modal .error {
-    color: var(--color-danger);
-    font-size: 13px;
-    background: #fee2e2;
-    border: 1px solid #fecaca;
-    border-radius: var(--radius);
-    padding: 8px 12px;
-    margin-bottom: 14px;
+    color: var(--color-danger); font-size: 13px; background: #fee2e2;
+    border: 1px solid #fecaca; border-radius: var(--radius);
+    padding: 8px 12px; margin-bottom: 14px;
   }
-  .modal .actions {
-    display: flex;
-    gap: 8px;
-    justify-content: flex-end;
-    margin-top: 20px;
-  }
+  .modal .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }
 
   /* Legend */
-  .legend {
-    display: flex;
-    gap: 12px;
-    font-size: 12px;
-    color: var(--color-text-muted);
-    flex-wrap: wrap;
-  }
+  .legend { display: flex; gap: 12px; font-size: 12px; color: var(--color-text-muted); flex-wrap: wrap; }
   .legend-swatch {
-    display: inline-block;
-    width: 12px;
-    height: 12px;
-    border-radius: 3px;
-    margin-right: 4px;
-    vertical-align: middle;
+    display: inline-block; width: 12px; height: 12px; border-radius: 3px;
+    margin-right: 4px; vertical-align: middle;
+    border: 1px solid rgba(15, 23, 42, 0.15);
   }
 
   /* Toast */
   .toast {
-    position: fixed;
-    bottom: 20px;
-    left: 50%;
-    transform: translateX(-50%);
-    background: var(--color-danger);
-    color: #fff;
-    padding: 12px 20px;
-    border-radius: var(--radius);
-    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-    z-index: 200;
-    font-size: 14px;
-    max-width: 600px;
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: var(--color-danger); color: #fff; padding: 12px 20px;
+    border-radius: var(--radius); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+    z-index: 200; font-size: 14px; max-width: 600px;
   }
 </style>
 </head>
@@ -570,31 +458,41 @@
 // ============================================================
 // Constants.
 // ============================================================
-const EVENT_LOG_KEY = 'dcb-playground:events:v3';
+const EVENT_LOG_KEY = 'dcb-playground:events:v5';
 
 const DEF_KINDS = [
-  'custom-type-definition',
+  'entity-definition',
   'event-definition',
-  'projection-definition',
-  'constraint-definition',
+  'sequence-definition',
   'command-definition',
+  'custom-type-definition',
 ];
 const DEF_COLLECTIONS = {
-  'custom-type-definition': 'custom-type-definitions',
+  'entity-definition': 'entity-definitions',
   'event-definition': 'event-definitions',
-  'projection-definition': 'projection-definitions',
-  'constraint-definition': 'constraint-definitions',
+  'sequence-definition': 'sequence-definitions',
   'command-definition': 'command-definitions',
+  'custom-type-definition': 'custom-type-definitions',
 };
 const KIND_COLOR_CLASS = {
-  'custom-type-definition': 'custom-type',
+  'entity-definition': 'entity',
   'event-definition': 'event',
-  'projection-definition': 'projection',
-  'constraint-definition': 'constraint',
+  'sequence-definition': 'sequence',
   'command-definition': 'command',
+  'custom-type-definition': 'custom-type',
+};
+
+const KIND_SECTION_TITLE = {
+  'entity-definition': 'Entities',
+  'event-definition': 'Events',
+  'sequence-definition': 'Sequences',
+  'command-definition': 'Commands',
+  'custom-type-definition': 'Custom Types',
 };
 
 const SIMPLE_TYPES = ['boolean', 'integer', 'string'];
+const DEFAULT_STATES = ['NonExistent', 'Existent'];
+const STATE_PROPERTY = 'state';
 
 const PASCAL_RE = /^[A-Z][A-Za-z0-9]+$/;
 const CAMEL_RE = /^[a-z][A-Za-z0-9]+$/;
@@ -613,6 +511,15 @@ const BINARY_PREDICATES = [
   'startsWith',
   'endsWith',
 ];
+const PREDICATE_SYMBOL = {
+  equals: '==',
+  lessThan: '<',
+  lessThanOrEquals: '<=',
+  greaterThan: '>',
+  greaterThanOrEquals: '>=',
+};
+
+const OPERATIONS = ['set', 'increment', 'decrement', 'append', 'remove'];
 
 // ============================================================
 // Event store (localStorage-backed append-only log).
@@ -685,10 +592,7 @@ function apply(contexts, event) {
 
   for (const kind of DEF_KINDS) {
     const coll = ctx[DEF_COLLECTIONS[kind]];
-    if (type === `${kind}-added`) {
-      coll[data.name] = data.body;
-      return;
-    }
+    if (type === `${kind}-added`) { coll[data.name] = data.body; return; }
     if (type === `${kind}-updated`) {
       if (coll[data.name] !== undefined) coll[data.name] = data.body;
       return;
@@ -701,21 +605,95 @@ function apply(contexts, event) {
       }
       return;
     }
-    if (type === `${kind}-removed`) {
-      delete coll[data.name];
-      return;
-    }
+    if (type === `${kind}-removed`) { delete coll[data.name]; return; }
+  }
+}
+
+// ============================================================
+// Derived types.
+//
+// An entity brings `<Entity>Id` and `<Entity>State` into existence.
+// Neither is stored anywhere: both are computed from the entity and
+// resolved in the same namespace as declared custom (value) types.
+// ============================================================
+
+function idTypeOf(entityName) { return entityName + 'Id'; }
+function stateTypeOf(entityName) { return entityName + 'State'; }
+
+function derivedTypes(ctx) {
+  const out = {};
+  for (const entityName of Object.keys(ctx['entity-definitions'])) {
+    out[idTypeOf(entityName)] = { entity: entityName, role: 'id' };
+    out[stateTypeOf(entityName)] = { entity: entityName, role: 'state' };
+  }
+  return out;
+}
+
+// Classifies a type name against a context: simple, declared custom
+// type, entity-derived, or unresolved.
+function classifyType(ctx, typeName) {
+  if (!typeName) return { kind: 'unresolved' };
+  if (SIMPLE_TYPES.includes(typeName)) return { kind: 'simple' };
+  const derived = derivedTypes(ctx)[typeName];
+  if (derived) return { kind: 'derived', entity: derived.entity, role: derived.role };
+  if (ctx['custom-type-definitions'][typeName] !== undefined) return { kind: 'custom' };
+  return { kind: 'unresolved' };
+}
+
+function allTypeNames(ctx) {
+  return [
+    ...SIMPLE_TYPES,
+    ...Object.keys(derivedTypes(ctx)).sort(),
+    ...Object.keys(ctx['custom-type-definitions']).sort(),
+  ];
+}
+
+// The state members of the enum a property is typed with, or null.
+function enumMembersFor(ctx, typeName) {
+  const cls = classifyType(ctx, typeName);
+  if (cls.kind !== 'derived' || cls.role !== 'state') return null;
+  const entity = ctx['entity-definitions'][cls.entity];
+  return entity ? (entity.states || []) : [];
+}
+
+// A context with one definition overlaid — used so that a body being
+// validated can reference the very definition it belongs to (an
+// entity's `state` property is typed with its own derived enum).
+function withPending(ctx, kind, name, body) {
+  const next = { ...ctx };
+  const collName = DEF_COLLECTIONS[kind];
+  next[collName] = { ...ctx[collName], [name]: body };
+  return next;
+}
+
+function defaultAlias(entityName) {
+  return entityName.charAt(0).toLowerCase() + entityName.slice(1);
+}
+
+// `courseId` -> `course`, `sourceCourseId` -> `sourceCourse`, `idFrom` ->
+// `idFrom`. Falls back to the property name whenever stripping would leave
+// something that is not a usable alias.
+function aliasFromProperty(propertyName) {
+  const name = propertyName || '';
+  const stripped = name.length > 2 && name.endsWith('Id') ? name.slice(0, -2) : name;
+  return CAMEL_RE.test(stripped) ? stripped : name;
+}
+
+function uniqueAlias(base, taken) {
+  if (!taken.includes(base)) return base;
+  for (let i = 2; ; i++) {
+    const candidate = base + i;
+    if (!taken.includes(candidate)) return candidate;
   }
 }
 
 // ============================================================
 // Reference computation and rewriting.
 //
-// References are derived from the body shape (per the DCB-Context
-// schema) — not stored alongside it. computeReferences returns
-// the set of names referenced by a body, grouped by referenced
-// kind. rewriteReferences returns a new body with every reference
-// to `oldName` of `targetKind` replaced by `newName`.
+// References are derived from the body shape (per the DCB Context
+// schema) — never stored alongside it. A property type naming an
+// entity's derived type is a reference to that *entity*, which is what
+// makes tags fall out of property types.
 // ============================================================
 
 function emptyRefs() {
@@ -726,55 +704,50 @@ function emptyRefs() {
 
 function uniq(arr) { return [...new Set(arr)]; }
 
-function pushTypeRef(refs, propertyType) {
-  if (!propertyType || SIMPLE_TYPES.includes(propertyType)) return;
-  refs['custom-type-definition'].push(propertyType);
+function pushTypeRef(ctx, refs, typeName) {
+  const cls = classifyType(ctx, typeName);
+  if (cls.kind === 'custom') refs['custom-type-definition'].push(typeName);
+  else if (cls.kind === 'derived') refs['entity-definition'].push(cls.entity);
 }
 
-function scanOperandForProjection(operand, refs) {
-  if (!operand || typeof operand !== 'object') return;
-  if (operand.projectionName) refs['projection-definition'].push(operand.projectionName);
-}
-
-function computeReferences(kind, body) {
+function computeReferences(ctx, kind, body) {
   const refs = emptyRefs();
   if (!body || typeof body !== 'object') return refs;
 
   switch (kind) {
     case 'custom-type-definition':
-      // Outbound refs not modeled (schema is opaque JSON Schema).
+      // Outbound refs not modeled (the schema is opaque JSON Schema).
       break;
     case 'event-definition':
-      for (const p of body.properties || []) pushTypeRef(refs, p.propertyType);
+      for (const p of body.properties || []) pushTypeRef(ctx, refs, p.propertyType);
       break;
-    case 'projection-definition':
-      pushTypeRef(refs, body.partition);
-      pushTypeRef(refs, body.projectionType);
-      for (const evName of Object.keys(body.handlers || {})) {
-        refs['event-definition'].push(evName);
+    case 'entity-definition':
+      for (const p of body.properties || []) {
+        pushTypeRef(ctx, refs, p.propertyType);
+        for (const handler of p.handlers || []) {
+          if (handler && handler.event) refs['event-definition'].push(handler.event);
+        }
       }
       break;
-    case 'constraint-definition':
-      for (const p of body.properties || []) pushTypeRef(refs, p.propertyType);
-      if (body.condition) {
-        scanOperandForProjection(body.condition.leftHandSide, refs);
-        scanOperandForProjection(body.condition.rightHandSide, refs);
+    case 'sequence-definition':
+      pushTypeRef(ctx, refs, body.valueType);
+      for (const advance of body.advancedBy || []) {
+        if (advance && advance.event) refs['event-definition'].push(advance.event);
       }
       break;
     case 'command-definition':
-      for (const p of body.properties || []) pushTypeRef(refs, p.propertyType);
-      for (const c of body.constraints || []) {
-        if (c && c.name) refs['constraint-definition'].push(c.name);
-        if (c && c.parameters) {
-          for (const v of Object.values(c.parameters)) scanOperandForProjection(v, refs);
-        }
+      for (const p of body.properties || []) pushTypeRef(ctx, refs, p.propertyType);
+      for (const binding of body.boundary || []) {
+        if (binding && binding.entity) refs['entity-definition'].push(binding.entity);
       }
-      for (const e of body.publishes || []) {
-        if (e && e.name) refs['event-definition'].push(e.name);
-        if (e && e.parameters) {
-          for (const v of Object.values(e.parameters)) scanOperandForProjection(v, refs);
-        }
+      for (const emission of body.publishes || []) {
+        if (emission && emission.name) refs['event-definition'].push(emission.name);
       }
+      forEachCommandOperand(body, (operand) => {
+        if (operandSource(operand) === 'sequence' && operand.sequence) {
+          refs['sequence-definition'].push(operand.sequence);
+        }
+      });
       break;
   }
 
@@ -782,52 +755,53 @@ function computeReferences(kind, body) {
   return refs;
 }
 
-function rewriteOperand(operand, oldName, newName) {
-  if (!operand || typeof operand !== 'object') return operand;
-  if (operand.projectionName === oldName) {
-    return { ...operand, projectionName: newName };
-  }
-  return operand;
-}
-
+// Rewrites every reference to `oldName` of `targetKind` into `newName`.
+// Renaming an entity also rewrites its two derived type names.
 function rewriteReferences(kind, body, targetKind, oldName, newName) {
-  const next = JSON.parse(JSON.stringify(body));
+  const next = deepClone(body);
+
+  const rewriteType = (typeName) => {
+    if (targetKind === 'custom-type-definition') {
+      return typeName === oldName ? newName : typeName;
+    }
+    if (targetKind === 'entity-definition') {
+      if (typeName === idTypeOf(oldName)) return idTypeOf(newName);
+      if (typeName === stateTypeOf(oldName)) return stateTypeOf(newName);
+    }
+    return typeName;
+  };
+
+  const rewriteProperties = (properties) => {
+    for (const p of properties || []) p.propertyType = rewriteType(p.propertyType);
+  };
+
   switch (kind) {
     case 'event-definition':
-      if (targetKind === 'custom-type-definition') {
-        for (const p of next.properties || []) {
-          if (p.propertyType === oldName) p.propertyType = newName;
-        }
-      }
+      rewriteProperties(next.properties);
       break;
-    case 'projection-definition':
-      if (targetKind === 'custom-type-definition') {
-        if (next.partition === oldName) next.partition = newName;
-        if (next.projectionType === oldName) next.projectionType = newName;
-      }
+    case 'entity-definition':
+      rewriteProperties(next.properties);
       if (targetKind === 'event-definition') {
-        if (next.handlers && oldName in next.handlers) {
-          const code = next.handlers[oldName];
-          delete next.handlers[oldName];
-          next.handlers[newName] = code;
+        for (const p of next.properties || []) {
+          for (const handler of p.handlers || []) {
+            if (handler && handler.event === oldName) handler.event = newName;
+          }
         }
       }
       break;
-    case 'constraint-definition':
-      if (targetKind === 'custom-type-definition') {
-        for (const p of next.properties || []) {
-          if (p.propertyType === oldName) p.propertyType = newName;
+    case 'sequence-definition':
+      next.valueType = rewriteType(next.valueType);
+      if (targetKind === 'event-definition') {
+        for (const advance of next.advancedBy || []) {
+          if (advance && advance.event === oldName) advance.event = newName;
         }
-      }
-      if (targetKind === 'projection-definition' && next.condition) {
-        next.condition.leftHandSide = rewriteOperand(next.condition.leftHandSide, oldName, newName);
-        next.condition.rightHandSide = rewriteOperand(next.condition.rightHandSide, oldName, newName);
       }
       break;
     case 'command-definition':
-      if (targetKind === 'custom-type-definition') {
-        for (const p of next.properties || []) {
-          if (p.propertyType === oldName) p.propertyType = newName;
+      rewriteProperties(next.properties);
+      if (targetKind === 'entity-definition') {
+        for (const binding of next.boundary || []) {
+          if (binding && binding.entity === oldName) binding.entity = newName;
         }
       }
       if (targetKind === 'event-definition') {
@@ -835,26 +809,12 @@ function rewriteReferences(kind, body, targetKind, oldName, newName) {
           e && e.name === oldName ? { ...e, name: newName } : e
         );
       }
-      if (targetKind === 'constraint-definition') {
-        next.constraints = (next.constraints || []).map((c) =>
-          c && c.name === oldName ? { ...c, name: newName } : c
-        );
-      }
-      if (targetKind === 'projection-definition') {
-        for (const c of next.constraints || []) {
-          if (c && c.parameters) {
-            for (const [k, v] of Object.entries(c.parameters)) {
-              c.parameters[k] = rewriteOperand(v, oldName, newName);
-            }
+      if (targetKind === 'sequence-definition') {
+        forEachCommandOperand(next, (operand) => {
+          if (operandSource(operand) === 'sequence' && operand.sequence === oldName) {
+            operand.sequence = newName;
           }
-        }
-        for (const e of next.publishes || []) {
-          if (e && e.parameters) {
-            for (const [k, v] of Object.entries(e.parameters)) {
-              e.parameters[k] = rewriteOperand(v, oldName, newName);
-            }
-          }
-        }
+        });
       }
       break;
   }
@@ -866,13 +826,215 @@ function findReferencers(ctx, targetKind, targetName) {
   for (const referrerKind of DEF_KINDS) {
     const coll = ctx[DEF_COLLECTIONS[referrerKind]];
     for (const [name, body] of Object.entries(coll)) {
-      const refs = computeReferences(referrerKind, body);
+      const refs = computeReferences(ctx, referrerKind, body);
       if (refs[targetKind].includes(targetName)) {
         out.push({ kind: referrerKind, name, body });
       }
     }
   }
   return out;
+}
+
+// ============================================================
+// Operands.
+//
+// Command operands:  {parameterName} | {alias, property} | {enumMember} | literal
+// Handler operands:  {eventProperty} | {currentValue} | {enumMember} | literal
+// ============================================================
+
+function operandSource(operand) {
+  if (operand === null || operand === undefined) return 'static';
+  if (typeof operand !== 'object') return 'static';
+  if (operand.parameterName !== undefined) return 'parameter';
+  if (operand.alias !== undefined) return 'alias-property';
+  if (operand.enumMember !== undefined) return 'enum-member';
+  if (operand.eventProperty !== undefined) return 'event-property';
+  if (operand.currentValue !== undefined) return 'current-value';
+  if (operand.sequence !== undefined) return 'sequence';
+  return 'static';
+}
+
+function operandText(operand) {
+  switch (operandSource(operand)) {
+    case 'parameter': return operand.parameterName || '?';
+    case 'alias-property': return `${operand.alias || '?'}.${operand.property || '?'}`;
+    case 'enum-member': return operand.enumMember || '?';
+    case 'event-property': return `event.${operand.eventProperty || '?'}`;
+    case 'current-value': return 'current';
+    case 'sequence': return `next(${operand.sequence || '?'})`;
+    default:
+      if (operand === null || operand === undefined) return 'null';
+      if (Array.isArray(operand)) return '[]';
+      return typeof operand === 'string' ? `"${operand}"` : String(operand);
+  }
+}
+
+function sameOperand(a, b) {
+  return JSON.stringify(a === undefined ? null : a) === JSON.stringify(b === undefined ? null : b);
+}
+
+// `operandSource` falls back to "static" for anything it does not
+// recognise, so a misspelt or retired operand key would be stored as a
+// literal and rendered as "[object Object]". A literal is a string, a
+// number or a boolean — never an object — so an object that classifies
+// as static is simply not an operand.
+function assertRecognisedOperand(operand, where) {
+  if (operandSource(operand) !== 'static') return;
+  if (operand !== null && typeof operand === 'object') {
+    throw new DomainError(
+      `${where} is not a recognised operand: ${JSON.stringify(operand)}. ` +
+      `A literal must be a string, a number or a boolean.`
+    );
+  }
+}
+
+function predicateText(predicate) { return PREDICATE_SYMBOL[predicate] || predicate; }
+
+function conditionText(condition) {
+  if (!condition) return '';
+  const left = operandText(condition.leftHandSide);
+  const core = condition.rightHandSide === undefined
+    ? `${left} ${predicateText(condition.predicate)}`
+    : `${left} ${predicateText(condition.predicate)} ${operandText(condition.rightHandSide)}`;
+  return condition.negate ? `not(${core})` : core;
+}
+
+function handlerText(handler) {
+  if (!handler) return '';
+  return `${handler.event || '?'} → ${handler.operation || '?'} ${operandText(handler.value)}`;
+}
+
+// The operations that make sense for a property's type.
+function operationsFor(ctx, property) {
+  if (property.isList) return ['set', 'append', 'remove'];
+  if (property.propertyType === 'integer') return ['set', 'increment', 'decrement'];
+  return ['set'];
+}
+
+// Walks every operand inside a command body.
+function forEachCommandOperand(body, visit) {
+  for (const binding of body.boundary || []) {
+    if (binding) visit(binding.id, { where: `boundary binding "${binding.alias || '?'}"` });
+  }
+  for (const condition of body.conditions || []) {
+    if (!condition) continue;
+    visit(condition.leftHandSide, { where: `condition "${conditionText(condition)}"` });
+    if (condition.rightHandSide !== undefined) {
+      visit(condition.rightHandSide, { where: `condition "${conditionText(condition)}"` });
+    }
+  }
+  for (const emission of body.publishes || []) {
+    if (!emission || !emission.parameters) continue;
+    for (const [key, operand] of Object.entries(emission.parameters)) {
+      visit(operand, { where: `emission "${emission.name}.${key}"` });
+    }
+  }
+}
+
+// ============================================================
+// DCB derivation.
+//
+// A command's boundary *is* its dynamic consistency boundary. Each
+// bound instance contributes one query item: its tag, restricted to
+// the event types reachable through the properties the conditions
+// actually read.
+//
+// Sequences contribute too, and are the only items with no tag: a
+// numbering is global, so its query is scoped by event type alone.
+// ============================================================
+
+// Every sequence the command reads, in first-mention order.
+function sequencesRead(body) {
+  const names = [];
+  forEachCommandOperand(body, (operand) => {
+    if (operandSource(operand) === 'sequence' && !names.includes(operand.sequence)) {
+      names.push(operand.sequence);
+    }
+  });
+  return names;
+}
+
+function deriveDcb(ctx, body) {
+  const items = [];
+
+  for (const name of sequencesRead(body)) {
+    const sequence = ctx['sequence-definitions'][name];
+    if (!sequence) continue;
+    items.push({
+      sequence: name,
+      tag: null,
+      types: uniq((sequence.advancedBy || []).map((a) => a && a.event).filter(Boolean)).sort(),
+      readProperties: [],
+    });
+  }
+
+  for (const binding of body.boundary || []) {
+    if (!binding) continue;
+    const readProperties = new Set();
+    forEachCommandOperand(body, (operand) => {
+      if (operandSource(operand) === 'alias-property' && operand.alias === binding.alias) {
+        readProperties.add(operand.property);
+      }
+    });
+    // The boundary binding's own id operand is not a read of the entity.
+    const entity = ctx['entity-definitions'][binding.entity];
+    const types = new Set();
+    if (entity) {
+      for (const property of entity.properties || []) {
+        if (!readProperties.has(property.name)) continue;
+        for (const handler of property.handlers || []) {
+          if (handler && handler.event) types.add(handler.event);
+        }
+      }
+    }
+    items.push({
+      tag: `${binding.entity}:${operandText(binding.id)}`,
+      types: [...types].sort(),
+      readProperties: [...readProperties].sort(),
+    });
+  }
+
+  const writes = [];
+  for (const emission of body.publishes || []) {
+    if (!emission) continue;
+    const event = ctx['event-definitions'][emission.name];
+    if (!event) continue;
+    for (const property of event.properties || []) {
+      const cls = classifyType(ctx, property.propertyType);
+      if (cls.kind !== 'derived' || cls.role !== 'id') continue;
+      const operand = (emission.parameters || {})[property.name];
+      writes.push(`${cls.entity}:${operand === undefined ? '?' : operandText(operand)}`);
+    }
+  }
+
+  return { items, writes: uniq(writes) };
+}
+
+// Every entity-id property of every published event must resolve to a
+// binding in the boundary — a command may not write a tag it did not
+// consult. A value drawn from a sequence is exempt: the sequence's own
+// query already covers every event that could have issued it, and a
+// freshly minted identifier has no history to consult.
+function coverageIssues(ctx, body) {
+  const issues = [];
+  for (const emission of body.publishes || []) {
+    if (!emission) continue;
+    const event = ctx['event-definitions'][emission.name];
+    if (!event) continue;
+    for (const property of event.properties || []) {
+      const cls = classifyType(ctx, property.propertyType);
+      if (cls.kind !== 'derived' || cls.role !== 'id') continue;
+      const operand = (emission.parameters || {})[property.name];
+      if (operandSource(operand) === 'sequence') continue;
+      const covered = (body.boundary || []).some(
+        (binding) => binding && binding.entity === cls.entity && sameOperand(binding.id, operand)
+      );
+      if (!covered) {
+        issues.push({ event: emission.name, property: property.name, entity: cls.entity, operand });
+      }
+    }
+  }
+  return issues;
 }
 
 // ============================================================
@@ -913,30 +1075,55 @@ function createDcbContext(name) {
 
 function renameDcbContext(id, newName) {
   const trimmed = validateContextName(newName);
-  const state = projectState();
-  if (!state[id]) throw new DomainError('Context does not exist.');
+  if (!projectState()[id]) throw new DomainError('Context does not exist.');
   appendEvents([{ type: 'dcb-context-renamed', data: { 'dcb-context-id': id, name: trimmed } }]);
 }
 
 function deleteDcbContext(id) {
-  const state = projectState();
-  if (!state[id]) throw new DomainError('Context does not exist.');
+  if (!projectState()[id]) throw new DomainError('Context does not exist.');
   appendEvents([{ type: 'dcb-context-deleted', data: { 'dcb-context-id': id } }]);
 }
 
 // Definitions ------------------------------------------------------------
 
 function getCtxOrThrow(ctxId) {
-  const state = projectState();
-  const ctx = state[ctxId];
+  const ctx = projectState()[ctxId];
   if (!ctx) throw new DomainError('Context does not exist (it may have been deleted).');
   return ctx;
 }
 
-function validateReferences(ctx, kind, body) {
-  const refs = computeReferences(kind, body);
+function assertDerivedNamesFree(ctx, entityName, exceptEntity) {
+  for (const derived of [idTypeOf(entityName), stateTypeOf(entityName)]) {
+    if (ctx['custom-type-definitions'][derived] !== undefined) {
+      throw new DomainError(
+        `Entity "${entityName}" would derive the type "${derived}", but a custom type by that name already exists.`
+      );
+    }
+    for (const other of Object.keys(ctx['entity-definitions'])) {
+      if (other === exceptEntity) continue;
+      if (idTypeOf(other) === derived || stateTypeOf(other) === derived) {
+        throw new DomainError(
+          `Entity "${entityName}" would derive the type "${derived}", which entity "${other}" already derives.`
+        );
+      }
+    }
+  }
+}
+
+function assertCustomTypeNameFree(ctx, typeName) {
+  const derived = derivedTypes(ctx)[typeName];
+  if (derived) {
+    throw new DomainError(
+      `"${typeName}" is derived from entity "${derived.entity}" — custom types share that namespace.`
+    );
+  }
+}
+
+function validateReferences(ctx, kind, name, body) {
+  const resolved = withPending(ctx, kind, name, body);
+  const refs = computeReferences(resolved, kind, body);
   for (const targetKind of DEF_KINDS) {
-    const coll = ctx[DEF_COLLECTIONS[targetKind]];
+    const coll = resolved[DEF_COLLECTIONS[targetKind]];
     for (const targetName of refs[targetKind]) {
       if (!(targetName in coll)) {
         throw new DomainError(
@@ -945,14 +1132,247 @@ function validateReferences(ctx, kind, body) {
       }
     }
   }
-  // Schema-driven extra check: projection.partition must be a custom-type with isTag=true.
-  if (kind === 'projection-definition' && body && body.partition) {
-    const tag = ctx['custom-type-definitions'][body.partition];
-    if (tag && tag.isTag !== true) {
+
+  const checkPropertyTypes = (properties, label) => {
+    const seen = new Set();
+    for (const p of properties || []) {
+      if (!CAMEL_RE.test(p.name || '')) {
+        throw new DomainError(`${label} property name "${p.name}" must be camelCase.`);
+      }
+      if (seen.has(p.name)) throw new DomainError(`${label} declares "${p.name}" twice.`);
+      seen.add(p.name);
+      if (classifyType(resolved, p.propertyType).kind === 'unresolved') {
+        throw new DomainError(`Type "${p.propertyType}" (property "${p.name}") does not resolve in this context.`);
+      }
+    }
+  };
+
+  if (kind === 'event-definition') checkPropertyTypes(body.properties, 'Event');
+  if (kind === 'command-definition') checkPropertyTypes(body.properties, 'Command');
+
+  if (kind === 'entity-definition') validateEntityBody(resolved, name, body);
+  if (kind === 'sequence-definition') validateSequenceBody(resolved, name, body);
+  if (kind === 'command-definition') validateCommandBody(resolved, body);
+}
+
+function validateSequenceBody(ctx, sequenceName, body) {
+  if (classifyType(ctx, body.valueType).kind === 'unresolved') {
+    throw new DomainError(`Type "${body.valueType}" (sequence "${sequenceName}") does not resolve in this context.`);
+  }
+  if (body.initialValue === undefined || body.initialValue === null || body.initialValue === '') {
+    throw new DomainError(`Sequence "${sequenceName}" needs an initial value — it is where the prefix is stated.`);
+  }
+  const advancedBy = body.advancedBy || [];
+  if (advancedBy.length === 0) {
+    throw new DomainError(`Sequence "${sequenceName}" must be advanced by at least one event.`);
+  }
+  const seen = new Set();
+  for (const advance of advancedBy) {
+    if (!advance || !advance.event) {
+      throw new DomainError(`An "advanced by" entry on sequence "${sequenceName}" has no event.`);
+    }
+    if (seen.has(advance.event)) {
+      throw new DomainError(`Sequence "${sequenceName}" names "${advance.event}" twice.`);
+    }
+    seen.add(advance.event);
+    const event = ctx['event-definitions'][advance.event];
+    const property = event && (event.properties || []).find((p) => p.name === advance.property);
+    if (!property) {
       throw new DomainError(
-        `Projection partition must reference a custom type with isTag=true; "${body.partition}" is not a tag.`
+        `Sequence "${sequenceName}" reads "${advance.property}", which "${advance.event}" does not carry.`
       );
     }
+    // The event has to carry the value the sequence issued, or the next
+    // read cannot find where the numbering got to.
+    if (property.propertyType !== body.valueType) {
+      throw new DomainError(
+        `Sequence "${sequenceName}" issues ${body.valueType}, but "${advance.event}.${advance.property}" ` +
+        `is typed ${property.propertyType}.`
+      );
+    }
+    if (property.isList || property.isOptional) {
+      throw new DomainError(
+        `"${advance.event}.${advance.property}" must be a single required value to advance a sequence.`
+      );
+    }
+  }
+}
+
+function validateEntityBody(ctx, entityName, body) {
+  const states = body.states || [];
+  if (states.length < 2) throw new DomainError('An entity must declare at least two states.');
+  if (uniq(states).length !== states.length) throw new DomainError('State members must be unique.');
+  for (const member of states) validateName(member, 'State member');
+
+  const properties = body.properties || [];
+  const stateProperties = properties.filter((p) => p.name === STATE_PROPERTY);
+  if (stateProperties.length !== 1) {
+    throw new DomainError('An entity must have exactly one reserved "state" property.');
+  }
+  const stateProperty = stateProperties[0];
+  if (stateProperty.propertyType !== stateTypeOf(entityName)) {
+    throw new DomainError(`The reserved "state" property must be typed "${stateTypeOf(entityName)}".`);
+  }
+  if (stateProperty.isOptional || stateProperty.isList) {
+    throw new DomainError('The reserved "state" property may be neither optional nor a list.');
+  }
+  if (operandSource(stateProperty.initialValue) !== 'enum-member'
+      || stateProperty.initialValue.enumMember !== states[0]) {
+    throw new DomainError(`The reserved "state" property must start in "${states[0]}", the first declared state.`);
+  }
+
+  const seen = new Set();
+  for (const property of properties) {
+    if (!CAMEL_RE.test(property.name || '')) {
+      throw new DomainError(`Property name "${property.name}" must be camelCase.`);
+    }
+    if (seen.has(property.name)) throw new DomainError(`Entity declares property "${property.name}" twice.`);
+    seen.add(property.name);
+    if (classifyType(ctx, property.propertyType).kind === 'unresolved') {
+      throw new DomainError(`Type "${property.propertyType}" (property "${property.name}") does not resolve.`);
+    }
+
+    const allowedOperations = operationsFor(ctx, property);
+    const members = enumMembersFor(ctx, property.propertyType);
+    const handledEvents = new Set();
+
+    if (members && operandSource(property.initialValue) === 'enum-member'
+        && !members.includes(property.initialValue.enumMember)) {
+      throw new DomainError(
+        `Property "${property.name}" starts in "${property.initialValue.enumMember}", which is not a member of ${property.propertyType}.`
+      );
+    }
+
+    for (const handler of property.handlers || []) {
+      if (!handler || !handler.event) {
+        throw new DomainError(`A handler on property "${property.name}" has no event.`);
+      }
+      if (handledEvents.has(handler.event)) {
+        throw new DomainError(`Property "${property.name}" handles "${handler.event}" twice.`);
+      }
+      handledEvents.add(handler.event);
+      if (!allowedOperations.includes(handler.operation)) {
+        throw new DomainError(
+          `Operation "${handler.operation}" is not available for property "${property.name}" ` +
+          `(allowed: ${allowedOperations.join(', ')}).`
+        );
+      }
+      const event = ctx['event-definitions'][handler.event];
+      assertRecognisedOperand(handler.value, `The handler for "${handler.event}" on "${property.name}"`);
+      if (operandSource(handler.value) === 'event-property') {
+        const known = (event.properties || []).some((p) => p.name === handler.value.eventProperty);
+        if (!known) {
+          throw new DomainError(
+            `Handler on "${property.name}" reads "${handler.value.eventProperty}", which "${handler.event}" does not carry.`
+          );
+        }
+      }
+      if (members && operandSource(handler.value) === 'enum-member'
+          && !members.includes(handler.value.enumMember)) {
+        throw new DomainError(
+          `Handler on "${property.name}" sets "${handler.value.enumMember}", which is not a member of ${property.propertyType}.`
+        );
+      }
+    }
+  }
+}
+
+function validateCommandBody(ctx, body) {
+  const boundary = body.boundary || [];
+  const aliases = new Set();
+  // Declaration order *is* the chain: a binding may take its identifier
+  // from an instance bound above it, never from one bound below. One
+  // left-to-right pass therefore both resolves the chain and makes a
+  // cycle impossible to write.
+  const declaredAbove = [];
+  for (const binding of boundary) {
+    if (!CAMEL_RE.test(binding.alias || '')) {
+      throw new DomainError(`Boundary alias "${binding.alias}" must be camelCase.`);
+    }
+    if (aliases.has(binding.alias)) throw new DomainError(`Boundary alias "${binding.alias}" is bound twice.`);
+    aliases.add(binding.alias);
+    if (!ctx['entity-definitions'][binding.entity]) {
+      throw new DomainError(`Boundary binding "${binding.alias}" names unknown entity "${binding.entity}".`);
+    }
+    if (binding.id === undefined || binding.id === null || operandText(binding.id).includes('?')) {
+      throw new DomainError(`Boundary binding "${binding.alias}" has no identifier operand.`);
+    }
+    if (operandSource(binding.id) === 'alias-property') {
+      if (binding.id.alias === binding.alias) {
+        throw new DomainError(`Boundary binding "${binding.alias}" takes its identifier from itself.`);
+      }
+      if (!declaredAbove.includes(binding.id.alias)) {
+        throw new DomainError(
+          `Boundary binding "${binding.alias}" takes its identifier from "${operandText(binding.id)}", ` +
+          `but "${binding.id.alias}" is not bound above it — a binding may only read instances declared earlier.`
+        );
+      }
+    }
+    declaredAbove.push(binding.alias);
+  }
+
+  const commandProperties = new Set((body.properties || []).map((p) => p.name));
+  let failure = null;
+  forEachCommandOperand(body, (operand, meta) => {
+    if (failure) return;
+    assertRecognisedOperand(operand, meta.where);
+    const source = operandSource(operand);
+    if (source === 'parameter' && !commandProperties.has(operand.parameterName)) {
+      failure = `${meta.where} reads parameter "${operand.parameterName}", which the command does not declare.`;
+    }
+    if (source === 'sequence' && !ctx['sequence-definitions'][operand.sequence]) {
+      failure = `${meta.where} draws from sequence "${operand.sequence}", which this context does not define.`;
+    }
+    if (source === 'alias-property') {
+      const binding = boundary.find((b) => b.alias === operand.alias);
+      if (!binding) {
+        failure = `${meta.where} reads "${operandText(operand)}", but "${operand.alias}" is not bound in the boundary.`;
+        return;
+      }
+      const entity = ctx['entity-definitions'][binding.entity];
+      const known = entity && (entity.properties || []).some((p) => p.name === operand.property);
+      if (!known) {
+        failure = `${meta.where} reads "${operandText(operand)}", but ${binding.entity} has no property "${operand.property}".`;
+      }
+    }
+  });
+  if (failure) throw new DomainError(failure);
+
+  // Enum members are checked against the alias property they sit
+  // opposite, which is where a state comparison always appears.
+  for (const condition of body.conditions || []) {
+    if (!condition || condition.rightHandSide === undefined) continue;
+    const sides = [[condition.leftHandSide, condition.rightHandSide], [condition.rightHandSide, condition.leftHandSide]];
+    for (const [maybeEnum, other] of sides) {
+      if (operandSource(maybeEnum) !== 'enum-member') continue;
+      if (operandSource(other) !== 'alias-property') continue;
+      const binding = boundary.find((b) => b.alias === other.alias);
+      if (!binding) continue;
+      const entity = ctx['entity-definitions'][binding.entity];
+      const property = (entity.properties || []).find((p) => p.name === other.property);
+      if (!property) continue;
+      const members = enumMembersFor(ctx, property.propertyType);
+      if (members && !members.includes(maybeEnum.enumMember)) {
+        throw new DomainError(
+          `"${maybeEnum.enumMember}" is not a member of ${property.propertyType} ` +
+          `(condition "${conditionText(condition)}").`
+        );
+      }
+    }
+  }
+
+  if (!body.publishes || body.publishes.length === 0) {
+    throw new DomainError('A command must publish at least one event.');
+  }
+
+  const issues = coverageIssues(ctx, body);
+  if (issues.length > 0) {
+    const first = issues[0];
+    throw new DomainError(
+      `Write coverage: "${first.event}.${first.property}" writes the tag ` +
+      `${first.entity}:${operandText(first.operand)}, which the boundary does not consult. ` +
+      `Bind that instance in the boundary first.`
+    );
   }
 }
 
@@ -963,7 +1383,9 @@ function addDefinition(kind, ctxId, name, body) {
   if (trimmed in coll) {
     throw new DomainError(`A ${humanize(kind)} named "${trimmed}" already exists in this context.`);
   }
-  validateReferences(ctx, kind, body);
+  if (kind === 'entity-definition') assertDerivedNamesFree(ctx, trimmed, null);
+  if (kind === 'custom-type-definition') assertCustomTypeNameFree(ctx, trimmed);
+  validateReferences(ctx, kind, trimmed, body);
   appendEvents([{ type: `${kind}-added`, data: { 'dcb-context-id': ctxId, name: trimmed, body } }]);
 }
 
@@ -973,8 +1395,51 @@ function updateDefinition(kind, ctxId, name, body) {
   if (!(name in coll)) {
     throw new DomainError(`No ${humanize(kind)} named "${name}" exists in this context.`);
   }
-  validateReferences(ctx, kind, body);
+  validateReferences(ctx, kind, name, body);
+  if (kind === 'entity-definition') assertEntityUpdateKeepsInboundReferences(ctx, name, body);
   appendEvents([{ type: `${kind}-updated`, data: { 'dcb-context-id': ctxId, name, body } }]);
+}
+
+// Dropping a property or a state member that a command still reads is
+// refused rather than silently breaking the command.
+function assertEntityUpdateKeepsInboundReferences(ctx, entityName, body) {
+  const propertyNames = new Set((body.properties || []).map((p) => p.name));
+  const states = new Set(body.states || []);
+  for (const [commandName, command] of Object.entries(ctx['command-definitions'])) {
+    const aliases = (command.boundary || [])
+      .filter((b) => b && b.entity === entityName)
+      .map((b) => b.alias);
+    if (aliases.length === 0) continue;
+
+    let failure = null;
+    forEachCommandOperand(command, (operand) => {
+      if (failure) return;
+      if (operandSource(operand) === 'alias-property'
+          && aliases.includes(operand.alias)
+          && !propertyNames.has(operand.property)) {
+        failure = `property "${operand.property}"`;
+      }
+    });
+    if (failure) {
+      throw new DomainError(
+        `Cannot drop ${failure} from "${entityName}" — command "${commandName}" still reads it.`
+      );
+    }
+
+    for (const condition of command.conditions || []) {
+      if (!condition) continue;
+      for (const side of [condition.leftHandSide, condition.rightHandSide]) {
+        if (operandSource(side) !== 'enum-member') continue;
+        const other = side === condition.leftHandSide ? condition.rightHandSide : condition.leftHandSide;
+        if (operandSource(other) !== 'alias-property' || !aliases.includes(other.alias)) continue;
+        if (!states.has(side.enumMember)) {
+          throw new DomainError(
+            `Cannot drop state "${side.enumMember}" from "${entityName}" — command "${commandName}" still compares against it.`
+          );
+        }
+      }
+    }
+  }
 }
 
 function renameDefinition(kind, ctxId, previousName, newName) {
@@ -988,6 +1453,8 @@ function renameDefinition(kind, ctxId, previousName, newName) {
   if (trimmed in coll) {
     throw new DomainError(`A ${humanize(kind)} named "${trimmed}" already exists in this context.`);
   }
+  if (kind === 'entity-definition') assertDerivedNamesFree(ctx, trimmed, previousName);
+  if (kind === 'custom-type-definition') assertCustomTypeNameFree(ctx, trimmed);
 
   const referencers = findReferencers(ctx, kind, previousName);
   const events = [{
@@ -995,10 +1462,14 @@ function renameDefinition(kind, ctxId, previousName, newName) {
     data: { 'dcb-context-id': ctxId, 'previous-name': previousName, name: trimmed },
   }];
   for (const ref of referencers) {
+    // An entity references itself: its reserved `state` property is
+    // typed with its own derived enum. That rewrite lands on the new
+    // name, since the rename event is applied first.
+    const isSelf = ref.kind === kind && ref.name === previousName;
     const rewritten = rewriteReferences(ref.kind, ref.body, kind, previousName, trimmed);
     events.push({
       type: `${ref.kind}-updated`,
-      data: { 'dcb-context-id': ctxId, name: ref.name, body: rewritten },
+      data: { 'dcb-context-id': ctxId, name: isSelf ? trimmed : ref.name, body: rewritten },
     });
   }
   appendEvents(events);
@@ -1010,7 +1481,8 @@ function removeDefinition(kind, ctxId, name) {
   if (!(name in coll)) {
     throw new DomainError(`No ${humanize(kind)} named "${name}" exists in this context.`);
   }
-  const referencers = findReferencers(ctx, kind, name);
+  const referencers = findReferencers(ctx, kind, name)
+    .filter((r) => !(r.kind === kind && r.name === name));
   if (referencers.length > 0) {
     const list = referencers.map((r) => `${humanize(r.kind)} "${r.name}"`).join(', ');
     throw new DomainError(`Cannot remove ${humanize(kind)} "${name}" — still referenced by: ${list}.`);
@@ -1021,10 +1493,15 @@ function removeDefinition(kind, ctxId, name) {
 // ============================================================
 // UI state.
 // ============================================================
-const ui = { view: 'list', selectedContextId: null };
+const ui = { view: 'list', selectedContextId: null, expanded: {} };
 
 function navigateToList() { ui.view = 'list'; ui.selectedContextId = null; render(); }
-function navigateToContext(id) { ui.view = 'detail'; ui.selectedContextId = id; render(); }
+function navigateToContext(id) { ui.view = 'detail'; ui.selectedContextId = id; ui.expanded = {}; render(); }
+
+function toggleExpanded(key) {
+  ui.expanded[key] = !ui.expanded[key];
+  render();
+}
 
 // ============================================================
 // DOM helpers.
@@ -1055,7 +1532,7 @@ function showToast(message) {
   container.innerHTML = '';
   const toast = h('div', { class: 'toast' }, message);
   container.appendChild(toast);
-  setTimeout(() => { if (container.contains(toast)) container.removeChild(toast); }, 4000);
+  setTimeout(() => { if (container.contains(toast)) container.removeChild(toast); }, 5000);
 }
 
 function runCommand(fn) {
@@ -1073,13 +1550,14 @@ function humanize(kind) {
   return kind.split('-').map((s) => s[0].toUpperCase() + s.slice(1)).join(' ');
 }
 
+function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
+
 // ============================================================
 // Modal helpers.
 // ============================================================
 function closeModal() { document.getElementById('modal-container').innerHTML = ''; }
 
 function openModal(buildContent) {
-  // buildContent is a function returning an array of nodes — called whenever the modal re-renders.
   const container = document.getElementById('modal-container');
   container.innerHTML = '';
   function rerender() {
@@ -1138,12 +1616,27 @@ function confirmModal({ title, body, confirmLabel, destructive, onConfirm }) {
 }
 
 // ============================================================
-// Form components.
+// Form primitives.
 // ============================================================
 
 function labeled(labelText, hint, ...children) {
   const lbl = h('label', {}, labelText, hint ? h('span', { class: 'hint' }, hint) : null);
   return h('div', { class: 'form-row' }, lbl, ...children);
+}
+
+// A `labeled` row that folds away, showing a one-line summary while shut.
+function collapsible({ label, hint, open, summary, ontoggle }, ...children) {
+  // Every child is an element: a bare text node would be an anonymous flex
+  // item and would not pick up the row's `gap`.
+  const head = h('label', { class: 'collapsible-head', onclick: ontoggle },
+    h('span', { class: 'disclosure' }, open ? '▼' : '▶'),
+    h('span', {}, label),
+    hint ? h('span', { class: 'hint' }, hint) : null
+  );
+  return h('div', { class: 'form-row' },
+    head,
+    ...(open ? children : [h('div', { class: 'collapsed-summary', onclick: ontoggle }, summary)])
+  );
 }
 
 function textInput({ value, oninput, placeholder }) {
@@ -1162,7 +1655,7 @@ function checkboxInput({ value, onchange, label }) {
 
 function selectInput({ value, options, onchange, placeholder }) {
   const sel = h('select', { onchange: (e) => onchange(e.target.value || '') });
-  sel.appendChild(h('option', { value: '' }, placeholder || '— select —'));
+  if (placeholder !== null) sel.appendChild(h('option', { value: '' }, placeholder || '— select —'));
   for (const opt of options) {
     const optEl = h('option', { value: opt.value }, opt.label || opt.value);
     if (opt.value === value) optEl.selected = true;
@@ -1172,459 +1665,986 @@ function selectInput({ value, options, onchange, placeholder }) {
 }
 
 function textareaInput({ value, oninput, rows }) {
-  return h('textarea', {
-    rows: rows || 4,
-    oninput: (e) => oninput(e.target.value),
-  }, value == null ? '' : value);
+  return h('textarea', { rows: rows || 4, oninput: (e) => oninput(e.target.value) }, value == null ? '' : value);
 }
 
-// Property list editor — used by event, constraint, command bodies.
-function propertyListEditor({ properties, customTypes, rerender }) {
+function typeOptions(ctx) {
+  return allTypeNames(ctx).map((t) => ({ value: t, label: t }));
+}
+
+// Property list editor — used by event and command bodies (flat
+// properties, no projection behaviour).
+function propertyListEditor({ properties, ctx, rerender }) {
   properties = properties || [];
-  const typeOptions = [
-    ...SIMPLE_TYPES.map((t) => ({ value: t, label: t })),
-    ...customTypes.map((t) => ({ value: t, label: t })),
-  ];
+  const options = typeOptions(ctx);
   const rows = properties.length === 0
     ? [h('div', { class: 'empty-rows' }, 'No properties — click + Add property to add one.')]
-    : properties.map((prop, idx) => {
-        return h('div', { class: 'row-list-row' },
-          textInput({
-            value: prop.name,
-            placeholder: 'propertyName',
-            oninput: (v) => { prop.name = v; },
-          }),
-          selectInput({
-            value: prop.propertyType,
-            options: typeOptions,
-            onchange: (v) => { prop.propertyType = v; },
-            placeholder: '— type —',
-          }),
-          checkboxInput({
-            value: prop.isOptional,
-            onchange: (v) => { prop.isOptional = v; },
-            label: 'optional',
-          }),
-          checkboxInput({
-            value: prop.isList,
-            onchange: (v) => { prop.isList = v; },
-            label: 'list',
-          }),
-          h('button', { class: 'btn btn-xs btn-danger', onclick: () => { properties.splice(idx, 1); rerender(); } }, '×')
-        );
-      });
+    : properties.map((prop, idx) => h('div', { class: 'row-list-row' },
+        textInput({ value: prop.name, placeholder: 'propertyName', oninput: (v) => { prop.name = v; } }),
+        selectInput({
+          value: prop.propertyType,
+          options,
+          onchange: (v) => { prop.propertyType = v; rerender(); },
+          placeholder: '— type —',
+        }),
+        checkboxInput({ value: prop.isOptional, onchange: (v) => { prop.isOptional = v; }, label: 'optional' }),
+        checkboxInput({ value: prop.isList, onchange: (v) => { prop.isList = v; }, label: 'list' }),
+        h('button', {
+          class: 'btn btn-xs btn-danger',
+          onclick: () => { properties.splice(idx, 1); rerender(); },
+        }, '×')
+      ));
   rows.push(h('button', {
     class: 'btn btn-xs btn-secondary add-row',
-    onclick: () => { properties.push({ name: '', propertyType: '', isOptional: false, isList: false }); rerender(); }
+    onclick: () => {
+      properties.push({ name: '', propertyType: '', isOptional: false, isList: false });
+      rerender();
+    },
   }, '+ Add property'));
   return h('div', { class: 'row-list' }, rows);
 }
 
-// Handler list editor — for projection.handlers (event-name -> code string).
-function handlerListEditor({ handlers, eventNames, rerender }) {
-  // handlers is an object — we work with entries.
-  const entries = Object.entries(handlers || {});
-  const eventOptions = eventNames.map((e) => ({ value: e, label: e }));
-  const rows = entries.length === 0
-    ? [h('div', { class: 'empty-rows' }, 'No handlers — click + Add handler to add one.')]
-    : entries.map(([evName, code], idx) => {
-        return h('div', { class: 'handler-row' },
-          selectInput({
-            value: evName,
-            options: eventOptions,
-            placeholder: '— event —',
-            onchange: (v) => {
-              if (v === evName) return;
-              const newHandlers = {};
-              for (const [k, val] of Object.entries(handlers)) {
-                if (k === evName) newHandlers[v || ''] = val;
-                else newHandlers[k] = val;
-              }
-              // Remove temp empty-string key if user picked nothing meaningful
-              for (const k of Object.keys(handlers)) delete handlers[k];
-              for (const [k, val] of Object.entries(newHandlers)) handlers[k] = val;
-              rerender();
-            },
-          }),
-          textareaInput({
-            value: code,
-            rows: 2,
-            oninput: (v) => { handlers[evName] = v; },
-          }),
-          h('button', { class: 'btn btn-xs btn-danger remove-btn', onclick: () => { delete handlers[evName]; rerender(); } }, '×')
-        );
-      });
-  rows.push(h('button', {
-    class: 'btn btn-xs btn-secondary add-row',
-    onclick: () => {
-      // Add a placeholder slot. The user picks an event and gives it code.
-      // Use a unique placeholder key so we don't collide.
-      let key = '';
-      for (let i = 1; key in handlers || key === ''; i++) key = `__new_${i}`;
-      handlers[key] = '';
-      rerender();
-    }
-  }, '+ Add handler'));
-  return h('div', { class: 'row-list' }, rows);
-}
+// ============================================================
+// Operand editors.
+// ============================================================
 
-function checkboxList({ available, selected, onchange }) {
-  if (available.length === 0) {
-    return h('div', { class: 'checkbox-list' },
-      h('div', { class: 'empty' }, 'Nothing to choose from yet.'));
+const OPERAND_SOURCE_LABELS = {
+  parameter: 'Parameter',
+  'alias-property': 'Entity property',
+  sequence: 'Sequence',
+  'enum-member': 'State',
+  static: 'Literal',
+};
+const ALL_OPERAND_SOURCES = ['parameter', 'alias-property', 'sequence', 'enum-member', 'static'];
+
+// The type an operand resolves to, or null when it cannot be worked out
+// (a literal, or a reference that does not resolve).
+function resolveOperandType(operand, { boundary, commandProperties, ctx }) {
+  const source = operandSource(operand);
+  if (source === 'alias-property') {
+    const binding = (boundary || []).find((b) => b.alias === operand.alias);
+    if (!binding) return null;
+    const entity = ctx['entity-definitions'][binding.entity];
+    if (!entity) return null;
+    const property = (entity.properties || []).find((p) => p.name === operand.property);
+    return property ? { propertyType: property.propertyType, isList: !!property.isList } : null;
   }
-  const set = new Set(selected || []);
-  const labels = available.map((name) => {
-    const cb = h('input', {
-      type: 'checkbox',
-      value: name,
-      checked: set.has(name),
-      onchange: (e) => {
-        if (e.target.checked) set.add(name); else set.delete(name);
-        onchange([...set]);
-      },
-    });
-    return h('label', {}, cb, h('span', {}, name));
-  });
-  return h('div', { class: 'checkbox-list' }, labels);
+  if (source === 'parameter') {
+    const property = (commandProperties || []).find((p) => p.name === operand.parameterName);
+    return property ? { propertyType: property.propertyType, isList: !!property.isList } : null;
+  }
+  if (source === 'sequence') {
+    const sequence = ctx['sequence-definitions'][operand.sequence];
+    return sequence ? { propertyType: sequence.valueType, isList: false } : null;
+  }
+  return null;
 }
 
-// Operand editor — reads/writes via getter/setter so the parent owns the value
-// (the operand may be a primitive, an object, or null, so swapping types
-// requires replacing the whole reference).
-function operandEditor2({ get, set, ownProperties, ctx, rerender }) {
-  const cur = get();
-  let source;
-  if (cur == null) source = 'parameter';
-  else if (typeof cur !== 'object') source = 'static';
-  else if (cur.projectionName !== undefined) source = 'projection-result';
-  else if (cur.parameterName !== undefined) source = 'parameter';
-  else source = 'parameter';
+function emptyOperandFor(source, boundary, members, ctx) {
+  if (source === 'parameter') return { parameterName: '' };
+  if (source === 'alias-property') return { alias: ((boundary || [])[0] || {}).alias || '', property: '' };
+  if (source === 'sequence') {
+    const names = Object.keys((ctx && ctx['sequence-definitions']) || {}).sort();
+    return { sequence: names.length === 1 ? names[0] : '' };
+  }
+  if (source === 'enum-member') return { enumMember: members.length === 1 ? members[0] : '' };
+  return '';
+}
 
-  const propertyOptions = ownProperties
-    .filter((p) => p.name && CAMEL_RE.test(p.name))
-    .map((p) => ({ value: p.name, label: p.name }));
-  const projectionOptions = Object.keys(ctx['projection-definitions']).sort()
-    .map((n) => ({ value: n, label: n }));
-
+// Command-scope operand: parameter | alias property | enum member | literal.
+// `sources` narrows what may be chosen — a single entry drops the source
+// picker entirely. `enumMembers` scopes the State list to the enum actually
+// being compared against, rather than every state in the context.
+function commandOperandEditor({
+  get, set, commandProperties, boundary, ctx, rerender, sources, enumMembers,
+}) {
+  const allowed = (sources && sources.length) ? sources : ALL_OPERAND_SOURCES;
+  const members = enumMembers || allStateMembers(ctx);
+  const current = get();
+  const detected = operandSource(current);
+  const source = allowed.includes(detected) ? detected : allowed[0];
+  const cur = (source === detected && current && typeof current === 'object') ? current : {};
   const rows = [];
 
-  rows.push(h('div', { class: 'row' },
-    h('label', {}, 'Source'),
-    selectInput({
+  if (allowed.length > 1) {
+    rows.push(selectInput({
       value: source,
-      options: [
-        { value: 'parameter', label: 'Parameter' },
-        { value: 'projection-result', label: 'Projection result' },
-        { value: 'static', label: 'Static value' },
-      ],
-      onchange: (v) => {
-        if (v === 'parameter') set({ parameterName: '' });
-        else if (v === 'projection-result') set({ projectionName: '', parameterName: '' });
-        else set('');
-        rerender();
-      },
-    })
-  ));
+      placeholder: null,
+      options: allowed.map((s) => ({ value: s, label: OPERAND_SOURCE_LABELS[s] })),
+      onchange: (v) => { set(emptyOperandFor(v, boundary, members, ctx)); rerender(); },
+    }));
+  }
 
   if (source === 'parameter') {
-    rows.push(h('div', { class: 'row' },
-      h('label', {}, 'Parameter name'),
+    rows.push(selectInput({
+      value: cur.parameterName || '',
+      options: commandProperties
+        .filter((p) => CAMEL_RE.test(p.name || ''))
+        .map((p) => ({ value: p.name, label: p.name })),
+      placeholder: '— pick a parameter —',
+      onchange: (v) => { set({ parameterName: v }); rerender(); },
+    }));
+  } else if (source === 'alias-property') {
+    const binding = boundary.find((b) => b.alias === cur.alias);
+    const entity = binding ? ctx['entity-definitions'][binding.entity] : null;
+    rows.push(h('div', { class: 'pair' },
       selectInput({
-        value: cur && cur.parameterName || '',
-        options: propertyOptions,
-        placeholder: '— pick a property —',
-        onchange: (v) => { set({ parameterName: v }); rerender(); },
-      })
-    ));
-  } else if (source === 'projection-result') {
-    rows.push(h('div', { class: 'row' },
-      h('label', {}, 'Projection'),
+        value: cur.alias || '',
+        options: boundary.filter((b) => b.alias).map((b) => ({ value: b.alias, label: b.alias })),
+        placeholder: '— instance —',
+        onchange: (v) => { set({ alias: v, property: '' }); rerender(); },
+      }),
       selectInput({
-        value: cur && cur.projectionName || '',
-        options: projectionOptions,
-        placeholder: '— pick a projection —',
-        onchange: (v) => { const next = { ...cur, projectionName: v }; set(next); rerender(); },
+        value: cur.property || '',
+        options: entity ? (entity.properties || []).map((p) => ({ value: p.name, label: p.name })) : [],
+        placeholder: entity ? '— property —' : '— pick an instance first —',
+        onchange: (v) => { set({ alias: cur.alias, property: v }); rerender(); },
       })
     ));
-    rows.push(h('div', { class: 'row' },
-      h('label', {}, 'Parameter name (binding)'),
-      selectInput({
-        value: cur && cur.parameterName || '',
-        options: propertyOptions,
-        placeholder: '— pick a property —',
-        onchange: (v) => { const next = { ...cur, parameterName: v }; set(next); rerender(); },
-      })
-    ));
-  } else if (source === 'static') {
-    rows.push(h('div', { class: 'row' },
-      h('label', {}, 'Value', h('span', { class: 'hint' }, '— "true"/"false"/numbers will be parsed accordingly')),
-      textInput({
-        value: cur == null ? '' : String(cur),
-        oninput: (v) => {
-          if (v === 'true') set(true);
-          else if (v === 'false') set(false);
-          else if (v !== '' && !isNaN(Number(v))) set(Number(v));
-          else set(v);
-        },
-      })
-    ));
+  } else if (source === 'sequence') {
+    rows.push(selectInput({
+      value: cur.sequence || '',
+      options: Object.keys(ctx['sequence-definitions']).sort().map((n) => ({ value: n, label: n })),
+      placeholder: '— sequence —',
+      onchange: (v) => { set({ sequence: v }); rerender(); },
+    }));
+  } else if (source === 'enum-member') {
+    rows.push(selectInput({
+      value: cur.enumMember || '',
+      options: members.map((m) => ({ value: m, label: m })),
+      placeholder: '— state —',
+      onchange: (v) => { set({ enumMember: v }); rerender(); },
+    }));
+  } else {
+    rows.push(literalInput(source === detected ? current : '', set));
   }
 
   return h('div', { class: 'operand-editor' }, rows);
 }
 
-function conditionEditor({ condition, ownProperties, ctx, rerender }) {
-  // condition may be undefined (treat as new unary).
-  if (!condition) condition = { leftHandSide: { parameterName: '' }, predicate: 'isEmpty' };
-
-  const isBinary = condition.rightHandSide !== undefined;
-  const predicateOptions = (isBinary ? BINARY_PREDICATES : UNARY_PREDICATES).map((p) => ({ value: p, label: p }));
-
+// Handler-scope operand: event property | current value | enum member | literal.
+function handlerOperandEditor({ get, set, event, members, ctx, rerender }) {
+  const current = get();
+  const source = operandSource(current);
   const rows = [];
 
-  rows.push(h('div', { class: 'field-row' },
-    h('label', {}, 'Type'),
-    selectInput({
-      value: isBinary ? 'binary' : 'unary',
-      options: [
-        { value: 'unary', label: 'Unary (1 operand)' },
-        { value: 'binary', label: 'Binary (2 operands)' },
-      ],
-      onchange: (v) => {
-        if (v === 'binary' && !isBinary) {
-          condition.rightHandSide = { parameterName: '' };
-          condition.predicate = 'equals';
-        } else if (v === 'unary' && isBinary) {
-          delete condition.rightHandSide;
-          condition.predicate = 'isEmpty';
-        }
-        rerender();
-      },
-    })
-  ));
+  const sources = [
+    { value: 'event-property', label: 'Event property' },
+    { value: 'current-value', label: 'Current value' },
+  ];
+  if (members) sources.push({ value: 'enum-member', label: 'State' });
+  sources.push({ value: 'static', label: 'Literal' });
 
-  rows.push(h('div', { class: 'field-row' },
-    h('label', {}, 'Left operand'),
-    operandEditor2({
-      get: () => condition.leftHandSide,
-      set: (v) => { condition.leftHandSide = v; },
-      ownProperties, ctx, rerender,
-    })
-  ));
+  rows.push(selectInput({
+    value: source,
+    placeholder: null,
+    options: sources,
+    onchange: (v) => {
+      if (v === 'event-property') set({ eventProperty: '' });
+      else if (v === 'current-value') set({ currentValue: true });
+      else if (v === 'enum-member') set({ enumMember: '' });
+      else set('');
+      rerender();
+    },
+  }));
 
-  rows.push(h('div', { class: 'field-row' },
-    h('label', {}, 'Predicate'),
-    selectInput({
-      value: condition.predicate,
-      options: predicateOptions,
-      onchange: (v) => { condition.predicate = v; rerender(); },
-    })
-  ));
-
-  if (isBinary) {
-    rows.push(h('div', { class: 'field-row' },
-      h('label', {}, 'Right operand'),
-      operandEditor2({
-        get: () => condition.rightHandSide,
-        set: (v) => { condition.rightHandSide = v; },
-        ownProperties, ctx, rerender,
-      })
-    ));
+  if (source === 'event-property') {
+    rows.push(selectInput({
+      value: current.eventProperty || '',
+      options: event ? (event.properties || []).map((p) => ({ value: p.name, label: p.name })) : [],
+      placeholder: event ? '— property —' : '— pick an event first —',
+      onchange: (v) => { set({ eventProperty: v }); rerender(); },
+    }));
+  } else if (source === 'enum-member') {
+    rows.push(selectInput({
+      value: current.enumMember || '',
+      options: (members || []).map((m) => ({ value: m, label: m })),
+      placeholder: '— state —',
+      onchange: (v) => { set({ enumMember: v }); rerender(); },
+    }));
+  } else if (source === 'static') {
+    rows.push(literalInput(current, set));
   }
 
-  return { node: h('div', { class: 'condition-builder' }, rows), normalised: condition };
+  return h('div', { class: 'operand-editor' }, rows);
+}
+
+function literalInput(current, set) {
+  return textInput({
+    value: current === null || current === undefined ? '' : String(current),
+    placeholder: 'value',
+    oninput: (v) => {
+      if (v === 'true') set(true);
+      else if (v === 'false') set(false);
+      else if (v !== '' && !isNaN(Number(v))) set(Number(v));
+      else set(v);
+    },
+  });
+}
+
+function allStateMembers(ctx) {
+  const out = [];
+  for (const entity of Object.values(ctx['entity-definitions'])) {
+    for (const member of entity.states || []) out.push(member);
+  }
+  return uniq(out).sort();
 }
 
 // ============================================================
-// Per-kind form builders.
-// Each returns an array of form-row nodes. They read & mutate a
-// shared `state` object passed from the definitionEditor frame.
+// Entity form.
 // ============================================================
 
-function customTypeForm({ state, ctx, rerender }) {
+// Keeps the name-dependent labels honest while the entity name is being
+// typed. Deliberately imperative: rebuilding the form on every keystroke
+// would destroy the input the user is typing into.
+function refreshDerivedTypeLabels(name) {
+  const trimmed = (name || '').trim();
+  for (const el of document.querySelectorAll('.derived-id-name')) {
+    el.textContent = trimmed ? idTypeOf(trimmed) : 'Id';
+  }
+  for (const el of document.querySelectorAll('.derived-state-name')) {
+    el.textContent = trimmed ? stateTypeOf(trimmed) : 'State';
+  }
+}
+
+function entityForm({ state, ctx, getName, rerender }) {
+  const entityName = (getName() || '').trim();
+  const stateType = entityName ? stateTypeOf(entityName) : 'State';
+  const idType = entityName ? idTypeOf(entityName) : 'Id';
+
+  // The reserved slot is kept in sync with the entity name and the
+  // first declared state on every render, so neither can drift.
+  const stateProperty = state.properties.find((p) => p.name === STATE_PROPERTY);
+  if (stateProperty) {
+    stateProperty.propertyType = stateType;
+    stateProperty.isOptional = false;
+    stateProperty.isList = false;
+    stateProperty.initialValue = { enumMember: state.states[0] || '' };
+  }
+
+  // The entity resolves against a context that already contains it,
+  // so its own derived types are offered in the type pickers.
+  const resolved = entityName
+    ? withPending(ctx, 'entity-definition', entityName, { states: state.states, properties: state.properties })
+    : ctx;
+
   return [
-    labeled('Schema (JSON Schema)', '— e.g. { "type": "string" }',
-      textareaInput({
-        value: state.schemaText,
-        rows: 6,
-        oninput: (v) => { state.schemaText = v; },
-      })
-    ),
-    labeled('isTag', '— required to use this type as a projection partition',
-      h('div', {},
-        checkboxInput({
-          value: state.isTag,
-          onchange: (v) => { state.isTag = v; },
-          label: 'Mark as DCB tag',
-        })
+    labeled('Derived types', '— brought into existence by the entity; never declared',
+      h('div', { class: 'kv' },
+        h('span', { class: 'state-chip initial derived-id-name' }, idType), ' the only kind of tag  ',
+        h('span', { class: 'state-chip initial derived-state-name' }, stateType), ' the state enum'
       )
     ),
+    labeled('Identifier schema', '— JSON Schema of the derived id type',
+      textareaInput({ value: state.identifierSchemaText, rows: 3, oninput: (v) => { state.identifierSchemaText = v; } })
+    ),
+    labeled('States', '— the first member is the initial state',
+      stateListEditor({ state, rerender })
+    ),
+    labeled('Properties', '— each one is a projection over this entity\'s events',
+      entityPropertyListEditor({ state, ctx: resolved, rerender })
+    ),
+  ];
+}
+
+function stateListEditor({ state, rerender }) {
+  const rows = state.states.map((member, idx) => h('div', { class: 'state-row' },
+    textInput({
+      value: member,
+      placeholder: 'StateName',
+      oninput: (v) => { state.states[idx] = v; },
+    }),
+    idx === 0 ? h('span', { class: 'initial-badge' }, 'initial') : h('span', {}),
+    h('button', {
+      class: 'btn btn-xs btn-danger',
+      onclick: () => {
+        if (state.states.length <= 2) { showToast('An entity needs at least two states.'); return; }
+        state.states.splice(idx, 1);
+        rerender();
+      },
+    }, '×')
+  ));
+  rows.push(h('button', {
+    class: 'btn btn-xs btn-secondary add-row',
+    onclick: () => { state.states.push(''); rerender(); },
+  }, '+ Add state'));
+  return h('div', { class: 'row-list' }, rows);
+}
+
+function entityPropertyListEditor({ state, ctx, rerender }) {
+  const cards = state.properties.map((property, idx) =>
+    entityPropertyCard({ property, idx, state, ctx, rerender })
+  );
+  cards.push(h('button', {
+    class: 'btn btn-xs btn-secondary add-row',
+    onclick: () => {
+      state.properties.push({
+        name: '', propertyType: '', isOptional: false, isList: false,
+        initialValue: null, handlers: [],
+      });
+      rerender();
+    },
+  }, '+ Add property'));
+  return h('div', { class: 'row-list' }, cards);
+}
+
+function entityPropertyCard({ property, idx, state, ctx, rerender }) {
+  const reserved = property.name === STATE_PROPERTY;
+  const eventNames = Object.keys(ctx['event-definitions']).sort();
+  const members = enumMembersFor(ctx, property.propertyType);
+  const operations = operationsFor(ctx, property);
+
+  const head = reserved
+    ? h('div', { class: 'prop-card-head' },
+        h('div', { class: 'locked' }, 'state'),
+        h('div', { class: 'locked derived-state-name' }, property.propertyType),
+        h('span', {}), h('span', {}),
+        h('span', { class: 'initial-badge' }, 'reserved')
+      )
+    : h('div', { class: 'prop-card-head' },
+        textInput({ value: property.name, placeholder: 'propertyName', oninput: (v) => { property.name = v; } }),
+        selectInput({
+          value: property.propertyType,
+          options: typeOptions(ctx),
+          placeholder: '— type —',
+          onchange: (v) => {
+            property.propertyType = v;
+            property.handlers = [];
+            property.initialValue = defaultInitialValue(ctx, property);
+            rerender();
+          },
+        }),
+        checkboxInput({
+          value: property.isOptional,
+          onchange: (v) => { property.isOptional = v; rerender(); },
+          label: 'optional',
+        }),
+        checkboxInput({
+          value: property.isList,
+          onchange: (v) => {
+            property.isList = v;
+            property.handlers = [];
+            property.initialValue = defaultInitialValue(ctx, property);
+            rerender();
+          },
+          label: 'list',
+        }),
+        h('button', {
+          class: 'btn btn-xs btn-danger',
+          onclick: () => { state.properties.splice(idx, 1); rerender(); },
+        }, '×')
+      );
+
+  const handlerRows = (property.handlers || []).map((handler, hIdx) => {
+    const event = ctx['event-definitions'][handler.event];
+    return h('div', { class: 'handler-row' },
+      selectInput({
+        value: handler.event || '',
+        options: eventNames.map((n) => ({ value: n, label: n })),
+        placeholder: '— event —',
+        onchange: (v) => { handler.event = v; rerender(); },
+      }),
+      selectInput({
+        value: handler.operation || '',
+        options: operations.map((o) => ({ value: o, label: o })),
+        placeholder: null,
+        onchange: (v) => { handler.operation = v; rerender(); },
+      }),
+      handlerOperandEditor({
+        get: () => handler.value,
+        set: (v) => { handler.value = v; },
+        event, members, ctx, rerender,
+      }),
+      h('button', {
+        class: 'btn btn-xs btn-danger',
+        onclick: () => { property.handlers.splice(hIdx, 1); rerender(); },
+      }, '×')
+    );
+  });
+
+  if (handlerRows.length === 0) {
+    handlerRows.push(h('div', { class: 'empty-rows' }, 'No handlers — this property never changes.'));
+  }
+  handlerRows.push(h('button', {
+    class: 'btn btn-xs btn-secondary add-row',
+    onclick: () => {
+      property.handlers = property.handlers || [];
+      property.handlers.push({ event: '', operation: operations[0], value: defaultHandlerValue(members) });
+      rerender();
+    },
+  }, '+ Add handler'));
+
+  return h('div', { class: 'prop-card' + (reserved ? ' reserved-prop' : '') },
+    head,
+    h('div', { class: 'sub-label' }, 'Initial value'),
+    reserved
+      ? h('div', { class: 'kv' }, state.states[0] || '(no states)', ' — pinned to the first state')
+      : initialValueEditor({ property, members, rerender }),
+    h('div', { class: 'sub-label' }, 'Handlers'),
+    h('div', {}, handlerRows)
+  );
+}
+
+function defaultInitialValue(ctx, property) {
+  if (property.isList) return [];
+  const members = enumMembersFor(ctx, property.propertyType);
+  if (members) return { enumMember: members[0] || '' };
+  if (property.isOptional) return null;
+  if (property.propertyType === 'integer') return 0;
+  if (property.propertyType === 'boolean') return false;
+  return '';
+}
+
+function defaultHandlerValue(members) {
+  return members ? { enumMember: members[0] || '' } : '';
+}
+
+function initialValueEditor({ property, members, rerender }) {
+  if (property.isList) {
+    property.initialValue = [];
+    return h('div', { class: 'kv' }, '[] — a list projection always starts empty');
+  }
+  if (members) {
+    return selectInput({
+      value: operandSource(property.initialValue) === 'enum-member' ? property.initialValue.enumMember : '',
+      options: members.map((m) => ({ value: m, label: m })),
+      placeholder: '— state —',
+      onchange: (v) => { property.initialValue = { enumMember: v }; rerender(); },
+    });
+  }
+  if (property.isOptional) {
+    const isNull = property.initialValue === null;
+    return h('div', { class: 'operand-editor' },
+      selectInput({
+        value: isNull ? 'null' : 'literal',
+        placeholder: null,
+        options: [{ value: 'null', label: 'null' }, { value: 'literal', label: 'Literal' }],
+        onchange: (v) => { property.initialValue = v === 'null' ? null : ''; rerender(); },
+      }),
+      isNull ? null : literalInput(property.initialValue, (v) => { property.initialValue = v; })
+    );
+  }
+  return literalInput(property.initialValue, (v) => { property.initialValue = v; });
+}
+
+// ============================================================
+// Event and custom-type forms.
+// ============================================================
+
+function customTypeForm({ state }) {
+  return [
+    labeled('Schema (JSON Schema)', '— e.g. { "type": "string", "format": "email" }',
+      textareaInput({ value: state.schemaText, rows: 6, oninput: (v) => { state.schemaText = v; } })
+    ),
+    h('div', { class: 'binding-empty' },
+      'Custom types are value types. Tags come from entity identifiers only.'),
   ];
 }
 
 function eventForm({ state, ctx, rerender }) {
-  const customTypes = Object.keys(ctx['custom-type-definitions']).sort();
+  const tagged = (state.properties || [])
+    .filter((p) => {
+      const cls = classifyType(ctx, p.propertyType);
+      return cls.kind === 'derived' && cls.role === 'id';
+    })
+    .map((p) => `${classifyType(ctx, p.propertyType).entity}:${p.name}`);
+
   return [
-    labeled('Properties', '',
-      propertyListEditor({ properties: state.properties, customTypes, rerender })
+    labeled('Properties', '— a property typed with an entity id makes this event carry that tag',
+      propertyListEditor({ properties: state.properties, ctx, rerender })
+    ),
+    labeled('Derived tags', '',
+      tagged.length === 0
+        ? h('div', { class: 'binding-empty' }, 'No tags — this event belongs to no entity.')
+        : h('div', {}, tagged.map((t) => h('span', { class: 'state-chip initial' }, t)))
     ),
   ];
 }
 
-function projectionForm({ state, ctx, rerender }) {
-  const customTypes = Object.keys(ctx['custom-type-definitions']).sort();
-  const tagTypes = customTypes.filter((n) => ctx['custom-type-definitions'][n].isTag === true);
+// ============================================================
+// Sequence form.
+// ============================================================
+
+function sequenceForm({ state, ctx, getName, rerender }) {
   const eventNames = Object.keys(ctx['event-definitions']).sort();
+  const name = (getName() || '').trim() || 'this sequence';
+
+  const rows = (state.advancedBy || []).map((advance, idx) => {
+    const event = ctx['event-definitions'][advance.event];
+    // Only properties that could actually carry the issued value are
+    // worth offering: same type, single, required.
+    const candidates = event
+      ? (event.properties || []).filter(
+          (p) => p.propertyType === state.valueType && !p.isList && !p.isOptional)
+      : [];
+    return h('div', { class: 'boundary-row' },
+      selectInput({
+        value: advance.event || '',
+        options: eventNames.map((n) => ({ value: n, label: n })),
+        placeholder: '— event —',
+        onchange: (v) => { advance.event = v; advance.property = ''; rerender(); },
+      }),
+      selectInput({
+        value: advance.property || '',
+        options: candidates.map((p) => ({ value: p.name, label: p.name })),
+        placeholder: event
+          ? (candidates.length > 0 ? '— property —' : `— no ${state.valueType || '?'} property —`)
+          : '— pick an event first —',
+        onchange: (v) => { advance.property = v; rerender(); },
+      }),
+      h('button', {
+        class: 'btn btn-xs btn-danger',
+        onclick: () => { state.advancedBy.splice(idx, 1); rerender(); },
+      }, '×')
+    );
+  });
+
+  if (rows.length === 0) {
+    rows.push(h('div', { class: 'empty-rows' }, 'Nothing advances this sequence — it would issue its initial value forever.'));
+  }
+  rows.push(h('button', {
+    class: 'btn btn-xs btn-secondary add-row',
+    onclick: () => { state.advancedBy.push({ event: '', property: '' }); rerender(); },
+  }, '+ Add advancing event'));
+
   return [
-    labeled('Partition', '— must be a custom type with isTag=true',
+    labeled('Issues', '— the type of the values this sequence hands out',
       selectInput({
-        value: state.partition,
-        options: tagTypes.map((t) => ({ value: t, label: t })),
-        placeholder: '— pick a tag type —',
-        onchange: (v) => { state.partition = v; },
+        value: state.valueType,
+        options: typeOptions(ctx),
+        placeholder: '— type —',
+        onchange: (v) => {
+          state.valueType = v;
+          // The property picker is scoped by type, so stale picks go.
+          for (const advance of state.advancedBy) advance.property = '';
+          rerender();
+        },
       })
     ),
-    labeled('Projection type', '— simple type or custom type',
-      selectInput({
-        value: state.projectionType,
-        options: [
-          ...SIMPLE_TYPES.map((t) => ({ value: t, label: t })),
-          ...customTypes.map((t) => ({ value: t, label: t })),
-        ],
-        placeholder: '— pick a type —',
-        onchange: (v) => { state.projectionType = v; },
-      })
+    labeled('Initial value', '— issued until an advancing event exists; the only place a prefix is stated',
+      literalInput(state.initialValue, (v) => { state.initialValue = v; })
     ),
-    labeled('Flags', '',
-      h('div', {},
-        checkboxInput({
-          value: state.isOptional,
-          onchange: (v) => { state.isOptional = v; },
-          label: 'isOptional',
-        }),
-        checkboxInput({
-          value: state.isList,
-          onchange: (v) => { state.isList = v; },
-          label: 'isList',
-        })
+    labeled('Advanced by', '— the events that consume values, and the property carrying the value consumed',
+      h('div', { class: 'binding-list' }, rows)
+    ),
+    labeled('Resulting query', '— derived, read-only',
+      h('div', { class: 'dcb-panel' },
+        h('div', {},
+          h('span', { class: 'q-key' }, 'read:  '),
+          h('span', { class: 'q-type' },
+            (state.advancedBy || []).map((a) => a.event).filter(Boolean).join(', ') || '(nothing)'),
+          h('span', { class: 'q-none' }, '  — newest matching event only, never a fold')
+        ),
+        h('div', {},
+          h('span', { class: 'q-key' }, 'guard: '),
+          h('span', { class: 'q-none' }, `every command reading ${name} is serialised against every other`)
+        )
       )
     ),
-    labeled('Initial state', '— string expression (e.g. "null", "0", "[]")',
-      textInput({
-        value: state.initialState,
-        placeholder: 'null',
-        oninput: (v) => { state.initialState = v; },
-      })
-    ),
-    labeled('Handlers', '— map an event onto a state-update expression',
-      handlerListEditor({ handlers: state.handlers, eventNames, rerender })
-    ),
   ];
 }
 
-function constraintForm({ state, ctx, rerender }) {
-  const customTypes = Object.keys(ctx['custom-type-definitions']).sort();
-  const conditionRes = conditionEditor({
-    condition: state.condition,
-    ownProperties: state.properties,
-    ctx,
-    rerender,
-  });
-  state.condition = conditionRes.normalised;
+// ============================================================
+// Command form.
+// ============================================================
+
+// The payload properties typed with an entity identifier. Each one is an
+// instance the command necessarily consults, so each one earns a binding.
+function idTypedProperties(state, ctx) {
+  const out = [];
+  for (const property of state.properties || []) {
+    const cls = classifyType(ctx, property.propertyType);
+    if (cls.kind === 'derived' && cls.role === 'id' && CAMEL_RE.test(property.name || '')) {
+      out.push({ entity: cls.entity, parameterName: property.name });
+    }
+  }
+  return out;
+}
+
+// Every binding whose identifier is a parameter reference belongs to the
+// sync — one rule, so a stale binding left by a rename or a retype is
+// indistinguishable from a fresh one and gets cleaned up either way.
+// Hand-added bindings take their identifier from somewhere else (a
+// literal, another instance's property) and are never touched.
+function isManagedBinding(binding) {
+  return !!binding
+    && !!binding.id
+    && typeof binding.id === 'object'
+    && !Array.isArray(binding.id)
+    && binding.id.parameterName !== undefined;
+}
+
+// Reconciles the boundary against the payload: exactly one binding per
+// entity-id property. An alias already given to a binding is preserved,
+// so renaming one sticks; renaming the underlying property re-derives it.
+function syncBoundaryToProperties(state, ctx) {
+  const wanted = idTypedProperties(state, ctx);
+  const boundary = state.boundary || [];
+  const manual = boundary.filter((b) => !isManagedBinding(b));
+  const managed = boundary.filter(isManagedBinding);
+
+  const derived = [];
+  const taken = manual.map((b) => b.alias);
+  for (const w of wanted) {
+    const found = managed.find(
+      (b) => b.entity === w.entity && b.id.parameterName === w.parameterName
+    );
+    const alias = found && !taken.includes(found.alias)
+      ? found.alias
+      : uniqueAlias(aliasFromProperty(w.parameterName), taken);
+    taken.push(alias);
+    derived.push({ alias, entity: w.entity, id: { parameterName: w.parameterName } });
+  }
+  state.boundary = [...derived, ...manual];
+  return wanted;
+}
+
+function commandForm({ state, ctx, rerender }) {
+  state.boundary = state.boundary || [];
+  state.conditions = state.conditions || [];
+  state.publishes = state.publishes || [];
+
+  // Derived before anything reads the boundary — operandArgs closes over it.
+  syncBoundaryToProperties(state, ctx);
+
+  // Shut by default: a fully derived boundary needs no attention. It opens
+  // itself only when a hand-added binding is present, since those are the
+  // ones that still have to be authored.
+  if (state.boundaryOpen === undefined) {
+    state.boundaryOpen = state.boundary.some((b) => !isManagedBinding(b));
+  }
+
+  const entityNames = Object.keys(ctx['entity-definitions']).sort();
+  const eventNames = Object.keys(ctx['event-definitions']).sort();
+  const operandArgs = { commandProperties: state.properties, boundary: state.boundary, ctx, rerender };
+
   return [
-    labeled('Properties', '— the parameters the constraint accepts',
-      propertyListEditor({ properties: state.properties, customTypes, rerender })
+    labeled('Properties', '— the command payload; every entity-id property binds its instance below',
+      propertyListEditor({ properties: state.properties, ctx, rerender })
     ),
-    labeled('Condition', '',
-      conditionRes.node
+    collapsible({
+      label: 'Boundary',
+      hint: '— the entity instances this command consults; this list is the DCB',
+      open: state.boundaryOpen,
+      summary: boundarySummary(state.boundary),
+      ontoggle: () => { state.boundaryOpen = !state.boundaryOpen; rerender(); },
+    },
+      boundaryEditor({ state, entityNames, operandArgs, rerender })
+    ),
+    labeled('Conditions', '— all must hold before any event is emitted',
+      conditionListEditor({ state, operandArgs, rerender })
+    ),
+    labeled('Publishes', '— events emitted on success',
+      publishesEditor({ state, eventNames, operandArgs, ctx, rerender })
+    ),
+    labeled('Resulting DCB', '— derived, read-only',
+      dcbPanel(ctx, stateToBodyPreview(state))
     ),
   ];
 }
 
-// Renders the binding rows for one constraint reference or event emission.
-// `targetProperties` is the list of properties declared by the referenced
-// definition; `parameters` is the live parameter map on the binding. We
-// reconcile the map with the target shape on every render so that:
-//   - properties newly added to the target appear as fresh slots, and
-//   - properties removed from the target are dropped silently.
-function renderParameterBindings(targetProperties, parameters, ownProperties, ctx, rerender) {
-  if (!parameters || typeof parameters !== 'object') {
-    parameters = {};
-  }
-  const targetNames = new Set(targetProperties.map((p) => p.name));
-  for (const propName of Object.keys(parameters)) {
-    if (!targetNames.has(propName)) delete parameters[propName];
-  }
-  for (const prop of targetProperties) {
-    if (!(prop.name in parameters)) parameters[prop.name] = { parameterName: '' };
-  }
+function boundarySummary(boundary) {
+  if (!boundary || boundary.length === 0) return 'nothing bound';
+  return boundary
+    .map((b) => `${b.alias || '?'}: ${b.entity || '?'}(${operandText(b.id)})`)
+    .join('   ·   ');
+}
 
+function boundaryEditor({ state, entityNames, operandArgs, rerender }) {
+  // Only hand-added bindings can be reordered; derived ones are rebuilt
+  // ahead of them on every render, so moving one would not stick.
+  const manualPositions = state.boundary
+    .map((b, i) => (isManagedBinding(b) ? -1 : i))
+    .filter((i) => i >= 0);
+
+  const rows = state.boundary.map((binding, idx) => {
+    // Derived bindings follow the payload: only the alias is authored,
+    // since changing the entity or the identifier here would just be
+    // overwritten on the next render.
+    if (isManagedBinding(binding)) {
+      return h('div', { class: 'binding-card' },
+        h('div', { class: 'boundary-row' },
+          textInput({ value: binding.alias, placeholder: 'alias', oninput: (v) => { binding.alias = v; } }),
+          h('div', { class: 'locked' }, binding.entity),
+          h('div', { class: 'locked' }, `id = ${operandText(binding.id)}`),
+          h('span', { class: 'initial-badge' }, 'from property')
+        )
+      );
+    }
+    // Declaration order is the chain, so a binding may only take its
+    // identifier from an instance bound above it — which is exactly the
+    // slice of the boundary the operand editor is allowed to offer.
+    const above = state.boundary.slice(0, idx);
+    const manualAt = manualPositions.indexOf(idx);
+    const swapWith = (other) => {
+      const tmp = state.boundary[idx];
+      state.boundary[idx] = state.boundary[other];
+      state.boundary[other] = tmp;
+      rerender();
+    };
+
+    return h('div', { class: 'binding-card' },
+      h('div', { class: 'boundary-row' },
+        textInput({ value: binding.alias, placeholder: 'alias', oninput: (v) => { binding.alias = v; } }),
+        selectInput({
+          value: binding.entity,
+          options: entityNames.map((n) => ({ value: n, label: n })),
+          placeholder: '— entity —',
+          onchange: (v) => { binding.entity = v; rerender(); },
+        }),
+        commandOperandEditor({
+          get: () => binding.id,
+          set: (v) => { binding.id = v; },
+          ...operandArgs,
+          boundary: above,
+        }),
+        h('button', {
+          class: 'btn btn-xs btn-secondary',
+          disabled: manualAt <= 0,
+          onclick: () => { if (manualAt > 0) swapWith(manualPositions[manualAt - 1]); },
+        }, '↑'),
+        h('button', {
+          class: 'btn btn-xs btn-secondary',
+          disabled: manualAt < 0 || manualAt >= manualPositions.length - 1,
+          onclick: () => {
+            if (manualAt >= 0 && manualAt < manualPositions.length - 1) swapWith(manualPositions[manualAt + 1]);
+          },
+        }, '↓'),
+        h('button', {
+          class: 'btn btn-xs btn-danger',
+          onclick: () => { state.boundary.splice(idx, 1); rerender(); },
+        }, '×')
+      )
+    );
+  });
+
+  if (rows.length === 0) {
+    rows.push(h('div', { class: 'empty-rows' },
+      'Nothing bound — give the command an entity-id property and its instance binds itself.'));
+  }
+  if (entityNames.length === 0) {
+    rows.push(h('div', { class: 'binding-warning' }, 'No entities exist in this context yet.'));
+  } else {
+    rows.push(renderAddPicker({
+      available: entityNames,
+      placeholder: '+ Bind an entity instance',
+      onpick: (entityName) => {
+        const taken = state.boundary.map((b) => b.alias);
+        state.boundary.push({
+          alias: uniqueAlias(defaultAlias(entityName), taken),
+          entity: entityName,
+          id: null,
+        });
+        rerender();
+      },
+    }));
+  }
+  return h('div', { class: 'binding-list' }, rows);
+}
+
+const COUNT_PREDICATES = ['countEquals', 'countLessThan', 'countGreaterThan'];
+
+// What the right-hand side is being compared against: the left operand's
+// type, narrowed by the predicate — `contains` over a list compares an
+// element, and the count predicates compare an integer.
+function expectedRightType(leftType, predicate) {
+  if (!leftType) return null;
+  if (COUNT_PREDICATES.includes(predicate)) return { propertyType: 'integer', isList: false };
+  if (predicate === 'contains' && leftType.isList) {
+    return { propertyType: leftType.propertyType, isList: false };
+  }
+  return leftType;
+}
+
+function conditionListEditor({ state, operandArgs, rerender }) {
+  const ctx = operandArgs.ctx;
+  const cards = state.conditions.map((condition, idx) => {
+    const isBinary = condition.rightHandSide !== undefined;
+    const predicates = (isBinary ? BINARY_PREDICATES : UNARY_PREDICATES).map((p) => ({ value: p, label: p }));
+
+    // A condition always talks about a bound instance, so the left side is
+    // fixed to an entity property — no source picker.
+    const leftType = resolveOperandType(condition.leftHandSide, operandArgs);
+    const expected = expectedRightType(leftType, condition.predicate);
+    const rightMembers = expected ? enumMembersFor(ctx, expected.propertyType) : null;
+    const rightSources = rightMembers
+      ? ['enum-member', 'alias-property']
+      : ['parameter', 'alias-property', 'static'];
+
+    const grid = h('div', { class: 'condition-grid' + (isBinary ? '' : ' unary') },
+      h('div', {},
+        h('label', {}, 'Left'),
+        commandOperandEditor({
+          get: () => condition.leftHandSide,
+          set: (v) => { condition.leftHandSide = v; },
+          ...operandArgs,
+          sources: ['alias-property'],
+        })
+      ),
+      h('div', {},
+        h('label', {}, 'Predicate'),
+        selectInput({
+          value: condition.predicate,
+          options: predicates,
+          placeholder: null,
+          onchange: (v) => { condition.predicate = v; rerender(); },
+        })
+      ),
+      isBinary
+        ? h('div', {},
+            h('label', {}, 'Right'),
+            commandOperandEditor({
+              get: () => condition.rightHandSide,
+              set: (v) => { condition.rightHandSide = v; },
+              ...operandArgs,
+              sources: rightSources,
+              enumMembers: rightMembers || undefined,
+            })
+          )
+        : null
+    );
+
+    return h('div', { class: 'condition-card' },
+      h('div', { class: 'condition-head' },
+        h('div', { class: 'condition-preview' }, conditionText(condition)),
+        selectInput({
+          value: isBinary ? 'binary' : 'unary',
+          placeholder: null,
+          options: [{ value: 'unary', label: '1 operand' }, { value: 'binary', label: '2 operands' }],
+          onchange: (v) => {
+            if (v === 'binary' && !isBinary) {
+              condition.rightHandSide = { parameterName: '' };
+              condition.predicate = 'equals';
+            } else if (v === 'unary' && isBinary) {
+              delete condition.rightHandSide;
+              condition.predicate = 'isEmpty';
+            }
+            rerender();
+          },
+        }),
+        checkboxInput({ value: condition.negate, onchange: (v) => { condition.negate = v; rerender(); }, label: 'not' }),
+        h('button', {
+          class: 'btn btn-xs btn-danger',
+          onclick: () => { state.conditions.splice(idx, 1); rerender(); },
+        }, '×')
+      ),
+      grid
+    );
+  });
+
+  if (cards.length === 0) {
+    cards.push(h('div', { class: 'empty-rows' },
+      'No conditions — the append is still guarded by the derived DCB below.'));
+  }
+  cards.push(h('button', {
+    class: 'btn btn-xs btn-secondary add-row',
+    onclick: () => {
+      // Seeded as a state check against the first bound instance — by far
+      // the most common condition, and the one you'd otherwise assemble
+      // from four dropdowns.
+      const binding = state.boundary[0];
+      const entity = binding ? ctx['entity-definitions'][binding.entity] : null;
+      const states = entity ? (entity.states || []) : [];
+      state.conditions.push({
+        leftHandSide: { alias: (binding || {}).alias || '', property: STATE_PROPERTY },
+        predicate: 'equals',
+        rightHandSide: { enumMember: states[1] || states[0] || '' },
+      });
+      rerender();
+    },
+  }, '+ Add condition'));
+
+  return h('div', { class: 'binding-list' }, cards);
+}
+
+function publishesEditor({ state, eventNames, operandArgs, ctx, rerender }) {
+  const rows = state.publishes.map((emission, idx) => {
+    const event = ctx['event-definitions'][emission.name];
+    const targetProperties = event ? (event.properties || []) : [];
+    emission.parameters = reconcileParameters(targetProperties, emission.parameters);
+
+    const issues = coverageIssues(ctx, { boundary: state.boundary, publishes: [emission] });
+
+    return h('div', { class: 'binding-card' },
+      h('div', { class: 'binding-header' },
+        h('div', { class: 'binding-title' }, emission.name || '(unknown)'),
+        h('button', {
+          class: 'btn btn-xs btn-danger',
+          onclick: () => { state.publishes.splice(idx, 1); rerender(); },
+        }, '×')
+      ),
+      event
+        ? renderParameterBindings(targetProperties, emission.parameters, operandArgs)
+        : h('div', { class: 'binding-warning' }, `Referenced event "${emission.name}" no longer exists.`),
+      ...issues.map((issue) => h('div', { class: 'coverage-issue' },
+        h('span', {},
+          `Writes tag ${issue.entity}:${operandText(issue.operand)} — not consulted by the boundary.`),
+        h('button', {
+          class: 'btn btn-xs',
+          onclick: () => {
+            const taken = state.boundary.map((b) => b.alias);
+            state.boundary.push({
+              alias: uniqueAlias(defaultAlias(issue.entity), taken),
+              entity: issue.entity,
+              id: issue.operand === undefined ? null : deepClone(issue.operand),
+            });
+            rerender();
+          },
+        }, 'Add to boundary')
+      ))
+    );
+  });
+
+  if (rows.length === 0) {
+    rows.push(h('div', { class: 'empty-rows' }, 'No events yet — pick at least one below.'));
+  }
+  if (eventNames.length === 0) {
+    rows.push(h('div', { class: 'binding-warning' }, 'No event definitions exist in this context yet.'));
+  } else {
+    rows.push(renderAddPicker({
+      available: eventNames,
+      placeholder: '+ Add event emission',
+      onpick: (name) => {
+        const event = ctx['event-definitions'][name];
+        state.publishes.push({ name, parameters: reconcileParameters((event && event.properties) || [], {}) });
+        rerender();
+      },
+    }));
+  }
+  return h('div', { class: 'binding-list' }, rows);
+}
+
+// Reconciles a binding map with the target's shape on every render, so
+// properties added to the target appear as fresh slots and removed ones
+// are dropped silently.
+function reconcileParameters(targetProperties, parameters) {
+  const next = (parameters && typeof parameters === 'object') ? parameters : {};
+  const targetNames = new Set(targetProperties.map((p) => p.name));
+  for (const key of Object.keys(next)) {
+    if (!targetNames.has(key)) delete next[key];
+  }
+  for (const property of targetProperties) {
+    if (!(property.name in next)) next[property.name] = { parameterName: '' };
+  }
+  return next;
+}
+
+function renderParameterBindings(targetProperties, parameters, operandArgs) {
   if (targetProperties.length === 0) {
     return h('div', { class: 'binding-empty' }, '(no parameters)');
   }
-
   return h('div', { class: 'param-bindings' },
-    targetProperties.map((prop) => {
-      const typeText = `${prop.propertyType}${prop.isList ? '[]' : ''}${prop.isOptional ? '?' : ''}`;
+    targetProperties.map((property) => {
+      const typeText = `${property.propertyType}${property.isList ? '[]' : ''}${property.isOptional ? '?' : ''}`;
       return h('div', { class: 'param-binding-row' },
-        h('div', { class: 'param-name' },
-          prop.name,
-          ': ',
-          h('span', { class: 'param-type' }, typeText)
-        ),
-        operandEditor2({
-          get: () => parameters[prop.name],
-          set: (v) => { parameters[prop.name] = v; },
-          ownProperties,
-          ctx,
-          rerender,
+        h('div', { class: 'param-name' }, property.name, ': ', h('span', { class: 'param-type' }, typeText)),
+        commandOperandEditor({
+          get: () => parameters[property.name],
+          set: (v) => { parameters[property.name] = v; },
+          ...operandArgs,
         })
       );
     })
-  );
-}
-
-function renderConstraintBinding(c, idx, state, ctx, rerender) {
-  const target = ctx['constraint-definitions'][c.name];
-  const targetProperties = target ? (target.properties || []) : [];
-  return h('div', { class: 'binding-card' },
-    h('div', { class: 'binding-header' },
-      h('div', { class: 'binding-title' },
-        c.negate ? 'not(' : '', c.name || '(unknown)', c.negate ? ')' : ''
-      ),
-      h('div', { class: 'binding-actions' },
-        checkboxInput({
-          value: !!c.negate,
-          onchange: (v) => { c.negate = v; rerender(); },
-          label: 'negate',
-        }),
-        h('button', {
-          class: 'btn btn-xs btn-danger',
-          onclick: () => { state.constraints.splice(idx, 1); rerender(); },
-        }, '×')
-      )
-    ),
-    target
-      ? renderParameterBindings(targetProperties, c.parameters || (c.parameters = {}), state.properties, ctx, rerender)
-      : h('div', { class: 'binding-warning' }, `Referenced constraint "${c.name}" no longer exists.`)
-  );
-}
-
-function renderEventBinding(e, idx, state, ctx, rerender) {
-  const target = ctx['event-definitions'][e.name];
-  const targetProperties = target ? (target.properties || []) : [];
-  return h('div', { class: 'binding-card' },
-    h('div', { class: 'binding-header' },
-      h('div', { class: 'binding-title' }, e.name || '(unknown)'),
-      h('button', {
-        class: 'btn btn-xs btn-danger',
-        onclick: () => { state.publishes.splice(idx, 1); rerender(); },
-      }, '×')
-    ),
-    target
-      ? renderParameterBindings(targetProperties, e.parameters || (e.parameters = {}), state.properties, ctx, rerender)
-      : h('div', { class: 'binding-warning' }, `Referenced event "${e.name}" no longer exists.`)
   );
 }
 
@@ -1640,81 +2660,56 @@ function renderAddPicker({ available, placeholder, onpick }) {
   return h('div', { class: 'add-binding' }, sel);
 }
 
-function commandForm({ state, ctx, rerender }) {
-  const customTypes = Object.keys(ctx['custom-type-definitions']).sort();
-  const allConstraints = Object.keys(ctx['constraint-definitions']).sort();
-  const allEvents = Object.keys(ctx['event-definitions']).sort();
+// ============================================================
+// DCB rendering.
+// ============================================================
 
-  state.constraints = state.constraints || [];
-  state.publishes = state.publishes || [];
+function dcbPanel(ctx, body) {
+  const dcb = deriveDcb(ctx, body);
+  const lines = [];
 
-  // Build constraints section. The same constraint can be reused (e.g. once
-  // plain, once negated) — so the picker shows every constraint, not just
-  // unused ones.
-  const constraintRows = [];
-  if (state.constraints.length === 0) {
-    constraintRows.push(h('div', { class: 'empty-rows' }, 'No constraints — pick one below.'));
+  if (dcb.items.length === 0) {
+    lines.push(h('div', { class: 'q-none' }, 'No boundary — the append is unconditional.'));
   } else {
-    state.constraints.forEach((c, idx) => {
-      constraintRows.push(renderConstraintBinding(c, idx, state, ctx, rerender));
+    lines.push(h('div', {}, h('span', { class: 'q-key' }, 'query:')));
+    dcb.items.forEach((item, idx) => {
+      const lead = ['  ', idx === 0 ? '  ' : 'or '];
+      // A sequence is global: its query is scoped by event type alone,
+      // and it is the only item here that carries no tag.
+      if (item.sequence) {
+        lines.push(h('div', {},
+          ...lead,
+          h('span', { class: 'q-key' }, 'types '),
+          h('span', { class: 'q-type' }, item.types.join(', ') || '(none)'),
+          h('span', { class: 'q-none' }, `  (no tag — sequence ${item.sequence} is global)`)
+        ));
+        return;
+      }
+      lines.push(h('div', {},
+        ...lead,
+        h('span', { class: 'q-key' }, 'tag '),
+        h('span', { class: 'q-tag' }, item.tag),
+        // No property read means no type restriction, which matches
+        // *every* event carrying the tag — a stronger guard, not a
+        // weaker one.
+        item.types.length > 0
+          ? h('span', {}, h('span', { class: 'q-key' }, ' and types '),
+              h('span', { class: 'q-type' }, item.types.join(', ')))
+          : h('span', {}, h('span', { class: 'q-key' }, ' and '),
+              h('span', { class: 'q-type' }, 'any type'),
+              h('span', { class: 'q-none' }, ' (no property read)'))
+      ));
     });
   }
-  if (allConstraints.length > 0) {
-    constraintRows.push(renderAddPicker({
-      available: allConstraints,
-      placeholder: '+ Add constraint reference',
-      onpick: (name) => {
-        const target = ctx['constraint-definitions'][name];
-        const parameters = {};
-        for (const prop of (target && target.properties) || []) {
-          parameters[prop.name] = { parameterName: '' };
-        }
-        state.constraints.push({ name, negate: false, parameters });
-        rerender();
-      },
-    }));
-  } else {
-    constraintRows.push(h('div', { class: 'binding-warning' }, 'No constraint definitions exist in this context yet.'));
-  }
 
-  // Publishes section.
-  const publishRows = [];
-  if (state.publishes.length === 0) {
-    publishRows.push(h('div', { class: 'empty-rows' }, 'No events yet — pick at least one below.'));
-  } else {
-    state.publishes.forEach((e, idx) => {
-      publishRows.push(renderEventBinding(e, idx, state, ctx, rerender));
-    });
-  }
-  if (allEvents.length > 0) {
-    publishRows.push(renderAddPicker({
-      available: allEvents,
-      placeholder: '+ Add event emission',
-      onpick: (name) => {
-        const target = ctx['event-definitions'][name];
-        const parameters = {};
-        for (const prop of (target && target.properties) || []) {
-          parameters[prop.name] = { parameterName: '' };
-        }
-        state.publishes.push({ name, parameters });
-        rerender();
-      },
-    }));
-  } else {
-    publishRows.push(h('div', { class: 'binding-warning' }, 'No event definitions exist in this context yet.'));
-  }
+  lines.push(h('div', {},
+    h('span', { class: 'q-key' }, 'appends tags: '),
+    dcb.writes.length > 0
+      ? h('span', { class: 'q-write' }, dcb.writes.join(', '))
+      : h('span', { class: 'q-none' }, 'none')
+  ));
 
-  return [
-    labeled('Properties', '— the command payload',
-      propertyListEditor({ properties: state.properties, customTypes, rerender })
-    ),
-    labeled('Constraints', '— the DCB consult surface; each reference can bind parameters and be negated',
-      h('div', { class: 'binding-list' }, constraintRows)
-    ),
-    labeled('Publishes', '— events emitted on success; bind each event\'s properties to operands',
-      h('div', { class: 'binding-list' }, publishRows)
-    ),
-  ];
+  return h('div', { class: 'dcb-panel' }, lines);
 }
 
 // ============================================================
@@ -1722,123 +2717,148 @@ function commandForm({ state, ctx, rerender }) {
 // ============================================================
 
 function initialBodyForKind(kind) {
-  if (kind === 'custom-type-definition') return { schema: { type: 'string' }, isTag: false };
+  if (kind === 'custom-type-definition') return { schema: { type: 'string' } };
   if (kind === 'event-definition') return { properties: [] };
-  if (kind === 'projection-definition') return {
-    partition: '', projectionType: '', isOptional: false, isList: false,
-    initialState: '', handlers: {},
-  };
-  if (kind === 'constraint-definition') return {
-    properties: [],
-    condition: { leftHandSide: { parameterName: '' }, predicate: 'isEmpty' },
-  };
-  if (kind === 'command-definition') return { properties: [], constraints: [], publishes: [] };
+  if (kind === 'entity-definition') {
+    return {
+      identifierSchema: { type: 'string' },
+      states: [...DEFAULT_STATES],
+      properties: [{
+        name: STATE_PROPERTY,
+        propertyType: '',
+        isOptional: false,
+        isList: false,
+        initialValue: { enumMember: DEFAULT_STATES[0] },
+        handlers: [],
+      }],
+    };
+  }
+  if (kind === 'sequence-definition') {
+    return { valueType: '', initialValue: '', advancedBy: [] };
+  }
+  if (kind === 'command-definition') {
+    return { properties: [], boundary: [], conditions: [], publishes: [] };
+  }
   return {};
 }
 
 function bodyToState(kind, body) {
   if (kind === 'custom-type-definition') {
-    return {
-      schemaText: JSON.stringify(body.schema == null ? { type: 'string' } : body.schema, null, 2),
-      isTag: !!body.isTag,
-    };
+    return { schemaText: JSON.stringify(body.schema == null ? { type: 'string' } : body.schema, null, 2) };
   }
   if (kind === 'event-definition') {
     return { properties: deepClone(body.properties || []) };
   }
-  if (kind === 'projection-definition') {
+  if (kind === 'entity-definition') {
     return {
-      partition: body.partition || '',
-      projectionType: body.projectionType || '',
-      isOptional: !!body.isOptional,
-      isList: !!body.isList,
-      initialState: body.initialState || '',
-      handlers: deepClone(body.handlers || {}),
+      identifierSchemaText: JSON.stringify(
+        body.identifierSchema == null ? { type: 'string' } : body.identifierSchema, null, 2),
+      states: deepClone(body.states || DEFAULT_STATES),
+      properties: deepClone(body.properties || []),
     };
   }
-  if (kind === 'constraint-definition') {
+  if (kind === 'sequence-definition') {
     return {
-      properties: deepClone(body.properties || []),
-      condition: deepClone(body.condition || { leftHandSide: { parameterName: '' }, predicate: 'isEmpty' }),
+      valueType: body.valueType || '',
+      initialValue: body.initialValue === undefined ? '' : body.initialValue,
+      advancedBy: deepClone(body.advancedBy || []),
     };
   }
   if (kind === 'command-definition') {
     return {
       properties: deepClone(body.properties || []),
-      constraints: deepClone(body.constraints || []),
+      boundary: deepClone(body.boundary || []),
+      conditions: deepClone(body.conditions || []),
       publishes: deepClone(body.publishes || []),
     };
   }
   return {};
 }
 
-function stateToBody(kind, state) {
+// A best-effort body used only to preview the derived DCB while
+// editing — it never throws.
+function stateToBodyPreview(state) {
+  return {
+    properties: state.properties || [],
+    boundary: state.boundary || [],
+    conditions: state.conditions || [],
+    publishes: state.publishes || [],
+  };
+}
+
+function stateToBody(kind, state, name) {
   if (kind === 'custom-type-definition') {
-    let schema;
-    try { schema = JSON.parse((state.schemaText || '').trim() || '{}'); }
-    catch (e) { throw new DomainError('Schema is not valid JSON: ' + e.message); }
-    if (typeof schema !== 'object' || schema === null) throw new DomainError('Schema must be a JSON object.');
-    return { schema, isTag: !!state.isTag };
+    return { schema: parseJsonObject(state.schemaText, 'Schema') };
   }
   if (kind === 'event-definition') {
     return { properties: cleanProperties(state.properties) };
   }
-  if (kind === 'projection-definition') {
-    if (!state.partition) throw new DomainError('Projection must have a partition.');
-    if (!state.projectionType) throw new DomainError('Projection must have a projectionType.');
-    if (state.initialState == null || state.initialState === '') {
-      throw new DomainError('Projection must have an initialState.');
-    }
+  if (kind === 'entity-definition') {
+    const states = (state.states || []).map((s) => (s || '').trim()).filter(Boolean);
+    if (states.length < 2) throw new DomainError('An entity must declare at least two states.');
+    const properties = cleanEntityProperties(state.properties, name, states);
     return {
-      partition: state.partition,
-      projectionType: state.projectionType,
-      isOptional: !!state.isOptional,
-      isList: !!state.isList,
-      initialState: state.initialState,
-      handlers: cleanHandlers(state.handlers),
+      identifierSchema: parseJsonObject(state.identifierSchemaText, 'Identifier schema'),
+      states,
+      properties,
     };
   }
-  if (kind === 'constraint-definition') {
-    const cond = state.condition;
-    if (!cond || !cond.predicate || !cond.leftHandSide) {
-      throw new DomainError('Constraint must have a condition with a left operand and a predicate.');
+  if (kind === 'sequence-definition') {
+    if (!state.valueType) throw new DomainError('A sequence must say what type it issues.');
+    const advancedBy = [];
+    for (const advance of state.advancedBy || []) {
+      if (!advance.event && !advance.property) continue;
+      if (!advance.event) throw new DomainError('An "advanced by" entry has no event.');
+      if (!advance.property) {
+        throw new DomainError(`"Advanced by ${advance.event}" does not say which property carries the value.`);
+      }
+      advancedBy.push({ event: advance.event, property: advance.property });
     }
-    return { properties: cleanProperties(state.properties), condition: cond };
+    return { valueType: state.valueType, initialValue: state.initialValue, advancedBy };
   }
   if (kind === 'command-definition') {
-    if (!state.publishes || state.publishes.length === 0) {
-      throw new DomainError('Command must publish at least one event.');
-    }
-    const cleanedProps = cleanProperties(state.properties);
-    const constraints = (state.constraints || []).map((c, i) => {
-      if (!c || !c.name) throw new DomainError(`Constraint reference #${i + 1} is missing a name.`);
-      const out = { name: c.name };
-      if (c.negate) out.negate = true;
-      if (c.parameters && Object.keys(c.parameters).length > 0) out.parameters = c.parameters;
+    const boundary = (state.boundary || []).map((binding, i) => {
+      if (!binding.alias) throw new DomainError(`Boundary binding #${i + 1} has no alias.`);
+      if (!binding.entity) throw new DomainError(`Boundary binding "${binding.alias}" has no entity.`);
+      return { alias: binding.alias.trim(), entity: binding.entity, id: binding.id };
+    });
+    const conditions = (state.conditions || []).map((condition, i) => {
+      if (!condition.predicate) throw new DomainError(`Condition #${i + 1} has no predicate.`);
+      const out = { leftHandSide: condition.leftHandSide, predicate: condition.predicate };
+      if (condition.rightHandSide !== undefined) out.rightHandSide = condition.rightHandSide;
+      if (condition.negate) out.negate = true;
       return out;
     });
-    const publishes = (state.publishes || []).map((e, i) => {
-      if (!e || !e.name) throw new DomainError(`Event emission #${i + 1} is missing a name.`);
-      const out = { name: e.name };
-      if (e.parameters && Object.keys(e.parameters).length > 0) out.parameters = e.parameters;
+    const publishes = (state.publishes || []).map((emission, i) => {
+      if (!emission || !emission.name) throw new DomainError(`Event emission #${i + 1} is missing a name.`);
+      const out = { name: emission.name };
+      if (emission.parameters && Object.keys(emission.parameters).length > 0) {
+        out.parameters = emission.parameters;
+      }
       return out;
     });
-    return { properties: cleanedProps, constraints, publishes };
+    return { properties: cleanProperties(state.properties), boundary, conditions, publishes };
   }
   return {};
 }
 
-function cleanProperties(props) {
+function parseJsonObject(text, label) {
+  let parsed;
+  try { parsed = JSON.parse((text || '').trim() || '{}'); }
+  catch (e) { throw new DomainError(`${label} is not valid JSON: ${e.message}`); }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new DomainError(`${label} must be a JSON object.`);
+  }
+  return parsed;
+}
+
+function cleanProperties(properties) {
   const cleaned = [];
-  for (const p of (props || [])) {
+  for (const p of properties || []) {
     if (!p.name && !p.propertyType) continue;
-    if (!p.name) throw new DomainError('Property is missing a name.');
-    if (!CAMEL_RE.test(p.name)) {
-      throw new DomainError(`Property name "${p.name}" must be camelCase.`);
-    }
-    if (!p.propertyType) {
-      throw new DomainError(`Property "${p.name}" is missing a type.`);
-    }
+    if (!p.name) throw new DomainError('A property is missing a name.');
+    if (!CAMEL_RE.test(p.name)) throw new DomainError(`Property name "${p.name}" must be camelCase.`);
+    if (!p.propertyType) throw new DomainError(`Property "${p.name}" is missing a type.`);
     cleaned.push({
       name: p.name,
       propertyType: p.propertyType,
@@ -1849,30 +2869,50 @@ function cleanProperties(props) {
   return cleaned;
 }
 
-function cleanHandlers(handlers) {
-  const cleaned = {};
-  for (const [k, v] of Object.entries(handlers || {})) {
-    if (k.startsWith('__new_')) {
-      // skip placeholder slot the user didn't fill in
-      continue;
+function cleanEntityProperties(properties, entityName, states) {
+  const cleaned = [];
+  for (const p of properties || []) {
+    const reserved = p.name === STATE_PROPERTY;
+    if (!reserved && !p.name && !p.propertyType) continue;
+    if (!p.name) throw new DomainError('A property is missing a name.');
+    if (!CAMEL_RE.test(p.name)) throw new DomainError(`Property name "${p.name}" must be camelCase.`);
+
+    const propertyType = reserved ? stateTypeOf(entityName) : p.propertyType;
+    if (!propertyType) throw new DomainError(`Property "${p.name}" is missing a type.`);
+
+    const handlers = [];
+    for (const handler of p.handlers || []) {
+      if (!handler.event && !handler.operation) continue;
+      if (!handler.event) throw new DomainError(`A handler on "${p.name}" has no event.`);
+      if (!handler.operation) throw new DomainError(`A handler on "${p.name}" has no operation.`);
+      if (!OPERATIONS.includes(handler.operation)) {
+        throw new DomainError(`Unknown operation "${handler.operation}" on "${p.name}".`);
+      }
+      handlers.push({ event: handler.event, operation: handler.operation, value: handler.value });
     }
-    if (!k) continue;
-    if (!PASCAL_RE.test(k)) {
-      throw new DomainError(`Handler event name "${k}" must be PascalCase.`);
-    }
-    cleaned[k] = v || '';
+
+    cleaned.push({
+      name: p.name,
+      propertyType,
+      isOptional: reserved ? false : !!p.isOptional,
+      isList: reserved ? false : !!p.isList,
+      initialValue: reserved ? { enumMember: states[0] } : normaliseInitialValue(p),
+      handlers,
+    });
   }
   return cleaned;
 }
 
-function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
+function normaliseInitialValue(property) {
+  if (property.isList) return [];
+  return property.initialValue === undefined ? null : property.initialValue;
+}
 
 function definitionEditor({ mode, kind, ctxId, existingName, existingBody }) {
-  // mode: 'add' | 'edit' | 'rename'
   const ctx = projectState()[ctxId];
   if (!ctx) { showToast('Context not found.'); return; }
 
-  let nameValue = mode === 'rename' ? existingName : (mode === 'edit' ? existingName : '');
+  let nameValue = mode === 'add' ? '' : existingName;
   const state = bodyToState(kind, existingBody || initialBodyForKind(kind));
 
   const titles = { add: `Add ${humanize(kind)}`, edit: `Edit ${humanize(kind)}`, rename: `Rename ${humanize(kind)}` };
@@ -1891,27 +2931,38 @@ function definitionEditor({ mode, kind, ctxId, existingName, existingBody }) {
         textInput({
           value: nameValue,
           placeholder: example,
-          oninput: (v) => { nameValue = v; },
+          oninput: (v) => {
+            nameValue = v;
+            // Never rerender here — it would destroy the focused input.
+            if (kind === 'entity-definition') refreshDerivedTypeLabels(v);
+          },
         })
       ));
     }
 
     if (mode !== 'rename') {
-      // Build the per-kind form.
       const fresh = projectState()[ctxId] || ctx;
-      const formRows = renderFormForKind(kind, { state, ctx: fresh, rerender });
-      rows.push(...formRows);
+      rows.push(...renderFormForKind(kind, {
+        state,
+        ctx: fresh,
+        getName: () => (mode === 'edit' ? existingName : nameValue),
+        rerender,
+      }));
     }
 
     function submit() {
       try {
+        // The payload name field does not rerender as you type, so a
+        // property named after its type was chosen would otherwise be
+        // saved without its binding.
+        if (kind === 'command-definition' && mode !== 'rename') {
+          syncBoundaryToProperties(state, projectState()[ctxId] || ctx);
+        }
         if (mode === 'add') {
-          const body = stateToBody(kind, state);
-          runCommand(() => addDefinition(kind, ctxId, nameValue, body));
+          runCommand(() => addDefinition(kind, ctxId, nameValue, stateToBody(kind, state, (nameValue || '').trim())));
         } else if (mode === 'edit') {
-          const body = stateToBody(kind, state);
-          runCommand(() => updateDefinition(kind, ctxId, existingName, body));
-        } else if (mode === 'rename') {
+          runCommand(() => updateDefinition(kind, ctxId, existingName, stateToBody(kind, state, existingName)));
+        } else {
           runCommand(() => renameDefinition(kind, ctxId, existingName, nameValue));
         }
         closeModal();
@@ -1933,8 +2984,8 @@ function renderFormForKind(kind, args) {
   switch (kind) {
     case 'custom-type-definition': return customTypeForm(args);
     case 'event-definition': return eventForm(args);
-    case 'projection-definition': return projectionForm(args);
-    case 'constraint-definition': return constraintForm(args);
+    case 'entity-definition': return entityForm(args);
+    case 'sequence-definition': return sequenceForm(args);
     case 'command-definition': return commandForm(args);
   }
   return [];
@@ -1942,10 +2993,10 @@ function renderFormForKind(kind, args) {
 
 function nameExample(kind) {
   return {
-    'custom-type-definition': 'CourseId',
+    'custom-type-definition': 'EmailAddress',
     'event-definition': 'CourseDefined',
-    'projection-definition': 'CourseCapacity',
-    'constraint-definition': 'CourseExists',
+    'entity-definition': 'Course',
+    'sequence-definition': 'CourseNumbering',
     'command-definition': 'SubscribeStudentToCourse',
   }[kind];
 }
@@ -1965,16 +3016,14 @@ function renderBreadcrumb() {
   const nav = document.getElementById('breadcrumb');
   nav.innerHTML = '';
   if (ui.view === 'list') { nav.textContent = 'Contexts'; return; }
-  const state = projectState();
-  const ctx = state[ui.selectedContextId];
+  const ctx = projectState()[ui.selectedContextId];
   nav.appendChild(h('a', { onclick: navigateToList }, 'Contexts'));
   nav.appendChild(document.createTextNode(' / '));
   nav.appendChild(document.createTextNode(ctx ? ctx.name : '(deleted)'));
 }
 
 function renderListView() {
-  const state = projectState();
-  const contexts = Object.values(state).sort((a, b) => a.name.localeCompare(b.name));
+  const contexts = Object.values(projectState()).sort((a, b) => a.name.localeCompare(b.name));
 
   const newButton = h('button', {
     class: 'btn',
@@ -1982,28 +3031,29 @@ function renderListView() {
       title: 'New DCB Context',
       label: 'Context name',
       confirmLabel: 'Create',
-      onConfirm: (val) => {
-        const id = createDcbContext(val);
-        render();
-        navigateToContext(id);
-      },
+      onConfirm: (val) => { const id = createDcbContext(val); render(); navigateToContext(id); },
     }),
   }, '+ New Context');
+
+  const exampleButton = h('button', {
+    class: 'btn btn-ghost',
+    onclick: () => runCommand(() => { const id = seedExample(); navigateToContext(id); }),
+  }, 'Load example');
 
   if (contexts.length === 0) {
     return h('div', {},
       h('div', { class: 'page-header' }, h('h2', {}, 'DCB Contexts'), renderLegend()),
       h('div', { class: 'empty-state' },
         h('h2', {}, 'No contexts yet'),
-        h('p', {}, 'Create your first DCB Context to start modeling.'),
-        newButton)
+        h('p', {}, 'Create your first DCB Context — or load the course-subscription example to see entities in action.'),
+        h('div', { class: 'actions' }, newButton, exampleButton))
     );
   }
 
   return h('div', {},
     h('div', { class: 'page-header' },
       h('h2', {}, 'DCB Contexts'),
-      h('div', { style: 'display:flex; gap:16px; align-items:center;' }, renderLegend(), newButton)
+      h('div', { style: 'display:flex; gap:16px; align-items:center;' }, renderLegend(), exampleButton, newButton)
     ),
     h('div', { class: 'context-list' }, contexts.map(renderContextCard))
   );
@@ -2011,10 +3061,9 @@ function renderListView() {
 
 function renderLegend() {
   return h('div', { class: 'legend' },
-    h('span', {}, h('span', { class: 'legend-swatch', style: 'background:var(--color-command)' }), 'Commands'),
+    h('span', {}, h('span', { class: 'legend-swatch', style: 'background:var(--color-entity)' }), 'Entities'),
     h('span', {}, h('span', { class: 'legend-swatch', style: 'background:var(--color-event)' }), 'Events'),
-    h('span', {}, h('span', { class: 'legend-swatch', style: 'background:var(--color-projection)' }), 'Projections'),
-    h('span', {}, h('span', { class: 'legend-swatch', style: 'background:var(--color-constraint)' }), 'Constraints'),
+    h('span', {}, h('span', { class: 'legend-swatch', style: 'background:var(--color-command)' }), 'Commands'),
     h('span', {}, h('span', { class: 'legend-swatch', style: 'background:var(--color-custom-type)' }), 'Custom Types')
   );
 }
@@ -2023,11 +3072,10 @@ function renderContextCard(ctx) {
   return h('div', { class: 'context-card' },
     h('h3', { onclick: () => navigateToContext(ctx.id) }, ctx.name),
     h('div', { class: 'counts' },
-      h('span', { class: 'count-pill pill-custom-type' }, String(Object.keys(ctx['custom-type-definitions']).length), ' types'),
+      h('span', { class: 'count-pill pill-entity' }, String(Object.keys(ctx['entity-definitions']).length), ' entities'),
       h('span', { class: 'count-pill pill-event' }, String(Object.keys(ctx['event-definitions']).length), ' events'),
-      h('span', { class: 'count-pill pill-projection' }, String(Object.keys(ctx['projection-definitions']).length), ' projections'),
-      h('span', { class: 'count-pill pill-constraint' }, String(Object.keys(ctx['constraint-definitions']).length), ' constraints'),
-      h('span', { class: 'count-pill pill-command' }, String(Object.keys(ctx['command-definitions']).length), ' commands')
+      h('span', { class: 'count-pill pill-command' }, String(Object.keys(ctx['command-definitions']).length), ' commands'),
+      h('span', { class: 'count-pill pill-custom-type' }, String(Object.keys(ctx['custom-type-definitions']).length), ' types')
     ),
     h('div', { class: 'actions' },
       h('button', { class: 'btn btn-sm', onclick: () => navigateToContext(ctx.id) }, 'Open'),
@@ -2056,8 +3104,7 @@ function renderContextCard(ctx) {
 }
 
 function renderDetailView() {
-  const state = projectState();
-  const ctx = state[ui.selectedContextId];
+  const ctx = projectState()[ui.selectedContextId];
   if (!ctx) {
     return h('div', { class: 'empty-state' },
       h('h2', {}, 'Context not found'),
@@ -2090,9 +3137,7 @@ function renderDetailView() {
           }),
         }, 'Delete Context'))
     ),
-    h('div', { class: 'definition-grid' },
-      ...DEF_KINDS.map((k) => renderDefinitionSection(ctx, k))
-    )
+    h('div', { class: 'definition-sections' }, DEF_KINDS.map((k) => renderDefinitionSection(ctx, k)))
   );
 }
 
@@ -2100,82 +3145,369 @@ function renderDefinitionSection(ctx, kind) {
   const coll = ctx[DEF_COLLECTIONS[kind]];
   const names = Object.keys(coll).sort();
 
-  const addBtn = h('button', {
-    class: 'btn btn-sm add-btn',
-    onclick: () => definitionEditor({ mode: 'add', kind, ctxId: ctx.id }),
-  }, '+ Add');
-
   const body = h('div', { class: 'body' });
   if (names.length === 0) {
-    body.appendChild(h('div', { class: 'empty' }, `No ${humanize(kind)}s yet.`));
+    body.appendChild(h('div', { class: 'empty' }, `No ${KIND_SECTION_TITLE[kind].toLowerCase()} yet.`));
   } else {
     for (const name of names) body.appendChild(renderDefinitionCard(ctx, kind, name, coll[name]));
   }
 
   return h('section', { class: `definition-section ${KIND_COLOR_CLASS[kind]}` },
     h('div', { class: 'section-header' },
-      h('h3', {}, humanize(kind) + 's'),
-      addBtn
+      h('h3', {}, KIND_SECTION_TITLE[kind]),
+      h('button', {
+        class: 'btn btn-sm add-btn',
+        onclick: () => definitionEditor({ mode: 'add', kind, ctxId: ctx.id }),
+      }, '+ Add')
     ),
     body
   );
 }
 
 function renderDefinitionCard(ctx, kind, name, body) {
-  // Summary line — tiny human hint of what the body holds.
-  const summary = summariseBody(kind, body);
-  const refs = computeReferences(kind, body);
+  const expandable = kind === 'entity-definition' || kind === 'command-definition';
+  const key = `${kind}:${name}`;
+  const open = !!ui.expanded[key];
+  const refs = computeReferences(ctx, kind, body);
 
   const refChips = [];
   for (const targetKind of DEF_KINDS) {
     for (const n of refs[targetKind]) {
+      if (targetKind === kind && n === name) continue;
       refChips.push(h('span', { class: `ref-chip ${targetKind}` }, n));
     }
   }
 
   return h('div', { class: 'definition-card' },
-    h('div', { class: 'name' }, name),
-    summary ? h('div', { class: 'summary' }, summary) : null,
+    h('div', { class: 'name-row' },
+      h('div', {},
+        h('div', { class: 'name' },
+          expandable
+            ? h('button', { class: 'disclosure', onclick: () => toggleExpanded(key) }, open ? '▼' : '▶')
+            : null,
+          name
+        ),
+        h('div', { class: 'summary' }, summariseBody(ctx, kind, body) || '')
+      )
+    ),
     refChips.length > 0 ? h('div', { class: 'refs' }, refChips) : null,
+    expandable && open ? renderExpanded(ctx, kind, name, body) : null,
     h('div', { class: 'actions' },
-      h('button', { class: 'btn btn-sm', onclick: () => definitionEditor({ mode: 'edit', kind, ctxId: ctx.id, existingName: name, existingBody: body }) }, 'Edit'),
-      h('button', { class: 'btn btn-sm btn-ghost', onclick: () => definitionEditor({ mode: 'rename', kind, ctxId: ctx.id, existingName: name, existingBody: body }) }, 'Rename'),
-      h('button', { class: 'btn btn-sm btn-danger', onclick: () => confirmModal({
-        title: `Remove ${humanize(kind)}`,
-        body: `Remove "${name}"?`,
-        confirmLabel: 'Remove',
-        destructive: true,
-        onConfirm: () => runCommand(() => removeDefinition(kind, ctx.id, name)),
-      }) }, 'Remove')
+      h('button', {
+        class: 'btn btn-sm',
+        onclick: () => definitionEditor({ mode: 'edit', kind, ctxId: ctx.id, existingName: name, existingBody: body }),
+      }, 'Edit'),
+      h('button', {
+        class: 'btn btn-sm btn-ghost',
+        onclick: () => definitionEditor({ mode: 'rename', kind, ctxId: ctx.id, existingName: name, existingBody: body }),
+      }, 'Rename'),
+      h('button', {
+        class: 'btn btn-sm btn-danger',
+        onclick: () => confirmModal({
+          title: `Remove ${humanize(kind)}`,
+          body: `Remove "${name}"?`,
+          confirmLabel: 'Remove',
+          destructive: true,
+          onConfirm: () => runCommand(() => removeDefinition(kind, ctx.id, name)),
+        }),
+      }, 'Remove')
     )
   );
 }
 
-function summariseBody(kind, body) {
+function renderExpanded(ctx, kind, name, body) {
+  if (kind === 'entity-definition') return renderEntityDetail(ctx, name, body);
+  return renderCommandDetail(ctx, body);
+}
+
+function renderEntityDetail(ctx, name, body) {
+  const states = body.states || [];
+  const idSchema = JSON.stringify(body.identifierSchema || { type: 'string' });
+
+  const propertyRows = (body.properties || []).map((property) => {
+    const reserved = property.name === STATE_PROPERTY;
+    const signature = `${property.name}: ${property.propertyType}` +
+      `${property.isList ? '[]' : ''}${property.isOptional ? '?' : ''}` +
+      ` = ${operandText(property.initialValue)}`;
+    const handlers = (property.handlers || []).map(handlerText);
+    return h('div', { class: 'prop-row' },
+      h('div', { class: 'prop-sig' }, signature,
+        reserved ? h('span', { class: 'reserved' }, 'reserved') : null),
+      handlers.length > 0
+        ? h('div', { class: 'prop-handlers' }, handlers.join('   ·   '))
+        : h('div', { class: 'prop-handlers' }, 'never changes')
+    );
+  });
+
+  return h('div', { class: 'expanded' },
+    h('div', { class: 'block' },
+      h('div', { class: 'block-title' }, 'Derived types'),
+      h('div', { class: 'kv' }, `${idTypeOf(name)} — ${idSchema}`),
+      h('div', { class: 'kv' }, `${stateTypeOf(name)} — enum`)
+    ),
+    h('div', { class: 'block' },
+      h('div', { class: 'block-title' }, 'States'),
+      h('div', {}, states.map((member, idx) =>
+        h('span', { class: 'state-chip' + (idx === 0 ? ' initial' : '') }, member)))
+    ),
+    h('div', { class: 'block' },
+      h('div', { class: 'block-title' }, `Properties (${(body.properties || []).length} projections)`),
+      h('div', {}, propertyRows)
+    )
+  );
+}
+
+function renderCommandDetail(ctx, body) {
+  const boundaryLines = (body.boundary || []).map((binding) =>
+    h('div', { class: 'cond-line' }, `${binding.alias}: ${binding.entity}(id = ${operandText(binding.id)})`));
+  const conditionLines = (body.conditions || []).map((condition) =>
+    h('div', { class: 'cond-line' }, conditionText(condition)));
+  const emissionLines = (body.publishes || []).map((emission) => {
+    const args = Object.entries(emission.parameters || {})
+      .map(([k, v]) => `${k}: ${operandText(v)}`).join(', ');
+    return h('div', { class: 'cond-line' }, `${emission.name}(${args})`);
+  });
+
+  return h('div', { class: 'expanded' },
+    h('div', { class: 'block' },
+      h('div', { class: 'block-title' }, 'Boundary'),
+      boundaryLines.length > 0 ? h('div', {}, boundaryLines) : h('div', { class: 'prop-handlers' }, 'nothing bound')
+    ),
+    h('div', { class: 'block' },
+      h('div', { class: 'block-title' }, 'Conditions'),
+      conditionLines.length > 0
+        ? h('div', {}, conditionLines)
+        : h('div', { class: 'prop-handlers' }, 'none — the derived DCB alone guards this append')
+    ),
+    h('div', { class: 'block' },
+      h('div', { class: 'block-title' }, 'Publishes'),
+      h('div', {}, emissionLines)
+    ),
+    h('div', { class: 'block' },
+      h('div', { class: 'block-title' }, 'Resulting DCB'),
+      dcbPanel(ctx, body)
+    )
+  );
+}
+
+function summariseBody(ctx, kind, body) {
   if (!body || typeof body !== 'object') return null;
   if (kind === 'custom-type-definition') {
-    const isTag = body.isTag ? ', tag' : '';
-    const type = body.schema && body.schema.type ? body.schema.type : 'object';
-    return `${type}${isTag}`;
+    return (body.schema && body.schema.type) ? body.schema.type : 'object';
   }
   if (kind === 'event-definition') {
-    const n = (body.properties || []).length;
-    return `${n} ${n === 1 ? 'property' : 'properties'}`;
+    const properties = body.properties || [];
+    const tags = properties
+      .map((p) => classifyType(ctx, p.propertyType))
+      .filter((cls) => cls.kind === 'derived' && cls.role === 'id')
+      .map((cls) => cls.entity);
+    const tagText = tags.length > 0 ? ` · tags ${uniq(tags).join(', ')}` : ' · untagged';
+    return `${properties.length} ${properties.length === 1 ? 'property' : 'properties'}${tagText}`;
   }
-  if (kind === 'projection-definition') {
-    const t = body.projectionType || '?';
-    const part = body.partition ? ` by ${body.partition}` : '';
-    return `${body.isList ? '[]' : ''}${t}${body.isOptional ? '?' : ''}${part}`;
+  if (kind === 'entity-definition') {
+    const count = (body.properties || []).length;
+    return `${count} ${count === 1 ? 'property' : 'properties'} · ${(body.states || []).length} states`;
   }
-  if (kind === 'constraint-definition') {
-    return body.condition && body.condition.predicate ? `predicate: ${body.condition.predicate}` : null;
+  if (kind === 'sequence-definition') {
+    const events = (body.advancedBy || []).map((a) => a && a.event).filter(Boolean);
+    return `${body.valueType || '?'} from ${operandText(body.initialValue)} · advanced by `
+      + (events.length > 0 ? events.join(', ') : 'nothing');
   }
   if (kind === 'command-definition') {
-    const ps = (body.publishes || []).length;
-    const cs = (body.constraints || []).length;
-    return `${ps} publishes, ${cs} constraints`;
+    const bound = (body.boundary || []).length;
+    const conditions = (body.conditions || []).length;
+    const publishes = (body.publishes || []).length;
+    return `binds ${bound} · ${conditions} ${conditions === 1 ? 'condition' : 'conditions'} · publishes ${publishes}`;
   }
   return null;
+}
+
+// ============================================================
+// Seed: the canonical course-subscription model.
+//
+// Built through the ordinary commands, in an order that keeps every
+// reference resolvable at each step — entities first without handlers
+// (nothing to reference yet), then the events, then the entities again
+// with their handlers, then the commands.
+// ============================================================
+
+function seedExample() {
+  const ctxId = createDcbContext('Course Subscriptions');
+
+  const property = (name, type, initialValue, extra = {}) => ({
+    name, propertyType: type, isOptional: false, isList: false,
+    initialValue, handlers: [], ...extra,
+  });
+  const stateProperty = (entity, first) =>
+    property(STATE_PROPERTY, stateTypeOf(entity), { enumMember: first });
+
+  // 1. Entities without handlers. Student first, since Course refers
+  //    to StudentId.
+  addDefinition('entity-definition', ctxId, 'Student', {
+    identifierSchema: { type: 'string' },
+    states: ['NonExistent', 'Existent'],
+    properties: [
+      stateProperty('Student', 'NonExistent'),
+      property('subscriptionCount', 'integer', 0),
+    ],
+  });
+  addDefinition('entity-definition', ctxId, 'Course', {
+    identifierSchema: { type: 'string', pattern: '^c[0-9]+$' },
+    states: ['NonExistent', 'Existent', 'Archived'],
+    properties: [
+      stateProperty('Course', 'NonExistent'),
+      property('capacity', 'integer', 0),
+      property('subscriptionCount', 'integer', 0),
+      property('subscribedStudentIds', 'StudentId', [], { isList: true }),
+    ],
+  });
+
+  // 2. Events. Their entity-id properties are what carry the tags.
+  const event = (name, properties) =>
+    addDefinition('event-definition', ctxId, name, { properties });
+  const prop = (name, type) => ({ name, propertyType: type, isOptional: false, isList: false });
+
+  event('CourseDefined', [prop('courseId', 'CourseId'), prop('capacity', 'integer')]);
+  event('CourseCapacityChanged', [prop('courseId', 'CourseId'), prop('newCapacity', 'integer')]);
+  event('CourseArchived', [prop('courseId', 'CourseId')]);
+  event('StudentRegistered', [prop('studentId', 'StudentId')]);
+  event('StudentSubscribedToCourse', [prop('courseId', 'CourseId'), prop('studentId', 'StudentId')]);
+  event('StudentUnsubscribedFromCourse', [prop('courseId', 'CourseId'), prop('studentId', 'StudentId')]);
+
+  // 3. Entities again, now with handlers.
+  const handler = (event, operation, value) => ({ event, operation, value });
+
+  updateDefinition('entity-definition', ctxId, 'Student', {
+    identifierSchema: { type: 'string' },
+    states: ['NonExistent', 'Existent'],
+    properties: [
+      { ...stateProperty('Student', 'NonExistent'),
+        handlers: [handler('StudentRegistered', 'set', { enumMember: 'Existent' })] },
+      { ...property('subscriptionCount', 'integer', 0),
+        handlers: [
+          handler('StudentSubscribedToCourse', 'increment', 1),
+          handler('StudentUnsubscribedFromCourse', 'decrement', 1),
+        ] },
+    ],
+  });
+  updateDefinition('entity-definition', ctxId, 'Course', {
+    identifierSchema: { type: 'string', pattern: '^c[0-9]+$' },
+    states: ['NonExistent', 'Existent', 'Archived'],
+    properties: [
+      { ...stateProperty('Course', 'NonExistent'),
+        handlers: [
+          handler('CourseDefined', 'set', { enumMember: 'Existent' }),
+          handler('CourseArchived', 'set', { enumMember: 'Archived' }),
+        ] },
+      { ...property('capacity', 'integer', 0),
+        handlers: [
+          handler('CourseDefined', 'set', { eventProperty: 'capacity' }),
+          handler('CourseCapacityChanged', 'set', { eventProperty: 'newCapacity' }),
+        ] },
+      { ...property('subscriptionCount', 'integer', 0),
+        handlers: [
+          handler('StudentSubscribedToCourse', 'increment', 1),
+          handler('StudentUnsubscribedFromCourse', 'decrement', 1),
+        ] },
+      { ...property('subscribedStudentIds', 'StudentId', [], { isList: true }),
+        handlers: [
+          handler('StudentSubscribedToCourse', 'append', { eventProperty: 'studentId' }),
+          handler('StudentUnsubscribedFromCourse', 'remove', { eventProperty: 'studentId' }),
+        ] },
+    ],
+  });
+
+  // 4. Sequences. Not partitioned by a tag — a numbering is global, so
+  //    its query is scoped by event type alone. Reading it is one
+  //    backwards lookup; the prefix rides on the initial value.
+  addDefinition('sequence-definition', ctxId, 'CourseNumbering', {
+    valueType: 'CourseId',
+    initialValue: 'c1',
+    advancedBy: [{ event: 'CourseDefined', property: 'courseId' }],
+  });
+
+  // 5. Commands. The boundary is the DCB.
+  const param = (name) => ({ parameterName: name });
+  const of = (alias, property) => ({ alias, property });
+  const bind = (alias, entity, idParam) => ({ alias, entity, id: param(idParam) });
+  const command = (name, body) => addDefinition('command-definition', ctxId, name, body);
+
+  // No payload identifier, no bindings, no conditions — and still safely
+  // guarded. Reading CourseNumbering contributes `types CourseDefined`
+  // to the append condition, so a course defined concurrently
+  // invalidates this append. That is what makes the numbering
+  // monotonic, and it is why no "id not yet used" check is needed.
+  command('DefineCourse', {
+    properties: [prop('capacity', 'integer')],
+    boundary: [],
+    conditions: [],
+    publishes: [{
+      name: 'CourseDefined',
+      parameters: { courseId: { sequence: 'CourseNumbering' }, capacity: param('capacity') },
+    }],
+  });
+
+  command('ChangeCourseCapacity', {
+    properties: [prop('courseId', 'CourseId'), prop('newCapacity', 'integer')],
+    boundary: [bind('course', 'Course', 'courseId')],
+    conditions: [
+      { leftHandSide: of('course', 'state'), predicate: 'equals', rightHandSide: { enumMember: 'Existent' } },
+      { leftHandSide: of('course', 'subscriptionCount'), predicate: 'lessThanOrEquals', rightHandSide: param('newCapacity') },
+    ],
+    publishes: [{
+      name: 'CourseCapacityChanged',
+      parameters: { courseId: param('courseId'), newCapacity: param('newCapacity') },
+    }],
+  });
+
+  command('ArchiveCourse', {
+    properties: [prop('courseId', 'CourseId')],
+    boundary: [bind('course', 'Course', 'courseId')],
+    conditions: [
+      { leftHandSide: of('course', 'state'), predicate: 'equals', rightHandSide: { enumMember: 'Existent' } },
+    ],
+    publishes: [{ name: 'CourseArchived', parameters: { courseId: param('courseId') } }],
+  });
+
+  command('RegisterStudent', {
+    properties: [prop('studentId', 'StudentId')],
+    boundary: [bind('student', 'Student', 'studentId')],
+    conditions: [
+      { leftHandSide: of('student', 'state'), predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' } },
+    ],
+    publishes: [{ name: 'StudentRegistered', parameters: { studentId: param('studentId') } }],
+  });
+
+  command('SubscribeStudentToCourse', {
+    properties: [prop('courseId', 'CourseId'), prop('studentId', 'StudentId')],
+    boundary: [bind('course', 'Course', 'courseId'), bind('student', 'Student', 'studentId')],
+    conditions: [
+      { leftHandSide: of('course', 'state'), predicate: 'equals', rightHandSide: { enumMember: 'Existent' } },
+      { leftHandSide: of('student', 'state'), predicate: 'equals', rightHandSide: { enumMember: 'Existent' } },
+      { leftHandSide: of('course', 'subscriptionCount'), predicate: 'lessThan', rightHandSide: of('course', 'capacity') },
+      { leftHandSide: of('course', 'subscribedStudentIds'), predicate: 'contains', rightHandSide: param('studentId'), negate: true },
+      { leftHandSide: of('student', 'subscriptionCount'), predicate: 'lessThan', rightHandSide: 10 },
+    ],
+    publishes: [{
+      name: 'StudentSubscribedToCourse',
+      parameters: { courseId: param('courseId'), studentId: param('studentId') },
+    }],
+  });
+
+  command('UnsubscribeStudentFromCourse', {
+    properties: [prop('courseId', 'CourseId'), prop('studentId', 'StudentId')],
+    boundary: [bind('course', 'Course', 'courseId'), bind('student', 'Student', 'studentId')],
+    conditions: [
+      { leftHandSide: of('course', 'state'), predicate: 'equals', rightHandSide: { enumMember: 'Existent' } },
+      { leftHandSide: of('course', 'subscribedStudentIds'), predicate: 'contains', rightHandSide: param('studentId') },
+    ],
+    publishes: [{
+      name: 'StudentUnsubscribedFromCourse',
+      parameters: { courseId: param('courseId'), studentId: param('studentId') },
+    }],
+  });
+
+  return ctxId;
 }
 
 // ============================================================
