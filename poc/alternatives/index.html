@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>A · Slices — DCB Playground</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+
+<div class="app-bar">
+  <h1>DCB Playground — the Slices interface</h1>
+  <span class="spacer"></span>
+  <a class="home" href="../index.html">the current PoC →</a>
+</div>
+
+<div class="chooser">
+  <p class="lead">
+    A prototype interface built around features rather than definitions. It runs on
+    <code>model.js</code>, lifted from the PoC, so anything you notice here is a
+    difference of interface, not of semantics — and it keeps its own storage, so
+    nothing you do touches the current PoC's contexts.
+  </p>
+
+  <a class="alt" href="a-slices.html">
+    <h2>Open A · Slices →</h2>
+    <p class="small muted">
+      Starts on <em>Course Example (with schedules)</em>. Switch example or mode
+      from the bar at the top right.
+    </p>
+  </a>
+
+  <h2 style="margin-top:30px">How it is arranged</h2>
+  <p class="small muted">
+    <b>Features hold commands.</b> The rail has two levels: a feature
+    ("Course management") is a heading over the commands that make it up. A
+    feature is not a definition of its own — it exists because commands name it,
+    which is why it costs nothing and why an empty one is only remembered until
+    it earns a command.
+  </p>
+  <p class="small muted">
+    <b>A command fills the page</b> as a chain of steps — asks for, reads, allowed
+    if, records, changes. Events and state handlers are created and edited
+    in place, so a whole command is built without navigating anywhere.
+  </p>
+  <p class="small muted">
+    <b>Entities are reached two ways.</b> Click an entity anywhere — in Reads, in
+    Changes, in the rail — and an inspector slides in beside what you were
+    reading, showing that entity whole and which commands move or consult each
+    property. In <b>Advanced</b> the rail also gains a <em>Model → Entities</em>
+    manager, listing every kind of thing at once with rename, remove, and a flag
+    on properties nothing moves and nothing reads.
+  </p>
+  <p class="small muted">
+    <b>Names are written the way you say them.</b> Type "define course" and the
+    model stores <code>DefineCourse</code>; the PascalCase is the schema's
+    business, not yours. The event is suggested from the command by moving the
+    verb behind the thing it acts on — "define course" offers "course defined",
+    "subscribe student to course" offers "student subscribed to course" — and by
+    default it records the same fields the command was given. Everything is
+    shown back as prose; Advanced adds the stored identifier beside it.
+  </p>
+  <p class="small muted">
+    <b>A new command is described in the page</b>, not in a dialog. There are no
+    browser prompts or confirms anywhere here — every name is asked for by an
+    inline form that previews what it will be stored as, takes Enter and Escape,
+    and can be cancelled.
+  </p>
+  <p class="small muted">
+    <b>Simple hides the machinery.</b> Identifier schemas, custom types,
+    sequences, the derived consistency boundary and the entity manager only
+    appear in Advanced. A new entity still gets its lifecycle, but in Simple the
+    reserved <code>state</code> property is shown as "what state it is in"
+    rather than as an enum.
+  </p>
+
+  <h2 style="margin-top:26px">Known gaps</h2>
+  <p class="small muted">
+    Sequences and custom types can be referenced but not authored here; renaming
+    a command or an event, and editing an identifier schema, still belong to the
+    current PoC. The <code>feature</code> field a command carries is
+    prototype-only — making it real means allowing it on
+    <code>CommandDefinition</code> in <code>dcb-context.schema.yaml</code>, which
+    today sets <code>additionalProperties: false</code>.
+  </p>
+  <p class="small muted">
+    Two earlier alternatives — a board and a guided wizard — were dropped in
+    favour of this one.
+  </p>
+</div>
+
+</body>
+</html>
