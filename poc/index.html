@@ -91,6 +91,17 @@
 
   /* List view */
   .empty-state { text-align: center; padding: 60px 20px; color: var(--color-text-muted); }
+  .library-note { font-size: 12px; color: var(--color-text-muted); margin-bottom: 12px; }
+  .library-card {
+    display: flex; align-items: center; gap: 16px;
+    padding: 12px 14px; margin-bottom: 8px;
+    border: 1px solid var(--color-border); border-radius: 6px;
+    background: var(--color-surface);
+  }
+  .library-card:hover { border-color: var(--color-command); }
+  .library-text { flex: 1; min-width: 0; }
+  .library-name { font-weight: 600; font-size: 13px; }
+  .library-description { font-size: 11px; color: var(--color-text-muted); margin-top: 3px; }
   .empty-state h2 { margin: 0 0 8px; color: var(--color-text); }
   .empty-state p { margin: 0 0 24px; }
   .empty-state .actions { display: flex; gap: 8px; justify-content: center; }
@@ -504,6 +515,7 @@ const BINARY_PREDICATES = [
   'countLessThan',
   'countGreaterThan',
   'contains',
+  'containsAny',
   'lessThan',
   'lessThanOrEquals',
   'greaterThan',
@@ -914,7 +926,11 @@ function operationsFor(ctx, property) {
 // Walks every operand inside a command body.
 function forEachCommandOperand(body, visit) {
   for (const binding of body.boundary || []) {
-    if (binding) visit(binding.id, { where: `boundary binding "${binding.alias || '?'}"` });
+    if (!binding) continue;
+    visit(binding.id, { where: `boundary binding "${binding.alias || '?'}"` });
+    if (binding.excluding !== undefined) {
+      visit(binding.excluding, { where: `boundary binding "${binding.alias || '?'}" (excluding)` });
+    }
   }
   for (const condition of body.conditions || []) {
     if (!condition) continue;
@@ -942,6 +958,26 @@ function forEachCommandOperand(body, visit) {
 // Sequences contribute too, and are the only items with no tag: a
 // numbering is global, so its query is scoped by event type alone.
 // ============================================================
+
+// A binding whose identifier operand is a list covers one instance per
+// element — nothing declares it, it follows from the operand's type. A
+// list read off an already-fanned-out alias is a list of lists, which
+// flattens; either way the binding is plural.
+function isFannedOut(ctx, body, binding) {
+  if (!binding) return false;
+  const resolved = resolveOperandType(binding.id, {
+    boundary: body.boundary || [],
+    commandProperties: body.properties || [],
+    ctx,
+  });
+  if (resolved && resolved.isList) return true;
+  // Reading a scalar property off a plural alias is itself plural.
+  if (operandSource(binding.id) === 'alias-property') {
+    const source = (body.boundary || []).find((b) => b && b.alias === binding.id.alias);
+    if (source && source !== binding) return isFannedOut(ctx, body, source);
+  }
+  return false;
+}
 
 // Every sequence the command reads, in first-mention order.
 function sequencesRead(body) {
@@ -987,8 +1023,13 @@ function deriveDcb(ctx, body) {
         }
       }
     }
+    const fannedOut = isFannedOut(ctx, body, binding);
     items.push({
-      tag: `${binding.entity}:${operandText(binding.id)}`,
+      tag: fannedOut
+        ? `${binding.entity}:each(${operandText(binding.id)}${
+            binding.excluding !== undefined ? ` except ${operandText(binding.excluding)}` : ''})`
+        : `${binding.entity}:${operandText(binding.id)}`,
+      fannedOut,
       types: [...types].sort(),
       readProperties: [...readProperties].sort(),
     });
@@ -1308,7 +1349,50 @@ function validateCommandBody(ctx, body) {
         );
       }
     }
+    if (binding.excluding !== undefined && !isFannedOut(ctx, body, binding)) {
+      throw new DomainError(
+        `Boundary binding "${binding.alias}" excludes ${operandText(binding.excluding)}, ` +
+        `but it binds a single instance — there is nothing to exclude it from.`
+      );
+    }
     declaredAbove.push(binding.alias);
+  }
+
+  // A plural alias cannot supply a single value, so it may be read by a
+  // condition — which quantifies over it — but never emitted.
+  for (const emission of body.publishes || []) {
+    if (!emission || !emission.parameters) continue;
+    for (const [key, operand] of Object.entries(emission.parameters)) {
+      if (operandSource(operand) !== 'alias-property') continue;
+      const binding = boundary.find((b) => b.alias === operand.alias);
+      if (binding && isFannedOut(ctx, body, binding)) {
+        throw new DomainError(
+          `"${emission.name}.${key}" takes its value from "${operandText(operand)}", but "${operand.alias}" ` +
+          `binds many instances. A fanned-out instance can be checked, not emitted.`
+        );
+      }
+    }
+  }
+
+  for (const condition of body.conditions || []) {
+    if (!condition || condition.predicate !== 'containsAny') continue;
+    const args = { boundary, commandProperties: body.properties || [], ctx };
+    const left = resolveOperandType(condition.leftHandSide, args);
+    const right = resolveOperandType(condition.rightHandSide, args);
+    for (const [side, label] of [[left, 'Left'], [right, 'Right']]) {
+      if (side && !side.isList) {
+        throw new DomainError(
+          `${label} side of "${conditionText(condition)}" is not a list — ` +
+          `"containsAny" asks whether two lists intersect.`
+        );
+      }
+    }
+    if (left && right && left.propertyType !== right.propertyType) {
+      throw new DomainError(
+        `"${conditionText(condition)}" compares ${left.propertyType} with ${right.propertyType}; ` +
+        `"containsAny" needs both sides to hold the same type.`
+      );
+    }
   }
 
   const commandProperties = new Set((body.properties || []).map((p) => p.name));
@@ -2383,6 +2467,12 @@ function boundaryEditor({ state, entityNames, operandArgs, rerender }) {
       rerender();
     };
 
+    // A list-typed identifier makes the binding plural. Nothing declares
+    // that, so the editor says it out loud — and only then offers an
+    // exclusion, which has no meaning on a single instance.
+    const plural = isFannedOut(operandArgs.ctx, stateToBodyPreview(state), binding);
+    if (!plural && binding.excluding !== undefined) delete binding.excluding;
+
     return h('div', { class: 'binding-card' },
       h('div', { class: 'boundary-row' },
         textInput({ value: binding.alias, placeholder: 'alias', oninput: (v) => { binding.alias = v; } }),
@@ -2398,6 +2488,7 @@ function boundaryEditor({ state, entityNames, operandArgs, rerender }) {
           ...operandArgs,
           boundary: above,
         }),
+        plural ? h('span', { class: 'initial-badge' }, 'one per element') : h('span', {}),
         h('button', {
           class: 'btn btn-xs btn-secondary',
           disabled: manualAt <= 0,
@@ -2414,7 +2505,29 @@ function boundaryEditor({ state, entityNames, operandArgs, rerender }) {
           class: 'btn btn-xs btn-danger',
           onclick: () => { state.boundary.splice(idx, 1); rerender(); },
         }, '×')
-      )
+      ),
+      plural
+        ? h('div', { class: 'boundary-row' },
+            h('div', { class: 'locked' }, 'excluding'),
+            binding.excluding === undefined
+              ? h('button', {
+                  class: 'btn btn-xs btn-secondary',
+                  onclick: () => { binding.excluding = { parameterName: '' }; rerender(); },
+                }, '+ Exclude an identifier')
+              : h('div', { class: 'operand-editor' },
+                  commandOperandEditor({
+                    get: () => binding.excluding,
+                    set: (v) => { binding.excluding = v; },
+                    ...operandArgs,
+                    boundary: above,
+                  }),
+                  h('button', {
+                    class: 'btn btn-xs btn-danger',
+                    onclick: () => { delete binding.excluding; rerender(); },
+                  }, '×')
+                )
+          )
+        : null
     );
   });
 
@@ -2453,6 +2566,7 @@ function expectedRightType(leftType, predicate) {
   if (predicate === 'contains' && leftType.isList) {
     return { propertyType: leftType.propertyType, isList: false };
   }
+  // containsAny intersects two lists, so the right side stays a list.
   return leftType;
 }
 
@@ -2697,7 +2811,8 @@ function dcbPanel(ctx, body) {
               h('span', { class: 'q-type' }, item.types.join(', ')))
           : h('span', {}, h('span', { class: 'q-key' }, ' and '),
               h('span', { class: 'q-type' }, 'any type'),
-              h('span', { class: 'q-none' }, ' (no property read)'))
+              h('span', { class: 'q-none' }, ' (no property read)')),
+        item.fannedOut ? h('span', { class: 'q-none' }, '  — one item per element') : null
       ));
     });
   }
@@ -2820,7 +2935,11 @@ function stateToBody(kind, state, name) {
     const boundary = (state.boundary || []).map((binding, i) => {
       if (!binding.alias) throw new DomainError(`Boundary binding #${i + 1} has no alias.`);
       if (!binding.entity) throw new DomainError(`Boundary binding "${binding.alias}" has no entity.`);
-      return { alias: binding.alias.trim(), entity: binding.entity, id: binding.id };
+      const out = { alias: binding.alias.trim(), entity: binding.entity, id: binding.id };
+      // Only carried when set — an exclusion is meaningless on a
+      // binding that covers a single instance.
+      if (binding.excluding !== undefined && binding.excluding !== null) out.excluding = binding.excluding;
+      return out;
     });
     const conditions = (state.conditions || []).map((condition, i) => {
       if (!condition.predicate) throw new DomainError(`Condition #${i + 1} has no predicate.`);
@@ -3035,28 +3154,65 @@ function renderListView() {
     }),
   }, '+ New Context');
 
-  const exampleButton = h('button', {
+  const loadButton = h('button', {
     class: 'btn btn-ghost',
-    onclick: () => runCommand(() => { const id = seedExample(); navigateToContext(id); }),
-  }, 'Load example');
+    onclick: openContextLibrary,
+  }, 'Load context…');
 
   if (contexts.length === 0) {
     return h('div', {},
       h('div', { class: 'page-header' }, h('h2', {}, 'DCB Contexts'), renderLegend()),
       h('div', { class: 'empty-state' },
         h('h2', {}, 'No contexts yet'),
-        h('p', {}, 'Create your first DCB Context — or load the course-subscription example to see entities in action.'),
-        h('div', { class: 'actions' }, newButton, exampleButton))
+        h('p', {}, 'Create your first DCB Context — or load one of the course-subscription '
+          + 'examples to see entities, sequences and boundaries in action.'),
+        h('div', { class: 'actions' }, newButton, loadButton))
     );
   }
 
   return h('div', {},
     h('div', { class: 'page-header' },
       h('h2', {}, 'DCB Contexts'),
-      h('div', { style: 'display:flex; gap:16px; align-items:center;' }, renderLegend(), exampleButton, newButton)
+      h('div', { style: 'display:flex; gap:16px; align-items:center;' }, renderLegend(), loadButton, newButton)
     ),
     h('div', { class: 'context-list' }, contexts.map(renderContextCard))
   );
+}
+
+// The library of contexts a modeler can start from. Predefined ones are
+// built in; the list is a list rather than three buttons so that saved
+// contexts of the modeler's own can join it without changing the shape
+// of anything here.
+function openContextLibrary() {
+  openModal(() => {
+    const rows = [
+      h('h3', {}, 'Load a context'),
+      h('div', { class: 'library-note' },
+        'Each is built through the ordinary editing commands, so it validates exactly '
+        + 'as it would if you typed it in. Loading the same one twice gives you two '
+        + 'independent copies.'),
+    ];
+
+    for (const [index, entry] of PREDEFINED_CONTEXTS.entries()) {
+      rows.push(h('div', { class: 'library-card' },
+        h('div', { class: 'library-text' },
+          h('div', { class: 'library-name' }, entry.name),
+          h('div', { class: 'library-description' }, entry.description)
+        ),
+        h('button', {
+          class: 'btn btn-sm',
+          onclick: () => {
+            closeModal();
+            runCommand(() => { navigateToContext(loadPredefinedContext(index)); });
+          },
+        }, 'Load')
+      ));
+    }
+
+    rows.push(h('div', { class: 'actions' },
+      h('button', { class: 'btn btn-ghost', onclick: closeModal }, 'Close')));
+    return rows;
+  });
 }
 
 function renderLegend() {
@@ -3259,7 +3415,10 @@ function renderEntityDetail(ctx, name, body) {
 
 function renderCommandDetail(ctx, body) {
   const boundaryLines = (body.boundary || []).map((binding) =>
-    h('div', { class: 'cond-line' }, `${binding.alias}: ${binding.entity}(id = ${operandText(binding.id)})`));
+    h('div', { class: 'cond-line' },
+      `${binding.alias}: ${binding.entity}(id = ${operandText(binding.id)}`
+      + (binding.excluding !== undefined ? `, excluding ${operandText(binding.excluding)}` : '')
+      + ')'));
   const conditionLines = (body.conditions || []).map((condition) =>
     h('div', { class: 'cond-line' }, conditionText(condition)));
   const emissionLines = (body.publishes || []).map((emission) => {
@@ -3323,23 +3482,48 @@ function summariseBody(ctx, kind, body) {
 }
 
 // ============================================================
-// Seed: the canonical course-subscription model.
+// Predefined contexts.
 //
-// Built through the ordinary commands, in an order that keeps every
-// reference resolvable at each step — entities first without handlers
-// (nothing to reference yet), then the events, then the entities again
-// with their handlers, then the commands.
+// One course-subscription model in three layers, because that is the
+// order the design was arrived at: the plain model, then generated
+// identifiers, then schedules. Each layer is applied through the
+// ordinary commands, so loading one exercises exactly the same
+// validation an author would hit typing it in.
+//
+// Every layer keeps references resolvable at each step — entities
+// first without handlers (nothing to reference yet), then the events,
+// then the entities again with their handlers, then the commands.
 // ============================================================
 
-function seedExample() {
-  const ctxId = createDcbContext('Course Subscriptions');
+const seedProperty = (name, type, initialValue, extra = {}) => ({
+  name, propertyType: type, isOptional: false, isList: false,
+  initialValue, handlers: [], ...extra,
+});
+const seedStateProperty = (entity, first) =>
+  seedProperty(STATE_PROPERTY, stateTypeOf(entity), { enumMember: first });
+const seedProp = (name, type) => ({ name, propertyType: type, isOptional: false, isList: false });
+const seedListProp = (name, type) => ({ name, propertyType: type, isOptional: false, isList: true });
+const seedHandler = (event, operation, value) => ({ event, operation, value });
+const seedParam = (name) => ({ parameterName: name });
+const seedOf = (alias, property) => ({ alias, property });
+const seedBind = (alias, entity, idParam) => ({ alias, entity, id: seedParam(idParam) });
 
-  const property = (name, type, initialValue, extra = {}) => ({
-    name, propertyType: type, isOptional: false, isList: false,
-    initialValue, handlers: [], ...extra,
-  });
-  const stateProperty = (entity, first) =>
-    property(STATE_PROPERTY, stateTypeOf(entity), { enumMember: first });
+// Reads a definition back and writes the modified copy, so a later
+// layer never has to restate the shape an earlier one produced.
+function seedPatch(kind, ctxId, name, mutate) {
+  const body = deepClone(getCtxOrThrow(ctxId)[DEF_COLLECTIONS[kind]][name]);
+  mutate(body);
+  updateDefinition(kind, ctxId, name, body);
+}
+
+function seedBase(ctxId) {
+  const property = seedProperty;
+  const stateProperty = seedStateProperty;
+  const prop = seedProp;
+  const handler = seedHandler;
+  const param = seedParam;
+  const of = seedOf;
+  const bind = seedBind;
 
   // 1. Entities without handlers. Student first, since Course refers
   //    to StudentId.
@@ -3352,7 +3536,7 @@ function seedExample() {
     ],
   });
   addDefinition('entity-definition', ctxId, 'Course', {
-    identifierSchema: { type: 'string', pattern: '^c[0-9]+$' },
+    identifierSchema: { type: 'string' },
     states: ['NonExistent', 'Existent', 'Archived'],
     properties: [
       stateProperty('Course', 'NonExistent'),
@@ -3365,7 +3549,6 @@ function seedExample() {
   // 2. Events. Their entity-id properties are what carry the tags.
   const event = (name, properties) =>
     addDefinition('event-definition', ctxId, name, { properties });
-  const prop = (name, type) => ({ name, propertyType: type, isOptional: false, isList: false });
 
   event('CourseDefined', [prop('courseId', 'CourseId'), prop('capacity', 'integer')]);
   event('CourseCapacityChanged', [prop('courseId', 'CourseId'), prop('newCapacity', 'integer')]);
@@ -3375,8 +3558,6 @@ function seedExample() {
   event('StudentUnsubscribedFromCourse', [prop('courseId', 'CourseId'), prop('studentId', 'StudentId')]);
 
   // 3. Entities again, now with handlers.
-  const handler = (event, operation, value) => ({ event, operation, value });
-
   updateDefinition('entity-definition', ctxId, 'Student', {
     identifierSchema: { type: 'string' },
     states: ['NonExistent', 'Existent'],
@@ -3391,7 +3572,7 @@ function seedExample() {
     ],
   });
   updateDefinition('entity-definition', ctxId, 'Course', {
-    identifierSchema: { type: 'string', pattern: '^c[0-9]+$' },
+    identifierSchema: { type: 'string' },
     states: ['NonExistent', 'Existent', 'Archived'],
     properties: [
       { ...stateProperty('Course', 'NonExistent'),
@@ -3417,33 +3598,18 @@ function seedExample() {
     ],
   });
 
-  // 4. Sequences. Not partitioned by a tag — a numbering is global, so
-  //    its query is scoped by event type alone. Reading it is one
-  //    backwards lookup; the prefix rides on the initial value.
-  addDefinition('sequence-definition', ctxId, 'CourseNumbering', {
-    valueType: 'CourseId',
-    initialValue: 'c1',
-    advancedBy: [{ event: 'CourseDefined', property: 'courseId' }],
-  });
-
-  // 5. Commands. The boundary is the DCB.
-  const param = (name) => ({ parameterName: name });
-  const of = (alias, property) => ({ alias, property });
-  const bind = (alias, entity, idParam) => ({ alias, entity, id: param(idParam) });
+  // 4. Commands. The boundary is the DCB.
   const command = (name, body) => addDefinition('command-definition', ctxId, name, body);
 
-  // No payload identifier, no bindings, no conditions — and still safely
-  // guarded. Reading CourseNumbering contributes `types CourseDefined`
-  // to the append condition, so a course defined concurrently
-  // invalidates this append. That is what makes the numbering
-  // monotonic, and it is why no "id not yet used" check is needed.
   command('DefineCourse', {
-    properties: [prop('capacity', 'integer')],
-    boundary: [],
-    conditions: [],
+    properties: [prop('courseId', 'CourseId'), prop('capacity', 'integer')],
+    boundary: [bind('course', 'Course', 'courseId')],
+    conditions: [
+      { leftHandSide: of('course', 'state'), predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' } },
+    ],
     publishes: [{
       name: 'CourseDefined',
-      parameters: { courseId: { sequence: 'CourseNumbering' }, capacity: param('capacity') },
+      parameters: { courseId: param('courseId'), capacity: param('capacity') },
     }],
   });
 
@@ -3506,7 +3672,153 @@ function seedExample() {
       parameters: { courseId: param('courseId'), studentId: param('studentId') },
     }],
   });
+}
 
+// Layer 2: course identifiers stop being supplied and start being
+// issued. DefineCourse loses its identifier parameter, its binding and
+// its "not already used" check all at once — reading the sequence
+// contributes `types CourseDefined` to the append condition, which is
+// what makes the numbering monotonic and what makes the check
+// redundant.
+function seedAddSequence(ctxId) {
+  seedPatch('entity-definition', ctxId, 'Course', (course) => {
+    course.identifierSchema = { type: 'string', pattern: '^c[0-9]+$' };
+  });
+
+  addDefinition('sequence-definition', ctxId, 'CourseNumbering', {
+    valueType: 'CourseId',
+    initialValue: 'c1',
+    advancedBy: [{ event: 'CourseDefined', property: 'courseId' }],
+  });
+
+  updateDefinition('command-definition', ctxId, 'DefineCourse', {
+    properties: [seedProp('capacity', 'integer')],
+    boundary: [],
+    conditions: [],
+    publishes: [{
+      name: 'CourseDefined',
+      parameters: {
+        courseId: { sequence: 'CourseNumbering' },
+        capacity: seedParam('capacity'),
+      },
+    }],
+  });
+}
+
+// Layer 3: schedules, and the rule that a student is never in two
+// courses at once. A slot is an hour of wall-clock time and a course is
+// scheduled by naming the slots it occupies, so a slot value *is* a
+// discretised timestamp and the granularity is stated by the pattern.
+//
+// Slots are values, never tags. Occupancy is not stored per student —
+// it is read from each course's current schedule at check time, which
+// is exactly what lets a course be rescheduled underneath its
+// subscribers without invalidating anything.
+function seedAddSchedules(ctxId) {
+  addDefinition('custom-type-definition', ctxId, 'TimeSlot', {
+    schema: { type: 'string', pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}$' },
+  });
+
+  seedPatch('event-definition', ctxId, 'CourseDefined', (event) => {
+    event.properties.push(seedListProp('slots', 'TimeSlot'));
+  });
+  addDefinition('event-definition', ctxId, 'CourseRescheduled', {
+    properties: [seedProp('courseId', 'CourseId'), seedListProp('slots', 'TimeSlot')],
+  });
+
+  seedPatch('entity-definition', ctxId, 'Course', (course) => {
+    course.properties.push({
+      ...seedProperty('slots', 'TimeSlot', [], { isList: true }),
+      handlers: [
+        seedHandler('CourseDefined', 'set', { eventProperty: 'slots' }),
+        seedHandler('CourseRescheduled', 'set', { eventProperty: 'slots' }),
+      ],
+    });
+  });
+  // Names the courses whose *current* schedules the overlap check
+  // reads. Nothing about time is stored here.
+  seedPatch('entity-definition', ctxId, 'Student', (student) => {
+    student.properties.push({
+      ...seedProperty('subscribedCourseIds', 'CourseId', [], { isList: true }),
+      handlers: [
+        seedHandler('StudentSubscribedToCourse', 'append', { eventProperty: 'courseId' }),
+        seedHandler('StudentUnsubscribedFromCourse', 'remove', { eventProperty: 'courseId' }),
+      ],
+    });
+  });
+
+  seedPatch('command-definition', ctxId, 'DefineCourse', (define) => {
+    define.properties.push(seedListProp('slots', 'TimeSlot'));
+    define.publishes[0].parameters.slots = seedParam('slots');
+  });
+
+  // Rescheduling is allowed while students are subscribed, so it has to
+  // prove that nobody it moves ends up double-booked: bind the
+  // subscribers, then every *other* course any of them is in, and
+  // require none of those schedules to touch the new slots. `theirs`
+  // would otherwise include this very course — every subscriber is in
+  // it — and a course almost always overlaps its own old schedule.
+  addDefinition('command-definition', ctxId, 'RescheduleCourse', {
+    properties: [seedProp('courseId', 'CourseId'), seedListProp('slots', 'TimeSlot')],
+    boundary: [
+      seedBind('course', 'Course', 'courseId'),
+      { alias: 'students', entity: 'Student', id: seedOf('course', 'subscribedStudentIds') },
+      { alias: 'theirs', entity: 'Course', id: seedOf('students', 'subscribedCourseIds'),
+        excluding: seedParam('courseId') },
+    ],
+    conditions: [
+      { leftHandSide: seedOf('course', 'state'), predicate: 'equals', rightHandSide: { enumMember: 'Existent' } },
+      { leftHandSide: seedOf('theirs', 'slots'), predicate: 'containsAny',
+        rightHandSide: seedParam('slots'), negate: true },
+    ],
+    publishes: [{
+      name: 'CourseRescheduled',
+      parameters: { courseId: seedParam('courseId'), slots: seedParam('slots') },
+    }],
+  });
+
+  // `others` is the second link of the chain: the student names its
+  // courses, and those courses' current schedules answer whether this
+  // one clashes. The condition holds for every course bound.
+  seedPatch('command-definition', ctxId, 'SubscribeStudentToCourse', (subscribe) => {
+    subscribe.boundary.push({
+      alias: 'others', entity: 'Course', id: seedOf('student', 'subscribedCourseIds'),
+    });
+    subscribe.conditions.push({
+      leftHandSide: seedOf('others', 'slots'),
+      predicate: 'containsAny',
+      rightHandSide: seedOf('course', 'slots'),
+      negate: true,
+    });
+  });
+}
+
+const PREDEFINED_CONTEXTS = [
+  {
+    name: 'Course Example (simple)',
+    description: 'Courses and students, capacity and subscriptions. '
+      + 'Identifiers are supplied by the caller and checked with a state condition.',
+    build: (ctxId) => { seedBase(ctxId); },
+  },
+  {
+    name: 'Course Example (with sequence)',
+    description: 'Adds a sequence issuing c1, c2, c3… DefineCourse loses its identifier '
+      + 'parameter, its binding and its conditions — the sequence guards it instead.',
+    build: (ctxId) => { seedBase(ctxId); seedAddSequence(ctxId); },
+  },
+  {
+    name: 'Course Example (with schedules)',
+    description: 'Adds hourly slots and the rule that a student is never in two courses at '
+      + 'once, checked against live schedules so courses can be rescheduled under subscribers.',
+    build: (ctxId) => { seedBase(ctxId); seedAddSequence(ctxId); seedAddSchedules(ctxId); },
+  },
+];
+
+function loadPredefinedContext(index) {
+  const entry = PREDEFINED_CONTEXTS[index];
+  if (!entry) throw new DomainError('No such predefined context.');
+  const ctxId = createDcbContext(entry.name);
+  entry.build(ctxId);
   return ctxId;
 }
 

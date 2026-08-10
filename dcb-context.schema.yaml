@@ -383,8 +383,22 @@ required:
           learn which instance to bind next. One left-to-right pass
           resolves the chain, and a cycle is impossible to write.
 
-          The chain reads in phases, but the append condition carries a
-          single position: the one observed before the *first* read.
+          **Execution.** The chain reads in links, but the whole
+          command decides as of a single point in the log:
+
+            1. `P` := the position of the last event overall — a
+               backwards read of everything, limited to one.
+            2. Resolve the bindings in declaration order, each link's
+               projections read **bounded at `P`**. Bounding matters:
+               a link that read past `P` could decide on an event that
+               the append condition then rejects it for.
+            3. Evaluate the conditions over the resolved instances.
+            4. Append with the condition
+               `query = the union of every link's query, after = P`.
+
+          Because the query covers everything read and `P` precedes
+          every read, any concurrent change to anything this command
+          looked at invalidates the append — and nothing else does.
         type: array
         items:
           "$ref": "#/$defs/EntityBinding"
@@ -392,6 +406,11 @@ required:
         description: |
           Conditions over the bound instances, all of which must hold
           before any event is emitted.
+
+          A condition reading a **fanned-out** alias must hold for
+          *every* instance that alias bound; an empty set satisfies it
+          vacuously. The quantifier is not written down — it follows
+          from the alias being plural.
 
           An empty list does **not** mean the command is unguarded: the
           append condition is derived from the `boundary` and from the
@@ -446,6 +465,27 @@ required:
           the command payload, but equally a projected property of an
           instance bound above this one, or a value drawn from a
           sequence.
+
+          **A list operand binds many instances.** When the operand
+          resolves to a list type, the binding covers one instance per
+          element and contributes one query item each. Reading a list
+          property of an already-fanned-out alias yields a list of
+          lists, which is flattened and de-duplicated. Nothing declares
+          this — it follows from the operand's type.
+        "$ref": "#/$defs/CommandOperand"
+      excluding:
+        description: |
+          One identifier to drop from a fanned-out set. Only meaningful
+          on a fanned-out binding, and needed when the set is derived
+          from instances that necessarily include the one being acted
+          on — rescheduling a course must compare against its
+          subscribers' *other* courses, and every subscriber is by
+          definition also in this one.
+
+          It narrows the binding rather than the conditions on purpose:
+          a condition over a fanned-out alias must hold for every
+          instance, so "except this one" cannot be stated as a
+          condition without turning it into an implication.
         "$ref": "#/$defs/CommandOperand"
     required:
     - alias
@@ -511,6 +551,11 @@ required:
     - predicate
 
   BinaryCondition:
+    description: |
+      `contains` asks whether a list holds one value; `containsAny` asks
+      whether two lists intersect, which is how "these two schedules
+      clash" is stated. Both sides of `containsAny` must be lists of the
+      same type, and `negate` turns it into "must not overlap".
     type: object
     additionalProperties: false
     properties:
@@ -523,6 +568,7 @@ required:
         - countLessThan
         - countGreaterThan
         - contains
+        - containsAny
         - lessThan
         - lessThanOrEquals
         - greaterThan
