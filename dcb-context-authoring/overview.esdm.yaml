@@ -2,14 +2,17 @@
 # with its full set of definitions, and two queries — one to list
 # all contexts (id + name) and one to fetch a single context's
 # detail. Both queries are open to the modeler and the viewer.
+#
+# One collection per definition kind, all five shaped alike: the
+# read model stays indifferent to what a `body` contains.
 
 apiVersion: schema.esdm.io/core/v1
 kind: read-model
 name: dcb-context-overview
 description: |
   One record per currently-live DCB Context, carrying the context's
-  display name and the four definition collections (custom-type,
-  event, entity, command) in their latest state.
+  display name and the five definition collections (custom-type,
+  event, entity, sequence, command) in their latest state.
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -17,7 +20,7 @@ paradigm: document
 projections:
   - boundedContext: dcb-context-authoring
     event: dcb-context-created
-    rule: Insert a new record keyed by `dcb-context-id` with the carried `name` and four empty definition collections.
+    rule: Insert a new record keyed by `dcb-context-id` with the carried `name` and five empty definition collections.
   - boundedContext: dcb-context-authoring
     event: dcb-context-renamed
     rule: Update the matching record's `name` to the carried value.
@@ -60,6 +63,18 @@ projections:
   - boundedContext: dcb-context-authoring
     event: entity-definition-removed
     rule: Drop the entry identified by `name` from the matching context's `entity-definitions` collection.
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-added
+    rule: Append the new definition to the matching context's `sequence-definitions` collection.
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-updated
+    rule: Replace the `body` of the entry identified by `name` in the matching context's `sequence-definitions` collection.
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-renamed
+    rule: Replace the `name` of the entry identified by `previous-name` with the carried `name` in the matching context's `sequence-definitions` collection.
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-removed
+    rule: Drop the entry identified by `name` from the matching context's `sequence-definitions` collection.
   - boundedContext: dcb-context-authoring
     event: command-definition-added
     rule: Append the new definition to the matching context's `command-definitions` collection.
@@ -111,6 +126,16 @@ schema:
             body:
               type: object
           required: [name, body]
+      sequence-definitions:
+        type: array
+        items:
+          type: object
+          properties:
+            name:
+              type: string
+            body:
+              type: object
+          required: [name, body]
       command-definitions:
         type: array
         items:
@@ -127,6 +152,7 @@ schema:
       - custom-type-definitions
       - event-definitions
       - entity-definitions
+      - sequence-definitions
       - command-definitions
 ---
 apiVersion: schema.esdm.io/core/v1
@@ -157,7 +183,7 @@ constraints:
   - name: light-shape
     rule: |
       Each record carries only `dcb-context-id` and `name`; the
-      four definition collections are stripped to keep listings
+      five definition collections are stripped to keep listings
       cheap to render.
   - name: stable-order
     rule: Sort by `name` ascending; break ties by `dcb-context-id`.
@@ -169,7 +195,7 @@ apiVersion: schema.esdm.io/core/v1
 kind: query
 name: get-dcb-context
 description: |
-  Returns the full content of one DCB Context — name plus all four
+  Returns the full content of one DCB Context — name plus all five
   definition collections in their latest state.
 scope:
   domain: dcb-playground
@@ -202,6 +228,10 @@ result:
       type: array
       items:
         type: object
+    sequence-definitions:
+      type: array
+      items:
+        type: object
     command-definitions:
       type: array
       items:
@@ -212,6 +242,7 @@ result:
     - custom-type-definitions
     - event-definitions
     - entity-definitions
+    - sequence-definitions
     - command-definitions
 constraints:
   - name: lookup-by-id

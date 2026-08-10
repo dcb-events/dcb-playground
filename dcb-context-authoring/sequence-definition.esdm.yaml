@@ -1,0 +1,492 @@
+# Sequence definitions inside a DCB Context: events, DCBs, commands.
+# Identified within the context by `name` (the natural key).
+#
+# Distinctive aspects of this kind:
+#   - a sequence derives no type, so its name occupies a namespace of
+#     its own. Unlike entity- and custom-type-definitions, adding or
+#     renaming one needs no collision check against the shared type
+#     namespace — only against other sequence-definitions.
+#   - it is the only definition whose query carries no tag. A numbering
+#     is global by nature, so it is scoped by event type alone; that is
+#     a property of the DCB Context being modeled, not of this domain,
+#     but it is why a sequence is its own kind rather than an entity.
+#   - its body names both an event *and a property of that event*, so
+#     the guards must consult `event-definition-updated` as well as the
+#     add/rename/remove events. Every other kind only needs event
+#     names; this one needs event bodies, because the named property
+#     must exist and be typed as the sequence's `valueType`.
+#
+# References out: event-definitions (`advancedBy[].event`) and the type
+# namespace — a custom-type-definition or an entity-derived type
+# (`valueType`).
+# References in: command-definitions alone, through operands that draw
+# the next value from the sequence.
+
+apiVersion: schema.esdm.io/core/v1
+kind: event
+name: sequence-definition-added
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+data:
+  type: object
+  properties:
+    dcb-context-id:
+      type: string
+    name:
+      type: string
+    body:
+      type: object
+      description: |
+        The sequence's authored content — the type it issues, the value
+        it starts from, and the events that consume values from it.
+        Kept opaque here: the shape of a `body` is owned by the DCB
+        Context schema, not by this domain model.
+  required: [dcb-context-id, name, body]
+  additionalProperties: false
+---
+apiVersion: schema.esdm.io/core/v1
+kind: event
+name: sequence-definition-updated
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+data:
+  type: object
+  properties:
+    dcb-context-id:
+      type: string
+    name:
+      type: string
+    body:
+      type: object
+  required: [dcb-context-id, name, body]
+  additionalProperties: false
+---
+apiVersion: schema.esdm.io/core/v1
+kind: event
+name: sequence-definition-renamed
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+data:
+  type: object
+  properties:
+    dcb-context-id:
+      type: string
+    previous-name:
+      type: string
+    name:
+      type: string
+  required: [dcb-context-id, previous-name, name]
+  additionalProperties: false
+---
+apiVersion: schema.esdm.io/core/v1
+kind: event
+name: sequence-definition-removed
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+data:
+  type: object
+  properties:
+    dcb-context-id:
+      type: string
+    name:
+      type: string
+  required: [dcb-context-id, name]
+  additionalProperties: false
+---
+apiVersion: schema.esdm.io/core/v1
+kind: dynamic-consistency-boundary
+name: sequence-definition-addition
+description: |
+  Guards the addition of a new sequence-definition. The name check is
+  simpler than for entities and custom types — a sequence derives no
+  type, so nothing outside its own namespace can collide — but the
+  reference check is stricter: the body names a property of an event,
+  so event *bodies* are consulted, not just event names.
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+identifiedBy:
+  - name: dcb-context-id
+    source: command-payload
+    field: dcb-context-id
+  - name: sequence-definition-name
+    source: command-payload
+    field: name
+consults:
+  - boundedContext: dcb-context-authoring
+    event: dcb-context-created
+    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
+  - boundedContext: dcb-context-authoring
+    event: dcb-context-deleted
+    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-added
+    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `sequence-definition-name`
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-renamed
+    criteria: events with matching `dcb-context-id` whose new `name` or `previous-name` equals this instance's `sequence-definition-name`
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-removed
+    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `sequence-definition-name`
+  - boundedContext: dcb-context-authoring
+    event: event-definition-added
+    criteria: every event-definition added in this context — needed to resolve the advancing events and the properties they carry
+  - boundedContext: dcb-context-authoring
+    event: event-definition-updated
+    criteria: every event-definition update in this context — the advancing property's type is read from the latest body
+  - boundedContext: dcb-context-authoring
+    event: event-definition-renamed
+    criteria: every event-definition rename in this context
+  - boundedContext: dcb-context-authoring
+    event: event-definition-removed
+    criteria: every event-definition removal in this context
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-added
+    criteria: every custom-type-definition added in this context — needed to resolve `valueType`
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-renamed
+    criteria: every custom-type-definition rename in this context
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-removed
+    criteria: every custom-type-definition removal in this context
+  - boundedContext: dcb-context-authoring
+    event: entity-definition-added
+    criteria: every entity-definition added in this context — needed to resolve a `valueType` naming an entity-derived type
+  - boundedContext: dcb-context-authoring
+    event: entity-definition-renamed
+    criteria: every entity-definition rename in this context
+  - boundedContext: dcb-context-authoring
+    event: entity-definition-removed
+    criteria: every entity-definition removal in this context
+invariants:
+  - name: context-active
+    rule: The context has been created and has not been deleted.
+  - name: name-not-in-use
+    rule: |
+      No sequence-definition currently goes by this name in this
+      context. Sequence names occupy their own namespace — a sequence
+      derives no type, so this name may equally belong to a custom
+      type, an entity or an event without conflict.
+  - name: value-type-resolves
+    rule: |
+      `valueType` resolves — to a simple type, a live
+      custom-type-definition, or a type derived from a live
+      entity-definition.
+  - name: advancing-events-resolve
+    rule: |
+      The body names at least one advancing event; every one of them is
+      a live event-definition in this context, and each names a
+      property that event carries, typed exactly `valueType` and
+      neither optional nor a list. An event may be named at most once.
+  - name: initial-value-present
+    rule: |
+      The body carries an initial value. It is the value issued before
+      any advancing event exists, and the only place a prefix is
+      stated, so a sequence without one issues nothing.
+---
+apiVersion: schema.esdm.io/core/v1
+kind: dynamic-consistency-boundary
+name: sequence-definition-update
+description: |
+  Guards body changes to an existing sequence-definition (name
+  unchanged). The name check reduces to "the name *is* currently in
+  use", since an update claims no new name — but the reference checks
+  are the addition's in full, because the new body may name different
+  events, a different property or a different type.
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+identifiedBy:
+  - name: dcb-context-id
+    source: command-payload
+    field: dcb-context-id
+  - name: sequence-definition-name
+    source: command-payload
+    field: name
+consults:
+  - boundedContext: dcb-context-authoring
+    event: dcb-context-created
+    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
+  - boundedContext: dcb-context-authoring
+    event: dcb-context-deleted
+    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-added
+    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `sequence-definition-name`
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-renamed
+    criteria: events with matching `dcb-context-id` whose new `name` or `previous-name` equals this instance's `sequence-definition-name`
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-removed
+    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `sequence-definition-name`
+  - boundedContext: dcb-context-authoring
+    event: event-definition-added
+    criteria: every event-definition added in this context — needed to resolve the advancing events and the properties they carry
+  - boundedContext: dcb-context-authoring
+    event: event-definition-updated
+    criteria: every event-definition update in this context — the advancing property's type is read from the latest body
+  - boundedContext: dcb-context-authoring
+    event: event-definition-renamed
+    criteria: every event-definition rename in this context
+  - boundedContext: dcb-context-authoring
+    event: event-definition-removed
+    criteria: every event-definition removal in this context
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-added
+    criteria: every custom-type-definition added in this context — needed to resolve `valueType`
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-renamed
+    criteria: every custom-type-definition rename in this context
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-removed
+    criteria: every custom-type-definition removal in this context
+  - boundedContext: dcb-context-authoring
+    event: entity-definition-added
+    criteria: every entity-definition added in this context — needed to resolve a `valueType` naming an entity-derived type
+  - boundedContext: dcb-context-authoring
+    event: entity-definition-renamed
+    criteria: every entity-definition rename in this context
+  - boundedContext: dcb-context-authoring
+    event: entity-definition-removed
+    criteria: every entity-definition removal in this context
+invariants:
+  - name: context-active
+    rule: The context has been created and has not been deleted.
+  - name: definition-exists
+    rule: A sequence-definition currently goes by this name in this context.
+  - name: value-type-resolves
+    rule: |
+      `valueType` resolves — to a simple type, a live
+      custom-type-definition, or a type derived from a live
+      entity-definition.
+  - name: advancing-events-resolve
+    rule: |
+      The body names at least one advancing event; every one of them is
+      a live event-definition in this context, and each names a
+      property that event carries, typed exactly `valueType` and
+      neither optional nor a list. An event may be named at most once.
+  - name: initial-value-present
+    rule: The body carries an initial value.
+---
+apiVersion: schema.esdm.io/core/v1
+kind: dynamic-consistency-boundary
+name: sequence-definition-rename
+description: |
+  Guards renaming a sequence-definition. Consults command lifecycle
+  events alongside its own, so every command drawing values from
+  `previous-name` can be rewritten in the same append. Nothing else
+  references a sequence, and no collision check against the type
+  namespace is needed — a sequence derives no type.
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+identifiedBy:
+  - name: dcb-context-id
+    source: command-payload
+    field: dcb-context-id
+  - name: previous-name
+    source: command-payload
+    field: previous-name
+  - name: name
+    source: command-payload
+    field: name
+consults:
+  - boundedContext: dcb-context-authoring
+    event: dcb-context-created
+    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
+  - boundedContext: dcb-context-authoring
+    event: dcb-context-deleted
+    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-added
+    criteria: events with matching `dcb-context-id` whose `name` equals `previous-name` or `name`
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-renamed
+    criteria: events with matching `dcb-context-id` whose new `name` or `previous-name` equals `previous-name` or `name`
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-removed
+    criteria: events with matching `dcb-context-id` whose `name` equals `previous-name` or `name`
+  - boundedContext: dcb-context-authoring
+    event: command-definition-added
+    criteria: every command-definition added in this context — needed to find the operands to rewrite
+  - boundedContext: dcb-context-authoring
+    event: command-definition-updated
+    criteria: every command-definition update in this context
+  - boundedContext: dcb-context-authoring
+    event: command-definition-renamed
+    criteria: every command-definition rename in this context
+  - boundedContext: dcb-context-authoring
+    event: command-definition-removed
+    criteria: every command-definition removal in this context
+invariants:
+  - name: context-active
+    rule: The context has been created and has not been deleted.
+  - name: previous-name-in-use
+    rule: A sequence-definition currently goes by `previous-name` in this context.
+  - name: new-name-free
+    rule: No sequence-definition currently goes by `name` in this context.
+---
+apiVersion: schema.esdm.io/core/v1
+kind: dynamic-consistency-boundary
+name: sequence-definition-removal
+description: |
+  Guards removal of a sequence-definition. Consults command lifecycle
+  events to refuse removal while any command in the same context still
+  draws values from it. No other kind can reference a sequence, so the
+  consult surface is narrower than the other removals.
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+identifiedBy:
+  - name: dcb-context-id
+    source: command-payload
+    field: dcb-context-id
+  - name: sequence-definition-name
+    source: command-payload
+    field: name
+consults:
+  - boundedContext: dcb-context-authoring
+    event: dcb-context-created
+    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
+  - boundedContext: dcb-context-authoring
+    event: dcb-context-deleted
+    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-added
+    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `sequence-definition-name`
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-renamed
+    criteria: events with matching `dcb-context-id` whose new `name` or `previous-name` equals this instance's `sequence-definition-name`
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-removed
+    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `sequence-definition-name`
+  - boundedContext: dcb-context-authoring
+    event: command-definition-added
+    criteria: every command-definition added in this context — needed to check for inbound references
+  - boundedContext: dcb-context-authoring
+    event: command-definition-updated
+    criteria: every command-definition update in this context
+  - boundedContext: dcb-context-authoring
+    event: command-definition-removed
+    criteria: every command-definition removal in this context
+invariants:
+  - name: context-active
+    rule: The context has been created and has not been deleted.
+  - name: definition-exists
+    rule: A sequence-definition currently goes by this name in this context.
+  - name: no-inbound-references
+    rule: |
+      No live command-definition in this context draws a value from
+      this sequence — in a boundary binding's identifier, in a
+      condition, or in an event emission. References are read from the
+      latest body of each live definition.
+---
+apiVersion: schema.esdm.io/core/v1
+kind: command
+name: add-sequence-definition
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+  dynamicConsistencyBoundary: sequence-definition-addition
+data:
+  type: object
+  properties:
+    dcb-context-id:
+      type: string
+    name:
+      type: string
+    body:
+      type: object
+  required: [dcb-context-id, name, body]
+  additionalProperties: false
+publishes:
+  - sequence-definition-added
+actors:
+  - modeler
+---
+apiVersion: schema.esdm.io/core/v1
+kind: command
+name: update-sequence-definition
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+  dynamicConsistencyBoundary: sequence-definition-update
+data:
+  type: object
+  properties:
+    dcb-context-id:
+      type: string
+    name:
+      type: string
+    body:
+      type: object
+  required: [dcb-context-id, name, body]
+  additionalProperties: false
+publishes:
+  - sequence-definition-updated
+actors:
+  - modeler
+---
+apiVersion: schema.esdm.io/core/v1
+kind: command
+name: rename-sequence-definition
+description: |
+  Renames a sequence-definition. Atomically emits the rename event plus
+  one `command-definition-updated` event for every command that drew
+  values from `previous-name`, with every occurrence replaced by
+  `name`. No other kind can reference a sequence, so no other
+  definitions are rewritten.
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+  dynamicConsistencyBoundary: sequence-definition-rename
+data:
+  type: object
+  properties:
+    dcb-context-id:
+      type: string
+    previous-name:
+      type: string
+    name:
+      type: string
+  required: [dcb-context-id, previous-name, name]
+  additionalProperties: false
+publishes:
+  - sequence-definition-renamed
+  - command-definition-updated
+constraints:
+  - name: rewrite-sequence-references
+    rule: |
+      Emit exactly one `command-definition-updated` event for every
+      command-definition currently in the context that draws a value
+      from `previous-name` — in a boundary binding's identifier, in a
+      condition, or in an event emission — with every occurrence
+      replaced by `name`. Emit nothing for commands that did not
+      reference the renamed sequence.
+actors:
+  - modeler
+---
+apiVersion: schema.esdm.io/core/v1
+kind: command
+name: remove-sequence-definition
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-context-authoring
+  dynamicConsistencyBoundary: sequence-definition-removal
+data:
+  type: object
+  properties:
+    dcb-context-id:
+      type: string
+    name:
+      type: string
+  required: [dcb-context-id, name]
+  additionalProperties: false
+publishes:
+  - sequence-definition-removed
+actors:
+  - modeler

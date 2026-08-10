@@ -8,11 +8,18 @@
 #   - entity-definitions, via the boundary bindings, the alias-property
 #     operands in conditions and emissions, and the enum-member
 #     operands naming a state;
-#   - event-definitions, via `publishes`.
+#   - event-definitions, via `publishes`;
+#   - sequence-definitions, via operands drawing the next value from
+#     a sequence.
 #
 # A command's `boundary` *is* its dynamic consistency boundary: the
-# bound instances supply the tags of the append condition's query. The
-# write-coverage invariant below is what keeps that honest.
+# bound instances supply the tags of the append condition's query,
+# and every sequence it reads adds a type-only query with no tag at
+# all. The write-coverage invariant below is what keeps that honest.
+#
+# Declaration order in the boundary is a chain — a binding may take
+# its identifier from an instance bound above it — and a binding whose
+# identifier is a list covers one instance per element.
 
 apiVersion: schema.esdm.io/core/v1
 kind: event
@@ -156,6 +163,15 @@ consults:
   - boundedContext: dcb-context-authoring
     event: event-definition-removed
     criteria: every event-definition removal in this context
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-added
+    criteria: every sequence-definition added in this context — needed to resolve operands drawing from a sequence
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-renamed
+    criteria: every sequence-definition rename in this context
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-removed
+    criteria: every sequence-definition removal in this context
 invariants:
   - name: context-active
     rule: The context has been created and has not been deleted.
@@ -165,12 +181,26 @@ invariants:
     rule: |
       Every payload property type resolves; every `entity` named in a
       boundary binding is a live entity-definition; every event named
-      in `publishes` is a live event-definition.
+      in `publishes` is a live event-definition; every sequence an
+      operand draws from is a live sequence-definition.
   - name: aliases-well-formed
     rule: |
       Boundary aliases are unique within the command, and every
       alias-property operand names a bound alias together with a
       property that the aliased entity currently declares.
+  - name: chain-resolves-downwards
+    rule: |
+      A binding taking its identifier from another instance names
+      one bound *above* it, never itself and never one below. One
+      left-to-right pass therefore resolves the chain, and a cycle
+      cannot be expressed.
+  - name: plural-aliases-are-not-emitted
+    rule: |
+      A binding whose identifier operand is a list covers one
+      instance per element. Such an alias may be read by a
+      condition — which then holds for every instance — but never
+      supplies a value to an event emission, having no single value
+      to give. `excluding` is set only on such a binding.
   - name: enum-members-resolve
     rule: |
       Every enum-member operand names a state member declared by the
@@ -181,6 +211,10 @@ invariants:
       entity identifier is bound to an operand that resolves to a
       boundary binding of that same entity. A command may not write a
       tag it did not consult.
+
+      A property supplied from a sequence is exempt: the sequence's
+      own query already covers every event that could have issued
+      that value.
 ---
 apiVersion: schema.esdm.io/core/v1
 kind: dynamic-consistency-boundary
@@ -248,6 +282,15 @@ consults:
   - boundedContext: dcb-context-authoring
     event: event-definition-removed
     criteria: every event-definition removal in this context
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-added
+    criteria: every sequence-definition added in this context — needed to resolve operands drawing from a sequence
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-renamed
+    criteria: every sequence-definition rename in this context
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-removed
+    criteria: every sequence-definition removal in this context
 invariants:
   - name: context-active
     rule: The context has been created and has not been deleted.
@@ -257,12 +300,26 @@ invariants:
     rule: |
       Every payload property type resolves; every `entity` named in a
       boundary binding is a live entity-definition; every event named
-      in `publishes` is a live event-definition.
+      in `publishes` is a live event-definition; every sequence an
+      operand draws from is a live sequence-definition.
   - name: aliases-well-formed
     rule: |
       Boundary aliases are unique within the command, and every
       alias-property operand names a bound alias together with a
       property that the aliased entity currently declares.
+  - name: chain-resolves-downwards
+    rule: |
+      A binding taking its identifier from another instance names
+      one bound *above* it, never itself and never one below. One
+      left-to-right pass therefore resolves the chain, and a cycle
+      cannot be expressed.
+  - name: plural-aliases-are-not-emitted
+    rule: |
+      A binding whose identifier operand is a list covers one
+      instance per element. Such an alias may be read by a
+      condition — which then holds for every instance — but never
+      supplies a value to an event emission, having no single value
+      to give. `excluding` is set only on such a binding.
   - name: enum-members-resolve
     rule: |
       Every enum-member operand names a state member declared by the
@@ -271,7 +328,8 @@ invariants:
     rule: |
       For every published event, each of its properties typed with an
       entity identifier is bound to an operand that resolves to a
-      boundary binding of that same entity.
+      boundary binding of that same entity, or is supplied from a
+      sequence.
 ---
 apiVersion: schema.esdm.io/core/v1
 kind: dynamic-consistency-boundary

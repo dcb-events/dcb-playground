@@ -14,7 +14,8 @@
 #     (property types), event-definitions (property handlers).
 #     References in: event-definitions (property types),
 #     command-definitions (boundary bindings, property types, enum
-#     member references) and other entity-definitions.
+#     member references), sequence-definitions (`valueType`) and
+#     other entity-definitions.
 
 apiVersion: schema.esdm.io/core/v1
 kind: event
@@ -340,6 +341,15 @@ consults:
   - boundedContext: dcb-context-authoring
     event: command-definition-removed
     criteria: every command-definition removal in this context
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-added
+    criteria: every sequence-definition added in this context — a sequence's `valueType` may name a derived type
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-updated
+    criteria: every sequence-definition update in this context
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-removed
+    criteria: every sequence-definition removal in this context
 invariants:
   - name: context-active
     rule: The context has been created and has not been deleted.
@@ -360,7 +370,8 @@ description: |
   Guards removal of an entity-definition. Refuses while anything still
   references the entity or either of its derived types: an event
   property typed `<name>Id`, another entity's property typed the same
-  way, or a command binding it in its boundary.
+  way, a command binding it in its boundary, or a sequence issuing
+  `<name>Id` as its `valueType`.
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -408,6 +419,15 @@ consults:
   - boundedContext: dcb-context-authoring
     event: command-definition-removed
     criteria: every command-definition removal in this context
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-added
+    criteria: every sequence-definition added in this context — a sequence's `valueType` may name a derived type
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-updated
+    criteria: every sequence-definition update in this context
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-removed
+    criteria: every sequence-definition removal in this context
 invariants:
   - name: context-active
     rule: The context has been created and has not been deleted.
@@ -417,9 +437,10 @@ invariants:
     rule: |
       No live event-definition has a property typed `<name>Id` or
       `<name>State`, no other live entity-definition has such a
-      property, and no live command-definition binds this entity in
-      its boundary or types a payload property with either derived
-      type.
+      property, no live command-definition binds this entity in its
+      boundary or types a payload property with either derived type,
+      and no live sequence-definition issues either as its
+      `valueType`.
 ---
 apiVersion: schema.esdm.io/core/v1
 kind: command
@@ -499,6 +520,7 @@ publishes:
   - entity-definition-updated
   - event-definition-updated
   - command-definition-updated
+  - sequence-definition-updated
 constraints:
   - name: rewrite-event-references
     rule: |
@@ -521,6 +543,12 @@ constraints:
       either derived name, with every occurrence rewritten. Alias names
       are left untouched — an alias is local to its command and carries
       no reference to the entity name.
+  - name: rewrite-sequence-value-types
+    rule: |
+      Emit exactly one `sequence-definition-updated` for every
+      sequence-definition currently in the context whose `valueType`
+      is `<previous-name>Id` or `<previous-name>State`, rewritten to
+      the corresponding new derived name.
 actors:
   - modeler
 ---

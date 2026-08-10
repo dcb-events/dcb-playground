@@ -7,8 +7,13 @@
 # reference is load-bearing rather than cosmetic.
 #
 # References in: entity-definitions (a property handler names the event
-# it folds) and command-definitions (`publishes`). Renames therefore
-# rewrite entities and commands atomically.
+# it folds), command-definitions (`publishes`) and sequence-definitions
+# (`advancedBy`). Renames therefore rewrite entities, commands and
+# sequences atomically.
+#
+# The sequence reference is the tightest of the three: it names not
+# just the event but a property of it, so dropping that property is
+# refused as firmly as dropping one an entity handler reads.
 
 apiVersion: schema.esdm.io/core/v1
 kind: event
@@ -161,9 +166,9 @@ description: |
   unchanged). Same consult surface as `event-definition-addition`;
   the uniqueness invariant flips to "the name *is* currently in use".
 
-  Also consults entity and command lifecycles: dropping a property
-  removes a tag or a value that a folding entity handler or an
-  emitting command may still bind.
+  Also consults entity, command and sequence lifecycles: dropping a
+  property removes a tag or a value that a folding entity handler, an
+  emitting command or an advancing sequence may still name.
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -220,6 +225,15 @@ consults:
   - boundedContext: dcb-context-authoring
     event: command-definition-removed
     criteria: every command-definition removal in this context
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-added
+    criteria: every sequence-definition added in this context — a sequence names an advancing event and a property of it
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-updated
+    criteria: every sequence-definition update in this context
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-removed
+    criteria: every sequence-definition removal in this context
 invariants:
   - name: context-active
     rule: The context has been created and has not been deleted.
@@ -235,8 +249,10 @@ invariants:
   - name: inbound-property-references-survive
     rule: |
       Every property of this event that a live entity handler reads
-      (as a handler value) or a live command binds (in an event
-      emission) is still present in the updated body.
+      (as a handler value), a live command binds (in an event
+      emission), or a live sequence advances from is still present in
+      the updated body — and a property a sequence advances from still
+      carries that sequence's `valueType`, singly and required.
 ---
 apiVersion: schema.esdm.io/core/v1
 kind: dynamic-consistency-boundary
@@ -302,6 +318,15 @@ consults:
   - boundedContext: dcb-context-authoring
     event: command-definition-removed
     criteria: every command-definition removal in this context
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-added
+    criteria: every sequence-definition added in this context — a sequence names an advancing event and a property of it
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-updated
+    criteria: every sequence-definition update in this context
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-removed
+    criteria: every sequence-definition removal in this context
 invariants:
   - name: context-active
     rule: The context has been created and has not been deleted.
@@ -314,10 +339,10 @@ apiVersion: schema.esdm.io/core/v1
 kind: dynamic-consistency-boundary
 name: event-definition-removal
 description: |
-  Guards removal of an event-definition. Consults entity and command
-  lifecycle events to refuse removal while any entity (via a property
-  handler) or any command (via `publishes`) in the same context still
-  references the name.
+  Guards removal of an event-definition. Consults entity, command and
+  sequence lifecycle events to refuse removal while any entity (via a
+  property handler), any command (via `publishes`) or any sequence
+  (via `advancedBy`) in the same context still references the name.
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -362,6 +387,15 @@ consults:
   - boundedContext: dcb-context-authoring
     event: command-definition-removed
     criteria: every command-definition removal in this context
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-added
+    criteria: every sequence-definition added in this context — a sequence names an advancing event and a property of it
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-updated
+    criteria: every sequence-definition update in this context
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-removed
+    criteria: every sequence-definition removal in this context
 invariants:
   - name: context-active
     rule: The context has been created and has not been deleted.
@@ -370,9 +404,9 @@ invariants:
   - name: no-inbound-references
     rule: |
       No entity-definition currently in the context names this
-      event-definition in a property handler, and no
-      command-definition in the context names it in `publishes`.
-      References are read from the latest body of each live
+      event-definition in a property handler, no command-definition
+      names it in `publishes`, and no sequence-definition is advanced
+      by it. References are read from the latest body of each live
       definition.
 ---
 apiVersion: schema.esdm.io/core/v1
@@ -451,6 +485,7 @@ publishes:
   - event-definition-renamed
   - entity-definition-updated
   - command-definition-updated
+  - sequence-definition-updated
 constraints:
   - name: rewrite-entity-references
     rule: |
@@ -466,6 +501,12 @@ constraints:
       list named the event under `previous-name`, with the entry
       replaced by `name`. Emit nothing for commands that did not
       reference the renamed event.
+  - name: rewrite-sequence-references
+    rule: |
+      Emit exactly one `sequence-definition-updated` for every
+      sequence-definition currently in the context advanced by the
+      event under `previous-name`, with the entry replaced by `name`.
+      Emit nothing for sequences the renamed event does not advance.
 actors:
   - modeler
 ---

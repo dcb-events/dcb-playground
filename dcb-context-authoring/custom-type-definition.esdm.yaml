@@ -9,7 +9,8 @@
 #
 # References out: none (the schema is opaque JSON Schema).
 # References in: event-definitions, entity-definitions and
-# command-definitions, through their property types.
+# command-definitions, through their property types; and
+# sequence-definitions, through `valueType`.
 
 apiVersion: schema.esdm.io/core/v1
 kind: event
@@ -184,10 +185,10 @@ apiVersion: schema.esdm.io/core/v1
 kind: dynamic-consistency-boundary
 name: custom-type-definition-rename
 description: |
-  Guards renaming a custom-type-definition. Consults event, entity and
-  command lifecycle events alongside its own, so every definition
-  whose property types name `previous-name` can be rewritten in the
-  same append — and consults the entity lifecycle a second time over,
+  Guards renaming a custom-type-definition. Consults event, entity,
+  command and sequence lifecycle events alongside its own, so every
+  definition naming `previous-name` — as a property type, or as a
+  sequence's `valueType` — can be rewritten in the same append — and consults the entity lifecycle a second time over,
   because the new name must not collide with a derived type name.
 scope:
   domain: dcb-playground
@@ -254,6 +255,15 @@ consults:
   - boundedContext: dcb-context-authoring
     event: command-definition-removed
     criteria: every command-definition removal in this context
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-added
+    criteria: every sequence-definition added in this context — a sequence's `valueType` names a type
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-updated
+    criteria: every sequence-definition update in this context
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-removed
+    criteria: every sequence-definition removal in this context
 invariants:
   - name: context-active
     rule: The context has been created and has not been deleted.
@@ -270,9 +280,10 @@ apiVersion: schema.esdm.io/core/v1
 kind: dynamic-consistency-boundary
 name: custom-type-definition-removal
 description: |
-  Guards removal of a custom-type-definition. Consults event, entity
-  and command lifecycle events to refuse removal while any definition
-  still types a property with the name.
+  Guards removal of a custom-type-definition. Consults event, entity,
+  command and sequence lifecycle events to refuse removal while any
+  definition still names it — as a property type, or as a sequence's
+  `valueType`.
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -326,6 +337,15 @@ consults:
   - boundedContext: dcb-context-authoring
     event: command-definition-removed
     criteria: every command-definition removal in this context
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-added
+    criteria: every sequence-definition added in this context — a sequence's `valueType` names a type
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-updated
+    criteria: every sequence-definition update in this context
+  - boundedContext: dcb-context-authoring
+    event: sequence-definition-removed
+    criteria: every sequence-definition removal in this context
 invariants:
   - name: context-active
     rule: The context has been created and has not been deleted.
@@ -335,8 +355,9 @@ invariants:
     rule: |
       No live event-definition, entity-definition or
       command-definition in this context types a property with this
-      name. References are read from the latest body of each live
-      definition.
+      name, and no live sequence-definition issues it as its
+      `valueType`. References are read from the latest body of each
+      live definition.
 ---
 apiVersion: schema.esdm.io/core/v1
 kind: command
@@ -390,8 +411,9 @@ name: rename-custom-type-definition
 description: |
   Renames a custom-type-definition. Atomically emits the rename event
   plus one `*-updated` event for every event-, entity- and
-  command-definition that typed a property with `previous-name`, with
-  every occurrence replaced by `name`.
+  command-definition that typed a property with `previous-name`, and
+  for every sequence-definition issuing it, with every occurrence
+  replaced by `name`.
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -412,6 +434,7 @@ publishes:
   - event-definition-updated
   - entity-definition-updated
   - command-definition-updated
+  - sequence-definition-updated
 constraints:
   - name: rewrite-property-type-references
     rule: |
@@ -420,6 +443,12 @@ constraints:
       property typed `previous-name`, with every occurrence replaced
       by `name`. Emit nothing for definitions that did not reference
       the renamed type.
+  - name: rewrite-sequence-value-types
+    rule: |
+      Emit exactly one `sequence-definition-updated` for every
+      sequence-definition currently in the context whose `valueType`
+      is `previous-name`, replaced by `name`. Emit nothing for
+      sequences issuing another type.
 actors:
   - modeler
 ---

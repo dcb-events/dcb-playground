@@ -3,7 +3,7 @@ kind: bounded-context
 name: dcb-context-authoring
 description: |
   The editing surface of the playground. Modelers create, edit, rename
-  and delete DCB Contexts and the four kinds of definitions inside
+  and delete DCB Contexts and the five kinds of definitions inside
   them; viewers inspect a context without changing it. The companion
   testing surface (scenarios, runs, assertions) is planned as a
   separate bounded context and is out of scope here.
@@ -13,9 +13,9 @@ ubiquitousLanguage:
   - term: DCB Context
     definition: |
       The complete authoring artifact a modeler builds — a named
-      container of custom-type, event, entity and command definitions
-      describing one DCB-based system. Identified by a generated id;
-      its name is a mutable display attribute.
+      container of custom-type, event, entity, sequence and command
+      definitions describing one DCB-based system. Identified by a
+      generated id; its name is a mutable display attribute.
   - term: Entity Definition
     definition: |
       A modeled thing with an identity, a lifecycle state and a set of
@@ -82,13 +82,43 @@ ubiquitousLanguage:
       A user-declared *value* type (a pattern-constrained string, a
       money amount). Never a tag — tags come from entity identifiers
       alone. Referenced by event, entity and command definitions
-      through their property types.
+      through their property types, and by sequence definitions
+      through the type they issue.
   - term: Event Definition
     definition: |
       A domain event modeled inside a DCB Context. Its property types
       determine both its payload and its tags. Referenced by entity
-      definitions (a property handler names the event it folds) and by
-      command definitions (in their `publishes` lists).
+      definitions (a property handler names the event it folds), by
+      command definitions (in their `publishes` lists) and by sequence
+      definitions (as an advancing event).
+  - term: Sequence Definition
+    definition: |
+      A monotonic generator of values — course numbers, invoice
+      references. Declares the type it issues, the value it starts
+      from, and the events that consume values from it; the value
+      issued is the successor of whatever the last such event carried.
+
+      It is the one definition not partitioned by a tag. A numbering is
+      global by nature — it is not *about* any one instance — so its
+      query is scoped by event type alone, and a command that reads one
+      is thereby serialised against every other command reading the
+      same sequence. Referenced only by command definitions; derives no
+      type, so its name occupies a namespace of its own.
+    avoid:
+      - term: Counter
+        reason: |
+          A counter accumulates and must be folded over its whole
+          history. A sequence is defined by the *last* advancing event
+          alone, which is what lets an implementation answer it with a
+          single backwards read. "Counter" invites the fold that the
+          definition exists to avoid.
+      - term: Singleton Entity
+        reason: |
+          Modeling the numbering as an entity with one instance was the
+          earlier design. It forced a synthetic tag onto every event
+          that advanced it, and made the entity a thing with an
+          identity nobody means. A sequence is not a thing in the
+          domain; it is a source of values.
   - term: Command Definition
     definition: |
       An intent a modeler may issue against the modeled system. Has a
@@ -101,9 +131,20 @@ ubiquitousLanguage:
       The list of entity instances a command consults, each under a
       local alias. *This is the command's dynamic consistency
       boundary*: the append condition's query is the union of the
-      bound instances' tags, restricted to the event types the
-      conditions reach through. Rendered on the command so the DCB is
-      visible rather than inferred.
+      bound instances' tags — restricted to the event types the
+      conditions reach through — together with the type-only query of
+      every sequence the command reads. Rendered on the command so the
+      DCB is visible rather than inferred.
+
+      Declaration order is a *chain*: a binding may take its identifier
+      from an instance bound above it, never from one below, so a
+      command can read one projection to learn which instance to bind
+      next. The chain reads in links but decides as of one point: the
+      position of the last event overall is taken first, every link is
+      read bounded at it, and the append condition carries the union of
+      the links' queries after that same position. Anything the command
+      looked at that changed under it invalidates the append, and
+      nothing else does.
   - term: Alias
     definition: |
       The local name a command gives one bound entity instance
@@ -118,23 +159,41 @@ ubiquitousLanguage:
       any event is emitted. Conditions are not reusable: duplication
       across commands is accepted in exchange for removing the
       indirection of a separate constraint kind.
+  - term: Fan-out
+    definition: |
+      What a binding does when its identifier operand is a list: it
+      covers one instance per element, contributing one query item
+      each. Never declared — it follows from the operand's type. A list
+      read off an already-plural alias is a list of lists, which
+      flattens; `excluding` drops one identifier from the set, which
+      narrows the binding rather than the conditions.
+
+      A condition reading a plural alias must hold for *every* instance
+      it bound, vacuously so when the set is empty. The quantifier is
+      not written down either, for the same reason. A plural alias can
+      therefore be checked but never emitted — it has no single value
+      to give.
   - term: Operand
     definition: |
       Where a value comes from. Inside a command: a payload property,
-      an alias property (`course.capacity`), an enum member, or a
-      literal. Inside a property handler: a property of the event
-      being folded, the property's current value, an enum member, or a
-      literal.
+      an alias property (`course.capacity`), the next value of a
+      sequence, an enum member, or a literal. Inside a property
+      handler: a property of the event being folded, the property's
+      current value, an enum member, or a literal.
   - term: Write Coverage
     definition: |
       The rule that every entity-identifier property of every
       published event must resolve to a binding in the command's
       boundary — a command may not write a tag it did not consult.
+
+      A value drawn from a sequence is exempt: the sequence's own query
+      already covers every event that could have issued it, and a
+      freshly minted identifier has no history to consult.
   - term: Definition
     definition: |
-      Umbrella term for the four kinds above (custom-type, event,
-      entity, command). Used wherever a rule applies regardless of
-      which kind is meant.
+      Umbrella term for the five kinds above (custom-type, event,
+      entity, sequence, command). Used wherever a rule applies
+      regardless of which kind is meant.
   - term: Reference
     definition: |
       A name-based pointer from one definition's body to another (e.g.
