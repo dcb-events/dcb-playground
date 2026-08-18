@@ -2,7 +2,7 @@
 # Identified within the context by `name` (the natural key).
 #
 # Distinctive aspects of this kind:
-#   - an entity *derives* two type names, `<name>Id` and `<name>State`,
+#   - an entity *derives* two type names, `<name>Id` and `<name>Status`,
 #     which are never stored but do occupy the custom-type namespace;
 #     addition and rename must therefore check those derived names for
 #     collisions against custom-type-definitions as well.
@@ -14,7 +14,8 @@
 #     (property types), event-definitions (property handlers).
 #     References in: event-definitions (property types),
 #     command-definitions (boundary bindings, property types, enum
-#     member references), sequence-definitions (`valueType`) and
+#     member references), projection-definitions (`valueType` and `parameters`),
+#     custom-type-definitions (composite field types) and
 #     other entity-definitions.
 
 apiVersion: schema.esdm.io/core/v1
@@ -33,9 +34,9 @@ data:
     body:
       type: object
       description: |
-        Authored content of the entity — identifier schema, state
+        Authored content of the entity — identifier schema, status
         members, and the property projections (including the reserved
-        `state` property) with their handlers. Body shape is owned by
+        `status` property) with their handlers. Body shape is owned by
         the DCB Context schema, not by this domain model.
   required: [dcb-context-id, name, body]
   additionalProperties: false
@@ -99,7 +100,7 @@ description: |
   Guards the addition of a new entity-definition. Beyond the usual
   "context active + name not in use" checks it consults
   custom-type-definition lifecycle events — because the entity claims
-  `<name>Id` and `<name>State` in the shared type namespace — plus
+  `<name>Id` and `<name>Status` in the shared type namespace — plus
   event-definition and entity-definition lifecycle events, so the
   outbound references in the new entity's body can be resolved in the
   same append.
@@ -154,7 +155,7 @@ invariants:
     rule: No entity-definition currently goes by this name in this context.
   - name: derived-names-free
     rule: |
-      Neither `<name>Id` nor `<name>State` is currently claimed by a
+      Neither `<name>Id` nor `<name>Status` is currently claimed by a
       custom-type-definition in this context, nor derived by any other
       live entity-definition. The type namespace is shared between
       declared value types and derived entity types.
@@ -165,24 +166,27 @@ invariants:
       from a live entity-definition (including this one) — and every
       event named by a property handler is a live event-definition in
       this context.
-  - name: state-property-well-formed
+  - name: status-property-well-formed
     rule: |
-      The body declares at least two distinct state members, and its
-      properties contain exactly one entry named `state`, typed
-      `<name>State`, neither optional nor a list, whose `initialValue`
-      names the first declared state member.
+      The body declares at least two distinct status members, and its
+      properties contain exactly one entry named `status`, typed
+      `<name>Status`, neither optional nor a list, never scripted, whose
+      `initialValue` names the first declared status member. It is the
+      one reading every condition and every derived boundary depends
+      on, so it stays something the tooling can make without running
+      anything.
 ---
 apiVersion: schema.esdm.io/core/v1
 kind: dynamic-consistency-boundary
 name: entity-definition-update
 description: |
   Guards body updates to an existing entity-definition — changing the
-  identifier schema, the state members, or the property projections.
+  identifier schema, the status members, or the property projections.
   Same consult surface as addition (outbound references must still
   resolve, derived names must still be free of *other* claimants); the
   uniqueness check flips to "definition exists".
 
-  Removing a state member is an update like any other, so the DCB also
+  Removing a status member is an update like any other, so the DCB also
   consults command lifecycle events: a command's condition may hold an
   enum-member reference to the member being dropped.
 scope:
@@ -251,18 +255,18 @@ invariants:
       Every type name used by the updated properties resolves, and
       every event named by a property handler is a live
       event-definition in this context.
-  - name: state-property-well-formed
+  - name: status-property-well-formed
     rule: |
-      The updated body still declares at least two distinct state
-      members and still carries the reserved `state` property, typed
-      `<name>State`, neither optional nor a list, whose `initialValue`
-      names the first declared state member.
+      The updated body still declares at least two distinct status
+      members and still carries the reserved `status` property, typed
+      `<name>Status`, neither optional nor a list, never scripted, whose
+      `initialValue` names the first declared status member.
   - name: inbound-references-survive
     rule: |
-      Every property and state member that a live command-definition
+      Every property and status member that a live command-definition
       still references — through an alias-property operand or an
       enum-member operand resolving to this entity — is still present
-      in the updated body. Dropping a referenced property or state
+      in the updated body. Dropping a referenced property or status
       member is refused rather than silently breaking the command.
 ---
 apiVersion: schema.esdm.io/core/v1
@@ -273,9 +277,10 @@ description: |
   in the model, because a rename changes the entity's *derived type
   names* as well as its own: every event-definition property typed
   `<previous-name>Id`, every other entity's property typed the same
-  way, and every command binding the entity in its boundary must be
-  rewritten in the same atomic append. The new derived names must also
-  be free.
+  way, every composite custom-type-definition with a *field* typed the
+  same way, and every command binding the entity in its boundary must
+  be rewritten in the same atomic append. The new derived names must
+  also be free.
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -310,7 +315,10 @@ consults:
     criteria: every entity-definition removal in this context
   - boundedContext: dcb-context-authoring
     event: custom-type-definition-added
-    criteria: every custom-type-definition added in this context — the new derived names must not collide
+    criteria: every custom-type-definition added in this context — the new derived names must not collide, and composite fields typed with a derived name must be rewritten
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-updated
+    criteria: every custom-type-definition update in this context — composite fields are read from the latest body
   - boundedContext: dcb-context-authoring
     event: custom-type-definition-renamed
     criteria: every custom-type-definition rename in this context
@@ -342,14 +350,14 @@ consults:
     event: command-definition-removed
     criteria: every command-definition removal in this context
   - boundedContext: dcb-context-authoring
-    event: sequence-definition-added
-    criteria: every sequence-definition added in this context — a sequence's `valueType` may name a derived type
+    event: projection-definition-added
+    criteria: every projection-definition added in this context — a projection's `valueType` or a `parameters` entry may name a derived type
   - boundedContext: dcb-context-authoring
-    event: sequence-definition-updated
-    criteria: every sequence-definition update in this context
+    event: projection-definition-updated
+    criteria: every projection-definition update in this context
   - boundedContext: dcb-context-authoring
-    event: sequence-definition-removed
-    criteria: every sequence-definition removal in this context
+    event: projection-definition-removed
+    criteria: every projection-definition removal in this context
 invariants:
   - name: context-active
     rule: The context has been created and has not been deleted.
@@ -359,7 +367,7 @@ invariants:
     rule: No entity-definition currently goes by `name` in this context.
   - name: new-derived-names-free
     rule: |
-      Neither `<name>Id` nor `<name>State` is currently claimed by a
+      Neither `<name>Id` nor `<name>Status` is currently claimed by a
       custom-type-definition or derived by another live
       entity-definition in this context.
 ---
@@ -370,8 +378,8 @@ description: |
   Guards removal of an entity-definition. Refuses while anything still
   references the entity or either of its derived types: an event
   property typed `<name>Id`, another entity's property typed the same
-  way, a command binding it in its boundary, or a sequence issuing
-  `<name>Id` as its `valueType`.
+  way, a command binding it in its boundary, or a projection holding
+  `<name>Id` as its `valueType` or taking it as a parameter.
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -420,14 +428,23 @@ consults:
     event: command-definition-removed
     criteria: every command-definition removal in this context
   - boundedContext: dcb-context-authoring
-    event: sequence-definition-added
-    criteria: every sequence-definition added in this context — a sequence's `valueType` may name a derived type
+    event: projection-definition-added
+    criteria: every projection-definition added in this context — a projection's `valueType` or a `parameters` entry may name a derived type
   - boundedContext: dcb-context-authoring
-    event: sequence-definition-updated
-    criteria: every sequence-definition update in this context
+    event: projection-definition-updated
+    criteria: every projection-definition update in this context
   - boundedContext: dcb-context-authoring
-    event: sequence-definition-removed
-    criteria: every sequence-definition removal in this context
+    event: projection-definition-removed
+    criteria: every projection-definition removal in this context
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-added
+    criteria: every custom-type-definition added in this context — a composite's field may be typed with a derived type
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-updated
+    criteria: every custom-type-definition update in this context — fields are read from the latest body
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-removed
+    criteria: every custom-type-definition removal in this context
 invariants:
   - name: context-active
     rule: The context has been created and has not been deleted.
@@ -436,18 +453,19 @@ invariants:
   - name: no-inbound-references
     rule: |
       No live event-definition has a property typed `<name>Id` or
-      `<name>State`, no other live entity-definition has such a
-      property, no live command-definition binds this entity in its
-      boundary or types a payload property with either derived type,
-      and no live sequence-definition issues either as its
-      `valueType`.
+      `<name>Status`, no other live entity-definition has such a
+      property, no live composite custom-type-definition has a *field*
+      typed either way, no live command-definition binds this entity in
+      its boundary or types a payload property with either derived
+      type, no live projection-definition holds either as its
+      `valueType`, and none takes `<name>Id` as a parameter.
 ---
 apiVersion: schema.esdm.io/core/v1
 kind: command
 name: add-entity-definition
 description: |
   Adds an entity. The body is expected to arrive complete — including
-  the reserved `state` property seeded with the first state member as
+  the reserved `status` property seeded with the first status member as
   its initial value — because the DCB checks the reserved slot as part
   of the same append.
 scope:
@@ -520,19 +538,29 @@ publishes:
   - entity-definition-updated
   - event-definition-updated
   - command-definition-updated
-  - sequence-definition-updated
+  - projection-definition-updated
+  - custom-type-definition-updated
 constraints:
   - name: rewrite-event-references
     rule: |
       Emit exactly one `event-definition-updated` for every
       event-definition currently in the context with a property typed
-      `<previous-name>Id` or `<previous-name>State`, with the type
+      `<previous-name>Id` or `<previous-name>Status`, with the type
       rewritten to the corresponding new derived name.
+  - name: rewrite-composite-field-references
+    rule: |
+      Emit exactly one `custom-type-definition-updated` for every
+      composite custom-type-definition currently in the context with a
+      *field* typed `<previous-name>Id` or `<previous-name>Status`, with
+      the type rewritten. Without this a composite would keep naming a
+      type nothing derives any more — and because a composite's
+      identifier fields are what make events carrying it tagged, the
+      break would surface as an event silently losing its tags.
   - name: rewrite-cross-entity-references
     rule: |
       Emit exactly one `entity-definition-updated` for every *other*
       entity-definition currently in the context with a property typed
-      `<previous-name>Id` or `<previous-name>State`, with the type
+      `<previous-name>Id` or `<previous-name>Status`, with the type
       rewritten. The renamed entity's own body is carried by the
       rename event, not by an update.
   - name: rewrite-command-references
@@ -543,12 +571,13 @@ constraints:
       either derived name, with every occurrence rewritten. Alias names
       are left untouched — an alias is local to its command and carries
       no reference to the entity name.
-  - name: rewrite-sequence-value-types
+  - name: rewrite-projection-value-types
     rule: |
-      Emit exactly one `sequence-definition-updated` for every
-      sequence-definition currently in the context whose `valueType`
-      is `<previous-name>Id` or `<previous-name>State`, rewritten to
-      the corresponding new derived name.
+      Emit exactly one `projection-definition-updated` for every
+      projection-definition currently in the context whose `valueType` is
+      `<previous-name>Id` or `<previous-name>Status`, or one of whose
+      parameters is typed `<previous-name>Id`, rewritten to the
+      corresponding new derived name.
 actors:
   - modeler
 ---

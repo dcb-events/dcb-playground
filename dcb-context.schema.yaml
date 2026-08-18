@@ -6,25 +6,33 @@ description: |
   Schema describing a DCB context including all definitions.
 
   The context is organised around **entities**. An entity owns its
-  identifier type, its state enum and every projection describing it —
+  identifier type, its status enum and every projection describing it —
   each of the entity's properties *is* a projection, folded over the
   events tagged with that entity instance. There is no standalone
   constraint kind: conditions are inlined into the commands that check
   them.
 
-  **Sequences** are the one deliberate exception. A monotonic numbering
-  is global by nature — it is not *about* any one instance — so it
-  cannot be partitioned by a tag. A `sequenceDefinition` is therefore
-  scoped by event type alone, and is the only thing in this document
-  whose query carries no tag.
+  **Projections** are what is left when a fold belongs to no entity. A
+  `projectionDefinition` states its own partition instead of inheriting
+  one: it declares typed parameters, and the arguments a command
+  supplies for them *are* its tags. Declare none and the query is
+  scoped by event type alone — a global numbering. Declare one and the
+  same numbering restarts per tenant. Nothing else changes between the
+  two, which is why there is one kind here and not two.
 type: object
 additionalProperties: false
 properties:
   customTypeDefinitions:
     description: |
-      User-declared *value* types (an email string with a pattern, a
-      money amount, …). Value types are never tags — tags come
-      exclusively from entity identifiers.
+      User-declared *value* types — either **scalar** (an email string
+      with a pattern, a money amount, …) or **composite** (a record of
+      named fields, such as an order line pairing a product with the
+      price it was displayed at).
+
+      Value types are never tags themselves. Tags still come
+      exclusively from entity identifiers — a composite merely gives
+      one somewhere to sit, so tag derivation looks *through* a
+      composite to the identifier fields inside it.
     type: array
     items:
       "$ref": "#/$defs/CustomTypeDefinition"
@@ -36,6 +44,15 @@ properties:
       carries the tags `Course:<courseId>` and `Student:<studentId>`.
       Tags are never declared separately; they are derived from
       property types.
+
+      **Tag derivation looks inside composites.** A property typed with
+      a composite custom type contributes one tag per identifier field
+      of that composite, and a *list* of composites contributes one tag
+      per identifier field **per element** — so
+      `ProductsOrdered{orderId: OrderId, items: Item[]}` where
+      `Item{productId: ProductId, price: Money}` carries `Order:<orderId>`
+      plus one `Product:<id>` for every item. This is how a single event
+      records something that happened to many instances at once.
     type: array
     items:
       "$ref": "#/$defs/EventDefinition"
@@ -43,14 +60,14 @@ properties:
     type: array
     items:
       "$ref": "#/$defs/EntityDefinition"
-  sequenceDefinitions:
+  projectionDefinitions:
     description: |
-      Monotonic value generators — course numbers, invoice references,
-      order numbers. A sequence issues the value that comes after the
-      one its last advancing event carried.
+      Folds that belong to no entity — a course numbering, a running
+      total, the set of addresses already registered. Each holds one
+      value and states its own partition through its parameters.
     type: array
     items:
-      "$ref": "#/$defs/SequenceDefinition"
+      "$ref": "#/$defs/ProjectionDefinition"
   commandDefinitions:
     description: |
       Commands that modelers may issue against the modeled system.
@@ -64,7 +81,7 @@ required:
 - customTypeDefinitions
 - eventDefinitions
 - entityDefinitions
-- sequenceDefinitions
+- projectionDefinitions
 - commandDefinitions
 "$defs":
 
@@ -74,7 +91,7 @@ required:
 
   EntityDefinition:
     description: |
-      A modeled thing with an identity, a lifecycle state and a set of
+      A modeled thing with an identity, a lifecycle status and a set of
       projected properties.
 
       An entity is projected state, **not** a consistency boundary. It
@@ -90,7 +107,7 @@ required:
         - `<name>Id`    — the identifier type, and the only kind of tag
                           in a DCB context. Its JSON Schema is
                           `identifierSchema`.
-        - `<name>State` — an enum over `states`.
+        - `<name>Status` — an enum over `statuses`.
 
       Both names are reserved: a `customTypeDefinition` may not claim
       them, and no other entity may derive the same names.
@@ -99,6 +116,18 @@ required:
     properties:
       name:
         "$ref": "#/$defs/EntityName"
+      icon:
+        description: |
+          A short glyph — one emoji, or a character or two — that stands
+          for this entity wherever it is named. Presentation only: no
+          part of the model reads it, and two entities may share one.
+          Absent means an authoring tool picks its own placeholder.
+        type: string
+        minLength: 1
+        maxLength: 8
+        examples:
+        - "\U0001F4DA"
+        - "\U0001F9FE"
       identifierSchema:
         description: |
           JSON Schema of the derived `<name>Id` type. Defaults to a
@@ -107,13 +136,17 @@ required:
         "$ref": https://json-schema.org/draft/2020-12/schema
         default:
           type: string
-      states:
+      statuses:
         description: |
-          Members of the derived `<name>State` enum, in declaration
-          order. The **first** member is the entity's initial state —
+          Members of the derived `<name>Status` enum, in declaration
+          order. The **first** member is the entity's initial status —
           the one an instance is in before any of its events have
-          occurred — and is therefore what `state`'s `initialValue`
+          occurred — and is therefore what `status`'s `initialValue`
           must name.
+
+          Named `statuses` rather than `states` because every property
+          of an entity is projected state; this is the one that says
+          where the thing is in its lifecycle.
         type: array
         minItems: 2
         uniqueItems: true
@@ -129,10 +162,10 @@ required:
           `tag = <name>:<id> AND type IN (handled event types)`; the
           partition is implicit and never authored.
 
-          Exactly one entry must be the reserved `state` property:
-          named `state`, typed `<name>State`, neither optional nor a
+          Exactly one entry must be the reserved `status` property:
+          named `status`, typed `<name>Status`, neither optional nor a
           list, with an `initialValue` naming the first member of
-          `states`. It may not be removed or renamed; only its
+          `statuses`. It may not be removed or renamed; only its
           handlers are authored.
         type: array
         minItems: 1
@@ -140,7 +173,7 @@ required:
           "$ref": "#/$defs/EntityPropertyDefinition"
     required:
     - name
-    - states
+    - statuses
     - properties
 
   EntityName:
@@ -155,8 +188,16 @@ required:
   EntityPropertyDefinition:
     description: |
       One projection belonging to an entity. `initialValue` is the
-      value before any event has been applied; each handler folds one
+      value before any event has been applied; each handler turns one
       event type into the next value.
+
+      A property is advanced either by declared handlers — the ordinary
+      case — or by a `script`. With a script, `initialValue` is
+      replaced by `script.initialState` and every handler carries
+      `code` instead of an operation and an operand. `propertyType` and
+      `isList` keep their meaning either way: they describe the value a
+      condition reads, which is what keeps a scripted property legible
+      to everything outside it.
     type: object
     additionalProperties: false
     properties:
@@ -170,7 +211,22 @@ required:
       isList:
         type: boolean
         default: false
+      script:
+        description: |
+          Present when this property is advanced by code. Never legal
+          on the reserved `status` property: every condition and every
+          DCB treats an instance as being in exactly one declared
+          status, and that is the one reading the tooling must be able
+          to make without running anything.
+
+          An entity property's script carries no `tagFilter` — the
+          binding that reads it already names the instance.
+        "$ref": "#/$defs/ProjectionScript"
       initialValue:
+        description: |
+          The value before any event has been applied. Given for a
+          declared property and forbidden for a scripted one, whose
+          `script.initialState` starts it instead.
         "$ref": "#/$defs/InitialValue"
       handlers:
         description: |
@@ -182,14 +238,13 @@ required:
     required:
     - name
     - propertyType
-    - initialValue
     - handlers
 
   InitialValue:
     description: |
       A literal. Use `[]` for list properties, `null` for optional
       ones, and `{"enumMember": "..."}` for enum-typed properties
-      (including `state`) so that renaming a member rewrites the
+      (including `status`) so that renaming a member rewrites the
       reference instead of silently breaking it.
     oneOf:
     - "$ref": "#/$defs/StaticValue"
@@ -199,35 +254,46 @@ required:
       maxItems: 0
 
   # ----------------------------------------------------------------
-  # Sequences
+  # Projections
   # ----------------------------------------------------------------
 
-  SequenceDefinition:
+  ProjectionDefinition:
     description: |
-      A monotonic generator of values — `c1`, `c2`, `c3`, …
+      One folded value that belongs to no entity.
 
-      Unlike an entity property, a sequence is **not** partitioned by a
-      tag. Numbering is global by nature: it is not about any one
-      instance, so there is no instance to scope it to. Its query is
-      therefore type-only —
+      Mechanically this is an `entityPropertyDefinition` with the
+      owning entity removed and the partition put back by hand. An
+      entity property is a projection too — folded over
+      `tag = <Entity>:<id> AND type IN (handled events)`, with the tag
+      implied by whose property it is. A `projectionDefinition` has no
+      owner to imply one, so it declares `parameters` and a command
+      supplies the arguments:
 
-        `type IN (advancedBy events)`
+        `tag IN (arguments) AND type IN (handled events)`
 
-      — and it is the only query in a DCB context that carries no tag.
+      With no parameters there is no tag, and the query is scoped by
+      event type alone — which is what a global numbering is.
 
-      **The value.** A sequence reads the *last* event of any advancing
-      type and issues the successor of the property that event carried.
-      With no such event it issues `initialValue`. Nothing is folded and
-      nothing accumulates, so an implementation answers the read with a
-      single backwards lookup (`ORDER BY position DESC LIMIT 1`) rather
-      than a scan. That is a property of the definition, not something a
-      reader has to infer from how the sequence was written.
+      **Numbering is not a special case.** `CourseNumbering` is a
+      projection whose value is set to the `successor` of the id each
+      `CourseDefined` carried, so the value *is* the next number to
+      issue at every point in its life — `initialValue` before anything
+      has happened, `successor(last)` after. There is no separate
+      generator concept and no read-side operator: a command binds the
+      projection and reads it like anything else.
 
-      **The guard.** A command reading a sequence contributes that
-      type-only query to its append condition, so a concurrent command
-      that advanced the sequence invalidates the append. This is what
-      makes the numbering monotonic, and it is an existence check rather
-      than a fold — the cost is contention, not scanning.
+      An implementation may still answer such a projection with a single
+      backwards lookup (`ORDER BY position DESC LIMIT 1`) instead of a
+      scan — a fold whose every handler `set`s from event properties
+      alone depends only on the last matching event. That is derived
+      from the handlers rather than declared, so it holds for any
+      projection written that way, and for entity properties too.
+
+      **The guard.** A command binding a projection contributes that
+      projection's query to its append condition, exactly as an entity
+      binding does. For a numbering this is what keeps it monotonic: a
+      concurrent command that minted from the same projection
+      invalidates the append.
 
       **Successor.** On an integer, `n + 1`. On a string, the trailing
       run of digits is incremented and both the prefix and any
@@ -238,63 +304,204 @@ required:
     additionalProperties: false
     properties:
       name:
-        "$ref": "#/$defs/SequenceName"
+        "$ref": "#/$defs/ProjectionName"
+      parameters:
+        description: |
+          What partitions this projection. Every parameter is typed
+          with an entity's derived identifier type and contributes
+          exactly one tag to the query; a command binding the
+          projection supplies one argument per parameter.
+
+          **Identifier types only.** A tag is the only thing that can
+          narrow a query, and only an identifier is a tag. A parameter
+          typed `integer` could not restrict what the store returns —
+          it could only discard events after reading them, which is a
+          predicate, and predicates live in conditions. So "numbering
+          per year" needs a `Year` entity; that requirement is what
+          keeps the read cheap.
+
+          An empty list is the ordinary case for a global numbering,
+          and is what makes its query the only kind in this document
+          that carries no tag.
+
+          A **scripted** projection has no parameters. Discarding after
+          reading is exactly what its code does, so the values it needs
+          arrive as `script.arguments` instead, and the partition it
+          would otherwise have derived from parameters is stated
+          outright in `script.tagFilter`.
+        type: array
+        items:
+          "$ref": "#/$defs/ProjectionParameter"
+        default: []
       valueType:
         description: |
-          The type of the values issued. Typically an entity's derived
-          identifier type, but a sequence may equally number things
-          that are not identities.
+          The type of the value held. Never a composite custom type:
+          the operations that advance a projection act on a single
+          value, and a record of fields has none.
         "$ref": "#/$defs/TypeName"
+      isOptional:
+        type: boolean
+        default: false
+      isList:
+        type: boolean
+        default: false
       initialValue:
         description: |
-          The value issued before any advancing event has occurred, and
-          the only place a prefix is stated.
-        "$ref": "#/$defs/StaticValue"
-      advancedBy:
+          The value before any event has been applied. For a numbering
+          this is the first number issued, and the only place a prefix
+          is stated.
+        "$ref": "#/$defs/InitialValue"
+      script:
         description: |
-          The events that consume values from this sequence, and the
-          property of each carrying the value consumed. Every entry's
-          property must exist on its event and be typed `valueType`.
-
-          More than one event may advance the same sequence; the query
-          then covers all of them.
+          Present when this projection is advanced by code. A
+          standalone script must carry a `tagFilter`: it has no owning
+          entity to take a tag from and no parameters to derive one
+          from, so it is the only thing that can say what the query
+          reads.
+        "$ref": "#/$defs/ProjectionScript"
+      handlers:
+        description: |
+          At most one handler per event type; the handled types are the
+          projection's query. Same operation vocabulary and same
+          operand rules as an entity property — or, for a scripted
+          projection, one `code` body per event type.
         type: array
         minItems: 1
         items:
-          "$ref": "#/$defs/SequenceAdvance"
+          "$ref": "#/$defs/PropertyHandler"
     required:
     - name
     - valueType
-    - initialValue
-    - advancedBy
+    - handlers
 
-  SequenceName:
+  ProjectionName:
     type: string
     minLength: 2
     maxLength: 100
     pattern: "^[A-Z][A-Za-z0-9]+$"
     examples:
     - CourseNumbering
-    - InvoiceNumbering
+    - TenantCourseNumbering
 
-  SequenceAdvance:
+  ProjectionParameter:
+    description: |
+      One tag of a projection's query, named so a command can supply
+      it. `propertyType` must be an entity's derived identifier type.
     type: object
     additionalProperties: false
     properties:
-      event:
-        "$ref": "#/$defs/EventName"
-      property:
+      name:
         "$ref": "#/$defs/PropertyName"
+      propertyType:
+        "$ref": "#/$defs/TypeName"
     required:
-    - event
-    - property
+    - name
+    - propertyType
+
+  ProjectionScript:
+    description: |
+      Code in place of declared handlers, for state whose accumulation
+      no operation in this vocabulary can express — a window, a running
+      comparison, anything needing a value the earlier events implied
+      rather than carried.
+
+      **What it costs.** The code is stored and displayed; nothing
+      parses it, checks it, or rewrites it. A scripted handler is
+      checked for the event it claims and nothing else, and renaming an
+      event's property leaves every mention of it inside the code
+      untouched. That is the price of the escape hatch and it is paid
+      in full.
+
+      **What it deliberately does not cost.** The derived DCB is
+      unchanged: the query still comes from the handler keys, and the
+      tags from the binding (entity property) or from `tagFilter`
+      (standalone). A script may hide how a value is arrived at; it may
+      never hide what was read to arrive at it.
+
+      **The contract.** Each handler body is an expression over
+      `state`, `event` and `args`, returning the next state. `event`
+      carries `data` (the payload) and `metadata` (the envelope —
+      see `EventMetadata`). `args` holds one entry per declared
+      argument. Nothing else is in scope, and the same inputs must
+      produce the same state: a body that consults an ambient clock
+      would decide one thing and replay another.
+    type: object
+    additionalProperties: false
+    properties:
+      initialState:
+        description: |
+          The state before any event. Any JSON value — unlike a
+          declared property's `initialValue` this is not typed, because
+          nothing outside the code ever reads the state whole.
+      exposes:
+        description: |
+          Which field of the state a condition reads, when the state is
+          a record. Absent means the state *is* the value.
+
+          This is what keeps an accumulator out of the boundary. The
+          declared `propertyType`/`isList` (or `valueType`/`isList`)
+          describe this exposed value, so conditions type-check exactly
+          as they do over a declared property, and the bookkeeping the
+          code needs stays private to it.
+        "$ref": "#/$defs/PropertyName"
+      arguments:
+        description: |
+          Values the reading command supplies, one entry per name, in
+          `args` when the code runs. A binding that reads this
+          projection must supply exactly these — the same "required
+          here, rejected there" rule `excluding` follows.
+
+          An argument is **not a tag** and can never narrow a query:
+          the store returns the same events either way and the code
+          discards what it does not want. That is the whole difference
+          between an argument and a `ProjectionParameter`, and it is
+          why a parameter must still be an identifier.
+        type: array
+        items:
+          "$ref": "#/$defs/ProjectionArgument"
+        default: []
+      tagFilter:
+        description: |
+          The tags of this projection's query, one entry each, ANDed.
+          Written as `Entity:value`, where the value may interpolate a
+          declared argument as `{name}`.
+
+          Required on a standalone projection and forbidden on an
+          entity property, whose binding already names the instance —
+          a second answer there could only disagree with the first.
+        type: array
+        items:
+          type: string
+          pattern: "^[A-Z][A-Za-z0-9]*:.+$"
+        examples:
+        - ["Product:{productId}"]
+    required:
+    - initialState
+
+  ProjectionArgument:
+    description: |
+      One value a scripted projection asks its reader for. Any type —
+      an argument reaches the code rather than the query, so the
+      identifier restriction that governs `ProjectionParameter` does
+      not apply.
+    type: object
+    additionalProperties: false
+    properties:
+      name:
+        "$ref": "#/$defs/PropertyName"
+      propertyType:
+        "$ref": "#/$defs/TypeName"
+    required:
+    - name
+    - propertyType
 
   PropertyHandler:
     description: |
-      How one event type advances one property. The operation
-      vocabulary is constrained by the property's type: `set` for any
-      type, `increment`/`decrement` for integers, `append`/`remove`
-      for lists.
+      How one event type advances one property. Either declared —
+      `operation` and `value`, with the vocabulary constrained by the
+      property's type: `set` for any type, `increment`/`decrement` for
+      integers, `append`/`remove` for lists — or scripted, carrying
+      `code` and neither of the other two.
     type: object
     additionalProperties: false
     properties:
@@ -309,21 +516,78 @@ required:
         - remove
       value:
         "$ref": "#/$defs/HandlerOperand"
+      code:
+        description: |
+          An expression over `state`, `event` and `args` returning the
+          next state. Present only on a property or projection that
+          declares a `script`, and never alongside `operation` — the
+          code is the operation.
+        type: string
+        minLength: 1
     required:
     - event
-    - operation
-    - value
 
   HandlerOperand:
     description: |
-      Where a handler's value comes from. Resolved while folding a
+      Where a handler's value comes from. Resolved while projecting a
       single event, so the only things in scope are that event's
-      properties, the property's own current value, and literals.
+      properties, its envelope metadata, the property's own current
+      value, and literals.
     oneOf:
     - "$ref": "#/$defs/EventPropertyValue"
+    - "$ref": "#/$defs/EventMetadataValue"
     - "$ref": "#/$defs/CurrentValue"
+    - "$ref": "#/$defs/SuccessorValue"
     - "$ref": "#/$defs/EnumMemberValue"
     - "$ref": "#/$defs/StaticValue"
+
+  EventMetadataValue:
+    description: |
+      A field of the envelope every event carries — see
+      `EventMetadata`. Kept as its own operand kind rather than folded
+      into `EventPropertyValue` so that payload and envelope never
+      share a namespace: one namespace would let a modeller declare
+      `recordedAt` on an event and silently shadow the real one.
+
+      Legal in a handler, never in a condition. A projection reading
+      the clock still replays to the same state, because it reads when
+      an event *was written*. A condition reading it would decide
+      differently on replay than it decided originally, which is the
+      one thing a boundary may never do.
+    type: object
+    additionalProperties: false
+    properties:
+      eventMetadata:
+        enum:
+        - recordedAt
+    required:
+    - eventMetadata
+
+  SuccessorValue:
+    description: |
+      The value that comes after another — `n + 1` on an integer; on a
+      string, the trailing run of digits incremented with the prefix
+      and any zero-padding preserved (`"c1"` → `"c2"`, `"c9"` →
+      `"c10"`, `"c007"` → `"c008"`).
+
+      This is where numbering lives. A projection that sets its value
+      to `{successor: {eventProperty: courseId}}` holds *the next
+      number to issue* at every point in its life: `initialValue`
+      before any event, the successor of the last one issued after. The
+      alternative — folding to the last id and applying successor at
+      the read — makes `initialValue` mean two different things
+      depending on whether anything has happened yet, and lets two
+      commands reading the same value disagree about it.
+
+      Nothing restricts this to projections: an entity property may
+      take a successor too.
+    type: object
+    additionalProperties: false
+    properties:
+      successor:
+        "$ref": "#/$defs/HandlerOperand"
+    required:
+    - successor
 
   EventPropertyValue:
     description: A property of the event being handled.
@@ -357,6 +621,25 @@ required:
     properties:
       name:
         "$ref": "#/$defs/CommandName"
+      feature:
+        description: |
+          The feature this command belongs to — "Course management",
+          "Checkout". Commands naming the same feature are presented
+          together.
+
+          It is the one field in this document that the modelled system
+          does not read. No query, boundary, condition or tag depends on
+          it, and removing every `feature` changes no behaviour: it
+          records how a *modeler* grouped their work, on a different
+          axis from the entities the rest of the context is organised
+          around.
+
+          A feature is therefore never declared. It exists because
+          commands name it, which is why it costs nothing and why an
+          empty one is not a thing that can be stored.
+        type: string
+        minLength: 1
+        maxLength: 100
       properties:
         description: The command payload.
         type: array
@@ -364,44 +647,79 @@ required:
           "$ref": "#/$defs/PropertyDefinition"
       boundary:
         description: |
-          The entity instances this command consults. **This list is
-          the command's dynamic consistency boundary**: the append
-          condition's query is the union of the bound instances' tags,
-          restricted to the event types reachable through the
-          properties the conditions read.
+          Everything this command reads — entity instances and
+          projections alike, each under a local alias. **This list is
+          the command's dynamic consistency boundary**, with nothing
+          contributed from outside it: the append condition's query is
+          the union of the bindings' queries, an entity binding
+          contributing its tag restricted to the event types reachable
+          through the properties the conditions read, a projection
+          binding contributing its arguments as tags and its handled
+          types.
 
           Every entity-identifier-typed property of every published
           event must resolve to a binding in this list — a command may
-          not write a tag it did not consult. A property supplied by a
-          `sequence` operand is exempt: the sequence's own query
-          already covers every event that could have issued that value,
-          and a freshly minted identifier has no history to consult.
+          not write a tag it did not consult. A property supplied from
+          a projection binding is exempt, provided that projection
+          handles the event being published: its query then already
+          covers every event that could have issued the value, and a
+          freshly minted identifier has no history to consult. The
+          exemption is unconditional in the partition — a projection
+          scoped so narrowly that two partitions can mint the same
+          identifier is a modelling error of the same class as folding
+          the wrong event, and is not checked here.
 
-          **Declaration order is the chain.** A binding may take its
-          identifier from an instance bound *above* it and never from
-          one bound below, so a command can read one projection to
-          learn which instance to bind next. One left-to-right pass
-          resolves the chain, and a cycle is impossible to write.
+          **Coverage follows tag derivation into composites.** Since a
+          property typed `Item[]` writes one `Product:<id>` per element,
+          coverage is checked against the identifier *leaves* of an
+          emitted property's type, not its surface: emitting `items`
+          into `ProductsOrdered.items` is covered by a binding whose
+          `id` is `{parameterName: items, property: productId}`. Without
+          the recursion the event carrying the most tags would be the
+          one checked least.
 
-          **Execution.** The chain reads in links, but the whole
+          **Declaration order is the chain.** A binding may draw its
+          operands from a binding *above* it and never from one below,
+          so a command can read one thing to learn which thing to read
+          next. One left-to-right pass resolves the chain, and a cycle
+          is impossible to write.
+
+          **Rounds are derived, never authored.** A binding waits only
+          for the bindings it actually references, so the number of
+          round trips to the store is the *depth* of that dependency
+          graph, not the length of this list: two bindings that both
+          take their identifiers from the payload are one round, not
+          two. Each binding's round is `1 + max(round of the bindings
+          its operands name)`, or 1 when it names none — computable in
+          the same left-to-right pass, since the list is already
+          topologically sorted by the rule above.
+
+          It is a graph and not a tree: `id` and `excluding` may each
+          name a different binding, and a binding's arguments may name
+          several. That is why the structure is
+          derived and rendered rather than written down as nesting,
+          which could not represent a binding with two parents without
+          duplicating it.
+
+          **Execution.** The chain reads in rounds, but the whole
           command decides as of a single point in the log:
 
             1. `P` := the position of the last event overall — a
                backwards read of everything, limited to one.
-            2. Resolve the bindings in declaration order, each link's
-               projections read **bounded at `P`**. Bounding matters:
-               a link that read past `P` could decide on an event that
-               the append condition then rejects it for.
+            2. Resolve the bindings round by round, every read
+               **bounded at `P`**. Bounding matters: a read past `P`
+               could decide on an event that the append condition then
+               rejects it for.
             3. Evaluate the conditions over the resolved instances.
             4. Append with the condition
-               `query = the union of every link's query, after = P`.
+               `query = the union of every binding's query, after = P`.
 
           Because the query covers everything read and `P` precedes
           every read, any concurrent change to anything this command
           looked at invalidates the append — and nothing else does.
         type: array
         items:
-          "$ref": "#/$defs/EntityBinding"
+          "$ref": "#/$defs/Binding"
       conditions:
         description: |
           Conditions over the bound instances, all of which must hold
@@ -412,11 +730,33 @@ required:
           vacuously. The quantifier is not written down — it follows
           from the alias being plural.
 
+          **Zipping.** When a binding fans out over a list, the elements
+          of that list stay available to conditions about the instances
+          it bound, at the matching index:
+
+            an operand rooted at a list that some alias in the *same*
+            condition also fans from is read at that iteration's index;
+            otherwise it is the whole list.
+
+          So with `product` bound over `items[].productId`,
+          `product.currentPrice equals items[].price` compares each
+          product against the price submitted *for that product*, while
+          `items[].price greaterThan 0` — mentioning no alias fanned
+          from `items` — is an ordinary universal over the list. The
+          pairing is provenance, not declaration: the operands are
+          correlated because they came from the same list.
+
+          **One fan root per condition.** A condition may quantify over
+          at most one fanned-out root. Two distinct roots is rejected
+          rather than read as a cross product: their lengths are
+          unrelated, nothing in this document can assert otherwise, and
+          the zipped and crossed readings look identical on the page.
+
           An empty list does **not** mean the command is unguarded: the
-          append condition is derived from the `boundary` and from the
-          sequences the command reads, not from this list. A command
-          with neither bindings nor conditions can still be strictly
-          serialised — which is what reading a sequence does to it.
+          append condition is derived from the `boundary`, not from
+          this list. A command with no conditions at all can still be
+          strictly serialised — which is what binding a parameterless
+          projection does to it.
         type: array
         items:
           "$ref": "#/$defs/Condition"
@@ -445,6 +785,51 @@ required:
     examples:
     - SubscribeStudentToCourse
 
+  Binding:
+    description: |
+      One thing the command reads. Distinguished by which of `entity`
+      or `projection` it carries.
+    oneOf:
+    - "$ref": "#/$defs/EntityBinding"
+    - "$ref": "#/$defs/ProjectionBinding"
+
+  ProjectionBinding:
+    description: |
+      One projection the command reads, under a local alias. The alias
+      defaults to the projection name with a lowercased first letter.
+
+      A projection read is a binding rather than an inline operand
+      because it is a read: it costs a round trip, it takes its place
+      in the chain when an argument comes from a binding above it, and
+      its query belongs in the append condition. Leaving it inline
+      would let a command that reads the store claim in its own
+      boundary to read nothing.
+    type: object
+    additionalProperties: false
+    properties:
+      alias:
+        "$ref": "#/$defs/AliasName"
+      projection:
+        "$ref": "#/$defs/ProjectionName"
+      arguments:
+        description: |
+          One entry per parameter of the projection, keyed by parameter
+          name; each value is the operand supplying that tag. A
+          projection with no parameters takes no arguments, and its
+          query carries no tag.
+
+          An argument operand may name a binding above this one, which
+          is what puts a projection into the chain. It may not resolve
+          to a list: a projection binding reads one partition, so there
+          is no fan-out here.
+        type: object
+        additionalProperties:
+          "$ref": "#/$defs/CommandOperand"
+        default: {}
+    required:
+    - alias
+    - projection
+
   EntityBinding:
     description: |
       One entity instance the command consults, under a local alias.
@@ -463,8 +848,8 @@ required:
         description: |
           Supplies the instance's identifier — typically a property of
           the command payload, but equally a projected property of an
-          instance bound above this one, or a value drawn from a
-          sequence.
+          instance bound above this one, or the value of a projection
+          bound above it.
 
           **A list operand binds many instances.** When the operand
           resolves to a list type, the binding covers one instance per
@@ -487,6 +872,30 @@ required:
           instance, so "except this one" cannot be stated as a
           condition without turning it into an implication.
         "$ref": "#/$defs/CommandOperand"
+      arguments:
+        description: |
+          Values handed to the scripted properties this binding reads,
+          keyed by argument name. Required exactly when a scripted
+          property it consults declares one, and rejected otherwise —
+          the same rule `excluding` follows, and for the same reason: a
+          field that means nothing here is a mistake, not a no-op. Two
+          scripted properties asking for the same name are answered
+          once: they are read through one binding, at one instant.
+
+          They are supplied, not ambient. A command that consults
+          time-sensitive state takes the instant as a payload property
+          and passes it here, so the decision stays a pure function of
+          its events and its parameters — the same events and the same
+          arguments always reach the same verdict. An implicit clock
+          would make replay disagree with the original decision.
+
+          They do not touch the append condition. The query still
+          covers the same tags and the same event types; an argument
+          decides how the events already read are projected, never
+          which ones are read.
+        type: object
+        additionalProperties:
+          "$ref": "#/$defs/CommandOperand"
     required:
     - alias
     - entity
@@ -593,39 +1002,47 @@ required:
     oneOf:
     - "$ref": "#/$defs/ParameterValue"
     - "$ref": "#/$defs/AliasPropertyValue"
-    - "$ref": "#/$defs/SequenceValue"
     - "$ref": "#/$defs/EnumMemberValue"
     - "$ref": "#/$defs/StaticValue"
 
-  SequenceValue:
-    description: |
-      The next value from a named sequence. Reading one adds that
-      sequence's type-only query to the command's append condition, so
-      a command that mints an identifier is serialised against every
-      other command that mints from the same sequence.
-    type: object
-    additionalProperties: false
-    properties:
-      sequence:
-        "$ref": "#/$defs/SequenceName"
-    required:
-    - sequence
-
   ParameterValue:
-    description: A property of the command payload.
+    description: |
+      A property of the command payload, optionally reaching one field
+      inside it.
+
+      `{parameterName: items}` is the payload property itself.
+      `{parameterName: items, property: productId}` is that field of it —
+      and when the property is a list of composites, the field of *every*
+      element, in order. The shape deliberately mirrors
+      `AliasPropertyValue`: one hop, never a path.
     type: object
     additionalProperties: false
     properties:
       parameterName:
+        "$ref": "#/$defs/PropertyName"
+      property:
+        description: |
+          A field of the parameter's composite type. Only meaningful
+          when the parameter is typed with a composite custom type.
         "$ref": "#/$defs/PropertyName"
     required:
     - parameterName
 
   AliasPropertyValue:
     description: |
-      A projected property of a bound entity instance — e.g.
-      `course.capacity`. The alias must appear in the command's
-      `boundary`.
+      Something read through a binding. The alias must appear in the
+      command's `boundary`.
+
+      `{alias: course, property: capacity}` is a projected property of
+      a bound entity instance. `{alias: courseNumbering}` — no
+      `property` — is a bound projection's value.
+
+      `property` is therefore **required on an entity alias** and
+      **rejected on a projection alias**: an entity has many values and
+      no single one to mean, a projection has exactly one and no name
+      for it. That is the same shape of rule `excluding` and
+      `arguments` already follow — a field that means nothing in its
+      position is a mistake, not a no-op.
     type: object
     additionalProperties: false
     properties:
@@ -635,13 +1052,12 @@ required:
         "$ref": "#/$defs/PropertyName"
     required:
     - alias
-    - property
 
   EnumMemberValue:
     description: |
       A member of an enum type — in practice a member of some entity's
-      `<Entity>State`. Modeled as a reference rather than a bare
-      string so that renaming a state rewrites every use of it.
+      `<Entity>Status`. Modeled as a reference rather than a bare
+      string so that renaming a status rewrites every use of it.
     type: object
     additionalProperties: false
     properties:
@@ -659,16 +1075,69 @@ required:
       A value type. Unlike the previous revision of this schema there
       is no `isTag` flag: tags are derived from entity identifiers and
       nothing else.
+
+      Exactly one of `schema` or `properties` is given, and the choice
+      is what makes the type scalar or composite:
+
+        - `schema`     — an opaque JSON Schema describing one value.
+        - `properties` — a record of named, typed fields.
+
+      A composite's fields are typed against the same universe as
+      everything else, so a field typed `ProductId` is a real reference:
+      renaming the entity rewrites it, and tag derivation can see it. A
+      raw JSON Schema could not offer either — inside one, an identifier
+      is indistinguishable from any other string.
     type: object
     additionalProperties: false
     properties:
       name:
         "$ref": "#/$defs/CustomTypeName"
       schema:
+        description: The scalar form — an opaque JSON Schema for a single value.
         "$ref": https://json-schema.org/draft/2020-12/schema
+      properties:
+        description: |
+          The composite form — the type's fields, in declaration order.
+        type: array
+        minItems: 1
+        items:
+          "$ref": "#/$defs/CompositeFieldDefinition"
+    oneOf:
+    - required: [name, schema]
+    - required: [name, properties]
+
+  CompositeFieldDefinition:
+    description: |
+      One field of a composite value type. Deliberately **not** a
+      `PropertyDefinition`: a field is always singular and always
+      required, and it may not itself be typed with a composite.
+
+      All three restrictions exist to keep *zipping* meaningful (see
+      `CommandDefinition.conditions`). Zipping is index correlation
+      between a fanned-out binding and the list it fanned from, and it
+      only holds while the two have the same length:
+
+        - a **list** field would flatten, as list-valued reads off a
+          plural alias already do, and a flattened list has a different
+          length than the list it came from;
+        - an **optional** identifier field would contribute a variable
+          number of tags, so a binding fanned from it would be shorter
+          than its source;
+        - a **nested** composite would need a path operand rather than
+          the single hop `{parameterName, property}` affords.
+
+      Each is a way for the index to drift silently, with nothing on the
+      page to show it had.
+    type: object
+    additionalProperties: false
+    properties:
+      name:
+        "$ref": "#/$defs/PropertyName"
+      propertyType:
+        "$ref": "#/$defs/TypeName"
     required:
     - name
-    - schema
+    - propertyType
 
   CustomTypeName:
     type: string
@@ -679,6 +1148,11 @@ required:
     - EmailAddress
 
   EventDefinition:
+    description: |
+      What an event carries. `properties` is the payload — the part
+      somebody emitting the event supplies. Every event *also* carries
+      the envelope described by `EventMetadata`, which is not declared
+      here and cannot be removed.
     type: object
     additionalProperties: false
     properties:
@@ -691,6 +1165,30 @@ required:
     required:
     - name
     - properties
+
+  EventMetadata:
+    description: |
+      The envelope: what every event carries besides its payload,
+      supplied by the store rather than by whatever emitted it. Not
+      declared on an event and not removable from one, which is why it
+      appears here as a fact about the log rather than as a field.
+
+      `recordedAt` is the instant the event was appended, typed
+      `timestamp`. It is readable by a handler — through
+      `EventMetadataValue`, or as `event.metadata.recordedAt` inside a
+      script — and never by a condition. A projection consulting it
+      still replays to the same state; a boundary consulting it would
+      not, and that asymmetry is the whole reason the envelope is
+      allowed near a projection at all.
+
+      This object is documentation. Nothing references it, because
+      nothing authors it.
+    type: object
+    additionalProperties: false
+    properties:
+      recordedAt:
+        "$ref": "#/$defs/TypeName"
+        const: timestamp
 
   EventName:
     type: string
@@ -750,14 +1248,31 @@ required:
 
   TypeName:
     description: |
-      A simple type, a declared custom (value) type, or one of the
-      types derived from an entity — `<Entity>Id` or `<Entity>State`.
-      The derived types share the custom-type namespace, so a name
-      resolves against the union of both.
+      A simple type, a declared custom (value) type — scalar or
+      composite — or one of the types derived from an entity —
+      `<Entity>Id` or `<Entity>Status`. The derived types share the
+      custom-type namespace, so a name resolves against the union of
+      both.
     type: string
     anyOf:
     - enum:
       - boolean
       - integer
       - string
+      - timestamp
     - "$ref": "#/$defs/CustomTypeName"
+
+  # `timestamp` is an instant in whole seconds since the epoch. It is
+  # built in rather than left to a custom type because the tooling has
+  # to recognise a clock reading on sight — to type the envelope's
+  # `recordedAt`, and to offer date affordances. A context-declared
+  # `Timestamp` would make that recognition depend on a name the
+  # modeller chose, which is exactly the coupling a built-in avoids.
+  #
+  # Only `set` is available to a timestamp property: an instant has no
+  # meaningful increment in this model.
+  #
+  # Durations are *not* a type. A window is arithmetic, and the only
+  # place this model does arithmetic is inside a script — where the
+  # duration is a number in the code, never an operand something else
+  # has to carry.

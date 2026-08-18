@@ -8,8 +8,16 @@
   --event-soft: #fff7ed;
   --entity: #16a34a;
   --entity-soft: #f0fdf4;
-  --sequence: #9333ea;
-  --sequence-soft: #faf5ff;
+  /* Projections share the entity green: a standalone projection and an
+     entity property are the same thing — folded state — and a second
+     colour would suggest a distinction the model does not make. */
+  --projection: var(--entity);
+  --projection-soft: var(--entity-soft);
+  /* Constraints. Fuchsia rather than a shade of the entity green: a
+     rule is not a kind of thing in the model, it is the gate in front
+     of one, and it should not read as belonging to whatever it guards. */
+  --rule: #c026d3;
+  --rule-soft: #fdf4ff;
   --type: #6b7280;
   --type-soft: #f9fafb;
   --bg: #f8fafc;
@@ -22,6 +30,39 @@
   --radius: 8px;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
 }
+
+/* The same palette after dark. Every colour above is a token and every
+   rule below this line reads one, so the theme is this block and
+   nothing else — except the handful of places where a chip needed a
+   border and a text colour of its own, which are re-stated here. */
+body.f-dark {
+  color-scheme: dark;
+  --command: #60a5fa;
+  --command-soft: #16243d;
+  --event: #fb923c;
+  --event-soft: #2d1c0d;
+  --entity: #4ade80;
+  --entity-soft: #0f2a1c;
+  --rule: #e879f9;
+  --rule-soft: #2a1130;
+  --type: #94a3b8;
+  --type-soft: #172030;
+  --bg: #0b1220;
+  --surface: #131c2e;
+  --border: #22304a;
+  --border-strong: #3a4b69;
+  --text: #e2e8f0;
+  --muted: #93a3b8;
+  --danger: #f87171;
+}
+body.f-dark .chip.command { border-color: #1e40af; color: #bfdbfe; }
+body.f-dark .chip.event { border-color: #9a3412; color: #fed7aa; }
+body.f-dark .chip.entity, body.f-dark .chip.projection { border-color: #166534; color: #bbf7d0; }
+body.f-dark .chip.rule { border-color: #86198f; color: #f5d0fe; }
+body.f-dark .btn.primary { color: #06121f; }
+body.f-dark .btn.primary:hover { background: #93c5fd; color: #06121f; }
+body.f-dark .advanced { background: #101827; }
+body.f-dark #toast { background: #1e293b; color: var(--text); }
 
 * { box-sizing: border-box; }
 
@@ -53,17 +94,6 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .app-bar .home { color: var(--muted); text-decoration: none; font-size: 12px; }
 .app-bar .home:hover { color: var(--command); }
 
-.mode-switch {
-  display: inline-flex; align-items: center;
-  border: 1px solid var(--border-strong); border-radius: 999px;
-  overflow: hidden; font-size: 12px;
-}
-.mode-switch button {
-  border: 0; background: transparent; padding: 4px 12px;
-  cursor: pointer; color: var(--muted); font: inherit;
-}
-.mode-switch button.on { background: var(--text); color: #fff; }
-
 /* ---------- generic bits ---------- */
 
 .btn {
@@ -79,6 +109,10 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .btn.ghost:hover { border-color: var(--border-strong); }
 .btn.tiny { padding: 2px 7px; font-size: 11px; }
 .btn.danger:hover { border-color: var(--danger); color: var(--danger); }
+/* A button with nothing left to do stays where it is rather than
+   disappearing: where undo lives should not move as you use it. */
+.btn:disabled { opacity: .35; cursor: default; }
+.btn:disabled:hover { border-color: transparent; color: var(--muted); }
 
 .chip {
   display: inline-block; padding: 1px 8px; border-radius: 999px;
@@ -87,8 +121,8 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 }
 .chip.command { background: var(--command-soft); border-color: #bfdbfe; color: #1e40af; }
 .chip.event { background: var(--event-soft); border-color: #fed7aa; color: #9a3412; }
-.chip.entity { background: var(--entity-soft); border-color: #bbf7d0; color: #166534; }
-.chip.sequence { background: var(--sequence-soft); border-color: #e9d5ff; color: #6b21a8; }
+.chip.entity, .chip.projection { background: var(--entity-soft); border-color: #bbf7d0; color: #166534; }
+.chip.rule { background: var(--rule-soft); border-color: #f5d0fe; color: #86198f; }
 
 .muted { color: var(--muted); }
 .small { font-size: 12px; }

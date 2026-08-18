@@ -13,12 +13,12 @@ ubiquitousLanguage:
   - term: DCB Context
     definition: |
       The complete authoring artifact a modeler builds — a named
-      container of custom-type, event, entity, sequence and command
+      container of custom-type, event, entity, projection and command
       definitions describing one DCB-based system. Identified by a
       generated id; its name is a mutable display attribute.
   - term: Entity Definition
     definition: |
-      A modeled thing with an identity, a lifecycle state and a set of
+      A modeled thing with an identity, a lifecycle status and a set of
       projected properties. The organising unit of a DCB Context:
       every projection in the context belongs to exactly one entity.
       References event definitions (through its property handlers),
@@ -49,7 +49,7 @@ ubiquitousLanguage:
   - term: Derived Type
     definition: |
       One of the two types an entity brings into existence without
-      anyone declaring them — `<Entity>Id` and `<Entity>State`. Never
+      anyone declaring them — `<Entity>Id` and `<Entity>Status`. Never
       stored: both are computed from the entity definition and
       resolved in the same namespace as custom types, which is why
       adding a custom type and adding an entity can collide.
@@ -65,11 +65,11 @@ ubiquitousLanguage:
           There is no longer a free-standing projection kind. Saying
           "property" keeps the entity as the unit a modeler thinks in,
           while "the property is a projection" stays true underneath.
-  - term: State
+  - term: Status
     definition: |
-      The reserved property every entity has, typed `<Entity>State`.
+      The reserved property every entity has, typed `<Entity>Status`.
       Always present, never removable or renameable; its initial value
-      is the first declared state member. Defaults to the two members
+      is the first declared status member. Defaults to the two members
       `NonExistent` and `Existent`, which modelers extend (`Archived`)
       or rename to fit the domain.
   - term: Tag
@@ -79,46 +79,98 @@ ubiquitousLanguage:
       that entity's tag, so an event may carry several.
   - term: Custom Type Definition
     definition: |
-      A user-declared *value* type (a pattern-constrained string, a
-      money amount). Never a tag — tags come from entity identifiers
-      alone. Referenced by event, entity and command definitions
-      through their property types, and by sequence definitions
-      through the type they issue.
+      A user-declared *value* type, in one of two forms: **scalar** (a
+      pattern-constrained string, a money amount) or **composite** (a
+      record of named, typed fields). Never a tag itself — tags come
+      from entity identifiers alone — but a composite may *hold* one,
+      and then tag derivation reaches through it, so an event property
+      typed with a list of composites carries one tag per element.
+      Referenced by event, entity and command definitions through their
+      property types, by projection definitions through the type they
+      hold, and by other custom type definitions through composite
+      field types.
+    avoid:
+      - term: Struct
+        reason: |
+          Names the shape and loses the point. What matters about a
+          composite is that it is still a *value* — it has no identity,
+          no lifecycle and no projection — while being able to carry an
+          identifier that tags the events it rides on.
+  - term: Composite Field
+    definition: |
+      One named, typed field of a composite custom type. Always
+      singular, always required, and never itself composite. Those
+      restrictions are not stylistic: they are what keeps a list of
+      composites the same length as the bindings fanned out over it,
+      which is what makes zipping mean anything.
+  - term: Feature
+    definition: |
+      A named group of commands — "Course management", "Checkout" — used
+      to organise a context for the people reading it.
+
+      The one thing a command carries that the modelled system does not
+      read: no query, boundary, condition or tag depends on it. It is
+      never declared as a definition of its own; it exists because
+      commands name it, which is why it costs nothing and why an empty
+      one cannot be stored, only remembered until it earns a command.
+    avoid:
+      - term: Bounded Context
+        reason: |
+          A feature groups commands for presentation inside one DCB
+          Context. It draws no boundary, owns no language and has no
+          consistency meaning — borrowing the term would imply all
+          three.
+      - term: Module
+        reason: |
+          Implies a unit of code or deployment. A feature is a label on
+          commands and nothing more.
   - term: Event Definition
     definition: |
       A domain event modeled inside a DCB Context. Its property types
       determine both its payload and its tags. Referenced by entity
       definitions (a property handler names the event it folds), by
-      command definitions (in their `publishes` lists) and by sequence
-      definitions (as an advancing event).
-  - term: Sequence Definition
+      command definitions (in their `publishes` lists) and by
+      projection definitions (a handler names the event it folds).
+  - term: Projection Definition
     definition: |
-      A monotonic generator of values — course numbers, invoice
-      references. Declares the type it issues, the value it starts
-      from, and the events that consume values from it; the value
-      issued is the successor of whatever the last such event carried.
+      One folded value belonging to no entity — a course numbering, a
+      running total, the set of addresses already registered. Declares
+      the type and shape of its value, the value it starts from, and
+      the handlers that fold events into it: an entity property with
+      the owning entity taken away.
 
-      It is the one definition not partitioned by a tag. A numbering is
-      global by nature — it is not *about* any one instance — so its
-      query is scoped by event type alone, and a command that reads one
-      is thereby serialised against every other command reading the
-      same sequence. Referenced only by command definitions; derives no
-      type, so its name occupies a namespace of its own.
+      What replaces that owner is `parameters`. Each is typed with an
+      entity's derived identifier, and the arguments a command supplies
+      for them are the tags of the projection's query. Declare none and
+      the query carries no tag at all — which is what a global
+      numbering is, and the only tagless query in a DCB Context.
+
+      Referenced only by command definitions, through the boundary
+      bindings that read it; derives no type, so its name occupies a
+      namespace of its own.
     avoid:
-      - term: Counter
+      - term: Sequence
         reason: |
-          A counter accumulates and must be folded over its whole
-          history. A sequence is defined by the *last* advancing event
-          alone, which is what lets an implementation answer it with a
-          single backwards read. "Counter" invites the fold that the
-          definition exists to avoid.
+          The kind this one replaced, and the name is what went wrong
+          with it. Calling it a sequence made numbering a concept in
+          the language, which forced "numbering is global by nature"
+          into the design — and that is false: a numbering per tenant
+          is an ordinary thing to want. Numbering is now one use of a
+          general fold, expressed by a `successor` operand and nothing
+          else.
+      - term: Read Model
+        reason: |
+          Carries CQRS baggage — a queryable store, kept up to date
+          asynchronously, read by a user interface. A projection here
+          is read inside a decision, synchronously, and its query
+          becomes part of the append condition that guards the write.
       - term: Singleton Entity
         reason: |
-          Modeling the numbering as an entity with one instance was the
-          earlier design. It forced a synthetic tag onto every event
-          that advanced it, and made the entity a thing with an
-          identity nobody means. A sequence is not a thing in the
-          domain; it is a source of values.
+          Modeling a global numbering as an entity with one instance
+          was an earlier design still. It forced a synthetic tag onto
+          every event that advanced it, and made the entity a thing
+          with an identity nobody means. A projection is not a thing in
+          the domain; it is a value derived from events.
   - term: Command Definition
     definition: |
       An intent a modeler may issue against the modeled system. Has a
@@ -128,30 +180,72 @@ ubiquitousLanguage:
       graph.
   - term: Boundary
     definition: |
-      The list of entity instances a command consults, each under a
-      local alias. *This is the command's dynamic consistency
-      boundary*: the append condition's query is the union of the
-      bound instances' tags — restricted to the event types the
-      conditions reach through — together with the type-only query of
-      every sequence the command reads. Rendered on the command so the
-      DCB is visible rather than inferred.
+      Everything a command reads, each under a local alias — entity
+      instances and projections alike. *This is the command's dynamic
+      consistency boundary*, with nothing contributed from outside it:
+      the append condition's query is the union of the bindings'
+      queries, an entity binding contributing its tag restricted to the
+      event types the conditions reach through, a projection binding
+      contributing its arguments as tags and the types it folds.
+      Rendered on the command so the DCB is visible rather than
+      inferred.
 
-      Declaration order is a *chain*: a binding may take its identifier
-      from an instance bound above it, never from one below, so a
-      command can read one projection to learn which instance to bind
-      next. The chain reads in links but decides as of one point: the
-      position of the last event overall is taken first, every link is
-      read bounded at it, and the append condition carries the union of
-      the links' queries after that same position. Anything the command
-      looked at that changed under it invalidates the append, and
-      nothing else does.
+      Declaration order is a *chain*: a binding may draw an operand
+      from a binding above it, never from one below, so a command can
+      read one thing to learn which thing to read next. The chain reads
+      in rounds but decides as of one point: the position of the last
+      event overall is taken first, every read is bounded at it, and
+      the append condition carries the union of the bindings' queries
+      after that same position. Anything the command looked at that
+      changed under it invalidates the append, and nothing else does.
+  - term: Round
+    definition: |
+      One trip to the event store while a command resolves its
+      boundary. A binding waits only for the bindings it actually
+      references, so a command's round count is the *depth* of that
+      dependency graph and not the length of its boundary: two bindings
+      taking their identifiers from the payload resolve together.
+
+      Never authored. It is computed from the operands already
+      written — `1 + max(round of the bindings this one names)` — and
+      exists to be shown, so that a command needing three reads before
+      it can decide says so on the page. Deriving it also keeps it
+      honest about shape: `id`, `excluding`, `asOf` and a projection's
+      arguments may each name a different binding, so the dependencies
+      form a graph, and a binding with two parents has no place in a
+      written hierarchy without being duplicated.
   - term: Alias
     definition: |
-      The local name a command gives one bound entity instance
-      (`course`, `sourceCourse`). Defaults to the entity name with a
-      lowercased initial; an explicit alias is needed only when one
-      command binds two instances of the same entity. Local to its
-      command — renaming an entity never rewrites an alias.
+      The local name a command gives one thing it reads — an entity
+      instance or a projection (`course`, `sourceCourse`,
+      `courseNumbering`). Defaults to the entity or projection name
+      with a lowercased initial; an explicit alias is needed only when
+      one command binds two instances of the same entity. Local to its
+      command, so renaming an entity never rewrites an alias, and
+      renaming an alias never reaches outside the command — though it
+      does move every operand within it that named the old one.
+  - term: Member
+    definition: |
+      A named part of a definition's body: an entity's properties and
+      statuses, an event's properties, a command's payload entries, a
+      composite's fields, a projection's parameters.
+
+      Members are referenced by name exactly as definitions are — a
+      condition names a property, a handler names an event property, a
+      binding supplies a projection's parameter by key — so renaming
+      one rewrites those references in the same append. It cannot be
+      done as an ordinary body update: mid-rename the old name is gone
+      while something still reads it, which is precisely what the
+      inbound-reference guards refuse.
+
+      Unlike a definition rename there is no `-renamed` event. A member
+      lives inside a body, so the whole thing is `<kind>-updated`
+      events — one for the owner, one for each definition that
+      referred to it.
+
+      Scope follows the reference, not the spelling: two entities may
+      each declare a status called `Existent`, and renaming one leaves
+      the other alone.
   - term: Condition
     definition: |
       A structured predicate over operands, inlined into the command
@@ -176,23 +270,28 @@ ubiquitousLanguage:
   - term: Operand
     definition: |
       Where a value comes from. Inside a command: a payload property,
-      an alias property (`course.capacity`), the next value of a
-      sequence, an enum member, or a literal. Inside a property
-      handler: a property of the event being folded, the property's
-      current value, an enum member, or a literal.
+      an alias property (`course.capacity`), a bound projection's value
+      (`courseNumbering`, with no property — it has only one), an enum
+      member, or a literal. Inside a property handler: a property of
+      the event being folded, the property's current value, the
+      successor of another operand, an enum member, or a literal.
   - term: Write Coverage
     definition: |
       The rule that every entity-identifier property of every
       published event must resolve to a binding in the command's
       boundary — a command may not write a tag it did not consult.
 
-      A value drawn from a sequence is exempt: the sequence's own query
-      already covers every event that could have issued it, and a
-      freshly minted identifier has no history to consult.
+      A value supplied from a projection binding is exempt when that
+      projection folds the event being published: its query already
+      covers every event that could have issued the value, and a
+      freshly minted identifier has no history to consult. The
+      exemption does not look at the partition — a projection scoped so
+      narrowly that two partitions can mint the same identifier is a
+      modelling error, and one this domain deliberately does not catch.
   - term: Definition
     definition: |
       Umbrella term for the five kinds above (custom-type, event,
-      entity, sequence, command). Used wherever a rule applies
+      entity, projection, command). Used wherever a rule applies
       regardless of which kind is meant.
   - term: Reference
     definition: |

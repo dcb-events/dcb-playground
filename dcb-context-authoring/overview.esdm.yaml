@@ -12,7 +12,7 @@ name: dcb-context-overview
 description: |
   One record per currently-live DCB Context, carrying the context's
   display name and the five definition collections (custom-type,
-  event, entity, sequence, command) in their latest state.
+  event, entity, projection, command) in their latest state.
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -64,17 +64,17 @@ projections:
     event: entity-definition-removed
     rule: Drop the entry identified by `name` from the matching context's `entity-definitions` collection.
   - boundedContext: dcb-context-authoring
-    event: sequence-definition-added
-    rule: Append the new definition to the matching context's `sequence-definitions` collection.
+    event: projection-definition-added
+    rule: Append the new definition to the matching context's `projection-definitions` collection.
   - boundedContext: dcb-context-authoring
-    event: sequence-definition-updated
-    rule: Replace the `body` of the entry identified by `name` in the matching context's `sequence-definitions` collection.
+    event: projection-definition-updated
+    rule: Replace the `body` of the entry identified by `name` in the matching context's `projection-definitions` collection.
   - boundedContext: dcb-context-authoring
-    event: sequence-definition-renamed
-    rule: Replace the `name` of the entry identified by `previous-name` with the carried `name` in the matching context's `sequence-definitions` collection.
+    event: projection-definition-renamed
+    rule: Replace the `name` of the entry identified by `previous-name` with the carried `name` in the matching context's `projection-definitions` collection.
   - boundedContext: dcb-context-authoring
-    event: sequence-definition-removed
-    rule: Drop the entry identified by `name` from the matching context's `sequence-definitions` collection.
+    event: projection-definition-removed
+    rule: Drop the entry identified by `name` from the matching context's `projection-definitions` collection.
   - boundedContext: dcb-context-authoring
     event: command-definition-added
     rule: Append the new definition to the matching context's `command-definitions` collection.
@@ -126,7 +126,7 @@ schema:
             body:
               type: object
           required: [name, body]
-      sequence-definitions:
+      projection-definitions:
         type: array
         items:
           type: object
@@ -152,7 +152,7 @@ schema:
       - custom-type-definitions
       - event-definitions
       - entity-definitions
-      - sequence-definitions
+      - projection-definitions
       - command-definitions
 ---
 apiVersion: schema.esdm.io/core/v1
@@ -228,7 +228,7 @@ result:
       type: array
       items:
         type: object
-    sequence-definitions:
+    projection-definitions:
       type: array
       items:
         type: object
@@ -242,7 +242,7 @@ result:
     - custom-type-definitions
     - event-definitions
     - entity-definitions
-    - sequence-definitions
+    - projection-definitions
     - command-definitions
 constraints:
   - name: lookup-by-id

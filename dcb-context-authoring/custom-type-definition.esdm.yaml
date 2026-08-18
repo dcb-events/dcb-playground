@@ -4,13 +4,24 @@
 # Custom types are *value* types only — there is no tag flag. Tags come
 # exclusively from entity identifiers. Custom types nevertheless share
 # a namespace with the types entities derive (`<Entity>Id`,
-# `<Entity>State`), so adding or renaming one must check that namespace
+# `<Entity>Status`), so adding or renaming one must check that namespace
 # against the live entities as well as against other custom types.
 #
-# References out: none (the schema is opaque JSON Schema).
+# A custom type is *scalar* (an opaque JSON Schema) or *composite* (a
+# record of typed fields) — the body carries one or the other. Only the
+# composite form references anything: its fields are typed against the
+# shared namespace, so a field typed `ProductId` is a real reference.
+# That is deliberate. A raw JSON Schema could hold an identifier too,
+# but nothing could tell it from any other string, so renaming the
+# entity would silently break it — which is the class of rot this whole
+# model exists to prevent.
+#
+# References out: other custom-type-definitions and entity-definitions,
+# through composite field types. (A scalar type references nothing.)
 # References in: event-definitions, entity-definitions and
-# command-definitions, through their property types; and
-# sequence-definitions, through `valueType`.
+# command-definitions, through their property types; other
+# custom-type-definitions, through composite field types; and
+# projection-definitions, through `valueType`.
 
 apiVersion: schema.esdm.io/core/v1
 kind: event
@@ -28,9 +39,9 @@ data:
     body:
       type: object
       description: |
-        The custom-type's authored content (its JSON Schema). Kept
-        opaque here — the shape of a `body` is owned by the DCB
-        Context schema, not by this domain model.
+        The custom-type's authored content — either its JSON Schema or
+        its composite fields. Kept opaque here — the shape of a `body`
+        is owned by the DCB Context schema, not by this domain model.
   required: [dcb-context-id, name, body]
   additionalProperties: false
 ---
@@ -113,16 +124,19 @@ consults:
     criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
   - boundedContext: dcb-context-authoring
     event: custom-type-definition-added
-    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `custom-type-definition-name`
+    criteria: every custom-type-definition added in this context — for the name check, and to resolve composite field types
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-updated
+    criteria: every custom-type-definition update in this context — a body may have become composite
   - boundedContext: dcb-context-authoring
     event: custom-type-definition-renamed
-    criteria: events with matching `dcb-context-id` whose new `name` or `previous-name` equals this instance's `custom-type-definition-name`
+    criteria: every custom-type-definition rename in this context
   - boundedContext: dcb-context-authoring
     event: custom-type-definition-removed
-    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `custom-type-definition-name`
+    criteria: every custom-type-definition removal in this context
   - boundedContext: dcb-context-authoring
     event: entity-definition-added
-    criteria: every entity-definition added in this context — the candidate name must not collide with a derived type name
+    criteria: every entity-definition added in this context — the candidate name must not collide with a derived type name, and composite fields may be typed with a derived one
   - boundedContext: dcb-context-authoring
     event: entity-definition-renamed
     criteria: every entity-definition rename in this context
@@ -140,7 +154,19 @@ invariants:
   - name: name-not-derived
     rule: |
       No live entity-definition derives this name: for no live entity
-      `E` does the candidate name equal `<E>Id` or `<E>State`.
+      `E` does the candidate name equal `<E>Id` or `<E>Status`.
+  - name: field-types-resolve
+    rule: |
+      If the body is composite, every field's type names a simple type,
+      a live custom-type-definition, or a type derived from a live
+      entity-definition.
+  - name: fields-are-flat
+    rule: |
+      If the body is composite, no field is a list, optional, or typed
+      with another composite. Each would break the index correlation a
+      zipped condition depends on: a list field flattens, an optional
+      identifier field contributes a variable number of tags, and a
+      nested composite cannot be reached by a single-hop operand.
 ---
 apiVersion: schema.esdm.io/core/v1
 kind: dynamic-consistency-boundary
@@ -168,28 +194,60 @@ consults:
     criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
   - boundedContext: dcb-context-authoring
     event: custom-type-definition-added
-    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `custom-type-definition-name`
+    criteria: every custom-type-definition added in this context — for the existence check, and to resolve composite field types
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-updated
+    criteria: every custom-type-definition update in this context — a body may have become composite
   - boundedContext: dcb-context-authoring
     event: custom-type-definition-renamed
-    criteria: events with matching `dcb-context-id` whose new `name` or `previous-name` equals this instance's `custom-type-definition-name`
+    criteria: every custom-type-definition rename in this context
   - boundedContext: dcb-context-authoring
     event: custom-type-definition-removed
-    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `custom-type-definition-name`
+    criteria: every custom-type-definition removal in this context
+  - boundedContext: dcb-context-authoring
+    event: entity-definition-added
+    criteria: every entity-definition added in this context — composite fields may be typed with a derived type
+  - boundedContext: dcb-context-authoring
+    event: entity-definition-renamed
+    criteria: every entity-definition rename in this context
+  - boundedContext: dcb-context-authoring
+    event: entity-definition-removed
+    criteria: every entity-definition removal in this context
 invariants:
   - name: context-active
     rule: The context has been created and has not been deleted.
   - name: definition-exists
     rule: A custom-type-definition currently goes by this name in this context.
+  - name: field-types-resolve
+    rule: |
+      If the new body is composite, every field's type names a simple
+      type, a live custom-type-definition, or a type derived from a live
+      entity-definition.
+  - name: fields-are-flat
+    rule: |
+      If the new body is composite, no field is a list, optional, or
+      typed with another composite.
+  - name: no-composite-cycle
+    rule: |
+      No field's type is this definition itself. Composites do not nest
+      at all, so a cycle cannot form — this states the degenerate case
+      the flatness rule would otherwise leave implicit.
 ---
 apiVersion: schema.esdm.io/core/v1
 kind: dynamic-consistency-boundary
 name: custom-type-definition-rename
 description: |
   Guards renaming a custom-type-definition. Consults event, entity,
-  command and sequence lifecycle events alongside its own, so every
-  definition naming `previous-name` — as a property type, or as a
-  sequence's `valueType` — can be rewritten in the same append — and consults the entity lifecycle a second time over,
-  because the new name must not collide with a derived type name.
+  command and projection lifecycle events alongside its own, so every
+  definition naming `previous-name` — as a property type, as a
+  *composite field* type, or as a projection's `valueType` — can be
+  rewritten in the same append — and consults the entity lifecycle a
+  second time over, because the new name must not collide with a
+  derived type name.
+
+  Its own kind is now among the referrers: a composite field may be
+  typed with another custom type, so renaming `Money` has to rewrite
+  `Item.price`.
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -212,13 +270,16 @@ consults:
     criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
   - boundedContext: dcb-context-authoring
     event: custom-type-definition-added
-    criteria: events with matching `dcb-context-id` whose `name` equals `previous-name` or `name`
+    criteria: every custom-type-definition added in this context — for the name checks, and to find composite field types to rewrite
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-updated
+    criteria: every custom-type-definition update in this context — a composite's fields are read from its latest body
   - boundedContext: dcb-context-authoring
     event: custom-type-definition-renamed
-    criteria: events with matching `dcb-context-id` whose new `name` or `previous-name` equals `previous-name` or `name`
+    criteria: every custom-type-definition rename in this context
   - boundedContext: dcb-context-authoring
     event: custom-type-definition-removed
-    criteria: events with matching `dcb-context-id` whose `name` equals `previous-name` or `name`
+    criteria: every custom-type-definition removal in this context
   - boundedContext: dcb-context-authoring
     event: event-definition-added
     criteria: every event-definition added in this context — needed to find property types to rewrite
@@ -256,14 +317,14 @@ consults:
     event: command-definition-removed
     criteria: every command-definition removal in this context
   - boundedContext: dcb-context-authoring
-    event: sequence-definition-added
-    criteria: every sequence-definition added in this context — a sequence's `valueType` names a type
+    event: projection-definition-added
+    criteria: every projection-definition added in this context — a projection's `valueType` names a type
   - boundedContext: dcb-context-authoring
-    event: sequence-definition-updated
-    criteria: every sequence-definition update in this context
+    event: projection-definition-updated
+    criteria: every projection-definition update in this context
   - boundedContext: dcb-context-authoring
-    event: sequence-definition-removed
-    criteria: every sequence-definition removal in this context
+    event: projection-definition-removed
+    criteria: every projection-definition removal in this context
 invariants:
   - name: context-active
     rule: The context has been created and has not been deleted.
@@ -274,16 +335,16 @@ invariants:
   - name: new-name-not-derived
     rule: |
       No live entity-definition derives `name`: for no live entity `E`
-      does `name` equal `<E>Id` or `<E>State`.
+      does `name` equal `<E>Id` or `<E>Status`.
 ---
 apiVersion: schema.esdm.io/core/v1
 kind: dynamic-consistency-boundary
 name: custom-type-definition-removal
 description: |
   Guards removal of a custom-type-definition. Consults event, entity,
-  command and sequence lifecycle events to refuse removal while any
-  definition still names it — as a property type, or as a sequence's
-  `valueType`.
+  command and projection lifecycle events to refuse removal while any
+  definition still names it — as a property type, as a *composite
+  field* type, or as a projection's `valueType`.
 scope:
   domain: dcb-playground
   boundedContext: dcb-context-authoring
@@ -303,13 +364,16 @@ consults:
     criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
   - boundedContext: dcb-context-authoring
     event: custom-type-definition-added
-    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `custom-type-definition-name`
+    criteria: every custom-type-definition added in this context — for the existence check, and to check composite fields for inbound references
+  - boundedContext: dcb-context-authoring
+    event: custom-type-definition-updated
+    criteria: every custom-type-definition update in this context — fields are read from the latest body
   - boundedContext: dcb-context-authoring
     event: custom-type-definition-renamed
-    criteria: events with matching `dcb-context-id` whose new `name` or `previous-name` equals this instance's `custom-type-definition-name`
+    criteria: every custom-type-definition rename in this context
   - boundedContext: dcb-context-authoring
     event: custom-type-definition-removed
-    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `custom-type-definition-name`
+    criteria: every custom-type-definition removal in this context
   - boundedContext: dcb-context-authoring
     event: event-definition-added
     criteria: every event-definition added in this context — needed to check for inbound references
@@ -338,14 +402,14 @@ consults:
     event: command-definition-removed
     criteria: every command-definition removal in this context
   - boundedContext: dcb-context-authoring
-    event: sequence-definition-added
-    criteria: every sequence-definition added in this context — a sequence's `valueType` names a type
+    event: projection-definition-added
+    criteria: every projection-definition added in this context — a projection's `valueType` names a type
   - boundedContext: dcb-context-authoring
-    event: sequence-definition-updated
-    criteria: every sequence-definition update in this context
+    event: projection-definition-updated
+    criteria: every projection-definition update in this context
   - boundedContext: dcb-context-authoring
-    event: sequence-definition-removed
-    criteria: every sequence-definition removal in this context
+    event: projection-definition-removed
+    criteria: every projection-definition removal in this context
 invariants:
   - name: context-active
     rule: The context has been created and has not been deleted.
@@ -355,7 +419,8 @@ invariants:
     rule: |
       No live event-definition, entity-definition or
       command-definition in this context types a property with this
-      name, and no live sequence-definition issues it as its
+      name, no live composite custom-type-definition types a *field*
+      with it, and no live projection-definition issues it as its
       `valueType`. References are read from the latest body of each
       live definition.
 ---
@@ -412,7 +477,7 @@ description: |
   Renames a custom-type-definition. Atomically emits the rename event
   plus one `*-updated` event for every event-, entity- and
   command-definition that typed a property with `previous-name`, and
-  for every sequence-definition issuing it, with every occurrence
+  for every projection-definition issuing it, with every occurrence
   replaced by `name`.
 scope:
   domain: dcb-playground
@@ -431,10 +496,11 @@ data:
   additionalProperties: false
 publishes:
   - custom-type-definition-renamed
+  - custom-type-definition-updated
   - event-definition-updated
   - entity-definition-updated
   - command-definition-updated
-  - sequence-definition-updated
+  - projection-definition-updated
 constraints:
   - name: rewrite-property-type-references
     rule: |
@@ -443,12 +509,20 @@ constraints:
       property typed `previous-name`, with every occurrence replaced
       by `name`. Emit nothing for definitions that did not reference
       the renamed type.
-  - name: rewrite-sequence-value-types
+  - name: rewrite-composite-field-types
     rule: |
-      Emit exactly one `sequence-definition-updated` for every
-      sequence-definition currently in the context whose `valueType`
+      Emit exactly one `custom-type-definition-updated` for every
+      *other* composite custom-type-definition currently in the context
+      with at least one field typed `previous-name`, with every
+      occurrence replaced by `name`. Emit nothing for scalar types,
+      which reference nothing, nor for composites that did not name the
+      renamed type.
+  - name: rewrite-projection-value-types
+    rule: |
+      Emit exactly one `projection-definition-updated` for every
+      projection-definition currently in the context whose `valueType`
       is `previous-name`, replaced by `name`. Emit nothing for
-      sequences issuing another type.
+      projections holding another type.
 actors:
   - modeler
 ---

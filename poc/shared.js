@@ -1,13 +1,13 @@
 // ============================================================
-// Shared by the interface alternatives: DOM helpers, the simple /
-// advanced mode, and the *slice* view — everything one feature touches,
-// gathered in one place so no alternative has to walk the definition
-// graph itself.
+// Everything the interface needs that is not the model: DOM helpers,
+// the simple / advanced mode, and the *slice* view — everything one
+// feature touches, gathered here so the page never has to walk the
+// definition graph itself.
 //
-// The slice is the idea the alternatives are all trying to serve: a
-// command, what it reads, what it decides, what it emits, and what
-// those events change. The model layer stores none of that as a unit;
-// it is derived here, from the definitions.
+// The slice is the idea the page is built around: a command, what it
+// reads, in how many trips to the log, what it decides, what it emits,
+// and what those events change. The model layer stores none of that as
+// a unit; it is derived here, from the definitions.
 // ============================================================
 
 // ---------- DOM ----------
@@ -56,26 +56,20 @@ function run(fn) {
 //
 // Advanced hides nothing structural — it only decides whether the parts
 // a first model never needs are on screen: identifier schemas, custom
-// types, sequences, and the derived consistency boundary.
+// types, projections, and the derived consistency boundary.
+//
+// How it is offered is the page's business, not this file's: it is one
+// of the interface's own settings, and they are collected in one place
+// rather than scattered along the top of the window.
 
-const MODE_KEY = 'dcb-playground:alternatives:mode';
+const MODE_KEY = 'dcb-playground:mode';
 function mode() { return localStorage.getItem(MODE_KEY) === 'advanced' ? 'advanced' : 'simple'; }
 function advanced() { return mode() === 'advanced'; }
 function setMode(next) { localStorage.setItem(MODE_KEY, next); if (typeof render === 'function') render(); }
 
-function modeSwitch() {
-  const button = (value, label, title) => h('button', {
-    class: mode() === value ? 'on' : '', title, onclick: () => setMode(value),
-  }, label);
-  return h('div', { class: 'mode-switch' },
-    button('simple', 'Simple', 'Features, state and events only'),
-    button('advanced', 'Advanced', 'Also identifier schemas, custom types, sequences and the derived DCB')
-  );
-}
-
 // ---------- which context is open ----------
 
-const CONTEXT_KEY = 'dcb-playground:alternatives:context';
+const CONTEXT_KEY = 'dcb-playground:context';
 
 function activeContextId() {
   const stored = localStorage.getItem(CONTEXT_KEY);
@@ -141,7 +135,7 @@ function createNamedContext(name) {
 
 // ---------- the slice ----------
 
-// Every entity property that folds this event — i.e. everything the
+// Every entity property that handles this event — i.e. everything the
 // event changes. This is the link the original interface made you go
 // and find for yourself, one entity at a time.
 function effectsOf(ctx, eventName) {
@@ -173,7 +167,11 @@ function sliceOf(ctx, commandName) {
       event: ctx['event-definitions'][emission.name] || null,
       effects: effectsOf(ctx, emission.name),
     })),
-    sequences: sequencesRead(body),
+    projections: projectionsRead(body),
+    // Grouped by the trip to the store each read actually happens on,
+    // which is the depth of the boundary's dependency graph and not
+    // its length. Derived here so nothing has to author it.
+    rounds: deriveRounds(body),
     dcb: deriveDcb(ctx, body),
     coverage: coverageIssues(ctx, body),
   };
@@ -191,7 +189,7 @@ function allSlices(ctx) {
 // here in the interface until they earn a command.
 
 const UNGROUPED = 'Ungrouped';
-const GROUPS_KEY = 'dcb-playground:alternatives:pending-features';
+const GROUPS_KEY = 'dcb-playground:pending-features';
 
 function pendingFeatures() {
   try { return JSON.parse(localStorage.getItem(GROUPS_KEY)) || []; } catch (e) { return []; }
@@ -291,11 +289,25 @@ function splitWords(name) {
     .split(/\s+/).filter(Boolean);
 }
 
-// `CourseDefined` -> "Course defined";  `subscriptionCount` -> "subscription count"
+// `CourseDefined` -> "Course defined". For things with a name of their
+// own: a command, an event, an entity, a value type, a status.
 function readable(name) {
   const words = splitWords(name);
   if (!words.length) return '';
   return words.map((w, i) => (i === 0 ? w[0].toUpperCase() + w.slice(1) : w.toLowerCase())).join(' ');
+}
+
+// `courseId` -> "course id". For the things that belong to something
+// else — a property, a parameter, a field. They are never capitalised,
+// and they read the same wherever they turn up: in the list that
+// declares them and in the sentence that refers back to them.
+function propertyWords(name) {
+  return splitWords(name).map((w) => w.toLowerCase()).join(' ');
+}
+
+// A property reached through the alias it was bound under.
+function memberWords(alias, property) {
+  return `${alias} · ${propertyWords(property)}`;
 }
 
 function pastTense(verb) {
@@ -326,12 +338,19 @@ function suggestEventName(commandName) {
 function operandWords(operand) {
   switch (operandSource(operand)) {
     case 'alias-property':
-      return operand.property === STATE_PROPERTY ? operand.alias : `${operand.alias}.${operand.property}`;
-    case 'parameter': return operand.parameterName;
-    case 'enum-member': return operand.enumMember;
-    case 'sequence': return `the next ${operand.sequence}`;
-    case 'event-property': return operand.eventProperty;
+      // No property means a bound projection's single value, which the
+      // alias already names.
+      if (!operand.property) return propertyWords(operand.alias);
+      return operand.property === STATUS_PROPERTY
+        ? operand.alias : memberWords(operand.alias, operand.property);
+    case 'parameter':
+      return operand.property
+        ? memberWords(propertyWords(operand.parameterName), operand.property)
+        : propertyWords(operand.parameterName);
+    case 'enum-member': return readable(operand.enumMember);
+    case 'event-property': return propertyWords(operand.eventProperty);
     case 'current-value': return 'its current value';
+    case 'successor': return `the one after ${operandWords(operand.successor)}`;
     default: return typeof operand === 'string' ? `"${operand}"` : String(operand);
   }
 }
@@ -371,8 +390,17 @@ const OPERATION_WORDS = {
 };
 
 function effectParts(effect) {
+  // A scripted handler has no operation and no operand to name — the
+  // code is both, and nothing here reads it.
+  if (effect.handler.code !== undefined) {
+    return {
+      subject: memberWords(readable(effect.entity), effect.property.name),
+      verb: 'is worked out by',
+      object: 'a script',
+    };
+  }
   return {
-    subject: `${effect.entity}.${effect.property.name}`,
+    subject: memberWords(readable(effect.entity), effect.property.name),
     verb: OPERATION_WORDS[effect.handler.operation] || effect.handler.operation,
     object: operandWords(effect.handler.value),
   };
@@ -380,16 +408,107 @@ function effectParts(effect) {
 
 // A binding, in words: what it is and how the command found it.
 function readParts(ctx, body, binding) {
-  const plural = isFannedOut(ctx, body, binding);
+  if (binding.projection) {
+    const projection = ctx['projection-definitions'][binding.projection] || {};
+    return {
+      alias: binding.alias,
+      projection: binding.projection,
+      plural: false,
+      // One entry per name the projection declares, in its order. For
+      // a declared projection these arguments *are* the tags of its
+      // query; for a scripted one they are values its code reads, and
+      // the tags are stated in the script itself.
+      arguments: ((projection.script ? projection.script.arguments : projection.parameters) || [])
+        .map((p) => ({
+          name: p.name,
+          words: operandWords((binding.arguments || {})[p.name]),
+        })),
+    };
+  }
   return {
     alias: binding.alias,
     entity: binding.entity,
-    plural,
+    plural: isFannedOut(ctx, body, binding),
     from: operandWords(binding.id),
     excluding: binding.excluding !== undefined ? operandWords(binding.excluding) : null,
+    // What the command hands a scripted property it reads.
+    arguments: Object.entries(binding.arguments || {})
+      .map(([name, operand]) => ({ name, words: operandWords(operand) })),
   };
 }
 
 function typeLabel(property) {
   return `${property.propertyType}${property.isList ? '[]' : ''}${property.isOptional ? '?' : ''}`;
+}
+
+// ---------- what a thing looks like ----------
+//
+// An entity is named in a dozen places — the rail, a read, a change, a
+// loose end — and a page with five kinds of thing on it is scanned by
+// shape long before it is read by name. So every entity carries one
+// mark, and the mark goes wherever the entity does.
+//
+// It is authored rather than derived: only the modeler knows whether a
+// Course is a book or a lecture hall. Until one is chosen a neutral
+// glyph stands in — different per entity, so the page is legible
+// straight away, but never claiming a meaning nobody gave it.
+const ENTITY_MARKS = ['◆', '●', '■', '▲', '★', '◇', '○', '□', '△', '✦'];
+
+function defaultEntityIcon(name) {
+  let sum = 0;
+  for (const ch of String(name || '')) sum = (sum * 31 + ch.charCodeAt(0)) >>> 0;
+  return ENTITY_MARKS[sum % ENTITY_MARKS.length];
+}
+
+function entityIcon(ctx, name) {
+  const body = ctx && ctx['entity-definitions'] ? ctx['entity-definitions'][name] : null;
+  const chosen = body && typeof body.icon === 'string' ? body.icon.trim() : '';
+  return chosen || defaultEntityIcon(name);
+}
+
+// Shown beside the type, never behind the Advanced gate: a value
+// arrived at by code is a different kind of claim from one arrived at
+// by a declaration, and a rule reading it should say so on the page.
+function scriptLabel(property) {
+  return property && property.script ? 'scripted' : null;
+}
+
+// The payload as operand choices, expanded one level into composite
+// fields. A composite is offered whole *and* field by field: the whole
+// value is what an emission wants, a field is what a boundary binding
+// or a rule wants.
+function payloadChoices(ctx, payload) {
+  const out = [];
+  for (const p of payload || []) {
+    const label = 'given · ' + propertyWords(p.name);
+    const fields = compositeFieldsOf(ctx, p.propertyType);
+    if (!fields) {
+      out.push([JSON.stringify({ parameterName: p.name }), label]);
+      continue;
+    }
+    out.push([JSON.stringify({ parameterName: p.name }), label + ' (all of it)']);
+    for (const f of fields) {
+      out.push([
+        JSON.stringify({ parameterName: p.name, property: f.name }),
+        `${label} · ${propertyWords(f.name)}`,
+      ]);
+    }
+  }
+  return out;
+}
+
+// The quantifier a condition carries but never states. A fanned-out
+// alias makes it universal; an operand rooted at the same list makes
+// the pairing by index. Both follow from the operands' types, so the
+// reader is told rather than left to work it out.
+function quantifierWords(ctx, body, condition) {
+  const roots = conditionFanRoots(ctx, body, condition);
+  if (roots.length !== 1) return '';
+  const operands = conditionOperands(condition);
+  if (operands.some((o) => isZipped(ctx, body, condition, o))) {
+    return `for each entry of ${roots[0].replace(/^parameter:/, '')}`;
+  }
+  const alias = operands.find((o) =>
+    operandSource(o) === 'alias-property' && fanRootOf(ctx, body, o) === roots[0]);
+  return `for every ${alias ? alias.alias : roots[0].replace(/^binding:|^parameter:/, '')}`;
 }
