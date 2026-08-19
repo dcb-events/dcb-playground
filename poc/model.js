@@ -815,6 +815,43 @@ function resolveOperandType(operand, { boundary, commandProperties, ctx }) {
   return null;
 }
 
+// The predicates that make sense against a resolved operand type — a
+// rule editor offers these rather than the full predicate list, so
+// "starts with" never turns up against an integer. `null` (the type
+// could not be worked out, e.g. an untyped literal) leaves every
+// predicate on the table rather than guessing.
+function predicatesForType(resolved) {
+  if (!resolved) return [...BINARY_PREDICATES, ...UNARY_PREDICATES];
+  if (resolved.isList) {
+    return ['equals', 'countEquals', 'countLessThan', 'countGreaterThan',
+      'contains', 'containsAny', 'isEmpty', 'isNotEmpty'];
+  }
+  if (resolved.propertyType === 'boolean') return ['equals', 'isTrue', 'isFalse'];
+  if (resolved.propertyType === 'integer' || resolved.propertyType === 'timestamp') {
+    return ['equals', 'lessThan', 'lessThanOrEquals', 'greaterThan', 'greaterThanOrEquals'];
+  }
+  if (resolved.propertyType === 'string') {
+    return ['equals', 'lessThan', 'lessThanOrEquals', 'greaterThan', 'greaterThanOrEquals',
+      'startsWith', 'endsWith'];
+  }
+  // Enum, id and composite types (custom or entity-derived): nothing
+  // but identity means anything without a declared ordering.
+  return ['equals'];
+}
+
+// The type a rule's right-hand side has to hold for a given predicate
+// against a left-hand side of `leftType` — `null` once `leftType`
+// itself is unknown, since nothing can be filtered against it then.
+function rightHandExpectedType(predicate, leftType) {
+  if (!leftType) return null;
+  if (predicate === 'countEquals' || predicate === 'countLessThan' || predicate === 'countGreaterThan') {
+    return { propertyType: 'integer', isList: false };
+  }
+  if (predicate === 'contains') return { propertyType: leftType.propertyType, isList: false };
+  if (predicate === 'containsAny') return { propertyType: leftType.propertyType, isList: true };
+  return { propertyType: leftType.propertyType, isList: leftType.isList };
+}
+
 // A binding whose identifier operand is a list covers one instance per
 // element — nothing declares it, it follows from the operand's type. A
 // list read off an already-fanned-out alias is a list of lists, which

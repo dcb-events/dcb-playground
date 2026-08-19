@@ -2826,9 +2826,46 @@ function stepRules(ctx, slice) {
 function ruleEditor(ctx, slice, index) {
   const draft = state.ruleDraft;
   const scope = operandChoicesAbove(ctx, slice);
-  const enums = allStatusMembers(ctx)
-    .map((m) => [JSON.stringify({ enumMember: m }), 'status · ' + readable(m)]);
+  const leftType = resolveOperandType(draftOperand(draft, 'left'),
+    { boundary: slice.reads, commandProperties: slice.payload, ctx });
+
+  // The predicate list narrows to what the left side's type supports —
+  // "starts with" against an integer could never be true — and the
+  // current choice is pulled back onto the list when it no longer fits,
+  // the same way a stale entity/source choice snaps back elsewhere.
+  const predicateChoices = BINARY_PREDICATES.concat(UNARY_PREDICATES)
+    .filter((p) => predicatesForType(leftType).includes(p));
+  if (!predicateChoices.includes(draft.predicate)) {
+    draft.predicate = predicateChoices[0] || draft.predicate;
+  }
   const unary = UNARY_PREDICATES.includes(draft.predicate);
+
+  // The right side is filtered to what the predicate demands of it —
+  // the same type as the left side for most predicates, a bare integer
+  // for the count predicates, and so on — so a capacity (an integer)
+  // does not sit alongside a list of ids as things to compare it with.
+  const rightType = rightHandExpectedType(draft.predicate, leftType);
+  const rightScope = rightType
+    ? scope.filter(([v]) => {
+        const resolved = resolveOperandType(JSON.parse(v),
+          { boundary: slice.reads, commandProperties: slice.payload, ctx });
+        return resolved && resolved.propertyType === rightType.propertyType
+          && resolved.isList === rightType.isList;
+      })
+    : scope;
+  // Enum options on the right only make sense once the left side names
+  // a status property, and only that property's own entity — offering
+  // every entity's statuses would let "course · status equals shipped"
+  // through, which nothing could ever satisfy.
+  const statusMembers = leftType ? enumMembersFor(ctx, leftType.propertyType) : null;
+  const enums = (statusMembers && rightType && !rightType.isList
+    && rightType.propertyType === leftType.propertyType)
+    ? statusMembers.map((m) => [JSON.stringify({ enumMember: m }), 'status · ' + readable(m)])
+    : [];
+  const rightRows = [...rightScope, ...enums];
+  if (draft.right && draft.right !== LITERAL && !rightRows.some(([v]) => v === draft.right)) {
+    draft.right = '';
+  }
 
   const close = () => { state.editRule = null; state.ruleDraft = null; render(); };
 
@@ -2840,9 +2877,9 @@ function ruleEditor(ctx, slice, index) {
         type: 'checkbox', checked: !!draft.negate,
         onchange: (e) => { draft.negate = e.target.checked; },
       }), ' not'),
-    pick(BINARY_PREDICATES.concat(UNARY_PREDICATES).map((p) => [p, readable(p).toLowerCase()]),
+    pick(predicateChoices.map((p) => [p, readable(p).toLowerCase()]),
       draft.predicate, (v) => { draft.predicate = v; render(); }),
-    ...(unary ? [] : operandPicker([...scope, ...enums], draft, 'right', { placeholder: '— what? —' })),
+    ...(unary ? [] : operandPicker(rightRows, draft, 'right', { placeholder: '— what? —' })),
     h('button', {
       class: 'btn primary', onclick: () => {
         const left = draftOperand(draft, 'left');
@@ -2971,20 +3008,33 @@ function warnScripted(ctx, eventName) {
 function eventFields(ctx, emission, event) {
   if (!event) return h('div', { class: 'fields empty' }, 'This event no longer exists.');
   const command = activeContext()['command-definitions'][state.slice];
+  const boundary = command.boundary || [];
+  const commandProperties = command.properties || [];
   const options = [
-    ...(command.properties || []).map((q) =>
+    ...commandProperties.map((q) =>
       [JSON.stringify({ parameterName: q.name }), 'given · ' + propertyWords(q.name)]),
     // Everything the command reads is bound, so everything it can emit
     // comes off an alias — a projection's value included.
-    ...(command.boundary || []).flatMap((b) => {
+    ...boundary.flatMap((b) => {
       if (b.projection) {
         return [[JSON.stringify({ alias: b.alias }), propertyWords(b.alias)]];
       }
       const entity = ctx['entity-definitions'][b.entity];
-      return (entity ? entity.properties : []).map((q) =>
+      const props = (entity ? entity.properties : []).map((q) =>
         [JSON.stringify({ alias: b.alias, property: q.name }), memberWords(b.alias, q.name)]);
+      // An alias identified straight off a payload parameter already
+      // has that same value in scope under "given · …", so naming it
+      // again here would just be a second label on the one thing. One
+      // found by tracing through another alias' property has no such
+      // shortcut — that path is not what an event wants to say — so its
+      // own identity is worth offering directly.
+      const ownId = b.id !== undefined && operandSource(b.id) !== 'parameter'
+        ? [[JSON.stringify(b.id), memberWords(b.alias, 'id')]]
+        : [];
+      return [...props, ...ownId];
     }),
   ];
+
   const where = 'event:' + emission.name;
   const rows = (event.properties || []).map((p, i) => {
     if (editingMember(where, p.name)) {
@@ -3000,13 +3050,19 @@ function eventFields(ctx, emission, event) {
       });
     }
     const bound = (emission.parameters || {})[p.name];
+    // Only options whose resolved type actually matches this field are
+    // offered — a field typed `StudentId` has no use for a capacity.
+    const fieldOptions = options.filter(([v]) => {
+      const resolved = resolveOperandType(JSON.parse(v), { boundary, commandProperties, ctx });
+      return resolved && resolved.propertyType === p.propertyType && resolved.isList === !!p.isList;
+    });
     return qrow('div', {
       cls: 'field', key: 'ev:' + emission.name + ':' + p.name, step: 'emits',
       src: 'evprop:' + emission.name + '.' + p.name,
     },
       h('span', { class: 'nm' }, propertyWords(p.name)),
       h('span', { class: 'muted tiny' }, '←'),
-      pick(options, bound === undefined ? '' : JSON.stringify(bound),
+      pick(fieldOptions, bound === undefined ? '' : JSON.stringify(bound),
         (v) => patchSlice((b) => {
           const e = b.publishes.find((x) => x.name === emission.name);
           e.parameters = e.parameters || {};
