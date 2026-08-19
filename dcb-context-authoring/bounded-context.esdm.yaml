@@ -3,10 +3,16 @@ kind: bounded-context
 name: dcb-context-authoring
 description: |
   The editing surface of the playground. Modelers create, edit, rename
-  and delete DCB Contexts and the five kinds of definitions inside
-  them; viewers inspect a context without changing it. The companion
-  testing surface (scenarios, runs, assertions) is planned as a
-  separate bounded context and is out of scope here.
+  and delete DCB Contexts and the six kinds of definitions inside
+  them; viewers inspect a context without changing it.
+
+  Scenarios are one of those six rather than a bounded context of their
+  own. A scenario names the command it exercises and every event its
+  Given is written from, so it changes when they change and is rewritten
+  by the same rename machinery — a boundary drawn between them would
+  have to be crossed by every rename, which is a boundary in name only.
+  The sandbox is the exception that proves it: nothing it produces is
+  stored, so nothing in it is part of this context.
 scope:
   domain: dcb-playground
 ubiquitousLanguage:
@@ -288,11 +294,62 @@ ubiquitousLanguage:
       exemption does not look at the partition — a projection scoped so
       narrowly that two partitions can mint the same identifier is a
       modelling error, and one this domain deliberately does not catch.
+  - term: Scenario
+    definition: |
+      One command, exercised against a log written by hand. A Given of
+      events with their payloads and the instants they were recorded
+      at, a When naming the command and its arguments, and a Then
+      holding what the definitions made of the two.
+
+      The Then is *derived and stored anyway*. Nothing asks a modeler to
+      predict it; storing it is what lets a later evaluation disagree
+      with it, and that disagreement is the only way the tool can report
+      that an edit changed a command's behaviour rather than merely
+      describing what it does now.
+
+      Identified by a generated id rather than by its name — the one
+      definition kind of which that is true, because its name is read
+      off its outcome and two scenarios of one command may derive the
+      same one.
+    avoid:
+      - term: Test
+        reason: |
+          A test is normally something an author writes an expectation
+          into. Here the expectation is computed and the author's act is
+          *accepting* it, which is closer to approving a diff than to
+          writing an assertion. Calling it a test invites modelers to go
+          looking for the assertion they are supposed to write.
+  - term: Drift
+    definition: |
+      A scenario whose stored Then no longer matches what the current
+      definitions produce. Answerable by reading the difference and
+      accepting the new outcome.
+
+      Distinct from **broken**, which is a scenario that could not be
+      run at all — its command deleted, an event it records gone, a
+      property added to an event it was written before. Drift has two
+      outcomes to compare and broken has one, so a count that merged
+      them would say less the more of them there were.
+  - term: Sandbox
+    definition: |
+      An unpersisted session in which a modeler drives commands against
+      an empty log and watches the events and the state respond, with a
+      timeline to step and scrub through.
+
+      Nothing it produces is stored: it exists to answer "what happens
+      if", and an experiment that outlived the question would be history
+      the model has to carry.
   - term: Definition
     definition: |
-      Umbrella term for the five kinds above (custom-type, event,
-      entity, projection, command). Used wherever a rule applies
-      regardless of which kind is meant.
+      Umbrella term for the six kinds above (custom-type, event,
+      entity, projection, command, scenario). Used wherever a rule
+      applies regardless of which kind is meant.
+
+      Scenarios are a definition for storage, references and renames,
+      and deliberately not for *deletion*: a scenario may never be the
+      reason a definition cannot be removed. Deleting what a scenario
+      exercises leaves it broken and saying so. A test reports what a
+      change broke; it never prevents the change.
   - term: Reference
     definition: |
       A name-based pointer from one definition's body to another (e.g.

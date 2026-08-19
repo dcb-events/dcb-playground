@@ -422,6 +422,101 @@
     to { background: transparent; }
   }
   .landed { animation: landed 1.1s ease-out; }
+
+  /* ---------- scenarios ----------
+     A scenario reads as a sentence in three parts, so its detail is
+     three labelled blocks rather than a form. The status carries the
+     colour: agreement is quiet, a difference is not. */
+  .tabs { display: flex; gap: 4px; margin: 0 0 20px; border-bottom: 1px solid var(--border); }
+  .tab {
+    background: none; border: none; border-bottom: 2px solid transparent;
+    color: var(--muted); font: inherit; font-size: 13px; cursor: pointer;
+    padding: 7px 12px; margin-bottom: -1px; display: flex; align-items: center; gap: 6px;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.on { color: var(--command); border-bottom-color: var(--command); }
+
+  .scenarios { display: flex; flex-direction: column; gap: 7px; }
+  .scenario {
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--surface); padding: 7px 11px;
+  }
+  .scenario.open { border-color: var(--border-strong); }
+  .scenario-row { display: flex; align-items: center; gap: 9px; font-size: 13px; }
+  .sc-name {
+    background: none; border: none; font: inherit; color: inherit;
+    cursor: pointer; text-align: left; padding: 0;
+  }
+  .sc-name:hover { color: var(--command); }
+  .sc-mark {
+    width: 18px; height: 18px; flex: none; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700; border: 1px solid;
+  }
+  .sc-mark.s-current { color: var(--entity); border-color: var(--entity); background: var(--entity-soft); }
+  .sc-mark.s-drifted { color: var(--event); border-color: var(--event); background: var(--event-soft); }
+  .sc-mark.s-broken { color: var(--danger); border-color: var(--danger); background: var(--surface); }
+  .sc-mark.s-held { color: var(--muted); border-color: var(--border-strong); background: var(--surface); }
+
+  .sc-body { margin-top: 9px; padding-top: 9px; border-top: 1px dashed var(--border); }
+  .sc-line { font-family: var(--mono); font-size: 11.5px; line-height: 1.7; }
+  .sc-line .y { color: var(--event); }
+  .sc-line .k { color: var(--muted); }
+  .sc-body .card { font-family: var(--mono); font-size: 11.5px; line-height: 1.7; margin-top: 4px; }
+  .sc-body .card .k { color: var(--muted); }
+  .sc-body .card .t { color: var(--entity); }
+  .sc-body .card .y { color: var(--event); }
+
+  /* Two outcomes side by side, because the question is which of them
+     you meant — not which of them is correct. */
+  .drift { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .drift .adder { grid-column: 1 / -1; }
+  @media (max-width: 720px) { .drift { grid-template-columns: 1fr; } }
+
+  .sc-editor { margin-top: 9px; }
+  .sc-step { margin-top: 6px; }
+  .vpayload, .vgroup { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: flex-start; }
+  .vfield { display: flex; flex-direction: column; gap: 2px; }
+  .vlabel { font-size: 11px; color: var(--muted); }
+  .vwrap { display: inline-flex; }
+  .vin {
+    font: inherit; font-size: 12px; padding: 3px 7px;
+    border: 1px solid var(--border); border-radius: 5px;
+    background: var(--surface); color: var(--text); min-width: 110px;
+  }
+  .vin:focus { outline: none; border-color: var(--command); }
+  .vin.tiny-in { min-width: 70px; width: 70px; }
+  .vlist { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+  .vrow { display: flex; gap: 5px; align-items: flex-start; }
+  .vgroup {
+    border: 1px dashed var(--border); border-radius: 5px; padding: 5px 8px;
+  }
+
+  /* ---------- sandbox ----------
+     A run of commands, and the position in it you are looking at. The
+     timeline is the subject, so it gets the width; the ticks under it
+     are where the commands landed. */
+  .timeline { display: flex; flex-direction: column; gap: 7px; }
+  .trow { display: flex; align-items: center; gap: 9px; }
+  .scrub { flex: 1; accent-color: var(--command); }
+  .ticks { display: flex; flex-wrap: wrap; gap: 4px; }
+  .tick {
+    font: inherit; font-size: 11px; cursor: pointer;
+    border: 1px solid var(--border); border-radius: 999px;
+    background: var(--surface); color: var(--muted); padding: 1px 9px;
+  }
+  .tick:hover { border-color: var(--command); color: var(--command); }
+  .tick.on { background: var(--command-soft); border-color: var(--command); color: var(--command); }
+  /* A step the position has not reached yet is still there — the run
+     did not shorten, you only moved back through it. */
+  .tick.ahead { opacity: .45; }
+
+  .pin {
+    background: none; border: none; cursor: pointer; padding: 0 5px 0 0;
+    color: var(--muted); font-size: 12px;
+  }
+  .pin:hover { color: var(--event); }
+  .pin.on { color: var(--event); }
 </style>
 </head>
 <body>
@@ -443,6 +538,7 @@
 <div id="palette-host"></div>
 
 <script src="model.js"></script>
+<script src="evaluate.js"></script>
 <script src="shared.js"></script>
 <script>
 // ============================================================
@@ -499,6 +595,11 @@ const state = {
   palette: false,           // quick open is up (flag: palette)
   lit: null,                // a reference pinned to its source
   land: null,               // a row to bring on screen after the repaint
+  tab: 'definition',        // 'definition' | 'scenarios' on a command page
+  openScenario: null,       // the scenario whose detail is unfolded
+  scenarioDraft: null,      // { key, body } — a scenario being written
+  renamingScenario: null,   // the scenario whose name is being overwritten
+  sandboxDraft: null,       // { command, arguments } — a command about to be driven
 };
 
 // Called by the context picker in shared.js, which owns no forms itself.
@@ -538,6 +639,29 @@ function variant() {
 function setVariant(value) {
   localStorage.setItem(VARIANT_KEY, value);
   state.sel = null; state.editing = null; state.adder = null;
+  render();
+}
+
+// Where a command's scenarios are shown. A sibling of the switch above
+// rather than part of section C, because `UI_SETTINGS` is built before
+// that section is reached — and because it is the same kind of thing:
+// a question about the interface that is not settled yet.
+const SCENARIO_PLACEMENTS = [
+  ['tab', 'Tab', 'Beside the command, on a tab of its own page'],
+  ['section', 'Below', 'A last step at the bottom of the command page'],
+  ['page', 'One page', 'Every scenario in the model, on a page of its own'],
+];
+const SCENARIO_PLACEMENT_KEY = 'dcb-playground:scenarios';
+
+function scenarioPlacement() {
+  const stored = localStorage.getItem(SCENARIO_PLACEMENT_KEY);
+  return SCENARIO_PLACEMENTS.some(([v]) => v === stored) ? stored : 'tab';
+}
+
+function setScenarioPlacement(value) {
+  localStorage.setItem(SCENARIO_PLACEMENT_KEY, value);
+  state.tab = 'definition';
+  if (state.view === 'scenarios' && value !== 'page') state.view = 'slice';
   render();
 }
 
@@ -638,6 +762,14 @@ const UI_SETTINGS = [
     ],
     get: mode,
     set: setMode,
+  },
+  {
+    title: 'Where scenarios go',
+    why: 'A command and the scenarios that exercise it are the same subject, and there is more '
+      + 'than one defensible place to put the second one. Switchable while that is still true.',
+    options: SCENARIO_PLACEMENTS,
+    get: scenarioPlacement,
+    set: setScenarioPlacement,
   },
 ];
 
@@ -1549,6 +1681,7 @@ const FORM_KEYS = [
   'renamingEntity', 'iconPicker', 'confirmRemove', 'newContext', 'newType', 'renamingType',
   'newProjection', 'renamingProjection', 'projDraft', 'renamingEvent',
   'renamingCommand', 'editMember', 'editRule', 'editBinding',
+  'scenarioDraft', 'renamingScenario', 'sandboxDraft',
 ];
 
 // What a form was holding while it was open. These outlive the form
@@ -1679,6 +1812,20 @@ function renderRail() {
       },
     }, 'Projections'));
   }
+
+  // The sandbox belongs to no definition, so it hangs off nothing in
+  // the lists above. It is last because it is where you go once there
+  // is something to try.
+  rail.appendChild(h('h4', { style: 'margin-top:20px' }, 'Try it'));
+  rail.appendChild(h('a', {
+    href: '#', class: state.view === 'sandbox' ? 'on' : '',
+    title: session.log.length
+      ? session.log.length + ' event' + (session.log.length === 1 ? '' : 's') + ' in this session'
+      : 'Drive the commands and watch what happens',
+    onclick: (e) => { e.preventDefault(); closeForms(); state.view = 'sandbox'; render(); },
+  }, 'Sandbox', session.log.length
+    ? h('span', { class: 'gcount' }, session.log.length)
+    : null));
 
 
   // Where a definition ends up once the last thing that used it is
@@ -2059,6 +2206,12 @@ function paintPage() {
     }, '⟳'));
   }
   if (flag('health')) tools.appendChild(healthButton(ctx));
+  // Not behind a flag: a scenario that no longer agrees with its
+  // command is the one thing in this model that can be wrong without
+  // anyone having touched it, and it belongs where the other count of
+  // what needs attention already is.
+  const scenarioCount = scenarioCountButton(ctx);
+  if (scenarioCount) tools.appendChild(scenarioCount);
 
   document.getElementById('settings').innerHTML = '';
   document.getElementById('settings').appendChild(settingsButton());
@@ -2071,8 +2224,10 @@ function paintPage() {
   const names = Object.keys(ctx['command-definitions']);
   if (state.view === 'slice' && (!state.slice || !names.includes(state.slice))) {
     state.slice = names[0] || null;
+    state.tab = 'definition';
   }
   if (state.view === 'types' && !advanced()) state.view = 'slice';
+  if (state.view === 'scenarios' && scenarioPlacement() !== 'page') state.view = 'slice';
   if (state.view === 'projections' && !advanced() && !Object.keys(ctx['projection-definitions']).length) {
     state.view = 'slice';
   }
@@ -2099,6 +2254,8 @@ function paintPage() {
   }
 
   if (state.view === 'draft') return renderDraft(ctx, main);
+  if (state.view === 'scenarios') return renderScenarios(ctx, main);
+  if (state.view === 'sandbox') return renderSandbox(ctx, main);
   if (state.view === 'entity') return renderEntity(ctx, main);
   if (state.view === 'types') return renderCustomTypes(ctx, main);
   if (state.view === 'projections') return renderProjections(ctx, main);
@@ -2199,6 +2356,18 @@ function paintPage() {
       + (slice.emits.map((e) => readable(e.emission.name)).join(', ') || 'nothing')),
     featurePicker(ctx, slice)));
 
+  // Where the scenarios go is still an open question, so the page
+  // answers it three ways. Only the tab hides the definition; the other
+  // two leave this page exactly as it was and add to it.
+  const placement = scenarioPlacement();
+  if (placement === 'tab') main.appendChild(scenarioTabs(ctx, slice));
+
+  if (placement === 'tab' && state.tab === 'scenarios') {
+    main.appendChild(scenarioPanel(ctx, slice.name));
+    paintLit();
+    return;
+  }
+
   main.appendChild(stepTrigger(ctx, slice));
   main.appendChild(stepReads(ctx, slice));
   main.appendChild(stepRules(ctx, slice));
@@ -2207,6 +2376,11 @@ function paintPage() {
   if (advanced()) main.appendChild(stepConsistency(ctx, slice));
   else main.appendChild(h('div', { class: 'muted tiny', style: 'padding-left:26px' },
     'Switch to Advanced to see the consistency boundary this command derives.'));
+
+  if (placement === 'section') {
+    main.appendChild(step('scenarios', 'What this is supposed to do',
+      scenarioPanel(ctx, slice.name)));
+  }
 
   // A pinned reference outlives the repaint that follows clicking it.
   paintLit();
@@ -4062,6 +4236,940 @@ function stepConsistency(ctx, slice) {
           h('span', { class: 'small' }, 'Writes a tag it never read: '
             + slice.coverage.map((c) => readable(c.entity)).join(', ')))
       : null);
+}
+
+
+// ============================================================
+// C · Scenarios
+//
+// One command, exercised. A Given of events written by hand, a When
+// naming the arguments, and a Then nobody types — it is derived from
+// the definitions and frozen beside the other two, so the next run
+// either agrees with it or reports that something changed.
+//
+// Accepting a difference is the whole gesture this interface exists
+// for. It is the same move as approving a diff: you are not told the
+// model is wrong, you are shown what it now does and asked whether that
+// is what you meant.
+//
+// Three statuses, and they are not degrees of one thing. **Current** is
+// agreement. **Drifted** has two outcomes to compare, and is answered by
+// reading the difference. **Broken** has one — the command deleted, an
+// event gone, a property added since — and is answered by repairing the
+// scenario. A count that merged the last two would say less the more of
+// them there were.
+// ============================================================
+
+// ---------- running them ----------
+//
+// A scenario that reads a scripted projection is never run unprompted.
+// The code is authored JavaScript with nothing between it and the page,
+// so a body that loops forever takes the tab with it — and a hang while
+// the page is painting itself leaves no way back in to fix the script
+// that caused it. Everything else runs on every repaint, the way the
+// whole model is already reprojected on every repaint.
+// The placement switch itself sits with the other interface switches
+// near the top of this file. Everything below is what it chooses
+// between.
+
+const heldRuns = new Map();
+
+function scenarioResult(ctx, key, body) {
+  if (!scenarioTouchesScript(ctx, body)) return runScenario(ctx, body);
+  const cached = heldRuns.get(key);
+  // The log length stands in for "nothing has changed since": every
+  // edit to this model is an append, so a run made before one is a run
+  // made against different definitions.
+  if (cached && cached.at === loadEvents().length) return cached.result;
+  return {
+    status: 'held',
+    reason: 'This scenario reads a scripted projection, so it runs when you ask and not before.',
+  };
+}
+
+function runHeldScenario(ctx, key, body) {
+  heldRuns.set(key, { at: loadEvents().length, result: runScenario(ctx, body) });
+  render();
+}
+
+const STATUS_WORDS = {
+  current: ['✓', 'Current', 'What this command does is what this scenario says it does'],
+  drifted: ['≠', 'Drifted', 'This command behaves differently now than when this was accepted'],
+  broken: ['!', 'Broken', 'This could not be run at all — something it names is gone'],
+  held: ['·', 'Not run', 'Reads a script, so it runs only when asked'],
+};
+
+function scenariosOf(ctx, commandName) {
+  return Object.entries(ctx['scenario-definitions'] || {})
+    .filter(([, body]) => body.command === commandName)
+    .map(([key, body]) => ({ key, body }));
+}
+
+// Every scenario in the model that is not saying "current", which is
+// the only number worth carrying in the bar.
+function scenarioTrouble(ctx) {
+  const out = [];
+  for (const [key, body] of Object.entries(ctx['scenario-definitions'] || {})) {
+    const result = scenarioResult(ctx, key, body);
+    if (result.status === 'current' || result.status === 'held') continue;
+    out.push({ key, body, result });
+  }
+  return out;
+}
+
+function scenarioCountButton(ctx) {
+  const trouble = scenarioTrouble(ctx);
+  const total = Object.keys(ctx['scenario-definitions'] || {}).length;
+  if (!total) return null;
+  return h('button', {
+    class: 'btn ghost',
+    title: trouble.length
+      ? 'Scenarios this model no longer agrees with'
+      : 'Every scenario agrees with what its command does',
+    onclick: () => {
+      closeForms();
+      const first = trouble[0];
+      if (first) {
+        state.view = 'slice';
+        state.slice = first.body.command;
+        state.tab = 'scenarios';
+        state.openScenario = first.key;
+      } else if (scenarioPlacement() === 'page') state.view = 'scenarios';
+      render();
+    },
+  }, 'Scenarios', h('span', { class: 'badge' + (trouble.length ? '' : ' clear') },
+    trouble.length || '✓'));
+}
+
+// ---------- values ----------
+//
+// A payload is written rather than chosen, which is the one place in
+// this interface where a modeler types a value the model will act on.
+// Identifiers get the strongest help available short of picking from a
+// list that does not exist yet: every identifier of the same kind
+// already written anywhere in this scenario is offered as you type. A
+// new instance is still just typed, because before the first event
+// mentions one there is nothing to have picked.
+
+let suggestionSeq = 0;
+
+// A value is addressed by where it sits in the draft, never by a copy
+// of what it was when the field was drawn.
+//
+// Two things follow, and both are bugs this shape does not have. A
+// field that closed over the payload as it was at paint time would
+// undo the edit before it the moment two fields were filled between
+// repaints. And a repaint under a text field takes the caret with it —
+// which is why filling one does not cause one: the inputs are
+// uncontrolled and the draft is the only copy, so there is nothing to
+// bring back into agreement. Only a change of *shape* — another list
+// element, a different event — redraws.
+
+function atPath(root, path) {
+  return path.reduce((node, key) => (node === null || node === undefined ? undefined : node[key]), root);
+}
+
+function setAtPath(root, path, value) {
+  let node = root;
+  for (let i = 0; i < path.length - 1; i++) {
+    if (node[path[i]] === null || node[path[i]] === undefined) {
+      node[path[i]] = typeof path[i + 1] === 'number' ? [] : {};
+    }
+    node = node[path[i]];
+  }
+  node[path[path.length - 1]] = value;
+  return root;
+}
+
+// Every identifier of a given entity already written anywhere in a
+// scenario. Read at the moment the field is used rather than the moment
+// it was drawn, so an id typed into the Given is offered in the When
+// without anything having to repaint in between.
+function identifiersInUse(ctx, body, entityName) {
+  const found = new Set();
+  const harvest = (values, properties) => {
+    for (const property of properties || []) {
+      const value = (values || {})[property.name];
+      if (value === undefined || value === null) continue;
+      const elements = property.isList ? (Array.isArray(value) ? value : []) : [value];
+      for (const leaf of idLeavesOfType(ctx, property.propertyType)) {
+        if (leaf.entity !== entityName) continue;
+        for (const element of elements) {
+          const held = leaf.field === null ? element : (element || {})[leaf.field];
+          if (held !== undefined && held !== null && held !== '') found.add(String(held));
+        }
+      }
+    }
+  };
+  for (const step of body.given || []) {
+    harvest(step.data, (ctx['event-definitions'][step.event] || {}).properties);
+  }
+  harvest((body.when || {}).arguments, (ctx['command-definitions'][body.command] || {}).properties);
+  return [...found].sort();
+}
+
+// One value of one declared type, at one place in the draft. Lists
+// repeat it, composites nest it, and everything else is a field with
+// the type's own vocabulary behind it.
+function valueEditor(ctx, property, path, where) {
+  const draft = where.root;
+  const fields = compositeFieldsOf(ctx, property.propertyType);
+
+  const scalar = (at) => {
+    const held = atPath(draft(), at);
+    const entity = entityOfIdType(ctx, property.propertyType);
+    const listId = entity ? `sug-${++suggestionSeq}` : null;
+    const options = () => where.suggest(entity);
+    return h('span', { class: 'vwrap' },
+      h('input', {
+        class: 'vin', value: held === undefined || held === null ? '' : String(held),
+        placeholder: readable(property.propertyType), list: listId,
+        // Rebuilt as the field is reached, not as it is drawn: an
+        // identifier typed a moment ago is offered here without a
+        // repaint having to carry it over.
+        onfocus: listId ? (e) => {
+          const list = document.getElementById(listId);
+          if (!list) return;
+          list.innerHTML = '';
+          for (const value of options()) list.appendChild(h('option', { value }));
+        } : null,
+        onchange: (e) => {
+          const parsed = literalOfType(ctx, property.propertyType, e.target.value);
+          if (parsed === undefined) {
+            return toast('That is not a ' + readable(property.propertyType) + '.', true);
+          }
+          setAtPath(draft(), at, parsed);
+        },
+      }),
+      listId ? h('datalist', { id: listId }) : null);
+  };
+
+  const composite = (at) => h('span', { class: 'vgroup' },
+    fields.map((field) => h('span', { class: 'vfield' },
+      h('span', { class: 'vlabel' }, propertyWords(field.name)),
+      valueEditor(ctx, { ...field, isList: false }, [...at, field.name], where))));
+
+  const one = fields ? composite : scalar;
+
+  if (!property.isList) return one(path);
+
+  const elements = atPath(draft(), path);
+  const held = Array.isArray(elements) ? elements : [];
+  return h('span', { class: 'vlist' },
+    held.map((element, index) => h('span', { class: 'vrow' },
+      one([...path, index]),
+      h('button', {
+        class: 'btn tiny danger', title: 'Remove this one',
+        onclick: () => {
+          setAtPath(draft(), path, held.filter((e, i) => i !== index));
+          render();
+        },
+      }, '×'))),
+    h('button', {
+      class: 'btn tiny',
+      onclick: () => {
+        setAtPath(draft(), path, [...held, fields ? {} : '']);
+        render();
+      },
+    }, '+ one more'));
+}
+
+// The payload of one event or one command call: every property it
+// declares, in the order it declares them.
+function payloadEditor(ctx, properties, path, where) {
+  if (!(properties || []).length) {
+    return h('span', { class: 'muted tiny' }, 'nothing to fill in');
+  }
+  return h('span', { class: 'vpayload' },
+    (properties || []).map((property) => h('span', { class: 'vfield' },
+      h('span', { class: 'vlabel' }, propertyWords(property.name)),
+      valueEditor(ctx, property, [...path, property.name], where))));
+}
+
+// Where a payload being written lives, and what it can be helped with.
+// A scenario suggests the identifiers written elsewhere in itself,
+// because nothing else exists yet. The sandbox suggests the ones that
+// actually do — every instance its log has mentioned — which is a
+// stronger answer and only available because a session has a history.
+function scenarioWhere(ctx) {
+  return {
+    root: () => state.scenarioDraft.body,
+    suggest: (entity) => identifiersInUse(ctx, state.scenarioDraft.body, entity),
+  };
+}
+
+function sandboxWhere(ctx) {
+  return {
+    root: () => state.sandboxDraft,
+    suggest: (entity) => sessionInstances(ctx)
+      .filter((tag) => tag.startsWith(entity + ':'))
+      .map((tag) => tag.slice(entity.length + 1)),
+  };
+}
+
+// ---------- reading one back ----------
+
+function payloadText(values) {
+  const entries = Object.entries(values || {});
+  if (!entries.length) return 'nothing';
+  return entries.map(([k, v]) => `${propertyWords(k)} ${JSON.stringify(v)}`).join(', ');
+}
+
+function outcomeCard(ctx, outcome, title) {
+  if (!outcome) return h('div', { class: 'card' }, h('div', { class: 'empty' }, 'nothing'));
+  const rule = outcome.failedRule;
+  return h('div', { class: 'card' },
+    h('div', { class: 'muted tiny' }, title),
+    outcome.outcome === 'rejected'
+      ? h('div', {},
+          h('span', { class: 'k' }, 'refused by '),
+          h('span', { class: 't' }, (rule || {}).text || 'a rule'),
+          rule && rule.rightValue !== null
+            ? h('span', { class: 'k' }, `  — read ${JSON.stringify(rule.leftValue)}`
+                + ` against ${JSON.stringify(rule.rightValue)}`)
+            : (rule ? h('span', { class: 'k' }, `  — read ${JSON.stringify(rule.leftValue)}`) : null),
+          rule && rule.atInstance !== null && rule.atInstance !== undefined
+            ? h('span', { class: 'k' }, `  (at ${ordinal(rule.atInstance + 1)})`) : null)
+      : (outcome.events || []).length
+        ? outcome.events.map((event) => h('div', {},
+            h('span', { class: 'y' }, readable(event.type)),
+            h('span', { class: 'k' }, '  ' + payloadText(event.data))))
+        : h('div', { class: 'empty' }, 'accepted, recording nothing'));
+}
+
+function ordinal(n) {
+  const suffix = n % 100 >= 11 && n % 100 <= 13 ? 'th'
+    : ['th', 'st', 'nd', 'rd'][n % 10] || 'th';
+  return n + suffix;
+}
+
+
+// ---------- the list ----------
+
+function scenarioRow(ctx, entry) {
+  const { key, body } = entry;
+  const result = scenarioResult(ctx, key, body);
+  const [mark, word, why] = STATUS_WORDS[result.status];
+  const open = state.openScenario === key;
+
+  const head = h('div', { class: 'row scenario-row' },
+    h('span', { class: 'sc-mark s-' + result.status, title: why }, mark),
+    h('button', {
+      class: 'sc-name',
+      onclick: () => {
+        state.openScenario = open ? null : key;
+        render();
+      },
+    }, scenarioName(body, readable)),
+    h('span', { class: 'grow' }),
+    h('span', { class: 'muted tiny' }, word),
+    reveal(
+      result.status === 'held'
+        ? h('button', {
+            class: 'btn tiny', title: 'Run this one now',
+            onclick: () => runHeldScenario(ctx, key, body),
+          }, 'Run')
+        : null,
+      h('button', {
+        class: 'btn tiny',
+        onclick: () => { closeForms(); state.renamingScenario = key; render(); },
+      }, 'Rename'),
+      removeButton('scenario:' + key, {
+        label: 'Remove', title: 'Remove this scenario. Nothing else is touched.',
+        onRemove: () => run(() => {
+          removeDefinition('scenario-definition', ctx.id, key);
+          if (state.openScenario === key) state.openScenario = null;
+        }),
+      })));
+
+  if (state.renamingScenario === key) {
+    return h('div', { class: 'scenario' }, head, inlineForm({
+      question: 'What should this scenario be called?',
+      placeholder: scenarioName({ ...body, name: undefined }, readable),
+      value: typeof body.name === 'string' ? body.name : '',
+      submitLabel: 'Rename',
+      onSubmit: (v) => {
+        const next = (v || '').trim();
+        state.renamingScenario = null;
+        run(() => {
+          const nextBody = { ...deepClone(body) };
+          if (next) nextBody.name = next; else delete nextBody.name;
+          updateDefinition('scenario-definition', ctx.id, key, nextBody);
+        });
+      },
+      onCancel: () => { state.renamingScenario = null; render(); },
+    }));
+  }
+
+  if (!open) return h('div', { class: 'scenario' }, head);
+
+  return h('div', { class: 'scenario open' }, head,
+    h('div', { class: 'sc-body' },
+      h('div', { class: 'muted tiny' }, 'Given'),
+      (body.given || []).length
+        ? (body.given || []).map((step) => h('div', { class: 'sc-line' },
+            h('span', { class: 'y' }, readable(step.event)),
+            h('span', { class: 'k' }, '  ' + payloadText(step.data))))
+        : h('div', { class: 'empty' }, 'nothing had happened yet'),
+      h('div', { class: 'muted tiny', style: 'margin-top:8px' }, 'When'),
+      h('div', { class: 'sc-line' },
+        h('span', { class: 'y' }, readable(body.command)),
+        h('span', { class: 'k' }, '  ' + payloadText((body.when || {}).arguments))),
+      h('div', { class: 'muted tiny', style: 'margin-top:8px' }, 'Then'),
+      result.status === 'broken'
+        ? h('div', { class: 'card', style: 'border-color:var(--danger)' },
+            h('div', { class: 'small' }, result.reason),
+            h('div', { class: 'muted tiny', style: 'margin-top:6px' },
+              'What it used to expect is kept below, so nothing is lost while you repair it.'),
+            outcomeCard(ctx, result.expected, 'was'))
+        : result.status === 'drifted'
+          ? h('div', { class: 'drift' },
+              outcomeCard(ctx, result.expected, 'this scenario says'),
+              outcomeCard(ctx, result.actual, 'the model now does'),
+              h('div', { class: 'adder' },
+                h('button', {
+                  class: 'btn primary',
+                  title: 'Store what the model now does as what this scenario expects',
+                  onclick: () => run(() => {
+                    updateDefinition('scenario-definition', ctx.id, key,
+                      { ...deepClone(body), then: result.actual });
+                  }),
+                }, 'Accept this'),
+                h('span', { class: 'muted tiny' },
+                  'Nothing changes in the model — only what this scenario expects of it.')))
+          : outcomeCard(ctx, result.status === 'held' ? body.then : result.expected,
+              result.status === 'held' ? 'last accepted' : 'and it does')));
+}
+
+// ---------- writing one ----------
+
+function startScenario(ctx, commandName) {
+  closeForms();
+  state.tab = 'scenarios';
+  state.scenarioDraft = {
+    key: null,
+    body: { command: commandName, given: [], when: { arguments: {} } },
+  };
+  render();
+}
+
+function patchScenarioDraft(mutate) {
+  const draft = state.scenarioDraft;
+  if (!draft) return;
+  mutate(draft.body);
+  render();
+}
+
+function scenarioEditor(ctx) {
+  const draft = state.scenarioDraft;
+  const body = draft.body;
+  const command = ctx['command-definitions'][body.command];
+  const eventNames = Object.keys(ctx['event-definitions']).sort();
+
+  // Each Given event lands one second after the one before it, so a
+  // projection folding the envelope sees them in the order they are
+  // written. Any of them can be overwritten; none of them may be blank.
+  const nextInstant = () => {
+    const last = (body.given || []).reduce((max, s) => Math.max(max, s.recordedAt || 0), 0);
+    return last + 1;
+  };
+
+  const givenRows = (body.given || []).map((step, index) => {
+    const definition = ctx['event-definitions'][step.event] || {};
+    return h('div', { class: 'card sc-step' },
+      h('div', { class: 'row' },
+        pick(eventNames.map((n) => [n, readable(n)]), step.event, (v) => patchScenarioDraft((b) => {
+          b.given[index] = { event: v, data: {}, recordedAt: step.recordedAt };
+        })),
+        h('span', { class: 'grow' }),
+        h('span', { class: 'muted tiny' }, 'at'),
+        h('input', {
+          class: 'vin tiny-in', value: step.recordedAt,
+          title: 'The instant this was recorded, in whole seconds. A projection may fold it.',
+          onchange: (e) => patchScenarioDraft((b) => {
+            const n = Number(e.target.value);
+            b.given[index].recordedAt = Number.isInteger(n) ? n : step.recordedAt;
+          }),
+        }),
+        h('button', {
+          class: 'btn tiny danger',
+          onclick: () => patchScenarioDraft((b) => { b.given.splice(index, 1); }),
+        }, '×')),
+      payloadEditor(ctx, definition.properties, ['given', index, 'data'], scenarioWhere(ctx)));
+  });
+
+  return h('div', { class: 'card sc-editor' },
+    h('h4', {}, draft.key ? 'Edit this scenario' : 'A new scenario'),
+    h('div', { class: 'muted small' },
+      'Write what had already happened, then the call. What it does with the two is worked out '
+      + 'here — you are never asked to predict it.'),
+
+    h('div', { class: 'muted tiny', style: 'margin-top:12px' }, 'Given'),
+    givenRows.length ? givenRows : h('div', { class: 'empty' }, 'nothing has happened yet'),
+    h('div', { class: 'adder' },
+      h('button', {
+        class: 'btn tiny',
+        onclick: () => patchScenarioDraft((b) => {
+          b.given = [...(b.given || []),
+            { event: eventNames[0], data: {}, recordedAt: nextInstant() }];
+        }),
+      }, '+ an event that had happened')),
+
+    h('div', { class: 'muted tiny', style: 'margin-top:12px' }, 'When'),
+    h('div', { class: 'card sc-step' },
+      h('div', { class: 'row' }, h('span', { class: 'y' }, readable(body.command))),
+      payloadEditor(ctx, (command || {}).properties, ['when', 'arguments'], scenarioWhere(ctx))),
+
+    h('div', { class: 'adder', style: 'margin-top:14px' },
+      h('button', { class: 'btn primary', onclick: () => saveScenario(ctx) },
+        draft.key ? 'Save' : 'Work out what happens'),
+      h('button', {
+        class: 'btn ghost',
+        onclick: () => { state.scenarioDraft = null; render(); },
+      }, 'Cancel')));
+}
+
+// Deriving the Then is the save. A scenario that cannot be evaluated
+// cannot be created either — there would be nothing to freeze — and the
+// message says which part of it did not resolve.
+function saveScenario(ctx) {
+  const draft = state.scenarioDraft;
+  const body = deepClone(draft.body);
+  let then;
+  try {
+    then = deriveThen(ctx, body);
+  } catch (error) {
+    return toast(error instanceof EvaluationError
+      ? error.message
+      : 'That could not be worked out: ' + error.message, true);
+  }
+  body.then = then;
+  run(() => {
+    const key = draft.key || generateId();
+    if (draft.key) updateDefinition('scenario-definition', ctx.id, key, body);
+    else addDefinition('scenario-definition', ctx.id, key, body);
+    state.scenarioDraft = null;
+    state.openScenario = key;
+  });
+}
+
+// ---------- where they are shown ----------
+
+function scenarioPanel(ctx, commandName) {
+  const entries = scenariosOf(ctx, commandName);
+  return h('div', { class: 'scenarios' },
+    entries.length
+      ? entries.map((entry) => scenarioRow(ctx, entry))
+      : h('div', { class: 'blank small' },
+          h('p', { class: 'muted small' },
+            'Nothing exercises this command yet. A scenario is what had already happened, the '
+            + 'call, and what the model makes of the two — and it is the only thing here that '
+            + 'notices when an edit somewhere else changes what this command does.')),
+    state.scenarioDraft && state.scenarioDraft.body.command === commandName
+      ? scenarioEditor(ctx)
+      : h('div', { class: 'adder' },
+          h('button', {
+            class: 'btn' + (entries.length ? '' : ' primary'),
+            onclick: () => startScenario(ctx, commandName),
+          }, '+ New scenario')));
+}
+
+function scenarioTabs(ctx, slice) {
+  const entries = scenariosOf(ctx, slice.name);
+  const trouble = entries.filter((e) => {
+    const status = scenarioResult(ctx, e.key, e.body).status;
+    return status === 'drifted' || status === 'broken';
+  }).length;
+  const tab = (key, label, extra) => h('button', {
+    class: 'tab' + (state.tab === key ? ' on' : ''),
+    'aria-pressed': state.tab === key ? 'true' : 'false',
+    onclick: () => { state.tab = key; state.scenarioDraft = null; render(); },
+  }, label, extra);
+  return h('div', { class: 'tabs' },
+    tab('definition', 'Definition'),
+    tab('scenarios', 'Scenarios',
+      entries.length
+        ? h('span', { class: 'badge' + (trouble ? '' : ' clear') }, trouble || entries.length)
+        : null));
+}
+
+// Every scenario in the model, grouped by the command it exercises —
+// the placement that answers "what did that rename break" in one look
+// rather than one command at a time.
+function renderScenarios(ctx, main) {
+  const commands = Object.keys(ctx['command-definitions']).sort();
+  main.appendChild(h('header', {},
+    h('div', { class: 'name' }, 'Scenarios'),
+    h('div', { class: 'muted small summary' },
+      'One command each, exercised against events written by hand. What they expect was worked '
+      + 'out here and frozen — so a difference is the report that something changed.')));
+
+  const orphaned = Object.entries(ctx['scenario-definitions'] || {})
+    .filter(([, body]) => !ctx['command-definitions'][body.command]);
+
+  for (const name of commands) {
+    const entries = scenariosOf(ctx, name);
+    if (!entries.length) continue;
+    main.appendChild(step('scenarios', readable(name),
+      h('div', { class: 'scenarios' }, entries.map((entry) => scenarioRow(ctx, entry)))));
+  }
+
+  if (orphaned.length) {
+    main.appendChild(step('scenarios', 'Commands that are gone',
+      h('div', { class: 'muted small' },
+        'These exercise a command this model no longer has. They are kept, and broken, because '
+        + 'deleting them was never what removing the command asked for.'),
+      h('div', { class: 'scenarios' },
+        orphaned.map(([key, body]) => scenarioRow(ctx, { key, body })))));
+  }
+
+  if (!Object.keys(ctx['scenario-definitions'] || {}).length) {
+    main.appendChild(h('div', { class: 'blank' },
+      h('h2', {}, 'Nothing exercised yet'),
+      h('p', { class: 'muted small' },
+        'A scenario belongs to a command, so it is written on that command page. This one '
+        + 'gathers them once there are some.')));
+  }
+}
+
+
+// ============================================================
+// D · Sandbox
+//
+// The other way to try a model: not one command against a written
+// Given, but a run of them against each other, with the events piling
+// up and the state responding as they go.
+//
+// Nothing here is kept. It exists to answer "what happens if", and an
+// experiment that outlived the question would be history the model has
+// to carry — so it lives in this variable and is gone on reload. What
+// makes that affordable is that the model itself is untouched: driving
+// a command here appends to `session.log`, never to the event log the
+// playground stores its own definitions in.
+//
+// **Scrubbing replays from zero.** Every position is a fold of the
+// events up to it, computed fresh. An incremental fold would only help
+// going forwards and would need a snapshot regime to come back, and
+// nothing measured says it is needed — the same ground the worker was
+// dropped on.
+//
+// **A refusal is shown and not recorded.** The timeline is what
+// happened; a command that was refused did not happen. It is said out
+// loud at the moment you try it, and then it is gone.
+// ============================================================
+
+const session = {
+  log: [],        // events so far — the shape `evaluate.js` reads
+  steps: [],      // one per command that went through: { command, args, from, to }
+  at: null,       // how many events are visible; null means all of them
+  pinned: [],     // 'Course:c1' — instances shown wherever you are
+  clock: 1000,    // the instant the next event is recorded at
+};
+
+function sessionReset() {
+  session.log = [];
+  session.steps = [];
+  session.at = null;
+  session.pinned = [];
+  session.clock = 1000;
+}
+
+function sessionPosition() {
+  return session.at === null ? session.log.length : session.at;
+}
+
+function sessionVisible() {
+  return session.log.slice(0, sessionPosition());
+}
+
+// The step the current position sits inside — the command whose events
+// were the last to arrive. Nothing at position zero: before the first
+// command there is no decision to look at.
+function sessionStepAt(position) {
+  for (let i = session.steps.length - 1; i >= 0; i--) {
+    if (session.steps[i].to <= position) return session.steps[i];
+  }
+  return null;
+}
+
+// Drives a command against everything recorded so far. A refusal
+// changes nothing — not the log, not the clock, not the position.
+function sessionRun(ctx, commandName, args) {
+  let result;
+  try {
+    result = evaluateCommand(ctx, session.log, commandName, args, { recordedAt: session.clock });
+  } catch (error) {
+    if (error instanceof EvaluationError) return toast(error.message, true);
+    throw error;
+  }
+  if (result.outcome === 'rejected') {
+    const rule = result.failedRule;
+    return toast(`${readable(commandName)} was refused: ${rule.text}`, true);
+  }
+  const from = session.log.length;
+  session.log.push(...result.events);
+  session.steps.push({ command: commandName, args, from, to: session.log.length });
+  session.clock += 1;
+  session.at = null;
+  state.sandboxDraft = null;
+  render();
+}
+
+// Every instance any visible event is about, as `Entity:id`. Tags are
+// the only thing that says so, which is why this reads them rather
+// than the payloads.
+function sessionInstances(ctx) {
+  const found = new Set();
+  for (const event of sessionVisible()) {
+    for (const tag of tagsOfEvent(ctx, event.type, event.data)) found.add(tag);
+  }
+  return [...found].sort();
+}
+
+// One instance, projected over what is visible. A scripted property is
+// read through a binding that supplies its arguments, and there is no
+// binding here — so it says so rather than guessing at them.
+function sessionInstanceState(ctx, tag) {
+  const [entityName, id] = [tag.slice(0, tag.indexOf(':')), tag.slice(tag.indexOf(':') + 1)];
+  const entity = ctx['entity-definitions'][entityName];
+  if (!entity) return null;
+  const log = sessionVisible();
+  return {
+    entity: entityName,
+    id,
+    properties: (entity.properties || []).map((property) => {
+      if (scriptOf(property)) {
+        return { name: property.name, scripted: true };
+      }
+      try {
+        return {
+          name: property.name,
+          value: foldEntityProperty(ctx, log, entityName, property.name, id),
+        };
+      } catch (error) {
+        if (error instanceof EvaluationError) return { name: property.name, error: error.message };
+        throw error;
+      }
+    }),
+  };
+}
+
+
+// ---------- driving one ----------
+
+function sandboxDriver(ctx) {
+  const names = Object.keys(ctx['command-definitions']);
+  if (!names.length) return null;
+  if (!state.sandboxDraft) {
+    return h('div', { class: 'adder' },
+      h('button', {
+        class: 'btn primary',
+        onclick: () => {
+          state.sandboxDraft = { command: names[0], arguments: {} };
+          render();
+        },
+      }, '+ Do something'));
+  }
+
+  const draft = state.sandboxDraft;
+  const command = ctx['command-definitions'][draft.command];
+  return h('div', { class: 'card sc-editor' },
+    h('div', { class: 'row' },
+      pick(names.map((n) => [n, readable(n)]), draft.command, (v) => {
+        state.sandboxDraft = { command: v, arguments: {} };
+        render();
+      }),
+      h('span', { class: 'grow' })),
+    payloadEditor(ctx, (command || {}).properties, ['arguments'], sandboxWhere(ctx)),
+    h('div', { class: 'adder', style: 'margin-top:12px' },
+      h('button', {
+        class: 'btn primary',
+        onclick: () => sessionRun(ctx, draft.command, draft.arguments),
+      }, 'Do it'),
+      h('button', {
+        class: 'btn ghost',
+        onclick: () => { state.sandboxDraft = null; render(); },
+      }, 'Cancel')));
+}
+
+// ---------- the timeline ----------
+
+function sandboxTimeline(ctx) {
+  const total = session.log.length;
+  const position = sessionPosition();
+  const goTo = (next) => {
+    session.at = Math.max(0, Math.min(total, next));
+    if (session.at === total) session.at = null;
+    render();
+  };
+
+  const marks = session.steps.map((step) => {
+    const on = position >= step.to && (sessionStepAt(position) === step);
+    return h('button', {
+      class: 'tick' + (on ? ' on' : '') + (position < step.to ? ' ahead' : ''),
+      title: `${readable(step.command)} — ${step.to - step.from} event`
+        + (step.to - step.from === 1 ? '' : 's'),
+      onclick: () => goTo(step.to),
+    }, h('span', { class: 'tname' }, readable(step.command)));
+  });
+
+  return h('div', { class: 'timeline' },
+    h('div', { class: 'trow' },
+      h('button', {
+        class: 'btn tiny', disabled: position === 0, title: 'Back one event',
+        onclick: () => goTo(position - 1),
+      }, '◀'),
+      h('input', {
+        type: 'range', class: 'scrub', min: '0', max: String(total), value: String(position),
+        title: 'Scrub through what has happened',
+        oninput: (e) => goTo(Number(e.target.value)),
+      }),
+      h('button', {
+        class: 'btn tiny', disabled: position === total, title: 'On one event',
+        onclick: () => goTo(position + 1),
+      }, '▶'),
+      h('span', { class: 'muted tiny' }, `${position} of ${total}`)),
+    marks.length ? h('div', { class: 'ticks' }, marks) : null);
+}
+
+// ---------- what the current step saw ----------
+//
+// The boundary is re-derived rather than remembered. A definition
+// edited while a session is open changes what this shows, which is the
+// point of having both open at once — and if the edit means the
+// command would no longer go through, that is worth being told rather
+// than being shown a boundary that no longer applies.
+//
+// This does re-run a scripted projection on every repaint, which is the
+// thing scenarios go out of their way not to do. The difference is what
+// a hang costs. A session is held in memory and nothing else, so a
+// script that loops forever is undone by reloading the page — where a
+// stored scenario running on load would hang again on the way back in,
+// and there would be no way to reach the script to fix it.
+function sandboxDecision(ctx) {
+  const position = sessionPosition();
+  const step = sessionStepAt(position);
+  if (!step) {
+    return h('div', { class: 'card' },
+      h('div', { class: 'empty' }, 'Nothing has happened yet.'));
+  }
+
+  let result;
+  try {
+    result = evaluateCommand(ctx, session.log.slice(0, step.from), step.command, step.args);
+  } catch (error) {
+    if (!(error instanceof EvaluationError)) throw error;
+    return h('div', { class: 'card', style: 'border-color:var(--danger)' },
+      h('div', { class: 'small' },
+        readable(step.command) + ' can no longer be worked out here: ' + error.message));
+  }
+
+  const stale = result.outcome === 'rejected'
+    ? h('div', { class: 'card', style: 'border-color:var(--danger);margin-bottom:8px' },
+        h('div', { class: 'small' },
+          'This went through when it was done, and would be refused now — by '
+          + result.failedRule.text + '. Everything after it on the timeline followed from it.'))
+    : null;
+
+  const reads = Object.entries(result.reads || {});
+  return h('div', {},
+    stale,
+    h('div', { class: 'muted tiny' },
+      readable(step.command) + ' · ' + payloadText(step.args)),
+    reads.length
+      ? reads.map(([alias, read]) => read.kind === 'projection'
+        ? h('div', { class: 'card sc-line' },
+            h('span', { class: 'k' }, alias + ' — '),
+            h('span', { class: 't' }, readable(read.projection)),
+            h('span', { class: 'k' }, '  ' + JSON.stringify(read.value)))
+        : h('div', { class: 'card' },
+            h('div', { class: 'sc-line' },
+              h('span', { class: 'k' }, alias + ' — '),
+              h('span', { class: 't' }, readable(read.entity)),
+              read.fanned ? h('span', { class: 'k' }, `  (${read.instances.length})`) : null),
+            read.instances.map((instance) => h('div', { class: 'sc-line' },
+              pinButton(read.entity + ':' + instance.id),
+              h('span', { class: 't' }, instance.id),
+              h('span', { class: 'k' }, '  ' + payloadText(instance.properties))))))
+      : h('div', { class: 'card' }, h('div', { class: 'empty' }, 'It read nothing.')));
+}
+
+function pinButton(tag) {
+  const on = session.pinned.includes(tag);
+  return h('button', {
+    class: 'pin' + (on ? ' on' : ''),
+    title: on ? 'Stop watching this one' : 'Watch this one wherever you are on the timeline',
+    onclick: () => {
+      session.pinned = on ? session.pinned.filter((t) => t !== tag) : [...session.pinned, tag];
+      render();
+    },
+  }, on ? '★' : '☆');
+}
+
+function sandboxWatched(ctx) {
+  if (!session.pinned.length) return null;
+  return step('scenarios', 'Watched',
+    h('div', { class: 'muted small' },
+      'Followed wherever you are on the timeline, whether or not the step you are looking at '
+      + 'read them.'),
+    session.pinned.map((tag) => {
+      const held = sessionInstanceState(ctx, tag);
+      if (!held) {
+        return h('div', { class: 'card' },
+          h('div', { class: 'sc-line' }, pinButton(tag),
+            h('span', { class: 'k' }, tag + ' — gone from this model')));
+      }
+      return h('div', { class: 'card' },
+        h('div', { class: 'sc-line' },
+          pinButton(tag),
+          h('span', { class: 't' }, readable(held.entity) + ' ' + held.id)),
+        held.properties.map((property) => h('div', { class: 'sc-line' },
+          h('span', { class: 'k' }, '  ' + propertyWords(property.name) + ' '),
+          property.scripted
+            ? h('span', { class: 'k' }, '— scripted, read through a command')
+            : property.error
+              ? h('span', { class: 'k' }, '— ' + property.error)
+              : h('span', {}, JSON.stringify(property.value)))));
+    }));
+}
+
+// ---------- the page ----------
+
+function renderSandbox(ctx, main) {
+  main.appendChild(h('header', {},
+    qrow('div', { cls: 'row', key: 'sandbox' },
+      h('div', { class: 'name' }, 'Sandbox'),
+      h('span', { class: 'grow' }),
+      session.log.length
+        ? h('button', {
+            class: 'btn tiny',
+            title: 'Throw all of this away and start from nothing',
+            onclick: () => { sessionReset(); state.sandboxDraft = null; render(); },
+          }, 'Start over')
+        : null),
+    h('div', { class: 'muted small summary' },
+      'Drive the commands and watch what happens. Nothing here is kept — it is gone when this '
+      + 'page reloads, and the model itself is never written to.')));
+
+  main.appendChild(step('trigger', 'Do something', sandboxDriver(ctx)
+    || h('div', { class: 'empty' }, 'This model has no commands to drive yet.')));
+
+  if (session.log.length) {
+    main.appendChild(step('emits', 'What has happened',
+      sandboxTimeline(ctx),
+      h('div', { class: 'card sc-line', style: 'margin-top:8px' },
+        sessionVisible().length
+          ? sessionVisible().map((event, index) => h('div', {
+              class: index === sessionPosition() - 1 ? 'lit' : '',
+            },
+              h('span', { class: 'y' }, readable(event.type)),
+              h('span', { class: 'k' }, '  ' + payloadText(event.data))))
+          : h('div', { class: 'empty' }, 'nothing yet'))));
+
+    main.appendChild(step('reads', 'What it read to decide', sandboxDecision(ctx)));
+    const watched = sandboxWatched(ctx);
+    if (watched) main.appendChild(watched);
+  }
 }
 
 // Escape backs out of one layer, wherever the focus happens to be, and

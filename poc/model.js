@@ -54,6 +54,7 @@ const DEF_KINDS = [
   'projection-definition',
   'command-definition',
   'custom-type-definition',
+  'scenario-definition',
 ];
 const DEF_COLLECTIONS = {
   'entity-definition': 'entity-definitions',
@@ -61,6 +62,7 @@ const DEF_COLLECTIONS = {
   'projection-definition': 'projection-definitions',
   'command-definition': 'command-definitions',
   'custom-type-definition': 'custom-type-definitions',
+  'scenario-definition': 'scenario-definitions',
 };
 const KIND_COLOR_CLASS = {
   'entity-definition': 'entity',
@@ -68,6 +70,7 @@ const KIND_COLOR_CLASS = {
   'projection-definition': 'projection',
   'command-definition': 'command',
   'custom-type-definition': 'custom-type',
+  'scenario-definition': 'scenario',
 };
 
 const KIND_SECTION_TITLE = {
@@ -76,7 +79,19 @@ const KIND_SECTION_TITLE = {
   'projection-definition': 'Projections',
   'command-definition': 'Commands',
   'custom-type-definition': 'Custom Types',
+  'scenario-definition': 'Scenarios',
 };
+
+// A scenario is identified by a generated id rather than by its name,
+// which is the same shape a DCB Context itself has and for the same
+// reason: its name is derived from what the command did and is the
+// modeler's to overwrite, so two scenarios of one command may well want
+// to be called the same thing. Every other definition kind is keyed by
+// a name that *is* its identity, and renaming one is what moves every
+// reference to it.
+const ID_KEYED_KINDS = ['scenario-definition'];
+
+function isIdKeyed(kind) { return ID_KEYED_KINDS.includes(kind); }
 
 // `timestamp` is an instant in whole seconds since the epoch. It is
 // built in rather than a custom type because the tooling has to know a
@@ -414,6 +429,19 @@ function computeReferences(ctx, kind, body) {
         if (emission && emission.name) refs['event-definition'].push(emission.name);
       }
       break;
+    case 'scenario-definition':
+      // A scenario names the command it exercises, every event its
+      // Given is written from, and every event its expected outcome
+      // holds. All three have to move when one of them is renamed —
+      // and none of them may stop one from being deleted.
+      if (body.command) refs['command-definition'].push(body.command);
+      for (const step of body.given || []) {
+        if (step && step.event) refs['event-definition'].push(step.event);
+      }
+      for (const event of (body.then || {}).events || []) {
+        if (event && event.type) refs['event-definition'].push(event.type);
+      }
+      break;
   }
 
   for (const k of DEF_KINDS) refs[k] = uniq(refs[k]);
@@ -501,6 +529,22 @@ function rewriteReferences(kind, body, targetKind, oldName, newName) {
         // its command and was the modeler's to choose after binding.
         for (const binding of next.boundary || []) {
           if (binding && binding.projection === oldName) binding.projection = newName;
+        }
+      }
+      break;
+    case 'scenario-definition':
+      if (targetKind === 'command-definition' && next.command === oldName) {
+        next.command = newName;
+      }
+      if (targetKind === 'event-definition') {
+        for (const step of next.given || []) {
+          if (step && step.event === oldName) step.event = newName;
+        }
+        // The expected outcome moves with it. Leaving it behind would
+        // report the rename as drift, which is exactly the signal a
+        // rename must not produce.
+        for (const event of (next.then || {}).events || []) {
+          if (event && event.type === oldName) event.type = newName;
         }
       }
       break;
@@ -596,6 +640,24 @@ function conditionText(condition) {
     ? `${left} ${predicateText(condition.predicate)}`
     : `${left} ${predicateText(condition.predicate)} ${operandText(condition.rightHandSide)}`;
   return condition.negate ? `not(${core})` : core;
+}
+
+// What a scenario is called. The stored name wins; without one it is
+// read off the outcome, which is why it changes when the outcome does —
+// and why the interface freezes it the moment a scenario drifts, rather
+// than letting the label move under the reader.
+// `spell` turns a stored name into the words the reader is used to
+// seeing; the model layer has no opinion about that, so it defaults to
+// leaving them alone and the interface passes its own.
+function scenarioName(body, spell = (n) => n) {
+  if (body && typeof body.name === 'string' && body.name.trim()) return body.name.trim();
+  const then = (body || {}).then;
+  if (!then) return 'an unrun scenario';
+  if (then.outcome === 'rejected') {
+    return `is refused by ${(then.failedRule || {}).text || 'a rule'}`;
+  }
+  const types = (then.events || []).map((e) => e && e.type).filter(Boolean);
+  return types.length ? `records ${types.map(spell).join(' and ')}` : 'is accepted';
 }
 
 function handlerText(handler) {
@@ -1081,6 +1143,17 @@ function validateName(value, label = 'Name') {
   return trimmed;
 }
 
+// The key a definition is stored under. For every kind but one that is
+// the name the modeler typed, and validating it is validating the
+// name. A scenario is keyed by a generated id instead, so there is
+// nothing here for a modeler to get wrong.
+function validateDefinitionKey(kind, value, label) {
+  if (!isIdKeyed(kind)) return validateName(value, label);
+  const trimmed = String(value || '').trim();
+  if (!trimmed) throw new DomainError(`A ${humanize(kind)} needs an id.`);
+  return trimmed;
+}
+
 function validateContextName(value) {
   const trimmed = (value || '').trim();
   if (!trimmed) throw new DomainError('Context name must not be empty.');
@@ -1177,6 +1250,7 @@ function validateReferences(ctx, kind, name, body) {
   if (kind === 'entity-definition') validateEntityBody(resolved, name, body);
   if (kind === 'projection-definition') validateProjectionBody(resolved, name, body);
   if (kind === 'command-definition') validateCommandBody(resolved, body);
+  if (kind === 'scenario-definition') validateScenarioBody(resolved, body);
 }
 
 // Handler validation, shared by entity properties and projections —
@@ -1908,9 +1982,100 @@ function validateCommandBody(ctx, body) {
   }
 }
 
+// ============================================================
+// Scenarios.
+//
+// One command, exercised. `given` is a log written by hand rather than
+// driven — events with their payloads and the instant each was
+// recorded; `when` is the command and the arguments it is called with;
+// `then` is what the current definitions make of that, frozen at the
+// moment it was accepted.
+//
+// The freezing is the whole mechanism. `then` is *derived* — nothing
+// here asks a modeler to predict it — but it is stored, so the next
+// evaluation either agrees with it or does not, and a disagreement is
+// the report that some edit changed this command's behaviour.
+//
+// `outcome` is a discriminator rather than a union, so publishing an
+// alternative event on refusal later is a change to what a `rejected`
+// outcome carries rather than a change to the shape every stored
+// scenario was written in.
+//
+// What is deliberately *not* checked here is the value in a payload
+// against the type it is declared with: a `CourseId` with a pattern is
+// stored as whatever was typed. Structure is checked — every property
+// present, no property invented, a list where a list is declared — and
+// the rest is the evaluator's to discover.
+// ============================================================
+
+function validateScenarioBody(ctx, body) {
+  if (body.name !== undefined && typeof body.name !== 'string') {
+    throw new DomainError('A scenario name is text, or absent when the derived one will do.');
+  }
+  if (!body.command) throw new DomainError('A scenario has to name the command it exercises.');
+  const command = ctx['command-definitions'][body.command];
+
+  // Checks a stored payload against the properties it is written from.
+  // Both directions matter: a missing one cannot be evaluated, and an
+  // invented one is a reference nothing would ever rewrite.
+  const checkPayload = (values, properties, label) => {
+    const held = values || {};
+    const declared = new Set();
+    for (const property of properties || []) {
+      declared.add(property.name);
+      if (!(property.name in held)) {
+        throw new DomainError(`${label} carries no value for "${property.name}".`);
+      }
+      if (property.isList && !Array.isArray(held[property.name])) {
+        throw new DomainError(`${label} declares "${property.name}" as a list, so its value must be one.`);
+      }
+    }
+    for (const name of Object.keys(held)) {
+      if (!declared.has(name)) {
+        throw new DomainError(`${label} carries "${name}", which is not one of its properties.`);
+      }
+    }
+  };
+
+  if (!Array.isArray(body.given)) {
+    throw new DomainError('A scenario\'s Given is a list of events, empty when nothing has happened yet.');
+  }
+  body.given.forEach((step, index) => {
+    const where = `Given step ${index + 1}`;
+    if (!step || !step.event) throw new DomainError(`${where} names no event.`);
+    if (!Number.isInteger(step.recordedAt)) {
+      throw new DomainError(
+        `${where} has no instant it was recorded at. Every Given event carries one, or a ` +
+        'projection that reads the envelope would replay differently every time.'
+      );
+    }
+    checkPayload(step.data, (ctx['event-definitions'][step.event] || {}).properties,
+      `${where} ("${step.event}")`);
+  });
+
+  const when = body.when || {};
+  checkPayload(when.arguments, (command || {}).properties, `The When ("${body.command}")`);
+
+  const then = body.then;
+  if (!then || (then.outcome !== 'published' && then.outcome !== 'rejected')) {
+    throw new DomainError('A scenario\'s Then is either published or rejected.');
+  }
+  if (!Array.isArray(then.events)) {
+    throw new DomainError('A scenario\'s Then holds the events it expects, empty when it expects none.');
+  }
+  then.events.forEach((event, index) => {
+    if (!event || !event.type) throw new DomainError(`Expected event ${index + 1} names no type.`);
+    checkPayload(event.data, (ctx['event-definitions'][event.type] || {}).properties,
+      `Expected event ${index + 1} ("${event.type}")`);
+  });
+  if (then.outcome === 'rejected' && !then.failedRule) {
+    throw new DomainError('A scenario that expects a refusal has to say which rule refused it.');
+  }
+}
+
 function addDefinition(kind, ctxId, name, body) {
   const ctx = getCtxOrThrow(ctxId);
-  const trimmed = validateName(name, `${humanize(kind)} name`);
+  const trimmed = validateDefinitionKey(kind, name, `${humanize(kind)} name`);
   const coll = ctx[DEF_COLLECTIONS[kind]];
   if (trimmed in coll) {
     throw new DomainError(`A ${humanize(kind)} named "${trimmed}" already exists in this context.`);
@@ -2024,6 +2189,12 @@ function scriptedHandlersOf(ctx, eventName) {
 
 function renameDefinition(kind, ctxId, previousName, newName) {
   const ctx = getCtxOrThrow(ctxId);
+  if (isIdKeyed(kind)) {
+    throw new DomainError(
+      `A ${humanize(kind)} is identified by a generated id and its name lives in its body, ` +
+      'so renaming one is an ordinary update rather than a rename.'
+    );
+  }
   const trimmed = validateName(newName, `New ${humanize(kind)} name`);
   const coll = ctx[DEF_COLLECTIONS[kind]];
   if (!(previousName in coll)) {
@@ -2204,12 +2375,27 @@ const MEMBER_REWRITES = {
       }
       return touched;
     }));
+
+    // A scenario holds this event's payload by key, in its Given and in
+    // the outcome it expects.
+    out.push(...rewriteScenarios(ctx, (scenario) => {
+      let touched = false;
+      for (const payload of scenarioPayloads(ctx, scenario)) {
+        if (payload.event !== eventName) continue;
+        if (payload.owner[payload.key] && previous in payload.owner[payload.key]) {
+          payload.owner[payload.key] = renameKey(payload.owner[payload.key], previous, next);
+          touched = true;
+        }
+      }
+      return touched;
+    }));
     return out;
   },
 
-  // A command's payload is local to it, so nothing outside is touched.
-  'command-definition:property': (ctx, commandName, previous, next) =>
-    rewriteCommands(ctx, (command, name) => {
+  // A command's payload is local to it — except that every scenario
+  // exercising it supplies that payload by key.
+  'command-definition:property': (ctx, commandName, previous, next) => [
+    ...rewriteCommands(ctx, (command, name) => {
       if (name !== commandName) return false;
       let touched = false;
       forEachCommandOperand(command, (operand) => {
@@ -2220,11 +2406,19 @@ const MEMBER_REWRITES = {
       });
       return touched;
     }),
+    ...rewriteScenarios(ctx, (scenario) => {
+      if (scenario.command !== commandName) return false;
+      const when = scenario.when;
+      if (!when || !when.arguments || !(previous in when.arguments)) return false;
+      when.arguments = renameKey(when.arguments, previous, next);
+      return true;
+    }),
+  ],
 
   // A composite's field is reached only through a parameter typed with
   // that composite — `{parameterName: items, property: productId}`.
-  'custom-type-definition:field': (ctx, typeName, previous, next) =>
-    rewriteCommands(ctx, (command) => {
+  'custom-type-definition:field': (ctx, typeName, previous, next) => [
+    ...rewriteCommands(ctx, (command) => {
       const parameters = new Set((command.properties || [])
         .filter((p) => p.propertyType === typeName).map((p) => p.name));
       let touched = false;
@@ -2237,6 +2431,29 @@ const MEMBER_REWRITES = {
       });
       return touched;
     }),
+    // A scenario holds composites as values, so the field name is a key
+    // inside the payload rather than a reference beside it — one level
+    // deeper than anywhere else this rename reaches.
+    ...rewriteScenarios(ctx, (scenario) => {
+      let touched = false;
+      for (const payload of scenarioPayloads(ctx, scenario)) {
+        const held = payload.owner[payload.key] || {};
+        for (const property of payload.properties || []) {
+          if (property.propertyType !== typeName) continue;
+          const value = held[property.name];
+          const elements = property.isList ? (Array.isArray(value) ? value : []) : [value];
+          elements.forEach((element, index) => {
+            if (!element || typeof element !== 'object' || !(previous in element)) return;
+            const renamed = renameKey(element, previous, next);
+            if (property.isList) value[index] = renamed;
+            else held[property.name] = renamed;
+            touched = true;
+          });
+        }
+      }
+      return touched;
+    }),
+  ],
 
   // A projection parameter is supplied by key in a binding.
   'projection-definition:parameter': (ctx, projectionName, previous, next) =>
@@ -2252,6 +2469,49 @@ const MEMBER_REWRITES = {
       return touched;
     }),
 };
+
+// Applies `mutate` to a deep copy of every scenario and returns the ones
+// it actually changed.
+//
+// A scenario stores *values* where a definition stores references, so
+// what a member rename moves here is the keys of a payload rather than
+// an operand. Renaming an event's property has to move that key in
+// every Given step written from it and in every expected event holding
+// it, or the scenario would report the rename as a change in behaviour.
+function rewriteScenarios(ctx, mutate) {
+  const out = [];
+  for (const [name, scenario] of Object.entries(ctx['scenario-definitions'] || {})) {
+    const body = deepClone(scenario);
+    if (mutate(body, name)) out.push({ kind: 'scenario-definition', name, body });
+  }
+  return out;
+}
+
+// Every payload a scenario holds, paired with the definition its keys
+// are written from. One walk serves both the event-property rename and
+// the composite-field rename, which reach the same objects by different
+// routes.
+function scenarioPayloads(ctx, scenario) {
+  const out = [];
+  for (const step of scenario.given || []) {
+    if (!step || !step.event) continue;
+    const event = ctx['event-definitions'][step.event];
+    if (event) out.push({ owner: step, key: 'data', event: step.event, properties: event.properties });
+  }
+  for (const event of (scenario.then || {}).events || []) {
+    if (!event || !event.type) continue;
+    const definition = ctx['event-definitions'][event.type];
+    if (definition) {
+      out.push({ owner: event, key: 'data', event: event.type, properties: definition.properties });
+    }
+  }
+  const command = ctx['command-definitions'][scenario.command];
+  if (command && scenario.when) {
+    out.push({ owner: scenario.when, key: 'arguments', command: scenario.command,
+      properties: command.properties });
+  }
+  return out;
+}
 
 // Applies `mutate` to a deep copy of every command and returns the ones
 // it actually changed.
@@ -2340,7 +2600,12 @@ function removeDefinition(kind, ctxId, name) {
     throw new DomainError(`No ${humanize(kind)} named "${name}" exists in this context.`);
   }
   const referencers = findReferencers(ctx, kind, name)
-    .filter((r) => !(r.kind === kind && r.name === name));
+    .filter((r) => !(r.kind === kind && r.name === name))
+    // A scenario names what it tests, but it may never refuse the
+    // change: a test exists to report what a change broke, not to
+    // prevent it. Deleting what a scenario reads leaves that scenario
+    // broken and says so, which is the whole point of keeping it.
+    .filter((r) => r.kind !== 'scenario-definition');
   if (referencers.length > 0) {
     const list = referencers.map((r) => `${humanize(r.kind)} "${r.name}"`).join(', ');
     throw new DomainError(`Cannot remove ${humanize(kind)} "${name}" — still referenced by: ${list}.`);

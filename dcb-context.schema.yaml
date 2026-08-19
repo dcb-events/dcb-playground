@@ -77,6 +77,26 @@ properties:
     type: array
     items:
       "$ref": "#/$defs/CommandDefinition"
+  scenarioDefinitions:
+    description: |
+      Worked examples: one command, exercised against a log written by
+      hand, with the outcome the definitions produced frozen beside it.
+
+      Scenarios live in the context rather than beside it because a
+      scenario *is* a reference — to the command it exercises and to
+      every event its Given is written from — and references are
+      rewritten in one place. Renaming an event moves it in every
+      scenario that records it, by the same machinery that moves it in
+      every handler that folds it.
+
+      What a scenario deliberately may **not** do is refuse a change.
+      Deleting a command a scenario exercises is allowed, and leaves
+      that scenario broken and saying so. A test reports what a change
+      broke; it never prevents the change.
+    type: array
+    items:
+      "$ref": "#/$defs/ScenarioDefinition"
+    default: []
 required:
 - customTypeDefinitions
 - eventDefinitions
@@ -1065,6 +1085,213 @@ required:
         "$ref": "#/$defs/EnumMemberName"
     required:
     - enumMember
+
+
+  # ----------------------------------------------------------------
+  # Scenarios
+  # ----------------------------------------------------------------
+
+  ScenarioDefinition:
+    description: |
+      One command, exercised. `given` is a log written by hand rather
+      than driven, `when` is the command and the arguments it is called
+      with, and `then` is what the definitions in this context made of
+      the two.
+
+      **`then` is derived, and stored anyway.** No modeler is asked to
+      predict it — an authoring tool computes it and freezes it. Storing
+      it is the entire mechanism: the next evaluation either agrees with
+      what is written here or it does not, and a disagreement is the
+      report that some edit changed this command's behaviour. A scenario
+      whose `then` is not stored can only ever say what a command does
+      now, never that it changed.
+
+      **A scenario is identified by a generated id**, unlike every other
+      definition in this document, whose name is its identity. Its
+      `name` is derived from the outcome unless overridden, so two
+      scenarios of one command may well want to be called the same
+      thing — and a name that changes when the outcome changes cannot
+      also be the key everything else refers to it by.
+    type: object
+    additionalProperties: false
+    properties:
+      id:
+        description: |
+          Generated, opaque, and never shown. What makes this a scenario
+          rather than what it is called.
+        type: string
+        minLength: 1
+      name:
+        description: |
+          What to call this scenario. Absent means it is read off the
+          outcome — "records StudentSubscribedToCourse", "is refused by
+          course.status == Existent". An authoring tool freezes the
+          derived name once a scenario drifts, so the label does not
+          move under the reader at the moment they are trying to read
+          the difference.
+        type: string
+        minLength: 1
+        maxLength: 200
+      command:
+        description: The command this scenario exercises.
+        "$ref": "#/$defs/CommandName"
+      given:
+        description: |
+          The events that had already been recorded, in order. Empty
+          when the scenario starts from nothing.
+        type: array
+        items:
+          "$ref": "#/$defs/ScenarioGivenEvent"
+        default: []
+      when:
+        "$ref": "#/$defs/ScenarioWhen"
+      then:
+        "$ref": "#/$defs/ScenarioThen"
+    required:
+    - id
+    - command
+    - given
+    - when
+    - then
+
+  ScenarioGivenEvent:
+    description: |
+      One event of a scenario's Given, with the payload it carried and
+      the instant it was recorded at.
+    type: object
+    additionalProperties: false
+    properties:
+      event:
+        "$ref": "#/$defs/EventName"
+      data:
+        description: |
+          One entry per property the event declares — all of them, and
+          nothing else. An event that later gains a property leaves
+          every scenario written before it *broken*, which is the honest
+          report: there is no value here to have evaluated with.
+        type: object
+      recordedAt:
+        description: |
+          The envelope's `recordedAt` for this event, in whole seconds
+          since the epoch.
+
+          Required, and required for a reason: a projection may fold the
+          envelope, so a Given without stated instants would replay
+          against a different clock every time and its `then` would
+          drift for reasons that have nothing to do with the
+          definitions changing. An authoring tool assigns these on
+          first save and lets them be overridden; what it may not do is
+          leave them out.
+        type: integer
+    required:
+    - event
+    - data
+    - recordedAt
+
+  ScenarioWhen:
+    description: The command call under test.
+    type: object
+    additionalProperties: false
+    properties:
+      arguments:
+        description: |
+          One entry per property the command declares — all of them, and
+          nothing else.
+        type: object
+    required:
+    - arguments
+
+  ScenarioThen:
+    description: |
+      The outcome, as the definitions produced it when this scenario was
+      last accepted.
+
+      `outcome` is a discriminator rather than a union of two shapes.
+      Publishing an alternative event when a constraint fails — a
+      refusal that also records something — is then a change to what a
+      `rejected` outcome carries, rather than a change to the shape
+      every stored scenario was written in.
+
+      What is **not** kept here is the boundary the command read. It is
+      derivable, it is large, and every edit to a definition would move
+      it — so keeping it would turn every scenario into a snapshot of
+      everything and every edit into a storm of differences. An
+      authoring tool shows the boundary; it does not assert it.
+    type: object
+    additionalProperties: false
+    properties:
+      outcome:
+        description: |
+          `published` when every condition held, `rejected` when one did
+          not.
+        enum:
+        - published
+        - rejected
+      events:
+        description: |
+          The events published, in order, each with the payload the
+          command built. Empty for a refusal — until a refusal is
+          allowed to record something too.
+        type: array
+        items:
+          "$ref": "#/$defs/ScenarioEmittedEvent"
+        default: []
+      failedRule:
+        description: |
+          Which condition refused the command, and what it saw. Present
+          exactly when `outcome` is `rejected`.
+        "$ref": "#/$defs/ScenarioFailedRule"
+    required:
+    - outcome
+    - events
+
+  ScenarioEmittedEvent:
+    type: object
+    additionalProperties: false
+    properties:
+      type:
+        "$ref": "#/$defs/EventName"
+      data:
+        description: One entry per property the event declares.
+        type: object
+    required:
+    - type
+    - data
+
+  ScenarioFailedRule:
+    description: |
+      The condition that refused the command. The values are kept
+      alongside the text because a rule that still fails, on a different
+      reading than before, is also a change in behaviour.
+    type: object
+    additionalProperties: false
+    properties:
+      index:
+        description: Position of the condition in the command's `conditions`.
+        type: integer
+        minimum: 0
+      text:
+        description: |
+          The condition as it reads — `course.subscriptionCount <
+          course.capacity`. Stored so a drift can be reported without
+          resolving the condition again, and so a scenario whose command
+          was deleted can still say what it used to check.
+        type: string
+      leftValue:
+        description: What the left-hand side read.
+      rightValue:
+        description: What the right-hand side read, or null for a unary predicate.
+      atInstance:
+        description: |
+          Which instance refused it, when the rule was quantified over a
+          plural binding — the index of the cart line, the subscriber,
+          the clashing course. Null when the rule was checked once.
+        type:
+        - integer
+        - "null"
+    required:
+    - index
+    - text
 
   # ----------------------------------------------------------------
   # Shared
