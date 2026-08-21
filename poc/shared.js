@@ -341,8 +341,7 @@ function operandWords(operand) {
       // No property means a bound projection's single value, which the
       // alias already names.
       if (!operand.property) return propertyWords(operand.alias);
-      return operand.property === STATUS_PROPERTY
-        ? operand.alias : memberWords(operand.alias, operand.property);
+      return memberWords(operand.alias, operand.property);
     case 'parameter':
       return operand.property
         ? memberWords(propertyWords(operand.parameterName), operand.property)

@@ -6,11 +6,13 @@ description: |
   Schema describing a DCB context including all definitions.
 
   The context is organised around **entities**. An entity owns its
-  identifier type, its status enum and every projection describing it —
-  each of the entity's properties *is* a projection, folded over the
-  events tagged with that entity instance. There is no standalone
-  constraint kind: conditions are inlined into the commands that check
-  them.
+  identifier type and every projection describing it — each of the
+  entity's properties *is* a projection, folded over the events tagged
+  with that entity instance. A lifecycle is not a distinct concept: a
+  modeller who wants one declares an ordinary property named `status`
+  (by convention only) typed with an ordinary enum custom type. There
+  is no standalone constraint kind: conditions are inlined into the
+  commands that check them.
 
   **Projections** are what is left when a fold belongs to no entity. A
   `projectionDefinition` states its own partition instead of inheriting
@@ -25,9 +27,13 @@ properties:
   customTypeDefinitions:
     description: |
       User-declared *value* types — either **scalar** (an email string
-      with a pattern, a money amount, …) or **composite** (a record of
-      named fields, such as an order line pairing a product with the
-      price it was displayed at).
+      with a pattern, a money amount, an enum of named members, …) or
+      **composite** (a record of named fields, such as an order line
+      pairing a product with the price it was displayed at). An enum is
+      not a distinct form: it is a scalar type whose `schema` carries
+      the JSON Schema `enum` keyword. A member reference is still
+      modeled as `{"enumMember": "..."}` rather than a bare literal, so
+      that renaming a member rewrites every use of it.
 
       Value types are never tags themselves. Tags still come
       exclusively from entity identifiers — a composite merely gives
@@ -111,8 +117,8 @@ required:
 
   EntityDefinition:
     description: |
-      A modeled thing with an identity, a lifecycle status and a set of
-      projected properties.
+      A modeled thing with an identity and a set of projected
+      properties.
 
       An entity is projected state, **not** a consistency boundary. It
       holds no invariants, handles no commands and decides nothing on
@@ -120,17 +126,22 @@ required:
       it binds in its `boundary` — dissolving the fixed aggregate is
       the point of DCB, so an entity is deliberately not one.
 
-      Every entity derives two types that are **not** serialised
-      anywhere in this document — they are computed from the entity and
-      unioned into the type-resolution table at load time:
+      An entity derives one type that is **not** serialised anywhere in
+      this document — it is computed from the entity and unioned into
+      the type-resolution table at load time:
 
-        - `<name>Id`    — the identifier type, and the only kind of tag
-                          in a DCB context. Its JSON Schema is
-                          `identifierSchema`.
-        - `<name>Status` — an enum over `statuses`.
+        - `<name>Id` — the identifier type, and the only kind of tag in
+                        a DCB context. Its JSON Schema is
+                        `identifierSchema`.
 
-      Both names are reserved: a `customTypeDefinition` may not claim
-      them, and no other entity may derive the same names.
+      The name is reserved: a `customTypeDefinition` may not claim it,
+      and no other entity may derive the same name.
+
+      A lifecycle is not a distinct concept here. A modeller who wants
+      one declares an ordinary property — by convention named `status`
+      — typed with an ordinary enum custom type, exactly like any other
+      property. Nothing requires an entity to have such a property, and
+      nothing stops it from having several.
     type: object
     additionalProperties: false
     properties:
@@ -156,25 +167,6 @@ required:
         "$ref": https://json-schema.org/draft/2020-12/schema
         default:
           type: string
-      statuses:
-        description: |
-          Members of the derived `<name>Status` enum, in declaration
-          order. The **first** member is the entity's initial status —
-          the one an instance is in before any of its events have
-          occurred — and is therefore what `status`'s `initialValue`
-          must name.
-
-          Named `statuses` rather than `states` because every property
-          of an entity is projected state; this is the one that says
-          where the thing is in its lifecycle.
-        type: array
-        minItems: 2
-        uniqueItems: true
-        items:
-          "$ref": "#/$defs/EnumMemberName"
-        default:
-        - NonExistent
-        - Existent
       properties:
         description: |
           The entity's projections. Every entry folds the events it
@@ -182,18 +174,16 @@ required:
           `tag = <name>:<id> AND type IN (handled event types)`; the
           partition is implicit and never authored.
 
-          Exactly one entry must be the reserved `status` property:
-          named `status`, typed `<name>Status`, neither optional nor a
-          list, with an `initialValue` naming the first member of
-          `statuses`. It may not be removed or renamed; only its
-          handlers are authored.
+          No entry is reserved: a property named `status` (a
+          convention, not a rule) is authored, renamed and dropped like
+          any other. An entity that consults its own tag but projects
+          nothing beyond it — used purely as a reference — declares no
+          properties at all.
         type: array
-        minItems: 1
         items:
           "$ref": "#/$defs/EntityPropertyDefinition"
     required:
     - name
-    - statuses
     - properties
 
   EntityName:
@@ -233,11 +223,7 @@ required:
         default: false
       script:
         description: |
-          Present when this property is advanced by code. Never legal
-          on the reserved `status` property: every condition and every
-          DCB treats an instance as being in exactly one declared
-          status, and that is the one reading the tooling must be able
-          to make without running anything.
+          Present when this property is advanced by code.
 
           An entity property's script carries no `tagFilter` — the
           binding that reads it already names the instance.
@@ -263,9 +249,9 @@ required:
   InitialValue:
     description: |
       A literal. Use `[]` for list properties, `null` for optional
-      ones, and `{"enumMember": "..."}` for enum-typed properties
-      (including `status`) so that renaming a member rewrites the
-      reference instead of silently breaking it.
+      ones, and `{"enumMember": "..."}` for enum-typed properties so
+      that renaming a member rewrites the reference instead of
+      silently breaking it.
     oneOf:
     - "$ref": "#/$defs/StaticValue"
     - "$ref": "#/$defs/EnumMemberValue"
@@ -1075,14 +1061,20 @@ required:
 
   EnumMemberValue:
     description: |
-      A member of an enum type — in practice a member of some entity's
-      `<Entity>Status`. Modeled as a reference rather than a bare
-      string so that renaming a status rewrites every use of it.
+      A member of an enum type — a scalar custom type whose `schema`
+      carries the JSON Schema `enum` keyword. Modeled as a reference
+      rather than a bare literal so that renaming a member rewrites
+      every use of it. `enumMember` holds whatever JSON value that
+      `enum` array actually contains — a plain string is by far the
+      common case, but nothing here requires it.
     type: object
     additionalProperties: false
     properties:
       enumMember:
-        "$ref": "#/$defs/EnumMemberName"
+        type:
+        - string
+        - number
+        - boolean
     required:
     - enumMember
 
@@ -1463,23 +1455,12 @@ required:
     - number
     - boolean
 
-  EnumMemberName:
-    type: string
-    minLength: 2
-    maxLength: 100
-    pattern: "^[A-Z][A-Za-z0-9]+$"
-    examples:
-    - NonExistent
-    - Existent
-    - Archived
-
   TypeName:
     description: |
-      A simple type, a declared custom (value) type — scalar or
-      composite — or one of the types derived from an entity —
-      `<Entity>Id` or `<Entity>Status`. The derived types share the
-      custom-type namespace, so a name resolves against the union of
-      both.
+      A simple type, a declared custom (value) type — scalar (which
+      includes an enum) or composite — or the `<Entity>Id` type derived
+      from an entity. The derived type shares the custom-type
+      namespace, so a name resolves against the union of both.
     type: string
     anyOf:
     - enum:

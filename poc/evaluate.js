@@ -791,6 +791,74 @@ function runScenario(ctx, scenario) {
   };
 }
 
+// What the current definitions make of this specification — the same
+// shape that gets stored as its Then: one value per property a
+// modeler chose to check, folded from the Given for the one instance
+// `forInstance` names. `scenarioLog` reads it unchanged — a
+// specification's Given is the same shape a scenario's is.
+function deriveSpecificationThen(ctx, spec, propertyNames) {
+  // A Given written against definitions that have since moved is not a
+  // specification that fails — it is one that cannot be run. See
+  // deriveThen for why this is checked ahead of the fold rather than
+  // left to fall out of it as a silent, empty match.
+  (spec.given || []).forEach((step, index) => {
+    const definition = ctx['event-definitions'][(step || {}).event];
+    if (!definition) {
+      fail(`Given step ${index + 1} records "${(step || {}).event}", which this context no longer defines.`);
+    }
+    for (const property of definition.properties || []) {
+      if (!((step.data || {})[property.name] !== undefined)) {
+        fail(
+          `Given step ${index + 1} ("${step.event}") carries no value for "${property.name}", ` +
+          'which that event has gained since this specification was written.'
+        );
+      }
+    }
+  });
+
+  const events = scenarioLog(spec);
+  const then = {};
+  for (const propertyName of propertyNames) {
+    then[propertyName] = foldEntityProperty(ctx, events, spec.entity, propertyName, spec.forInstance, {});
+  }
+  return then;
+}
+
+// Whether anything this specification would run is scripted — the
+// entity-property analogue of scenarioTouchesScript, simpler because a
+// specification names its entity directly rather than reaching one
+// through a command's boundary.
+function specificationTouchesScript(ctx, spec) {
+  const entity = ctx['entity-definitions'][spec.entity];
+  if (!entity) return false;
+  return Object.keys(spec.then || {}).some((propertyName) => {
+    const property = (entity.properties || []).find((p) => p.name === propertyName);
+    return property && scriptOf(property);
+  });
+}
+
+// `{ status, expected, actual, reason }` — the entity-property analogue
+// of runScenario. `actual` is derived over the same property set the
+// last accepted Then checked, so a property deleted since surfaces as
+// broken rather than silently changing what is compared.
+function runSpecification(ctx, spec) {
+  const expected = spec.then || null;
+  let actual;
+  try {
+    actual = deriveSpecificationThen(ctx, spec, Object.keys(expected || {}));
+  } catch (error) {
+    if (error instanceof EvaluationError) {
+      return { status: 'broken', expected, actual: null, reason: error.message };
+    }
+    throw error;
+  }
+  return {
+    status: evSameOutcome(actual, expected) ? 'current' : 'drifted',
+    expected,
+    actual,
+  };
+}
+
 // Loadable both as a classic script — the way the playground loads
 // everything, so it opens from the filesystem without a server — and as
 // a module, so this can be exercised outside a browser.
@@ -805,5 +873,8 @@ if (typeof module !== 'undefined' && module.exports) {
     runScenario,
     scenarioLog,
     scenarioTouchesScript,
+    deriveSpecificationThen,
+    runSpecification,
+    specificationTouchesScript,
   };
 }

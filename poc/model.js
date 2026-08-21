@@ -45,8 +45,10 @@
 // whole state, so an old log replayed against new validation would
 // produce contexts this build refuses to save — a fresh key is honest
 // about that where a silent migration would not be. v8 dropped
-// property retention and a binding's `asOf`.
-const EVENT_LOG_KEY = 'dcb-playground:events:v9';
+// property retention and a binding's `asOf`. v9 dropped the reserved
+// `status` property and its entity-derived enum: a lifecycle is now an
+// ordinary enum custom type plus an ordinary property, like any other.
+const EVENT_LOG_KEY = 'dcb-playground:events:v10';
 
 const DEF_KINDS = [
   'entity-definition',
@@ -55,6 +57,7 @@ const DEF_KINDS = [
   'command-definition',
   'custom-type-definition',
   'scenario-definition',
+  'specification-definition',
 ];
 const DEF_COLLECTIONS = {
   'entity-definition': 'entity-definitions',
@@ -63,6 +66,7 @@ const DEF_COLLECTIONS = {
   'command-definition': 'command-definitions',
   'custom-type-definition': 'custom-type-definitions',
   'scenario-definition': 'scenario-definitions',
+  'specification-definition': 'specification-definitions',
 };
 const KIND_COLOR_CLASS = {
   'entity-definition': 'entity',
@@ -71,6 +75,7 @@ const KIND_COLOR_CLASS = {
   'command-definition': 'command',
   'custom-type-definition': 'custom-type',
   'scenario-definition': 'scenario',
+  'specification-definition': 'scenario',
 };
 
 const KIND_SECTION_TITLE = {
@@ -80,6 +85,7 @@ const KIND_SECTION_TITLE = {
   'command-definition': 'Commands',
   'custom-type-definition': 'Custom Types',
   'scenario-definition': 'Scenarios',
+  'specification-definition': 'Specifications',
 };
 
 // A scenario is identified by a generated id rather than by its name,
@@ -88,8 +94,11 @@ const KIND_SECTION_TITLE = {
 // modeler's to overwrite, so two scenarios of one command may well want
 // to be called the same thing. Every other definition kind is keyed by
 // a name that *is* its identity, and renaming one is what moves every
-// reference to it.
-const ID_KEYED_KINDS = ['scenario-definition'];
+// reference to it. A specification is the same shape for the same
+// reason, one level down: it belongs to an entity rather than a
+// command, but its name is still derived from what it found, not
+// chosen up front.
+const ID_KEYED_KINDS = ['scenario-definition', 'specification-definition'];
 
 function isIdKeyed(kind) { return ID_KEYED_KINDS.includes(kind); }
 
@@ -114,6 +123,11 @@ const SIMPLE_TYPES = ['boolean', 'integer', 'string', 'timestamp'];
 const EVENT_METADATA = [
   { name: 'recordedAt', propertyType: 'timestamp' },
 ];
+// Nothing below enforces either of these: a lifecycle is an ordinary
+// enum custom type plus an ordinary property, like any other. They
+// exist purely as the convention the "new entity" scaffold offers —
+// most entities want exactly this, and typing it out is the same
+// every time.
 const DEFAULT_STATUSES = ['NonExistent', 'Existent'];
 const STATUS_PROPERTY = 'status';
 
@@ -236,19 +250,20 @@ function apply(contexts, event) {
 // ============================================================
 // Derived types.
 //
-// An entity brings `<Entity>Id` and `<Entity>Status` into existence.
-// Neither is stored anywhere: both are computed from the entity and
-// resolved in the same namespace as declared custom (value) types.
+// An entity brings `<Entity>Id` into existence. It is not stored
+// anywhere: it is computed from the entity and resolved in the same
+// namespace as declared custom (value) types. A lifecycle is not a
+// derived type — a modeller who wants one declares an ordinary enum
+// custom type and an ordinary property typed with it, by convention
+// named `status`.
 // ============================================================
 
 function idTypeOf(entityName) { return entityName + 'Id'; }
-function statusTypeOf(entityName) { return entityName + 'Status'; }
 
 function derivedTypes(ctx) {
   const out = {};
   for (const entityName of Object.keys(ctx['entity-definitions'])) {
     out[idTypeOf(entityName)] = { entity: entityName, role: 'id' };
-    out[statusTypeOf(entityName)] = { entity: entityName, role: 'status' };
   }
   return out;
 }
@@ -314,17 +329,33 @@ function allTypeNames(ctx) {
   ];
 }
 
-// The status members of the enum a property is typed with, or null.
+// An enum is not a distinct form of custom type: it is a scalar custom
+// type whose `schema` carries the JSON Schema `enum` keyword. Presence
+// of a non-empty `enum` array is what the tooling treats as "this
+// resolves to an enum" — the one keyword that unambiguously means
+// "these are the only legal values".
 function enumMembersFor(ctx, typeName) {
   const cls = classifyType(ctx, typeName);
-  if (cls.kind !== 'derived' || cls.role !== 'status') return null;
-  const entity = ctx['entity-definitions'][cls.entity];
-  return entity ? (entity.statuses || []) : [];
+  if (cls.kind !== 'custom' || cls.composite) return null;
+  const custom = ctx['custom-type-definitions'][typeName];
+  const members = custom && custom.schema && custom.schema.enum;
+  return Array.isArray(members) && members.length ? members : null;
+}
+
+// Whether an enum's members are all plain strings — the shape the
+// chip-based member editor (add/rename/remove, with rewrite-on-rename
+// across every reference) is built for. A numeric, boolean or mixed
+// enum still evaluates correctly through the ordinary operand
+// machinery; it just does not get that authoring convenience, and is
+// edited as raw JSON Schema instead.
+function isStringEnumType(ctx, typeName) {
+  const members = enumMembersFor(ctx, typeName);
+  return !!members && members.every((m) => typeof m === 'string');
 }
 
 // A context with one definition overlaid — used so that a body being
 // validated can reference the very definition it belongs to (an
-// entity's `status` property is typed with its own derived enum).
+// entity's own properties may reference its own derived `<Entity>Id`).
 function withPending(ctx, kind, name, body) {
   const next = { ...ctx };
   const collName = DEF_COLLECTIONS[kind];
@@ -442,6 +473,17 @@ function computeReferences(ctx, kind, body) {
         if (event && event.type) refs['event-definition'].push(event.type);
       }
       break;
+    case 'specification-definition':
+      // A specification names the entity it tests and every event its
+      // Given is written from. Neither may stop one from being deleted
+      // — a specification exists to report what that broke, not to
+      // prevent it. Its Then holds property names, not references:
+      // nothing else in the model is identified by one.
+      if (body.entity) refs['entity-definition'].push(body.entity);
+      for (const step of body.given || []) {
+        if (step && step.event) refs['event-definition'].push(step.event);
+      }
+      break;
   }
 
   for (const k of DEF_KINDS) refs[k] = uniq(refs[k]);
@@ -449,7 +491,7 @@ function computeReferences(ctx, kind, body) {
 }
 
 // Rewrites every reference to `oldName` of `targetKind` into `newName`.
-// Renaming an entity also rewrites its two derived type names.
+// Renaming an entity also rewrites its derived id type name.
 function rewriteReferences(kind, body, targetKind, oldName, newName) {
   const next = deepClone(body);
 
@@ -459,7 +501,6 @@ function rewriteReferences(kind, body, targetKind, oldName, newName) {
     }
     if (targetKind === 'entity-definition') {
       if (typeName === idTypeOf(oldName)) return idTypeOf(newName);
-      if (typeName === statusTypeOf(oldName)) return statusTypeOf(newName);
     }
     return typeName;
   };
@@ -547,6 +588,18 @@ function rewriteReferences(kind, body, targetKind, oldName, newName) {
           if (event && event.type === oldName) event.type = newName;
         }
       }
+      break;
+    case 'specification-definition':
+      if (targetKind === 'entity-definition' && next.entity === oldName) {
+        next.entity = newName;
+      }
+      if (targetKind === 'event-definition') {
+        for (const step of next.given || []) {
+          if (step && step.event === oldName) step.event = newName;
+        }
+      }
+      // Then holds property names, not references — nothing to rewrite
+      // there for either target kind.
       break;
   }
   return next;
@@ -658,6 +711,17 @@ function scenarioName(body, spell = (n) => n) {
   }
   const types = (then.events || []).map((e) => e && e.type).filter(Boolean);
   return types.length ? `records ${types.map(spell).join(' and ')}` : 'is accepted';
+}
+
+// The same derivation as scenarioName, one level down: a specification
+// has no outcome to name itself after, only the properties a modeler
+// chose to check and what they folded to.
+function specificationName(body, spell = (n) => n) {
+  if (body && typeof body.name === 'string' && body.name.trim()) return body.name.trim();
+  const then = (body || {}).then;
+  if (!then || !Object.keys(then).length) return 'an unrun specification';
+  const parts = Object.entries(then).map(([k, v]) => `${spell(k)} ${JSON.stringify(v)}`);
+  return `ends up with ${parts.join(', ')}`;
 }
 
 function handlerText(handler) {
@@ -1226,19 +1290,18 @@ function getCtxOrThrow(ctxId) {
 }
 
 function assertDerivedNamesFree(ctx, entityName, exceptEntity) {
-  for (const derived of [idTypeOf(entityName), statusTypeOf(entityName)]) {
-    if (ctx['custom-type-definitions'][derived] !== undefined) {
+  const derived = idTypeOf(entityName);
+  if (ctx['custom-type-definitions'][derived] !== undefined) {
+    throw new DomainError(
+      `Entity "${entityName}" would derive the type "${derived}", but a custom type by that name already exists.`
+    );
+  }
+  for (const other of Object.keys(ctx['entity-definitions'])) {
+    if (other === exceptEntity) continue;
+    if (idTypeOf(other) === derived) {
       throw new DomainError(
-        `Entity "${entityName}" would derive the type "${derived}", but a custom type by that name already exists.`
+        `Entity "${entityName}" would derive the type "${derived}", which entity "${other}" already derives.`
       );
-    }
-    for (const other of Object.keys(ctx['entity-definitions'])) {
-      if (other === exceptEntity) continue;
-      if (idTypeOf(other) === derived || statusTypeOf(other) === derived) {
-        throw new DomainError(
-          `Entity "${entityName}" would derive the type "${derived}", which entity "${other}" already derives.`
-        );
-      }
     }
   }
 }
@@ -1288,6 +1351,7 @@ function validateReferences(ctx, kind, name, body) {
   if (kind === 'projection-definition') validateProjectionBody(resolved, name, body);
   if (kind === 'command-definition') validateCommandBody(resolved, body);
   if (kind === 'scenario-definition') validateScenarioBody(resolved, body);
+  if (kind === 'specification-definition') validateSpecificationBody(resolved, body);
 }
 
 // Handler validation, shared by entity properties and projections —
@@ -1312,7 +1376,7 @@ function validateHandlers(ctx, label, target, handlers) {
       // members are a set, and "the next member" means nothing.
       const cls = classifyType(ctx, target.propertyType);
       const underlying = cls.kind === 'simple' ? target.propertyType
-        : (cls.kind === 'derived' && cls.role === 'status' ? 'enum' : 'string');
+        : (enumMembersFor(ctx, target.propertyType) ? 'enum' : 'string');
       if (!successorTypes.includes(underlying)) {
         throw new DomainError(
           `${where} takes a successor, but ${label} is typed ${target.propertyType}. ` +
@@ -1641,34 +1705,7 @@ function validateCustomTypeBody(ctx, typeName, body) {
 }
 
 function validateEntityBody(ctx, entityName, body) {
-  const statuses = body.statuses || [];
-  if (statuses.length < 2) throw new DomainError('An entity must declare at least two statuses.');
-  if (uniq(statuses).length !== statuses.length) throw new DomainError('Status members must be unique.');
-  for (const member of statuses) validateName(member, 'Status member');
-
   const properties = body.properties || [];
-  const statusProperties = properties.filter((p) => p.name === STATUS_PROPERTY);
-  if (statusProperties.length !== 1) {
-    throw new DomainError('An entity must have exactly one reserved "status" property.');
-  }
-  const statusProperty = statusProperties[0];
-  if (statusProperty.propertyType !== statusTypeOf(entityName)) {
-    throw new DomainError(`The reserved "status" property must be typed "${statusTypeOf(entityName)}".`);
-  }
-  if (statusProperty.isOptional || statusProperty.isList) {
-    throw new DomainError('The reserved "status" property may be neither optional nor a list.');
-  }
-  if (scriptOf(statusProperty)) {
-    throw new DomainError(
-      'The reserved "status" property may not be scripted. Every condition and every DCB treats ' +
-      'an instance as being in exactly one declared status, and that is the one part of an entity ' +
-      'the tooling has to be able to read without running anything.'
-    );
-  }
-  if (operandSource(statusProperty.initialValue) !== 'enum-member'
-      || statusProperty.initialValue.enumMember !== statuses[0]) {
-    throw new DomainError(`The reserved "status" property must start in "${statuses[0]}", the first declared status.`);
-  }
 
   const seen = new Set();
   for (const property of properties) {
@@ -2110,6 +2147,69 @@ function validateScenarioBody(ctx, body) {
   }
 }
 
+// One entity instance, exercised by replay rather than by a command:
+// `given` is the same shape a scenario's is, but there is no `when` to
+// call and no boundary to infer an instance from, so `forInstance`
+// names it outright. `then` is *derived*, exactly like a scenario's,
+// but partial — only the properties a modeler chose to check appear,
+// each frozen at the moment it was accepted.
+function validateSpecificationBody(ctx, body) {
+  if (body.name !== undefined && typeof body.name !== 'string') {
+    throw new DomainError('A specification name is text, or absent when the derived one will do.');
+  }
+  if (!body.entity) throw new DomainError('A specification has to name the entity it tests.');
+  const entity = ctx['entity-definitions'][body.entity];
+  if (typeof body.forInstance !== 'string' || !body.forInstance.trim()) {
+    throw new DomainError('A specification has to say which instance it tests.');
+  }
+
+  const checkPayload = (values, properties, label) => {
+    const held = values || {};
+    const declared = new Set();
+    for (const property of properties || []) {
+      declared.add(property.name);
+      if (!(property.name in held)) {
+        throw new DomainError(`${label} carries no value for "${property.name}".`);
+      }
+      if (property.isList && !Array.isArray(held[property.name])) {
+        throw new DomainError(`${label} declares "${property.name}" as a list, so its value must be one.`);
+      }
+    }
+    for (const name of Object.keys(held)) {
+      if (!declared.has(name)) {
+        throw new DomainError(`${label} carries "${name}", which is not one of its properties.`);
+      }
+    }
+  };
+
+  if (!Array.isArray(body.given)) {
+    throw new DomainError('A specification\'s Given is a list of events, empty when nothing has happened yet.');
+  }
+  body.given.forEach((step, index) => {
+    const where = `Given step ${index + 1}`;
+    if (!step || !step.event) throw new DomainError(`${where} names no event.`);
+    if (!Number.isInteger(step.recordedAt)) {
+      throw new DomainError(
+        `${where} has no instant it was recorded at. Every Given event carries one, or a ` +
+        'projection that reads the envelope would replay differently every time.'
+      );
+    }
+    checkPayload(step.data, (ctx['event-definitions'][step.event] || {}).properties,
+      `${where} ("${step.event}")`);
+  });
+
+  const then = body.then;
+  if (!then || typeof then !== 'object' || Array.isArray(then)) {
+    throw new DomainError('A specification\'s Then holds the properties it checks, empty when it checks none.');
+  }
+  const propertyNames = new Set((entity ? entity.properties : []).map((p) => p.name));
+  for (const propertyName of Object.keys(then)) {
+    if (!propertyNames.has(propertyName)) {
+      throw new DomainError(`Then checks "${propertyName}", which "${body.entity}" has no property called.`);
+    }
+  }
+}
+
 function addDefinition(kind, ctxId, name, body) {
   const ctx = getCtxOrThrow(ctxId);
   const trimmed = validateDefinitionKey(kind, name, `${humanize(kind)} name`);
@@ -2131,6 +2231,7 @@ function updateDefinition(kind, ctxId, name, body) {
   }
   validateReferences(ctx, kind, name, body);
   if (kind === 'entity-definition') assertEntityUpdateKeepsInboundReferences(ctx, name, body);
+  if (kind === 'custom-type-definition') assertCustomTypeUpdateKeepsInboundReferences(ctx, name, body);
   if (kind === 'projection-definition') assertProjectionUpdateKeepsBindingsFitting(ctx, name, body);
   appendEvents([{ type: `${kind}-updated`, data: { 'dcb-context-id': ctxId, name, body } }]);
 }
@@ -2160,11 +2261,10 @@ function assertProjectionUpdateKeepsBindingsFitting(ctx, projectionName, body) {
   }
 }
 
-// Dropping a property or a status member that a command still reads is
-// refused rather than silently breaking the command.
+// Dropping a property that a command still reads is refused rather
+// than silently breaking the command.
 function assertEntityUpdateKeepsInboundReferences(ctx, entityName, body) {
   const propertyNames = new Set((body.properties || []).map((p) => p.name));
-  const statuses = new Set(body.statuses || []);
   for (const [commandName, command] of Object.entries(ctx['command-definitions'])) {
     const aliases = (command.boundary || [])
       .filter((b) => b && b.entity === entityName)
@@ -2185,16 +2285,37 @@ function assertEntityUpdateKeepsInboundReferences(ctx, entityName, body) {
         `Cannot drop ${failure} from "${entityName}" — command "${commandName}" still reads it.`
       );
     }
+  }
+}
 
+// Dropping a member of an enum custom type that a command still
+// compares against is refused rather than silently breaking the
+// command. Scoped to the type itself rather than to one entity, since
+// any number of properties across any number of entities may now
+// reference it. Mirrors `assertEntityUpdateKeepsInboundReferences`
+// exactly, checking conditions only — the same narrower guarantee the
+// reserved status property carried before it.
+function assertCustomTypeUpdateKeepsInboundReferences(ctx, typeName, body) {
+  const previousMembers = enumMembersFor(ctx, typeName);
+  if (!previousMembers) return;
+  const nextMembers = new Set(
+    Array.isArray(body.schema && body.schema.enum) ? body.schema.enum : []
+  );
+  for (const [commandName, command] of Object.entries(ctx['command-definitions'])) {
     for (const condition of command.conditions || []) {
       if (!condition) continue;
       for (const side of [condition.leftHandSide, condition.rightHandSide]) {
         if (operandSource(side) !== 'enum-member') continue;
+        if (nextMembers.has(side.enumMember) || !previousMembers.includes(side.enumMember)) continue;
         const other = side === condition.leftHandSide ? condition.rightHandSide : condition.leftHandSide;
-        if (operandSource(other) !== 'alias-property' || !aliases.includes(other.alias)) continue;
-        if (!statuses.has(side.enumMember)) {
+        const resolved = resolveOperandType(other, {
+          boundary: command.boundary || [],
+          commandProperties: command.properties || [],
+          ctx,
+        });
+        if (resolved && resolved.propertyType === typeName) {
           throw new DomainError(
-            `Cannot drop status "${side.enumMember}" from "${entityName}" — command "${commandName}" still compares against it.`
+            `Cannot drop member "${side.enumMember}" from "${typeName}" — command "${commandName}" still compares against it.`
           );
         }
       }
@@ -2250,9 +2371,9 @@ function renameDefinition(kind, ctxId, previousName, newName) {
     data: { 'dcb-context-id': ctxId, 'previous-name': previousName, name: trimmed },
   }];
   for (const ref of referencers) {
-    // An entity references itself: its reserved `status` property is
-    // typed with its own derived enum. That rewrite lands on the new
-    // name, since the rename event is applied first.
+    // An entity can reference itself — a property typed with its own
+    // derived `<Entity>Id`, for a hierarchy. That rewrite lands on the
+    // new name, since the rename event is applied first.
     const isSelf = ref.kind === kind && ref.name === previousName;
     const rewritten = rewriteReferences(ref.kind, ref.body, kind, previousName, trimmed);
     events.push({
@@ -2299,6 +2420,27 @@ function renameKey(object, previousName, newName) {
   return out;
 }
 
+// A member kind's list usually sits at the top of its body
+// (`properties`, `parameters`); an enum's sits at `schema.enum`, one
+// level in. Read and write through a dotted path so `MEMBER_SHAPE` can
+// name either uniformly. Named distinctly from the interface's own
+// `atPath`/`setAtPath` (which walk an array of keys, not a dotted
+// string) — model.js and index.html share one global scope as classic
+// scripts, and a same-named `function` declared in either would
+// silently win over the other's.
+function getAtDottedPath(obj, path) {
+  return path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
+}
+function setAtDottedPath(obj, path, value) {
+  const keys = path.split('.');
+  let target = obj;
+  for (let i = 0; i < keys.length - 1; i++) {
+    if (target[keys[i]] == null || typeof target[keys[i]] !== 'object') target[keys[i]] = {};
+    target = target[keys[i]];
+  }
+  target[keys[keys.length - 1]] = value;
+}
+
 // The rewrites each member kind implies, as
 // `(ctx, definitionName, previous, next) => [{kind, name, body}]`.
 const MEMBER_REWRITES = {
@@ -2319,33 +2461,37 @@ const MEMBER_REWRITES = {
       return touched;
     }),
 
-  // A status member is an `{enumMember}` operand. Scoped by the type it
-  // is compared against, because two entities may declare statuses of
-  // the same name — Course and Student both start NonExistent.
-  'entity-definition:status': (ctx, entityName, previous, next) => {
-    // The entity refers to its own statuses, through the initial value
-    // and the handler values of every `<Entity>Status` property.
-    const statusType = statusTypeOf(entityName);
-    const owner = deepClone(ctx['entity-definitions'][entityName]);
-    for (const property of owner.properties || []) {
-      if (property.propertyType !== statusType) continue;
-      if (operandSource(property.initialValue) === 'enum-member'
-          && property.initialValue.enumMember === previous) {
-        property.initialValue = { enumMember: next };
+  // An enum member is an `{enumMember}` operand. The type it belongs to
+  // may now be referenced by properties on any number of entities, so
+  // this reaches every one of them rather than one private owner.
+  'custom-type-definition:member': (ctx, typeName, previous, next) => {
+    const out = [];
+
+    // Every entity property typed with this enum refers to its own
+    // members through its initial value and its handler values.
+    for (const [entityName, entity] of Object.entries(ctx['entity-definitions'])) {
+      const body = deepClone(entity);
+      let touched = false;
+      for (const property of body.properties || []) {
+        if (property.propertyType !== typeName) continue;
+        if (operandSource(property.initialValue) === 'enum-member'
+            && property.initialValue.enumMember === previous) {
+          property.initialValue = { enumMember: next };
+          touched = true;
+        }
+        for (const handler of property.handlers || []) {
+          rewriteHandlerOperand(handler && handler.value, (operand) => {
+            if (operand.enumMember === previous) { operand.enumMember = next; touched = true; }
+          });
+        }
       }
-      for (const handler of property.handlers || []) {
-        rewriteHandlerOperand(handler && handler.value, (operand) => {
-          if (operand.enumMember === previous) operand.enumMember = next;
-        });
-      }
+      if (touched) out.push({ kind: 'entity-definition', name: entityName, body });
     }
 
-    const commands = rewriteCommands(ctx, (command) => {
-      const aliases = (command.boundary || [])
-        .filter((b) => b && b.entity === entityName).map((b) => b.alias);
-      const entity = ctx['entity-definitions'][entityName];
-      const statusProperties = new Set((entity.properties || [])
-        .filter((p) => p.propertyType === statusType).map((p) => p.name));
+    // A command condition compares an entity's enum-typed property
+    // against a member by value — resolved through the boundary rather
+    // than assumed, since the bound entity is whichever the alias names.
+    out.push(...rewriteCommands(ctx, (command) => {
       let touched = false;
       for (const condition of command.conditions || []) {
         if (!condition) continue;
@@ -2356,14 +2502,20 @@ const MEMBER_REWRITES = {
         for (const [maybeEnum, other] of sides) {
           if (operandSource(maybeEnum) !== 'enum-member' || maybeEnum.enumMember !== previous) continue;
           if (operandSource(other) !== 'alias-property') continue;
-          if (!aliases.includes(other.alias) || !statusProperties.has(other.property)) continue;
+          const resolved = resolveOperandType(other, {
+            boundary: command.boundary || [],
+            commandProperties: command.properties || [],
+            ctx,
+          });
+          if (!resolved || resolved.propertyType !== typeName) continue;
           maybeEnum.enumMember = next;
           touched = true;
         }
       }
       return touched;
-    });
-    return [{ kind: 'entity-definition', name: entityName, body: owner }, ...commands];
+    }));
+
+    return out;
   },
 
   // An event property is read by whatever handles the event, and written
@@ -2562,10 +2714,14 @@ function rewriteCommands(ctx, mutate) {
 }
 
 // Where a member of each kind lives inside its body, and what its name
-// has to look like.
+// has to look like. `list` is a dotted path — flat for most kinds, but
+// an enum's members sit at `schema.enum`, one level into the custom
+// type's JSON Schema. A JSON Schema `enum` may legally hold any value;
+// this entry — and the chip editor it drives — only ever runs against
+// a string-only enum, so the pattern only has strings to say no to.
 const MEMBER_SHAPE = {
   property: { list: 'properties', named: true, label: 'Property', pattern: CAMEL_RE, style: 'camelCase' },
-  status: { list: 'statuses', named: false, label: 'Status', pattern: PASCAL_RE, style: 'PascalCase' },
+  member: { list: 'schema.enum', named: false, label: 'Member', pattern: /^.+$/, style: 'a non-empty string' },
   field: { list: 'properties', named: true, label: 'Field', pattern: CAMEL_RE, style: 'camelCase' },
   parameter: { list: 'parameters', named: true, label: 'Parameter', pattern: CAMEL_RE, style: 'camelCase' },
 };
@@ -2588,7 +2744,7 @@ function renameMember(kind, ctxId, definitionName, memberKind, previousName, new
   }
   if (trimmed === previousName) return;
 
-  const members = body[shape.list] || [];
+  const members = getAtDottedPath(body, shape.list) || [];
   const nameOf = (m) => (shape.named ? m && m.name : m);
   if (!members.some((m) => nameOf(m) === previousName)) {
     throw new DomainError(
@@ -2600,21 +2756,18 @@ function renameMember(kind, ctxId, definitionName, memberKind, previousName, new
       `${humanize(kind)} "${definitionName}" already has a ${memberKind} named "${trimmed}".`
     );
   }
-  if (memberKind === 'property' && kind === 'entity-definition' && previousName === STATUS_PROPERTY) {
-    throw new DomainError('The reserved "status" property may not be renamed.');
-  }
 
   // A rewrite fixes *references*; the member list itself is renamed
   // here, uniformly, so each rewrite has one job. When a rewrite also
-  // lands on the owning definition — an entity refers to its own
-  // statuses — its body is the one the list rename is applied to.
+  // lands on the owning definition, its body is the one the list
+  // rename is applied to.
   const rewrites = rewrite(ctx, definitionName, previousName, trimmed);
   const ownerRewrite = rewrites.find((r) => r.kind === kind && r.name === definitionName);
   const ownerBody = deepClone(ownerRewrite ? ownerRewrite.body : body);
-  ownerBody[shape.list] = (ownerBody[shape.list] || []).map((m) => {
+  setAtDottedPath(ownerBody, shape.list, (getAtDottedPath(ownerBody, shape.list) || []).map((m) => {
     if (!shape.named) return m === previousName ? trimmed : m;
     return m && m.name === previousName ? { ...m, name: trimmed } : m;
-  });
+  }));
 
   const events = [{
     type: `${kind}-updated`,
@@ -2638,11 +2791,11 @@ function removeDefinition(kind, ctxId, name) {
   }
   const referencers = findReferencers(ctx, kind, name)
     .filter((r) => !(r.kind === kind && r.name === name))
-    // A scenario names what it tests, but it may never refuse the
-    // change: a test exists to report what a change broke, not to
-    // prevent it. Deleting what a scenario reads leaves that scenario
+    // A scenario or specification names what it tests, but it may
+    // never refuse the change: a test exists to report what a change
+    // broke, not to prevent it. Deleting what one reads leaves it
     // broken and says so, which is the whole point of keeping it.
-    .filter((r) => r.kind !== 'scenario-definition');
+    .filter((r) => r.kind !== 'scenario-definition' && r.kind !== 'specification-definition');
   if (referencers.length > 0) {
     const list = referencers.map((r) => `${humanize(r.kind)} "${r.name}"`).join(', ');
     throw new DomainError(`Cannot remove ${humanize(kind)} "${name}" — still referenced by: ${list}.`);
@@ -2665,16 +2818,6 @@ function defaultInitialValue(ctx, property) {
   if (property.propertyType === 'integer' || property.propertyType === 'timestamp') return 0;
   if (property.propertyType === 'boolean') return false;
   return '';
-}
-
-// Every status member declared by any entity, for pickers that compare
-// against one.
-function allStatusMembers(ctx) {
-  const out = [];
-  for (const entity of Object.values(ctx['entity-definitions'])) {
-    for (const member of entity.statuses || []) out.push(member);
-  }
-  return uniq(out).sort();
 }
 
 function humanize(kind) {
@@ -2703,8 +2846,12 @@ const seedProperty = (name, type, initialValue, extra = {}) => ({
   name, propertyType: type, isOptional: false, isList: false,
   initialValue, handlers: [], ...extra,
 });
-const seedStatusProperty = (entity, first) =>
-  seedProperty(STATUS_PROPERTY, statusTypeOf(entity), { enumMember: first });
+// A lifecycle enum is an ordinary scalar custom type whose schema
+// carries `enum`, declared once and referenced from an ordinary
+// `status` property — the same shape any other enum property has.
+const seedEnumType = (name, members) => ({ schema: { type: 'string', enum: members } });
+const seedStatusProperty = (statusType, first) =>
+  seedProperty(STATUS_PROPERTY, statusType, { enumMember: first });
 const seedProp = (name, type) => ({ name, propertyType: type, isOptional: false, isList: false });
 const seedListProp = (name, type) => ({ name, propertyType: type, isOptional: false, isList: true });
 const seedHandler = (event, operation, value) => ({ event, operation, value });
@@ -2732,23 +2879,25 @@ function seedBase(ctxId) {
   const of = seedOf;
   const bind = seedBind;
 
-  // 1. Entities without handlers. Student first, since Course refers
+  // 1. The lifecycle enums, declared like any other custom type. Then
+  //    entities without handlers. Student first, since Course refers
   //    to StudentId.
+  addDefinition('custom-type-definition', ctxId, 'StudentStatus', seedEnumType('StudentStatus', ['NonExistent', 'Existent']));
+  addDefinition('custom-type-definition', ctxId, 'CourseStatus', seedEnumType('CourseStatus', ['NonExistent', 'Existent', 'Archived']));
+
   addDefinition('entity-definition', ctxId, 'Student', {
     icon: '🧑‍🎓',
     identifierSchema: { type: 'string' },
-    statuses: ['NonExistent', 'Existent'],
     properties: [
-      statusProperty('Student', 'NonExistent'),
+      statusProperty('StudentStatus', 'NonExistent'),
       property('subscriptionCount', 'integer', 0),
     ],
   });
   addDefinition('entity-definition', ctxId, 'Course', {
     icon: '📚',
     identifierSchema: { type: 'string' },
-    statuses: ['NonExistent', 'Existent', 'Archived'],
     properties: [
-      statusProperty('Course', 'NonExistent'),
+      statusProperty('CourseStatus', 'NonExistent'),
       property('capacity', 'integer', 0),
       property('subscriptionCount', 'integer', 0),
       property('subscribedStudentIds', 'StudentId', [], { isList: true }),
@@ -2770,9 +2919,8 @@ function seedBase(ctxId) {
   updateDefinition('entity-definition', ctxId, 'Student', {
     icon: '🧑‍🎓',
     identifierSchema: { type: 'string' },
-    statuses: ['NonExistent', 'Existent'],
     properties: [
-      { ...statusProperty('Student', 'NonExistent'),
+      { ...statusProperty('StudentStatus', 'NonExistent'),
         handlers: [handler('StudentRegistered', 'set', { enumMember: 'Existent' })] },
       { ...property('subscriptionCount', 'integer', 0),
         handlers: [
@@ -2784,9 +2932,8 @@ function seedBase(ctxId) {
   updateDefinition('entity-definition', ctxId, 'Course', {
     icon: '📚',
     identifierSchema: { type: 'string' },
-    statuses: ['NonExistent', 'Existent', 'Archived'],
     properties: [
-      { ...statusProperty('Course', 'NonExistent'),
+      { ...statusProperty('CourseStatus', 'NonExistent'),
         handlers: [
           handler('CourseDefined', 'set', { enumMember: 'Existent' }),
           handler('CourseArchived', 'set', { enumMember: 'Archived' }),
@@ -2955,11 +3102,11 @@ function seedAddSequence(ctxId) {
 // identifier type, the minted value is not a tag, so write coverage
 // has nothing to exempt here.
 function seedAddTenancy(ctxId) {
+  addDefinition('custom-type-definition', ctxId, 'TenantStatus', seedEnumType('TenantStatus', ['NonExistent', 'Existent']));
   addDefinition('entity-definition', ctxId, 'Tenant', {
     icon: '🏢',
     identifierSchema: { type: 'string' },
-    statuses: ['NonExistent', 'Existent'],
-    properties: [seedStatusProperty('Tenant', 'NonExistent')],
+    properties: [seedStatusProperty('TenantStatus', 'NonExistent')],
   });
   addDefinition('custom-type-definition', ctxId, 'CourseNumber', {
     schema: { type: 'string', pattern: '^[0-9]+$' },
@@ -3144,19 +3291,22 @@ function seedProductPricing(ctxId) {
   const of = seedOf;
 
   // 1. Value types. Money is scalar; Item is composite, and its
-  //    productId field is what turns a list of them into tags.
+  //    productId field is what turns a list of them into tags. The
+  //    lifecycle enums are scalar too — just with `enum` instead of a
+  //    numeric schema.
   addDefinition('custom-type-definition', ctxId, 'Money', {
     schema: { type: 'number', minimum: 0 },
   });
+  addDefinition('custom-type-definition', ctxId, 'ProductStatus', seedEnumType('ProductStatus', ['NonExistent', 'Existent']));
+  addDefinition('custom-type-definition', ctxId, 'OrderStatus', seedEnumType('OrderStatus', ['NonExistent', 'Existent']));
 
   // 2. Entities, first without handlers — Item cannot be declared
   //    until ProductId exists, and ProductId comes from Product.
   addDefinition('entity-definition', ctxId, 'Product', {
     icon: '📦',
     identifierSchema: { type: 'string' },
-    statuses: ['NonExistent', 'Existent'],
     properties: [
-      statusProperty('Product', 'NonExistent'),
+      statusProperty('ProductStatus', 'NonExistent'),
       // Optional, and null until the product is defined: a price of 0
       // on a product that does not exist would be a lie the model then
       // has to defend.
@@ -3166,8 +3316,7 @@ function seedProductPricing(ctxId) {
   addDefinition('entity-definition', ctxId, 'Order', {
     icon: '🧾',
     identifierSchema: { type: 'string' },
-    statuses: ['NonExistent', 'Existent'],
-    properties: [statusProperty('Order', 'NonExistent')],
+    properties: [statusProperty('OrderStatus', 'NonExistent')],
   });
 
   addDefinition('custom-type-definition', ctxId, 'Item', {
@@ -3193,9 +3342,8 @@ function seedProductPricing(ctxId) {
   updateDefinition('entity-definition', ctxId, 'Product', {
     icon: '📦',
     identifierSchema: { type: 'string' },
-    statuses: ['NonExistent', 'Existent'],
     properties: [
-      { ...statusProperty('Product', 'NonExistent'),
+      { ...statusProperty('ProductStatus', 'NonExistent'),
         handlers: [handler('ProductDefined', 'set', { enumMember: 'Existent' })] },
       { ...property('currentPrice', 'Money', null, { isOptional: true }),
         handlers: [
@@ -3207,9 +3355,8 @@ function seedProductPricing(ctxId) {
   updateDefinition('entity-definition', ctxId, 'Order', {
     icon: '🧾',
     identifierSchema: { type: 'string' },
-    statuses: ['NonExistent', 'Existent'],
     properties: [
-      { ...statusProperty('Order', 'NonExistent'),
+      { ...statusProperty('OrderStatus', 'NonExistent'),
         handlers: [handler('ProductsOrdered', 'set', { enumMember: 'Existent' })] },
     ],
   });

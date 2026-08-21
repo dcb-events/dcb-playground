@@ -88,9 +88,6 @@
     padding: 5px 0; border-bottom: 1px dashed var(--border); font-size: 12px;
   }
   .erow .nm { min-width: 165px; }
-  .chip.initial { background: #fffbeb; border-color: #fde68a; color: #92400e; }
-  /* The one colour on this page that is not a token, after dark. */
-  body.f-dark .chip.initial { background: #2b1f06; border-color: #78500b; color: #fde68a; }
   /* Removing a part of a definition, from inside the chip that shows it. */
   .chip .x {
     border: 0; background: transparent; font: inherit; font-size: 11px;
@@ -243,12 +240,11 @@
   .prop.dead { opacity: .6; }
   .prop.dead .nm::after { content: " · unused"; color: var(--danger); font-size: 10px; font-weight: 400; }
 
-  /* Identity and lifecycle. Set apart from the properties below it
-     because it is a different kind of statement: what makes one of
-     these one of these, rather than something we happen to know about
-     it. Nobody added the identifier or the status — they come with the
-     thing — and a page that lists them alongside "capacity" says
-     otherwise. */
+  /* Identity. Set apart from the properties below it because it is a
+     different kind of statement: what makes one of these one of these,
+     rather than something we happen to know about it. Nobody added the
+     identifier — it comes with the thing — and a page that lists it
+     alongside "capacity" says otherwise. */
   .ident {
     border: 1px solid var(--entity); border-left-width: 3px;
     border-radius: var(--radius); background: var(--entity-soft);
@@ -585,7 +581,7 @@ const state = {
   renamingFeature: null,
   newEntityAt: null,        // 'reads' | 'changes:<Event>' | 'rail'
   addingProp: null,         // { eventName } | { at }
-  addingStatus: null,        // { entity, eventName } | { entity, at }
+  addingMember: null,       // { type, eventName? } — adding a member to an enum custom type
   renamingEntity: null,
   iconPicker: null,         // the entity whose mark is being chosen
   confirmRemove: null,
@@ -600,6 +596,13 @@ const state = {
   scenarioDraft: null,      // { key, body } — a scenario being written
   renamingScenario: null,   // the scenario whose name is being overwritten
   sandboxDraft: null,       // { command, arguments } — a command about to be driven
+  entityTab: 'definition',  // 'definition' | 'specifications' on an entity page
+  editHandler: null,        // { entity, property, event } — the handler row open for editing
+  entityHandlerDraft: null, // in-progress edits to that handler, from the entity page
+  entityPropertyDraft: null, // in-progress "+ property" row on the entity page
+  openSpecification: null,  // the specification whose detail is unfolded
+  specificationDraft: null, // { key, body } — a specification being written
+  renamingSpecification: null, // the specification whose name is being overwritten
 };
 
 // Called by the context picker in shared.js, which owns no forms itself.
@@ -962,9 +965,6 @@ function looseEnds(ctx) {
   }
   for (const [entity, body] of Object.entries(ctx['entity-definitions'])) {
     for (const property of body.properties || []) {
-      // The status property is the model's, not the author's: it is
-      // there whether or not anything has got round to using it.
-      if (property.name === STATUS_PROPERTY) continue;
       const usage = propertyUsage(ctx, entity, property.name);
       if (usage.changedBy.length || usage.readBy.length) continue;
       found.push({
@@ -1611,6 +1611,7 @@ function openEntity(name) {
   state.entitiesCollapsed = false;
   state.view = 'entity';
   state.entity = name;
+  state.entityTab = 'definition';
   render();
 }
 
@@ -1677,18 +1678,19 @@ function inlineForm({ question, placeholder, value = '', showsIdentifier, submit
 // Escape has to know whether any of them is on screen, and the two
 // answers must not drift apart.
 const FORM_KEYS = [
-  'newFeature', 'renamingFeature', 'newEntityAt', 'addingProp', 'addingStatus',
+  'newFeature', 'renamingFeature', 'newEntityAt', 'addingProp', 'addingMember',
   'renamingEntity', 'iconPicker', 'confirmRemove', 'newContext', 'newType', 'renamingType',
   'newProjection', 'renamingProjection', 'projDraft', 'renamingEvent',
   'renamingCommand', 'editMember', 'editRule', 'editBinding',
   'scenarioDraft', 'renamingScenario', 'sandboxDraft',
+  'editHandler', 'specificationDraft', 'renamingSpecification',
 ];
 
 // What a form was holding while it was open. These outlive the form
 // that filled them — a folded-away adder leaves its half-written row
 // behind — so they are cleared with the forms but never taken as
 // evidence that one is open.
-const DRAFT_KEYS = ['bindingDraft', 'ruleDraft', 'changeDraft', 'readDraft'];
+const DRAFT_KEYS = ['bindingDraft', 'ruleDraft', 'changeDraft', 'readDraft', 'entityHandlerDraft', 'entityPropertyDraft'];
 
 const formOpen = () => FORM_KEYS.some((key) => state[key]);
 
@@ -2236,6 +2238,7 @@ function paintPage() {
   if (state.view === 'entity' && !ctx['entity-definitions'][state.entity]) {
     const rest = Object.keys(ctx['entity-definitions']).sort();
     state.entity = rest[0] || null;
+    state.entityTab = 'definition';
     if (!state.entity) state.view = 'slice';
   }
   renderRail();
@@ -2428,19 +2431,24 @@ function stepTrigger(ctx, slice) {
         onRename: (name) => renameMember('command-definition', ctx.id, slice.name, 'property', p.name, name),
       });
     }
-    return qrow('div', { cls: 'field', key: 'in:' + p.name, step: 'trigger', src: 'param:' + p.name },
-      h('span', { class: 'nm' }, propertyWords(p.name)),
-      h('span', { class: 'grow', style: 'flex:1' }),
-      reveal(
-        h('span', {
-          class: 'chip editable', title: 'Rename or retype this input',
-          onclick: () => openMember(where, p.name),
-        }, readable(typeLabel(p))),
-        advanced() ? h('span', { class: 'tech' }, p.name) : null,
-        h('button', {
-          class: 'btn tiny danger',
-          onclick: () => patchSlice((b) => { b.properties.splice(i, 1); }),
-        }, '×')));
+    const enumType = isStringEnumType(ctx, p.propertyType) ? p.propertyType : null;
+    return [
+      qrow('div', { cls: 'field', key: 'in:' + p.name, step: 'trigger', src: 'param:' + p.name },
+        h('span', { class: 'nm' }, propertyWords(p.name)),
+        h('span', { class: 'grow', style: 'flex:1' }),
+        reveal(
+          h('span', {
+            class: 'chip editable', title: 'Rename or retype this input',
+            onclick: () => openMember(where, p.name),
+          }, readable(typeLabel(p))),
+          advanced() ? h('span', { class: 'tech' }, p.name) : null,
+          h('button', {
+            class: 'btn tiny danger',
+            onclick: () => patchSlice((b) => { b.properties.splice(i, 1); }),
+          }, '×'))),
+      enumType ? h('div', { class: 'use' },
+        h('span', { class: 'muted' }, 'can be '), ...enumMemberChips(ctx, enumType)) : null,
+    ];
   });
   if (!rows.length) rows.push(h('div', { class: 'empty' }, 'Takes no input.'));
 
@@ -2854,13 +2862,16 @@ function ruleEditor(ctx, slice, index) {
       })
     : scope;
   // Enum options on the right only make sense once the left side names
-  // a status property, and only that property's own entity — offering
-  // every entity's statuses would let "course · status equals shipped"
-  // through, which nothing could ever satisfy.
-  const statusMembers = leftType ? enumMembersFor(ctx, leftType.propertyType) : null;
-  const enums = (statusMembers && rightType && !rightType.isList
+  // an enum-typed property, and only that property's own enum —
+  // offering every enum's members would let "course · capacity equals
+  // shipped" through, which nothing could ever satisfy.
+  const leftOperand = draftOperand(draft, 'left');
+  const leftPropertyName = leftOperand && (leftOperand.property || leftOperand.parameterName);
+  const enumMembers = leftType ? enumMembersFor(ctx, leftType.propertyType) : null;
+  const enums = (enumMembers && rightType && !rightType.isList
     && rightType.propertyType === leftType.propertyType)
-    ? statusMembers.map((m) => [JSON.stringify({ enumMember: m }), 'status · ' + readable(m)])
+    ? enumMembers.map((m) =>
+        [JSON.stringify({ enumMember: m }), propertyWords(leftPropertyName) + ' · ' + readable(m)])
     : [];
   const rightRows = [...rightScope, ...enums];
   if (draft.right && draft.right !== LITERAL && !rightRows.some(([v]) => v === draft.right)) {
@@ -2879,7 +2890,8 @@ function ruleEditor(ctx, slice, index) {
       }), ' not'),
     pick(predicateChoices.map((p) => [p, readable(p).toLowerCase()]),
       draft.predicate, (v) => { draft.predicate = v; render(); }),
-    ...(unary ? [] : operandPicker(rightRows, draft, 'right', { placeholder: '— what? —' })),
+    ...(unary ? [] : operandPicker(rightRows, draft, 'right',
+      { placeholder: '— what? —', allowLiteral: !enums.length })),
     h('button', {
       class: 'btn primary', onclick: () => {
         const left = draftOperand(draft, 'left');
@@ -3056,29 +3068,34 @@ function eventFields(ctx, emission, event) {
       const resolved = resolveOperandType(JSON.parse(v), { boundary, commandProperties, ctx });
       return resolved && resolved.propertyType === p.propertyType && resolved.isList === !!p.isList;
     });
-    return qrow('div', {
-      cls: 'field', key: 'ev:' + emission.name + ':' + p.name, step: 'emits',
-      src: 'evprop:' + emission.name + '.' + p.name,
-    },
-      h('span', { class: 'nm' }, propertyWords(p.name)),
-      h('span', { class: 'muted tiny' }, '←'),
-      pick(fieldOptions, bound === undefined ? '' : JSON.stringify(bound),
-        (v) => patchSlice((b) => {
-          const e = b.publishes.find((x) => x.name === emission.name);
-          e.parameters = e.parameters || {};
-          e.parameters[p.name] = JSON.parse(v);
-        }), '— unset —'),
-      h('span', { class: 'grow', style: 'flex:1' }),
-      reveal(
-        h('span', {
-          class: 'chip editable', title: 'Rename or retype this field',
-          onclick: () => openMember(where, p.name),
-        }, readable(typeLabel(p))),
-        advanced() ? h('span', { class: 'tech' }, p.name) : null,
-        h('button', {
-          class: 'btn tiny danger', title: 'Remove this field from the event',
-          onclick: () => patch('event-definition', emission.name, (b) => { b.properties.splice(i, 1); }),
-        }, '×')));
+    const enumType = isStringEnumType(ctx, p.propertyType) ? p.propertyType : null;
+    return [
+      qrow('div', {
+        cls: 'field', key: 'ev:' + emission.name + ':' + p.name, step: 'emits',
+        src: 'evprop:' + emission.name + '.' + p.name,
+      },
+        h('span', { class: 'nm' }, propertyWords(p.name)),
+        h('span', { class: 'muted tiny' }, '←'),
+        pick(fieldOptions, bound === undefined ? '' : JSON.stringify(bound),
+          (v) => patchSlice((b) => {
+            const e = b.publishes.find((x) => x.name === emission.name);
+            e.parameters = e.parameters || {};
+            e.parameters[p.name] = JSON.parse(v);
+          }), '— unset —'),
+        h('span', { class: 'grow', style: 'flex:1' }),
+        reveal(
+          h('span', {
+            class: 'chip editable', title: 'Rename or retype this field',
+            onclick: () => openMember(where, p.name),
+          }, readable(typeLabel(p))),
+          advanced() ? h('span', { class: 'tech' }, p.name) : null,
+          h('button', {
+            class: 'btn tiny danger', title: 'Remove this field from the event',
+            onclick: () => patch('event-definition', emission.name, (b) => { b.properties.splice(i, 1); }),
+          }, '×'))),
+      enumType ? h('div', { class: 'use' },
+        h('span', { class: 'muted' }, 'can be '), ...enumMemberChips(ctx, enumType)) : null,
+    ];
   });
 
   return h('div', { class: 'fields' },
@@ -3104,6 +3121,9 @@ function stepChanges(ctx, slice) {
   for (const { emission, effects } of slice.emits) {
     const rows = effects.map((effect) => {
       const p = effectParts(effect);
+      // A scripted handler has no operation/value for this form to
+      // pre-fill — it is edited where its code is, via scriptPanel.
+      const scripted = effect.handler.code !== undefined;
       return qrow('div', {
         cls: 'row', step: 'changes',
         key: 'chg:' + emission.name + ':' + effect.entity + '.' + effect.property.name,
@@ -3113,13 +3133,27 @@ function stepChanges(ctx, slice) {
           h('span', { class: 'verb' }, p.verb), ' ',
           opRef(effect.handler.value, emission.name, p.object)),
         h('span', { class: 'grow' }),
-        reveal(h('button', {
-          class: 'btn tiny danger',
-          onclick: () => patch('entity-definition', effect.entity, (b) => {
-            const prop = b.properties.find((q) => q.name === effect.property.name);
-            prop.handlers = prop.handlers.filter((x) => x.event !== emission.name);
-          }),
-        }, '×')));
+        reveal(
+          scripted ? null : h('button', {
+            class: 'btn tiny',
+            onclick: () => {
+              closeForms();
+              state.changeDraft = draftFromOperand({
+                eventName: emission.name,
+                target: JSON.stringify([effect.entity, effect.property.name]),
+                operation: effect.handler.operation,
+              }, 'value', effect.handler.value);
+              state.adder = 'chg:' + emission.name;
+              render();
+            },
+          }, 'Edit'),
+          h('button', {
+            class: 'btn tiny danger',
+            onclick: () => patch('entity-definition', effect.entity, (b) => {
+              const prop = b.properties.find((q) => q.name === effect.property.name);
+              prop.handlers = prop.handlers.filter((x) => x.event !== emission.name);
+            }),
+          }, '×')));
     });
     cards.push(h('div', { class: 'card entity' },
       h('div', { class: 'row' }, h('span', { class: 'chip event' }, readable(emission.name)),
@@ -3162,19 +3196,6 @@ function changeAdder(ctx, eventName) {
           `${entityIcon(ctx, name)} ${readable(name)} · ${propertyWords(p.name)}`])),
     [NEW, '+ New property…'],
   ];
-  // What a handler may take in: a property of the event, the value the
-  // property already holds, a status, the one *after* something — which
-  // is what a numbering is made of — or a typed literal.
-  const values = [
-    ...(event ? event.properties : []).flatMap((p) => [
-      [JSON.stringify({ eventProperty: p.name }), "the event's " + propertyWords(p.name)],
-      [JSON.stringify({ successor: { eventProperty: p.name } }),
-        "the one after the event's " + propertyWords(p.name)],
-    ]),
-    [JSON.stringify({ currentValue: true }), 'its current value'],
-    ...allStatusMembers(ctx).map((m) => [JSON.stringify({ enumMember: m }), 'status · ' + readable(m)]),
-    [NEW, '+ New status…'],
-  ];
   // The draft outlives a repaint, which a typed literal needs: the
   // picker rebuilds on every keystroke otherwise.
   const draft = state.changeDraft && state.changeDraft.eventName === eventName
@@ -3183,24 +3204,49 @@ function changeAdder(ctx, eventName) {
         eventName,
         target: targets.length > 1 ? targets[0][0] : '',
         operation: 'set',
-        value: values.length ? values[0][0] : '',
+        value: '',
       });
+
+  // What a handler may take in: a property of the event, the value the
+  // property already holds, a member of whichever enum the currently
+  // targeted property is typed with — not any other enum, which
+  // nothing here could ever hold — the one *after* something, or a
+  // typed literal.
+  const [targetEntity, targetPropertyName] =
+    draft.target && draft.target !== NEW ? JSON.parse(draft.target) : [null, null];
+  const targetProperty = targetEntity
+    ? (ctx['entity-definitions'][targetEntity].properties || []).find((p) => p.name === targetPropertyName)
+    : null;
+  const targetEnumMembers = targetProperty ? enumMembersFor(ctx, targetProperty.propertyType) : null;
+  const values = [
+    ...(event ? event.properties : []).flatMap((p) => [
+      [JSON.stringify({ eventProperty: p.name }), "the event's " + propertyWords(p.name)],
+      [JSON.stringify({ successor: { eventProperty: p.name } }),
+        "the one after the event's " + propertyWords(p.name)],
+    ]),
+    [JSON.stringify({ currentValue: true }), 'its current value'],
+    ...(targetEnumMembers || []).map((m) =>
+      [JSON.stringify({ enumMember: m }), propertyWords(targetPropertyName) + ' · ' + readable(m)]),
+    ...(targetEnumMembers ? [[NEW, '+ New member…']] : []),
+  ];
+  if (!draft.value) draft.value = values.length ? values[0][0] : '';
 
   const targetSel = pick(targets, draft.target, (v) => {
     if (v === NEW) { closeForms(); state.addingProp = { eventName }; return render(); }
     draft.target = v;
+    render();
   });
 
   const rows = [adderSlot('chg:' + eventName, 'changes', '+ change', () =>
     h('div', { class: 'adder' }, targetSel,
       pick(Object.entries(OPERATION_WORDS), draft.operation, (v) => { draft.operation = v; }),
-      ...operandPicker(values, draft, 'value', {}),
+      ...operandPicker(values, draft, 'value', { allowLiteral: !targetEnumMembers }),
       h('button', {
         class: 'btn', onclick: () => {
           if (!draft.target || draft.target === NEW) return toast('Pick what changes.', true);
           if (draft.value === NEW) {
             closeForms();
-            state.addingStatus = { entity: JSON.parse(draft.target)[0], eventName };
+            state.addingMember = { type: targetProperty.propertyType, eventName };
             return render();
           }
           const value = draftOperand(draft, 'value');
@@ -3217,19 +3263,75 @@ function changeAdder(ctx, eventName) {
       }, '+ Record a change')))];
 
   if (state.addingProp && state.addingProp.eventName === eventName) rows.push(newPropertyForm(ctx));
-  if (state.addingStatus && state.addingStatus.eventName === eventName) {
-    rows.push(inlineForm({
-      question: `What else can a ${readable(state.addingStatus.entity)} be?`,
-      placeholder: 'archived', showsIdentifier: true,
-      onSubmit: (v) => {
-        const entity = state.addingStatus.entity;
-        state.addingStatus = null;
-        patch('entity-definition', entity, (b) => b.statuses.push(toPascal(v)));
-      },
-      onCancel: () => { state.addingStatus = null; render(); },
-    }));
+  if (state.addingMember && state.addingMember.eventName === eventName) {
+    rows.push(addEnumMemberForm(ctx, state.addingMember.type));
   }
   return h('div', {}, rows);
+}
+
+// The entity-page mirror of changeAdder's "+ change" form: the target
+// property is already known — this is opened from its own card — so
+// only the event, operation and operand are asked. Passing `existing`
+// opens it pre-filled to edit that handler in place rather than add a
+// new one; the event is fixed then, since changing it would leave the
+// original handler behind rather than move it.
+function entityHandlerAdder(ctx, entityName, property, existing) {
+  const key = entityName + '.' + property.name;
+  const draft = state.entityHandlerDraft && state.entityHandlerDraft.key === key
+    ? state.entityHandlerDraft
+    : (state.entityHandlerDraft = existing
+        ? draftFromOperand({ key, event: existing.event, operation: existing.operation }, 'value', existing.value)
+        : { key, event: '', operation: 'set', value: '' });
+
+  // Only events that actually carry a tag for this entity — anything
+  // else could never identify one of its instances.
+  const eventNames = Object.keys(ctx['event-definitions'])
+    .filter((n) => (ctx['event-definitions'][n].properties || [])
+      .some((p) => idLeavesOfType(ctx, p.propertyType).some((leaf) => leaf.entity === entityName)))
+    .filter((n) => existing || !(property.handlers || []).some((h) => h.event === n))
+    .sort();
+
+  const chosenEventName = existing ? existing.event : draft.event;
+  const chosenEvent = ctx['event-definitions'][chosenEventName];
+  const values = [
+    ...(chosenEvent ? chosenEvent.properties : []).flatMap((p) => [
+      [JSON.stringify({ eventProperty: p.name }), "the event's " + propertyWords(p.name)],
+      [JSON.stringify({ successor: { eventProperty: p.name } }),
+        "the one after the event's " + propertyWords(p.name)],
+    ]),
+    [JSON.stringify({ currentValue: true }), 'its current value'],
+    ...(enumMembersFor(ctx, property.propertyType) || [])
+      .map((m) => [JSON.stringify({ enumMember: m }), propertyWords(property.name) + ' · ' + readable(m)]),
+  ];
+  const propEnumMembers = enumMembersFor(ctx, property.propertyType);
+
+  const close = () => { state.editHandler = null; state.entityHandlerDraft = null; render(); };
+
+  return h('div', { class: 'adder' },
+    existing
+      ? h('span', { class: 'chip event' }, readable(existing.event))
+      : pick(eventNames.map((n) => [n, readable(n)]), draft.event,
+          (v) => { draft.event = v; render(); },
+          eventNames.length ? '— which event? —' : '— nothing fits this yet —'),
+    pick(Object.entries(OPERATION_WORDS), draft.operation, (v) => { draft.operation = v; }),
+    ...operandPicker(values, draft, 'value', { allowLiteral: !propEnumMembers }),
+    h('button', {
+      class: 'btn', onclick: () => {
+        const eventName = existing ? existing.event : draft.event;
+        if (!eventName) return toast('Pick which event.', true);
+        const value = draftOperand(draft, 'value');
+        if (value === undefined) return toast('Say what it changes to.', true);
+        const operation = draft.operation;
+        state.editHandler = null;
+        state.entityHandlerDraft = null;
+        patch('entity-definition', entityName, (b) => {
+          const prop = b.properties.find((q) => q.name === property.name);
+          prop.handlers = (prop.handlers || []).filter((x) => x.event !== eventName);
+          prop.handlers.push({ event: eventName, operation, value });
+        });
+      },
+    }, existing ? 'Save' : '+ Wire this event'),
+    existing ? h('button', { class: 'btn ghost tiny', onclick: close }, 'Cancel') : null);
 }
 
 // ---------- creating things ----------
@@ -3237,15 +3339,19 @@ function changeAdder(ctx, eventName) {
 function createEntity(ctx, label) {
   const name = toPascal(label);
   if (!name) return toast('Give it a name.', true);
-  // Every entity needs a lifecycle and the reserved status property. In
-  // Simple mode both exist but are never named: you say "it exists" by
-  // recording a change, not by declaring an enum.
+  // A lifecycle is not required — but almost every entity wants one, so
+  // it is offered as a convenience: an ordinary enum custom type plus an
+  // ordinary `status` property typed with it, both named the way anyone
+  // would type them by hand. In Simple mode neither is ever named: you
+  // say "it exists" by recording a change, not by declaring an enum.
+  const statusType = name + 'Status';
   return run(() => {
+    addDefinition('custom-type-definition', ctx.id, statusType,
+      { schema: { type: 'string', enum: [...DEFAULT_STATUSES] } });
     addDefinition('entity-definition', ctx.id, name, {
       identifierSchema: { type: 'string' },
-      statuses: [...DEFAULT_STATUSES],
       properties: [{
-        name: STATUS_PROPERTY, propertyType: statusTypeOf(name),
+        name: STATUS_PROPERTY, propertyType: statusType,
         isOptional: false, isList: false,
         initialValue: { enumMember: DEFAULT_STATUSES[0] }, handlers: [],
       }],
@@ -3280,43 +3386,69 @@ function newPropertyForm(ctx) {
       h('button', { class: 'btn ghost', onclick: () => { state.addingProp = null; render(); } }, 'Cancel')));
 }
 
-// The statuses an entity can be in. The first one cannot go: the
-// reserved `status` property is defined as starting there, so removing
-// it would leave the entity with no beginning. The rest come off on one
-// click — and the model refuses while a rule still compares against one.
-function statusChips(name, entity) {
-  const ctx = activeContext();
-  const where = 'status:' + name;
-  return (entity.statuses || []).map((member, i) => {
-    // Renaming a status rewrites every enum-member operand that
-    // resolves to *this* entity — two entities may both have an
-    // "Existent", and only one of them is being renamed.
+// The members of a string-only enum, wherever a property typed with it
+// is shown — on the value type's own card, or inline on an entity's
+// property. Renaming goes through the model, which rewrites every
+// enum-member operand that resolves to *this* type; removing goes
+// through the same guard an ordinary drop does, and refuses while a
+// command still compares against the member.
+function enumMemberChips(ctx, typeName) {
+  const body = ctx['custom-type-definitions'][typeName];
+  const members = (body && body.schema && body.schema.enum) || [];
+  const where = 'member:' + typeName;
+  const chips = members.map((member) => {
     if (editingMember(where, member)) {
       return inlineForm({
-        question: `Rename this status of ${readable(name)}`, submitLabel: 'Rename',
+        question: `Rename this member of ${readable(typeName)}`, submitLabel: 'Rename',
         value: readable(member), showsIdentifier: true,
         onSubmit: (v) => {
           const next = toPascal(v);
           state.editMember = null;
           if (next && next !== member) {
-            run(() => renameMember('entity-definition', ctx.id, name, 'status', member, next));
+            run(() => renameMember('custom-type-definition', ctx.id, typeName, 'member', member, next));
           } else render();
         },
         onCancel: () => { state.editMember = null; render(); },
       });
     }
-    return h('span', {
-      class: 'chip' + (i === 0 ? ' initial' : ''), style: 'margin-right:3px',
-      title: i === 0 ? 'before anything has happened — where an instance starts' : null,
-    }, h('span', {
-      class: 'editable', title: 'Rename this status',
+    return h('span', { class: 'chip', style: 'margin-right:3px' }, h('span', {
+      class: 'editable', title: 'Rename this member',
       onclick: () => openMember(where, member),
-    }, readable(member)), i === 0 ? null : h('button', {
-      class: 'x', title: 'Remove this status',
-      onclick: () => patch('entity-definition', name, (b) => {
-        b.statuses = b.statuses.filter((x) => x !== member);
-      }),
+    }, readable(member)), h('button', {
+      class: 'x', title: 'Remove this member',
+      onclick: () => {
+        if (members.length === 1) return toast('An enum needs at least one member.', true);
+        run(() => updateDefinition('custom-type-definition', ctx.id, typeName,
+          { ...body, schema: { ...body.schema, enum: members.filter((x) => x !== member) } }));
+      },
     }, '×'));
+  });
+  chips.push(h('button', {
+    class: 'btn tiny ghost',
+    onclick: () => { closeForms(); state.addingMember = { type: typeName }; render(); },
+  }, '+ member'));
+  if (state.addingMember && state.addingMember.type === typeName && !state.addingMember.eventName) {
+    chips.push(addEnumMemberForm(ctx, typeName));
+  }
+  return chips;
+}
+
+// The "+ New member" form, shared between the enum's own card and
+// wherever else a member is added inline (wiring a handler that sets
+// one that does not exist yet).
+function addEnumMemberForm(ctx, typeName) {
+  const body = ctx['custom-type-definitions'][typeName];
+  const members = (body && body.schema && body.schema.enum) || [];
+  return inlineForm({
+    question: `What else can a ${readable(typeName)} be?`, placeholder: 'archived',
+    showsIdentifier: true,
+    onSubmit: (v) => {
+      const member = toPascal(v);
+      state.addingMember = null;
+      run(() => updateDefinition('custom-type-definition', ctx.id, typeName,
+        { ...body, schema: { ...body.schema, enum: [...members, member] } }));
+    },
+    onCancel: () => { state.addingMember = null; render(); },
   });
 }
 
@@ -3420,19 +3552,108 @@ function identifierSchemaField(ctx, name, entity) {
 // saying different amounts. One page, one shape.
 //
 // The page is in two parts, and the split is the point. What makes one
-// of these one of these — the identifier every event about it is tagged
-// with, and the statuses it moves through — is not something a modeler
-// added, and it does not belong in the same list as "capacity". It sits
-// above, in its own block. Everything below it is what this model
+// of these one of these — the identifier every event about it is
+// tagged with — is not something a modeler added, and it does not
+// belong in the same list as "capacity". It sits above, in its own
+// block. Everything below it, a lifecycle included, is what this model
 // happens to know, and every row of that is a fold over events.
+
+// The entity page's own "+ property" form. Declaring a property's
+// shape is enough for the ordinary case — its handlers get wired
+// afterward, from here or from a command's page — but a scripted one
+// cannot: `validateScript` refuses a scripted property with no
+// handler at all ("nothing would ever run"), so this asks for the
+// first one, and the state it starts from, up front. Kept separate
+// from `propertyAdder` rather than extending it, since that function
+// is shared with event fields and command inputs, neither of which
+// have scripts.
+function entityPropertyAdder(ctx, entityName) {
+  const draft = state.entityPropertyDraft && state.entityPropertyDraft.entity === entityName
+    ? state.entityPropertyDraft
+    : (state.entityPropertyDraft = {
+        entity: entityName, name: '', propertyType: 'integer', isList: false, isOptional: false,
+        scripted: false, initialStateText: '', handlerEvent: '', handlerCode: 'state',
+      });
+
+  const eventNames = Object.keys(ctx['event-definitions'])
+    .filter((n) => (ctx['event-definitions'][n].properties || [])
+      .some((p) => idLeavesOfType(ctx, p.propertyType).some((leaf) => leaf.entity === entityName)))
+    .sort();
+
+  const scriptedFields = draft.scripted ? [
+    h('span', { class: 'tiny muted' }, 'starts as'),
+    h('input', {
+      type: 'text', class: 'mono', style: 'width:110px', value: draft.initialStateText,
+      oninput: (e) => { draft.initialStateText = e.target.value; },
+    }),
+    h('span', { class: 'tiny muted' }, 'handles'),
+    pick(eventNames.map((n) => [n, readable(n)]), draft.handlerEvent,
+      (v) => { draft.handlerEvent = v; },
+      eventNames.length ? '— which event? —' : '— nothing fits this yet —'),
+    h('textarea', {
+      class: 'mono', rows: 2, style: 'width:100%', value: draft.handlerCode,
+      oninput: (e) => { draft.handlerCode = e.target.value; },
+    }),
+  ] : [];
+
+  return h('div', { class: 'adder' },
+    h('input', {
+      type: 'text', placeholder: 'seat count', value: draft.name,
+      oninput: (e) => { draft.name = e.target.value; },
+    }),
+    pick(typeOptions(ctx), draft.propertyType, (v) => { draft.propertyType = v; }),
+    h('label', { class: 'tiny muted' },
+      h('input', {
+        type: 'checkbox', checked: draft.isList,
+        onchange: (e) => { draft.isList = e.target.checked; },
+      }), ' many'),
+    h('label', { class: 'tiny muted' },
+      h('input', {
+        type: 'checkbox', checked: draft.isOptional,
+        onchange: (e) => { draft.isOptional = e.target.checked; },
+      }), ' optional'),
+    advanced() ? h('label', { class: 'tiny muted' },
+      h('input', {
+        type: 'checkbox', checked: draft.scripted,
+        onchange: (e) => {
+          draft.scripted = e.target.checked;
+          if (draft.scripted && !draft.initialStateText) {
+            draft.initialStateText = JSON.stringify(defaultInitialValue(ctx,
+              { propertyType: draft.propertyType, isList: draft.isList, isOptional: draft.isOptional }));
+          }
+          render();
+        },
+      }), ' scripted') : null,
+    ...scriptedFields,
+    h('button', {
+      class: 'btn', onclick: () => {
+        if (!draft.name.trim()) return toast('Give the field a name.', true);
+        const property = {
+          name: toCamel(draft.name), propertyType: draft.propertyType,
+          isOptional: draft.isOptional, isList: draft.isList,
+        };
+        if (draft.scripted) {
+          if (!draft.handlerEvent) return toast('A scripted property needs at least one event to handle.', true);
+          let initialState;
+          try { initialState = JSON.parse(draft.initialStateText); }
+          catch { return toast('That starting value is not valid JSON.', true); }
+          property.script = { initialState };
+          property.handlers = [{ event: draft.handlerEvent, code: draft.handlerCode || 'state' }];
+        } else {
+          property.initialValue = defaultInitialValue(ctx, property);
+          property.handlers = [];
+        }
+        state.entityPropertyDraft = null;
+        patch('entity-definition', entityName, (b) => b.properties.push(property));
+      },
+    }, '+ Property'));
+}
 
 function renderEntity(ctx, main) {
   const name = state.entity;
   const entity = ctx['entity-definitions'][name];
   if (!entity) return;
   const properties = entity.properties || [];
-  const statusProperty = properties.find((p) => p.name === STATUS_PROPERTY);
-  const rest = properties.filter((p) => p.name !== STATUS_PROPERTY);
 
   const readers = new Set();
   const writers = new Set();
@@ -3489,15 +3710,20 @@ function renderEntity(ctx, main) {
             }),
           }))),
       h('div', { class: 'muted small summary' },
-        `${rest.length} propert${rest.length === 1 ? 'y' : 'ies'} · `
-        + `${(entity.statuses || []).length} statuses · `
+        `${properties.length} propert${properties.length === 1 ? 'y' : 'ies'} · `
         + `moved by ${writers.size} command${writers.size === 1 ? '' : 's'}, `
         + `read by ${readers.size}`)));
   }
 
   if (state.iconPicker === name) main.appendChild(iconPicker(ctx, name, entity));
 
-  main.appendChild(identityBlock(ctx, name, entity, statusProperty));
+  main.appendChild(entityTabs(ctx, name));
+  if (state.entityTab === 'specifications') {
+    main.appendChild(specificationPanel(ctx, name));
+    return;
+  }
+
+  main.appendChild(identityBlock(ctx, name, entity));
 
   const section = h('section', { class: 'esection' },
     h('h4', {}, 'What we know about each one'),
@@ -3505,33 +3731,27 @@ function renderEntity(ctx, main) {
       'Each of these is folded from the events tagged with one of these things — so a '
       + 'property nothing moves is a property nothing knows.'));
 
-  if (!rest.length) {
-    section.appendChild(h('div', { class: 'empty' }, 'Nothing yet beyond what status it is in.'));
+  if (!properties.length) {
+    section.appendChild(h('div', { class: 'empty' }, 'Nothing yet.'));
   }
-  for (const property of rest) section.appendChild(propertyCard(ctx, name, entity, property));
+  for (const property of properties) section.appendChild(propertyCard(ctx, name, entity, property));
 
-  section.appendChild(adderSlot('prop:' + name, null, '+ property', () => propertyAdder(ctx, {
-    placeholder: 'seat count', type: 'integer', label: '+ Property',
-    onAdd: (property) => {
-      property.initialValue = defaultInitialValue(ctx, property);
-      property.handlers = [];
-      patch('entity-definition', name, (b) => b.properties.push(property));
-    },
-  })));
+  section.appendChild(adderSlot('prop:' + name, null, '+ property',
+    () => entityPropertyAdder(ctx, name)));
   main.appendChild(section);
 }
 
-// The half of an entity nobody authored. Both rows here are consequences
-// of being a thing at all: the identifier is the only kind of tag a DCB
-// context has, and the status is the one property every entity is
-// required to carry.
-function identityBlock(ctx, name, entity, statusProperty) {
+// The half of an entity nobody authored: the identifier is the only
+// kind of tag a DCB context has, and nothing declared it — it comes
+// with being a thing at all. A lifecycle, unlike the identifier, is not
+// part of this: it is an ordinary enum property, listed below with
+// everything else a modeler chose to track.
+function identityBlock(ctx, name, entity) {
   const box = h('section', { class: 'ident' },
-    h('h4', {}, 'Identity and lifecycle'),
+    h('h4', {}, 'Identity'),
     h('div', { class: 'muted tiny why' },
-      'What makes one of these one of these. Neither row is a property anyone added: the '
-      + 'identifier is the tag every event about this thing carries, and the status is what '
-      + 'the model reads to know whether it exists at all.'));
+      'What makes one of these one of these. Nobody added this row: the identifier is the '
+      + 'tag every event about this thing carries, and it comes with being a thing at all.'));
 
   box.appendChild(h('div', { class: 'irow' },
     h('span', { class: 'nm' }, 'identified by'),
@@ -3540,44 +3760,62 @@ function identityBlock(ctx, name, entity, statusProperty) {
       ? identifierSchemaField(ctx, name, entity)
       : h('span', { class: 'tiny muted' }, 'one per thing — and the tag every event about it carries')));
 
-  box.appendChild(h('div', { class: 'irow' },
-    h('span', { class: 'nm' }, 'can be'),
-    ...statusChips(name, entity),
-    h('button', {
-      class: 'btn tiny ghost',
-      onclick: () => { closeForms(); state.addingStatus = { entity: name, at: 'entity' }; render(); },
-    }, '+ status')));
-
-  if (state.addingStatus && state.addingStatus.at === 'entity' && state.addingStatus.entity === name) {
-    box.appendChild(inlineForm({
-      question: `What else can a ${readable(name)} be?`, placeholder: 'archived',
-      showsIdentifier: true,
-      onSubmit: (v) => {
-        state.addingStatus = null;
-        patch('entity-definition', name, (b) => b.statuses.push(toPascal(v)));
-      },
-      onCancel: () => { state.addingStatus = null; render(); },
-    }));
-  }
-
-  // The reserved property, in the block it belongs to rather than at the
-  // head of the list of authored ones: what moves an instance between
-  // the statuses above is exactly as worth reading as the statuses are.
-  if (statusProperty) box.appendChild(propertyCard(ctx, name, entity, statusProperty));
   return box;
+}
+
+// Every handler that moves this property, in one place — the entity's
+// own record of it, rather than something only visible by visiting
+// each command that happens to touch it. `usage.changedBy` carries one
+// entry per command that publishes a handled event, so several
+// entries can share the same handler; this collapses that back down to
+// one row per event, which is what can actually be edited or removed.
+function handlerList(ctx, entityName, property, usage) {
+  const byEvent = new Map();
+  for (const u of usage.changedBy) byEvent.set(u.event, u);
+
+  const rows = [...byEvent.values()].map((u) => {
+    const editing = state.editHandler
+      && state.editHandler.entity === entityName
+      && state.editHandler.property === property.name
+      && state.editHandler.event === u.event;
+    if (editing) return entityHandlerAdder(ctx, entityName, property, u.handler);
+    const p = effectParts({ entity: entityName, property, handler: u.handler });
+    return h('div', { class: 'row' },
+      h('span', { class: 'sentence' },
+        h('span', { class: 'chip event' }, readable(u.event)), ' ',
+        h('span', { class: 'verb' }, p.verb), ' ', opRef(u.handler.value, u.event, p.object)),
+      h('span', { class: 'grow' }),
+      reveal(
+        h('button', {
+          class: 'btn tiny',
+          onclick: () => {
+            closeForms();
+            state.editHandler = { entity: entityName, property: property.name, event: u.event };
+            render();
+          },
+        }, 'Edit'),
+        h('button', {
+          class: 'btn tiny danger',
+          onclick: () => patch('entity-definition', entityName, (b) => {
+            const prop = b.properties.find((q) => q.name === property.name);
+            prop.handlers = prop.handlers.filter((x) => x.event !== u.event);
+          }),
+        }, '×')));
+  });
+
+  return h('div', { class: 'handlers' },
+    rows.length ? rows : h('div', {}, 'nothing moves it'),
+    adderSlot('wire:' + entityName + '.' + property.name, null, '+ wire an event',
+      () => entityHandlerAdder(ctx, entityName, property)));
 }
 
 // One property: what it is called and what it holds on the first line,
 // who moves it and who reads it on the second. Two different questions,
 // so they do not share a line and fight for the room.
 function propertyCard(ctx, entityName, entity, property) {
-  const reserved = property.name === STATUS_PROPERTY;
   const where = 'entity:' + entityName;
 
-  // The reserved `status` property is the one member with nothing to
-  // edit: its name, its type and its initial value are all decided by
-  // the entity, and only its handlers are authored.
-  if (!reserved && editingMember(where, property.name)) {
+  if (editingMember(where, property.name)) {
     const index = (entity.properties || []).findIndex((p) => p.name === property.name);
     return memberEditor(ctx, {
       member: property, where, allow: { initialValue: true },
@@ -3587,36 +3825,33 @@ function propertyCard(ctx, entityName, entity, property) {
   }
 
   const usage = propertyUsage(ctx, entityName, property.name);
-  const dead = !reserved && !usage.changedBy.length && !usage.readBy.length;
+  const dead = !usage.changedBy.length && !usage.readBy.length;
   const jump = (command) => h('b', {
     title: 'Open ' + readable(command),
     onclick: () => { closeForms(); state.slice = command; state.view = 'slice'; render(); },
   }, readable(command));
   const listed = (commands) => commands.flatMap((c, i) => (i ? [', ', jump(c)] : [jump(c)]));
 
-  // Under the statuses that name them, the reserved property's type would
-  // only repeat the row above it.
-  const showsType = advanced() || !reserved;
   // A property typed with another thing's identifier is a reference to
   // that thing, so it carries that thing's mark — the same one the rail
   // and every command show it under.
   const referenced = entityOfIdType(ctx, property.propertyType);
+  // A string-only enum gets its members editable right here, wherever a
+  // property of that type is shown — the same convenience a lifecycle
+  // status used to get for free, now available to any enum property.
+  const enumType = isStringEnumType(ctx, property.propertyType) ? property.propertyType : null;
 
   return h('div', { class: 'prop' + (dead ? ' dead' : '') },
     qrow('div', { cls: 'top', key: 'prop:' + entityName + '.' + property.name },
-      h('span', { class: 'nm' },
-        reserved && !advanced() ? 'what status it is in' : propertyWords(property.name)),
+      h('span', { class: 'nm' }, propertyWords(property.name)),
       // A row's type is what the row is about, so it stays on screen.
       // Only the machinery around it — the stored name, where it starts,
       // the button that removes it — waits to be asked for.
-      showsType ? h('span', {
-        class: 'chip' + (reserved ? '' : ' editable'),
-        title: reserved
-          ? 'Decided by the entity — only its handlers are authored'
-          : 'Rename or retype this',
-        onclick: reserved ? null : () => openMember(where, property.name),
+      h('span', {
+        class: 'chip editable', title: 'Rename or retype this',
+        onclick: () => openMember(where, property.name),
       }, referenced ? h('i', { class: 'ic' }, entityIcon(ctx, referenced)) : null,
-        readable(typeLabel(property))) : null,
+        readable(typeLabel(property))),
       // A scripted property stays marked on screen: a value arrived at
       // by code is a different kind of claim from one arrived at by a
       // declaration, and a rule reading it should say so.
@@ -3628,16 +3863,23 @@ function propertyCard(ctx, entityName, entity, property) {
           h('code', {}, property.script
             ? JSON.stringify(property.script.initialState)
             : operandWords(property.initialValue))) : null,
-        reserved ? h('span', { class: 'chip' }, 'built in') : h('button', {
+        h('button', {
           class: 'btn tiny danger', title: 'Stop tracking this',
           onclick: () => patch('entity-definition', entityName, (b) => {
             b.properties = b.properties.filter((p) => p.name !== property.name);
           }),
         }, '×'))),
+    enumType ? h('div', { class: 'use' },
+      h('span', { class: 'muted' }, 'can be '), ...enumMemberChips(ctx, enumType)) : null,
     h('div', { class: 'use' },
-      h('div', {}, usage.changedBy.length
-        ? ['moved by ', ...listed(uniq(usage.changedBy.map((u) => u.command)))]
-        : 'nothing moves it'),
+      // A scripted property's handlers live in its own code, in
+      // scriptPanel below — this list is for the declarative ones,
+      // where an event/operation/value row can actually be edited here.
+      property.script
+        ? h('div', {}, usage.changedBy.length
+            ? ['moved by ', ...listed(uniq(usage.changedBy.map((u) => u.command)))]
+            : 'nothing moves it')
+        : handlerList(ctx, entityName, property, usage),
       h('div', {}, usage.readBy.length
         ? ['read by ', ...listed(usage.readBy)]
         : 'nothing reads it')),
@@ -3778,33 +4020,38 @@ function renderCustomTypes(ctx, main) {
         }
         const cls = classifyType(ctx, field.propertyType);
         const isId = cls.kind === 'derived' && cls.role === 'id';
+        const enumType = isStringEnumType(ctx, field.propertyType) ? field.propertyType : null;
         // A record field is its type — that one stays on screen even
         // here, because with it hidden the row would say nothing.
-        return qrow('div', { cls: 'erow', key: 'field:' + name + '.' + field.name },
-          h('span', { class: 'nm' }, propertyWords(field.name)),
-          h('span', {
-            class: (isId ? 'chip entity' : 'chip') + ' editable',
-            title: 'Rename or retype this field',
-            onclick: () => openMember(where, field.name),
-          }, isId ? h('i', { class: 'ic' }, entityIcon(ctx, cls.entity)) : null,
-            readable(field.propertyType)),
-          isId ? h('span', { class: 'tiny muted' },
-            'identifies a ' + entityIcon(ctx, cls.entity) + ' ' + readable(cls.entity)
-            + ' — every event carrying this is tagged with it') : null,
-          h('span', { style: 'flex:1' }),
-          reveal(
-            advanced() ? h('span', { class: 'tech' }, field.name) : null,
-            h('button', {
-            class: 'btn tiny danger',
-            onclick: () => {
-              if (body.properties.length === 1) {
-                return toast('A record needs at least one field. Remove the type instead.', true);
-              }
-              patch('custom-type-definition', name, (b) => {
-                b.properties = b.properties.filter((f) => f.name !== field.name);
-              });
-            },
-          }, '×')));
+        return [
+          qrow('div', { cls: 'erow', key: 'field:' + name + '.' + field.name },
+            h('span', { class: 'nm' }, propertyWords(field.name)),
+            h('span', {
+              class: (isId ? 'chip entity' : 'chip') + ' editable',
+              title: 'Rename or retype this field',
+              onclick: () => openMember(where, field.name),
+            }, isId ? h('i', { class: 'ic' }, entityIcon(ctx, cls.entity)) : null,
+              readable(field.propertyType)),
+            isId ? h('span', { class: 'tiny muted' },
+              'identifies a ' + entityIcon(ctx, cls.entity) + ' ' + readable(cls.entity)
+              + ' — every event carrying this is tagged with it') : null,
+            h('span', { style: 'flex:1' }),
+            reveal(
+              advanced() ? h('span', { class: 'tech' }, field.name) : null,
+              h('button', {
+              class: 'btn tiny danger',
+              onclick: () => {
+                if (body.properties.length === 1) {
+                  return toast('A record needs at least one field. Remove the type instead.', true);
+                }
+                patch('custom-type-definition', name, (b) => {
+                  b.properties = b.properties.filter((f) => f.name !== field.name);
+                });
+              },
+            }, '×'))),
+          enumType ? h('div', { class: 'use' },
+            h('span', { class: 'muted' }, 'can be '), ...enumMemberChips(ctx, enumType)) : null,
+        ];
       })));
 
       let fname = '', ftype = 'string';
@@ -3821,6 +4068,12 @@ function renderCustomTypes(ctx, main) {
         }, '+ Field'),
         h('span', { style: 'flex:1' }),
         h('span', { class: 'tiny muted' }, 'fields are single and required'))));
+    } else if (isStringEnumType(ctx, name)) {
+      // An enum is not a distinct form of type — it is a scalar whose
+      // schema carries `enum` — so this is the same card as any other
+      // scalar, just with a chip editor over that one keyword instead
+      // of a raw-text view of the whole schema.
+      card.appendChild(h('div', { class: 'irow' }, ...enumMemberChips(ctx, name)));
     } else {
       let text = JSON.stringify(body.schema == null ? { type: 'string' } : body.schema);
       card.appendChild(h('div', { class: 'adder' },
@@ -3843,7 +4096,8 @@ function renderCustomTypes(ctx, main) {
 
   if (state.newType) {
     main.appendChild(inlineForm({
-      question: 'What is this value called?', placeholder: 'order line',
+      question: 'What is this value called?',
+      placeholder: state.newType === 'enum' ? 'course status' : 'order line',
       showsIdentifier: true,
       onSubmit: (v) => {
         const typeName = toPascal(v);
@@ -3855,7 +4109,11 @@ function renderCustomTypes(ctx, main) {
             // one the modeler is expected to rename rather than with an
             // empty body the model would reject.
             ? { properties: [{ name: 'value', propertyType: 'string' }] }
-            : { schema: { type: 'string' } }));
+            : form === 'enum'
+              // Same for an enum: one member to rename, rather than a
+              // legal-but-useless empty list.
+              ? { schema: { type: 'string', enum: ['Member'] } }
+              : { schema: { type: 'string' } }));
       },
       onCancel: () => { state.newType = null; render(); },
     }));
@@ -3865,6 +4123,10 @@ function renderCustomTypes(ctx, main) {
         class: 'btn primary',
         onclick: () => { closeForms(); state.newType = 'composite'; render(); },
       }, '+ New record'),
+      h('button', {
+        class: 'btn',
+        onclick: () => { closeForms(); state.newType = 'enum'; render(); },
+      }, '+ New enum'),
       h('button', {
         class: 'btn',
         onclick: () => { closeForms(); state.newType = 'scalar'; render(); },
@@ -3902,8 +4164,8 @@ function fieldTypeOptions(ctx) {
 // instead of as you type. A half-edited projection would otherwise be
 // refused by the model on every keystroke.
 
-// What a projection may hold: never a composite (there is no single
-// value to advance), never a status enum (nothing counts through one).
+// What a projection may hold: any scalar — including an enum — but
+// never a composite, since there is no single value there to advance.
 function projectionTypeOptions(ctx) {
   return allTypeNames(ctx)
     .filter((t) => {
@@ -3979,6 +4241,10 @@ function handlerValueChoices(ctx, draft, event) {
       `the one after ${propertyWords(p.name)}`]);
   }
   out.push([JSON.stringify({ currentValue: true }), 'its current value']);
+  const enumMembers = enumMembersFor(ctx, draft.valueType);
+  if (enumMembers) {
+    for (const m of enumMembers) out.push([JSON.stringify({ enumMember: m }), readable(m)]);
+  }
   return out;
 }
 
@@ -4074,6 +4340,8 @@ function projectionFields(ctx, draft) {
       }, '×'));
   });
 
+  const enumType = isStringEnumType(ctx, draft.valueType) ? draft.valueType : null;
+
   return [
     h('div', { class: 'row' },
       h('span', { class: 'muted tiny', style: 'min-width:90px' }, 'it holds'),
@@ -4083,6 +4351,8 @@ function projectionFields(ctx, draft) {
         for (const handler of draft.handlers || []) handler.value = '';
         render();
       }, '— which type? —')),
+    enumType ? h('div', { class: 'use' },
+      h('span', { class: 'muted' }, 'can be '), ...enumMemberChips(ctx, enumType)) : null,
     h('div', { class: 'row' },
       h('span', { class: 'muted tiny', style: 'min-width:90px' }, 'starting at'),
       h('input', {
@@ -4473,6 +4743,13 @@ function valueEditor(ctx, property, path, where) {
 
   const scalar = (at) => {
     const held = atPath(draft(), at);
+    const enumMembers = enumMembersFor(ctx, property.propertyType);
+    if (enumMembers) {
+      return h('span', { class: 'vwrap' },
+        pick(enumMembers.map((m) => [m, readable(m)]),
+          held === undefined || held === null ? '' : String(held),
+          (v) => setAtPath(draft(), at, v), '— choose —'));
+    }
     const entity = entityOfIdType(ctx, property.propertyType);
     const listId = entity ? `sug-${++suggestionSeq}` : null;
     const options = () => where.suggest(entity);
@@ -4886,6 +5163,332 @@ function renderScenarios(ctx, main) {
         'A scenario belongs to a command, so it is written on that command page. This one '
         + 'gathers them once there are some.')));
   }
+}
+
+// ============================================================
+// C2 · Specifications
+//
+// The entity-page analogue of Scenarios, one level down: a Given of
+// events written by hand, and a Then nobody types — derived from the
+// entity's own handlers and frozen beside the Given, so the next run
+// either agrees with it or reports that something changed. There is no
+// When: nothing is called, an instance's state is simply folded from
+// what happened to it. And there is no full Then either — only the
+// properties a modeler chose to check, so "ends up existent" does not
+// require restating every field nothing here cares about.
+//
+// Everything else — the four statuses, the held/run gesture for a
+// scripted property, the drift diff, "Accept this" — is the same
+// mechanism Scenarios already has, reused rather than reinvented.
+// ============================================================
+
+const heldSpecRuns = new Map();
+
+function specificationResult(ctx, key, body) {
+  if (!specificationTouchesScript(ctx, body)) return runSpecification(ctx, body);
+  const cached = heldSpecRuns.get(key);
+  if (cached && cached.at === loadEvents().length) return cached.result;
+  return {
+    status: 'held',
+    reason: 'This specification checks a scripted property, so it runs when you ask and not before.',
+  };
+}
+
+function runHeldSpecification(ctx, key, body) {
+  heldSpecRuns.set(key, { at: loadEvents().length, result: runSpecification(ctx, body) });
+  render();
+}
+
+const SPEC_STATUS_WORDS = {
+  current: ['✓', 'Current', 'What this entity does is what this specification says it does'],
+  drifted: ['≠', 'Drifted', 'This entity behaves differently now than when this was accepted'],
+  broken: ['!', 'Broken', 'This could not be run at all — something it names is gone'],
+  held: ['·', 'Not run', 'Checks a script, so it runs only when asked'],
+};
+
+function specificationsOf(ctx, entityName) {
+  return Object.entries(ctx['specification-definitions'] || {})
+    .filter(([, body]) => body.entity === entityName)
+    .map(([key, body]) => ({ key, body }));
+}
+
+// Where a specification's Given lives, and what it can be helped with
+// — the same identifiers-already-written suggestion Scenarios' Given
+// gets. `identifiersInUse` reads `body.given`/`body.when` generically;
+// a specification simply has no `when`; there is nothing to harvest.
+function specWhere(ctx) {
+  return {
+    root: () => state.specificationDraft.body,
+    suggest: (entity) => identifiersInUse(ctx, state.specificationDraft.body, entity),
+  };
+}
+
+// A specification's Then, one property per line — the analogue of
+// outcomeCard, shaped around `{propertyName: value}` rather than
+// `{outcome, events}`.
+function entityOutcomeCard(then, title) {
+  if (!then) return h('div', { class: 'card' }, h('div', { class: 'empty' }, 'nothing'));
+  const entries = Object.entries(then);
+  return h('div', { class: 'card' },
+    h('div', { class: 'muted tiny' }, title),
+    entries.length
+      ? entries.map(([name, value]) => h('div', {},
+          h('span', { class: 'y' }, propertyWords(name)),
+          h('span', { class: 'k' }, '  ' + JSON.stringify(value))))
+      : h('div', { class: 'empty' }, 'nothing checked'));
+}
+
+function specificationRow(ctx, entry) {
+  const { key, body } = entry;
+  const result = specificationResult(ctx, key, body);
+  const [mark, word, why] = SPEC_STATUS_WORDS[result.status];
+  const open = state.openSpecification === key;
+
+  const head = h('div', { class: 'row scenario-row' },
+    h('span', { class: 'sc-mark s-' + result.status, title: why }, mark),
+    h('button', {
+      class: 'sc-name',
+      onclick: () => { state.openSpecification = open ? null : key; render(); },
+    }, specificationName(body, propertyWords)),
+    h('span', { class: 'grow' }),
+    h('span', { class: 'muted tiny' }, word),
+    reveal(
+      result.status === 'held'
+        ? h('button', {
+            class: 'btn tiny', title: 'Run this one now',
+            onclick: () => runHeldSpecification(ctx, key, body),
+          }, 'Run')
+        : null,
+      h('button', {
+        class: 'btn tiny',
+        onclick: () => { closeForms(); state.renamingSpecification = key; render(); },
+      }, 'Rename'),
+      removeButton('specification:' + key, {
+        label: 'Remove', title: 'Remove this specification. Nothing else is touched.',
+        onRemove: () => run(() => {
+          removeDefinition('specification-definition', ctx.id, key);
+          if (state.openSpecification === key) state.openSpecification = null;
+        }),
+      })));
+
+  if (state.renamingSpecification === key) {
+    return h('div', { class: 'scenario' }, head, inlineForm({
+      question: 'What should this specification be called?',
+      placeholder: specificationName({ ...body, name: undefined }, propertyWords),
+      value: typeof body.name === 'string' ? body.name : '',
+      submitLabel: 'Rename',
+      onSubmit: (v) => {
+        const next = (v || '').trim();
+        state.renamingSpecification = null;
+        run(() => {
+          const nextBody = { ...deepClone(body) };
+          if (next) nextBody.name = next; else delete nextBody.name;
+          updateDefinition('specification-definition', ctx.id, key, nextBody);
+        });
+      },
+      onCancel: () => { state.renamingSpecification = null; render(); },
+    }));
+  }
+
+  if (!open) return h('div', { class: 'scenario' }, head);
+
+  return h('div', { class: 'scenario open' }, head,
+    h('div', { class: 'sc-body' },
+      h('div', { class: 'muted tiny' }, 'Given'),
+      (body.given || []).length
+        ? (body.given || []).map((step) => h('div', { class: 'sc-line' },
+            h('span', { class: 'y' }, readable(step.event)),
+            h('span', { class: 'k' }, '  ' + payloadText(step.data))))
+        : h('div', { class: 'empty' }, 'nothing had happened yet'),
+      h('div', { class: 'muted tiny', style: 'margin-top:8px' }, 'For instance'),
+      h('div', { class: 'sc-line' }, h('span', { class: 'k' }, body.forInstance)),
+      h('div', { class: 'muted tiny', style: 'margin-top:8px' }, 'Then'),
+      result.status === 'broken'
+        ? h('div', { class: 'card', style: 'border-color:var(--danger)' },
+            h('div', { class: 'small' }, result.reason),
+            h('div', { class: 'muted tiny', style: 'margin-top:6px' },
+              'What it used to expect is kept below, so nothing is lost while you repair it.'),
+            entityOutcomeCard(result.expected, 'was'))
+        : result.status === 'drifted'
+          ? h('div', { class: 'drift' },
+              entityOutcomeCard(result.expected, 'this specification says'),
+              entityOutcomeCard(result.actual, 'the model now does'),
+              h('div', { class: 'adder' },
+                h('button', {
+                  class: 'btn primary',
+                  title: 'Store what the model now does as what this specification expects',
+                  onclick: () => run(() => {
+                    updateDefinition('specification-definition', ctx.id, key,
+                      { ...deepClone(body), then: result.actual });
+                  }),
+                }, 'Accept this'),
+                h('span', { class: 'muted tiny' },
+                  'Nothing changes in the model — only what this specification expects of it.')))
+          : entityOutcomeCard(result.status === 'held' ? body.then : result.expected,
+              result.status === 'held' ? 'last accepted' : 'and it does')));
+}
+
+function startSpecification(ctx, entityName) {
+  closeForms();
+  state.entityTab = 'specifications';
+  state.specificationDraft = {
+    key: null,
+    body: { entity: entityName, forInstance: '', given: [], assert: [] },
+  };
+  render();
+}
+
+function patchSpecificationDraft(mutate) {
+  const draft = state.specificationDraft;
+  if (!draft) return;
+  mutate(draft.body);
+  render();
+}
+
+function specificationEditor(ctx) {
+  const draft = state.specificationDraft;
+  const body = draft.body;
+  const entity = ctx['entity-definitions'][body.entity];
+  const eventNames = Object.keys(ctx['event-definitions']).sort();
+
+  const nextInstant = () => {
+    const last = (body.given || []).reduce((max, s) => Math.max(max, s.recordedAt || 0), 0);
+    return last + 1;
+  };
+
+  const givenRows = (body.given || []).map((step, index) => {
+    const definition = ctx['event-definitions'][step.event] || {};
+    return h('div', { class: 'card sc-step' },
+      h('div', { class: 'row' },
+        pick(eventNames.map((n) => [n, readable(n)]), step.event, (v) => patchSpecificationDraft((b) => {
+          b.given[index] = { event: v, data: {}, recordedAt: step.recordedAt };
+        })),
+        h('span', { class: 'grow' }),
+        h('span', { class: 'muted tiny' }, 'at'),
+        h('input', {
+          class: 'vin tiny-in', value: step.recordedAt,
+          title: 'The instant this was recorded, in whole seconds. A projection may fold it.',
+          onchange: (e) => patchSpecificationDraft((b) => {
+            const n = Number(e.target.value);
+            b.given[index].recordedAt = Number.isInteger(n) ? n : step.recordedAt;
+          }),
+        }),
+        h('button', {
+          class: 'btn tiny danger',
+          onclick: () => patchSpecificationDraft((b) => { b.given.splice(index, 1); }),
+        }, '×')),
+      payloadEditor(ctx, definition.properties, ['given', index, 'data'], specWhere(ctx)));
+  });
+
+  const properties = entity ? entity.properties : [];
+  const assertRows = properties.map((property) => h('label', { class: 'tiny muted', style: 'display:block' },
+    h('input', {
+      type: 'checkbox', checked: (body.assert || []).includes(property.name),
+      onchange: (e) => patchSpecificationDraft((b) => {
+        b.assert = e.target.checked
+          ? [...(b.assert || []), property.name]
+          : (b.assert || []).filter((n) => n !== property.name);
+      }),
+    }), ' ', propertyWords(property.name)));
+
+  return h('div', { class: 'card sc-editor' },
+    h('h4', {}, draft.key ? 'Edit this specification' : 'A new specification'),
+    h('div', { class: 'muted small' },
+      'Write what had already happened, then say which of it to check. What it ends up being is '
+      + 'worked out here — you are never asked to predict it.'),
+
+    h('div', { class: 'muted tiny', style: 'margin-top:12px' }, 'Given'),
+    givenRows.length ? givenRows : h('div', { class: 'empty' }, 'nothing has happened yet'),
+    h('div', { class: 'adder' },
+      h('button', {
+        class: 'btn tiny',
+        onclick: () => patchSpecificationDraft((b) => {
+          b.given = [...(b.given || []),
+            { event: eventNames[0], data: {}, recordedAt: nextInstant() }];
+        }),
+      }, '+ an event that had happened')),
+
+    h('div', { class: 'muted tiny', style: 'margin-top:12px' }, 'For instance'),
+    h('div', { class: 'card sc-step' },
+      valueEditor(ctx, { name: 'forInstance', propertyType: idTypeOf(body.entity), isList: false },
+        ['forInstance'], specWhere(ctx))),
+
+    h('div', { class: 'muted tiny', style: 'margin-top:12px' }, 'Then, check'),
+    assertRows.length ? assertRows : h('div', { class: 'empty' }, 'nothing to check yet'),
+
+    h('div', { class: 'adder', style: 'margin-top:14px' },
+      h('button', { class: 'btn primary', onclick: () => saveSpecification(ctx) },
+        draft.key ? 'Save' : 'Work out what happens'),
+      h('button', {
+        class: 'btn ghost',
+        onclick: () => { state.specificationDraft = null; render(); },
+      }, 'Cancel')));
+}
+
+// Deriving the Then is the save, exactly as it is for a scenario — see
+// saveScenario. The properties a modeler checked live in `assert`
+// only on the draft; the saved body keeps just their folded values,
+// under `then`, which is also what re-opening this for editing reads
+// the checked set back from.
+function saveSpecification(ctx) {
+  const draft = state.specificationDraft;
+  const body = deepClone(draft.body);
+  const propertyNames = body.assert || [];
+  delete body.assert;
+  let then;
+  try {
+    then = deriveSpecificationThen(ctx, body, propertyNames);
+  } catch (error) {
+    return toast(error instanceof EvaluationError
+      ? error.message
+      : 'That could not be worked out: ' + error.message, true);
+  }
+  body.then = then;
+  run(() => {
+    const key = draft.key || generateId();
+    if (draft.key) updateDefinition('specification-definition', ctx.id, key, body);
+    else addDefinition('specification-definition', ctx.id, key, body);
+    state.specificationDraft = null;
+    state.openSpecification = key;
+  });
+}
+
+function specificationPanel(ctx, entityName) {
+  const entries = specificationsOf(ctx, entityName);
+  return h('div', { class: 'scenarios' },
+    entries.length
+      ? entries.map((entry) => specificationRow(ctx, entry))
+      : h('div', { class: 'blank small' },
+          h('p', { class: 'muted small' },
+            'Nothing exercises this entity yet. A specification is what had already happened and '
+            + 'which of it to check — and it is the only thing here that notices when an edit '
+            + 'somewhere else changes what this entity ends up being.')),
+    state.specificationDraft && state.specificationDraft.body.entity === entityName
+      ? specificationEditor(ctx)
+      : h('div', { class: 'adder' },
+          h('button', {
+            class: 'btn' + (entries.length ? '' : ' primary'),
+            onclick: () => startSpecification(ctx, entityName),
+          }, '+ New specification')));
+}
+
+function entityTabs(ctx, entityName) {
+  const entries = specificationsOf(ctx, entityName);
+  const trouble = entries.filter((e) => {
+    const status = specificationResult(ctx, e.key, e.body).status;
+    return status === 'drifted' || status === 'broken';
+  }).length;
+  const tab = (key, label, extra) => h('button', {
+    class: 'tab' + (state.entityTab === key ? ' on' : ''),
+    'aria-pressed': state.entityTab === key ? 'true' : 'false',
+    onclick: () => { state.entityTab = key; state.specificationDraft = null; render(); },
+  }, label, extra);
+  return h('div', { class: 'tabs' },
+    tab('definition', 'Definition'),
+    tab('specifications', 'Specifications',
+      entries.length
+        ? h('span', { class: 'badge' + (trouble ? '' : ' clear') }, trouble || entries.length)
+        : null));
 }
 
 
