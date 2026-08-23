@@ -465,6 +465,26 @@ function entityIcon(ctx, name) {
   return chosen || defaultEntityIcon(name);
 }
 
+// An event earns the same legibility once it appears as more than a
+// line of text — the sandbox lays a whole session out as a strip of
+// these. But an event is a moment, not a thing, so its neutral mark
+// comes from a different family than an entity's: a spark rather than
+// a shape, so a page holding both never reads an unmarked glyph as the
+// wrong kind of thing.
+const EVENT_MARKS = ['✱', '✲', '✳', '✴', '✵', '✶', '✷', '✸', '✹', '✺'];
+
+function defaultEventIcon(name) {
+  let sum = 0;
+  for (const ch of String(name || '')) sum = (sum * 31 + ch.charCodeAt(0)) >>> 0;
+  return EVENT_MARKS[sum % EVENT_MARKS.length];
+}
+
+function eventIcon(ctx, name) {
+  const body = ctx && ctx['event-definitions'] ? ctx['event-definitions'][name] : null;
+  const chosen = body && typeof body.icon === 'string' ? body.icon.trim() : '';
+  return chosen || defaultEventIcon(name);
+}
+
 // Shown beside the type, never behind the Advanced gate: a value
 // arrived at by code is a different kind of claim from one arrived at
 // by a declaration, and a rule reading it should say so on the page.

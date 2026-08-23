@@ -57,7 +57,7 @@ const DEF_KINDS = [
   'command-definition',
   'custom-type-definition',
   'scenario-definition',
-  'specification-definition',
+  'property-scenario-definition',
 ];
 const DEF_COLLECTIONS = {
   'entity-definition': 'entity-definitions',
@@ -66,7 +66,7 @@ const DEF_COLLECTIONS = {
   'command-definition': 'command-definitions',
   'custom-type-definition': 'custom-type-definitions',
   'scenario-definition': 'scenario-definitions',
-  'specification-definition': 'specification-definitions',
+  'property-scenario-definition': 'property-scenario-definitions',
 };
 const KIND_COLOR_CLASS = {
   'entity-definition': 'entity',
@@ -75,7 +75,7 @@ const KIND_COLOR_CLASS = {
   'command-definition': 'command',
   'custom-type-definition': 'custom-type',
   'scenario-definition': 'scenario',
-  'specification-definition': 'scenario',
+  'property-scenario-definition': 'scenario',
 };
 
 const KIND_SECTION_TITLE = {
@@ -85,7 +85,7 @@ const KIND_SECTION_TITLE = {
   'command-definition': 'Commands',
   'custom-type-definition': 'Custom Types',
   'scenario-definition': 'Scenarios',
-  'specification-definition': 'Specifications',
+  'property-scenario-definition': 'Property scenarios',
 };
 
 // A scenario is identified by a generated id rather than by its name,
@@ -94,11 +94,11 @@ const KIND_SECTION_TITLE = {
 // modeler's to overwrite, so two scenarios of one command may well want
 // to be called the same thing. Every other definition kind is keyed by
 // a name that *is* its identity, and renaming one is what moves every
-// reference to it. A specification is the same shape for the same
+// reference to it. A property scenario is the same shape for the same
 // reason, one level down: it belongs to an entity rather than a
 // command, but its name is still derived from what it found, not
 // chosen up front.
-const ID_KEYED_KINDS = ['scenario-definition', 'specification-definition'];
+const ID_KEYED_KINDS = ['scenario-definition', 'property-scenario-definition'];
 
 function isIdKeyed(kind) { return ID_KEYED_KINDS.includes(kind); }
 
@@ -473,11 +473,11 @@ function computeReferences(ctx, kind, body) {
         if (event && event.type) refs['event-definition'].push(event.type);
       }
       break;
-    case 'specification-definition':
-      // A specification names the entity it tests and every event its
-      // Given is written from. Neither may stop one from being deleted
-      // — a specification exists to report what that broke, not to
-      // prevent it. Its Then holds property names, not references:
+    case 'property-scenario-definition':
+      // A property scenario names the entity it tests and every event
+      // its Given is written from. Neither may stop one from being
+      // deleted — a property scenario exists to report what that broke,
+      // not to prevent it. Its Then holds property names, not references:
       // nothing else in the model is identified by one.
       if (body.entity) refs['entity-definition'].push(body.entity);
       for (const step of body.given || []) {
@@ -589,7 +589,7 @@ function rewriteReferences(kind, body, targetKind, oldName, newName) {
         }
       }
       break;
-    case 'specification-definition':
+    case 'property-scenario-definition':
       if (targetKind === 'entity-definition' && next.entity === oldName) {
         next.entity = newName;
       }
@@ -713,13 +713,13 @@ function scenarioName(body, spell = (n) => n) {
   return types.length ? `records ${types.map(spell).join(' and ')}` : 'is accepted';
 }
 
-// The same derivation as scenarioName, one level down: a specification
-// has no outcome to name itself after, only the properties a modeler
-// chose to check and what they folded to.
-function specificationName(body, spell = (n) => n) {
+// The same derivation as scenarioName, one level down: a property
+// scenario has no outcome to name itself after, only the properties a
+// modeler chose to check and what they folded to.
+function propertyScenarioName(body, spell = (n) => n) {
   if (body && typeof body.name === 'string' && body.name.trim()) return body.name.trim();
   const then = (body || {}).then;
-  if (!then || !Object.keys(then).length) return 'an unrun specification';
+  if (!then || !Object.keys(then).length) return 'an unrun property scenario';
   const parts = Object.entries(then).map(([k, v]) => `${spell(k)} ${JSON.stringify(v)}`);
   return `ends up with ${parts.join(', ')}`;
 }
@@ -1351,7 +1351,7 @@ function validateReferences(ctx, kind, name, body) {
   if (kind === 'projection-definition') validateProjectionBody(resolved, name, body);
   if (kind === 'command-definition') validateCommandBody(resolved, body);
   if (kind === 'scenario-definition') validateScenarioBody(resolved, body);
-  if (kind === 'specification-definition') validateSpecificationBody(resolved, body);
+  if (kind === 'property-scenario-definition') validatePropertyScenarioBody(resolved, body);
 }
 
 // Handler validation, shared by entity properties and projections —
@@ -2153,14 +2153,14 @@ function validateScenarioBody(ctx, body) {
 // names it outright. `then` is *derived*, exactly like a scenario's,
 // but partial — only the properties a modeler chose to check appear,
 // each frozen at the moment it was accepted.
-function validateSpecificationBody(ctx, body) {
+function validatePropertyScenarioBody(ctx, body) {
   if (body.name !== undefined && typeof body.name !== 'string') {
-    throw new DomainError('A specification name is text, or absent when the derived one will do.');
+    throw new DomainError('A property scenario name is text, or absent when the derived one will do.');
   }
-  if (!body.entity) throw new DomainError('A specification has to name the entity it tests.');
+  if (!body.entity) throw new DomainError('A property scenario has to name the entity it tests.');
   const entity = ctx['entity-definitions'][body.entity];
   if (typeof body.forInstance !== 'string' || !body.forInstance.trim()) {
-    throw new DomainError('A specification has to say which instance it tests.');
+    throw new DomainError('A property scenario has to say which instance it tests.');
   }
 
   const checkPayload = (values, properties, label) => {
@@ -2183,7 +2183,7 @@ function validateSpecificationBody(ctx, body) {
   };
 
   if (!Array.isArray(body.given)) {
-    throw new DomainError('A specification\'s Given is a list of events, empty when nothing has happened yet.');
+    throw new DomainError('A property scenario\'s Given is a list of events, empty when nothing has happened yet.');
   }
   body.given.forEach((step, index) => {
     const where = `Given step ${index + 1}`;
@@ -2200,7 +2200,7 @@ function validateSpecificationBody(ctx, body) {
 
   const then = body.then;
   if (!then || typeof then !== 'object' || Array.isArray(then)) {
-    throw new DomainError('A specification\'s Then holds the properties it checks, empty when it checks none.');
+    throw new DomainError('A property scenario\'s Then holds the properties it checks, empty when it checks none.');
   }
   const propertyNames = new Set((entity ? entity.properties : []).map((p) => p.name));
   for (const propertyName of Object.keys(then)) {
@@ -2791,11 +2791,11 @@ function removeDefinition(kind, ctxId, name) {
   }
   const referencers = findReferencers(ctx, kind, name)
     .filter((r) => !(r.kind === kind && r.name === name))
-    // A scenario or specification names what it tests, but it may
+    // A scenario or property scenario names what it tests, but it may
     // never refuse the change: a test exists to report what a change
     // broke, not to prevent it. Deleting what one reads leaves it
     // broken and says so, which is the whole point of keeping it.
-    .filter((r) => r.kind !== 'scenario-definition' && r.kind !== 'specification-definition');
+    .filter((r) => r.kind !== 'scenario-definition' && r.kind !== 'property-scenario-definition');
   if (referencers.length > 0) {
     const list = referencers.map((r) => `${humanize(r.kind)} "${r.name}"`).join(', ');
     throw new DomainError(`Cannot remove ${humanize(kind)} "${name}" — still referenced by: ${list}.`);

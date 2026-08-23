@@ -33,6 +33,11 @@
     background: var(--bg); border-radius: 999px; padding: 0 6px;
   }
   .rail a.cmd { padding-left: 32px; }
+  /* The count used to sit hard against the label — "Sandbox14" — because
+     an <a> lays its children out as text, not as a row. This one alone
+     needs a row: the label on the left, the count held to the right. */
+  .rail a.sandbox { display: flex; align-items: center; gap: 8px; }
+  .rail a.sandbox .grow { flex: 1; }
   /* A thing in the rail is in the colour things are in everywhere else,
      so the rail says which of the two lists you are in without a
      heading having to. */
@@ -55,6 +60,7 @@
   /* Choosing a mark is not naming something — it belongs to the thing
      it is on, so it is dressed in that thing's colour. */
   .inline-form.icons { border-color: var(--entity); background: var(--entity-soft); }
+  .inline-form.icons.event { border-color: var(--event); background: var(--event-soft); }
   .inline-form .adder { margin-top: 0; }
   .rail .inline-form { margin: 6px 16px; }
   .becomes { font-family: var(--mono); font-size: 11px; color: var(--muted); }
@@ -195,6 +201,15 @@
   .member-editor .adder { flex-wrap: wrap; }
   .chip.editable { cursor: pointer; }
   .chip.editable:hover { border-color: var(--command); color: var(--command); }
+  /* A field offered rather than authored (flag: copyFields) — dashed,
+     like the adders it sits beside, so it reads as "not here yet" rather
+     than as one more fact about the event. */
+  .chip.suggest {
+    font: inherit; font-size: 11px; cursor: pointer; color: var(--muted);
+    border-style: dashed; background: transparent;
+  }
+  .chip.suggest:hover { border-color: var(--command); color: var(--command); background: var(--command-soft); }
+  .copy-missing { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
   .row { display: flex; align-items: center; gap: 8px; }
   .row + .row { margin-top: 6px; }
   .row .grow { flex: 1; }
@@ -272,6 +287,7 @@
     border: 1px solid var(--border); border-radius: 9px; background: var(--surface);
   }
   .icon-btn:hover { border-color: var(--entity); }
+  .icon-btn.event:hover { border-color: var(--event); }
   .icons .grid {
     display: grid; grid-template-columns: repeat(auto-fill, minmax(32px, 1fr));
     gap: 4px; margin-bottom: 8px; max-width: 460px;
@@ -283,6 +299,8 @@
   }
   .ic-opt:hover { border-color: var(--entity); }
   .ic-opt.on { border-color: var(--entity); background: var(--entity-soft); }
+  .icons.event .ic-opt:hover { border-color: var(--event); }
+  .icons.event .ic-opt.on { border-color: var(--event); background: var(--event-soft); }
 
   /* ---------- settings ----------
      Everything that decides how the interface behaves rather than what
@@ -489,23 +507,40 @@
   }
 
   /* ---------- sandbox ----------
-     A run of commands, and the position in it you are looking at. The
-     timeline is the subject, so it gets the width; the ticks under it
-     are where the commands landed. */
+     A run of events, read as the icons they carry rather than the
+     count of them — a session is scanned as a shape before it is read
+     as a number, and any position in it is reached by pointing at the
+     icon that was there. */
   .timeline { display: flex; flex-direction: column; gap: 7px; }
   .trow { display: flex; align-items: center; gap: 9px; }
-  .scrub { flex: 1; accent-color: var(--command); }
-  .ticks { display: flex; flex-wrap: wrap; gap: 4px; }
-  .tick {
-    font: inherit; font-size: 11px; cursor: pointer;
-    border: 1px solid var(--border); border-radius: 999px;
-    background: var(--surface); color: var(--muted); padding: 1px 9px;
+  .escrub {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 3px;
+    padding: 5px 3px; margin: 0 -3px; border-radius: 8px;
+    cursor: grab; touch-action: none; -webkit-user-select: none; user-select: none;
   }
-  .tick:hover { border-color: var(--command); color: var(--command); }
-  .tick.on { background: var(--command-soft); border-color: var(--command); color: var(--command); }
-  /* A step the position has not reached yet is still there — the run
-     did not shorten, you only moved back through it. */
-  .tick.ahead { opacity: .45; }
+  .escrub:active { cursor: grabbing; }
+  .escrub:focus-visible { outline: 2px solid var(--command); outline-offset: 2px; }
+  .estep {
+    flex: none; width: 28px; height: 28px; border-radius: 8px;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 14px; line-height: 1; border: 1px solid var(--border);
+    background: var(--surface); color: var(--muted); cursor: pointer;
+    transition: opacity .12s ease, border-color .12s ease, background .12s ease;
+  }
+  /* Icons from the same command sit close together; the next command's
+     get a little more air, so the run reads in decisions, not just in
+     events. */
+  .estep.step-end { margin-right: 7px; }
+  .estep:hover { border-color: var(--event); }
+  .estep.played { border-color: var(--event-soft); background: var(--event-soft); color: var(--text); }
+  .estep.current {
+    border-color: var(--event); background: var(--event-soft); color: var(--text);
+    box-shadow: 0 0 0 2px var(--event-soft);
+  }
+  /* Still on the timeline — scrubbing back does not shorten the run,
+     it only looks away from the rest of it. */
+  .estep.upcoming { opacity: .38; }
+  .eplayhead { flex: none; width: 2px; align-self: stretch; min-height: 26px; background: var(--command); border-radius: 2px; }
 
   .pin {
     background: none; border: none; cursor: pointer; padding: 0 5px 0 0;
@@ -584,6 +619,7 @@ const state = {
   addingMember: null,       // { type, eventName? } — adding a member to an enum custom type
   renamingEntity: null,
   iconPicker: null,         // the entity whose mark is being chosen
+  eventIconPicker: null,    // the event whose mark is being chosen
   confirmRemove: null,
   newContext: false,        // naming form for a brand-new context
   settings: false,          // the settings modal
@@ -596,13 +632,13 @@ const state = {
   scenarioDraft: null,      // { key, body } — a scenario being written
   renamingScenario: null,   // the scenario whose name is being overwritten
   sandboxDraft: null,       // { command, arguments } — a command about to be driven
-  entityTab: 'definition',  // 'definition' | 'specifications' on an entity page
+  entityTab: 'definition',  // 'definition' | 'property-scenarios' on an entity page
   editHandler: null,        // { entity, property, event } — the handler row open for editing
   entityHandlerDraft: null, // in-progress edits to that handler, from the entity page
   entityPropertyDraft: null, // in-progress "+ property" row on the entity page
-  openSpecification: null,  // the specification whose detail is unfolded
-  specificationDraft: null, // { key, body } — a specification being written
-  renamingSpecification: null, // the specification whose name is being overwritten
+  openPropertyScenario: null,  // the property scenario whose detail is unfolded
+  propertyScenarioDraft: null, // { key, body } — a property scenario being written
+  renamingPropertyScenario: null, // the property scenario whose name is being overwritten
 };
 
 // Called by the context picker in shared.js, which owns no forms itself.
@@ -709,6 +745,17 @@ const FLAGS = [
     key: 'scrollref', label: 'Follow a reference to its source',
     why: 'Clicking a value already lights up where it came from. This also brings it on screen, '
       + 'which matters when the two are steps apart.',
+  },
+  {
+    key: 'roomy', label: 'Roomier fields',
+    why: 'Every text field, select and button on the page grows to a size worth aiming at — '
+      + 'wider name fields, taller targets. What is compact today is a choice, not a limit.',
+  },
+  {
+    key: 'copyFields', label: 'Copy missing fields from the command',
+    why: 'A field the command was given but its event does not yet carry, offered as one click '
+      + 'that copies the name and type across and wires the event field straight to it — the '
+      + 'same thing you could already do by hand, field by field.',
   },
   {
     key: 'dark', label: 'Dark',
@@ -1352,21 +1399,29 @@ function removeButton(key, { label = '×', title, confirm = 'Really remove?', on
 }
 
 // The name / type / many / add row that four different lists all want.
+// Enter anywhere in the row adds the field, the same as clicking the
+// button — a field is typically typed, tabbed through, and added without
+// the hand ever leaving the keyboard.
 function propertyAdder(ctx, { placeholder = 'course id', label = '+ Add', type = 'string', onAdd }) {
   let name = '', chosen = type, isList = false, isOptional = false;
+  const add = () => {
+    if (!name.trim()) return toast('Give the field a name.', true);
+    onAdd({ name: toCamel(name), propertyType: chosen, isOptional, isList });
+  };
+  const onEnter = (e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } };
+  const input = h('input', {
+    type: 'text', placeholder,
+    oninput: (e) => { name = e.target.value; }, onkeydown: onEnter,
+  });
+  setTimeout(() => input.focus(), 0);
   return h('div', { class: 'adder' },
-    h('input', { type: 'text', placeholder, oninput: (e) => { name = e.target.value; } }),
+    input,
     pick(typeOptions(ctx), chosen, (v) => { chosen = v; }),
-    h('label', { class: 'tiny muted' },
+    h('label', { class: 'tiny muted', onkeydown: onEnter },
       h('input', { type: 'checkbox', onchange: (e) => { isList = e.target.checked; } }), ' many'),
-    h('label', { class: 'tiny muted' },
+    h('label', { class: 'tiny muted', onkeydown: onEnter },
       h('input', { type: 'checkbox', onchange: (e) => { isOptional = e.target.checked; } }), ' optional'),
-    h('button', {
-      class: 'btn', onclick: () => {
-        if (!name.trim()) return toast('Give the field a name.', true);
-        onAdd({ name: toCamel(name), propertyType: chosen, isOptional, isList });
-      },
-    }, label));
+    h('button', { class: 'btn', onclick: add }, label));
 }
 
 // ---------- editing a member ----------
@@ -1430,23 +1485,24 @@ function memberEditor(ctx, { member, where, types, allow = {}, onReplace, onRena
   const close = () => { state.editMember = null; render(); };
   let name = member.name;
   const options = types || typeOptions(ctx);
+  const doRename = () => {
+    const next = toCamel(name);
+    if (!next) return toast('Give it a name.', true);
+    if (next === member.name) return close();
+    state.editMember = { where, name: next };
+    run(() => onRename(next));
+  };
 
   return h('div', { class: 'member-editor' },
     h('div', { class: 'adder' },
       h('input', {
-        type: 'text', value: member.name, style: 'width:150px',
+        type: 'text', value: member.name, style: 'width:' + (flag('roomy') ? '190px' : '150px'),
         oninput: (e) => { name = e.target.value; },
-        onkeydown: (e) => { if (e.key === 'Enter') e.target.blur(); },
+        onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); doRename(); } },
       }),
       h('button', {
         class: 'btn tiny', title: 'Rename, rewriting every reference to it',
-        onclick: () => {
-          const next = toCamel(name);
-          if (!next) return toast('Give it a name.', true);
-          if (next === member.name) return close();
-          state.editMember = { where, name: next };
-          run(() => onRename(next));
-        },
+        onclick: doRename,
       }, 'Rename'),
       h('span', { class: 'muted tiny' }, 'is a'),
       pick(options, member.propertyType, (v) => onReplace(retypeProperty(ctx, member, { propertyType: v }))),
@@ -1485,7 +1541,7 @@ function initialValueField(ctx, property, onReplace) {
   return h('div', { class: 'adder' },
     h('span', { class: 'muted tiny' }, 'starts as'),
     h('input', {
-      type: 'text', style: 'width:120px',
+      type: 'text', style: 'width:' + (flag('roomy') ? '150px' : '120px'),
       value: property.initialValue === undefined || property.initialValue === null
         ? '' : String(property.initialValue),
       onblur: (e) => {
@@ -1493,6 +1549,7 @@ function initialValueField(ctx, property, onReplace) {
         if (parsed === undefined) return toast('That is not a ' + readable(property.propertyType) + '.', true);
         onReplace({ ...property, initialValue: parsed });
       },
+      onkeydown: (e) => { if (e.key === 'Enter') e.target.blur(); },
     }));
 }
 
@@ -1653,7 +1710,7 @@ function inlineForm({ question, placeholder, value = '', showsIdentifier, submit
     if (showsIdentifier && text.trim()) preview.appendChild(document.createTextNode('→ ' + toPascal(text)));
   };
   const input = h('input', {
-    type: 'text', value, placeholder, style: 'width:210px',
+    type: 'text', value, placeholder, style: 'width:' + (flag('roomy') ? '280px' : '210px'),
     oninput: (e) => { text = e.target.value; paint(); },
     onkeydown: (e) => {
       if (e.key === 'Enter') { e.preventDefault(); submit(); }
@@ -1679,11 +1736,11 @@ function inlineForm({ question, placeholder, value = '', showsIdentifier, submit
 // answers must not drift apart.
 const FORM_KEYS = [
   'newFeature', 'renamingFeature', 'newEntityAt', 'addingProp', 'addingMember',
-  'renamingEntity', 'iconPicker', 'confirmRemove', 'newContext', 'newType', 'renamingType',
+  'renamingEntity', 'iconPicker', 'eventIconPicker', 'confirmRemove', 'newContext', 'newType', 'renamingType',
   'newProjection', 'renamingProjection', 'projDraft', 'renamingEvent',
   'renamingCommand', 'editMember', 'editRule', 'editBinding',
   'scenarioDraft', 'renamingScenario', 'sandboxDraft',
-  'editHandler', 'specificationDraft', 'renamingSpecification',
+  'editHandler', 'propertyScenarioDraft', 'renamingPropertyScenario',
 ];
 
 // What a form was holding while it was open. These outlive the form
@@ -1820,12 +1877,12 @@ function renderRail() {
   // is something to try.
   rail.appendChild(h('h4', { style: 'margin-top:20px' }, 'Try it'));
   rail.appendChild(h('a', {
-    href: '#', class: state.view === 'sandbox' ? 'on' : '',
+    href: '#', class: 'sandbox' + (state.view === 'sandbox' ? ' on' : ''),
     title: session.log.length
       ? session.log.length + ' event' + (session.log.length === 1 ? '' : 's') + ' in this session'
       : 'Drive the commands and watch what happens',
     onclick: (e) => { e.preventDefault(); closeForms(); state.view = 'sandbox'; render(); },
-  }, 'Sandbox', session.log.length
+  }, h('span', { class: 'grow' }, 'Sandbox'), session.log.length
     ? h('span', { class: 'gcount' }, session.log.length)
     : null));
 
@@ -1989,23 +2046,26 @@ function renderDraft(ctx, main) {
     h('span', { class: 'grow', style: 'flex:1' }),
     h('button', { class: 'btn tiny danger', onclick: () => { d.payload.splice(i, 1); render(); } }, '×')));
   let fieldName = '', fieldType = 'string', fieldList = false;
+  const addField = () => {
+    if (!fieldName.trim()) return toast('Give the field a name.', true);
+    d.payload.push({ name: toCamel(fieldName), propertyType: fieldType, isOptional: false, isList: fieldList });
+    render();
+  };
   box.appendChild(h('div', { class: 'qblock' },
     h('label', {}, 'What do they have to provide?'),
     h('div', { class: 'why' }, 'Only what the caller knows. Leave it empty if nothing.'),
     h('div', { class: 'card' },
       rows.length ? rows : h('div', { class: 'empty' }, 'Nothing.'),
       h('div', { class: 'adder' },
-        h('input', { type: 'text', placeholder: 'course id', oninput: (e) => { fieldName = e.target.value; } }),
+        h('input', {
+          type: 'text', placeholder: 'course id',
+          oninput: (e) => { fieldName = e.target.value; },
+          onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); addField(); } },
+        }),
         pick(typeOptions(ctx), fieldType, (v) => { fieldType = v; }),
         h('label', { class: 'tiny muted' },
           h('input', { type: 'checkbox', onchange: (e) => { fieldList = e.target.checked; } }), ' many'),
-        h('button', {
-          class: 'btn', onclick: () => {
-            if (!fieldName.trim()) return toast('Give the field a name.', true);
-            d.payload.push({ name: toCamel(fieldName), propertyType: fieldType, isOptional: false, isList: fieldList });
-            render();
-          },
-        }, '+ Add')))));
+        h('button', { class: 'btn', onclick: addField }, '+ Add')))));
 
   // 3. what it records
   box.appendChild(h('div', { class: 'qblock' },
@@ -2444,7 +2504,13 @@ function stepTrigger(ctx, slice) {
           advanced() ? h('span', { class: 'tech' }, p.name) : null,
           h('button', {
             class: 'btn tiny danger',
-            onclick: () => patchSlice((b) => { b.properties.splice(i, 1); }),
+            onclick: () => patchSlice((b) => {
+              // A stale reference from before `removeEventField` existed
+              // would otherwise refuse this removal for a reason no
+              // longer visible anywhere — see the comment there.
+              pruneDanglingEmissionParameters(ctx, b);
+              b.properties.splice(i, 1);
+            }),
           }, '×'))),
       enumType ? h('div', { class: 'use' },
         h('span', { class: 'muted' }, 'can be '), ...enumMemberChips(ctx, enumType)) : null,
@@ -2941,8 +3007,21 @@ function stepEmits(ctx, slice) {
         onCancel: () => { state.renamingEvent = null; render(); },
       }));
     }
+    const pickingIcon = state.eventIconPicker === emission.name;
     return h('div', { class: 'card event' },
       qrow('div', { cls: 'row', key: 'emit:' + emission.name, step: 'emits' },
+        // The mark leads, exactly as it does on an entity's header — it
+        // is what this event will be recognised by wherever it shows up
+        // as more than a name, which the sandbox timeline now does.
+        h('button', {
+          class: 'icon-btn event', title: 'Choose the mark this is shown with',
+          onclick: () => {
+            const wasOpen = pickingIcon;
+            closeForms();
+            state.eventIconPicker = wasOpen ? null : emission.name;
+            render();
+          },
+        }, event ? eventIcon(ctx, emission.name) : '？'),
         h('span', { class: 'chip event' }, readable(emission.name)),
         h('span', { class: 'muted tiny' }, params.length + ' field' + (params.length === 1 ? '' : 's')),
         h('span', { class: 'grow' }),
@@ -2962,6 +3041,7 @@ function stepEmits(ctx, slice) {
               + '"Nothing uses these" once no command records it.',
             onclick: () => patchSlice((b) => { b.publishes.splice(i, 1); }),
           }, '×'))),
+      pickingIcon && event ? eventIconPicker(ctx, emission.name, event) : null,
       open ? eventFields(ctx, emission, event) : null);
   });
   if (!cards.length) cards.push(h('div', { class: 'empty' }, 'Records nothing yet.'));
@@ -3015,6 +3095,50 @@ function warnScripted(ctx, eventName) {
   toast(`Renamed. ${scripted.join(', ')} handle${scripted.length === 1 ? 's' : ''} `
     + `${readable(eventName)} in code, which was not rewritten — check ${
       scripted.length === 1 ? 'it' : 'them'}.`);
+}
+
+// A key in `publishes[].parameters` that no longer names a property on
+// the event it targets is not a reference to anything — the field it
+// once read is gone. The only way there is one is a leftover from
+// before `removeEventField` cleaned up after itself; swept here, on
+// every payload edit, so a leftover like that never blocks removing the
+// value it still, invisibly, claimed to use.
+function pruneDanglingEmissionParameters(ctx, body) {
+  for (const emission of body.publishes || []) {
+    if (!emission.parameters) continue;
+    const eventDef = ctx['event-definitions'][emission.name];
+    const known = new Set((eventDef ? eventDef.properties : []).map((q) => q.name));
+    for (const key of Object.keys(emission.parameters)) {
+      if (!known.has(key)) delete emission.parameters[key];
+    }
+  }
+}
+
+// A field leaves the event, and takes its binding with it. The binding
+// lives on the *command* side — `publishes[].parameters`, keyed by this
+// field's own name — and every command that emits the event can hold
+// one. Dropped only from the event, that key would go on pointing at
+// whatever command value it read, invisibly, since nothing on the page
+// still shows a field for it to belong to. Left in place, it keeps
+// "using" that value forever, which is what later refuses to let the
+// value itself be removed for a reason no longer visible anywhere.
+function removeEventField(ctx, emission, index, propertyName) {
+  run(() => {
+    const eventBody = deepClone(activeContext()['event-definitions'][emission.name]);
+    eventBody.properties.splice(index, 1);
+    updateDefinition('event-definition', ctx.id, emission.name, eventBody);
+
+    for (const [name, body] of Object.entries(activeContext()['command-definitions'])) {
+      const bound = (body.publishes || [])
+        .some((e) => e.name === emission.name && e.parameters && propertyName in e.parameters);
+      if (!bound) continue;
+      const next = deepClone(body);
+      for (const e of next.publishes || []) {
+        if (e.name === emission.name && e.parameters) delete e.parameters[propertyName];
+      }
+      updateDefinition('command-definition', ctx.id, name, next);
+    }
+  });
 }
 
 function eventFields(ctx, emission, event) {
@@ -3091,12 +3215,31 @@ function eventFields(ctx, emission, event) {
           advanced() ? h('span', { class: 'tech' }, p.name) : null,
           h('button', {
             class: 'btn tiny danger', title: 'Remove this field from the event',
-            onclick: () => patch('event-definition', emission.name, (b) => { b.properties.splice(i, 1); }),
+            onclick: () => removeEventField(ctx, emission, i, p.name),
           }, '×'))),
       enumType ? h('div', { class: 'use' },
         h('span', { class: 'muted' }, 'can be '), ...enumMemberChips(ctx, enumType)) : null,
     ];
   });
+
+  // What the command was given but this event does not yet carry. A
+  // field copied from here is not a guess at what the event should say —
+  // it is a value already in the command's own vocabulary, so the copy
+  // both declares the field and wires it to that value in one step.
+  const missing = flag('copyFields')
+    ? commandProperties.filter((q) => !(event.properties || []).some((p) => p.name === q.name))
+    : [];
+  const copyFromCommand = (property) => {
+    patch('event-definition', emission.name, (b) => b.properties.push({
+      name: property.name, propertyType: property.propertyType,
+      isOptional: property.isOptional, isList: property.isList,
+    }));
+    patchSlice((b) => {
+      const e = b.publishes.find((x) => x.name === emission.name);
+      e.parameters = e.parameters || {};
+      e.parameters[property.name] = { parameterName: property.name };
+    });
+  };
 
   return h('div', { class: 'fields' },
     rows.length ? rows : h('div', { class: 'empty' }, 'Carries nothing yet.'),
@@ -3110,6 +3253,13 @@ function eventFields(ctx, emission, event) {
       h('span', { class: 'grow', style: 'flex:1' }),
       h('span', { class: 'chip' }, readable(typeLabel(m))),
       h('span', { class: 'muted tiny' }, 'always carried'))),
+    missing.length ? h('div', { class: 'copy-missing' },
+      h('span', { class: 'muted tiny' }, 'Given but not recorded: '),
+      missing.map((p) => h('button', {
+        class: 'chip suggest',
+        title: 'Add ' + propertyWords(p.name) + ' to this event, carried through unchanged',
+        onclick: () => copyFromCommand(p),
+      }, '+ ' + propertyWords(p.name)))) : null,
     adderSlot('ev:' + emission.name, 'emits', '+ field', () => propertyAdder(ctx, {
       label: '+ Add field',
       onAdd: (property) => patch('event-definition', emission.name, (b) => b.properties.push(property)),
@@ -3718,8 +3868,8 @@ function renderEntity(ctx, main) {
   if (state.iconPicker === name) main.appendChild(iconPicker(ctx, name, entity));
 
   main.appendChild(entityTabs(ctx, name));
-  if (state.entityTab === 'specifications') {
-    main.appendChild(specificationPanel(ctx, name));
+  if (state.entityTab === 'property-scenarios') {
+    main.appendChild(propertyScenarioPanel(ctx, name));
     return;
   }
 
@@ -3937,6 +4087,48 @@ function iconPicker(ctx, name, entity) {
       }, 'Clear') : null,
       h('button', {
         class: 'btn ghost', onclick: () => { state.iconPicker = null; render(); },
+      }, 'Done')));
+}
+
+// The event analogue of iconPicker. Kept as its own function rather
+// than a parameterised one — a rename or a patch call reads plainly
+// this way, and the two forms are alike by coincidence of shape, not
+// by being the same form on two collections.
+function eventIconPicker(ctx, name, event) {
+  const current = eventIcon(ctx, name);
+  let typed = event.icon || '';
+  const set = (icon) => {
+    state.eventIconPicker = null;
+    patch('event-definition', name, (b) => {
+      const next = String(icon || '').trim();
+      if (next) b.icon = next;
+      else delete b.icon;
+    });
+  };
+  return h('div', { class: 'inline-form icons event' },
+    h('div', { class: 'q' },
+      `The mark ${readable(name)} is shown with — in the sandbox timeline, in every Given that `
+      + 'records it, and everywhere it is recorded.'),
+    h('div', { class: 'grid' }, ICON_CHOICES.map((icon) => h('button', {
+      class: 'ic-opt' + (icon === current ? ' on' : ''), title: 'Use this',
+      onclick: () => set(icon),
+    }, icon))),
+    h('div', { class: 'adder' },
+      h('input', {
+        type: 'text', value: typed, placeholder: 'or type one', style: 'width:110px',
+        oninput: (e) => { typed = e.target.value; },
+        onkeydown: (e) => {
+          if (e.key === 'Enter') { e.preventDefault(); set(typed); }
+          if (e.key === 'Escape') { e.preventDefault(); state.eventIconPicker = null; render(); }
+        },
+      }),
+      h('button', { class: 'btn', onclick: () => set(typed) }, 'Use'),
+      event.icon ? h('button', {
+        class: 'btn ghost', title: 'Back to the neutral mark',
+        onclick: () => set(''),
+      }, 'Clear') : null,
+      h('button', {
+        class: 'btn ghost', onclick: () => { state.eventIconPicker = null; render(); },
       }, 'Done')));
 }
 
@@ -5166,7 +5358,7 @@ function renderScenarios(ctx, main) {
 }
 
 // ============================================================
-// C2 · Specifications
+// C2 · Property scenarios
 //
 // The entity-page analogue of Scenarios, one level down: a Given of
 // events written by hand, and a Then nobody types — derived from the
@@ -5182,48 +5374,48 @@ function renderScenarios(ctx, main) {
 // mechanism Scenarios already has, reused rather than reinvented.
 // ============================================================
 
-const heldSpecRuns = new Map();
+const heldPropertyScenarioRuns = new Map();
 
-function specificationResult(ctx, key, body) {
-  if (!specificationTouchesScript(ctx, body)) return runSpecification(ctx, body);
-  const cached = heldSpecRuns.get(key);
+function propertyScenarioResult(ctx, key, body) {
+  if (!propertyScenarioTouchesScript(ctx, body)) return runPropertyScenario(ctx, body);
+  const cached = heldPropertyScenarioRuns.get(key);
   if (cached && cached.at === loadEvents().length) return cached.result;
   return {
     status: 'held',
-    reason: 'This specification checks a scripted property, so it runs when you ask and not before.',
+    reason: 'This property scenario checks a scripted property, so it runs when you ask and not before.',
   };
 }
 
-function runHeldSpecification(ctx, key, body) {
-  heldSpecRuns.set(key, { at: loadEvents().length, result: runSpecification(ctx, body) });
+function runHeldPropertyScenario(ctx, key, body) {
+  heldPropertyScenarioRuns.set(key, { at: loadEvents().length, result: runPropertyScenario(ctx, body) });
   render();
 }
 
-const SPEC_STATUS_WORDS = {
-  current: ['✓', 'Current', 'What this entity does is what this specification says it does'],
+const PROPERTY_SCENARIO_STATUS_WORDS = {
+  current: ['✓', 'Current', 'What this entity does is what this property scenario says it does'],
   drifted: ['≠', 'Drifted', 'This entity behaves differently now than when this was accepted'],
   broken: ['!', 'Broken', 'This could not be run at all — something it names is gone'],
   held: ['·', 'Not run', 'Checks a script, so it runs only when asked'],
 };
 
-function specificationsOf(ctx, entityName) {
-  return Object.entries(ctx['specification-definitions'] || {})
+function propertyScenariosOf(ctx, entityName) {
+  return Object.entries(ctx['property-scenario-definitions'] || {})
     .filter(([, body]) => body.entity === entityName)
     .map(([key, body]) => ({ key, body }));
 }
 
-// Where a specification's Given lives, and what it can be helped with
+// Where a property scenario's Given lives, and what it can be helped with
 // — the same identifiers-already-written suggestion Scenarios' Given
 // gets. `identifiersInUse` reads `body.given`/`body.when` generically;
-// a specification simply has no `when`; there is nothing to harvest.
+// a property scenario simply has no `when`; there is nothing to harvest.
 function specWhere(ctx) {
   return {
-    root: () => state.specificationDraft.body,
-    suggest: (entity) => identifiersInUse(ctx, state.specificationDraft.body, entity),
+    root: () => state.propertyScenarioDraft.body,
+    suggest: (entity) => identifiersInUse(ctx, state.propertyScenarioDraft.body, entity),
   };
 }
 
-// A specification's Then, one property per line — the analogue of
+// A property scenario's Then, one property per line — the analogue of
 // outcomeCard, shaped around `{propertyName: value}` rather than
 // `{outcome, events}`.
 function entityOutcomeCard(then, title) {
@@ -5238,55 +5430,55 @@ function entityOutcomeCard(then, title) {
       : h('div', { class: 'empty' }, 'nothing checked'));
 }
 
-function specificationRow(ctx, entry) {
+function propertyScenarioRow(ctx, entry) {
   const { key, body } = entry;
-  const result = specificationResult(ctx, key, body);
-  const [mark, word, why] = SPEC_STATUS_WORDS[result.status];
-  const open = state.openSpecification === key;
+  const result = propertyScenarioResult(ctx, key, body);
+  const [mark, word, why] = PROPERTY_SCENARIO_STATUS_WORDS[result.status];
+  const open = state.openPropertyScenario === key;
 
   const head = h('div', { class: 'row scenario-row' },
     h('span', { class: 'sc-mark s-' + result.status, title: why }, mark),
     h('button', {
       class: 'sc-name',
-      onclick: () => { state.openSpecification = open ? null : key; render(); },
-    }, specificationName(body, propertyWords)),
+      onclick: () => { state.openPropertyScenario = open ? null : key; render(); },
+    }, propertyScenarioName(body, propertyWords)),
     h('span', { class: 'grow' }),
     h('span', { class: 'muted tiny' }, word),
     reveal(
       result.status === 'held'
         ? h('button', {
             class: 'btn tiny', title: 'Run this one now',
-            onclick: () => runHeldSpecification(ctx, key, body),
+            onclick: () => runHeldPropertyScenario(ctx, key, body),
           }, 'Run')
         : null,
       h('button', {
         class: 'btn tiny',
-        onclick: () => { closeForms(); state.renamingSpecification = key; render(); },
+        onclick: () => { closeForms(); state.renamingPropertyScenario = key; render(); },
       }, 'Rename'),
-      removeButton('specification:' + key, {
-        label: 'Remove', title: 'Remove this specification. Nothing else is touched.',
+      removeButton('property-scenario:' + key, {
+        label: 'Remove', title: 'Remove this property scenario. Nothing else is touched.',
         onRemove: () => run(() => {
-          removeDefinition('specification-definition', ctx.id, key);
-          if (state.openSpecification === key) state.openSpecification = null;
+          removeDefinition('property-scenario-definition', ctx.id, key);
+          if (state.openPropertyScenario === key) state.openPropertyScenario = null;
         }),
       })));
 
-  if (state.renamingSpecification === key) {
+  if (state.renamingPropertyScenario === key) {
     return h('div', { class: 'scenario' }, head, inlineForm({
-      question: 'What should this specification be called?',
-      placeholder: specificationName({ ...body, name: undefined }, propertyWords),
+      question: 'What should this property scenario be called?',
+      placeholder: propertyScenarioName({ ...body, name: undefined }, propertyWords),
       value: typeof body.name === 'string' ? body.name : '',
       submitLabel: 'Rename',
       onSubmit: (v) => {
         const next = (v || '').trim();
-        state.renamingSpecification = null;
+        state.renamingPropertyScenario = null;
         run(() => {
           const nextBody = { ...deepClone(body) };
           if (next) nextBody.name = next; else delete nextBody.name;
-          updateDefinition('specification-definition', ctx.id, key, nextBody);
+          updateDefinition('property-scenario-definition', ctx.id, key, nextBody);
         });
       },
-      onCancel: () => { state.renamingSpecification = null; render(); },
+      onCancel: () => { state.renamingPropertyScenario = null; render(); },
     }));
   }
 
@@ -5311,42 +5503,42 @@ function specificationRow(ctx, entry) {
             entityOutcomeCard(result.expected, 'was'))
         : result.status === 'drifted'
           ? h('div', { class: 'drift' },
-              entityOutcomeCard(result.expected, 'this specification says'),
+              entityOutcomeCard(result.expected, 'this property scenario says'),
               entityOutcomeCard(result.actual, 'the model now does'),
               h('div', { class: 'adder' },
                 h('button', {
                   class: 'btn primary',
-                  title: 'Store what the model now does as what this specification expects',
+                  title: 'Store what the model now does as what this property scenario expects',
                   onclick: () => run(() => {
-                    updateDefinition('specification-definition', ctx.id, key,
+                    updateDefinition('property-scenario-definition', ctx.id, key,
                       { ...deepClone(body), then: result.actual });
                   }),
                 }, 'Accept this'),
                 h('span', { class: 'muted tiny' },
-                  'Nothing changes in the model — only what this specification expects of it.')))
+                  'Nothing changes in the model — only what this property scenario expects of it.')))
           : entityOutcomeCard(result.status === 'held' ? body.then : result.expected,
               result.status === 'held' ? 'last accepted' : 'and it does')));
 }
 
-function startSpecification(ctx, entityName) {
+function startPropertyScenario(ctx, entityName) {
   closeForms();
-  state.entityTab = 'specifications';
-  state.specificationDraft = {
+  state.entityTab = 'property-scenarios';
+  state.propertyScenarioDraft = {
     key: null,
     body: { entity: entityName, forInstance: '', given: [], assert: [] },
   };
   render();
 }
 
-function patchSpecificationDraft(mutate) {
-  const draft = state.specificationDraft;
+function patchPropertyScenarioDraft(mutate) {
+  const draft = state.propertyScenarioDraft;
   if (!draft) return;
   mutate(draft.body);
   render();
 }
 
-function specificationEditor(ctx) {
-  const draft = state.specificationDraft;
+function propertyScenarioEditor(ctx) {
+  const draft = state.propertyScenarioDraft;
   const body = draft.body;
   const entity = ctx['entity-definitions'][body.entity];
   const eventNames = Object.keys(ctx['event-definitions']).sort();
@@ -5360,7 +5552,7 @@ function specificationEditor(ctx) {
     const definition = ctx['event-definitions'][step.event] || {};
     return h('div', { class: 'card sc-step' },
       h('div', { class: 'row' },
-        pick(eventNames.map((n) => [n, readable(n)]), step.event, (v) => patchSpecificationDraft((b) => {
+        pick(eventNames.map((n) => [n, readable(n)]), step.event, (v) => patchPropertyScenarioDraft((b) => {
           b.given[index] = { event: v, data: {}, recordedAt: step.recordedAt };
         })),
         h('span', { class: 'grow' }),
@@ -5368,14 +5560,14 @@ function specificationEditor(ctx) {
         h('input', {
           class: 'vin tiny-in', value: step.recordedAt,
           title: 'The instant this was recorded, in whole seconds. A projection may fold it.',
-          onchange: (e) => patchSpecificationDraft((b) => {
+          onchange: (e) => patchPropertyScenarioDraft((b) => {
             const n = Number(e.target.value);
             b.given[index].recordedAt = Number.isInteger(n) ? n : step.recordedAt;
           }),
         }),
         h('button', {
           class: 'btn tiny danger',
-          onclick: () => patchSpecificationDraft((b) => { b.given.splice(index, 1); }),
+          onclick: () => patchPropertyScenarioDraft((b) => { b.given.splice(index, 1); }),
         }, '×')),
       payloadEditor(ctx, definition.properties, ['given', index, 'data'], specWhere(ctx)));
   });
@@ -5384,7 +5576,7 @@ function specificationEditor(ctx) {
   const assertRows = properties.map((property) => h('label', { class: 'tiny muted', style: 'display:block' },
     h('input', {
       type: 'checkbox', checked: (body.assert || []).includes(property.name),
-      onchange: (e) => patchSpecificationDraft((b) => {
+      onchange: (e) => patchPropertyScenarioDraft((b) => {
         b.assert = e.target.checked
           ? [...(b.assert || []), property.name]
           : (b.assert || []).filter((n) => n !== property.name);
@@ -5392,7 +5584,7 @@ function specificationEditor(ctx) {
     }), ' ', propertyWords(property.name)));
 
   return h('div', { class: 'card sc-editor' },
-    h('h4', {}, draft.key ? 'Edit this specification' : 'A new specification'),
+    h('h4', {}, draft.key ? 'Edit this property scenario' : 'A new property scenario'),
     h('div', { class: 'muted small' },
       'Write what had already happened, then say which of it to check. What it ends up being is '
       + 'worked out here — you are never asked to predict it.'),
@@ -5402,7 +5594,7 @@ function specificationEditor(ctx) {
     h('div', { class: 'adder' },
       h('button', {
         class: 'btn tiny',
-        onclick: () => patchSpecificationDraft((b) => {
+        onclick: () => patchPropertyScenarioDraft((b) => {
           b.given = [...(b.given || []),
             { event: eventNames[0], data: {}, recordedAt: nextInstant() }];
         }),
@@ -5417,11 +5609,11 @@ function specificationEditor(ctx) {
     assertRows.length ? assertRows : h('div', { class: 'empty' }, 'nothing to check yet'),
 
     h('div', { class: 'adder', style: 'margin-top:14px' },
-      h('button', { class: 'btn primary', onclick: () => saveSpecification(ctx) },
+      h('button', { class: 'btn primary', onclick: () => savePropertyScenario(ctx) },
         draft.key ? 'Save' : 'Work out what happens'),
       h('button', {
         class: 'btn ghost',
-        onclick: () => { state.specificationDraft = null; render(); },
+        onclick: () => { state.propertyScenarioDraft = null; render(); },
       }, 'Cancel')));
 }
 
@@ -5430,14 +5622,14 @@ function specificationEditor(ctx) {
 // only on the draft; the saved body keeps just their folded values,
 // under `then`, which is also what re-opening this for editing reads
 // the checked set back from.
-function saveSpecification(ctx) {
-  const draft = state.specificationDraft;
+function savePropertyScenario(ctx) {
+  const draft = state.propertyScenarioDraft;
   const body = deepClone(draft.body);
   const propertyNames = body.assert || [];
   delete body.assert;
   let then;
   try {
-    then = deriveSpecificationThen(ctx, body, propertyNames);
+    then = derivePropertyScenarioThen(ctx, body, propertyNames);
   } catch (error) {
     return toast(error instanceof EvaluationError
       ? error.message
@@ -5446,46 +5638,46 @@ function saveSpecification(ctx) {
   body.then = then;
   run(() => {
     const key = draft.key || generateId();
-    if (draft.key) updateDefinition('specification-definition', ctx.id, key, body);
-    else addDefinition('specification-definition', ctx.id, key, body);
-    state.specificationDraft = null;
-    state.openSpecification = key;
+    if (draft.key) updateDefinition('property-scenario-definition', ctx.id, key, body);
+    else addDefinition('property-scenario-definition', ctx.id, key, body);
+    state.propertyScenarioDraft = null;
+    state.openPropertyScenario = key;
   });
 }
 
-function specificationPanel(ctx, entityName) {
-  const entries = specificationsOf(ctx, entityName);
+function propertyScenarioPanel(ctx, entityName) {
+  const entries = propertyScenariosOf(ctx, entityName);
   return h('div', { class: 'scenarios' },
     entries.length
-      ? entries.map((entry) => specificationRow(ctx, entry))
+      ? entries.map((entry) => propertyScenarioRow(ctx, entry))
       : h('div', { class: 'blank small' },
           h('p', { class: 'muted small' },
-            'Nothing exercises this entity yet. A specification is what had already happened and '
+            'Nothing exercises this entity yet. A property scenario is what had already happened and '
             + 'which of it to check — and it is the only thing here that notices when an edit '
             + 'somewhere else changes what this entity ends up being.')),
-    state.specificationDraft && state.specificationDraft.body.entity === entityName
-      ? specificationEditor(ctx)
+    state.propertyScenarioDraft && state.propertyScenarioDraft.body.entity === entityName
+      ? propertyScenarioEditor(ctx)
       : h('div', { class: 'adder' },
           h('button', {
             class: 'btn' + (entries.length ? '' : ' primary'),
-            onclick: () => startSpecification(ctx, entityName),
-          }, '+ New specification')));
+            onclick: () => startPropertyScenario(ctx, entityName),
+          }, '+ New property scenario')));
 }
 
 function entityTabs(ctx, entityName) {
-  const entries = specificationsOf(ctx, entityName);
+  const entries = propertyScenariosOf(ctx, entityName);
   const trouble = entries.filter((e) => {
-    const status = specificationResult(ctx, e.key, e.body).status;
+    const status = propertyScenarioResult(ctx, e.key, e.body).status;
     return status === 'drifted' || status === 'broken';
   }).length;
   const tab = (key, label, extra) => h('button', {
     class: 'tab' + (state.entityTab === key ? ' on' : ''),
     'aria-pressed': state.entityTab === key ? 'true' : 'false',
-    onclick: () => { state.entityTab = key; state.specificationDraft = null; render(); },
+    onclick: () => { state.entityTab = key; state.propertyScenarioDraft = null; render(); },
   }, label, extra);
   return h('div', { class: 'tabs' },
     tab('definition', 'Definition'),
-    tab('specifications', 'Specifications',
+    tab('property-scenarios', 'Property scenarios',
       entries.length
         ? h('span', { class: 'badge' + (trouble ? '' : ' clear') }, trouble || entries.length)
         : null));
@@ -5653,6 +5845,18 @@ function sandboxDriver(ctx) {
 
 // ---------- the timeline ----------
 
+// The pointer never owns a single `.estep` — the whole page gets
+// rebuilt under it on every move, which would drop a capture set on
+// one particular element. Tracking through `window` instead survives
+// that: each move just asks the live DOM what is under the pointer
+// now, so it does not matter that "now" is a different node than a
+// moment ago.
+function scrubToPointer(e, goTo) {
+  const el = document.elementFromPoint(e.clientX, e.clientY);
+  const step = el && el.closest && el.closest('.estep');
+  if (step) goTo(Number(step.dataset.index) + 1);
+}
+
 function sandboxTimeline(ctx) {
   const total = session.log.length;
   const position = sessionPosition();
@@ -5662,15 +5866,36 @@ function sandboxTimeline(ctx) {
     render();
   };
 
-  const marks = session.steps.map((step) => {
-    const on = position >= step.to && (sessionStepAt(position) === step);
-    return h('button', {
-      class: 'tick' + (on ? ' on' : '') + (position < step.to ? ' ahead' : ''),
-      title: `${readable(step.command)} — ${step.to - step.from} event`
-        + (step.to - step.from === 1 ? '' : 's'),
-      onclick: () => goTo(step.to),
-    }, h('span', { class: 'tname' }, readable(step.command)));
+  const startDrag = (e) => {
+    scrubToPointer(e, goTo);
+    const onMove = (ev) => scrubToPointer(ev, goTo);
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+
+  // Which step produced event `i` — not sessionStepAt, which answers a
+  // different question (the step a *position* last completed inside).
+  const stepOfEvent = (i) => session.steps.find((s) => i >= s.from && i < s.to) || null;
+
+  const items = [];
+  session.log.forEach((event, i) => {
+    if (i === position) items.push(h('span', { class: 'eplayhead' }));
+    const step = stepOfEvent(i);
+    items.push(h('span', {
+      class: 'estep'
+        + (i < position ? (i === position - 1 ? ' current' : ' played') : ' upcoming')
+        + (step && i === step.to - 1 ? ' step-end' : ''),
+      'data-index': String(i),
+      title: readable(event.type) + (step ? ' — from ' + readable(step.command) : '')
+        + (Object.keys(event.data || {}).length ? ' · ' + payloadText(event.data) : ''),
+      onclick: () => goTo(i + 1),
+    }, eventIcon(ctx, event.type)));
   });
+  if (position === total) items.push(h('span', { class: 'eplayhead' }));
 
   return h('div', { class: 'timeline' },
     h('div', { class: 'trow' },
@@ -5678,17 +5903,24 @@ function sandboxTimeline(ctx) {
         class: 'btn tiny', disabled: position === 0, title: 'Back one event',
         onclick: () => goTo(position - 1),
       }, '◀'),
-      h('input', {
-        type: 'range', class: 'scrub', min: '0', max: String(total), value: String(position),
-        title: 'Scrub through what has happened',
-        oninput: (e) => goTo(Number(e.target.value)),
-      }),
+      h('div', {
+        class: 'escrub', tabindex: '0', role: 'slider',
+        'aria-orientation': 'horizontal', 'aria-valuemin': '0', 'aria-valuemax': String(total),
+        'aria-valuenow': String(position), 'aria-valuetext': `${position} of ${total}`,
+        title: 'Drag, click, or use the arrow keys to scrub through what has happened',
+        onpointerdown: startDrag,
+        onkeydown: (e) => {
+          if (e.key === 'ArrowLeft') { e.preventDefault(); goTo(position - 1); }
+          else if (e.key === 'ArrowRight') { e.preventDefault(); goTo(position + 1); }
+          else if (e.key === 'Home') { e.preventDefault(); goTo(0); }
+          else if (e.key === 'End') { e.preventDefault(); goTo(total); }
+        },
+      }, items),
       h('button', {
         class: 'btn tiny', disabled: position === total, title: 'On one event',
         onclick: () => goTo(position + 1),
       }, '▶'),
-      h('span', { class: 'muted tiny' }, `${position} of ${total}`)),
-    marks.length ? h('div', { class: 'ticks' }, marks) : null);
+      h('span', { class: 'muted tiny' }, `${position} of ${total}`)));
 }
 
 // ---------- what the current step saw ----------
@@ -5821,6 +6053,7 @@ function renderSandbox(ctx, main) {
           ? sessionVisible().map((event, index) => h('div', {
               class: index === sessionPosition() - 1 ? 'lit' : '',
             },
+              h('span', { class: 'ic' }, eventIcon(ctx, event.type)),
               h('span', { class: 'y' }, readable(event.type)),
               h('span', { class: 'k' }, '  ' + payloadText(event.data))))
           : h('div', { class: 'empty' }, 'nothing yet'))));

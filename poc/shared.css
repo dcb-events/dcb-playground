@@ -64,6 +64,19 @@ body.f-dark .btn.primary:hover { background: #93c5fd; color: #06121f; }
 body.f-dark .advanced { background: #101827; }
 body.f-dark #toast { background: #1e293b; color: var(--text); }
 
+/* Roomier fields (flag: roomy) — every field you type into grows to a
+   size worth aiming at. Buttons and chips grow with them, or a row ends
+   up lopsided: one large control among several the flag left alone. */
+body.f-roomy input[type=text], body.f-roomy select, body.f-roomy textarea {
+  font-size: 14px; padding: 8px 11px;
+}
+body.f-roomy input.inline { padding: 3px 4px; }
+body.f-roomy .btn { padding: 7px 14px; font-size: 13px; }
+body.f-roomy .btn.tiny { padding: 4px 10px; font-size: 12px; }
+body.f-roomy .chip { font-size: 12px; padding: 3px 10px; }
+body.f-roomy .adder { gap: 9px; }
+body.f-roomy .field, body.f-roomy .row .sentence { font-size: 13px; }
+
 * { box-sizing: border-box; }
 
 body {
