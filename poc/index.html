@@ -237,6 +237,13 @@
   .chip.entity, .op.ent { cursor: pointer; }
   .chip.entity:hover, .op.ent:hover { outline: 1px solid var(--entity); }
 
+  /* A chip that is a way to something else, wherever a definition
+     turns up as a cross-reference rather than as itself. Its own kind
+     already colours it (chip.command, chip.event, chip.projection); this
+     only adds the affordance, in the same colour. */
+  .chip.linkable { cursor: pointer; }
+  .chip.linkable:hover { outline: 1px solid currentColor; }
+
   /* ---------- one thing, on its own page ----------
      A property row, wherever it is shown: the name and what it holds on
      the first line, who moves it and who reads it on the second. The
@@ -475,6 +482,7 @@
   .sc-body { margin-top: 9px; padding-top: 9px; border-top: 1px dashed var(--border); }
   .sc-line { font-family: var(--mono); font-size: 11.5px; line-height: 1.7; }
   .sc-line .y { color: var(--event); }
+  .sc-line .c { color: var(--command); }
   .sc-line .k { color: var(--muted); }
   .sc-body .card { font-family: var(--mono); font-size: 11.5px; line-height: 1.7; margin-top: 4px; }
   .sc-body .card .k { color: var(--muted); }
@@ -590,7 +598,7 @@
 // ============================================================
 
 const state = {
-  view: 'slice',            // 'slice' | 'draft' | 'entity' | 'types' | 'projections'
+  view: 'slice',            // 'slice' | 'draft' | 'entity' | 'types' | 'projections' | 'events'
   slice: null,
   sel: null,                // the row being attended to (reveal: select)
   editing: null,            // the step being edited (reveal: steps)
@@ -598,6 +606,7 @@ const state = {
   projDraft: null,          // { name, body } — a projection being edited
   newProjection: null,      // a projection being described
   renamingProjection: null,
+  newEvent: null,           // { name } — a bare event being described
   renamingEvent: null,
   renamingCommand: null,
   editMember: null,         // { where, name } — the member being edited
@@ -988,9 +997,7 @@ function looseEnds(ctx) {
   for (const name of loose.events) {
     found.push({
       what: readable(name), why: 'no command records this event',
-      // An event nothing records has no page: it is only reachable from
-      // the bottom of the rail, which is where this points.
-      go: () => { state.land = `[data-key="${CSS.escape('loose:' + name)}"]`; },
+      go: () => goToEvent(name),
     });
   }
   for (const name of loose.entities) {
@@ -1090,8 +1097,6 @@ function paletteEntries(ctx) {
       state.entitiesCollapsed = false; state.view = 'entity'; state.entity = name;
     });
   }
-  // An event has no page of its own: it is defined inside the command
-  // that records it, so that is where choosing one goes.
   const records = {};
   for (const slice of allSlices(ctx)) {
     for (const emit of slice.emits) records[emit.emission.name] = slice.name;
@@ -1099,13 +1104,10 @@ function paletteEntries(ctx) {
   for (const name of Object.keys(ctx['event-definitions'])) {
     const from = records[name];
     add('event', readable(name), from ? 'recorded by ' + readable(from) : 'recorded by nothing',
-      () => {
-        if (!from) return;
-        state.view = 'slice'; state.slice = from; state.openEvent = name;
-      });
+      () => goToEvent(name));
   }
   for (const name of Object.keys(ctx['projection-definitions'])) {
-    add('projection', readable(name), 'projections', () => { state.view = 'projections'; });
+    add('projection', readable(name), 'projections', () => goToProjection(name));
   }
   if (advanced()) {
     for (const name of Object.keys(ctx['custom-type-definitions'])) {
@@ -1348,7 +1350,7 @@ function qrow(tag, { cls = '', key, step: stepKey, src }, ...children) {
     onclick: byClick ? (e) => {
       // A click meant for a control inside the row is not a click on
       // the row.
-      if (e.target.closest('button, select, input, label, a, .chip.entity, .op.ent')) return;
+      if (e.target.closest('button, select, input, label, a, .chip.entity, .chip.linkable, .op.ent')) return;
       toggle();
     } : null,
     onkeydown: byClick ? (e) => {
@@ -1682,6 +1684,75 @@ function entityRef(ctx, name, { cls = 'chip entity', text } = {}) {
     text === undefined ? readable(name) : text);
 }
 
+// An event has its own page too, for the same reason an entity does:
+// it is named from more than one place — a command's publish list, an
+// entity's or a projection's handlers, a scenario's Given — and every
+// one of those is the way there.
+function goToEvent(name) {
+  closeForms();
+  state.view = 'events';
+  state.openEvent = name;
+  state.land = `[data-key="${CSS.escape('event:' + name)}"]`;
+  render();
+}
+function eventRef(ctx, name, { cls = 'chip event linkable', text } = {}) {
+  return h('span', {
+    class: cls, title: 'Open ' + readable(name),
+    onclick: () => goToEvent(name),
+  }, h('i', { class: 'ic' }, eventIcon(ctx, name)), text === undefined ? readable(name) : text);
+}
+
+function goToCommand(name) {
+  closeForms();
+  state.view = 'slice';
+  state.slice = name;
+  state.tab = 'definition';
+  render();
+}
+function commandRef(ctx, name, { cls = 'chip command linkable', text } = {}) {
+  return h('span', {
+    class: cls, title: 'Open ' + readable(name),
+    onclick: () => goToCommand(name),
+  }, text === undefined ? readable(name) : text);
+}
+
+function goToProjection(name) {
+  closeForms();
+  state.view = 'projections';
+  state.land = `[data-key="${CSS.escape('projection:' + name)}"]`;
+  render();
+}
+function projectionRef(ctx, name, { cls = 'chip projection linkable', text } = {}) {
+  return h('span', {
+    class: cls, title: 'Open ' + readable(name),
+    onclick: () => goToProjection(name),
+  }, text === undefined ? readable(name) : text);
+}
+
+// A specific scenario, wherever it is shown, is always reached the
+// same way regardless of where scenarios are placed on the command's
+// own page — see `scenarioCountButton`, which this mirrors.
+function goToScenario(ctx, key) {
+  const body = ctx['scenario-definitions'][key];
+  if (!body) return;
+  closeForms();
+  state.view = 'slice';
+  state.slice = body.command;
+  state.tab = 'scenarios';
+  state.openScenario = key;
+  render();
+}
+function goToPropertyScenario(ctx, key) {
+  const body = ctx['property-scenario-definitions'][key];
+  if (!body) return;
+  closeForms();
+  state.view = 'entity';
+  state.entity = body.entity;
+  state.entityTab = 'property-scenarios';
+  state.openPropertyScenario = key;
+  render();
+}
+
 function typeChoices(ctx) {
   if (advanced()) return allTypeNames(ctx);
   return [...SIMPLE_TYPES, ...Object.keys(ctx['entity-definitions']).sort().map(idTypeOf)];
@@ -1737,7 +1808,7 @@ function inlineForm({ question, placeholder, value = '', showsIdentifier, submit
 const FORM_KEYS = [
   'newFeature', 'renamingFeature', 'newEntityAt', 'addingProp', 'addingMember',
   'renamingEntity', 'iconPicker', 'eventIconPicker', 'confirmRemove', 'newContext', 'newType', 'renamingType',
-  'newProjection', 'renamingProjection', 'projDraft', 'renamingEvent',
+  'newProjection', 'renamingProjection', 'projDraft', 'newEvent', 'renamingEvent',
   'renamingCommand', 'editMember', 'editRule', 'editBinding',
   'scenarioDraft', 'renamingScenario', 'sandboxDraft',
   'editHandler', 'propertyScenarioDraft', 'renamingPropertyScenario',
@@ -1870,6 +1941,16 @@ function renderRail() {
         state.view = 'projections'; render();
       },
     }, 'Projections'));
+    const eventNames = Object.keys(ctx['event-definitions']);
+    if (advanced() || eventNames.length) rail.appendChild(h('a', {
+      href: '#', class: state.view === 'events' ? 'on' : '',
+      'data-src': eventNames.map((n) => 'event:' + n).join(' ') || null,
+      title: eventNames.length ? eventNames.map(readable).join(', ') : 'nothing recorded yet',
+      onclick: (e) => {
+        e.preventDefault(); closeForms();
+        state.view = 'events'; render();
+      },
+    }, 'Events'));
   }
 
   // The sandbox belongs to no definition, so it hangs off nothing in
@@ -1887,22 +1968,20 @@ function renderRail() {
     : null));
 
 
-  // Where a definition ends up once the last thing that used it is
-  // gone. Nothing references these, so this is the one place a removal
-  // can never be refused — and the only place an event that no command
-  // records can be got rid of at all.
+  // Where an entity ends up once the last thing that used it is gone.
+  // Nothing references it, so this is the one place its removal can
+  // never be refused. An orphaned event is not shown here any more —
+  // the Events page above is now the one place for those, recorded or
+  // not.
   const loose = orphans(ctx);
-  if (loose.events.length || loose.entities.length) {
+  if (loose.entities.length) {
     rail.appendChild(h('h4', { style: 'margin-top:20px' }, 'Nothing uses these'));
-    const looseRow = (kind, name, chip, extra) => rail.appendChild(
+    const looseRow = (kind, name, chip) => rail.appendChild(
       qrow('div', { cls: 'loose', key: 'loose:' + name }, chip, h('span', { style: 'flex:1' }),
         reveal(removeButton(kind + ':' + name, {
           title: 'Remove this definition', onRemove: () => run(() =>
-            removeDefinition(kind === 'event' ? 'event-definition' : 'entity-definition', ctx.id, name)),
+            removeDefinition('entity-definition', ctx.id, name)),
         }))));
-    for (const n of loose.events) {
-      looseRow('event', n, h('span', { class: 'chip event' }, readable(n)));
-    }
     for (const n of loose.entities) {
       looseRow('entity', n, entityRef(ctx, n));
     }
@@ -2293,6 +2372,9 @@ function paintPage() {
   if (state.view === 'projections' && !advanced() && !Object.keys(ctx['projection-definitions']).length) {
     state.view = 'slice';
   }
+  if (state.view === 'events' && !advanced() && !Object.keys(ctx['event-definitions']).length) {
+    state.view = 'slice';
+  }
   // A thing removed from under its own page leaves the page with
   // nothing to show; the next one along is a better answer than a blank.
   if (state.view === 'entity' && !ctx['entity-definitions'][state.entity]) {
@@ -2322,6 +2404,7 @@ function paintPage() {
   if (state.view === 'entity') return renderEntity(ctx, main);
   if (state.view === 'types') return renderCustomTypes(ctx, main);
   if (state.view === 'projections') return renderProjections(ctx, main);
+  if (state.view === 'events') return renderEvents(ctx, main);
 
   if (!state.slice) {
     // With nothing to keep track of, a command has no identifier to be
@@ -2984,45 +3067,15 @@ function stepEmits(ctx, slice) {
   const cards = slice.emits.map(({ emission, event }, i) => {
     const open = state.openEvent === emission.name;
     const params = event ? (event.properties || []) : [];
-    // Renaming an event rewrites every entity handler, every
-    // projection handler and every other command's `publishes` in the
-    // same append, so it is offered here rather than being something
-    // only a rebuild can do.
-    if (state.renamingEvent === emission.name) {
-      return h('div', { class: 'card event' }, inlineForm({
-        question: 'Rename — every reference is rewritten with it', submitLabel: 'Rename',
-        value: readable(emission.name), showsIdentifier: true,
-        onSubmit: (v) => {
-          const next = toPascal(v);
-          const from = state.renamingEvent;
-          state.renamingEvent = null;
-          if (next && next !== from) {
-            run(() => {
-              warnScripted(activeContext(), from);
-              renameDefinition('event-definition', ctx.id, from, next);
-            });
-          }
-          else render();
-        },
-        onCancel: () => { state.renamingEvent = null; render(); },
-      }));
-    }
-    const pickingIcon = state.eventIconPicker === emission.name;
+    // The event's own shape — its name, its mark, its fields — is
+    // edited on its own page now (see `renderEvents`): an event may be
+    // published by more than one command, and one card editing what
+    // every other card shows was the risk, not the convenience. This
+    // card keeps only what is specific to *this* publish binding: which
+    // of this command's values fills which of the event's fields.
     return h('div', { class: 'card event' },
       qrow('div', { cls: 'row', key: 'emit:' + emission.name, step: 'emits' },
-        // The mark leads, exactly as it does on an entity's header — it
-        // is what this event will be recognised by wherever it shows up
-        // as more than a name, which the sandbox timeline now does.
-        h('button', {
-          class: 'icon-btn event', title: 'Choose the mark this is shown with',
-          onclick: () => {
-            const wasOpen = pickingIcon;
-            closeForms();
-            state.eventIconPicker = wasOpen ? null : emission.name;
-            render();
-          },
-        }, event ? eventIcon(ctx, emission.name) : '？'),
-        h('span', { class: 'chip event' }, readable(emission.name)),
+        event ? eventRef(ctx, emission.name) : h('span', { class: 'chip event' }, readable(emission.name)),
         h('span', { class: 'muted tiny' }, params.length + ' field' + (params.length === 1 ? '' : 's')),
         h('span', { class: 'grow' }),
         reveal(
@@ -3032,16 +3085,11 @@ function stepEmits(ctx, slice) {
             onclick: () => { state.openEvent = open ? null : emission.name; render(); },
           }, open ? 'Hide fields' : 'Fields'),
           h('button', {
-            class: 'btn tiny',
-            onclick: () => { closeForms(); state.renamingEvent = emission.name; render(); },
-          }, 'Rename'),
-          h('button', {
             class: 'btn tiny danger',
-            title: 'Stop recording this. The event itself stays — remove it under '
-              + '"Nothing uses these" once no command records it.',
+            title: 'Stop recording this. The event itself stays — remove it from its own '
+              + 'page once no command records it.',
             onclick: () => patchSlice((b) => { b.publishes.splice(i, 1); }),
           }, '×'))),
-      pickingIcon && event ? eventIconPicker(ctx, emission.name, event) : null,
       open ? eventFields(ctx, emission, event) : null);
   });
   if (!cards.length) cards.push(h('div', { class: 'empty' }, 'Records nothing yet.'));
@@ -3122,25 +3170,33 @@ function pruneDanglingEmissionParameters(ctx, body) {
 // still shows a field for it to belong to. Left in place, it keeps
 // "using" that value forever, which is what later refuses to let the
 // value itself be removed for a reason no longer visible anywhere.
-function removeEventField(ctx, emission, index, propertyName) {
+function removeEventField(ctx, eventName, index, propertyName) {
   run(() => {
-    const eventBody = deepClone(activeContext()['event-definitions'][emission.name]);
+    const eventBody = deepClone(activeContext()['event-definitions'][eventName]);
     eventBody.properties.splice(index, 1);
-    updateDefinition('event-definition', ctx.id, emission.name, eventBody);
+    updateDefinition('event-definition', ctx.id, eventName, eventBody);
 
     for (const [name, body] of Object.entries(activeContext()['command-definitions'])) {
       const bound = (body.publishes || [])
-        .some((e) => e.name === emission.name && e.parameters && propertyName in e.parameters);
+        .some((e) => e.name === eventName && e.parameters && propertyName in e.parameters);
       if (!bound) continue;
       const next = deepClone(body);
       for (const e of next.publishes || []) {
-        if (e.name === emission.name && e.parameters) delete e.parameters[propertyName];
+        if (e.name === eventName && e.parameters) delete e.parameters[propertyName];
       }
       updateDefinition('command-definition', ctx.id, name, next);
     }
   });
 }
 
+// What this command's publish binding does: map this command's own
+// values into the event's fields. The fields themselves — their names,
+// their types, how many there are — are no longer edited here; an
+// event may be published by more than one command, so their shape has
+// exactly one home, on the event's own page (`eventFieldsEditor`).
+// This stays specific to *this* binding for the same reason
+// `copyFromCommand` below has to: only this command knows what it was
+// given.
 function eventFields(ctx, emission, event) {
   if (!event) return h('div', { class: 'fields empty' }, 'This event no longer exists.');
   const command = activeContext()['command-definitions'][state.slice];
@@ -3171,20 +3227,7 @@ function eventFields(ctx, emission, event) {
     }),
   ];
 
-  const where = 'event:' + emission.name;
-  const rows = (event.properties || []).map((p, i) => {
-    if (editingMember(where, p.name)) {
-      // An event property has no initial value — nothing projects it,
-      // it is simply carried.
-      return memberEditor(ctx, {
-        member: p, where,
-        onReplace: (next) => patch('event-definition', emission.name, (b) => { b.properties[i] = next; }),
-        onRename: (name) => {
-          warnScripted(activeContext(), emission.name);
-          return renameMember('event-definition', ctx.id, emission.name, 'property', p.name, name);
-        },
-      });
-    }
+  const rows = (event.properties || []).map((p) => {
     const bound = (emission.parameters || {})[p.name];
     // Only options whose resolved type actually matches this field are
     // offered — a field typed `StudentId` has no use for a capacity.
@@ -3192,40 +3235,25 @@ function eventFields(ctx, emission, event) {
       const resolved = resolveOperandType(JSON.parse(v), { boundary, commandProperties, ctx });
       return resolved && resolved.propertyType === p.propertyType && resolved.isList === !!p.isList;
     });
-    const enumType = isStringEnumType(ctx, p.propertyType) ? p.propertyType : null;
-    return [
-      qrow('div', {
-        cls: 'field', key: 'ev:' + emission.name + ':' + p.name, step: 'emits',
-        src: 'evprop:' + emission.name + '.' + p.name,
-      },
-        h('span', { class: 'nm' }, propertyWords(p.name)),
-        h('span', { class: 'muted tiny' }, '←'),
-        pick(fieldOptions, bound === undefined ? '' : JSON.stringify(bound),
-          (v) => patchSlice((b) => {
-            const e = b.publishes.find((x) => x.name === emission.name);
-            e.parameters = e.parameters || {};
-            e.parameters[p.name] = JSON.parse(v);
-          }), '— unset —'),
-        h('span', { class: 'grow', style: 'flex:1' }),
-        reveal(
-          h('span', {
-            class: 'chip editable', title: 'Rename or retype this field',
-            onclick: () => openMember(where, p.name),
-          }, readable(typeLabel(p))),
-          advanced() ? h('span', { class: 'tech' }, p.name) : null,
-          h('button', {
-            class: 'btn tiny danger', title: 'Remove this field from the event',
-            onclick: () => removeEventField(ctx, emission, i, p.name),
-          }, '×'))),
-      enumType ? h('div', { class: 'use' },
-        h('span', { class: 'muted' }, 'can be '), ...enumMemberChips(ctx, enumType)) : null,
-    ];
+    return h('div', { class: 'field', 'data-src': 'evprop:' + emission.name + '.' + p.name },
+      h('span', { class: 'nm' }, propertyWords(p.name)),
+      h('span', { class: 'muted tiny' }, readable(typeLabel(p))),
+      h('span', { class: 'muted tiny' }, '←'),
+      pick(fieldOptions, bound === undefined ? '' : JSON.stringify(bound),
+        (v) => patchSlice((b) => {
+          const e = b.publishes.find((x) => x.name === emission.name);
+          e.parameters = e.parameters || {};
+          e.parameters[p.name] = JSON.parse(v);
+        }), '— unset —'));
   });
 
   // What the command was given but this event does not yet carry. A
   // field copied from here is not a guess at what the event should say —
   // it is a value already in the command's own vocabulary, so the copy
-  // both declares the field and wires it to that value in one step.
+  // both declares the field and wires it to that value in one step. It
+  // stays here rather than on the event's page because it reads *this*
+  // command's payload — an event published by several commands has no
+  // one "given" to offer.
   const missing = flag('copyFields')
     ? commandProperties.filter((q) => !(event.properties || []).some((p) => p.name === q.name))
     : [];
@@ -3260,10 +3288,11 @@ function eventFields(ctx, emission, event) {
         title: 'Add ' + propertyWords(p.name) + ' to this event, carried through unchanged',
         onclick: () => copyFromCommand(p),
       }, '+ ' + propertyWords(p.name)))) : null,
-    adderSlot('ev:' + emission.name, 'emits', '+ field', () => propertyAdder(ctx, {
-      label: '+ Add field',
-      onAdd: (property) => patch('event-definition', emission.name, (b) => b.properties.push(property)),
-    })));
+    h('div', { class: 'adder', style: 'margin-top:6px' },
+      h('button', {
+        class: 'btn ghost tiny',
+        onclick: () => goToEvent(emission.name),
+      }, 'Rename, retype or add fields on ' + readable(emission.name) + ' →')));
 }
 
 function stepChanges(ctx, slice) {
@@ -4605,12 +4634,15 @@ function renderProjections(ctx, main) {
   main.appendChild(h('header', {},
     h('div', { class: 'name' }, 'Projections'),
     h('div', { class: 'muted small' },
-      'A projection is a projected value that belongs to no entity — the same machinery as an '
-      + 'entity property, with the owner replaced by what it is kept separately for. Keep it '
-      + 'separately for nothing and its query carries no tag at all, which is what a global '
-      + 'numbering is; keep it per tenant and the same numbering restarts for each. A numbering '
-      + 'is just a projection set to the one *after* what an event carried.')));
+      'A projection folds events into a value. An ', h('b', {}, 'entity projection'),
+      ' is one scoped to an entity’s own identity — what everywhere else on this page calls a '
+      + 'property. A ', h('b', {}, 'standalone projection'),
+      ' is the same machinery kept for something else instead: nothing at all, which is what a '
+      + 'global numbering is, or a declared tag, which is what a numbering kept per tenant is. '
+      + 'Standalone projections are created and edited here; entity projections are indexed here '
+      + 'and edited on their entity’s own page.')));
 
+  main.appendChild(h('h4', {}, 'Standalone projections'));
   const names = Object.keys(ctx['projection-definitions']).sort();
   if (!names.length && !state.newProjection) {
     main.appendChild(h('div', { class: 'empty' }, 'No projections yet.'));
@@ -4722,6 +4754,234 @@ function renderProjections(ctx, main) {
         },
       }, '+ New projection')));
   }
+
+  // Entity projections, indexed rather than edited: the entity's own
+  // page already does that, and a second form editing the same stored
+  // property is exactly the drift two independent editors invite.
+  const entityNames = Object.keys(ctx['entity-definitions']).sort()
+    .filter((n) => (ctx['entity-definitions'][n].properties || []).length);
+  if (entityNames.length) {
+    main.appendChild(h('h4', { style: 'margin-top:28px' }, 'Entity projections'));
+    for (const entityName of entityNames) {
+      const entity = ctx['entity-definitions'][entityName];
+      main.appendChild(h('div', { class: 'ecard' },
+        h('div', { class: 'ehead' }, entityRef(ctx, entityName)),
+        h('div', { class: 'row', style: 'flex-wrap:wrap;gap:6px;margin-top:8px' },
+          (entity.properties || []).map((p) => h('span', {
+            class: 'chip entity linkable', title: 'Open ' + readable(entityName) + ' to edit this',
+            onclick: () => openEntity(entityName),
+          }, propertyWords(p.name))))));
+    }
+  }
+}
+
+// ---------- events ----------
+//
+// The one place every event definition lives, recorded or not. A
+// command's publish list only ever showed the events *it* records, and
+// an event nothing records yet had nowhere to be shown at all — this
+// page is both of those, for every event, at once. Shape — name, mark,
+// fields — is owned here; a command's own page keeps only how *it*
+// maps its own values into an already-declared field
+// (see `eventFields`).
+function renderEvents(ctx, main) {
+  main.appendChild(h('header', {},
+    h('div', { class: 'name' }, 'Events'),
+    h('div', { class: 'muted small' },
+      'Everything that has ever happened, named and shaped. An event may be recorded by no '
+      + 'command, one, or several — and read by no projection, one, or several — which is why it '
+      + 'has a page of its own rather than living on any one of theirs.')));
+
+  const names = Object.keys(ctx['event-definitions']).sort();
+  if (!names.length && !state.newEvent) {
+    main.appendChild(h('div', { class: 'empty' }, 'No events yet.'));
+  }
+
+  for (const name of names) main.appendChild(eventCard(ctx, name));
+
+  if (state.newEvent) {
+    const draft = state.newEvent;
+    const card = h('div', { class: 'ecard' });
+    card.appendChild(h('div', { class: 'q', style: 'font-size:11px;color:var(--muted);margin-bottom:6px' },
+      'What happened?  (past tense)'));
+    card.appendChild(h('div', { class: 'row' },
+      h('span', { class: 'muted tiny', style: 'min-width:90px' }, 'called'),
+      h('input', {
+        type: 'text', value: draft.name, placeholder: 'course capacity reached',
+        oninput: (e) => { draft.name = e.target.value; },
+      })));
+    card.appendChild(h('div', { class: 'adder', style: 'margin-top:10px' },
+      h('button', {
+        class: 'btn primary',
+        onclick: () => {
+          const eventName = toPascal(draft.name);
+          if (!eventName) return toast('Give the event a name.', true);
+          run(() => {
+            addDefinition('event-definition', ctx.id, eventName, { properties: [] });
+            state.newEvent = null;
+            state.openEvent = eventName;
+          });
+        },
+      }, 'Create'),
+      h('button', { class: 'btn ghost', onclick: () => { state.newEvent = null; render(); } }, 'Cancel')));
+    main.appendChild(card);
+  } else {
+    main.appendChild(h('div', { class: 'adder', style: 'margin-top:14px' },
+      h('button', {
+        class: 'btn primary',
+        title: 'An event does not need a command yet — record it later from any command’s '
+          + '"record something already known".',
+        onclick: () => { closeForms(); state.newEvent = { name: '' }; render(); },
+      }, '+ New event')));
+  }
+}
+
+function eventCard(ctx, name) {
+  const event = ctx['event-definitions'][name];
+  const open = state.openEvent === name;
+  const publishers = publishersOf(ctx, name);
+  const subscribers = [...effectsOf(ctx, name), ...projectionsHandling(ctx, name)];
+  const scenarios = scenariosReferencingEvent(ctx, name);
+  const card = h('div', { class: 'ecard' });
+
+  // Renaming rewrites every entity handler, every projection handler,
+  // every command's `publishes` and every scenario that names it, all
+  // in the same append.
+  if (state.renamingEvent === name) {
+    card.appendChild(inlineForm({
+      question: 'Rename — every reference is rewritten with it', submitLabel: 'Rename',
+      value: readable(name), showsIdentifier: true,
+      onSubmit: (v) => {
+        const next = toPascal(v);
+        state.renamingEvent = null;
+        if (next && next !== name) {
+          run(() => {
+            warnScripted(ctx, name);
+            renameDefinition('event-definition', ctx.id, name, next);
+            if (state.openEvent === name) state.openEvent = next;
+          });
+        } else render();
+      },
+      onCancel: () => { state.renamingEvent = null; render(); },
+    }));
+    return card;
+  }
+
+  const pickingIcon = state.eventIconPicker === name;
+  card.appendChild(qrow('div', { cls: 'ehead', key: 'event:' + name },
+    h('button', {
+      class: 'icon-btn event', title: 'Choose the mark this is shown with',
+      onclick: () => {
+        const wasOpen = pickingIcon;
+        closeForms();
+        state.eventIconPicker = wasOpen ? null : name;
+        render();
+      },
+    }, eventIcon(ctx, name)),
+    h('span', { class: 'chip event' }, readable(name)),
+    h('span', { class: 'muted tiny' },
+      (event.properties || []).length + ' field' + ((event.properties || []).length === 1 ? '' : 's')),
+    h('span', { class: 'muted tiny' }, publishers.length ? 'recorded by '
+      + publishers.map((p) => readable(p.command)).join(', ') : 'recorded by nothing yet'),
+    h('span', { style: 'flex:1' }),
+    reveal(
+      advanced() ? h('span', { class: 'tech' }, name) : null,
+      h('button', {
+        class: 'btn tiny',
+        onclick: () => { state.openEvent = open ? null : name; render(); },
+      }, open ? 'Hide details' : 'Details'),
+      h('button', {
+        class: 'btn tiny',
+        onclick: () => { closeForms(); state.renamingEvent = name; render(); },
+      }, 'Rename'),
+      removeButton('event:' + name, {
+        label: 'Remove', title: 'Remove this event',
+        onRemove: () => run(() => removeDefinition('event-definition', ctx.id, name)),
+      }))));
+
+  if (pickingIcon) card.appendChild(eventIconPicker(ctx, name, event));
+
+  if (open) {
+    card.appendChild(h('div', { class: 'card event' },
+      eventFieldsEditor(ctx, name, event),
+      h('div', { class: 'refs', style: 'margin-top:12px' },
+        h('div', { class: 'muted tiny' }, 'Recorded by'),
+        publishers.length
+          ? h('div', { class: 'row', style: 'flex-wrap:wrap;gap:6px;margin-top:4px' },
+              publishers.map((p) => commandRef(ctx, p.command)))
+          : h('div', { class: 'empty tiny' }, 'no command records this yet')),
+      h('div', { class: 'refs', style: 'margin-top:10px' },
+        h('div', { class: 'muted tiny' }, 'Handled by'),
+        subscribers.length
+          ? h('div', { class: 'row', style: 'flex-wrap:wrap;gap:6px;margin-top:4px' },
+              subscribers.map((s) => s.entity
+                ? entityRef(ctx, s.entity, { text: readable(s.entity) + ' · ' + propertyWords(s.property.name) })
+                : projectionRef(ctx, s.projection)))
+          : h('div', { class: 'empty tiny' }, 'nothing reads this yet')),
+      scenarios.length ? h('div', { class: 'refs', style: 'margin-top:10px' },
+        h('div', { class: 'muted tiny' }, 'Referenced by'),
+        h('div', { class: 'row', style: 'flex-wrap:wrap;gap:6px;margin-top:4px' },
+          scenarios.map((s) => h('span', {
+            class: 'chip linkable', title: 'Open this scenario',
+            onclick: () => (s.property ? goToPropertyScenario(ctx, s.key) : goToScenario(ctx, s.key)),
+          }, s.property ? propertyScenarioName(s.body, readable) : scenarioName(s.body, readable))))) : null));
+  }
+
+  return card;
+}
+
+// The event's own shape: rename a field, retype it, remove it, add
+// one. The one thing this does *not* do is say what fills it from any
+// particular command — that mapping is `eventFields`' job, on the
+// command's own page, because it is specific to that command's payload
+// and this page is not.
+function eventFieldsEditor(ctx, name, event) {
+  const where = 'event:' + name;
+  const rows = (event.properties || []).map((p, i) => {
+    if (editingMember(where, p.name)) {
+      // An event property has no initial value — nothing projects it,
+      // it is simply carried.
+      return memberEditor(ctx, {
+        member: p, where,
+        onReplace: (next) => patch('event-definition', name, (b) => { b.properties[i] = next; }),
+        onRename: (newName) => {
+          warnScripted(ctx, name);
+          return renameMember('event-definition', ctx.id, name, 'property', p.name, newName);
+        },
+      });
+    }
+    const enumType = isStringEnumType(ctx, p.propertyType) ? p.propertyType : null;
+    return [
+      qrow('div', { cls: 'field', key: 'evown:' + name + ':' + p.name },
+        h('span', { class: 'nm' }, propertyWords(p.name)),
+        h('span', { class: 'grow', style: 'flex:1' }),
+        reveal(
+          h('span', {
+            class: 'chip editable', title: 'Rename or retype this field',
+            onclick: () => openMember(where, p.name),
+          }, readable(typeLabel(p))),
+          advanced() ? h('span', { class: 'tech' }, p.name) : null,
+          h('button', {
+            class: 'btn tiny danger', title: 'Remove this field',
+            onclick: () => removeEventField(ctx, name, i, p.name),
+          }, '×'))),
+      enumType ? h('div', { class: 'use' },
+        h('span', { class: 'muted' }, 'can be '), ...enumMemberChips(ctx, enumType)) : null,
+    ];
+  });
+
+  return h('div', { class: 'fields' },
+    rows.length ? rows : h('div', { class: 'empty' }, 'Carries nothing yet.'),
+    ...EVENT_METADATA.map((m) => h('div', { class: 'field envelope' },
+      h('span', { class: 'nm' }, propertyWords(m.name)),
+      h('span', { class: 'muted tiny' }, '← the store'),
+      h('span', { class: 'grow', style: 'flex:1' }),
+      h('span', { class: 'chip' }, readable(typeLabel(m))),
+      h('span', { class: 'muted tiny' }, 'always carried'))),
+    adderSlot('evown:' + name, null, '+ field', () => propertyAdder(ctx, {
+      label: '+ Add field',
+      onAdd: (property) => patch('event-definition', name, (b) => b.properties.push(property)),
+    })));
 }
 
 function stepConsistency(ctx, slice) {
@@ -5138,7 +5398,7 @@ function scenarioRow(ctx, entry) {
         : h('div', { class: 'empty' }, 'nothing had happened yet'),
       h('div', { class: 'muted tiny', style: 'margin-top:8px' }, 'When'),
       h('div', { class: 'sc-line' },
-        h('span', { class: 'y' }, readable(body.command)),
+        h('span', { class: 'c' }, readable(body.command)),
         h('span', { class: 'k' }, '  ' + payloadText((body.when || {}).arguments))),
       h('div', { class: 'muted tiny', style: 'margin-top:8px' }, 'Then'),
       result.status === 'broken'
@@ -5425,7 +5685,7 @@ function entityOutcomeCard(then, title) {
     h('div', { class: 'muted tiny' }, title),
     entries.length
       ? entries.map(([name, value]) => h('div', {},
-          h('span', { class: 'y' }, propertyWords(name)),
+          h('span', { class: 't' }, propertyWords(name)),
           h('span', { class: 'k' }, '  ' + JSON.stringify(value))))
       : h('div', { class: 'empty' }, 'nothing checked'));
 }

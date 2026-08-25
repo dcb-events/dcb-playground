@@ -152,6 +152,46 @@ function effectsOf(ctx, eventName) {
   return out;
 }
 
+// Every command that publishes this event — zero, one, or many. An
+// event has no single owner the way an entity does, so this answers
+// "who records this" instead of a boundary binding.
+function publishersOf(ctx, eventName) {
+  const out = [];
+  for (const [name, body] of Object.entries(ctx['command-definitions'])) {
+    for (const emission of body.publishes || []) {
+      if (emission && emission.name === eventName) out.push({ command: name, emission });
+    }
+  }
+  return out;
+}
+
+// Every standalone projection that handles this event — the same
+// relationship `effectsOf` gives for an entity's own properties, one
+// level over.
+function projectionsHandling(ctx, eventName) {
+  const out = [];
+  for (const [name, body] of Object.entries(ctx['projection-definitions'])) {
+    for (const handler of body.handlers || []) {
+      if (handler && handler.event === eventName) out.push({ projection: name, body, handler });
+    }
+  }
+  return out;
+}
+
+// Every scenario — ordinary or property — whose Given or Then names
+// this event.
+function scenariosReferencingEvent(ctx, eventName) {
+  const scenarios = Object.entries(ctx['scenario-definitions'] || {})
+    .filter(([, body]) =>
+      (body.given || []).some((s) => s && s.event === eventName)
+      || ((body.then || {}).events || []).some((e) => e && e.type === eventName))
+    .map(([key, body]) => ({ key, body, property: false }));
+  const propertyScenarios = Object.entries(ctx['property-scenario-definitions'] || {})
+    .filter(([, body]) => (body.given || []).some((s) => s && s.event === eventName))
+    .map(([key, body]) => ({ key, body, property: true }));
+  return [...scenarios, ...propertyScenarios];
+}
+
 // Everything one feature touches, in the order a reader meets it.
 function sliceOf(ctx, commandName) {
   const body = ctx['command-definitions'][commandName];
