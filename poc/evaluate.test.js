@@ -57,8 +57,18 @@ const {
   evaluateCommand, foldEntityProperty, foldProjection, tagsOfEvent,
   deriveThen, runScenario, scenarioTouchesScript,
   addDefinition, updateDefinition, removeDefinition, renameDefinition, renameMember,
-  generateId, scenarioName, deepClone,
+  createDcbContext,
+  generateId, scenarioName, deepClone, evSuccessor,
 } = sandbox;
+
+// A fresh, empty context — for the ad-hoc identifier-type fixtures
+// below, which want a minimal model rather than one of the six shipped
+// contexts.
+function openBlank(name) {
+  store.clear();
+  const id = createDcbContext(name || 'Ad-hoc');
+  return { id, ctx: () => sandbox.projectState()[id] };
+}
 
 let passed = 0;
 const failures = [];
@@ -150,8 +160,8 @@ function drive(ctx, log, command, args, at) {
 
   check('tags come from identifier-typed properties', () => {
     eq(tagsOfEvent(ctx, 'StudentSubscribedToCourse', { courseId: 'c1', studentId: 's1' }),
-      ['Course:c1', 'Student:s1'], 'tags');
-    eq(tagsOfEvent(ctx, 'CourseDefined', { courseId: 'c1', capacity: 3 }), ['Course:c1'], 'tags');
+      ['CourseId:c1', 'StudentId:s1'], 'tags');
+    eq(tagsOfEvent(ctx, 'CourseDefined', { courseId: 'c1', capacity: 3 }), ['CourseId:c1'], 'tags');
   });
 
   check('one instance never sees another instance events', () => {
@@ -323,7 +333,7 @@ function drive(ctx, log, command, args, at) {
     eq(tagsOfEvent(ctx, 'ProductsOrdered', {
       orderId: 'o1',
       items: [{ productId: 'p1', price: 1 }, { productId: 'p2', price: 2 }],
-    }), ['Order:o1', 'Product:p1', 'Product:p2'], 'tags');
+    }), ['OrderId:o1', 'ProductId:p1', 'ProductId:p2'], 'tags');
   });
 }
 
@@ -746,6 +756,291 @@ function drive(ctx, log, command, args, at) {
   });
 }
 
+// ---------------------------------------------------------------
+// 12. An entity with an integer identifier: tagging and successor,
+// end to end.
+// ---------------------------------------------------------------
+{
+  const { id, ctx } = openBlank();
+
+  addDefinition('entity-definition', id, 'Widget', { properties: [] });
+  updateDefinition('custom-type-definition', id, 'WidgetId', { schema: { type: 'integer' }, isTag: true });
+  addDefinition('event-definition', id, 'WidgetDefined', {
+    properties: [{ name: 'widgetId', propertyType: 'WidgetId', isOptional: false, isList: false }],
+  });
+  updateDefinition('entity-definition', id, 'Widget', {
+    properties: [{
+      name: 'defined', propertyType: 'boolean', isOptional: false, isList: false,
+      initialValue: false,
+      handlers: [{ event: 'WidgetDefined', operation: 'set', value: true }],
+    }],
+  });
+  addDefinition('projection-definition', id, 'WidgetNumbering', {
+    parameters: [],
+    valueType: 'WidgetId',
+    isOptional: false,
+    isList: false,
+    initialValue: 1,
+    handlers: [{ event: 'WidgetDefined', operation: 'set', value: { successor: { eventProperty: 'widgetId' } } }],
+  });
+  addDefinition('command-definition', id, 'DefineWidget', {
+    properties: [],
+    boundary: [{ alias: 'widgetNumbering', projection: 'WidgetNumbering', arguments: {} }],
+    conditions: [],
+    publishes: [{ name: 'WidgetDefined', parameters: { widgetId: { alias: 'widgetNumbering' } } }],
+  });
+
+  check('an integer identifier tags and numbers correctly, end to end', () => {
+    const log = [];
+    eq(foldProjection(ctx(), log, 'WidgetNumbering', {}), 1, 'before anything');
+    drive(ctx(), log, 'DefineWidget', {});
+    eq(log[0].data.widgetId, 1, 'first id is a number');
+    eq(tagsOfEvent(ctx(), 'WidgetDefined', { widgetId: 1 }), ['WidgetId:1'], 'tag');
+    eq(foldEntityProperty(ctx(), log, 'Widget', 'defined', 1), true, 'entity state');
+    drive(ctx(), log, 'DefineWidget', {});
+    eq(foldProjection(ctx(), log, 'WidgetNumbering', {}), 3, 'numbering advances by successor');
+  });
+}
+
+// ---------------------------------------------------------------
+// 13 & 14. Composite identifiers: union-of-component tags, and a
+// standalone identifier type shared across two entities' composite ids.
+//
+// `Course` and `Invoice` each compose a shared standalone `TenantTag`
+// with a component of their own (`CourseNumber`, `InvoiceNumber` — one
+// entity-derived, one standalone, exercising both origins in the same
+// composite). Tag derivation looks *through* the composite: the tags
+// are the union of the components' own tags, never renamespaced under
+// `CourseId`/`InvoiceId` — and because both entities compose in the
+// very same `TenantTag`, their events end up sharing that one tag.
+// ---------------------------------------------------------------
+{
+  const { id, ctx } = openBlank();
+
+  addDefinition('custom-type-definition', id, 'TenantTag', { schema: { type: 'string' }, isTag: true });
+  addDefinition('custom-type-definition', id, 'CourseNumber', { schema: { type: 'string' }, isTag: true });
+  addDefinition('entity-definition', id, 'InvoiceSeries', { properties: [] });
+  addDefinition('entity-definition', id, 'Course', { properties: [] });
+  updateDefinition('custom-type-definition', id, 'CourseId', {
+    properties: [
+      { name: 'tenant', propertyType: 'TenantTag' },
+      { name: 'number', propertyType: 'CourseNumber' },
+    ],
+  });
+  addDefinition('entity-definition', id, 'Invoice', { properties: [] });
+  updateDefinition('custom-type-definition', id, 'InvoiceId', {
+    properties: [
+      { name: 'tenant', propertyType: 'TenantTag' },
+      { name: 'series', propertyType: 'InvoiceSeriesId' },
+    ],
+  });
+  addDefinition('event-definition', id, 'CourseDefined', {
+    properties: [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false }],
+  });
+  addDefinition('event-definition', id, 'InvoiceRaised', {
+    properties: [{ name: 'invoiceId', propertyType: 'InvoiceId', isOptional: false, isList: false }],
+  });
+
+  check('a composite identifier tags as the union of its components, not renamespaced', () => {
+    eq(
+      tagsOfEvent(ctx(), 'CourseDefined', { courseId: { tenant: 't1', number: 'c1' } }),
+      ['TenantTag:t1', 'CourseNumber:c1'],
+      'tags are the bare component tags, never "CourseId.tenant:..." or similar'
+    );
+  });
+
+  check('two entities sharing a standalone identifier-type component share its tag', () => {
+    const courseTags = tagsOfEvent(ctx(), 'CourseDefined', { courseId: { tenant: 't1', number: 'c1' } });
+    const invoiceTags = tagsOfEvent(ctx(), 'InvoiceRaised', { invoiceId: { tenant: 't1', series: 'i1' } });
+    eq(courseTags.includes('TenantTag:t1'), true, 'course carries the shared tag');
+    eq(invoiceTags.includes('TenantTag:t1'), true, 'invoice carries the same shared tag');
+    eq(invoiceTags, ['TenantTag:t1', 'InvoiceSeriesId:i1'], 'invoice tags, entity-derived component included');
+  });
+
+  check('declaring a successor over a composite identifier is refused at validation time', () => {
+    try {
+      addDefinition('entity-definition', id, 'Ledger', {
+        properties: [{
+          name: 'lastCourseId', propertyType: 'CourseId', isOptional: true, isList: false,
+          initialValue: null,
+          handlers: [{ event: 'CourseDefined', operation: 'set', value: { successor: { eventProperty: 'courseId' } } }],
+        }],
+      });
+      throw new Error('did not refuse');
+    } catch (error) {
+      if (!/composite identifier has no successor/.test(error.message)) throw error;
+    }
+  });
+}
+
+// ---------------------------------------------------------------
+// 15. Successor on a composite value is a broken evaluation, not a
+// silent fallthrough to the generic "no successor" message.
+// ---------------------------------------------------------------
+{
+  check('evSuccessor on a composite (object) value fails with a specific message', () => {
+    try {
+      evSuccessor({ tenant: 't1', number: 'c1' });
+      throw new Error('did not fail');
+    } catch (error) {
+      if (error.name !== 'EvaluationError') throw error;
+      if (!/composite identifier has no successor/.test(error.message)) {
+        throw new Error(`wrong message: ${error.message}`);
+      }
+    }
+  });
+}
+
+// ---------------------------------------------------------------
+// 16. Rename tracking for an entity's derived identifier — now an
+// ordinary custom-type-definition, auto-created alongside the entity.
+//
+// Three shapes: an entity whose identifier still tracks it (renaming
+// the entity moves the derived type's name along with it, both still
+// tracking afterward), an entity created with an explicit
+// `identifierType` (the rename leaves the type name alone), and a
+// direct rename of the value type itself (which pins a previously
+// tracking owner's `identifierType` explicit, since its default would
+// otherwise point at a name that no longer exists).
+// ---------------------------------------------------------------
+{
+  check('renaming an entity that still tracks its identifier moves the derived type', () => {
+    const { id, ctx } = openBlank();
+    addDefinition('entity-definition', id, 'Gadget', { properties: [] });
+    addDefinition('event-definition', id, 'GadgetDefined', {
+      properties: [{ name: 'gadgetId', propertyType: 'GadgetId', isOptional: false, isList: false }],
+    });
+    renameDefinition('entity-definition', id, 'Gadget', 'Widget');
+    eq('WidgetId' in ctx()['custom-type-definitions'], true, 'the derived type renamed too');
+    eq('GadgetId' in ctx()['custom-type-definitions'], false, 'old name gone');
+    eq('identifierType' in ctx()['entity-definitions'].Widget, false, 'still tracking, nothing pinned');
+    eq(ctx()['event-definitions'].GadgetDefined.properties[0].propertyType, 'WidgetId',
+      'the property type followed the rename');
+    eq(tagsOfEvent(ctx(), 'GadgetDefined', { gadgetId: 'g1' }), ['WidgetId:g1'], 'tags follow too');
+  });
+
+  check('renaming an entity whose identifier type was customised leaves the derived type alone', () => {
+    const { id, ctx } = openBlank();
+    addDefinition('entity-definition', id, 'Gizmo', {
+      identifierType: 'GizmoRef', properties: [],
+    });
+    addDefinition('event-definition', id, 'GizmoDefined', {
+      properties: [{ name: 'gizmoId', propertyType: 'GizmoRef', isOptional: false, isList: false }],
+    });
+    renameDefinition('entity-definition', id, 'Gizmo', 'Doohickey');
+    eq('Doohickey' in ctx()['entity-definitions'], true, 'entity renamed');
+    eq('Gizmo' in ctx()['entity-definitions'], false, 'old name gone');
+    eq(ctx()['entity-definitions'].Doohickey.identifierType, 'GizmoRef', 'the override stayed put');
+    eq(ctx()['event-definitions'].GizmoDefined.properties[0].propertyType, 'GizmoRef',
+      'the customised identifier type did not move');
+    eq(tagsOfEvent(ctx(), 'GizmoDefined', { gizmoId: 'g1' }), ['GizmoRef:g1'], 'tag unaffected by the rename');
+  });
+
+  check('renaming a tracking entity\'s derived value type directly pins it explicit', () => {
+    const { id, ctx } = openBlank();
+    addDefinition('entity-definition', id, 'Sprocket', { properties: [] });
+    addDefinition('event-definition', id, 'SprocketDefined', {
+      properties: [{ name: 'sprocketId', propertyType: 'SprocketId', isOptional: false, isList: false }],
+    });
+
+    renameDefinition('custom-type-definition', id, 'SprocketId', 'SprocketRef');
+    eq(ctx()['entity-definitions'].Sprocket.identifierType, 'SprocketRef',
+      'tracking is replaced by an explicit pointer at the new name');
+    eq(ctx()['event-definitions'].SprocketDefined.properties[0].propertyType, 'SprocketRef',
+      'the property type followed the rename');
+    eq(tagsOfEvent(ctx(), 'SprocketDefined', { sprocketId: 's1' }), ['SprocketRef:s1'], 'tag follows too');
+
+    // Now pinned, so renaming the *entity* no longer touches the type.
+    renameDefinition('entity-definition', id, 'Sprocket', 'Cog');
+    eq(ctx()['entity-definitions'].Cog.identifierType, 'SprocketRef', 'pin survives an entity rename');
+    eq('SprocketRef' in ctx()['custom-type-definitions'], true, 'the value type keeps its own name');
+  });
+
+  check('renaming a standalone tag-marked custom type cascades like any other', () => {
+    const { id, ctx } = openBlank();
+    addDefinition('custom-type-definition', id, 'CourseNumber', { schema: { type: 'string' }, isTag: true });
+    addDefinition('event-definition', id, 'CourseNumberIssued', {
+      properties: [{ name: 'number', propertyType: 'CourseNumber', isOptional: false, isList: false }],
+    });
+    renameDefinition('custom-type-definition', id, 'CourseNumber', 'CourseRef');
+    eq('CourseRef' in ctx()['custom-type-definitions'], true, 'renamed');
+    eq('CourseNumber' in ctx()['custom-type-definitions'], false, 'old name gone');
+    eq(ctx()['event-definitions'].CourseNumberIssued.properties[0].propertyType, 'CourseRef',
+      'the reference followed the rename');
+    eq(tagsOfEvent(ctx(), 'CourseNumberIssued', { number: 'c1' }), ['CourseRef:c1'], 'tag follows too');
+  });
+
+  check('an ordinary update cannot change identifierType', () => {
+    const { id, ctx } = openBlank();
+    addDefinition('entity-definition', id, 'Anvil', { properties: [] });
+    try {
+      updateDefinition('entity-definition', id, 'Anvil', {
+        identifierType: 'AnvilRef', properties: [],
+      });
+      throw new Error('did not refuse');
+    } catch (error) {
+      if (!/ordinary update/.test(error.message)) throw error;
+    }
+    eq('identifierType' in ctx()['entity-definitions'].Anvil, false, 'unchanged');
+  });
+
+  check('an entity-owned value type cannot be removed directly, only by removing its entity', () => {
+    const { id, ctx } = openBlank();
+    addDefinition('entity-definition', id, 'Bolt', { properties: [] });
+    try {
+      removeDefinition('custom-type-definition', id, 'BoltId');
+      throw new Error('did not refuse');
+    } catch (error) {
+      if (!/still referenced by/.test(error.message)) throw error;
+    }
+    removeDefinition('entity-definition', id, 'Bolt');
+    eq('Bolt' in ctx()['entity-definitions'], false, 'entity removed');
+    eq('BoltId' in ctx()['custom-type-definitions'], false, 'its derived type cascaded with it');
+  });
+}
+
+// ---------------------------------------------------------------
+// 17. A scripted standalone projection's `tagFilter` names an
+// identifier type, not a literal tag string. Its `:` is authoring
+// syntax splitting "which identifier" from "what value" — the actual
+// tag is rendered through that identifier type's own `tagSchema`,
+// which need not use `:` at all. A filter that just interpolated its
+// placeholder into the written template verbatim would silently match
+// nothing once a `tagSchema` diverges from the default.
+// ---------------------------------------------------------------
+{
+  const { id, ctx } = openBlank();
+
+  addDefinition('custom-type-definition', id, 'RegionCode', {
+    schema: { type: 'string' }, isTag: true, tagSchema: '{type}={value}',
+  });
+  addDefinition('event-definition', id, 'RegionOpened', {
+    properties: [{ name: 'regionCode', propertyType: 'RegionCode', isOptional: false, isList: false }],
+  });
+  addDefinition('command-definition', id, 'OpenRegion', {
+    properties: [{ name: 'regionCode', propertyType: 'RegionCode', isOptional: false, isList: false }],
+    boundary: [], conditions: [],
+    publishes: [{ name: 'RegionOpened', parameters: { regionCode: { parameterName: 'regionCode' } } }],
+  });
+  addDefinition('projection-definition', id, 'OpenRegionCount', {
+    valueType: 'integer',
+    script: {
+      initialState: 0,
+      tagFilter: ['RegionCode:{region}'],
+      arguments: [{ name: 'region', propertyType: 'RegionCode' }],
+    },
+    handlers: [{ event: 'RegionOpened', code: '(state || 0) + 1' }],
+  });
+
+  check("a scripted projection's tagFilter resolves through a non-default tagSchema", () => {
+    const log = [];
+    drive(ctx(), log, 'OpenRegion', { regionCode: 'eu' });
+    drive(ctx(), log, 'OpenRegion', { regionCode: 'us' });
+    eq(foldProjection(ctx(), log, 'OpenRegionCount', { region: 'eu' }), 1,
+      'matched through RegionCode\'s "=" tagSchema, not a hardcoded "RegionCode:eu"');
+    eq(foldProjection(ctx(), log, 'OpenRegionCount', { region: 'us' }), 1, 'us counted separately');
+  });
+}
 
 console.log(`${passed} passed, ${failures.length} failed`);
 if (failures.length) {

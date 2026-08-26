@@ -14,6 +14,16 @@ description: |
   is no standalone constraint kind: conditions are inlined into the
   commands that check them.
 
+  **Tags come from value types, not from a separate kind.** Any
+  `customTypeDefinition` may set `isTag: true`, which is what makes it
+  an identifier. An entity's own derived identifier is such a value
+  type — created automatically when the entity is, and from then on
+  edited exactly like any other value type. A composite value type is
+  never itself a tag; its tag-ness is derived by looking through it to
+  whichever of its fields are themselves tag-marked, which is what lets
+  two unrelated entities share one component (a `TenantId` field) and
+  be scoped together by it.
+
   **Projections** are what is left when a fold belongs to no entity. A
   `projectionDefinition` states its own partition instead of inheriting
   one: it declares typed parameters, and the arguments a command
@@ -26,39 +36,55 @@ additionalProperties: false
 properties:
   customTypeDefinitions:
     description: |
-      User-declared *value* types — either **scalar** (an email string
-      with a pattern, a money amount, an enum of named members, …) or
-      **composite** (a record of named fields, such as an order line
-      pairing a product with the price it was displayed at). An enum is
-      not a distinct form: it is a scalar type whose `schema` carries
-      the JSON Schema `enum` keyword. A member reference is still
-      modeled as `{"enumMember": "..."}` rather than a bare literal, so
-      that renaming a member rewrites every use of it.
+      Value types — either **scalar** (an email string with a pattern,
+      a money amount, an enum of named members, a tag-bearing
+      identifier, …) or **composite** (a record of named fields, such
+      as an order line pairing a product with the price it was
+      displayed at). An enum is not a distinct form: it is a scalar
+      type whose `schema` carries the JSON Schema `enum` keyword. A
+      member reference is still modeled as `{"enumMember": "..."}`
+      rather than a bare literal, so that renaming a member rewrites
+      every use of it.
 
-      Value types are never tags themselves. Tags still come
-      exclusively from entity identifiers — a composite merely gives
-      one somewhere to sit, so tag derivation looks *through* a
-      composite to the identifier fields inside it.
+      A scalar entry may set `isTag: true`, which is what makes it an
+      identifier — see `CustomTypeDefinition`. This is also where an
+      entity's own derived identifier type lives: it is created
+      automatically alongside the entity (see
+      `EntityDefinition.identifierType`), and from then on it is an
+      ordinary entry here, edited, retyped and renamed the same way any
+      other value type is — the one thing that never changes about it
+      is that it stays a tag, and it may only be removed by removing
+      the entity that owns it.
+
+      A composite entry — whether entity-owned or standalone — is
+      never a tag itself; a field of it may be, and one deliberately
+      shared across several entities' composite identifiers (a
+      `TenantId` field, say) is what scopes them together.
     type: array
     items:
       "$ref": "#/$defs/CustomTypeDefinition"
   eventDefinitions:
     description: |
-      Domain events. An event property whose type is an entity
-      identifier type *is* a tag on that event, so
+      Domain events. An event property whose type is a tag-marked
+      (`isTag: true`) value type *is* one or more tags on that event,
+      rendered through that type's `tagSchema`, so
       `StudentSubscribedToCourse{courseId: CourseId, studentId: StudentId}`
-      carries the tags `Course:<courseId>` and `Student:<studentId>`.
-      Tags are never declared separately; they are derived from
-      property types.
+      carries the tags `CourseId:<courseId>` and `StudentId:<studentId>`
+      (their default `tagSchema`). Tags are never declared separately;
+      they are derived from property types.
 
       **Tag derivation looks inside composites.** A property typed with
-      a composite custom type contributes one tag per identifier field
-      of that composite, and a *list* of composites contributes one tag
-      per identifier field **per element** — so
+      a composite value type contributes one tag per tag-marked field
+      it contains — a `CourseId` composed of
+      `{tenant: TenantId, number: CourseNumber}`, both tag-marked,
+      carries `Tenant:<…>` and `CourseNumber:<…>`, not a tag
+      namespaced under `CourseId`; a field that is not itself tag-marked
+      contributes nothing. A *list* of a composite contributes one such
+      tag **per element** — so
       `ProductsOrdered{orderId: OrderId, items: Item[]}` where
-      `Item{productId: ProductId, price: Money}` carries `Order:<orderId>`
-      plus one `Product:<id>` for every item. This is how a single event
-      records something that happened to many instances at once.
+      `Item{productId: ProductId, price: Money}` carries `OrderId:<…>`
+      plus one `ProductId:<id>` for every item. This is how a single
+      event records something that happened to many instances at once.
     type: array
     items:
       "$ref": "#/$defs/EventDefinition"
@@ -126,20 +152,22 @@ required:
       it binds in its `boundary` — dissolving the fixed aggregate is
       the point of DCB, so an entity is deliberately not one.
 
-      An entity derives one type that is **not** serialised anywhere in
-      this document — it is computed from the entity and unioned into
-      the type-resolution table at load time:
+      An entity derives one identifier type, which *is* serialised —
+      as an ordinary `customTypeDefinition`, created automatically when
+      the entity is (scalar, `isTag: true`, a plain string) and named
+      `identifierType` unless overridden. From then on it is edited
+      exactly like any other value type: its `schema` may change, it
+      may switch to `properties` and become composite, it may be
+      renamed. `isTag` and removability are the two things pinned to
+      it for as long as the entity owns it — see
+      `CustomTypeDefinition`.
 
-        - `<name>Id` — the identifier type, and the only kind of tag in
-                        a DCB context. Its JSON Schema is
-                        `identifierSchema`.
-
-      The name is reserved: a `customTypeDefinition` may not claim it,
-      and no other entity may derive the same name.
+      The derived name is reserved: no other `customTypeDefinition` and
+      no other entity may claim or derive the same name.
 
       A lifecycle is not a distinct concept here. A modeller who wants
       one declares an ordinary property — by convention named `status`
-      — typed with an ordinary enum custom type, exactly like any other
+      — typed with an ordinary enum value type, exactly like any other
       property. Nothing requires an entity to have such a property, and
       nothing stops it from having several.
     type: object
@@ -159,20 +187,25 @@ required:
         examples:
         - "\U0001F4DA"
         - "\U0001F9FE"
-      identifierSchema:
+      identifierType:
         description: |
-          JSON Schema of the derived `<name>Id` type. Defaults to a
-          plain string; override to model integer keys, UUID patterns
-          and the like.
-        "$ref": https://json-schema.org/draft/2020-12/schema
-        default:
-          type: string
+          The name of the entity's derived identifier value type.
+          Absent means the ordinary case: the name *is* `<name>Id` and
+          tracks the entity's own name, so renaming the entity renames
+          its identifier type too. Given once, it stops tracking — the
+          entity may then be renamed freely without moving it.
+
+          This field only ever holds a *name*; the value type it names
+          is created when the entity is and from then on is edited in
+          `customTypeDefinitions`, never here — there is no
+          entity-local schema, fields or tag-schema to author.
+        "$ref": "#/$defs/CustomTypeName"
       properties:
         description: |
           The entity's projections. Every entry folds the events it
           handles over the DCB query
-          `tag = <name>:<id> AND type IN (handled event types)`; the
-          partition is implicit and never authored.
+          `tag IN (the identifier's tags) AND type IN (handled event
+          types)`; the partition is implicit and never authored.
 
           No entry is reserved: a property named `status` (a
           convention, not a rule) is authored, renamed and dropped like
@@ -270,10 +303,10 @@ required:
       Mechanically this is an `entityPropertyDefinition` with the
       owning entity removed and the partition put back by hand. An
       entity property is a projection too — folded over
-      `tag = <Entity>:<id> AND type IN (handled events)`, with the tag
-      implied by whose property it is. A `projectionDefinition` has no
-      owner to imply one, so it declares `parameters` and a command
-      supplies the arguments:
+      `tag IN (the identifier's tags) AND type IN (handled events)`,
+      with the tag(s) implied by whose property it is. A
+      `projectionDefinition` has no owner to imply one, so it declares
+      `parameters` and a command supplies the arguments:
 
         `tag IN (arguments) AND type IN (handled events)`
 
@@ -314,12 +347,15 @@ required:
       parameters:
         description: |
           What partitions this projection. Every parameter is typed
-          with an entity's derived identifier type and contributes
-          exactly one tag to the query; a command binding the
-          projection supplies one argument per parameter.
+          with a tag-bearing value type — one whose leaves resolve to
+          at least one `isTag` type, scalar or through a composite's
+          fields — and contributes the tag(s) those types' `tagSchema`
+          render: one for a tag-marked scalar, one per tag-marked field
+          for a composite. A command binding the projection supplies
+          one argument per parameter.
 
-          **Identifier types only.** A tag is the only thing that can
-          narrow a query, and only an identifier is a tag. A parameter
+          **Tag-bearing types only.** A tag is the only thing that can
+          narrow a query, and only a tag-marked type is a tag. A parameter
           typed `integer` could not restrict what the store returns —
           it could only discard events after reading them, which is a
           predicate, and predicates live in conditions. So "numbering
@@ -341,7 +377,7 @@ required:
         default: []
       valueType:
         description: |
-          The type of the value held. Never a composite custom type:
+          The type of the value held. Never a composite value type:
           the operations that advance a projection act on a single
           value, and a record of fields has none.
         "$ref": "#/$defs/TypeName"
@@ -391,8 +427,10 @@ required:
 
   ProjectionParameter:
     description: |
-      One tag of a projection's query, named so a command can supply
-      it. `propertyType` must be an entity's derived identifier type.
+      One or more tags of a projection's query, named so a command can
+      supply it. `propertyType` must be a tag-bearing value type — an
+      entity's derived identifier or a standalone one, scalar and
+      `isTag: true` or composite with tag-marked fields.
     type: object
     additionalProperties: false
     properties:
@@ -461,7 +499,7 @@ required:
           the store returns the same events either way and the code
           discards what it does not want. That is the whole difference
           between an argument and a `ProjectionParameter`, and it is
-          why a parameter must still be an identifier.
+          why a parameter must still be tag-bearing.
         type: array
         items:
           "$ref": "#/$defs/ProjectionArgument"
@@ -469,8 +507,10 @@ required:
       tagFilter:
         description: |
           The tags of this projection's query, one entry each, ANDed.
-          Written as `Entity:value`, where the value may interpolate a
-          declared argument as `{name}`.
+          Written as `TagType:value`, naming a scalar, `isTag: true`
+          value type — a composite has no tag of its own to name; name
+          its tag-marked fields' own types individually instead. The
+          value may interpolate a declared argument as `{name}`.
 
           Required on a standalone projection and forbidden on an
           entity property, whose binding already names the instance —
@@ -480,7 +520,7 @@ required:
           type: string
           pattern: "^[A-Z][A-Za-z0-9]*:.+$"
         examples:
-        - ["Product:{productId}"]
+        - ["ProductId:{productId}"]
     required:
     - initialState
 
@@ -658,13 +698,14 @@ required:
           the command's dynamic consistency boundary**, with nothing
           contributed from outside it: the append condition's query is
           the union of the bindings' queries, an entity binding
-          contributing its tag restricted to the event types reachable
+          contributing its tag(s) — more than one when its identifier
+          is composite — restricted to the event types reachable
           through the properties the conditions read, a projection
           binding contributing its arguments as tags and its handled
           types.
 
-          Every entity-identifier-typed property of every published
-          event must resolve to a binding in this list — a command may
+          Every identifier-typed property of every published event
+          must resolve to a binding in this list — a command may
           not write a tag it did not consult. A property supplied from
           a projection binding is exempt, provided that projection
           handles the event being published: its query then already
@@ -676,7 +717,7 @@ required:
           the wrong event, and is not checked here.
 
           **Coverage follows tag derivation into composites.** Since a
-          property typed `Item[]` writes one `Product:<id>` per element,
+          property typed `Item[]` writes one `ProductId:<id>` per element,
           coverage is checked against the identifier *leaves* of an
           emitted property's type, not its surface: emitting `items`
           into `ProductsOrdered.items` is covered by a binding whose
@@ -1291,9 +1332,10 @@ required:
 
   CustomTypeDefinition:
     description: |
-      A value type. Unlike the previous revision of this schema there
-      is no `isTag` flag: tags are derived from entity identifiers and
-      nothing else.
+      A value type — either **scalar** (an email string with a pattern,
+      a money amount, an enum of named members, …) or **composite** (a
+      record of named fields, such as an order line pairing a product
+      with the price it was displayed at).
 
       Exactly one of `schema` or `properties` is given, and the choice
       is what makes the type scalar or composite:
@@ -1304,8 +1346,31 @@ required:
       A composite's fields are typed against the same universe as
       everything else, so a field typed `ProductId` is a real reference:
       renaming the entity rewrites it, and tag derivation can see it. A
-      raw JSON Schema could not offer either — inside one, an identifier
-      is indistinguishable from any other string.
+      raw JSON Schema could not offer either — inside one, a tag is
+      indistinguishable from any other string.
+
+      **`isTag`** is what makes a value type an identifier, and it is
+      meaningful only on the scalar form: a composite is never itself a
+      tag, no matter how `isTag` reads on it. This is what lets two
+      unrelated entities share one component (a `TenantId` field on
+      each of their composite identifiers) and be scoped together by
+      it — a composite that could opt into being its own tag would
+      break that sharing. A composite's tag-ness is instead entirely
+      derived by looking through it: every field whose own type is
+      `isTag` contributes that field's tag to the whole, exactly as
+      `eventDefinitions` describes for an event's identifier-typed
+      properties.
+
+      **An entity's own derived identifier** is an ordinary
+      `customTypeDefinition` like any other — see
+      `EntityDefinition.identifierType`. It is created automatically
+      when the entity is, scalar and `isTag: true` by default, and from
+      then on it is edited here exactly like a standalone value type:
+      change its `schema`, switch it to `properties`, rename it. The
+      one thing that stays fixed is that it may not stop being a tag —
+      an entity that could not be tagged could not be bound in a DCB
+      query — and it may not be removed directly, only by removing the
+      entity that owns it.
     type: object
     additionalProperties: false
     properties:
@@ -1321,6 +1386,24 @@ required:
         minItems: 1
         items:
           "$ref": "#/$defs/CompositeFieldDefinition"
+      isTag:
+        description: |
+          Whether this value type is represented as a tag — meaningful
+          only when this is the scalar form. Defaults to `false`: a
+          value type is an inert record of data unless it opts in.
+        type: boolean
+        default: false
+      tagSchema:
+        description: |
+          Template rendering this type's value into its tag, when
+          `isTag` is true. Interpolates `{type}` (this type's name) and
+          `{value}` (the value); both are required, in either order,
+          and nothing else is. `{type}:{value}` — the default — is what
+          every earlier example in this document assumes; rearranging
+          it (`{type}={value}`) or restyling it changes what an event
+          consulting this type writes as its tag, everywhere.
+        type: string
+        default: "{type}:{value}"
     oneOf:
     - required: [name, schema]
     - required: [name, properties]
@@ -1457,10 +1540,11 @@ required:
 
   TypeName:
     description: |
-      A simple type, a declared custom (value) type — scalar (which
-      includes an enum) or composite — or the `<Entity>Id` type derived
-      from an entity. The derived type shares the custom-type
-      namespace, so a name resolves against the union of both.
+      A simple type, or a declared value type — scalar (which includes
+      an enum and a tag-marked identifier) or composite, including an
+      entity's own derived identifier (`<name>Id` unless overridden,
+      itself an ordinary `customTypeDefinition`). Every declared value
+      type shares one namespace, so a name resolves against it.
     type: string
     anyOf:
     - enum:

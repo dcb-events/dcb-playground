@@ -94,6 +94,12 @@ function evDeepEqual(a, b) {
 // written past the validator.
 function evSuccessor(value) {
   const v = evNormalize(value);
+  if (v !== null && typeof v === 'object' && !Array.isArray(v)) {
+    return fail(
+      'A composite identifier has no successor — auto-incrementing makes sense for a single ' +
+      'value, and a composite is a record of them.'
+    );
+  }
   if (typeof v === 'number') return v + 1;
   if (typeof v === 'string') {
     const match = /^(.*?)(\d+)$/.exec(v);
@@ -152,7 +158,7 @@ function tagsOfEvent(ctx, eventName, data) {
       for (const leaf of leaves) {
         const value = leaf.field === null ? element : (element || {})[leaf.field];
         if (value === null || value === undefined) continue;
-        tags.add(`${leaf.entity}:${value}`);
+        tags.add(renderTag(identifierTypeOf(ctx, leaf.identifierType), String(value)));
       }
     }
   }
@@ -298,8 +304,24 @@ function evCompileTarget(ctx, target, label) {
 // regime that a replay does not need.
 // ============================================================
 
+// The tag(s) that identify one entity instance — one per leaf of the
+// entity's own derived identifier, scalar or composite alike, each
+// through that leaf's own `tagSchema`. An event carrying this
+// instance's identifier carries every one of these tags (see
+// `tagsOfEvent`), so matching on all of them together is what "this
+// instance" means — the same union-of-component-tags rule, read
+// backwards.
+function tagsForEntityInstance(ctx, entityName, instanceId) {
+  const leaves = idLeavesOfType(ctx, idTypeOf(ctx, entityName));
+  if (!leaves.length) return [`${entityName}:${instanceId}`];
+  return leaves.map((leaf) => {
+    const value = leaf.field === null ? instanceId : (instanceId || {})[leaf.field];
+    return renderTag(identifierTypeOf(ctx, leaf.identifierType), String(value));
+  });
+}
+
 // One property of one entity instance. The events are those carrying
-// the instance's tag; the compiled steps ignore the rest.
+// the instance's tag(s); the compiled steps ignore the rest.
 function foldEntityProperty(ctx, events, entityName, propertyName, instanceId, args) {
   const entity = ctx['entity-definitions'][entityName];
   if (!entity) fail(`This context has no entity "${entityName}".`);
@@ -307,9 +329,9 @@ function foldEntityProperty(ctx, events, entityName, propertyName, instanceId, a
   if (!property) fail(`"${entityName}" has no property "${propertyName}".`);
 
   const compiled = evCompileTarget(ctx, property, `${entityName}.${propertyName}`);
-  const tag = `${entityName}:${instanceId}`;
+  const tags = tagsForEntityInstance(ctx, entityName, instanceId);
   return compiled.fold(
-    events.filter((event) => evMatchesTags(ctx, event, [tag])),
+    events.filter((event) => evMatchesTags(ctx, event, tags)),
     args
   );
 }
@@ -325,17 +347,35 @@ function foldProjection(ctx, events, projectionName, argumentValues) {
 
   const values = argumentValues || {};
   const script = scriptOf(projection);
+  // A tag filter's `:` is authoring syntax splitting "which identifier"
+  // from "what value" — not the tag's actual separator, which is that
+  // identifier type's own `tagSchema` and may differ. So the value half
+  // is interpolated first, then rendered through `renderTag`, the same
+  // path a declared parameter's tag takes below.
   const tags = script
-    ? (script.tagFilter || []).map((template) =>
-      String(template).replace(TAG_PLACEHOLDER_RE, (whole, name) =>
-        (values[name] === undefined ? whole : String(evNormalize(values[name])))))
-    : (projection.parameters || []).map((parameter) => {
-      const entity = entityOfIdType(ctx, parameter.propertyType);
+    ? (script.tagFilter || []).map((template) => {
+      const match = TAG_FILTER_RE.exec(String(template || ''));
+      if (!match) return String(template);
+      const valueText = match[2].replace(TAG_PLACEHOLDER_RE, (whole, name) =>
+        (values[name] === undefined ? whole : String(evNormalize(values[name]))));
+      const identifierType = identifierTypeOf(ctx, match[1]);
+      return identifierType ? renderTag(identifierType, valueText) : `${match[1]}:${valueText}`;
+    })
+    : (projection.parameters || []).flatMap((parameter) => {
       const value = values[parameter.name];
       if (value === undefined) {
         fail(`Projection "${projectionName}" was read without its parameter "${parameter.name}".`);
       }
-      return `${entity || parameter.propertyType}:${evNormalize(value)}`;
+      const normalized = evNormalize(value);
+      const leaves = idLeavesOfType(ctx, parameter.propertyType);
+      if (!leaves.length) return [`${parameter.propertyType}:${normalized}`];
+      // A composite parameter contributes the union of its components'
+      // own tags — one per leaf, each rendered through that leaf's own
+      // tagSchema, never renamespaced under the parameter's type.
+      return leaves.map((leaf) => {
+        const leafValue = leaf.field === null ? normalized : (normalized || {})[leaf.field];
+        return renderTag(identifierTypeOf(ctx, leaf.identifierType), String(leafValue));
+      });
     });
 
   const compiled = evCompileTarget(ctx, projection, `projection "${projectionName}"`);

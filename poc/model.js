@@ -48,7 +48,11 @@
 // property retention and a binding's `asOf`. v9 dropped the reserved
 // `status` property and its entity-derived enum: a lifecycle is now an
 // ordinary enum custom type plus an ordinary property, like any other.
-const EVENT_LOG_KEY = 'dcb-playground:events:v10';
+// v10 merged identifier types into custom types: `isTag` now lives on
+// a custom type directly, an entity's derived identifier is an
+// ordinary custom type created alongside it, and there is no longer a
+// separate identifier-type-definition kind.
+const EVENT_LOG_KEY = 'dcb-playground:events:v11';
 
 const DEF_KINDS = [
   'entity-definition',
@@ -250,72 +254,114 @@ function apply(contexts, event) {
 // ============================================================
 // Derived types.
 //
-// An entity brings `<Entity>Id` into existence. It is not stored
-// anywhere: it is computed from the entity and resolved in the same
-// namespace as declared custom (value) types. A lifecycle is not a
-// derived type — a modeller who wants one declares an ordinary enum
-// custom type and an ordinary property typed with it, by convention
-// named `status`.
+// An entity brings an identifier type into existence — `<Entity>Id`
+// unless `identifierType` overrides the name — as an ordinary
+// `custom-type-definition`, created alongside the entity and stored
+// like any other. A lifecycle is not a derived type — a modeller who
+// wants one declares an ordinary enum value type and an ordinary
+// property typed with it, by convention named `status`.
 // ============================================================
 
-function idTypeOf(entityName) { return entityName + 'Id'; }
-
-function derivedTypes(ctx) {
-  const out = {};
-  for (const entityName of Object.keys(ctx['entity-definitions'])) {
-    out[idTypeOf(entityName)] = { entity: entityName, role: 'id' };
-  }
-  return out;
+// `entityName`'s derived identifier type name — `identifierType` when
+// the entity gives one, otherwise `<name>Id`, tracking the entity's own
+// name for as long as nothing overrides it. Reads straight off `ctx`,
+// so renaming the entity moves this automatically: the name is
+// recomputed fresh every time, never stored on the entity itself.
+function idTypeOf(ctx, entityName) {
+  const entity = ctx['entity-definitions'][entityName];
+  return (entity && entity.identifierType) || (entityName + 'Id');
 }
 
-// Classifies a type name against a context: simple, declared custom
-// type, entity-derived, or unresolved.
+// The entity that owns a value type as its derived identifier, or null.
+// Ownership is discovered by asking every entity what it currently
+// derives, not stored on the value type itself — which is what lets a
+// rename of the entity (while its identifier type is still tracking)
+// move the ownership along with the recomputed name, for free.
+function entityOfIdType(ctx, typeName) {
+  for (const entityName of Object.keys(ctx['entity-definitions'])) {
+    if (idTypeOf(ctx, entityName) === typeName) return entityName;
+  }
+  return null;
+}
+
+// Classifies a type name against a context: simple, a declared value
+// type (entity-owned or standalone — same shape either way), or
+// unresolved.
 function classifyType(ctx, typeName) {
   if (!typeName) return { kind: 'unresolved' };
   if (SIMPLE_TYPES.includes(typeName)) return { kind: 'simple' };
-  const derived = derivedTypes(ctx)[typeName];
-  if (derived) return { kind: 'derived', entity: derived.entity, role: derived.role };
-  const custom = ctx['custom-type-definitions'][typeName];
-  if (custom !== undefined) {
-    return { kind: 'custom', composite: Array.isArray(custom && custom.properties) };
+  const valueType = ctx['custom-type-definitions'][typeName];
+  if (valueType !== undefined) {
+    return {
+      kind: 'value',
+      composite: Array.isArray(valueType.properties),
+      isTag: !!valueType.isTag,
+      ownerEntity: entityOfIdType(ctx, typeName),
+    };
   }
   return { kind: 'unresolved' };
 }
 
-// The entity a type is the identifier of, or null. A projection
-// parameter is always one of these — only an identifier is a tag.
-function entityOfIdType(ctx, typeName) {
+// The scalar, tag-marked value type a name resolves to, in the shape a
+// tag is rendered from — entity-owned or standalone alike — or null
+// for anything else (unresolved, not a value type, composite, or not
+// marked `isTag`).
+function identifierTypeOf(ctx, typeName) {
   const cls = classifyType(ctx, typeName);
-  return cls.kind === 'derived' && cls.role === 'id' ? cls.entity : null;
+  if (cls.kind !== 'value' || cls.composite || !cls.isTag) return null;
+  const body = ctx['custom-type-definitions'][typeName];
+  return { name: typeName, composite: false, ownerEntity: cls.ownerEntity, tagSchema: (body && body.tagSchema) || '{type}:{value}' };
+}
+
+// Renders one identifier's value into its tag, through that
+// identifier's own `tagSchema` — `{type}` and `{value}`, in whichever
+// order the template states them.
+function renderTag(identifierType, valueText) {
+  return identifierType.tagSchema
+    .replace('{type}', identifierType.name)
+    .replace('{value}', valueText);
 }
 
 // The fields of a composite value type, or null for anything else.
+// Universal — a composite's fields may be any value type, tag-marked
+// or not; `idLeavesOfType` is what picks out the tag-marked ones.
 function compositeFieldsOf(ctx, typeName) {
   const cls = classifyType(ctx, typeName);
-  if (cls.kind !== 'custom' || !cls.composite) return null;
+  if (cls.kind !== 'value' || !cls.composite) return null;
   return ctx['custom-type-definitions'][typeName].properties || [];
 }
 
-// Tag derivation, looking *through* composites.
+// Whether a type carries at least one tag — a tag-marked scalar, or a
+// composite with at least one tag-marked field. Used wherever something
+// must be able to narrow a query: a projection parameter, a tag filter,
+// an entity's own derived identifier.
+function isTagBearing(ctx, typeName) {
+  return idLeavesOfType(ctx, typeName).length > 0;
+}
+
+// Tag derivation, looking *through* a composite to its fields.
 //
-// Every identifier reachable from a type, as `{ field, entity }` —
-// `field` is null when the type is itself an entity id, and names the
-// composite's field otherwise. A property typed with a composite
-// therefore contributes one tag per identifier field, and a *list* of
-// composites one such tag per element.
+// Every tag reachable from a type, as `{ field, identifierType }` —
+// `field` is null when the type is itself a tag-marked scalar (used
+// whole), and names the composite's field otherwise. A property typed
+// with a composite therefore contributes one tag per tag-marked field
+// it has (a field that is not itself tag-marked contributes nothing),
+// and a *list* of composites one such tag per element.
 //
-// Composites do not nest, so this is one hop and cannot recurse
-// further.
+// A composite's fields may not themselves be composite, so this is
+// always one hop and cannot recurse further.
 function idLeavesOfType(ctx, typeName) {
   const cls = classifyType(ctx, typeName);
-  if (cls.kind === 'derived' && cls.role === 'id') return [{ field: null, entity: cls.entity }];
-  const fields = compositeFieldsOf(ctx, typeName);
-  if (!fields) return [];
+  if (cls.kind !== 'value') return [];
+  if (!cls.composite) {
+    return cls.isTag ? [{ field: null, identifierType: typeName }] : [];
+  }
+  const fields = compositeFieldsOf(ctx, typeName) || [];
   const out = [];
   for (const field of fields) {
     const fieldCls = classifyType(ctx, field.propertyType);
-    if (fieldCls.kind === 'derived' && fieldCls.role === 'id') {
-      out.push({ field: field.name, entity: fieldCls.entity });
+    if (fieldCls.kind === 'value' && !fieldCls.composite && fieldCls.isTag) {
+      out.push({ field: field.name, identifierType: field.propertyType });
     }
   }
   return out;
@@ -324,21 +370,20 @@ function idLeavesOfType(ctx, typeName) {
 function allTypeNames(ctx) {
   return [
     ...SIMPLE_TYPES,
-    ...Object.keys(derivedTypes(ctx)).sort(),
     ...Object.keys(ctx['custom-type-definitions']).sort(),
   ];
 }
 
-// An enum is not a distinct form of custom type: it is a scalar custom
+// An enum is not a distinct form of value type: it is a scalar value
 // type whose `schema` carries the JSON Schema `enum` keyword. Presence
 // of a non-empty `enum` array is what the tooling treats as "this
 // resolves to an enum" — the one keyword that unambiguously means
 // "these are the only legal values".
 function enumMembersFor(ctx, typeName) {
   const cls = classifyType(ctx, typeName);
-  if (cls.kind !== 'custom' || cls.composite) return null;
-  const custom = ctx['custom-type-definitions'][typeName];
-  const members = custom && custom.schema && custom.schema.enum;
+  if (cls.kind !== 'value' || cls.composite) return null;
+  const valueType = ctx['custom-type-definitions'][typeName];
+  const members = valueType && valueType.schema && valueType.schema.enum;
   return Array.isArray(members) && members.length ? members : null;
 }
 
@@ -388,9 +433,12 @@ function uniqueAlias(base, taken) {
 // Reference computation and rewriting.
 //
 // References are derived from the body shape (per the DCB Context
-// schema) — never stored alongside it. A property type naming an
-// entity's derived type is a reference to that *entity*, which is what
-// makes tags fall out of property types.
+// schema) — never stored alongside it. An entity's own derived
+// identifier is an ordinary custom-type-definition, referenced by the
+// entity through `identifierType` exactly like any property type
+// references one — which is what lets renaming or removing it go
+// through the same generic machinery as any other value type, with no
+// entity-specific case needed.
 // ============================================================
 
 function emptyRefs() {
@@ -403,11 +451,10 @@ function uniq(arr) { return [...new Set(arr)]; }
 
 function pushTypeRef(ctx, refs, typeName) {
   const cls = classifyType(ctx, typeName);
-  if (cls.kind === 'custom') refs['custom-type-definition'].push(typeName);
-  else if (cls.kind === 'derived') refs['entity-definition'].push(cls.entity);
+  if (cls.kind === 'value') refs['custom-type-definition'].push(typeName);
 }
 
-function computeReferences(ctx, kind, body) {
+function computeReferences(ctx, kind, name, body) {
   const refs = emptyRefs();
   if (!body || typeof body !== 'object') return refs;
 
@@ -432,18 +479,29 @@ function computeReferences(ctx, kind, body) {
           if (handler && handler.event) refs['event-definition'].push(handler.event);
         }
       }
+      // An entity references its own derived identifier by name —
+      // whatever it currently resolves to, tracking or overridden. This
+      // is what lets renaming or removing that value type go through
+      // the ordinary generic machinery: the entity turns up as a
+      // referencer exactly like any property typed with it would.
+      // Mirrors `idTypeOf`, but read off `body`/`name` directly rather
+      // than through `ctx`, since a body being validated may not be
+      // committed there yet.
+      if (name) refs['custom-type-definition'].push(body.identifierType || (name + 'Id'));
       break;
     case 'projection-definition':
       pushTypeRef(ctx, refs, body.valueType);
-      // A parameter is always an entity-derived identifier, so it
-      // reaches the entity the same way a property type does.
+      // A parameter is always a tag-bearing value type, so it
+      // references it the same way a property type does.
       for (const p of body.parameters || []) pushTypeRef(ctx, refs, p.propertyType);
       for (const a of (scriptOf(body) || {}).arguments || []) pushTypeRef(ctx, refs, a.propertyType);
-      // A tag filter names entities outright, which is the one place in
-      // this model an entity is referenced by bare name.
+      // A tag filter names a value type outright — the one place in
+      // this model a type is referenced by bare name rather than
+      // through a property type.
       for (const t of (scriptOf(body) || {}).tagFilter || []) {
         const match = TAG_FILTER_RE.exec(String(t || ''));
-        if (match && ctx['entity-definitions'][match[1]]) refs['entity-definition'].push(match[1]);
+        const cls = match && classifyType(ctx, match[1]);
+        if (cls && cls.kind === 'value') refs['custom-type-definition'].push(match[1]);
       }
       for (const handler of body.handlers || []) {
         if (handler && handler.event) refs['event-definition'].push(handler.event);
@@ -491,19 +549,11 @@ function computeReferences(ctx, kind, body) {
 }
 
 // Rewrites every reference to `oldName` of `targetKind` into `newName`.
-// Renaming an entity also rewrites its derived id type name.
 function rewriteReferences(kind, body, targetKind, oldName, newName) {
   const next = deepClone(body);
 
-  const rewriteType = (typeName) => {
-    if (targetKind === 'custom-type-definition') {
-      return typeName === oldName ? newName : typeName;
-    }
-    if (targetKind === 'entity-definition') {
-      if (typeName === idTypeOf(oldName)) return idTypeOf(newName);
-    }
-    return typeName;
-  };
+  const rewriteType = (typeName) =>
+    (targetKind === 'custom-type-definition' && typeName === oldName) ? newName : typeName;
 
   const rewriteProperties = (properties) => {
     for (const p of properties || []) {
@@ -512,11 +562,11 @@ function rewriteReferences(kind, body, targetKind, oldName, newName) {
     }
   };
 
-  // A tag filter carries an entity by bare name, so renaming the entity
-  // has to move it. The placeholder inside is an argument name and is
+  // A tag filter carries a value type by bare name, so renaming one has
+  // to move it. The placeholder inside is an argument name and is
   // untouched by anything happening outside the script.
   const rewriteTagFilter = (script) => {
-    if (!script || !script.tagFilter || targetKind !== 'entity-definition') return;
+    if (!script || !script.tagFilter || targetKind !== 'custom-type-definition') return;
     script.tagFilter = script.tagFilter.map((template) => {
       const match = TAG_FILTER_RE.exec(String(template || ''));
       return match && match[1] === oldName ? `${newName}:${match[2]}` : template;
@@ -534,6 +584,14 @@ function rewriteReferences(kind, body, targetKind, oldName, newName) {
       break;
     case 'entity-definition':
       rewriteProperties(next.properties);
+      // The entity's own derived identifier moves with it — but only
+      // when an explicit `identifierType` names the old value. While
+      // it is absent (still tracking `<name>Id`), nothing here needs
+      // rewriting: recomputing the default off the entity's own
+      // (possibly just-renamed) name is what `idTypeOf` already does.
+      if (targetKind === 'custom-type-definition' && next.identifierType === oldName) {
+        next.identifierType = newName;
+      }
       if (targetKind === 'event-definition') {
         for (const p of next.properties || []) {
           for (const handler of p.handlers || []) {
@@ -610,7 +668,7 @@ function findReferencers(ctx, targetKind, targetName) {
   for (const referrerKind of DEF_KINDS) {
     const coll = ctx[DEF_COLLECTIONS[referrerKind]];
     for (const [name, body] of Object.entries(coll)) {
-      const refs = computeReferences(ctx, referrerKind, body);
+      const refs = computeReferences(ctx, referrerKind, name, body);
       if (refs[targetKind].includes(targetName)) {
         out.push({ kind: referrerKind, name, body });
       }
@@ -738,9 +796,14 @@ function scriptOf(target) {
 
 // A scripted *standalone* projection states its own tags, because
 // nothing else can: it has no owning entity to take one from and no
-// parameter list to derive one from. The form is `Entity:{argument}` —
-// an entity name, and either a placeholder naming one of the script's
-// arguments or a literal value.
+// parameter list to derive one from. The form is
+// `IdentifierType:{argument}` — the name of a *scalar* identifier type
+// (entity-derived or standalone; a composite one has no tag of its own
+// to name — its components do), and either a placeholder naming one of
+// the script's arguments or a literal value. The `:` here is purely
+// authoring syntax, separating which identifier from what value; the
+// actual tag is rendered through that identifier type's own
+// `tagSchema`, which may not even use `:` — see `renderTag`.
 const TAG_FILTER_RE = /^([A-Z][A-Za-z0-9]*):(.+)$/;
 const TAG_PLACEHOLDER_RE = /\{([A-Za-z][A-Za-z0-9]*)\}/g;
 
@@ -748,9 +811,13 @@ function tagFilterPlaceholders(template) {
   return [...String(template || '').matchAll(TAG_PLACEHOLDER_RE)].map((m) => m[1]);
 }
 
-function resolveTagFilter(template, args) {
-  return String(template || '').replace(TAG_PLACEHOLDER_RE, (whole, name) =>
+function resolveTagFilter(ctx, template, args) {
+  const match = TAG_FILTER_RE.exec(String(template || ''));
+  if (!match) return String(template || '');
+  const valueText = match[2].replace(TAG_PLACEHOLDER_RE, (whole, name) =>
     args[name] === undefined ? whole : operandText(args[name]));
+  const identifierType = identifierTypeOf(ctx, match[1]);
+  return identifierType ? renderTag(identifierType, valueText) : `${match[1]}:${valueText}`;
 }
 
 // Every scripted property an alias is read through, which is what
@@ -1037,6 +1104,60 @@ function projectionsRead(body) {
     .map((b) => b.projection);
 }
 
+// The operand that reaches one leaf of a composite identifier's value —
+// the same one-hop projection write coverage already applies via
+// `{parameterName, property}` / `{alias, property}`. `leaf` comes from
+// `idLeavesOfType`; `field: null` means the type is already the leaf,
+// so the operand is read whole.
+function operandForLeaf(operand, leaf) {
+  if (leaf.field === null || operand === undefined) return operand;
+  const source = operandSource(operand);
+  if (source === 'parameter') return { parameterName: operand.parameterName, property: leaf.field };
+  if (source === 'alias-property') return { alias: operand.alias, property: leaf.field };
+  return operand;
+}
+
+// The tag(s) an identifier-typed value renders as — one per leaf,
+// scalar and composite alike, each through that leaf's own `tagSchema`.
+// Shared by every DCB preview (a projection binding's arguments, an
+// event's published properties): all of them read the same union of
+// component tags that `eventDefinitions` describes.
+function tagsForIdentifierValue(ctx, identifierTypeName, operand, { each } = {}) {
+  const leaves = idLeavesOfType(ctx, identifierTypeName);
+  if (!leaves.length) {
+    // Unresolved mid-edit — nothing to render through, so fall back to
+    // the type name literally rather than showing nothing at all.
+    const shown = operand === undefined ? '?' : operandText(operand);
+    return [`${identifierTypeName}:${each ? `each(${shown})` : shown}`];
+  }
+  return leaves.map((leaf) => {
+    const shown = operand === undefined ? '?' : operandText(operandForLeaf(operand, leaf));
+    return renderTag(identifierTypeOf(ctx, leaf.identifierType), each ? `each(${shown})` : shown);
+  });
+}
+
+// The tag(s) an entity binding contributes — one per leaf of the
+// entity's own derived identifier, scalar or composite alike.
+function entityBindingTags(ctx, entityName, idOperand, excludingOperand, fannedOut) {
+  const leaves = idLeavesOfType(ctx, idTypeOf(ctx, entityName));
+  if (!leaves.length) {
+    // An unknown entity mid-edit has no derived identifier to look up —
+    // fall back to its bare name so a body still being typed renders
+    // something rather than nothing.
+    const shown = operandText(idOperand);
+    return [fannedOut ? `${entityName}:each(${shown})` : `${entityName}:${shown}`];
+  }
+  return leaves.map((leaf) => {
+    const shownValue = operandText(operandForLeaf(idOperand, leaf));
+    const shownExcluding = excludingOperand !== undefined
+      ? operandText(operandForLeaf(excludingOperand, leaf)) : null;
+    const valueText = fannedOut
+      ? `each(${shownValue}${shownExcluding !== null ? ` except ${shownExcluding}` : ''})`
+      : shownValue;
+    return renderTag(identifierTypeOf(ctx, leaf.identifierType), valueText);
+  });
+}
+
 function deriveDcb(ctx, body) {
   const items = [];
 
@@ -1048,17 +1169,16 @@ function deriveDcb(ctx, body) {
       if (!projection) continue;
       // A declared projection's parameters *are* its tags, so the query
       // is written from the parameter list rather than from anything
-      // about the value. A scripted one states its tags itself, with
-      // argument names interpolated — the one thing the escape hatch is
-      // not allowed to hide is what it reads.
+      // about the value — one tag for a scalar identifier parameter,
+      // one per component for a composite one. A scripted projection
+      // states its tags itself, with argument names interpolated — the
+      // one thing the escape hatch is not allowed to hide is what it
+      // reads.
       const script = scriptOf(projection);
       const tags = script
-        ? (script.tagFilter || []).map((t) => resolveTagFilter(t, binding.arguments || {}))
-        : (projection.parameters || []).map((p) => {
-            const entity = entityOfIdType(ctx, p.propertyType);
-            const operand = (binding.arguments || {})[p.name];
-            return `${entity || p.propertyType}:${operandText(operand)}`;
-          });
+        ? (script.tagFilter || []).map((t) => resolveTagFilter(ctx, t, binding.arguments || {}))
+        : (projection.parameters || []).flatMap((p) =>
+            tagsForIdentifierValue(ctx, p.propertyType, (binding.arguments || {})[p.name]));
       items.push({
         projection: binding.projection,
         alias: binding.alias,
@@ -1090,10 +1210,7 @@ function deriveDcb(ctx, body) {
     const fannedOut = isFannedOut(ctx, body, binding);
     items.push({
       alias: binding.alias,
-      tags: [fannedOut
-        ? `${binding.entity}:each(${operandText(binding.id)}${
-            binding.excluding !== undefined ? ` except ${operandText(binding.excluding)}` : ''})`
-        : `${binding.entity}:${operandText(binding.id)}`],
+      tags: entityBindingTags(ctx, binding.entity, binding.id, binding.excluding, fannedOut),
       fannedOut,
       types: [...types].sort(),
       readProperties: [...readProperties].sort(),
@@ -1110,14 +1227,8 @@ function deriveDcb(ctx, body) {
       const listed = property.isList || (operand !== undefined && operandSource(operand) === 'parameter'
         && (body.properties || []).some((p) => p.name === operand.parameterName && p.isList));
       for (const leaf of idLeavesOfType(ctx, property.propertyType)) {
-        const shown = operand === undefined
-          ? '?'
-          : operandText(leaf.field === null
-            ? operand
-            : (operandSource(operand) === 'parameter'
-              ? { parameterName: operand.parameterName, property: leaf.field }
-              : operand));
-        writes.push(`${leaf.entity}:${listed ? `each(${shown})` : shown}`);
+        const shown = operand === undefined ? '?' : operandText(operandForLeaf(operand, leaf));
+        writes.push(renderTag(identifierTypeOf(ctx, leaf.identifierType), listed ? `each(${shown})` : shown));
       }
     }
   }
@@ -1201,19 +1312,25 @@ function coverageIssues(ctx, body) {
       // type, not its surface: a property typed `Item[]` writes one
       // tag per element, and each has to have been consulted.
       for (const leaf of idLeavesOfType(ctx, property.propertyType)) {
+        // A leaf whose identifier type is standalone — a component with
+        // no entity of its own — has no entity binding that could ever
+        // cover it, so there is nothing to check here: coverage is
+        // stated in terms of the entity instances a command binds.
+        const ownerEntity = entityOfIdType(ctx, leaf.identifierType);
+        if (!ownerEntity) continue;
         const required = leaf.field === null
           ? operand
           : (operandSource(operand) === 'parameter'
             ? { parameterName: operand.parameterName, property: leaf.field }
             : undefined);
         const covered = required !== undefined && (body.boundary || []).some(
-          (binding) => binding && binding.entity === leaf.entity && sameOperand(binding.id, required)
+          (binding) => binding && binding.entity === ownerEntity && sameOperand(binding.id, required)
         );
         if (!covered) {
           issues.push({
             event: emission.name,
             property: leaf.field === null ? property.name : `${property.name}.${leaf.field}`,
-            entity: leaf.entity,
+            entity: ownerEntity,
             operand: required === undefined ? operand : required,
           });
         }
@@ -1289,35 +1406,9 @@ function getCtxOrThrow(ctxId) {
   return ctx;
 }
 
-function assertDerivedNamesFree(ctx, entityName, exceptEntity) {
-  const derived = idTypeOf(entityName);
-  if (ctx['custom-type-definitions'][derived] !== undefined) {
-    throw new DomainError(
-      `Entity "${entityName}" would derive the type "${derived}", but a custom type by that name already exists.`
-    );
-  }
-  for (const other of Object.keys(ctx['entity-definitions'])) {
-    if (other === exceptEntity) continue;
-    if (idTypeOf(other) === derived) {
-      throw new DomainError(
-        `Entity "${entityName}" would derive the type "${derived}", which entity "${other}" already derives.`
-      );
-    }
-  }
-}
-
-function assertCustomTypeNameFree(ctx, typeName) {
-  const derived = derivedTypes(ctx)[typeName];
-  if (derived) {
-    throw new DomainError(
-      `"${typeName}" is derived from entity "${derived.entity}" — custom types share that namespace.`
-    );
-  }
-}
-
 function validateReferences(ctx, kind, name, body) {
   const resolved = withPending(ctx, kind, name, body);
-  const refs = computeReferences(resolved, kind, body);
+  const refs = computeReferences(resolved, kind, name, body);
   for (const targetKind of DEF_KINDS) {
     const coll = resolved[DEF_COLLECTIONS[targetKind]];
     for (const targetName of refs[targetKind]) {
@@ -1371,10 +1462,19 @@ function validateHandlers(ctx, label, target, handlers) {
   const successorTypes = ['integer', 'string'];
   const checkOperand = (operand, where) => {
     if (operandSource(operand) === 'successor') {
-      // A custom scalar and an entity identifier are both strings
-      // underneath, so both have a successor. An enum does not: its
-      // members are a set, and "the next member" means nothing.
+      // A scalar value type, tag-marked or not, is a string underneath,
+      // so it has a successor. An enum does not: its members are a
+      // set, and "the next member" means nothing. Nor does a
+      // composite: it is a record of values, not one value, and
+      // auto-incrementing a record means nothing either.
       const cls = classifyType(ctx, target.propertyType);
+      if (cls.kind === 'value' && cls.composite) {
+        throw new DomainError(
+          `${where} takes a successor, but ${label} is typed "${target.propertyType}", a composite. ` +
+          'A composite identifier has no successor — auto-incrementing makes sense for a single ' +
+          'value, and a composite is a record of them.'
+        );
+      }
       const underlying = cls.kind === 'simple' ? target.propertyType
         : (enumMembersFor(ctx, target.propertyType) ? 'enum' : 'string');
       if (!successorTypes.includes(underlying)) {
@@ -1549,12 +1649,27 @@ function validateScript(ctx, label, target, { standalone }) {
     const match = TAG_FILTER_RE.exec(String(template || ''));
     if (!match) {
       throw new DomainError(
-        `Tag filter "${template}" on ${label} is not a tag. A tag is "Entity:value", and the ` +
-        'value may be a "{argument}" placeholder.'
+        `Tag filter "${template}" on ${label} is not a tag. A tag is "TagType:value", and ` +
+        'the value may be a "{argument}" placeholder.'
       );
     }
-    if (!ctx['entity-definitions'][match[1]]) {
-      throw new DomainError(`Tag filter "${template}" on ${label} names unknown entity "${match[1]}".`);
+    const cls = classifyType(ctx, match[1]);
+    if (cls.kind !== 'value') {
+      throw new DomainError(
+        `Tag filter "${template}" on ${label} names "${match[1]}", which is not a value type.`
+      );
+    }
+    if (cls.composite) {
+      throw new DomainError(
+        `Tag filter "${template}" on ${label} names "${match[1]}", a composite — it has no tag of ` +
+        'its own. Name its tag-marked fields\' own types individually instead.'
+      );
+    }
+    if (!cls.isTag) {
+      throw new DomainError(
+        `Tag filter "${template}" on ${label} names "${match[1]}", which is not marked "represented ` +
+        'as a tag".'
+      );
     }
     for (const placeholder of tagFilterPlaceholders(template)) {
       if (!seen.has(placeholder)) {
@@ -1578,7 +1693,7 @@ function validateProjectionBody(ctx, projectionName, body) {
       `Type "${body.valueType}" (projection "${projectionName}") does not resolve in this context.`
     );
   }
-  if (valueCls.kind === 'custom' && valueCls.composite) {
+  if (valueCls.kind === 'value' && valueCls.composite) {
     throw new DomainError(
       `Projection "${projectionName}" holds "${body.valueType}", which is a composite. ` +
       'A projection holds a single value, and the operations that advance one have nothing ' +
@@ -1609,12 +1724,12 @@ function validateProjectionBody(ctx, projectionName, body) {
     );
   }
 
-  // Only an identifier is a tag, and only a tag can narrow a query. A
-  // parameter of any other type could not restrict what the store
-  // returns — it could only discard events after reading them, which
-  // is a predicate, and predicates live in conditions. A script is
-  // exactly the place where discarding after reading is legitimate,
-  // which is why that one takes arguments and not parameters.
+  // Only a tag-bearing type can narrow a query. A parameter of any
+  // other type could not restrict what the store returns — it could
+  // only discard events after reading them, which is a predicate, and
+  // predicates live in conditions. A script is exactly the place where
+  // discarding after reading is legitimate, which is why that one
+  // takes arguments and not parameters.
   const seenParameters = new Set();
   for (const parameter of body.parameters || []) {
     if (!parameter || !CAMEL_RE.test(parameter.name || '')) {
@@ -1624,11 +1739,11 @@ function validateProjectionBody(ctx, projectionName, body) {
       throw new DomainError(`Projection "${projectionName}" declares parameter "${parameter.name}" twice.`);
     }
     seenParameters.add(parameter.name);
-    if (!entityOfIdType(ctx, parameter.propertyType)) {
+    if (classifyType(ctx, parameter.propertyType).kind !== 'value' || !isTagBearing(ctx, parameter.propertyType)) {
       throw new DomainError(
         `Parameter "${parameter.name}" on projection "${projectionName}" is typed ` +
-        `"${parameter.propertyType}", which is not an entity identifier. A parameter becomes a ` +
-        'tag, and only an identifier is a tag.'
+        `"${parameter.propertyType}", which carries no tag. A parameter becomes a tag, and only ` +
+        'a value type marked "represented as a tag" (directly, or through a tag-marked field) is one.'
       );
     }
   }
@@ -1641,14 +1756,19 @@ function validateProjectionBody(ctx, projectionName, body) {
   validateHandlers(ctx, `projection "${projectionName}"`, body, body.handlers);
 }
 
-// A custom type is scalar (an opaque JSON Schema) or composite (typed
-// fields) — never both and never neither.
+// A value type is scalar (an opaque JSON Schema) or composite (typed
+// fields) — never both and never neither. `isTag` is meaningful only
+// on the scalar form: a composite is never itself a tag, so it may not
+// combine with fields. An entity-owned value type carries one further
+// invariant, checked here rather than only at the point of change: it
+// must stay tag-bearing, since an entity that could not be tagged
+// could not be bound in a DCB query.
 //
 // A composite's fields are singular, required and never composite
 // themselves. All three keep zipping honest: zipping correlates a
 // fanned-out binding with the list it fanned from by index, and it only
 // means anything while the two have the same length. A list field
-// flattens, an optional identifier field contributes a variable number
+// flattens, an optional tag-marked field contributes a variable number
 // of tags, and either way the index drifts with nothing on the page to
 // show it.
 function validateCustomTypeBody(ctx, typeName, body) {
@@ -1656,55 +1776,77 @@ function validateCustomTypeBody(ctx, typeName, body) {
   const hasFields = body.properties !== undefined;
   if (hasSchema && hasFields) {
     throw new DomainError(
-      `Custom type "${typeName}" declares both a schema and fields — it is either scalar or composite, not both.`
+      `Value type "${typeName}" declares both a schema and fields — it is either scalar or composite, not both.`
     );
   }
   if (!hasSchema && !hasFields) {
-    throw new DomainError(`Custom type "${typeName}" declares neither a schema nor fields.`);
+    throw new DomainError(`Value type "${typeName}" declares neither a schema nor fields.`);
   }
-  if (!hasFields) return;
 
-  const fields = body.properties || [];
-  if (fields.length === 0) {
-    throw new DomainError(`Composite type "${typeName}" declares no fields.`);
+  if (hasFields) {
+    if (body.isTag) {
+      throw new DomainError(
+        `Value type "${typeName}" is composite and marked "represented as a tag" — only a scalar ` +
+        'value type can be. A composite\'s tag-ness is derived from its tag-marked fields instead.'
+      );
+    }
+    const fields = body.properties || [];
+    if (fields.length === 0) {
+      throw new DomainError(`Composite type "${typeName}" declares no fields.`);
+    }
+    const seen = new Set();
+    for (const field of fields) {
+      if (!CAMEL_RE.test(field.name || '')) {
+        throw new DomainError(`Field name "${field.name}" on "${typeName}" must be camelCase.`);
+      }
+      if (seen.has(field.name)) {
+        throw new DomainError(`Composite type "${typeName}" declares field "${field.name}" twice.`);
+      }
+      seen.add(field.name);
+      const cls = classifyType(ctx, field.propertyType);
+      if (cls.kind === 'unresolved') {
+        throw new DomainError(
+          `Type "${field.propertyType}" (field "${typeName}.${field.name}") does not resolve in this context.`
+        );
+      }
+      // Composites do not nest — an operand reaches one field, never a path.
+      if (cls.kind === 'value' && cls.composite) {
+        throw new DomainError(
+          `Field "${typeName}.${field.name}" is typed with the composite "${field.propertyType}". ` +
+          `Composites do not nest — an operand reaches one field, never a path.`
+        );
+      }
+      if (field.isList) {
+        throw new DomainError(
+          `Field "${typeName}.${field.name}" is a list. A composite's fields are singular, ` +
+          `because a list field flattens and would break the index a zipped condition reads by.`
+        );
+      }
+      if (field.isOptional) {
+        throw new DomainError(
+          `Field "${typeName}.${field.name}" is optional. A composite's fields are required, ` +
+          `because a missing tag field would contribute no tag and shift every later index.`
+        );
+      }
+    }
   }
-  const seen = new Set();
-  for (const field of fields) {
-    if (!CAMEL_RE.test(field.name || '')) {
-      throw new DomainError(`Field name "${field.name}" on "${typeName}" must be camelCase.`);
-    }
-    if (seen.has(field.name)) {
-      throw new DomainError(`Composite type "${typeName}" declares field "${field.name}" twice.`);
-    }
-    seen.add(field.name);
-    const cls = classifyType(ctx, field.propertyType);
-    if (cls.kind === 'unresolved') {
-      throw new DomainError(
-        `Type "${field.propertyType}" (field "${typeName}.${field.name}") does not resolve in this context.`
-      );
-    }
-    if (cls.kind === 'custom' && cls.composite) {
-      throw new DomainError(
-        `Field "${typeName}.${field.name}" is typed with the composite "${field.propertyType}". ` +
-        `Composites do not nest — an operand reaches one field, never a path.`
-      );
-    }
-    if (field.isList) {
-      throw new DomainError(
-        `Field "${typeName}.${field.name}" is a list. A composite's fields are singular, ` +
-        `because a list field flattens and would break the index a zipped condition reads by.`
-      );
-    }
-    if (field.isOptional) {
-      throw new DomainError(
-        `Field "${typeName}.${field.name}" is optional. A composite's fields are required, ` +
-        `because a missing identifier would contribute no tag and shift every later index.`
-      );
-    }
+
+  const owner = entityOfIdType(ctx, typeName);
+  if (owner && !isTagBearing(ctx, typeName)) {
+    throw new DomainError(
+      `"${typeName}" is entity "${owner}"'s derived identifier — it must stay tag-bearing (a scalar ` +
+      'marked "represented as a tag", or a composite with at least one tag-marked field).'
+    );
   }
 }
 
 function validateEntityBody(ctx, entityName, body) {
+  if (body.identifierType !== undefined && !PASCAL_RE.test(body.identifierType)) {
+    throw new DomainError(
+      `Entity "${entityName}"'s identifierType "${body.identifierType}" must be PascalCase.`
+    );
+  }
+
   const properties = body.properties || [];
 
   const seen = new Set();
@@ -2217,8 +2359,28 @@ function addDefinition(kind, ctxId, name, body) {
   if (trimmed in coll) {
     throw new DomainError(`A ${humanize(kind)} named "${trimmed}" already exists in this context.`);
   }
-  if (kind === 'entity-definition') assertDerivedNamesFree(ctx, trimmed, null);
-  if (kind === 'custom-type-definition') assertCustomTypeNameFree(ctx, trimmed);
+  if (kind === 'entity-definition') {
+    // An entity's derived identifier is an ordinary value type, created
+    // in the same append so the two never exist without each other —
+    // scalar, a plain string, and marked as a tag, which is the
+    // ordinary case. Naming it `<name>Id` unless `identifierType`
+    // overrides it, and colliding with an existing value type is
+    // refused exactly like any other name collision.
+    const idTypeName = body.identifierType || (trimmed + 'Id');
+    validateDefinitionKey('custom-type-definition', idTypeName, 'Value type name');
+    if (ctx['custom-type-definitions'][idTypeName] !== undefined) {
+      throw new DomainError(
+        `Entity "${trimmed}" would derive the type "${idTypeName}", but a value type by that name already exists.`
+      );
+    }
+    const idTypeBody = { schema: { type: 'string' }, isTag: true };
+    validateReferences(withPending(ctx, 'custom-type-definition', idTypeName, idTypeBody), kind, trimmed, body);
+    appendEvents([
+      { type: 'custom-type-definition-added', data: { 'dcb-context-id': ctxId, name: idTypeName, body: idTypeBody } },
+      { type: 'entity-definition-added', data: { 'dcb-context-id': ctxId, name: trimmed, body } },
+    ]);
+    return;
+  }
   validateReferences(ctx, kind, trimmed, body);
   appendEvents([{ type: `${kind}-added`, data: { 'dcb-context-id': ctxId, name: trimmed, body } }]);
 }
@@ -2228,6 +2390,17 @@ function updateDefinition(kind, ctxId, name, body) {
   const coll = ctx[DEF_COLLECTIONS[kind]];
   if (!(name in coll)) {
     throw new DomainError(`No ${humanize(kind)} named "${name}" exists in this context.`);
+  }
+  if (kind === 'entity-definition' && (coll[name].identifierType || null) !== (body.identifierType || null)) {
+    // Changing `identifierType` moves which value type the entity
+    // derives — every reference to the old one has to move with it,
+    // the same as any other rename. An ordinary update cannot carry
+    // that cascade: renaming the entity's derived identifier happens
+    // by renaming the value type itself, in Custom Types.
+    throw new DomainError(
+      `Cannot change "${name}"'s identifierType through an ordinary update — rename the value type ` +
+      'itself instead, which moves this reference along with every other.'
+    );
   }
   validateReferences(ctx, kind, name, body);
   if (kind === 'entity-definition') assertEntityUpdateKeepsInboundReferences(ctx, name, body);
@@ -2288,7 +2461,7 @@ function assertEntityUpdateKeepsInboundReferences(ctx, entityName, body) {
   }
 }
 
-// Dropping a member of an enum custom type that a command still
+// Dropping a member of an enum value type that a command still
 // compares against is refused rather than silently breaking the
 // command. Scoped to the type itself rather than to one entity, since
 // any number of properties across any number of entities may now
@@ -2345,6 +2518,46 @@ function scriptedHandlersOf(ctx, eventName) {
   return out;
 }
 
+// Renaming an entity while its derived identifier is still tracking
+// (`identifierType` absent) moves two names in one append: the entity
+// itself, and — since the value type is a real stored definition now —
+// its still-default-named `<name>Id` alongside it. Neither is pinned
+// explicit afterward, so both keep tracking indefinitely. This is kept
+// separate from the ordinary rename path below because it merges two
+// referencer sets (whoever names the entity, whoever names its id
+// type) into one append, and because an entity with an *explicit*
+// `identifierType` needs none of this — that case falls through to the
+// ordinary path, which renames only the entity.
+function renameEntityDefinition(ctx, ctxId, previousName, trimmed) {
+  const entityBody = ctx['entity-definitions'][previousName];
+  const oldIdType = previousName + 'Id';
+  const newIdType = trimmed + 'Id';
+  if (ctx['custom-type-definitions'][newIdType] !== undefined) {
+    throw new DomainError(
+      `Entity "${trimmed}" would derive the type "${newIdType}", but a value type by that name already exists.`
+    );
+  }
+
+  const events = [
+    { type: 'entity-definition-renamed', data: { 'dcb-context-id': ctxId, 'previous-name': previousName, name: trimmed } },
+    { type: 'custom-type-definition-renamed', data: { 'dcb-context-id': ctxId, 'previous-name': oldIdType, name: newIdType } },
+  ];
+  const touched = new Map();
+  const addRewrite = (ref) => {
+    const key = `${ref.kind}:${ref.name}`;
+    if (touched.has(key)) return;
+    let body = rewriteReferences(ref.kind, ref.body, 'entity-definition', previousName, trimmed);
+    body = rewriteReferences(ref.kind, body, 'custom-type-definition', oldIdType, newIdType);
+    touched.set(key, { kind: ref.kind, name: ref.kind === 'entity-definition' && ref.name === previousName ? trimmed : ref.name, body });
+  };
+  for (const ref of findReferencers(ctx, 'entity-definition', previousName)) addRewrite(ref);
+  for (const ref of findReferencers(ctx, 'custom-type-definition', oldIdType)) addRewrite(ref);
+  for (const { kind: refKind, name, body } of touched.values()) {
+    events.push({ type: `${refKind}-updated`, data: { 'dcb-context-id': ctxId, name, body } });
+  }
+  appendEvents(events);
+}
+
 function renameDefinition(kind, ctxId, previousName, newName) {
   const ctx = getCtxOrThrow(ctxId);
   if (isIdKeyed(kind)) {
@@ -2362,8 +2575,11 @@ function renameDefinition(kind, ctxId, previousName, newName) {
   if (trimmed in coll) {
     throw new DomainError(`A ${humanize(kind)} named "${trimmed}" already exists in this context.`);
   }
-  if (kind === 'entity-definition') assertDerivedNamesFree(ctx, trimmed, previousName);
-  if (kind === 'custom-type-definition') assertCustomTypeNameFree(ctx, trimmed);
+
+  if (kind === 'entity-definition' && coll[previousName].identifierType === undefined) {
+    renameEntityDefinition(ctx, ctxId, previousName, trimmed);
+    return;
+  }
 
   const referencers = findReferencers(ctx, kind, previousName);
   const events = [{
@@ -2371,11 +2587,20 @@ function renameDefinition(kind, ctxId, previousName, newName) {
     data: { 'dcb-context-id': ctxId, 'previous-name': previousName, name: trimmed },
   }];
   for (const ref of referencers) {
-    // An entity can reference itself — a property typed with its own
-    // derived `<Entity>Id`, for a hierarchy. That rewrite lands on the
-    // new name, since the rename event is applied first.
+    // A value type can reference itself — a composite field typed with
+    // one of its own siblings' names is not self-reference, but an
+    // entity's own self-referencing property is. That rewrite lands on
+    // the new name, since the rename event is applied first.
     const isSelf = ref.kind === kind && ref.name === previousName;
-    const rewritten = rewriteReferences(ref.kind, ref.body, kind, previousName, trimmed);
+    let rewritten = rewriteReferences(ref.kind, ref.body, kind, previousName, trimmed);
+    // Renaming a value type directly (not via the entity-rename path
+    // above): an entity that was tracking it — no explicit
+    // `identifierType` — has to pin the new name explicitly now, or it
+    // would silently keep recomputing a default that no longer exists.
+    if (kind === 'custom-type-definition' && ref.kind === 'entity-definition'
+        && ref.body.identifierType === undefined) {
+      rewritten = { ...rewritten, identifierType: trimmed };
+    }
     events.push({
       type: `${ref.kind}-updated`,
       data: { 'dcb-context-id': ctxId, name: isSelf ? trimmed : ref.name, body: rewritten },
@@ -2800,6 +3025,24 @@ function removeDefinition(kind, ctxId, name) {
     const list = referencers.map((r) => `${humanize(r.kind)} "${r.name}"`).join(', ');
     throw new DomainError(`Cannot remove ${humanize(kind)} "${name}" — still referenced by: ${list}.`);
   }
+
+  if (kind === 'entity-definition') {
+    // The entity's own derived custom type is removed alongside it —
+    // auto-created together, they go together, bypassing that type's
+    // own referencer check (a direct removal of *it* would still be
+    // blocked — see the collision this creates in `findReferencers`
+    // above, which is what makes that block work). Anything else still
+    // naming it is left broken, reported the same way this system
+    // already reports every other broken reference: a scenario left
+    // saying what it used to check, a property scenario left reporting
+    // what it found.
+    const idType = idTypeOf(ctx, name);
+    appendEvents([
+      { type: 'entity-definition-removed', data: { 'dcb-context-id': ctxId, name } },
+      { type: 'custom-type-definition-removed', data: { 'dcb-context-id': ctxId, name: idType } },
+    ]);
+    return;
+  }
   appendEvents([{ type: `${kind}-removed`, data: { 'dcb-context-id': ctxId, name } }]);
 }
 
@@ -2887,7 +3130,6 @@ function seedBase(ctxId) {
 
   addDefinition('entity-definition', ctxId, 'Student', {
     icon: '🧑‍🎓',
-    identifierSchema: { type: 'string' },
     properties: [
       statusProperty('StudentStatus', 'NonExistent'),
       property('subscriptionCount', 'integer', 0),
@@ -2895,7 +3137,6 @@ function seedBase(ctxId) {
   });
   addDefinition('entity-definition', ctxId, 'Course', {
     icon: '📚',
-    identifierSchema: { type: 'string' },
     properties: [
       statusProperty('CourseStatus', 'NonExistent'),
       property('capacity', 'integer', 0),
@@ -2918,7 +3159,6 @@ function seedBase(ctxId) {
   // 3. Entities again, now with handlers.
   updateDefinition('entity-definition', ctxId, 'Student', {
     icon: '🧑‍🎓',
-    identifierSchema: { type: 'string' },
     properties: [
       { ...statusProperty('StudentStatus', 'NonExistent'),
         handlers: [handler('StudentRegistered', 'set', { enumMember: 'Existent' })] },
@@ -2931,7 +3171,6 @@ function seedBase(ctxId) {
   });
   updateDefinition('entity-definition', ctxId, 'Course', {
     icon: '📚',
-    identifierSchema: { type: 'string' },
     properties: [
       { ...statusProperty('CourseStatus', 'NonExistent'),
         handlers: [
@@ -3052,8 +3291,8 @@ function seedBase(ctxId) {
 // Project to the last id instead and `initialValue` would have to mean
 // two different things depending on whether anything had happened yet.
 function seedAddSequence(ctxId) {
-  seedPatch('entity-definition', ctxId, 'Course', (course) => {
-    course.identifierSchema = { type: 'string', pattern: '^c[0-9]+$' };
+  seedPatch('custom-type-definition', ctxId, 'CourseId', (courseId) => {
+    courseId.schema = { type: 'string', pattern: '^c[0-9]+$' };
   });
 
   addDefinition('projection-definition', ctxId, 'CourseNumbering', {
@@ -3105,7 +3344,6 @@ function seedAddTenancy(ctxId) {
   addDefinition('custom-type-definition', ctxId, 'TenantStatus', seedEnumType('TenantStatus', ['NonExistent', 'Existent']));
   addDefinition('entity-definition', ctxId, 'Tenant', {
     icon: '🏢',
-    identifierSchema: { type: 'string' },
     properties: [seedStatusProperty('TenantStatus', 'NonExistent')],
   });
   addDefinition('custom-type-definition', ctxId, 'CourseNumber', {
@@ -3304,7 +3542,6 @@ function seedProductPricing(ctxId) {
   //    until ProductId exists, and ProductId comes from Product.
   addDefinition('entity-definition', ctxId, 'Product', {
     icon: '📦',
-    identifierSchema: { type: 'string' },
     properties: [
       statusProperty('ProductStatus', 'NonExistent'),
       // Optional, and null until the product is defined: a price of 0
@@ -3315,7 +3552,6 @@ function seedProductPricing(ctxId) {
   });
   addDefinition('entity-definition', ctxId, 'Order', {
     icon: '🧾',
-    identifierSchema: { type: 'string' },
     properties: [statusProperty('OrderStatus', 'NonExistent')],
   });
 
@@ -3341,7 +3577,6 @@ function seedProductPricing(ctxId) {
   //    cannot yet express.
   updateDefinition('entity-definition', ctxId, 'Product', {
     icon: '📦',
-    identifierSchema: { type: 'string' },
     properties: [
       { ...statusProperty('ProductStatus', 'NonExistent'),
         handlers: [handler('ProductDefined', 'set', { enumMember: 'Existent' })] },
@@ -3354,7 +3589,6 @@ function seedProductPricing(ctxId) {
   });
   updateDefinition('entity-definition', ctxId, 'Order', {
     icon: '🧾',
-    identifierSchema: { type: 'string' },
     properties: [
       { ...statusProperty('OrderStatus', 'NonExistent'),
         handlers: [handler('ProductsOrdered', 'set', { enumMember: 'Existent' })] },

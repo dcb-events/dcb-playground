@@ -1111,7 +1111,7 @@ function paletteEntries(ctx) {
   }
   if (advanced()) {
     for (const name of Object.keys(ctx['custom-type-definitions'])) {
-      add('value type', readable(name), 'value types', () => { state.view = 'types'; });
+      add('custom type', readable(name), 'custom types', () => goToCustomType(name));
     }
   }
   add('do', 'New command…', '', () => startDraft(activeContext()));
@@ -1702,6 +1702,16 @@ function eventRef(ctx, name, { cls = 'chip event linkable', text } = {}) {
   }, h('i', { class: 'ic' }, eventIcon(ctx, name)), text === undefined ? readable(name) : text);
 }
 
+// A custom type has no page of its own — it lives as a card in Custom
+// Types — so opening one means landing on that card rather than
+// switching to a dedicated view the way an entity or event does.
+function goToCustomType(name) {
+  closeForms();
+  state.view = 'types';
+  state.land = `[data-key="${CSS.escape('type:' + name)}"]`;
+  render();
+}
+
 function goToCommand(name) {
   closeForms();
   state.view = 'slice';
@@ -1755,7 +1765,7 @@ function goToPropertyScenario(ctx, key) {
 
 function typeChoices(ctx) {
   if (advanced()) return allTypeNames(ctx);
-  return [...SIMPLE_TYPES, ...Object.keys(ctx['entity-definitions']).sort().map(idTypeOf)];
+  return [...SIMPLE_TYPES, ...Object.keys(ctx['entity-definitions']).sort().map((n) => idTypeOf(ctx, n))];
 }
 function typeOptions(ctx) {
   return typeChoices(ctx).map((t) => [t, readable(t)]);
@@ -1926,7 +1936,7 @@ function renderRail() {
           e.preventDefault(); closeForms();
           state.view = 'types'; render();
         },
-      }, 'Value types'));
+      }, 'Custom types'));
     }
     if (advanced() || projectionNames.length) rail.appendChild(h('a', {
       href: '#', class: state.view === 'projections' ? 'on' : '',
@@ -3466,7 +3476,8 @@ function entityHandlerAdder(ctx, entityName, property, existing) {
   // else could never identify one of its instances.
   const eventNames = Object.keys(ctx['event-definitions'])
     .filter((n) => (ctx['event-definitions'][n].properties || [])
-      .some((p) => idLeavesOfType(ctx, p.propertyType).some((leaf) => leaf.entity === entityName)))
+      .some((p) => idLeavesOfType(ctx, p.propertyType)
+        .some((leaf) => entityOfIdType(ctx, leaf.identifierType) === entityName)))
     .filter((n) => existing || !(property.handlers || []).some((h) => h.event === n))
     .sort();
 
@@ -3528,7 +3539,6 @@ function createEntity(ctx, label) {
     addDefinition('custom-type-definition', ctx.id, statusType,
       { schema: { type: 'string', enum: [...DEFAULT_STATUSES] } });
     addDefinition('entity-definition', ctx.id, name, {
-      identifierSchema: { type: 'string' },
       properties: [{
         name: STATUS_PROPERTY, propertyType: statusType,
         isOptional: false, isList: false,
@@ -3696,29 +3706,25 @@ function scriptPanel(ctx, entityName, property) {
       )));
 }
 
-// The JSON Schema of an entity's derived `<name>Id`. Written as raw
-// JSON because that is what it is — the schema does not constrain the
-// shape beyond "a JSON Schema", so a form over it would be a guess
-// about which keys matter. Applied on blur rather than per keystroke:
-// half-typed JSON is not JSON.
-function identifierSchemaField(ctx, name, entity) {
-  const current = JSON.stringify(entity.identifierSchema || { type: 'string' });
-  return h('span', { class: 'tiny muted' }, ' id: ',
+// The template rendering a tag-marked custom type's value into its tag
+// — `{type}` and `{value}`, in whichever order it states them. Unlike
+// the type's own name, changing this never moves a reference — it
+// changes what an event carrying it writes as its tag, not what
+// anything is called — so it goes through `patch` like any other
+// field.
+function tagSchemaField(name, body) {
+  const current = body.tagSchema || '{type}:{value}';
+  return h('div', { class: 'irow' },
+    h('span', { class: 'nm' }, 'tag schema'),
     h('input', {
-      type: 'text', class: 'mono', value: current, style: 'width:26ch',
-      title: 'JSON Schema of ' + idTypeOf(name),
+      type: 'text', class: 'mono', value: current, style: 'width:16ch',
+      title: 'Renders the value into a tag — interpolates {type} and {value}',
       onblur: (e) => {
-        const text = e.target.value.trim();
+        const text = e.target.value.trim() || '{type}:{value}';
         if (text === current) return;
-        let parsed;
-        try { parsed = JSON.parse(text); } catch (err) {
-          return toast('That is not valid JSON.', true);
-        }
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-          return toast('An identifier schema is a JSON object.', true);
-        }
-        patch('entity-definition', name, (b) => { b.identifierSchema = parsed; });
+        patch('custom-type-definition', name, (b) => { b.tagSchema = text; });
       },
+      onkeydown: (e) => { if (e.key === 'Enter') e.target.blur(); },
     }));
 }
 
@@ -3756,7 +3762,8 @@ function entityPropertyAdder(ctx, entityName) {
 
   const eventNames = Object.keys(ctx['event-definitions'])
     .filter((n) => (ctx['event-definitions'][n].properties || [])
-      .some((p) => idLeavesOfType(ctx, p.propertyType).some((leaf) => leaf.entity === entityName)))
+      .some((p) => idLeavesOfType(ctx, p.propertyType)
+        .some((leaf) => entityOfIdType(ctx, leaf.identifierType) === entityName)))
     .sort();
 
   const scriptedFields = draft.scripted ? [
@@ -3925,7 +3932,13 @@ function renderEntity(ctx, main) {
 // with being a thing at all. A lifecycle, unlike the identifier, is not
 // part of this: it is an ordinary enum property, listed below with
 // everything else a modeler chose to track.
+//
+// The identifier itself is an ordinary custom type, created alongside
+// the entity — this row is a read-only pointer at it, not an editor.
+// Changing its schema, composing it, or renaming it all happen in
+// Custom Types, which is what the chip opens.
 function identityBlock(ctx, name, entity) {
+  const idType = idTypeOf(ctx, name);
   const box = h('section', { class: 'ident' },
     h('h4', {}, 'Identity'),
     h('div', { class: 'muted tiny why' },
@@ -3934,10 +3947,11 @@ function identityBlock(ctx, name, entity) {
 
   box.appendChild(h('div', { class: 'irow' },
     h('span', { class: 'nm' }, 'identified by'),
-    named(idTypeOf(name), 'chip'),
-    advanced()
-      ? identifierSchemaField(ctx, name, entity)
-      : h('span', { class: 'tiny muted' }, 'one per thing — and the tag every event about it carries')));
+    h('span', {
+      class: 'chip editable', title: 'Open ' + readable(idType) + ' in Custom Types',
+      onclick: () => goToCustomType(idType),
+    }, readable(idType), advanced() ? h('span', { class: 'tech' }, idType) : null),
+    h('span', { class: 'tiny muted' }, 'one per thing — and the tag every event about it carries')));
 
   return box;
 }
@@ -4174,10 +4188,12 @@ function eventIconPicker(ctx, name, event) {
 // editor declines to ask rather than asking and then refusing.
 function renderCustomTypes(ctx, main) {
   main.appendChild(h('header', {},
-    h('div', { class: 'name' }, 'Value types'),
+    h('div', { class: 'name' }, 'Custom types'),
     h('div', { class: 'muted small' },
-      'Things with no identity of their own — a price, an order line. A value type is never '
-      + 'a tag, but a record that holds an identifier passes that tag on to whatever carries it.')));
+      'Records with no identity of their own — a price, an order line — and identifiers: a '
+      + 'scalar type marked "represented as a tag" is what every event carrying it is tagged '
+      + 'with. An entity’s own derived identifier lives here too, created automatically '
+      + 'alongside it, and stays pinned as a tag for as long as the entity owns it.')));
 
   const names = Object.keys(ctx['custom-type-definitions']).sort();
   if (!names.length) {
@@ -4187,6 +4203,7 @@ function renderCustomTypes(ctx, main) {
   for (const name of names) {
     const body = ctx['custom-type-definitions'][name];
     const composite = Array.isArray(body.properties);
+    const owner = entityOfIdType(ctx, name);
     const card = h('div', { class: 'ecard' });
 
     if (state.renamingType === name) {
@@ -4203,13 +4220,18 @@ function renderCustomTypes(ctx, main) {
       }));
     } else {
       const tags = composite
-        ? idLeavesOfType(ctx, name).map((l) => `${readable(l.entity)} (from ${readable(l.field)})`)
+        ? idLeavesOfType(ctx, name).map((l) =>
+            `${readable(entityOfIdType(ctx, l.identifierType) || l.identifierType)} (from ${readable(l.field)})`)
         : [];
       card.appendChild(qrow('div', { cls: 'ehead', key: 'type:' + name },
         h('span', { class: 'chip' }, readable(name)),
         h('span', { class: 'muted tiny' }, composite
           ? `${body.properties.length} field${body.properties.length === 1 ? '' : 's'}`
           : 'one value'),
+        owner ? h('span', {
+          class: 'chip entity', title: 'Open ' + readable(owner),
+          onclick: () => openEntity(owner),
+        }, h('i', { class: 'ic' }, entityIcon(ctx, owner)), 'identifier of ' + readable(owner)) : null,
         tags.length
           ? h('span', { class: 'muted tiny' }, ' · tags whatever carries it: ' + tags.join(', '))
           : null,
@@ -4218,10 +4240,15 @@ function renderCustomTypes(ctx, main) {
           class: 'btn tiny',
           onclick: () => { closeForms(); state.renamingType = name; render(); },
         }, 'Rename'),
-        removeButton('custom-type:' + name, {
-          label: 'Remove', title: 'Remove this value type',
-          onRemove: () => run(() => removeDefinition('custom-type-definition', ctx.id, name)),
-        }))));
+        owner
+          ? h('button', {
+              class: 'btn tiny danger', disabled: true,
+              title: `Remove the ${readable(owner)} entity instead — its identifier goes with it.`,
+            }, 'Remove')
+          : removeButton('custom-type:' + name, {
+              label: 'Remove', title: 'Remove this custom type',
+              onRemove: () => run(() => removeDefinition('custom-type-definition', ctx.id, name)),
+            }))));
     }
 
     if (composite) {
@@ -4240,7 +4267,10 @@ function renderCustomTypes(ctx, main) {
           });
         }
         const cls = classifyType(ctx, field.propertyType);
-        const isId = cls.kind === 'derived' && cls.role === 'id';
+        const isId = cls.kind === 'value' && !cls.composite && cls.isTag;
+        // A standalone tag-marked type has no owning entity — nothing
+        // to mark it with and nothing to name in the sentence below.
+        const ownerEntity = isId ? cls.ownerEntity : null;
         const enumType = isStringEnumType(ctx, field.propertyType) ? field.propertyType : null;
         // A record field is its type — that one stays on screen even
         // here, because with it hidden the row would say nothing.
@@ -4248,14 +4278,16 @@ function renderCustomTypes(ctx, main) {
           qrow('div', { cls: 'erow', key: 'field:' + name + '.' + field.name },
             h('span', { class: 'nm' }, propertyWords(field.name)),
             h('span', {
-              class: (isId ? 'chip entity' : 'chip') + ' editable',
+              class: (ownerEntity ? 'chip entity' : 'chip') + ' editable',
               title: 'Rename or retype this field',
               onclick: () => openMember(where, field.name),
-            }, isId ? h('i', { class: 'ic' }, entityIcon(ctx, cls.entity)) : null,
+            }, ownerEntity ? h('i', { class: 'ic' }, entityIcon(ctx, ownerEntity)) : null,
               readable(field.propertyType)),
             isId ? h('span', { class: 'tiny muted' },
-              'identifies a ' + entityIcon(ctx, cls.entity) + ' ' + readable(cls.entity)
-              + ' — every event carrying this is tagged with it') : null,
+              ownerEntity
+                ? ('identifies a ' + entityIcon(ctx, ownerEntity) + ' ' + readable(ownerEntity)
+                  + ' — every event carrying this is tagged with it')
+                : 'a standalone tag — every event carrying this is tagged with it') : null,
             h('span', { style: 'flex:1' }),
             reveal(
               advanced() ? h('span', { class: 'tech' }, field.name) : null,
@@ -4307,9 +4339,29 @@ function renderCustomTypes(ctx, main) {
             let parsed;
             try { parsed = JSON.parse(text); }
             catch (e) { throw new DomainError('That is not valid JSON: ' + e.message); }
-            updateDefinition('custom-type-definition', ctx.id, name, { schema: parsed });
+            updateDefinition('custom-type-definition', ctx.id, name, { ...body, schema: parsed });
           }),
         }, 'Save')));
+    }
+
+    // "Represented as a tag" applies only to the scalar form — a
+    // composite is never itself a tag, only whichever of its fields are
+    // (see the field rows above). Pinned on and undisabled for an
+    // entity-owned type: it must stay a tag for the entity to be
+    // bindable at all, so this is where that invariant is enforced in
+    // the UI rather than only caught after the fact by validation.
+    if (!composite) {
+      card.appendChild(h('div', { class: 'irow' },
+        h('span', { class: 'nm' }, 'represented as a tag'),
+        h('label', { class: 'tiny muted' },
+          h('input', {
+            type: 'checkbox', checked: !!body.isTag, disabled: !!owner,
+            onchange: (e) => patch('custom-type-definition', name, (b) => {
+              if (e.target.checked) b.isTag = true; else delete b.isTag;
+            }),
+          }),
+          owner ? ` required — this is ${readable(owner)}’s identifier` : '')));
+      if (body.isTag && !owner) card.appendChild(tagSchemaField(name, body));
     }
 
     main.appendChild(card);
@@ -4361,7 +4413,7 @@ function fieldTypeOptions(ctx) {
   return typeChoices(ctx)
     .filter((t) => {
       const cls = classifyType(ctx, t);
-      return !(cls.kind === 'custom' && cls.composite);
+      return !(cls.kind === 'value' && cls.composite);
     })
     .map((t) => [t, readable(t)]);
 }
@@ -4391,23 +4443,21 @@ function projectionTypeOptions(ctx) {
   return allTypeNames(ctx)
     .filter((t) => {
       const cls = classifyType(ctx, t);
-      if (cls.kind === 'derived') return cls.role === 'id';
-      if (cls.kind === 'custom') return !cls.composite;
+      if (cls.kind === 'value') return !cls.composite;
       return t === 'integer' || t === 'string';
     })
     .map((t) => [t, readable(t)]);
 }
 
 // The JSON Schema a type bottoms out in, so the first value can be read
-// as the number it is rather than as a string of digits.
+// as the number it is rather than as a string of digits. A composite
+// has no single scalar schema to bottom out in — its value is a plain
+// object matching its fields — so this reads null for one, which every
+// caller here already treats as "not a number".
 function underlyingSchema(ctx, typeName) {
   const cls = classifyType(ctx, typeName);
   if (cls.kind === 'simple') return { type: typeName === 'timestamp' ? 'integer' : typeName };
-  if (cls.kind === 'derived' && cls.role === 'id') {
-    const entity = ctx['entity-definitions'][cls.entity];
-    return (entity && entity.identifierSchema) || { type: 'string' };
-  }
-  if (cls.kind === 'custom' && !cls.composite) {
+  if (cls.kind === 'value' && !cls.composite) {
     return ctx['custom-type-definitions'][typeName].schema || { type: 'string' };
   }
   return null;
@@ -4440,11 +4490,14 @@ function projectionWords(ctx, body) {
     + (moves ? ` — moved by ${moves}` : ' — nothing moves it yet');
 }
 
-// The identifier types on offer as a partition. Only an identifier is
-// a tag, and only a tag can narrow a query, so nothing else appears.
+// The types on offer as a partition. Only a tag can narrow a query, so
+// nothing else appears — an entity's own derived identifier as much as
+// a standalone tag-marked type, scalar or composite (through its
+// tag-marked fields) either way.
 function partitionTypeOptions(ctx) {
-  return Object.keys(ctx['entity-definitions']).sort()
-    .map((n) => [idTypeOf(n), readable(n)]);
+  return allTypeNames(ctx)
+    .filter((t) => classifyType(ctx, t).kind === 'value' && isTagBearing(ctx, t))
+    .map((t) => [t, readable(t)]);
 }
 
 // A projection's handler value, offered as the small set that makes
@@ -4616,8 +4669,19 @@ function projectionFields(ctx, draft) {
           h('div', {}, h('span', { class: 'k' }, 'query  '),
             h('span', { class: 't' },
               (draft.parameters || []).length
-                ? (draft.parameters || []).map((p) =>
-                    `${(entityOfIdType(ctx, p.propertyType) || '?')}:<${p.name || '?'}>`).join(' and ')
+                // A parameter's own type may be a composite identifier,
+                // which has no tag of its own — its *leaves* each do —
+                // so this walks them and renders each through its own
+                // identifier's tagSchema, exactly as the query really
+                // will. Assuming the parameter's type name works
+                // directly here was the bug this replaced.
+                ? (draft.parameters || []).flatMap((p) =>
+                    idLeavesOfType(ctx, p.propertyType).map((leaf) => {
+                      const identifierType = identifierTypeOf(ctx, leaf.identifierType);
+                      const placeholder = `<${p.name || '?'}${leaf.field ? '.' + leaf.field : ''}>`;
+                      return identifierType ? renderTag(identifierType, placeholder)
+                        : `${leaf.identifierType}:${placeholder}`;
+                    })).join(' and ')
                 : ''),
             (draft.parameters || []).length ? h('span', { class: 'k' }, ' and ') : null,
             h('span', { class: 'y' },
@@ -5171,7 +5235,7 @@ function identifiersInUse(ctx, body, entityName) {
       if (value === undefined || value === null) continue;
       const elements = property.isList ? (Array.isArray(value) ? value : []) : [value];
       for (const leaf of idLeavesOfType(ctx, property.propertyType)) {
-        if (leaf.entity !== entityName) continue;
+        if (entityOfIdType(ctx, leaf.identifierType) !== entityName) continue;
         for (const element of elements) {
           const held = leaf.field === null ? element : (element || {})[leaf.field];
           if (held !== undefined && held !== null && held !== '') found.add(String(held));
@@ -5191,6 +5255,10 @@ function identifiersInUse(ctx, body, entityName) {
 // the type's own vocabulary behind it.
 function valueEditor(ctx, property, path, where) {
   const draft = where.root;
+  // A composite value's fields — whether the type is tag-bearing (an
+  // entity's own derived identifier, say) or an ordinary record — are
+  // one shape, `{name, propertyType}`, so the recursion below does not
+  // have to know which kind it is nesting into.
   const fields = compositeFieldsOf(ctx, property.propertyType);
 
   const scalar = (at) => {
@@ -5862,7 +5930,7 @@ function propertyScenarioEditor(ctx) {
 
     h('div', { class: 'muted tiny', style: 'margin-top:12px' }, 'For instance'),
     h('div', { class: 'card sc-step' },
-      valueEditor(ctx, { name: 'forInstance', propertyType: idTypeOf(body.entity), isList: false },
+      valueEditor(ctx, { name: 'forInstance', propertyType: idTypeOf(ctx, body.entity), isList: false },
         ['forInstance'], specWhere(ctx))),
 
     h('div', { class: 'muted tiny', style: 'margin-top:12px' }, 'Then, check'),
