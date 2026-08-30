@@ -71,16 +71,6 @@
   .blank h2 { margin-bottom: 6px; }
   .blank p { margin-bottom: 14px; }
 
-  /* Draft: a command being described, before it exists. */
-  .draft { max-width: 640px; }
-  .draft .qblock { margin-bottom: 20px; }
-  .draft .qblock > label {
-    display: block; font-size: 13px; font-weight: 600; margin-bottom: 5px;
-  }
-  .draft .qblock .why { font-size: 11.5px; color: var(--muted); margin-bottom: 7px; }
-  .draft input.big { width: 330px; font-size: 14px; padding: 6px 9px; }
-  .draft .actions { display: flex; gap: 8px; padding-top: 14px; border-top: 1px solid var(--border); }
-
   /* A definition as a card, with its members listed under it: value
      types and projections are shown this way. */
   .ecard {
@@ -118,7 +108,7 @@
     border: 3px solid var(--surface); background: var(--border-strong);
   }
   .step.trigger > .dot { background: var(--command); }
-  .step.reads > .dot, .step.changes > .dot { background: var(--entity); }
+  .step.reads > .dot, .step.changes > .dot, .step.now > .dot { background: var(--entity); }
   .step.rules > .dot { background: var(--rule); }
   .card.rule { border-left: 3px solid var(--rule); }
   .step.emits > .dot { background: var(--event); }
@@ -201,9 +191,9 @@
   .member-editor .adder { flex-wrap: wrap; }
   .chip.editable { cursor: pointer; }
   .chip.editable:hover { border-color: var(--command); color: var(--command); }
-  /* A field offered rather than authored (flag: copyFields) — dashed,
-     like the adders it sits beside, so it reads as "not here yet" rather
-     than as one more fact about the event. */
+  /* A field offered rather than authored — dashed, like the adders it
+     sits beside, so it reads as "not here yet" rather than as one more
+     fact about the event. */
   .chip.suggest {
     font: inherit; font-size: 11px; cursor: pointer; color: var(--muted);
     border-style: dashed; background: transparent;
@@ -556,6 +546,22 @@
   }
   .pin:hover { color: var(--event); }
   .pin.on { color: var(--event); }
+
+  /* A picker whose options start with an icon (an entity, a type)
+     builds its <option> text label-first so arrow-key type-ahead
+     matches the name a person actually types — native <option> has no
+     way to search on anything else. Where the browser supports
+     customizable <select> (`::picker(select)`, `<selectedcontent>`),
+     this puts the icon back in front visually without touching that
+     word order; everywhere else it just falls back to "Name 🔖", which
+     is still readable and still keyboard-searchable. */
+  @supports (appearance: base-select) {
+    select.icon-select { appearance: base-select; }
+    select.icon-select option { display: flex; align-items: center; gap: 4px; }
+    select.icon-select option .icon,
+    select.icon-select selectedcontent .icon { order: -1; }
+    select.icon-select selectedcontent { display: flex; align-items: center; gap: 4px; }
+  }
 </style>
 </head>
 <body>
@@ -598,7 +604,7 @@
 // ============================================================
 
 const state = {
-  view: 'slice',            // 'slice' | 'draft' | 'entity' | 'types' | 'projections' | 'events'
+  view: 'slice',            // 'slice' | 'entity' | 'types' | 'projections' | 'events'
   slice: null,
   sel: null,                // the row being attended to (reveal: select)
   editing: null,            // the step being edited (reveal: steps)
@@ -620,7 +626,7 @@ const state = {
   collapsed: {},            // feature name -> collapsed in the rail
   entitiesCollapsed: false, // the entity list in the rail
   entity: null,             // the thing whose own page is open
-  draft: null,              // a command being described
+  namingCommand: false,     // inline form open, naming a brand-new command
   newFeature: false,        // inline form open in the rail
   renamingFeature: null,
   newEntityAt: null,        // 'reads' | 'changes:<Event>' | 'rail'
@@ -759,12 +765,6 @@ const FLAGS = [
     key: 'roomy', label: 'Roomier fields',
     why: 'Every text field, select and button on the page grows to a size worth aiming at — '
       + 'wider name fields, taller targets. What is compact today is a choice, not a limit.',
-  },
-  {
-    key: 'copyFields', label: 'Copy missing fields from the command',
-    why: 'A field the command was given but its event does not yet carry, offered as one click '
-      + 'that copies the name and type across and wires the event field straight to it — the '
-      + 'same thing you could already do by hand, field by field.',
   },
   {
     key: 'dark', label: 'Dark',
@@ -1114,7 +1114,7 @@ function paletteEntries(ctx) {
       add('custom type', readable(name), 'custom types', () => goToCustomType(name));
     }
   }
-  add('do', 'New command…', '', () => startDraft(activeContext()));
+  add('do', 'New command…', '', () => beginNewCommand(activeContext()));
   add('do', 'Settings', '', () => { state.settings = true; });
   add('do', advanced() ? 'Switch to Simple' : 'Switch to Advanced', '',
     () => setMode(advanced() ? 'simple' : 'advanced'));
@@ -1335,8 +1335,9 @@ function opRef(operand, eventName, text) {
 
 // A row that is quiet by default. `key` names it for the click variant,
 // `step` for the whole-step one, `src` for anything that refers back
-// to it.
-function qrow(tag, { cls = '', key, step: stepKey, src }, ...children) {
+// to it. Arrow keys always move along the page's flow — see
+// `navFlow` — and Backspace removes the row when `onRemove` is given.
+function qrow(tag, { cls = '', key, step: stepKey, src, onRemove }, ...children) {
   const open = revealed(key, stepKey);
   const byClick = variant() === 'select' || (variant() === 'steps' && !stepKey);
   const toggle = () => { state.sel = state.sel === key ? null : key; render(); };
@@ -1355,20 +1356,48 @@ function qrow(tag, { cls = '', key, step: stepKey, src }, ...children) {
     } : null,
     onkeydown: byClick ? (e) => {
       if (e.target !== e.currentTarget) return;
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); return; }
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { navFlow(e); return; }
+      if ((e.key === 'Backspace' || e.key === 'Delete') && onRemove) {
+        e.preventDefault();
+        const at = flowStops().indexOf(e.currentTarget);
+        onRemove();
+        if (at >= 0) focusFlowStopNear(Math.max(0, at - 1));
+      }
     } : null,
   }, ...children);
 }
 
 // "Add another one", folded into a single button until it is wanted.
+// `flow-adder` marks that button as a stop of its own — see `navFlow`
+// — so the row above it and the step below it are both one arrow key
+// away, exactly the way an unfolded row would be.
 function adderSlot(key, stepKey, label, build) {
   if (variant() === 'all') return build();
   if (variant() === 'steps' && stepKey) return state.editing === stepKey ? build() : null;
   if (state.adder === key) return build();
   return h('div', { class: 'adder' }, h('button', {
-    class: 'btn ghost tiny',
-    onclick: () => { closeForms(); state.adder = key; render(); },
+    class: 'btn ghost tiny flow-adder',
+    onclick: () => { closeForms(); state.adder = key; render(); focusOpenedAdder(stepKey); },
+    onkeydown: (e) => { if (e.key === 'ArrowUp' || e.key === 'ArrowDown') navFlow(e); },
   }, label));
+}
+
+// Opening one adder from its folded button can also fold another —
+// `state.adder` holds one key for the whole page, so a reads form left
+// open collapses the instant a rule form opens. That is two sections
+// changing shape in the same repaint, which is more than the generic
+// by-position focus restore in `render` can track: it lands wherever
+// the old button's position now falls in the new page, not on the form
+// that actually replaced it. Landing explicitly on the new form's own
+// first control — it is always the step's last child — is what keeps
+// Enter-to-submit-then-Tab reaching the *next* step reliable.
+function focusOpenedAdder(stepKey) {
+  if (!stepKey) return;
+  const section = document.querySelector('.step.' + stepKey);
+  const last = section && section.lastElementChild;
+  const el = last && last.querySelector('select, input, textarea, button');
+  if (el) el.focus();
 }
 
 // ---------- removing things ----------
@@ -1401,29 +1430,86 @@ function removeButton(key, { label = '×', title, confirm = 'Really remove?', on
 }
 
 // The name / type / many / add row that four different lists all want.
-// Enter anywhere in the row adds the field, the same as clicking the
-// button — a field is typically typed, tabbed through, and added without
-// the hand ever leaving the keyboard.
-function propertyAdder(ctx, { placeholder = 'course id', label = '+ Add', type = 'string', onAdd }) {
+// Enter anywhere in the row adds the field — the type select and the
+// two checkboxes included, which is why the row itself listens rather
+// than just the name field — the same as clicking the button, so a
+// field is typically typed, tabbed through, and added without the hand
+// ever leaving the keyboard. Backspace in an empty name field is the
+// reverse: it pops the row just added. An empty name field is also
+// where a list ends: Enter there with nothing typed means "done with
+// these", which is `onEmptyEnter`'s to interpret.
+function propertyAdder(ctx, {
+  placeholder = 'course id', label = '+ Add', type = 'string',
+  onAdd, onRemoveLast, onEmptyEnter,
+}) {
   let name = '', chosen = type, isList = false, isOptional = false;
   const add = () => {
     if (!name.trim()) return toast('Give the field a name.', true);
     onAdd({ name: toCamel(name), propertyType: chosen, isOptional, isList });
   };
-  const onEnter = (e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } };
   const input = h('input', {
-    type: 'text', placeholder,
-    oninput: (e) => { name = e.target.value; }, onkeydown: onEnter,
+    type: 'text', placeholder, class: 'flow-entry',
+    oninput: (e) => { name = e.target.value; },
+    onkeydown: (e) => {
+      if (e.key === 'Backspace' && !name && onRemoveLast) { e.preventDefault(); onRemoveLast(); return; }
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') navFlow(e);
+    },
   });
   setTimeout(() => input.focus(), 0);
-  return h('div', { class: 'adder' },
+  return h('div', {
+    class: 'adder',
+    onkeydown: (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      if (!name.trim() && onEmptyEnter) { onEmptyEnter(); return; }
+      add();
+    },
+  },
     input,
     pick(typeOptions(ctx), chosen, (v) => { chosen = v; }),
-    h('label', { class: 'tiny muted', onkeydown: onEnter },
+    h('label', { class: 'tiny muted' },
       h('input', { type: 'checkbox', onchange: (e) => { isList = e.target.checked; } }), ' many'),
-    h('label', { class: 'tiny muted', onkeydown: onEnter },
+    h('label', { class: 'tiny muted' },
       h('input', { type: 'checkbox', onchange: (e) => { isOptional = e.target.checked; } }), ' optional'),
     h('button', { class: 'btn', onclick: add }, label));
+}
+
+// ---------- moving through a command's steps ----------
+//
+// One list, top to bottom, spanning every step on the page: the rows
+// already declared — a property, a read, a rule, whatever a step
+// holds — and each step's own "add another", its folded button while
+// closed, its own entry field once open (see `adderSlot` and
+// `propertyAdder`). Arrow keys walk it in either direction, crossing
+// from one step into the next exactly where the page already draws
+// the line between them — nothing here knows "trigger" from "rules",
+// it only ever asks the document what comes next.
+function flowStops() {
+  const main = document.getElementById('main');
+  if (!main) return [];
+  return [...main.querySelectorAll('.qrow[tabindex], .flow-adder, .flow-entry')];
+}
+function navFlow(e) {
+  const stops = flowStops();
+  const at = stops.indexOf(document.activeElement);
+  if (at < 0) return;
+  const next = stops[at + (e.key === 'ArrowDown' ? 1 : -1)];
+  if (next) { e.preventDefault(); next.focus(); next.scrollIntoView({ block: 'nearest' }); }
+}
+// Where to land after the stop at `index` is gone: whatever is now in
+// its place, or the last stop if it was the very end of the list.
+function focusFlowStopNear(index) {
+  // The removal repaints the page, and if an adder stays open that
+  // repaint mounts a fresh field which focuses itself the same way —
+  // scheduled at the same 0ms delay, registered a moment later. A 0ms
+  // timer of ours would lose that race every time; one tick later, its
+  // self-focus has already happened and this is free to overrule it.
+  setTimeout(() => {
+    const stops = flowStops();
+    if (!stops.length) return;
+    const target = stops[Math.min(index, stops.length - 1)];
+    if (target) { target.focus(); target.scrollIntoView({ block: 'nearest' }); }
+  }, 1);
 }
 
 // ---------- editing a member ----------
@@ -1639,7 +1725,8 @@ function operandChoicesAbove(ctx, slice, index) {
     }
     const entity = ctx['entity-definitions'][b.entity];
     (entity ? entity.properties : []).forEach((p) =>
-      out.push([JSON.stringify({ alias: b.alias, property: p.name }), memberWords(b.alias, p.name)]));
+      out.push([JSON.stringify({ alias: b.alias, property: p.name }),
+        entityIcon(ctx, b.entity) + ' ' + memberWords(b.alias, p.name)]));
   });
   return out;
 }
@@ -1771,12 +1858,68 @@ function typeOptions(ctx) {
   return typeChoices(ctx).map((t) => [t, readable(t)]);
 }
 
+// An option built as "🔖 Name" reads fine, but a native <option> has
+// no separate accessible label — arrow-key type-ahead searches the
+// same text a screen reader gets, so it can only ever match the first
+// character actually typed, which here is the icon. Splitting the icon
+// into its own trailing span puts the name first in that text without
+// giving up the icon (see the `.icon-select` CSS, which puts it back
+// in front visually on browsers that support customizable <select>).
+const ICON_PREFIX = /^(?:\p{Extended_Pictographic}(?:️|‍\p{Extended_Pictographic})*)+\s*/u;
+
+// The same "alias · property" text that makes a flat list readable —
+// "given · course id", "course · capacity", "status · Existent" —
+// says exactly where an <optgroup> belongs: one per alias, holding
+// just the properties, so a list naming three things a command read
+// stops looking like nine unrelated rows. A prefix with only one
+// property under it stays a plain option in its full "alias ·
+// property" form — a group of one is not a group, and the context
+// would otherwise be lost.
+const GROUP_SEP = ' · ';
+
 function pick(options, value, onchange, placeholder) {
   const sel = h('select', { onchange: (e) => onchange(e.target.value) });
   if (placeholder) sel.appendChild(h('option', { value: '' }, placeholder));
+
+  const buckets = new Map(); // prefix -> [{v, suffix}]
+  const sequence = []; // {text} | {prefix}, in first-seen order
   for (const o of options) {
     const [v, text] = Array.isArray(o) ? o : [o, o];
-    sel.appendChild(h('option', { value: v, selected: v === value }, text));
+    const at = text.indexOf(GROUP_SEP);
+    if (at === -1) { sequence.push({ v, text }); continue; }
+    const prefix = text.slice(0, at);
+    if (!buckets.has(prefix)) { buckets.set(prefix, []); sequence.push({ prefix }); }
+    buckets.get(prefix).push({ v, suffix: text.slice(at + GROUP_SEP.length) });
+  }
+
+  let hasIcon = false;
+  const appendOption = (parent, v, text) => {
+    const match = text.match(ICON_PREFIX);
+    if (match) {
+      hasIcon = true;
+      parent.appendChild(h('option', { value: v, selected: v === value },
+        h('span', { class: 'label' }, text.slice(match[0].length)),
+        h('span', { class: 'icon' }, match[0].trimEnd())));
+    } else {
+      parent.appendChild(h('option', { value: v, selected: v === value }, text));
+    }
+  };
+
+  for (const entry of sequence) {
+    if ('text' in entry) { appendOption(sel, entry.v, entry.text); continue; }
+    const rows = buckets.get(entry.prefix);
+    if (rows.length === 1) {
+      appendOption(sel, rows[0].v, entry.prefix + GROUP_SEP + rows[0].suffix);
+      continue;
+    }
+    const group = h('optgroup', { label: entry.prefix });
+    for (const { v, suffix } of rows) appendOption(group, v, suffix);
+    sel.appendChild(group);
+  }
+
+  if (hasIcon) {
+    sel.classList.add('icon-select');
+    sel.insertBefore(h('button', {}, h('selectedcontent', {})), sel.firstChild);
   }
   return sel;
 }
@@ -1816,7 +1959,7 @@ function inlineForm({ question, placeholder, value = '', showsIdentifier, submit
 // Escape has to know whether any of them is on screen, and the two
 // answers must not drift apart.
 const FORM_KEYS = [
-  'newFeature', 'renamingFeature', 'newEntityAt', 'addingProp', 'addingMember',
+  'namingCommand', 'newFeature', 'renamingFeature', 'newEntityAt', 'addingProp', 'addingMember',
   'renamingEntity', 'iconPicker', 'eventIconPicker', 'confirmRemove', 'newContext', 'newType', 'renamingType',
   'newProjection', 'renamingProjection', 'projDraft', 'newEvent', 'renamingEvent',
   'renamingCommand', 'editMember', 'editRule', 'editBinding',
@@ -1897,10 +2040,18 @@ function renderRail() {
   }
 
   rail.appendChild(h('div', { class: 'add' },
-    h('button', { class: 'btn', onclick: () => startDraft(ctx) }, '+ Command'),
+    h('button', { class: 'btn', onclick: () => beginNewCommand(ctx) }, '+ Command'),
     h('button', {
       class: 'btn ghost', onclick: () => { closeForms(); state.newFeature = true; render(); },
     }, '+ Feature')));
+
+  if (state.namingCommand) {
+    rail.appendChild(inlineForm({
+      question: 'What can someone do?', placeholder: 'define course', showsIdentifier: true,
+      onSubmit: (v) => createCommand(ctx, v),
+      onCancel: () => { state.namingCommand = false; render(); },
+    }));
+  }
 
   if (state.newFeature) {
     rail.appendChild(inlineForm({
@@ -2073,245 +2224,81 @@ function renameFeature(ctx, from, to) {
 
 // ---------- describing a new command ----------
 
-function startDraft(ctx) {
+// Naming is the only thing a command cannot do without, so it is the
+// only question asked up front — an inline field, not a page of its
+// own. Everything else (what it takes, what it reads, what it decides,
+// what it records) is added afterwards, on the command's own page,
+// the same way it would be for a command that already existed.
+function beginNewCommand(ctx) {
   closeForms();
-  const current = state.slice && ctx['command-definitions'][state.slice]
-    ? featureOf(ctx['command-definitions'][state.slice]) : UNGROUPED;
-  state.draft = { name: '', event: '', eventTouched: false, copyFields: true, payload: [], feature: current };
-  state.view = 'draft';
+  state.namingCommand = true;
   render();
 }
 
-function renderDraft(ctx, main) {
-  const d = state.draft;
-  main.appendChild(h('header', {},
-    h('div', { class: 'name' }, 'A new command'),
-    h('div', { class: 'muted small' },
-      'Nothing is written until you create it. Everything else — what it reads, what it '
-      + 'changes — is added afterwards, on this same page.')));
-
-  const box = h('div', { class: 'draft' });
-
-  // 1. the command
-  const eventInput = h('input', {
-    type: 'text', class: 'big', value: d.event, placeholder: 'course defined',
-    oninput: (e) => { d.event = e.target.value; d.eventTouched = true; paintEventTech(); },
-  });
-  const eventTech = h('span', { class: 'becomes' }, '');
-  const paintEventTech = () => {
-    eventTech.innerHTML = '';
-    const stored = toPascal(d.event);
-    if (!stored) return;
-    const known = !!ctx['event-definitions'][stored];
-    eventTech.appendChild(document.createTextNode(
-      '→ ' + stored + (known ? '  · already recorded elsewhere' : '')));
-  };
-
-  const nameInput = h('input', {
-    type: 'text', class: 'big', value: d.name, placeholder: 'define course',
-    oninput: (e) => {
-      d.name = e.target.value;
-      nameTech.innerHTML = '';
-      if (toPascal(d.name)) nameTech.appendChild(document.createTextNode('→ ' + toPascal(d.name)));
-      // The event follows the command until you say otherwise.
-      if (!d.eventTouched) {
-        d.event = readable(suggestEventName(d.name));
-        eventInput.value = d.event;
-        paintEventTech();
-      }
-    },
-  });
-  const nameTech = h('span', { class: 'becomes' }, '');
-
-  box.appendChild(h('div', { class: 'qblock' },
-    h('label', {}, 'What can someone do?'),
-    h('div', { class: 'why' }, 'Say it as an instruction. Capitals and punctuation do not matter.'),
-    h('div', { class: 'adder' }, nameInput, nameTech)));
-
-  // 2. its input
-  const rows = d.payload.map((p, i) => h('div', { class: 'field' },
-    h('span', { class: 'nm' }, propertyWords(p.name)),
-    h('span', { class: 'chip' }, readable(typeLabel(p))),
-    h('span', { class: 'grow', style: 'flex:1' }),
-    h('button', { class: 'btn tiny danger', onclick: () => { d.payload.splice(i, 1); render(); } }, '×')));
-  let fieldName = '', fieldType = 'string', fieldList = false;
-  const addField = () => {
-    if (!fieldName.trim()) return toast('Give the field a name.', true);
-    d.payload.push({ name: toCamel(fieldName), propertyType: fieldType, isOptional: false, isList: fieldList });
-    render();
-  };
-  box.appendChild(h('div', { class: 'qblock' },
-    h('label', {}, 'What do they have to provide?'),
-    h('div', { class: 'why' }, 'Only what the caller knows. Leave it empty if nothing.'),
-    h('div', { class: 'card' },
-      rows.length ? rows : h('div', { class: 'empty' }, 'Nothing.'),
-      h('div', { class: 'adder' },
-        h('input', {
-          type: 'text', placeholder: 'course id',
-          oninput: (e) => { fieldName = e.target.value; },
-          onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); addField(); } },
-        }),
-        pick(typeOptions(ctx), fieldType, (v) => { fieldType = v; }),
-        h('label', { class: 'tiny muted' },
-          h('input', { type: 'checkbox', onchange: (e) => { fieldList = e.target.checked; } }), ' many'),
-        h('button', { class: 'btn', onclick: addField }, '+ Add')))));
-
-  // 3. what it records
-  box.appendChild(h('div', { class: 'qblock' },
-    h('label', {}, 'What happened, once it worked?'),
-    h('div', { class: 'why' },
-      'Past tense — a fact, not an instruction. Suggested from the command; change it freely.'),
-    h('div', { class: 'adder' }, eventInput, eventTech),
-    h('label', { class: 'tiny muted', style: 'display:block;margin-top:7px' },
-      h('input', {
-        type: 'checkbox', checked: d.copyFields,
-        onchange: (e) => { d.copyFields = e.target.checked; },
-      }),
-      ' record the same fields it was given')));
-
-  // 4. what that commits it to reading
-  //
-  // An identifier in the payload becomes a tag on the event, and a tag
-  // may not be written without the instance having been consulted. So
-  // the command already reads something before anyone has said what it
-  // reads — better to say so here than to derive it silently.
-  const willRead = draftReads(ctx, d);
-  if (willRead.length) {
-    box.appendChild(h('div', { class: 'qblock' },
-      h('label', {}, 'So it will read'),
-      h('div', { class: 'why' },
-        'Recording an identifier tags the event with it, and nothing may write a tag it did '
-        + 'not consult first. These reads are set up for you; the rules over them are yours '
-        + 'to add afterwards.'),
-      // Not a way in, unlike an entity chip everywhere else: opening a
-      // thing from here would throw away the half-written draft.
-      h('div', { class: 'card' }, willRead.map((r) => h('div', { class: 'field' },
-        h('span', { class: 'chip entity', style: 'cursor:default' },
-          h('i', { class: 'ic' }, entityIcon(ctx, r.entity)), readable(r.entity)),
-        h('span', { class: 'verb muted' }, ' as '),
-        h('span', { class: 'op' }, r.alias),
-        h('span', { class: 'verb muted' }, ' — identified by '),
-        h('span', { class: 'op' }, propertyWords(r.from)))))));
-  }
-
-  // 5. where it belongs
-  box.appendChild(h('div', { class: 'qblock' },
-    h('label', {}, 'Part of which feature?'),
-    pick([...featureNames(ctx).map((n) => [n, n]), [UNGROUPED, '— none for now —']],
-      d.feature, (v) => { d.feature = v; })));
-
-  box.appendChild(h('div', { class: 'actions' },
-    h('button', { class: 'btn primary', onclick: () => commitDraft(ctx) }, 'Create command'),
-    h('button', {
-      class: 'btn ghost',
-      onclick: () => { state.draft = null; state.view = 'slice'; render(); },
-    }, 'Cancel')));
-
-  main.appendChild(box);
-  paintEventTech();
-}
-
-// Every tag the new event writes has to have been consulted before the
-// append — that is the whole of DCB's guarantee, and the model refuses a
-// command that breaks it. The draft form never asks about a boundary, so
-// one is derived here: each identifier the event carries becomes a
-// binding on the instance it names.
-//
-// The issues are read off `coverageIssues` — the very function that
-// would refuse the command — so the derivation and the rule can never
-// drift apart. What is *not* derived is a condition over the instance:
-// whether a course must not exist yet or must already exist is the
-// modeler's decision, and guessing it would put words in their mouth.
-function draftBoundary(ctx, body) {
-  const boundary = [];
-  const seen = new Set();
-  for (const issue of coverageIssues(ctx, body)) {
-    const operand = issue.operand;
-    // An identifier that arrives as anything but a parameter has no
-    // obvious binding; leave it, and let the model say so.
-    if (!operand || operandSource(operand) !== 'parameter') continue;
-    const key = issue.entity + ' ' + JSON.stringify(operand);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    // Named after the identifier it came in as, not after the entity:
-    // `sourceCourseId` and `targetCourseId` both bind a Course, and
-    // `sourceCourse` / `targetCourse` says which is which where
-    // `course` / `course2` would not.
-    const from = operand.property || operand.parameterName;
-    boundary.push({
-      alias: uniqueAlias(aliasFromProperty(from) || defaultAlias(issue.entity),
-        boundary.map((b) => b.alias)),
-      entity: issue.entity,
-      id: operand,
-    });
-  }
-  return boundary;
-}
-
-// What the derivation above will produce, shown while the command is
-// still being described. The event may not exist yet, so it is added to
-// a copy of the context and the real derivation is run against that —
-// the preview and the thing it previews are then one piece of code.
-function draftReads(ctx, d) {
-  const eventName = toPascal(d.event);
-  if (!eventName) return [];
-  const known = ctx['event-definitions'][eventName];
-  const fields = known ? (known.properties || []) : (d.copyFields ? d.payload : []);
-  const parameters = {};
-  for (const f of fields) {
-    if (d.payload.some((p) => p.name === f.name)) parameters[f.name] = { parameterName: f.name };
-  }
-  const hypothetical = {
-    ...ctx,
-    'event-definitions': { ...ctx['event-definitions'], [eventName]: { properties: fields } },
-  };
-  return draftBoundary(hypothetical, {
-    properties: d.payload, boundary: [], conditions: [],
-    publishes: [{ name: eventName, parameters }],
-  }).map((b) => ({
-    entity: b.entity, alias: b.alias, from: b.id.property || b.id.parameterName,
-  }));
-}
-
-function commitDraft(ctx) {
-  const d = state.draft;
-  const commandName = toPascal(d.name);
-  const eventName = toPascal(d.event);
-  if (!commandName) return toast('The command needs a name.', true);
-  if (!eventName) return toast('A command has to record something.', true);
-
+function createCommand(ctx, label) {
+  const name = toPascal(label);
+  if (!name) return toast('Give it a name.', true);
+  const current = state.slice && ctx['command-definitions'][state.slice]
+    ? featureOf(ctx['command-definitions'][state.slice]) : UNGROUPED;
+  // A command with nothing it records is not one the model can hold —
+  // so a starting event comes along with it, guessed from the command's
+  // own name the same way the event field always was. It is an ordinary
+  // event from here on: rename it, retarget it, add fields to it, all
+  // on this same page.
+  const eventName = toPascal(suggestEventName(label));
   run(() => {
-    const existing = activeContext()['event-definitions'][eventName];
-    if (!existing) {
-      addDefinition('event-definition', ctx.id, eventName, {
-        properties: d.copyFields ? deepClone(d.payload) : [],
-      });
-    }
-    // Wire every event field the command was given a value for.
-    const fields = activeContext()['event-definitions'][eventName].properties || [];
-    const parameters = {};
-    for (const f of fields) {
-      if (d.payload.some((p) => p.name === f.name)) parameters[f.name] = { parameterName: f.name };
+    if (!activeContext()['event-definitions'][eventName]) {
+      addDefinition('event-definition', ctx.id, eventName, { properties: [] });
     }
     const body = {
-      properties: deepClone(d.payload), boundary: [], conditions: [],
-      publishes: [{ name: eventName, parameters }],
+      properties: [], boundary: [], conditions: [],
+      publishes: [{ name: eventName, parameters: {} }],
     };
-    body.boundary = draftBoundary(activeContext(), body);
-    if (d.feature !== UNGROUPED) body.feature = d.feature;
-    addDefinition('command-definition', ctx.id, commandName, body);
-    state.draft = null; state.view = 'slice'; state.slice = commandName; state.openEvent = eventName;
+    if (current !== UNGROUPED) body.feature = current;
+    addDefinition('command-definition', ctx.id, name, body);
+    state.namingCommand = false;
+    state.view = 'slice'; state.slice = name; state.openEvent = eventName;
+    // Straight into typing the first input — no click required to get
+    // there.
+    state.adder = 'in'; state.editing = 'trigger';
   });
 }
 
 // ---------- the slice ----------
+
+// A repaint tears #main down and rebuilds it, which drops whatever the
+// keyboard was on — the element is gone, so the browser has nothing to
+// blur from and focus falls back to the document, where the next Tab
+// starts over at the top rather than continuing from where the user
+// was. Restoring by position — the Nth focusable thing in #main, not
+// which one it was — is what keeps Tab (and Shift+Tab) moving through
+// the page instead of restarting at the command title on every edit.
+function mainFocusStops() {
+  const main = document.getElementById('main');
+  if (!main) return [];
+  return [...main.querySelectorAll('a[href], button, select, input, textarea, [tabindex]')]
+    .filter((el) => !el.disabled && el.tabIndex !== -1 && el.offsetParent !== null);
+}
+function mainFocusRank() {
+  const main = document.getElementById('main');
+  if (!main || !main.contains(document.activeElement)) return null;
+  const at = mainFocusStops().indexOf(document.activeElement);
+  return at < 0 ? null : at;
+}
+function restoreMainFocusRank(rank) {
+  if (rank === null) return;
+  const stops = mainFocusStops();
+  if (stops.length) stops[Math.min(rank, stops.length - 1)].focus();
+}
 
 // A repaint, and the one thing that has to happen after every one of
 // them whichever view it drew: bringing a row the interface moved you
 // to on screen. It is out here because the painter below returns early
 // once it knows which view it is drawing.
 function render() {
+  const focusRank = mainFocusRank();
   paintPage();
+  restoreMainFocusRank(focusRank);
   if (!state.land) return;
   const selector = state.land;
   state.land = null;
@@ -2408,7 +2395,6 @@ function paintPage() {
     return;
   }
 
-  if (state.view === 'draft') return renderDraft(ctx, main);
   if (state.view === 'scenarios') return renderScenarios(ctx, main);
   if (state.view === 'sandbox') return renderSandbox(ctx, main);
   if (state.view === 'entity') return renderEntity(ctx, main);
@@ -2447,17 +2433,17 @@ function paintPage() {
               }, '+ First entity'),
               // Not a dead end: a model whose first move really is a
               // command should not have to argue with the page.
-              h('button', { class: 'btn ghost', onclick: () => startDraft(ctx) },
+              h('button', { class: 'btn ghost', onclick: () => beginNewCommand(ctx) },
                 'or start with a command'))));
       return;
     }
     main.appendChild(h('div', { class: 'blank' },
       h('h2', {}, 'Nothing here yet'),
       h('p', { class: 'muted small' },
-        'Start with something someone can do. Name it and the thing it records, and the rest '
-        + 'of the model — what it reads, what it changes, the things themselves — gets built '
-        + 'from inside it.'),
-      h('button', { class: 'btn primary', onclick: () => startDraft(ctx) }, '+ First command')));
+        'Start with something someone can do. Name it and the rest of the model — what it '
+        + 'reads, what it decides, what it records, what it changes, the things themselves — '
+        + 'gets built from inside it.'),
+      h('button', { class: 'btn primary', onclick: () => beginNewCommand(ctx) }, '+ First command')));
     return;
   }
 
@@ -2576,6 +2562,13 @@ function step(kind, title, ...body) {
 
 function stepTrigger(ctx, slice) {
   const where = 'payload:' + slice.name;
+  // A stale reference from before `removeEventField` existed would
+  // otherwise refuse this removal for a reason no longer visible
+  // anywhere — see the comment there.
+  const dropProperty = (i) => patchSlice((b) => {
+    pruneDanglingEmissionParameters(ctx, b);
+    b.properties.splice(i, 1);
+  });
   const rows = slice.payload.map((p, i) => {
     if (editingMember(where, p.name)) {
       return memberEditor(ctx, {
@@ -2586,7 +2579,10 @@ function stepTrigger(ctx, slice) {
     }
     const enumType = isStringEnumType(ctx, p.propertyType) ? p.propertyType : null;
     return [
-      qrow('div', { cls: 'field', key: 'in:' + p.name, step: 'trigger', src: 'param:' + p.name },
+      qrow('div', {
+        cls: 'field', key: 'in:' + p.name, step: 'trigger', src: 'param:' + p.name,
+        onRemove: () => dropProperty(i),
+      },
         h('span', { class: 'nm' }, propertyWords(p.name)),
         h('span', { class: 'grow', style: 'flex:1' }),
         reveal(
@@ -2595,16 +2591,7 @@ function stepTrigger(ctx, slice) {
             onclick: () => openMember(where, p.name),
           }, readable(typeLabel(p))),
           advanced() ? h('span', { class: 'tech' }, p.name) : null,
-          h('button', {
-            class: 'btn tiny danger',
-            onclick: () => patchSlice((b) => {
-              // A stale reference from before `removeEventField` existed
-              // would otherwise refuse this removal for a reason no
-              // longer visible anywhere — see the comment there.
-              pruneDanglingEmissionParameters(ctx, b);
-              b.properties.splice(i, 1);
-            }),
-          }, '×'))),
+          h('button', { class: 'btn tiny danger', onclick: () => dropProperty(i) }, '×'))),
       enumType ? h('div', { class: 'use' },
         h('span', { class: 'muted' }, 'can be '), ...enumMemberChips(ctx, enumType)) : null,
     ];
@@ -2616,6 +2603,8 @@ function stepTrigger(ctx, slice) {
       adderSlot('in', 'trigger', '+ input', () => propertyAdder(ctx, {
         label: '+ Add input',
         onAdd: (property) => patchSlice((b) => b.properties.push(property)),
+        onRemoveLast: slice.payload.length ? () => dropProperty(slice.payload.length - 1) : undefined,
+        onEmptyEnter: beginReadAdder,
       }))));
 }
 
@@ -2808,6 +2797,22 @@ function roundLabel(index, total) {
   return `and again (${index + 1} of ${total})`;
 }
 
+// What Enter on an empty property name means: that list is done, and
+// the next thing a command needs is what it reads. Opens the same
+// adder "+ read something" opens, and reaches for its first control —
+// best effort, since a model with no entity yet offers a button in its
+// place, not a field.
+function beginReadAdder() {
+  closeForms();
+  state.adder = 'read';
+  state.editing = 'reads';
+  render();
+  setTimeout(() => {
+    const el = document.querySelector('.step.reads select, .step.reads input');
+    if (el) el.focus();
+  }, 0);
+}
+
 function stepReads(ctx, slice) {
   const rounds = slice.rounds || [];
   const indexOfBinding = new Map(slice.reads.map((b, i) => [b, i]));
@@ -2832,7 +2837,8 @@ function stepReads(ctx, slice) {
       if (b.projection) return [[JSON.stringify({ alias: b.alias }), propertyWords(b.alias)]];
       const entity = ctx['entity-definitions'][b.entity];
       return (entity ? entity.properties : []).map((p) =>
-        [JSON.stringify({ alias: b.alias, property: p.name }), memberWords(b.alias, p.name)]);
+        [JSON.stringify({ alias: b.alias, property: p.name }),
+          entityIcon(ctx, b.entity) + ' ' + memberWords(b.alias, p.name)]);
     }),
   ];
   const entityNames = Object.keys(ctx['entity-definitions']).sort();
@@ -2885,8 +2891,53 @@ function stepReads(ctx, slice) {
       : null;
     const parameters = chosenProjection ? (chosenProjection.parameters || []) : [];
 
+    // Once something is chosen, Enter anywhere in the row reads it — the
+    // same as clicking the button — so a read picked entirely from the
+    // keyboard never needs the mouse to land.
+    const submit = () => {
+      if (!draft.entity) return toast('Pick something to read.', true);
+      if (chosenProjection) {
+        const name = draft.entity.slice('projection:'.length);
+        const args = {};
+        for (const p of parameters) {
+          const chosen = draft['arg:' + p.name] || (sources[0] && sources[0][0]);
+          if (!chosen) return toast(`Say what ${readable(name)} is kept separately for.`, true);
+          args[p.name] = JSON.parse(chosen);
+        }
+        state.readDraft = null;
+        patchSlice((b) => b.boundary.push({
+          alias: uniqueAlias(defaultAlias(name), b.boundary.map((x) => x.alias)),
+          projection: name, arguments: args }));
+        return focusReadAdderButton();
+      }
+      if (!draft.source) return toast('Pick a thing and where its id comes from.', true);
+      const entity = draft.entity;
+      const source = draft.source;
+      state.readDraft = null;
+      patchSlice((b) => b.boundary.push({
+        alias: uniqueAlias(defaultAlias(entity), b.boundary.map((x) => x.alias)),
+        entity, id: JSON.parse(source) }));
+      focusReadAdderButton();
+    };
+    // A read just added leaves the form open for the next one, freshly
+    // reset to the first entity again — so the button, not the entity
+    // picker, is where Enter should leave the keyboard: Tab from here
+    // reaches the next step directly, and Shift+Tab still reaches the
+    // reset picker for anyone who does want another read.
+    function focusReadAdderButton() {
+      // Direct child, not just any button under the adder: an
+      // icon-select's own customizable-select markup nests a button of
+      // its own ahead of this one in the document, and a plain
+      // descendant selector would land on that instead.
+      const btn = document.querySelector('.step.reads .card .adder > button');
+      if (btn) btn.focus();
+    }
+
     body.push(adderSlot('read', 'reads', '+ read something', () =>
-      h('div', { class: 'card' }, h('div', { class: 'adder' },
+      h('div', { class: 'card' }, h('div', {
+        class: 'adder',
+        onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } },
+      },
         pick([...readables, [NEW, '+ New entity…']], draft.entity, (v) => {
           if (v === NEW) { closeForms(); state.newEntityAt = 'reads'; return render(); }
           draft.entity = v;
@@ -2906,31 +2957,7 @@ function stepReads(ctx, slice) {
               pick(sources, draft.source, (v) => { draft.source = v; },
                 sources.length ? null : '— nothing in scope yet —'),
             ],
-        h('button', {
-          class: 'btn', onclick: () => {
-            if (!draft.entity) return toast('Pick something to read.', true);
-            if (chosenProjection) {
-              const name = draft.entity.slice('projection:'.length);
-              const args = {};
-              for (const p of parameters) {
-                const chosen = draft['arg:' + p.name] || (sources[0] && sources[0][0]);
-                if (!chosen) return toast(`Say what ${readable(name)} is kept separately for.`, true);
-                args[p.name] = JSON.parse(chosen);
-              }
-              state.readDraft = null;
-              return patchSlice((b) => b.boundary.push({
-                alias: uniqueAlias(defaultAlias(name), b.boundary.map((x) => x.alias)),
-                projection: name, arguments: args }));
-            }
-            if (!draft.source) return toast('Pick a thing and where its id comes from.', true);
-            const entity = draft.entity;
-            const source = draft.source;
-            state.readDraft = null;
-            patchSlice((b) => b.boundary.push({
-              alias: uniqueAlias(defaultAlias(entity), b.boundary.map((x) => x.alias)),
-              entity, id: JSON.parse(source) }));
-          },
-        }, '+ Read something')))));
+        h('button', { class: 'btn', onclick: submit }, '+ Read something')))));
   }
   return step('reads', 'To decide, it reads', ...body);
 }
@@ -2968,18 +2995,7 @@ function stepRules(ctx, slice) {
   if (!cards.length) cards.push(h('div', { class: 'empty' }, 'No rules — always allowed.'));
 
   return step('rules', 'It is only allowed if', h('div', {}, cards),
-    state.editRule === 'new'
-      ? h('div', { class: 'card' }, ruleEditor(ctx, slice, null))
-      : adderSlot('rule', 'rules', '+ rule', () =>
-          h('div', { class: 'card' }, h('div', { class: 'adder' },
-            h('button', {
-              class: 'btn', onclick: () => {
-                closeForms();
-                state.editRule = 'new';
-                state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' };
-                render();
-              },
-            }, '+ Add rule')))));
+    adderSlot('rule', 'rules', '+ rule', () => h('div', { class: 'card' }, ruleEditor(ctx, slice, null))));
 }
 
 // One condition, open for editing — the same form whether it already
@@ -2991,8 +3007,17 @@ function stepRules(ctx, slice) {
 // no right-hand side at all, so that half of the form goes away when
 // one is chosen rather than being ignored.
 function ruleEditor(ctx, slice, index) {
-  const draft = state.ruleDraft;
+  // A rule being edited always has a draft; a rule about to be created
+  // grows one the first time it is painted, and keeps it across every
+  // repaint a keystroke causes from then on.
+  const draft = state.ruleDraft || (state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' });
   const scope = operandChoicesAbove(ctx, slice);
+  // A rule's left side says what it's about, and that's always
+  // something read — a value the command was merely given belongs on
+  // the right, compared against. Left keeps only what came off the
+  // boundary, not the "given · …" entries `scope` also carries for the
+  // right side's sake.
+  const leftScope = scope.filter(([v]) => !('parameterName' in JSON.parse(v)));
   const leftType = resolveOperandType(draftOperand(draft, 'left'),
     { boundary: slice.reads, commandProperties: slice.payload, ctx });
 
@@ -3011,15 +3036,17 @@ function ruleEditor(ctx, slice, index) {
   // the same type as the left side for most predicates, a bare integer
   // for the count predicates, and so on — so a capacity (an integer)
   // does not sit alongside a list of ids as things to compare it with.
+  // Whatever the left side already names is dropped too: "capacity
+  // equals capacity" is never a rule anyone meant to write.
   const rightType = rightHandExpectedType(draft.predicate, leftType);
-  const rightScope = rightType
+  const rightScope = (rightType
     ? scope.filter(([v]) => {
         const resolved = resolveOperandType(JSON.parse(v),
           { boundary: slice.reads, commandProperties: slice.payload, ctx });
         return resolved && resolved.propertyType === rightType.propertyType
           && resolved.isList === rightType.isList;
       })
-    : scope;
+    : scope).filter(([v]) => v !== draft.left);
   // Enum options on the right only make sense once the left side names
   // an enum-typed property, and only that property's own enum —
   // offering every enum's members would let "course · capacity equals
@@ -3037,11 +3064,40 @@ function ruleEditor(ctx, slice, index) {
     draft.right = '';
   }
 
-  const close = () => { state.editRule = null; state.ruleDraft = null; render(); };
+  const close = () => { state.editRule = null; state.ruleDraft = null; state.adder = null; render(); };
 
-  return h('div', { class: 'adder' },
-    ...operandPicker(scope, draft, 'left',
-      { placeholder: scope.length ? '— what? —' : '— read something first —' }),
+  // Once both sides are chosen, Enter anywhere in the row submits it —
+  // the same as clicking the primary button — so a rule typed and
+  // picked entirely from the keyboard never needs the mouse to land.
+  const submit = () => {
+    const left = draftOperand(draft, 'left');
+    if (left === undefined) return toast('Say what the rule is about.', true);
+    const condition = { leftHandSide: left, predicate: draft.predicate };
+    if (!unary) {
+      const right = draftOperand(draft, 'right');
+      if (right === undefined) return toast('Say what to compare it with.', true);
+      condition.rightHandSide = right;
+    }
+    if (draft.negate) condition.negate = true;
+    state.editRule = null;
+    state.ruleDraft = null;
+    state.adder = null;
+    patchSlice((b) => {
+      if (index === null) b.conditions.push(condition);
+      else b.conditions[index] = condition;
+    });
+  };
+
+  return h('div', {
+    class: 'adder',
+    onkeydown: (e) => {
+      if (e.key !== 'Enter' || e.target.tagName === 'BUTTON') return;
+      e.preventDefault();
+      submit();
+    },
+  },
+    ...operandPicker(leftScope, draft, 'left',
+      { placeholder: leftScope.length ? '— what? —' : '— read something first —' }),
     h('label', { class: 'tiny muted' },
       h('input', {
         type: 'checkbox', checked: !!draft.negate,
@@ -3051,25 +3107,7 @@ function ruleEditor(ctx, slice, index) {
       draft.predicate, (v) => { draft.predicate = v; render(); }),
     ...(unary ? [] : operandPicker(rightRows, draft, 'right',
       { placeholder: '— what? —', allowLiteral: !enums.length })),
-    h('button', {
-      class: 'btn primary', onclick: () => {
-        const left = draftOperand(draft, 'left');
-        if (left === undefined) return toast('Say what the rule is about.', true);
-        const condition = { leftHandSide: left, predicate: draft.predicate };
-        if (!unary) {
-          const right = draftOperand(draft, 'right');
-          if (right === undefined) return toast('Say what to compare it with.', true);
-          condition.rightHandSide = right;
-        }
-        if (draft.negate) condition.negate = true;
-        state.editRule = null;
-        state.ruleDraft = null;
-        patchSlice((b) => {
-          if (index === null) b.conditions.push(condition);
-          else b.conditions[index] = condition;
-        });
-      },
-    }, index === null ? 'Add rule' : 'Save'),
+    h('button', { class: 'btn primary', onclick: submit }, index === null ? 'Add rule' : 'Save'),
     h('button', { class: 'btn ghost tiny', onclick: close }, 'Cancel'));
 }
 
@@ -3123,12 +3161,31 @@ function stepEmits(ctx, slice) {
           patchSlice((b) => b.publishes.push({ name, parameters: {} }));
           state.openEvent = name;
         });
+        // A brand new event has nothing this command gave it yet to
+        // record — copying all of it in one more keystroke is the
+        // common case, so that is where focus lands next.
+        if (slice.payload.length) {
+          setTimeout(() => {
+            const chips = document.querySelectorAll('.copy-missing button');
+            const target = chips[chips.length - 1];
+            if (target) target.focus();
+          }, 0);
+        }
       },
       onCancel: () => { state.newEntityAt = null; render(); },
     }));
   } else {
     body.push(adderSlot('emit', 'emits', '+ record something', () =>
-      h('div', { class: 'card' }, h('div', { class: 'adder' },
+      h('div', { class: 'card' }, h('div', {
+        class: 'adder',
+        // Enter records the picked event — unless focus is on a button,
+        // which already knows what Enter on it means.
+        onkeydown: existing.length ? (e) => {
+          if (e.key !== 'Enter' || e.target.tagName === 'BUTTON') return;
+          e.preventDefault();
+          patchSlice((b) => b.publishes.push({ name: chosen, parameters: {} }));
+        } : null,
+      },
         existing.length ? pick(existing.map((n) => [n, readable(n)]), chosen, (v) => { chosen = v; }) : null,
         existing.length ? h('button', {
           class: 'btn',
@@ -3222,8 +3279,9 @@ function eventFields(ctx, emission, event) {
         return [[JSON.stringify({ alias: b.alias }), propertyWords(b.alias)]];
       }
       const entity = ctx['entity-definitions'][b.entity];
+      const icon = entityIcon(ctx, b.entity) + ' ';
       const props = (entity ? entity.properties : []).map((q) =>
-        [JSON.stringify({ alias: b.alias, property: q.name }), memberWords(b.alias, q.name)]);
+        [JSON.stringify({ alias: b.alias, property: q.name }), icon + memberWords(b.alias, q.name)]);
       // An alias identified straight off a payload parameter already
       // has that same value in scope under "given · …", so naming it
       // again here would just be a second label on the one thing. One
@@ -3231,7 +3289,7 @@ function eventFields(ctx, emission, event) {
       // shortcut — that path is not what an event wants to say — so its
       // own identity is worth offering directly.
       const ownId = b.id !== undefined && operandSource(b.id) !== 'parameter'
-        ? [[JSON.stringify(b.id), memberWords(b.alias, 'id')]]
+        ? [[JSON.stringify(b.id), icon + memberWords(b.alias, 'id')]]
         : [];
       return [...props, ...ownId];
     }),
@@ -3264,18 +3322,20 @@ function eventFields(ctx, emission, event) {
   // stays here rather than on the event's page because it reads *this*
   // command's payload — an event published by several commands has no
   // one "given" to offer.
-  const missing = flag('copyFields')
-    ? commandProperties.filter((q) => !(event.properties || []).some((p) => p.name === q.name))
-    : [];
-  const copyFromCommand = (property) => {
-    patch('event-definition', emission.name, (b) => b.properties.push({
-      name: property.name, propertyType: property.propertyType,
-      isOptional: property.isOptional, isList: property.isList,
-    }));
+  const missing = commandProperties.filter((q) => !(event.properties || []).some((p) => p.name === q.name));
+  const copyFromCommand = (properties) => {
+    patch('event-definition', emission.name, (b) => {
+      for (const property of properties) {
+        b.properties.push({
+          name: property.name, propertyType: property.propertyType,
+          isOptional: property.isOptional, isList: property.isList,
+        });
+      }
+    });
     patchSlice((b) => {
       const e = b.publishes.find((x) => x.name === emission.name);
       e.parameters = e.parameters || {};
-      e.parameters[property.name] = { parameterName: property.name };
+      for (const property of properties) e.parameters[property.name] = { parameterName: property.name };
     });
   };
 
@@ -3296,8 +3356,16 @@ function eventFields(ctx, emission, event) {
       missing.map((p) => h('button', {
         class: 'chip suggest',
         title: 'Add ' + propertyWords(p.name) + ' to this event, carried through unchanged',
-        onclick: () => copyFromCommand(p),
-      }, '+ ' + propertyWords(p.name)))) : null,
+        onclick: () => copyFromCommand([p]),
+      }, '+ ' + propertyWords(p.name))),
+      // The common case — an event that just records what it was given,
+      // field for field — is one click rather than one per field.
+      missing.length > 1 ? h('button', {
+        class: 'chip suggest flow-adder',
+        title: `Add all ${missing.length} of these at once, each carried through unchanged`,
+        onkeydown: (e) => { if (e.key === 'ArrowUp' || e.key === 'ArrowDown') navFlow(e); },
+        onclick: () => copyFromCommand(missing),
+      }, `+ all ${missing.length}, same as the command`) : null) : null,
     h('div', { class: 'adder', style: 'margin-top:6px' },
       h('button', {
         class: 'btn ghost tiny',
@@ -3426,30 +3494,35 @@ function changeAdder(ctx, eventName) {
     render();
   });
 
+  // Once a target and a value are chosen, Enter anywhere in the row
+  // records the change — the same as clicking the button.
+  const submitChange = () => {
+    if (!draft.target || draft.target === NEW) return toast('Pick what changes.', true);
+    if (draft.value === NEW) {
+      closeForms();
+      state.addingMember = { type: targetProperty.propertyType, eventName };
+      return render();
+    }
+    const value = draftOperand(draft, 'value');
+    if (value === undefined) return toast('Say what it changes to.', true);
+    const [entityName, propertyName] = JSON.parse(draft.target);
+    const operation = draft.operation;
+    state.changeDraft = null;
+    patch('entity-definition', entityName, (b) => {
+      const prop = b.properties.find((q) => q.name === propertyName);
+      prop.handlers = (prop.handlers || []).filter((x) => x.event !== eventName);
+      prop.handlers.push({ event: eventName, operation, value });
+    });
+  };
+
   const rows = [adderSlot('chg:' + eventName, 'changes', '+ change', () =>
-    h('div', { class: 'adder' }, targetSel,
+    h('div', {
+      class: 'adder',
+      onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); submitChange(); } },
+    }, targetSel,
       pick(Object.entries(OPERATION_WORDS), draft.operation, (v) => { draft.operation = v; }),
       ...operandPicker(values, draft, 'value', { allowLiteral: !targetEnumMembers }),
-      h('button', {
-        class: 'btn', onclick: () => {
-          if (!draft.target || draft.target === NEW) return toast('Pick what changes.', true);
-          if (draft.value === NEW) {
-            closeForms();
-            state.addingMember = { type: targetProperty.propertyType, eventName };
-            return render();
-          }
-          const value = draftOperand(draft, 'value');
-          if (value === undefined) return toast('Say what it changes to.', true);
-          const [entityName, propertyName] = JSON.parse(draft.target);
-          const operation = draft.operation;
-          state.changeDraft = null;
-          patch('entity-definition', entityName, (b) => {
-            const prop = b.properties.find((q) => q.name === propertyName);
-            prop.handlers = (prop.handlers || []).filter((x) => x.event !== eventName);
-            prop.handlers.push({ event: eventName, operation, value });
-          });
-        },
-      }, '+ Record a change')))];
+      h('button', { class: 'btn', onclick: submitChange }, '+ Record a change')))];
 
   if (state.addingProp && state.addingProp.eventName === eventName) rows.push(newPropertyForm(ctx));
   if (state.addingMember && state.addingMember.eventName === eventName) {
@@ -5015,8 +5088,12 @@ function eventFieldsEditor(ctx, name, event) {
       });
     }
     const enumType = isStringEnumType(ctx, p.propertyType) ? p.propertyType : null;
+    const dropField = () => removeEventField(ctx, name, i, p.name);
     return [
-      qrow('div', { cls: 'field', key: 'evown:' + name + ':' + p.name },
+      qrow('div', {
+        cls: 'field', key: 'evown:' + name + ':' + p.name,
+        onRemove: dropField,
+      },
         h('span', { class: 'nm' }, propertyWords(p.name)),
         h('span', { class: 'grow', style: 'flex:1' }),
         reveal(
@@ -5027,7 +5104,7 @@ function eventFieldsEditor(ctx, name, event) {
           advanced() ? h('span', { class: 'tech' }, p.name) : null,
           h('button', {
             class: 'btn tiny danger', title: 'Remove this field',
-            onclick: () => removeEventField(ctx, name, i, p.name),
+            onclick: dropField,
           }, '×'))),
       enumType ? h('div', { class: 'use' },
         h('span', { class: 'muted' }, 'can be '), ...enumMemberChips(ctx, enumType)) : null,
@@ -5045,6 +5122,10 @@ function eventFieldsEditor(ctx, name, event) {
     adderSlot('evown:' + name, null, '+ field', () => propertyAdder(ctx, {
       label: '+ Add field',
       onAdd: (property) => patch('event-definition', name, (b) => b.properties.push(property)),
+      onRemoveLast: rows.length
+        ? () => removeEventField(ctx, name, event.properties.length - 1,
+            event.properties[event.properties.length - 1].name)
+        : undefined,
     })));
 }
 
@@ -6325,31 +6406,92 @@ function pinButton(tag) {
   }, on ? '★' : '☆');
 }
 
+// One instance's full current state, as a card — the same rendering
+// whether it got here by being pinned or by having been read.
+function instanceStateCard(ctx, tag) {
+  const held = sessionInstanceState(ctx, tag);
+  if (!held) {
+    return h('div', { class: 'card' },
+      h('div', { class: 'sc-line' }, pinButton(tag),
+        h('span', { class: 'k' }, tag + ' — gone from this model')));
+  }
+  return h('div', { class: 'card' },
+    h('div', { class: 'sc-line' },
+      pinButton(tag),
+      h('span', { class: 't' }, readable(held.entity) + ' ' + held.id)),
+    held.properties.map((property) => h('div', { class: 'sc-line' },
+      h('span', { class: 'k' }, '  ' + propertyWords(property.name) + ' '),
+      property.scripted
+        ? h('span', { class: 'k' }, '— scripted, read through a command')
+        : property.error
+          ? h('span', { class: 'k' }, '— ' + property.error)
+          : h('span', {}, JSON.stringify(property.value)))));
+}
+
 function sandboxWatched(ctx) {
   if (!session.pinned.length) return null;
   return step('scenarios', 'Watched',
     h('div', { class: 'muted small' },
       'Followed wherever you are on the timeline, whether or not the step you are looking at '
       + 'read them.'),
-    session.pinned.map((tag) => {
-      const held = sessionInstanceState(ctx, tag);
-      if (!held) {
-        return h('div', { class: 'card' },
-          h('div', { class: 'sc-line' }, pinButton(tag),
-            h('span', { class: 'k' }, tag + ' — gone from this model')));
-      }
-      return h('div', { class: 'card' },
-        h('div', { class: 'sc-line' },
-          pinButton(tag),
-          h('span', { class: 't' }, readable(held.entity) + ' ' + held.id)),
-        held.properties.map((property) => h('div', { class: 'sc-line' },
-          h('span', { class: 'k' }, '  ' + propertyWords(property.name) + ' '),
-          property.scripted
-            ? h('span', { class: 'k' }, '— scripted, read through a command')
-            : property.error
-              ? h('span', { class: 'k' }, '— ' + property.error)
-              : h('span', {}, JSON.stringify(property.value)))));
-    }));
+    session.pinned.map((tag) => instanceStateCard(ctx, tag)));
+}
+
+// ---------- what the involved decision models look like now ----------
+//
+// `sandboxDecision` is frozen at the instant the step decided; this
+// moves as you scrub. An entity's "now" is its full state — the same
+// card `instanceStateCard` gives a pinned instance — not only the
+// properties the decision happened to touch, which is the boundary's
+// story to tell, not this one's. A projection has no properties to
+// enumerate, so its "now" is just a fresh fold — gotten by deciding the
+// same command again against the log as it stands here, which is also
+// the only way to recover the argument values it was folded with.
+function sandboxNow(ctx) {
+  const position = sessionPosition();
+  const step = sessionStepAt(position);
+  if (!step) {
+    return h('div', { class: 'card' },
+      h('div', { class: 'empty' }, 'Nothing has happened yet.'));
+  }
+
+  let then;
+  try {
+    then = evaluateCommand(ctx, session.log.slice(0, step.from), step.command, step.args);
+  } catch (error) {
+    if (!(error instanceof EvaluationError)) throw error;
+    return h('div', { class: 'card' },
+      h('div', { class: 'empty' }, 'See "What it read to decide" above.'));
+  }
+
+  const reads = Object.entries(then.reads || {});
+  if (!reads.length) {
+    return h('div', { class: 'card' }, h('div', { class: 'empty' }, 'It involved nothing.'));
+  }
+
+  let now = null;
+  let nowError = null;
+  try {
+    now = evaluateCommand(ctx, sessionVisible(), step.command, step.args);
+  } catch (error) {
+    if (!(error instanceof EvaluationError)) throw error;
+    nowError = error.message;
+  }
+
+  return h('div', {},
+    reads.map(([alias, read]) => read.kind === 'projection'
+      ? h('div', { class: 'card sc-line' },
+          h('span', { class: 'k' }, alias + ' — '),
+          h('span', { class: 't' }, readable(read.projection)),
+          now
+            ? h('span', { class: 'k' }, '  ' + JSON.stringify(now.reads[alias].value))
+            : h('span', { class: 'k' }, '  can no longer be worked out here: ' + nowError))
+      : h('div', {},
+          h('div', { class: 'muted tiny' },
+            alias + ' — ' + readable(read.entity)
+              + (read.fanned ? ` (${read.instances.length})` : '')),
+          read.instances.map((instance) =>
+            instanceStateCard(ctx, read.entity + ':' + instance.id)))));
 }
 
 // ---------- the page ----------
@@ -6360,11 +6502,12 @@ function renderSandbox(ctx, main) {
       h('div', { class: 'name' }, 'Sandbox'),
       h('span', { class: 'grow' }),
       session.log.length
-        ? h('button', {
-            class: 'btn tiny',
+        ? removeButton('sandbox:reset', {
+            label: 'Start over',
             title: 'Throw all of this away and start from nothing',
-            onclick: () => { sessionReset(); state.sandboxDraft = null; render(); },
-          }, 'Start over')
+            confirm: 'Really start over?',
+            onRemove: () => { sessionReset(); state.sandboxDraft = null; render(); },
+          })
         : null),
     h('div', { class: 'muted small summary' },
       'Drive the commands and watch what happens. Nothing here is kept — it is gone when this '
@@ -6387,6 +6530,7 @@ function renderSandbox(ctx, main) {
           : h('div', { class: 'empty' }, 'nothing yet'))));
 
     main.appendChild(step('reads', 'What it read to decide', sandboxDecision(ctx)));
+    main.appendChild(step('now', 'What it looks like now', sandboxNow(ctx)));
     const watched = sandboxWatched(ctx);
     if (watched) main.appendChild(watched);
   }
@@ -6423,12 +6567,27 @@ window.addEventListener('keydown', (e) => {
   // on, Escape puts it back.
   if (state.sel || state.adder || state.editing || state.lit) {
     const key = state.sel;
+    // An open adder folds back to a single button, which is fewer tab
+    // stops than the form it replaces — closing it shifts everything
+    // after it up the page, so the generic by-position focus restore in
+    // `render` overshoots into whatever now sits where the keyboard
+    // used to be. Noting which step the keyboard was in before the
+    // repaint is what lets it land on that step's own folded button
+    // instead, the same way opening one does.
+    const openStep = document.activeElement instanceof Element
+      ? document.activeElement.closest('.step')
+      : null;
+    const openStepKind = openStep
+      && [...openStep.classList].find((c) => c !== 'step' && c !== 'editing');
     state.sel = null; state.adder = null; state.editing = null; state.lit = null;
     render();
     // Deselecting must not also lose the keyboard's place on the page.
     if (key) {
       const row = document.querySelector(`.qrow[data-key="${CSS.escape(key)}"]`);
       if (row) row.focus();
+    } else if (openStepKind) {
+      const btn = document.querySelector('.step.' + openStepKind + ' .flow-adder');
+      if (btn) btn.focus();
     }
   }
 });
