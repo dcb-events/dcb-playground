@@ -221,6 +221,194 @@ function allSlices(ctx) {
   return Object.keys(ctx['command-definitions']).map((n) => sliceOf(ctx, n));
 }
 
+// ---------- coupling ----------
+//
+// Every command against every event type it writes (`publishes`) or
+// reads back to decide — the same relationship each command's own page
+// already shows one at a time (its derived boundary), gathered once
+// into a matrix. "Consumes" is read straight off `deriveDcb`: an event
+// type is in a command's boundary the moment some read property's
+// handler names it, whether or not that command ever publishes it —
+// which is what lets a cell be produce-only, consume-only, or both.
+function couplingMatrix(ctx) {
+  const events = Object.keys(ctx['event-definitions']).sort();
+  const groups = featureGroups(ctx)
+    .map((group) => ({ name: group.name, commands: group.commands.map((n) => couplingRow(ctx, n, events)) }))
+    .filter((group) => group.commands.length);
+  return { events, groups };
+}
+
+function couplingRow(ctx, name, events) {
+  const slice = sliceOf(ctx, name);
+  const produces = new Set((slice.body.publishes || []).map((e) => e && e.name).filter(Boolean));
+  // event type -> Set of readable "where from" text.
+  const via = {};
+  for (const item of slice.dcb.items) {
+    if (!item.types.length) continue;
+    const binding = !item.projection && (slice.body.boundary || []).find((b) => b.alias === item.alias);
+    const entity = binding && ctx['entity-definitions'][binding.entity];
+    for (const eventType of item.types) {
+      if (!via[eventType]) via[eventType] = new Set();
+      if (item.projection) {
+        via[eventType].add(readable(item.projection));
+        continue;
+      }
+      const sources = (item.readProperties || []).filter((propName) => {
+        const property = entity && (entity.properties || []).find((p) => p.name === propName);
+        return property && (property.handlers || []).some((h) => h && h.event === eventType);
+      });
+      if (sources.length) sources.forEach((propName) => via[eventType].add(memberWords(item.alias, propName)));
+      else via[eventType].add(item.alias);
+    }
+  }
+  return {
+    name,
+    cells: events.map((event) => ({
+      event,
+      produces: produces.has(event),
+      consumes: !!via[event],
+      via: via[event] ? [...via[event]] : [],
+    })),
+  };
+}
+
+// ---------- coupling clusters ----------
+//
+// The matrix as a plain undirected graph — one node per command and
+// per event, an edge wherever a cell has any coupling at all (produce
+// or consume; direction does not matter for reachability). Two things
+// fall out of that graph for free: which commands and events could be
+// lifted into their own bounded context together (a connected
+// component), and which single command or event is the one thing
+// still holding two such components together (an articulation point —
+// sever that one coupling and the model splits along the seam it
+// names).
+function couplingGraph(matrix) {
+  const adj = new Map(); // id -> Set(id)
+  const commandId = (name) => 'cmd:' + name;
+  const eventId = (name) => 'evt:' + name;
+  const addNode = (id) => { if (!adj.has(id)) adj.set(id, new Set()); };
+  const addEdge = (a, b) => { adj.get(a).add(b); adj.get(b).add(a); };
+
+  for (const event of matrix.events) addNode(eventId(event));
+  for (const group of matrix.groups) {
+    for (const row of group.commands) {
+      addNode(commandId(row.name));
+      for (const cell of row.cells) {
+        if (cell.produces || cell.consumes) addEdge(commandId(row.name), eventId(cell.event));
+      }
+    }
+  }
+  return adj;
+}
+
+// Every node's connected-component index, assigned in the order
+// `nodeOrder` first meets each component — so the numbering is stable
+// and reproducible rather than an artefact of `Map` iteration order.
+function connectedComponentsOf(adj, nodeOrder) {
+  const componentOf = new Map();
+  let next = 0;
+  for (const start of nodeOrder) {
+    if (componentOf.has(start)) continue;
+    const stack = [start];
+    componentOf.set(start, next);
+    while (stack.length) {
+      const id = stack.pop();
+      for (const neighbor of adj.get(id)) {
+        if (!componentOf.has(neighbor)) { componentOf.set(neighbor, next); stack.push(neighbor); }
+      }
+    }
+    next += 1;
+  }
+  return componentOf;
+}
+
+// Articulation points (Tarjan): nodes whose removal would split the
+// component they belong to into two or more pieces. Standard
+// discovery/low-link DFS — recursive, since a DCB model's coupling
+// graph is small enough that the call depth never approaches what
+// would trouble the interpreter.
+function articulationPointsOf(adj) {
+  const disc = new Map();
+  const low = new Map();
+  const cut = new Set();
+  let timer = 0;
+
+  function dfs(id, parent) {
+    disc.set(id, timer); low.set(id, timer); timer += 1;
+    let children = 0;
+    for (const neighbor of adj.get(id)) {
+      if (neighbor === parent) continue;
+      if (disc.has(neighbor)) {
+        low.set(id, Math.min(low.get(id), disc.get(neighbor)));
+      } else {
+        children += 1;
+        dfs(neighbor, id);
+        low.set(id, Math.min(low.get(id), low.get(neighbor)));
+        if (parent !== null && low.get(neighbor) >= disc.get(id)) cut.add(id);
+      }
+    }
+    if (parent === null && children > 1) cut.add(id);
+  }
+
+  for (const id of adj.keys()) {
+    if (!disc.has(id)) dfs(id, null);
+  }
+  return cut;
+}
+
+// Commands and events reordered so that coupled clusters sit together
+// and, within a cluster, the most-coupled things — the likeliest
+// bridges — settle toward the far edge. Clusters are numbered by size,
+// largest first, so the model's core sits at the top-left and its
+// loosest ends trail off toward the bottom-right.
+function couplingClusters(matrix) {
+  const adj = couplingGraph(matrix);
+  const commandIds = matrix.groups.flatMap((g) => g.commands.map((r) => 'cmd:' + r.name));
+  const eventIds = matrix.events.map((e) => 'evt:' + e);
+  const nodeOrder = [...commandIds, ...eventIds];
+
+  const componentOf = connectedComponentsOf(adj, nodeOrder);
+  const bridges = articulationPointsOf(adj);
+
+  const commandCount = new Map();
+  const eventCount = new Map();
+  const firstSeen = new Map();
+  nodeOrder.forEach((id, i) => {
+    const c = componentOf.get(id);
+    if (!firstSeen.has(c)) firstSeen.set(c, i);
+    (id.startsWith('cmd:') ? commandCount : eventCount).set(c, ((id.startsWith('cmd:') ? commandCount : eventCount).get(c) || 0) + 1);
+  });
+  const rankOrder = [...firstSeen.keys()].sort((a, b) => {
+    const sizeA = (commandCount.get(a) || 0) + (eventCount.get(a) || 0);
+    const sizeB = (commandCount.get(b) || 0) + (eventCount.get(b) || 0);
+    return sizeB - sizeA || firstSeen.get(a) - firstSeen.get(b);
+  });
+  const rankOf = new Map(rankOrder.map((c, i) => [c, i]));
+
+  const degree = (id) => adj.get(id).size;
+  const byClusterThenDegree = (a, b) =>
+    rankOf.get(componentOf.get(a)) - rankOf.get(componentOf.get(b))
+    || (bridges.has(a) === bridges.has(b) ? degree(b) - degree(a) : bridges.has(a) ? 1 : -1);
+
+  const commandOrder = [...commandIds].sort(byClusterThenDegree).map((id) => id.slice(4));
+  const eventOrder = [...eventIds].sort(byClusterThenDegree).map((id) => id.slice(4));
+
+  const clusters = rankOrder.map((c, rank) => ({
+    rank, commands: commandCount.get(c) || 0, events: eventCount.get(c) || 0,
+  }));
+
+  return {
+    commandOrder,
+    eventOrder,
+    clusterOfCommand: (name) => rankOf.get(componentOf.get('cmd:' + name)),
+    clusterOfEvent: (name) => rankOf.get(componentOf.get('evt:' + name)),
+    isBridgeCommand: (name) => bridges.has('cmd:' + name),
+    isBridgeEvent: (name) => bridges.has('evt:' + name),
+    clusters,
+  };
+}
+
 // ---------- features ----------
 //
 // A feature groups the commands that make it up. It is not a definition
@@ -421,6 +609,15 @@ function conditionParts(condition) {
   const left = operandWords(condition.leftHandSide);
   if (condition.rightHandSide === undefined) return { left, verb, right: null };
   return { left, verb, right: operandWords(condition.rightHandSide) };
+}
+
+// A condition as one plain sentence — the same words `conditionParts`
+// hands the slice page's rule editor, joined into a string for a
+// read-only overview that has nowhere to hang per-operand styling.
+function ruleSentence(ctx, body, condition) {
+  const p = conditionParts(condition);
+  const quantifier = quantifierWords(ctx, body, condition);
+  return (quantifier ? quantifier + ', ' : '') + p.left + ' ' + p.verb + (p.right ? ' ' + p.right : '');
 }
 
 const OPERATION_WORDS = {

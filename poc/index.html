@@ -562,13 +562,84 @@
     select.icon-select selectedcontent .icon { order: -1; }
     select.icon-select selectedcontent { display: flex; align-items: center; gap: 4px; }
   }
+
+  /* The two overview pages read across every command at once rather
+     than down one of them, so they earn more width than an ordinary
+     slice — capped, not unbounded, so a model with many events still
+     scrolls its matrix instead of running the page edge to edge. */
+  .slice.wide { max-width: 1100px; }
+
+  /* ---------- coupling ---------- */
+  .coupling-legend { display: flex; align-items: center; gap: 18px; margin-bottom: 14px; flex-wrap: wrap; }
+  .coupling-legend-item { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); }
+  .coupling-mark { display: inline-block; width: 13px; height: 13px; border-radius: 50%; box-sizing: border-box; }
+  .coupling-mark.produces { background: var(--command); }
+  .coupling-mark.consumes { border: 2px solid var(--event); }
+  .coupling-mark.both { background: var(--command); border: 2px solid var(--event); }
+  .coupling-scroll { overflow-x: auto; overflow-y: hidden; padding-bottom: 6px; }
+  .coupling-grid {
+    display: grid; border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--surface); overflow: hidden;
+  }
+  .coupling-corner { border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+  /* Read normally — left to right, upright — rather than rotated:
+     sideways text reads slower at any length, and rotating it only
+     traded a wide header for a very tall one. Wrapping across a few
+     lines instead costs far less height for a typical name, and the
+     row still sizes itself to the longest one — nothing here needs
+     to estimate a pixel height in JS to avoid clipping. A name long
+     enough to still run past a handful of lines is clamped with an
+     ellipsis; the full name is always one hover away. */
+  .coupling-colhead {
+    position: relative; border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border); background: var(--bg); cursor: pointer;
+    display: flex; align-items: flex-end; justify-content: center;
+    padding: 10px 6px; text-align: center;
+  }
+  .coupling-colhead:hover { background: var(--event-soft); }
+  .coupling-colhead.cluster-start { border-left: 2px solid var(--border-strong); }
+  .coupling-colhead span {
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 5;
+    overflow: hidden; font-family: var(--mono); font-size: 11px; line-height: 1.4;
+    color: var(--text);
+  }
+  .coupling-grouprow {
+    grid-column: 1 / -1; padding: 5px 12px; font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+    background: var(--bg); border-bottom: 1px solid var(--border);
+  }
+  .coupling-rowlabel {
+    display: flex; align-items: center; padding: 0 12px; font-size: 12px;
+    border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
+    background: var(--surface); min-height: 40px; cursor: pointer;
+  }
+  .coupling-rowlabel:hover { color: var(--command); background: var(--command-soft); }
+  .coupling-cell {
+    position: relative; display: flex; align-items: center; justify-content: center;
+    border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
+    min-height: 40px;
+  }
+  .coupling-cell.cluster-start { border-left: 2px solid var(--border-strong); }
+
+  /* ---------- rule map ---------- */
+  .rulemap-feature { margin: 22px 0 10px; font-size: 13px; color: var(--muted); }
+  .rulemap-feature:first-child { margin-top: 0; }
+  .rulemap-row { display: flex; align-items: flex-start; gap: 12px; }
+  .rulemap-cmd { flex: 0 0 190px; padding-top: 2px; }
+  .rulemap-arrow { flex: 0 0 16px; color: var(--muted); padding-top: 6px; text-align: center; }
+  .rulemap-rules { flex: 1 1 auto; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .rulemap-events { flex: 0 0 180px; display: flex; flex-direction: column; gap: 6px; }
+  .rulemap-rule {
+    border-left: 3px solid var(--rule); background: var(--rule-soft);
+    border-radius: 0 6px 6px 0; padding: 6px 10px; font-size: 12px; line-height: 1.5;
+  }
 </style>
 </head>
 <body>
 
 <div class="app-bar">
   <h1>DCB Playground</h1>
-  <span class="muted small">features, and the commands that make them up</span>
+  <span class="muted small">experimental — everything here is subject to change</span>
   <span class="spacer"></span>
   <span id="tools"></span>
   <span id="picker"></span>
@@ -1103,8 +1174,8 @@ function paletteEntries(ctx) {
   }
   for (const name of Object.keys(ctx['event-definitions'])) {
     const from = records[name];
-    add('event', readable(name), from ? 'recorded by ' + readable(from) : 'recorded by nothing',
-      () => goToEvent(name));
+    add('event', eventIcon(ctx, name) + ' ' + readable(name),
+      from ? 'recorded by ' + readable(from) : 'recorded by nothing', () => goToEvent(name));
   }
   for (const name of Object.keys(ctx['projection-definitions'])) {
     add('projection', readable(name), 'projections', () => goToProjection(name));
@@ -2114,6 +2185,23 @@ function renderRail() {
     }, 'Events'));
   }
 
+  // Neither of these is a definition of its own — each reads across
+  // every command at once rather than living on any one of theirs,
+  // the way Events reads across every command that publishes one.
+  if (Object.keys(ctx['command-definitions']).length) {
+    rail.appendChild(h('h4', { style: 'margin-top:20px' }, 'Overview'));
+    rail.appendChild(h('a', {
+      href: '#', class: state.view === 'coupling' ? 'on' : '',
+      title: 'Which commands write or read back which events',
+      onclick: (e) => { e.preventDefault(); closeForms(); state.view = 'coupling'; render(); },
+    }, 'Coupling'));
+    rail.appendChild(h('a', {
+      href: '#', class: state.view === 'rulemap' ? 'on' : '',
+      title: 'Every command, its rules, and what it records',
+      onclick: (e) => { e.preventDefault(); closeForms(); state.view = 'rulemap'; render(); },
+    }, 'Rule map'));
+  }
+
   // The sandbox belongs to no definition, so it hangs off nothing in
   // the lists above. It is last because it is where you go once there
   // is something to try.
@@ -2372,6 +2460,9 @@ function paintPage() {
   if (state.view === 'events' && !advanced() && !Object.keys(ctx['event-definitions']).length) {
     state.view = 'slice';
   }
+  if ((state.view === 'coupling' || state.view === 'rulemap') && !names.length) {
+    state.view = 'slice';
+  }
   // A thing removed from under its own page leaves the page with
   // nothing to show; the next one along is a better answer than a blank.
   if (state.view === 'entity' && !ctx['entity-definitions'][state.entity]) {
@@ -2384,6 +2475,7 @@ function paintPage() {
 
   const main = document.getElementById('main');
   main.innerHTML = '';
+  main.className = 'slice' + (state.view === 'coupling' || state.view === 'rulemap' ? ' wide' : '');
 
   if (state.newContext) {
     main.appendChild(h('header', {}, h('div', { class: 'name' }, 'A new model')));
@@ -2401,6 +2493,8 @@ function paintPage() {
   if (state.view === 'types') return renderCustomTypes(ctx, main);
   if (state.view === 'projections') return renderProjections(ctx, main);
   if (state.view === 'events') return renderEvents(ctx, main);
+  if (state.view === 'coupling') return renderCoupling(ctx, main);
+  if (state.view === 'rulemap') return renderRuleMap(ctx, main);
 
   if (!state.slice) {
     // With nothing to keep track of, a command has no identifier to be
@@ -3123,7 +3217,8 @@ function stepEmits(ctx, slice) {
     // of this command's values fills which of the event's fields.
     return h('div', { class: 'card event' },
       qrow('div', { cls: 'row', key: 'emit:' + emission.name, step: 'emits' },
-        event ? eventRef(ctx, emission.name) : h('span', { class: 'chip event' }, readable(emission.name)),
+        event ? eventRef(ctx, emission.name)
+          : h('span', { class: 'chip event' }, h('i', { class: 'ic' }, eventIcon(ctx, emission.name)), readable(emission.name)),
         h('span', { class: 'muted tiny' }, params.length + ' field' + (params.length === 1 ? '' : 's')),
         h('span', { class: 'grow' }),
         reveal(
@@ -3413,7 +3508,8 @@ function stepChanges(ctx, slice) {
           }, '×')));
     });
     cards.push(h('div', { class: 'card entity' },
-      h('div', { class: 'row' }, h('span', { class: 'chip event' }, readable(emission.name)),
+      h('div', { class: 'row' }, h('span', { class: 'chip event' },
+          h('i', { class: 'ic' }, eventIcon(ctx, emission.name)), readable(emission.name)),
         h('span', { class: 'muted tiny' }, 'changes')),
       h('div', { style: 'margin-top:6px' },
         rows.length ? rows : h('div', { class: 'empty' }, 'Changes nothing we know.')),
@@ -3572,8 +3668,8 @@ function entityHandlerAdder(ctx, entityName, property, existing) {
 
   return h('div', { class: 'adder' },
     existing
-      ? h('span', { class: 'chip event' }, readable(existing.event))
-      : pick(eventNames.map((n) => [n, readable(n)]), draft.event,
+      ? h('span', { class: 'chip event' }, h('i', { class: 'ic' }, eventIcon(ctx, existing.event)), readable(existing.event))
+      : pick(eventNames.map((n) => [n, eventIcon(ctx, n) + ' ' + readable(n)]), draft.event,
           (v) => { draft.event = v; render(); },
           eventNames.length ? '— which event? —' : '— nothing fits this yet —'),
     pick(Object.entries(OPERATION_WORDS), draft.operation, (v) => { draft.operation = v; }),
@@ -3746,7 +3842,7 @@ function scriptPanel(ctx, entityName, property) {
 
     ...(property.handlers || []).map((handler) => h('div', { class: 'script-handler' },
       h('div', { class: 'tiny' },
-        h('span', { class: 'chip event' }, readable(handler.event)),
+        h('span', { class: 'chip event' }, h('i', { class: 'ic' }, eventIcon(ctx, handler.event)), readable(handler.event)),
         h('button', {
           class: 'btn tiny danger',
           title: 'Stop handling this event',
@@ -4048,7 +4144,7 @@ function handlerList(ctx, entityName, property, usage) {
     const p = effectParts({ entity: entityName, property, handler: u.handler });
     return h('div', { class: 'row' },
       h('span', { class: 'sentence' },
-        h('span', { class: 'chip event' }, readable(u.event)), ' ',
+        h('span', { class: 'chip event' }, h('i', { class: 'ic' }, eventIcon(ctx, u.event)), readable(u.event)), ' ',
         h('span', { class: 'verb' }, p.verb), ' ', opRef(u.handler.value, u.event, p.object)),
       h('span', { class: 'grow' }),
       reveal(
@@ -4626,7 +4722,7 @@ function projectionFields(ctx, draft) {
       h('div', { class: 'tiny muted' }, 'over ',
         h('code', {}, (draft.script.tagFilter || []).join(', ') || 'nothing')),
       ...(draft.handlers || []).map((handler) => h('div', { class: 'script-handler' },
-        h('div', { class: 'tiny' }, h('span', { class: 'chip event' }, readable(handler.event))),
+        h('div', { class: 'tiny' }, h('span', { class: 'chip event' }, h('i', { class: 'ic' }, eventIcon(ctx, handler.event)), readable(handler.event))),
         h('textarea', { class: 'mono', rows: 6, value: handler.code || '', readonly: true }))),
     ];
   }
@@ -4672,7 +4768,7 @@ function projectionFields(ctx, draft) {
     const values = handlerValueChoices(ctx, draft, event);
     const operations = operationsFor(ctx, draft);
     return h('div', { class: 'adder' },
-      pick(eventNames.map((n) => [n, readable(n)]), handler.event,
+      pick(eventNames.map((n) => [n, eventIcon(ctx, n) + ' ' + readable(n)]), handler.event,
         (v) => { handler.event = v; handler.value = ''; render(); }, '— which event? —'),
       pick(operations.map((op) => [op, op]), handler.operation,
         (v) => { handler.operation = v; render(); }, '— do what? —'),
@@ -5065,6 +5161,191 @@ function eventCard(ctx, name) {
   }
 
   return card;
+}
+
+// ---------- coupling ----------
+//
+// Every command against every event type it writes or reads back,
+// gathered once into a matrix — the same boundary each command's own
+// page derives one at a time (`stepConsistency`), read here across all
+// of them at once rather than one command deep.
+function renderCoupling(ctx, main) {
+  main.appendChild(h('header', {},
+    h('div', { class: 'name' }, 'Coupling'),
+    h('div', { class: 'muted small' },
+      'Every command against every event type it writes, or reads back to decide — the same '
+      + 'boundary each command derives on its own page, laid out as one matrix. A filled mark '
+      + 'writes the event; a ringed mark reads it back first.')));
+
+  const matrix = couplingMatrix(ctx);
+  if (!matrix.events.length || !matrix.groups.length) {
+    main.appendChild(h('div', { class: 'empty' },
+      matrix.events.length ? 'No commands yet.' : 'No events yet.'));
+    return;
+  }
+
+  const orderMode = state.couplingOrder === 'coupling' ? 'coupling' : 'feature';
+  const tab = (key, label) => h('button', {
+    class: 'tab' + (orderMode === key ? ' on' : ''),
+    'aria-pressed': orderMode === key ? 'true' : 'false',
+    onclick: () => { state.couplingOrder = key; render(); },
+  }, label);
+  main.appendChild(h('div', { class: 'tabs', style: 'margin-bottom:16px' },
+    tab('feature', 'By feature'), tab('coupling', 'By coupling')));
+
+  main.appendChild(h('div', { class: 'coupling-legend' },
+    h('span', { class: 'coupling-legend-item' }, h('span', { class: 'coupling-mark produces' }), 'produces'),
+    h('span', { class: 'coupling-legend-item' }, h('span', { class: 'coupling-mark consumes' }), 'consumes'),
+    h('span', { class: 'coupling-legend-item' }, h('span', { class: 'coupling-mark both' }), 'both'),
+    orderMode === 'coupling'
+      ? h('span', { class: 'coupling-legend-item' },
+          h('span', { class: 'chip rule tiny' }, 'bridge'),
+          'the one coupling still joining two clusters')
+      : null));
+
+  // A lookup from (command, event) to its cell, so either ordering can
+  // read the same underlying matrix without recomputing it.
+  const cellIndex = {};
+  for (const group of matrix.groups) {
+    for (const row of group.commands) {
+      cellIndex[row.name] = {};
+      row.cells.forEach((cell, i) => { cellIndex[row.name][matrix.events[i]] = cell; });
+    }
+  }
+
+  let orderedEvents;
+  let rows; // [{ isGroup, label }] | [{ isCommand, name, isBridge, cells }]
+  let isBridgeEvent = () => false;
+  let clusterStartsAt = () => false;
+
+  if (orderMode === 'coupling') {
+    const clusters = couplingClusters(matrix);
+    orderedEvents = clusters.eventOrder;
+    isBridgeEvent = clusters.isBridgeEvent;
+
+    const clusterLabel = (rank) => {
+      const info = clusters.clusters[rank];
+      if (info.commands + info.events === 1) return 'Isolated — coupled to nothing';
+      const c = info.commands + ' command' + (info.commands === 1 ? '' : 's');
+      const e = info.events + ' event' + (info.events === 1 ? '' : 's');
+      return 'Cluster ' + (rank + 1) + ' · ' + c + ', ' + e;
+    };
+    rows = [];
+    let lastRank = null;
+    for (const name of clusters.commandOrder) {
+      const rank = clusters.clusterOfCommand(name);
+      if (rank !== lastRank) { rows.push({ isGroup: true, label: clusterLabel(rank) }); lastRank = rank; }
+      rows.push({
+        isCommand: true, name, isBridge: clusters.isBridgeCommand(name),
+        cells: orderedEvents.map((ev) => cellIndex[name][ev]),
+      });
+    }
+    let lastEventRank = null;
+    clusterStartsAt = (i) => {
+      const rank = clusters.clusterOfEvent(orderedEvents[i]);
+      const isStart = i > 0 && rank !== clusters.clusterOfEvent(orderedEvents[i - 1]);
+      return isStart;
+    };
+    if (clusters.clusters.length > 1) {
+      main.appendChild(h('div', { class: 'muted small', style: 'margin-bottom:14px' },
+        clusters.clusters.length + ' clusters — nothing couples one to another. Splitting the model '
+        + 'along those seams would leave each cluster as its own bounded context.'));
+    } else {
+      main.appendChild(h('div', { class: 'muted small', style: 'margin-bottom:14px' },
+        'Everything here is one connected cluster — no command or event stands apart from the rest yet.'));
+    }
+  } else {
+    orderedEvents = matrix.events;
+    rows = matrix.groups.flatMap((group) => [
+      { isGroup: true, label: group.name },
+      ...group.commands.map((row) => ({ isCommand: true, name: row.name, isBridge: false, cells: row.cells })),
+    ]);
+  }
+
+  const colWidth = 104;
+  const grid = h('div', {
+    class: 'coupling-grid',
+    style: `grid-template-columns: 210px repeat(${orderedEvents.length}, ${colWidth}px); `
+      + `width: ${210 + orderedEvents.length * colWidth}px`,
+  });
+  grid.appendChild(h('div', { class: 'coupling-corner' }));
+  orderedEvents.forEach((event, i) => {
+    const bridge = isBridgeEvent(event);
+    // A non-breaking space between the icon and the first word keeps
+    // them on the same line — an icon stranded alone on its own line
+    // is the one wrapping outcome worth avoiding.
+    const label = eventIcon(ctx, event) + ' ' + readable(event);
+    grid.appendChild(h('div', {
+      class: 'coupling-colhead' + (clusterStartsAt(i) ? ' cluster-start' : ''),
+      title: (bridge ? 'Bridge — removing this splits its cluster in two. ' : '') + 'Open ' + readable(event),
+      onclick: () => goToEvent(event),
+    }, h('span', { style: bridge ? 'color:var(--rule)' : '' }, label)));
+  });
+
+  for (const row of rows) {
+    if (row.isGroup) { grid.appendChild(h('div', { class: 'coupling-grouprow' }, row.label)); continue; }
+    grid.appendChild(h('div', {
+      class: 'coupling-rowlabel', title: 'Open ' + readable(row.name), onclick: () => goToCommand(row.name),
+    }, h('span', {}, readable(row.name)),
+      row.isBridge ? h('span', {
+        class: 'chip rule tiny', style: 'margin-left:7px',
+        title: 'Bridge — removing this splits its cluster in two',
+      }, 'bridge') : null));
+    row.cells.forEach((cell, i) => {
+      const markClass = cell.produces && cell.consumes ? 'both'
+        : cell.produces ? 'produces' : cell.consumes ? 'consumes' : null;
+      const label = eventIcon(ctx, cell.event) + ' ' + readable(cell.event);
+      const tip = !markClass ? null
+        : cell.produces && cell.consumes
+          ? label + ' — written here, read back via ' + cell.via.join(', ')
+          : cell.produces ? label + ' — written here'
+            : label + ' — read via ' + cell.via.join(', ');
+      grid.appendChild(h('div', {
+        class: 'coupling-cell' + (clusterStartsAt(i) ? ' cluster-start' : ''),
+        title: tip,
+      }, markClass ? h('div', { class: 'coupling-mark ' + markClass }) : null));
+    });
+  }
+  main.appendChild(h('div', { class: 'coupling-scroll' }, grid));
+}
+
+// ---------- rule map ----------
+//
+// Every command, the rules guarding it, and what it records once they
+// all hold — the same conditions and emissions from `stepRules` and
+// `stepEmits`, read here across every command at once.
+function renderRuleMap(ctx, main) {
+  main.appendChild(h('header', {},
+    h('div', { class: 'name' }, 'Rule map'),
+    h('div', { class: 'muted small' },
+      'Every command, the rules guarding it, and what it records once they all hold — the same '
+      + 'conditions and emissions from each command’s own page, gathered across all of them.')));
+
+  const groups = featureGroups(ctx).filter((g) => g.commands.length);
+  if (!groups.length) {
+    main.appendChild(h('div', { class: 'empty' }, 'No commands yet.'));
+    return;
+  }
+
+  for (const group of groups) {
+    main.appendChild(h('h3', { class: 'rulemap-feature' }, group.name));
+    for (const name of group.commands) {
+      const slice = sliceOf(ctx, name);
+      const rules = slice.rules.map((condition) => ruleSentence(ctx, slice.body, condition));
+      main.appendChild(h('div', { class: 'card command rulemap-row' },
+        h('div', { class: 'rulemap-cmd' }, commandRef(ctx, name)),
+        h('div', { class: 'rulemap-arrow' }, '→'),
+        h('div', { class: 'rulemap-rules' },
+          rules.length
+            ? rules.map((text) => h('div', { class: 'rulemap-rule' }, text))
+            : h('div', { class: 'empty tiny' }, 'always allowed')),
+        h('div', { class: 'rulemap-arrow' }, '→'),
+        h('div', { class: 'rulemap-events' },
+          slice.emits.length
+            ? slice.emits.map(({ emission }) => eventRef(ctx, emission.name))
+            : h('div', { class: 'empty tiny' }, 'records nothing yet'))));
+    }
+  }
 }
 
 // The event's own shape: rename a field, retype it, remove it, add
