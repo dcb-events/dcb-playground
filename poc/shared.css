@@ -2,6 +2,12 @@
    own layout on top; nothing here decides how a slice is arranged. */
 
 :root {
+  /* The real height of .topbar (disclaimer + app-bar), kept current by
+     JS — see `syncTopbarHeight`. Everything that docks under it reads
+     this instead of a guessed constant, so a taller disclaimer (a
+     narrow screen wrapping its text to two lines) never leaves a gap
+     or an overlap. */
+  --topbar-h: 86px;
   --command: #2563eb;
   --command-soft: #eff6ff;
   --event: #f97316;
@@ -121,7 +127,16 @@ body.f-dark .disclaimer { background: #2d2408; color: #fcd34d; border-bottom-col
 .app-bar #model-switch, .app-bar #tools, .app-bar #jump, .app-bar #actions {
   display: flex; align-items: center; gap: 4px;
 }
-.app-bar .model-name { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Most of the time there is no loose end to report — an empty #tools
+   should not still cost the bar two gaps either side of nothing. */
+.app-bar #tools:empty { display: none; }
+/* display:inline-block so max-width actually clips it — a plain
+   inline box ignores max-width entirely, which desktop had enough
+   room to never expose. */
+.app-bar .model-name {
+  display: inline-block; max-width: 220px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom;
+}
 
 /* Import/export and Settings — icon only, same footprint as the
    undo/redo buttons they sit next to. */
@@ -133,6 +148,9 @@ body.f-dark .disclaimer { background: #2d2408; color: #fcd34d; border-bottom-col
 }
 .app-bar .icon-btn:hover { border-color: var(--command); color: var(--command); }
 .app-bar .icon-btn svg { width: 16px; height: 16px; }
+/* The rail's own toggle — only meaningful once the rail is off-canvas,
+   so it stays out of the bar entirely above that breakpoint. */
+.app-bar .menu-btn { display: none; }
 
 /* The trigger that opens quick open — a button that looks like a
    search field but only ever holds a placeholder; the field itself
@@ -151,6 +169,31 @@ body.f-dark .disclaimer { background: #2d2408; color: #fcd34d; border-bottom-col
 .app-bar .trigger .kbd {
   margin-left: auto; flex: none; font-family: var(--mono); font-size: 10px; color: var(--muted);
   border: 1px solid var(--border); border-radius: 4px; padding: 0 4px;
+}
+
+/* ---------- narrow screens ----------
+   One breakpoint, everything the bar and the rail need to keep working
+   at a phone width: the rail becomes a drawer (see .rail below), its
+   toggle appears, the bar's own controls compact enough that nothing
+   is pushed off the edge, and touch targets grow to the ~40px a finger
+   actually needs — the desktop 30px stays for a mouse. */
+@media (max-width: 760px) {
+  .app-bar .menu-btn { display: inline-flex; }
+  .app-bar { gap: 6px; padding: 8px 10px; }
+  .brand-link { gap: 8px; }
+  .brand-link h1 { display: none; }
+  /* Everything else in the bar is fixed-width (~266px of icons, gaps
+     and padding at this breakpoint's sizes) — the name gets whatever
+     is left of the screen, not a fraction of it. A vw-based cap falls
+     short right at the narrow end (a fixed share of not much is still
+     too much); this keeps the same margin at every width instead of
+     needing a second breakpoint to patch the narrowest phones. */
+  .app-bar .model-name { max-width: clamp(40px, calc(100vw - 266px), 220px); }
+  .app-bar .icon-btn, .app-bar .trigger { width: 40px; height: 40px; }
+  .app-bar .icon-btn svg { width: 18px; height: 18px; }
+  .app-bar .trigger { padding: 0; justify-content: center; }
+  .app-bar .trigger svg { width: 17px; height: 17px; }
+  .app-bar .trigger .label, .app-bar .trigger .kbd { display: none; }
 }
 
 /* ---------- generic bits ---------- */

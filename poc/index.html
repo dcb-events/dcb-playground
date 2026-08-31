@@ -2,13 +2,35 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DCB Playground</title>
 <link rel="icon" type="image/png" href="logo-mark.png">
 <link rel="alternate icon" href="favicon.ico">
 <link rel="stylesheet" href="shared.css">
 <style>
-  .layout { display: grid; grid-template-columns: 250px 1fr; min-height: calc(100vh - 86px); }
+  .layout { display: grid; grid-template-columns: 250px 1fr; min-height: calc(100vh - var(--topbar-h)); }
   .rail { border-right: 1px solid var(--border); background: var(--surface); padding: 14px 0; }
+  .rail-backdrop { display: none; }
+  /* Below the breakpoint the rail stops being a grid column and
+     becomes a drawer over the content instead — .layout falls back to
+     one column so .main never sits in a column sized for a rail that
+     is no longer there. Opening it is the menu button in the bar
+     (`.menu-btn`); a backdrop and picking an actual link both close it
+     — see `renderRail` and the delegated click listener on #rail. */
+  @media (max-width: 760px) {
+    .layout { grid-template-columns: 1fr; }
+    .rail {
+      position: fixed; top: var(--topbar-h); bottom: 0; left: 0; z-index: 25;
+      width: 82vw; max-width: 300px; overflow-y: auto;
+      box-shadow: 2px 0 20px rgba(15, 23, 42, .2);
+      transform: translateX(-100%); transition: transform .18s ease;
+    }
+    .rail.open { transform: translateX(0); }
+    .rail-backdrop.open {
+      display: block; position: fixed; inset: var(--topbar-h) 0 0 0;
+      background: rgba(15, 23, 42, .35); z-index: 24;
+    }
+  }
   .rail h4 { padding: 0 16px 8px; }
   .rail a {
     display: block; padding: 6px 16px; font-size: 13px;
@@ -97,7 +119,7 @@
   /* Pinned while its steps scroll by, so which command you are inside
      is the one thing the page never loses. */
   .slice > header {
-    position: sticky; top: 86px; z-index: 10;
+    position: sticky; top: var(--topbar-h); z-index: 10;
     background: var(--bg); margin: 0 -30px 22px; padding: 8px 30px;
   }
   .slice > header .name { font-size: 20px; font-weight: 600; }
@@ -647,6 +669,7 @@
 <div class="topbar">
   <div class="disclaimer">Experimental — everything here is subject to change.</div>
   <div class="app-bar">
+    <span id="menu-toggle"></span>
     <button type="button" class="brand-link" title="Models — switch, load, or start a new one"
             onclick="closeForms(); state.models = true; render();">
       <img class="brand-mark" src="logo-mark.png" alt="" aria-hidden="true">
@@ -661,6 +684,7 @@
 </div>
 
 <div class="layout">
+  <div class="rail-backdrop" id="rail-backdrop" onclick="state.railOpen = false; render();"></div>
   <aside class="rail" id="rail"></aside>
   <main class="slice" id="main"></main>
 </div>
@@ -728,6 +752,7 @@ const state = {
   pendingImport: null,      // a decoded share envelope waiting on the scripted-code confirm
   settings: false,          // the settings modal
   problems: false,          // the loose-ends-and-drifted-scenarios panel
+  railOpen: false,          // the rail, as an off-canvas drawer on a narrow screen
   importExport: false,      // the Import & Export modal
   ieTab: 'import',          // within it: 'import' | 'export'
   ieImportMode: 'url',      // within Import: 'url' | 'json'
@@ -940,6 +965,11 @@ const UI_SETTINGS = [
     set: setMode,
   },
 ];
+
+const MENU_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+  + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<line x1="4" y1="7" x2="20" y2="7"></line><line x1="4" y1="12" x2="20" y2="12"></line>'
+  + '<line x1="4" y1="17" x2="20" y2="17"></line></svg>';
 
 const SEARCH_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
   + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
@@ -2357,6 +2387,10 @@ const closeForms = () => {
 function renderRail() {
   const ctx = activeContext();
   const rail = document.getElementById('rail');
+  // Only meaningful on a narrow screen — off-canvas there, an ordinary
+  // column everywhere else, entirely by CSS. See `.rail` / media query.
+  rail.classList.toggle('open', !!state.railOpen);
+  document.getElementById('rail-backdrop').classList.toggle('open', !!state.railOpen);
   rail.innerHTML = '';
   rail.appendChild(h('h4', {}, 'Features'));
 
@@ -2717,10 +2751,13 @@ function paintPage() {
   jump.innerHTML = '';
   const actions = document.getElementById('actions');
   actions.innerHTML = '';
+  const menuToggle = document.getElementById('menu-toggle');
+  menuToggle.innerHTML = '';
 
   if (!ctx) {
     // Nothing loaded: nothing to search, share, or report a problem
-    // with. The Models modal (forced open below) is the entire page.
+    // with, and no rail to open. The Models modal (forced open below)
+    // is the entire page.
     actions.appendChild(settingsButton());
     document.getElementById('rail').innerHTML = '';
     document.getElementById('main').innerHTML = '';
@@ -2728,6 +2765,15 @@ function paintPage() {
     renderPalette();
     return;
   }
+
+  // The rail's own toggle — visible only on a narrow screen, where the
+  // rail is an off-canvas drawer rather than a permanent column. See
+  // `.rail` and `.rail-backdrop` for the mobile layout.
+  menuToggle.appendChild(h('button', {
+    class: 'icon-btn menu-btn', type: 'button', title: 'Features and entities',
+    'aria-label': 'Menu', 'aria-expanded': state.railOpen ? 'true' : 'false',
+    onclick: () => { state.railOpen = !state.railOpen; render(); },
+  }, h('span', { html: MENU_ICON_SVG })));
 
   // A scenario that no longer agrees with its command, or a loose end
   // nobody has tied — the one count of what needs attention, shown
@@ -7190,12 +7236,32 @@ window.addEventListener('scroll', () => {
   document.body.classList.toggle('scrolled', window.scrollY > 60);
 }, { passive: true });
 
+// The disclaimer wraps to two lines on a narrow-enough screen, which
+// changes .topbar's real height — everything sticky beneath it reads
+// `--topbar-h` rather than a guessed constant, so it stays measured
+// instead of drifting out of sync on resize or rotation.
+function syncTopbarHeight() {
+  const topbar = document.querySelector('.topbar');
+  if (topbar) document.documentElement.style.setProperty('--topbar-h', topbar.offsetHeight + 'px');
+}
+window.addEventListener('resize', syncTopbarHeight);
+
+// The rail drawer closes itself once a link in it is actually followed
+// — on a narrow screen there is no other way back to the content it
+// was covering. Delegated once, on the rail's own element (which
+// `renderRail` never replaces, only refills), rather than threaded
+// through every one of its many links.
+document.getElementById('rail').addEventListener('click', (e) => {
+  if (state.railOpen && e.target.closest('a')) { state.railOpen = false; render(); }
+});
+
 // A `#context=…` fragment never reaches the server (there is none), so
 // this is the only place it is read. Cleared as soon as it is read,
 // successfully or not — a bad or already-consumed link should not keep
 // re-triggering on every reload.
 async function boot() {
   render();
+  syncTopbarHeight();
   const hash = location.hash;
   if (!hash.startsWith('#context=')) return;
   history.replaceState(null, '', location.pathname + location.search);
