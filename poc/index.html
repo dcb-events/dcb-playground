@@ -562,6 +562,28 @@
   .sc-mark.s-broken { color: var(--danger); border-color: var(--danger); background: var(--surface); }
   .sc-mark.s-held { color: var(--muted); border-color: var(--border-strong); background: var(--surface); }
 
+  /* Whether the Then a card shows is a record or a refusal — orange for
+     the one, red for the other, the same two colours everything else
+     here already uses for "an event" and "a rule stopped this". */
+  .card.outcome-published { background: var(--event-soft); }
+  .card.outcome-rejected { background: var(--danger-soft); }
+
+  /* The drop target while dragging a scenario by its grip — a line on
+     the edge the dragged one would land against, not a filled highlight,
+     so it reads as "here" rather than "this one". */
+  .scenario.drop-before { box-shadow: inset 0 2px 0 var(--command); }
+  .scenario.drop-after { box-shadow: inset 0 -2px 0 var(--command); }
+  .scenario.dragging { opacity: .4; }
+  .sc-grip { cursor: grab; color: var(--muted); padding: 0 2px; font-size: 13px; user-select: none; }
+  .sc-grip:active { cursor: grabbing; }
+
+  /* Always on, unlike the rest of a row's actions — branching a
+     scenario is common enough to want a permanent handle, just a quiet
+     one: full opacity only once you are actually pointed at it. */
+  .sc-footer { display: flex; gap: 6px; margin: -3px 0 0 26px; }
+  .sc-footer .btn { opacity: .55; }
+  .sc-footer .btn:hover { opacity: 1; }
+
   .sc-body { margin-top: 9px; padding-top: 9px; border-top: 1px dashed var(--border); }
   .sc-line { font-family: var(--mono); font-size: 11.5px; line-height: 1.7; }
   .sc-line .y { color: var(--event); }
@@ -832,17 +854,20 @@ const state = {
   lit: null,                // a reference pinned to its source
   land: null,               // a row to bring on screen after the repaint
   tab: 'definition',        // 'definition' | 'scenarios' on a command page
-  openScenario: null,       // the scenario whose detail is unfolded
-  scenarioDraft: null,      // { key, body } — a scenario being written
-  renamingScenario: null,   // the scenario whose name is being overwritten
+  openScenarios: new Set(), // keys of every scenario whose detail is unfolded — any number at once
+  // { key, insertAfter, body } — a scenario being written or, with `key`
+  // set, an existing one being fully edited in place. `insertAfter`
+  // names the sibling a freshly created one lands after; null means "no
+  // sibling to land after" (the list was empty) and is ignored once
+  // `key` is set, since an edit never moves what it edits.
+  scenarioDraft: null,
   sandboxDraft: null,       // { command, arguments } — a command about to be driven
   entityTab: 'definition',  // 'definition' | 'property-scenarios' on an entity page
   editHandler: null,        // { entity, property, event } — the handler row open for editing
   entityHandlerDraft: null, // in-progress edits to that handler, from the entity page
   entityPropertyDraft: null, // in-progress "+ property" row on the entity page
-  openPropertyScenario: null,  // the property scenario whose detail is unfolded
-  propertyScenarioDraft: null, // { key, body } — a property scenario being written
-  renamingPropertyScenario: null, // the property scenario whose name is being overwritten
+  openPropertyScenarios: new Set(), // keys of every property scenario whose detail is unfolded
+  propertyScenarioDraft: null, // { key, insertAfter, body } — see `scenarioDraft`
 };
 
 // A decoded share envelope, on its way in — from the URL fragment on
@@ -1615,7 +1640,7 @@ function problems(ctx) {
       why: STATUS_WORDS[result.status][2],
       go: () => {
         state.view = 'slice'; state.slice = body.command;
-        state.tab = 'scenarios'; state.openScenario = key;
+        state.tab = 'scenarios'; state.openScenarios.add(key);
       },
     });
   }
@@ -2427,7 +2452,7 @@ function goToScenario(ctx, key) {
   state.view = 'slice';
   state.slice = body.command;
   state.tab = 'scenarios';
-  state.openScenario = key;
+  state.openScenarios.add(key);
   render();
 }
 function goToPropertyScenario(ctx, key) {
@@ -2437,7 +2462,7 @@ function goToPropertyScenario(ctx, key) {
   state.view = 'entity';
   state.entity = body.entity;
   state.entityTab = 'property-scenarios';
-  state.openPropertyScenario = key;
+  state.openPropertyScenarios.add(key);
   render();
 }
 
@@ -2554,8 +2579,8 @@ const FORM_KEYS = [
   'renamingEntity', 'iconPicker', 'eventIconPicker', 'commandIconPicker', 'confirmRemove', 'newType', 'renamingType',
   'newProjection', 'renamingProjection', 'projDraft', 'newEvent', 'renamingEvent',
   'renamingCommand', 'editMember', 'editRule', 'editBinding',
-  'scenarioDraft', 'renamingScenario', 'sandboxDraft',
-  'editHandler', 'propertyScenarioDraft', 'renamingPropertyScenario',
+  'scenarioDraft', 'sandboxDraft',
+  'editHandler', 'propertyScenarioDraft',
   'pendingImport',
 ];
 
@@ -6077,6 +6102,67 @@ function scenariosOf(ctx, commandName) {
     .map(([key, body]) => ({ key, body }));
 }
 
+// Splices an already-added member right after another one — what a
+// duplicate or a positional "+ new" needs once `addDefinition` has put
+// it at the end of the collection, since nothing else ever inserts
+// anywhere but there. Shared by both scenario kinds and by the "+ copy" /
+// "+ new" footer, since the move is identical either way.
+function insertAfterSibling(kind, ctxId, key, afterKey) {
+  const fresh = projectState()[ctxId];
+  const order = Object.keys(fresh[DEF_COLLECTIONS[kind]]).filter((k) => k !== key);
+  order.splice(order.indexOf(afterKey) + 1, 0, key);
+  reorderDefinitions(kind, ctxId, order);
+}
+
+// Drops `fromKey` right against `toKey`'s edge — the drag gesture's
+// equivalent of the old up/down swap, against any edge rather than just
+// one neighbor at a time. Everything outside the two keys involved keeps
+// its place, the same as every other reorder here.
+function reorderScenarioByDrag(ctx, fromKey, toKey, before) {
+  if (fromKey === toKey) return;
+  const order = Object.keys(ctx['scenario-definitions']).filter((k) => k !== fromKey);
+  order.splice(order.indexOf(toKey) + (before ? 0 : 1), 0, fromKey);
+  reorderDefinitions('scenario-definition', ctx.id, order);
+}
+
+// What each of this command's scenarios currently derives — judged
+// against the live definitions, not what a scenario was last saved as: a
+// scenario that used to refuse by one rule can stop covering it the
+// moment something upstream drifts. A held scenario (unrun since its last
+// edit — see `scenarioResult`) has no current derivation to read, so it
+// is judged by what it last recorded instead.
+function currentScenarioThens(ctx, commandName) {
+  return scenariosOf(ctx, commandName).map(({ key, body: scenario }) => {
+    const result = scenarioResult(ctx, key, scenario);
+    return result.status === 'held' ? scenario.then : result.actual;
+  }).filter(Boolean);
+}
+
+// A rule this command declares that no scenario currently demonstrates
+// *refusing* — the gap between a condition being present and a condition
+// being proven to matter. A condition only ever seen holding true could
+// be removed tomorrow and nothing here would notice.
+function uncoveredRules(ctx, commandName) {
+  const body = ctx['command-definitions'][commandName];
+  const conditions = (body && body.conditions) || [];
+  if (!conditions.length) return [];
+  const covered = new Set();
+  for (const then of currentScenarioThens(ctx, commandName)) {
+    if (then.outcome === 'rejected' && then.failedRule) covered.add(then.failedRule.index);
+  }
+  return conditions
+    .map((condition, index) => ({ index, condition }))
+    .filter(({ index }) => !covered.has(index));
+}
+
+// Whether any scenario currently shows this command succeeding — every
+// rule can be individually proven to refuse and the happy path still go
+// untested, which is its own gap: nothing here says the rules, taken
+// together, ever let the command through at all.
+function happyPathUntested(ctx, commandName) {
+  return !currentScenarioThens(ctx, commandName).some((then) => then.outcome === 'published');
+}
+
 // Every scenario in the model that is not saying "current" — what
 // `problems` folds in alongside loose ends.
 function scenarioTrouble(ctx) {
@@ -6277,8 +6363,9 @@ function payloadText(values) {
 function outcomeCard(ctx, outcome, title) {
   if (!outcome) return h('div', { class: 'card' }, h('div', { class: 'empty' }, 'nothing'));
   const rule = outcome.failedRule;
-  return h('div', { class: 'card' },
-    h('div', { class: 'muted tiny' }, title),
+  const cls = 'card ' + (outcome.outcome === 'rejected' ? 'outcome-rejected' : 'outcome-published');
+  return h('div', { class: cls },
+    title ? h('div', { class: 'muted tiny' }, title) : null,
     outcome.outcome === 'rejected'
       ? h('div', {},
           h('span', { class: 'k' }, 'refused by '),
@@ -6305,23 +6392,55 @@ function ordinal(n) {
 
 // ---------- the list ----------
 
+// The key being dragged, module-level rather than on `state`: a
+// dragover fires continuously while the pointer moves, and routing that
+// through `render()` would repaint the whole app many times a second.
+// Only `drop` — once, at the end — goes through `run()`.
+let dragScenarioKey = null;
+
+// The drop-target handlers shared by every `.scenario` card: hover
+// paints which edge the dragged one would land against, drop reorders
+// against that edge, leave/end clear the paint either way.
+function scenarioDropTarget(onDrop) {
+  const clear = (el) => el.classList.remove('drop-before', 'drop-after');
+  return {
+    ondragover: (e) => {
+      if (!dragScenarioKey) return;
+      e.preventDefault();
+      const rect = e.currentTarget.getBoundingClientRect();
+      const before = (e.clientY - rect.top) < rect.height / 2;
+      e.currentTarget.classList.toggle('drop-before', before);
+      e.currentTarget.classList.toggle('drop-after', !before);
+    },
+    ondragleave: (e) => clear(e.currentTarget),
+    ondrop: (e) => {
+      e.preventDefault();
+      const before = e.currentTarget.classList.contains('drop-before');
+      clear(e.currentTarget);
+      const from = dragScenarioKey;
+      dragScenarioKey = null;
+      if (from) onDrop(from, before);
+    },
+  };
+}
+
 function scenarioRow(ctx, entry) {
   const { key, body } = entry;
   const result = scenarioResult(ctx, key, body);
   const [mark, word, why] = STATUS_WORDS[result.status];
-  const open = state.openScenario === key;
+  const open = state.openScenarios.has(key);
 
   const head = h('div', { class: 'row scenario-row' },
     h('span', { class: 'sc-mark s-' + result.status, title: why }, mark),
     h('button', {
       class: 'sc-name',
       onclick: () => {
-        state.openScenario = open ? null : key;
+        if (open) state.openScenarios.delete(key); else state.openScenarios.add(key);
         render();
       },
     }, scenarioName(body, readable)),
     h('span', { class: 'grow' }),
-    h('span', { class: 'muted tiny' }, word),
+    result.status !== 'current' ? h('span', { class: 'muted tiny' }, word) : null,
     reveal(
       result.status === 'held'
         ? h('button', {
@@ -6329,84 +6448,104 @@ function scenarioRow(ctx, entry) {
             onclick: () => runHeldScenario(ctx, key, body),
           }, 'Run')
         : null,
+      h('span', {
+        class: 'sc-grip', title: 'Drag to reorder among this command\'s scenarios',
+        draggable: 'true',
+        ondragstart: (e) => {
+          dragScenarioKey = key;
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', key);
+        },
+        ondragend: () => { dragScenarioKey = null; },
+      }, '⠿'),
       h('button', {
-        class: 'btn tiny',
-        onclick: () => { closeForms(); state.renamingScenario = key; render(); },
-      }, 'Rename'),
-      removeButton('scenario:' + key, {
-        label: 'Remove', title: 'Remove this scenario. Nothing else is touched.',
-        onRemove: () => run(() => {
-          removeDefinition('scenario-definition', ctx.id, key);
-          if (state.openScenario === key) state.openScenario = null;
-        }),
-      })));
+        class: 'btn tiny', title: 'Rename, change, or remove this scenario',
+        onclick: () => editScenario(key, body),
+      }, 'Edit')));
 
-  if (state.renamingScenario === key) {
-    return h('div', { class: 'scenario' }, head, inlineForm({
-      question: 'What should this scenario be called?',
-      placeholder: scenarioName({ ...body, name: undefined }, readable),
-      value: typeof body.name === 'string' ? body.name : '',
-      submitLabel: 'Rename',
-      onSubmit: (v) => {
-        const next = (v || '').trim();
-        state.renamingScenario = null;
-        run(() => {
-          const nextBody = { ...deepClone(body) };
-          if (next) nextBody.name = next; else delete nextBody.name;
-          updateDefinition('scenario-definition', ctx.id, key, nextBody);
-        });
-      },
-      onCancel: () => { state.renamingScenario = null; render(); },
-    }));
-  }
+  const card = h('div', {
+    class: 'scenario' + (open ? ' open' : ''),
+    ...scenarioDropTarget((from, before) => run(() => reorderScenarioByDrag(ctx, from, key, before))),
+  }, head);
 
-  if (!open) return h('div', { class: 'scenario' }, head);
+  if (!open) return card;
 
-  return h('div', { class: 'scenario open' }, head,
-    h('div', { class: 'sc-body' },
-      h('div', { class: 'muted tiny' }, 'Given'),
-      (body.given || []).length
-        ? (body.given || []).map((step) => h('div', { class: 'sc-line' },
-            h('span', { class: 'y' }, readable(step.event)),
-            h('span', { class: 'k' }, '  ' + payloadText(step.data))))
-        : h('div', { class: 'empty' }, 'nothing had happened yet'),
-      h('div', { class: 'muted tiny', style: 'margin-top:8px' }, 'When'),
-      h('div', { class: 'sc-line' },
-        h('span', { class: 'c' }, readable(body.command)),
-        h('span', { class: 'k' }, '  ' + payloadText((body.when || {}).arguments))),
-      h('div', { class: 'muted tiny', style: 'margin-top:8px' }, 'Then'),
-      result.status === 'broken'
-        ? h('div', { class: 'card', style: 'border-color:var(--danger)' },
-            h('div', { class: 'small' }, result.reason),
-            h('div', { class: 'muted tiny', style: 'margin-top:6px' },
-              'What it used to expect is kept below, so nothing is lost while you repair it.'),
-            outcomeCard(ctx, result.expected, 'was'))
-        : result.status === 'drifted'
-          ? h('div', { class: 'drift' },
-              outcomeCard(ctx, result.expected, 'this scenario says'),
-              outcomeCard(ctx, result.actual, 'the model now does'),
-              h('div', { class: 'adder' },
-                h('button', {
-                  class: 'btn primary',
-                  title: 'Store what the model now does as what this scenario expects',
-                  onclick: () => run(() => {
-                    updateDefinition('scenario-definition', ctx.id, key,
-                      { ...deepClone(body), then: result.actual });
-                  }),
-                }, 'Accept this'),
-                h('span', { class: 'muted tiny' },
-                  'Nothing changes in the model — only what this scenario expects of it.')))
-          : outcomeCard(ctx, result.status === 'held' ? body.then : result.expected,
-              result.status === 'held' ? 'last accepted' : 'and it does')));
+  card.appendChild(h('div', { class: 'sc-body' },
+    h('div', { class: 'muted tiny' }, 'Given'),
+    (body.given || []).length
+      ? (body.given || []).map((step) => h('div', { class: 'sc-line' },
+          h('span', { class: 'y' }, readable(step.event)),
+          h('span', { class: 'k' }, '  ' + payloadText(step.data))))
+      : h('div', { class: 'empty' }, 'nothing had happened yet'),
+    h('div', { class: 'muted tiny', style: 'margin-top:8px' }, 'When'),
+    h('div', { class: 'sc-line' },
+      h('span', { class: 'c' }, readable(body.command)),
+      h('span', { class: 'k' }, '  ' + payloadText((body.when || {}).arguments))),
+    h('div', { class: 'muted tiny', style: 'margin-top:8px' }, 'Then'),
+    result.status === 'broken'
+      ? h('div', { class: 'card', style: 'border-color:var(--danger)' },
+          h('div', { class: 'small' }, result.reason),
+          h('div', { class: 'muted tiny', style: 'margin-top:6px' },
+            'What it used to expect is kept below, so nothing is lost while you repair it.'),
+          outcomeCard(ctx, result.expected, 'was'))
+      : result.status === 'drifted'
+        ? h('div', { class: 'drift' },
+            outcomeCard(ctx, result.expected, 'this scenario says'),
+            outcomeCard(ctx, result.actual, 'the model now does'),
+            h('div', { class: 'adder' },
+              h('button', {
+                class: 'btn primary',
+                title: 'Store what the model now does as what this scenario expects',
+                onclick: () => run(() => {
+                  updateDefinition('scenario-definition', ctx.id, key,
+                    { ...deepClone(body), then: result.actual });
+                }),
+              }, 'Accept this'),
+              h('span', { class: 'muted tiny' },
+                'Nothing changes in the model — only what this scenario expects of it.')))
+        : outcomeCard(ctx, result.status === 'held' ? body.then : result.expected,
+            result.status === 'held' ? 'last accepted' : null)));
+  return card;
+}
+
+// The always-on pair under every scenario: start a fresh one, or branch
+// this one, each landing directly below the row it hangs from. Together
+// they cover what a bottom-of-list "+ New scenario" button used to —
+// see `scenarioPanel` for the one case nothing hangs a footer off of.
+function scenarioFooter(ctx, commandName, afterKey) {
+  return h('div', { class: 'sc-footer' },
+    h('button', {
+      class: 'btn tiny ghost', title: 'Start a new scenario, placed right after this one',
+      onclick: () => startScenario(ctx, commandName, afterKey),
+    }, '+ new'),
+    h('button', {
+      class: 'btn tiny ghost', title: 'Add a copy of this scenario, placed right after it, open to tweak',
+      onclick: () => run(() => {
+        const copyKey = generateId();
+        const copyBody = deepClone(ctx['scenario-definitions'][afterKey]);
+        addDefinition('scenario-definition', ctx.id, copyKey, copyBody);
+        insertAfterSibling('scenario-definition', ctx.id, copyKey, afterKey);
+        closeForms();
+        state.scenarioDraft = { key: copyKey, insertAfter: null, body: copyBody };
+      }),
+    }, '+ copy'));
 }
 
 // ---------- writing one ----------
 
-function startScenario(ctx, commandName) {
+function editScenario(key, body) {
+  closeForms();
+  state.tab = 'scenarios';
+  state.scenarioDraft = { key, insertAfter: null, body: deepClone(body) };
+  render();
+}
+
+function startScenario(ctx, commandName, insertAfter) {
   closeForms();
   state.tab = 'scenarios';
   state.scenarioDraft = {
     key: null,
+    insertAfter: insertAfter || null,
     body: { command: commandName, given: [], when: { arguments: {} } },
   };
   render();
@@ -6467,7 +6606,17 @@ function scenarioEditor(ctx) {
       h('button', {
         class: 'btn ghost',
         onclick: () => { state.scenarioDraft = null; render(); },
-      }, 'Cancel')));
+      }, 'Cancel'),
+      draft.key
+        ? removeButton('scenario:' + draft.key, {
+            label: 'Remove', title: 'Remove this scenario. Nothing else is touched.',
+            onRemove: () => run(() => {
+              removeDefinition('scenario-definition', ctx.id, draft.key);
+              state.openScenarios.delete(draft.key);
+              state.scenarioDraft = null;
+            }),
+          })
+        : null));
 }
 
 // Deriving the Then is the save. A scenario that cannot be evaluated
@@ -6487,32 +6636,78 @@ function saveScenario(ctx) {
   body.then = then;
   run(() => {
     const key = draft.key || generateId();
-    if (draft.key) updateDefinition('scenario-definition', ctx.id, key, body);
-    else addDefinition('scenario-definition', ctx.id, key, body);
+    if (draft.key) {
+      updateDefinition('scenario-definition', ctx.id, key, body);
+    } else {
+      addDefinition('scenario-definition', ctx.id, key, body);
+      if (draft.insertAfter) insertAfterSibling('scenario-definition', ctx.id, key, draft.insertAfter);
+    }
     state.scenarioDraft = null;
-    state.openScenario = key;
+    state.openScenarios.add(key);
   });
 }
 
 // ---------- where they are shown ----------
 
+// What this command's scenarios leave untested — an untested happy path
+// (see `happyPathUntested`) plus the rules no scenario demonstrates
+// refusing (see `uncoveredRules`). Shown ahead of the scenarios
+// themselves, since it is read before writing the scenario that would
+// close a gap.
+function coverageGapsCard(ctx, commandName) {
+  const missingRules = uncoveredRules(ctx, commandName);
+  const noHappyPath = happyPathUntested(ctx, commandName);
+  if (!missingRules.length && !noHappyPath) return null;
+  return h('div', { class: 'card uncovered-rules' },
+    noHappyPath
+      ? h('div', { class: 'muted tiny' }, 'No scenario here shows this command succeeding')
+      : null,
+    missingRules.length
+      ? h('div', { class: 'muted tiny' },
+          missingRules.length === 1
+            ? 'One rule no scenario here refuses yet'
+            : missingRules.length + ' rules no scenario here refuses yet')
+      : null,
+    missingRules.map(({ condition }) =>
+      h('div', { class: 'rulemap-rule' }, ruleSentence(ctx, ctx['command-definitions'][commandName], condition))));
+}
+
 function scenarioPanel(ctx, commandName) {
   const entries = scenariosOf(ctx, commandName);
+  const draft = state.scenarioDraft;
+  const draftHere = !!draft && draft.body.command === commandName;
+
+  const rows = [];
+  for (const entry of entries) {
+    if (draftHere && draft.key === entry.key) {
+      rows.push(scenarioEditor(ctx));
+    } else {
+      rows.push(scenarioRow(ctx, entry));
+      if (!draftHere) rows.push(scenarioFooter(ctx, commandName, entry.key));
+    }
+    if (draftHere && !draft.key && draft.insertAfter === entry.key) {
+      rows.push(scenarioEditor(ctx));
+    }
+  }
+  const standaloneDraft = draftHere && !draft.key && !draft.insertAfter;
+
   return h('div', { class: 'scenarios' },
-    entries.length
-      ? entries.map((entry) => scenarioRow(ctx, entry))
-      : h('div', { class: 'blank small' },
+    coverageGapsCard(ctx, commandName),
+    rows.length ? rows : null,
+    !entries.length && !standaloneDraft
+      ? h('div', { class: 'blank small' },
           h('p', { class: 'muted small' },
             'Nothing exercises this command yet. A scenario is what had already happened, the '
             + 'call, and what the model makes of the two — and it is the only thing here that '
-            + 'notices when an edit somewhere else changes what this command does.')),
-    state.scenarioDraft && state.scenarioDraft.body.command === commandName
-      ? scenarioEditor(ctx)
-      : h('div', { class: 'adder' },
-          h('button', {
-            class: 'btn' + (entries.length ? '' : ' primary'),
-            onclick: () => startScenario(ctx, commandName),
-          }, '+ New scenario')));
+            + 'notices when an edit somewhere else changes what this command does.'))
+      : null,
+    !entries.length
+      ? (standaloneDraft
+          ? scenarioEditor(ctx)
+          : h('div', { class: 'adder' },
+              h('button', { class: 'btn primary', onclick: () => startScenario(ctx, commandName) },
+                '+ New scenario')))
+      : null);
 }
 
 function scenarioTabs(ctx, slice) {
@@ -6581,6 +6776,14 @@ function propertyScenariosOf(ctx, entityName) {
     .map(([key, body]) => ({ key, body }));
 }
 
+// The property-scenario analogue of `reorderScenarioByDrag`.
+function reorderPropertyScenarioByDrag(ctx, fromKey, toKey, before) {
+  if (fromKey === toKey) return;
+  const order = Object.keys(ctx['property-scenario-definitions']).filter((k) => k !== fromKey);
+  order.splice(order.indexOf(toKey) + (before ? 0 : 1), 0, fromKey);
+  reorderDefinitions('property-scenario-definition', ctx.id, order);
+}
+
 // Where a property scenario's Given lives, and what it can be helped with
 // — the same identifiers-already-written suggestion Scenarios' Given
 // gets. `identifiersInUse` reads `body.given`/`body.when` generically;
@@ -6599,7 +6802,7 @@ function entityOutcomeCard(then, title) {
   if (!then) return h('div', { class: 'card' }, h('div', { class: 'empty' }, 'nothing'));
   const entries = Object.entries(then);
   return h('div', { class: 'card' },
-    h('div', { class: 'muted tiny' }, title),
+    title ? h('div', { class: 'muted tiny' }, title) : null,
     entries.length
       ? entries.map(([name, value]) => h('div', {},
           h('span', { class: 't' }, propertyWords(name)),
@@ -6611,16 +6814,19 @@ function propertyScenarioRow(ctx, entry) {
   const { key, body } = entry;
   const result = propertyScenarioResult(ctx, key, body);
   const [mark, word, why] = PROPERTY_SCENARIO_STATUS_WORDS[result.status];
-  const open = state.openPropertyScenario === key;
+  const open = state.openPropertyScenarios.has(key);
 
   const head = h('div', { class: 'row scenario-row' },
     h('span', { class: 'sc-mark s-' + result.status, title: why }, mark),
     h('button', {
       class: 'sc-name',
-      onclick: () => { state.openPropertyScenario = open ? null : key; render(); },
+      onclick: () => {
+        if (open) state.openPropertyScenarios.delete(key); else state.openPropertyScenarios.add(key);
+        render();
+      },
     }, propertyScenarioName(body, propertyWords)),
     h('span', { class: 'grow' }),
-    h('span', { class: 'muted tiny' }, word),
+    result.status !== 'current' ? h('span', { class: 'muted tiny' }, word) : null,
     reveal(
       result.status === 'held'
         ? h('button', {
@@ -6628,80 +6834,98 @@ function propertyScenarioRow(ctx, entry) {
             onclick: () => runHeldPropertyScenario(ctx, key, body),
           }, 'Run')
         : null,
+      h('span', {
+        class: 'sc-grip', title: 'Drag to reorder among this entity\'s property scenarios',
+        draggable: 'true',
+        ondragstart: (e) => {
+          dragScenarioKey = key;
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', key);
+        },
+        ondragend: () => { dragScenarioKey = null; },
+      }, '⠿'),
       h('button', {
-        class: 'btn tiny',
-        onclick: () => { closeForms(); state.renamingPropertyScenario = key; render(); },
-      }, 'Rename'),
-      removeButton('property-scenario:' + key, {
-        label: 'Remove', title: 'Remove this property scenario. Nothing else is touched.',
-        onRemove: () => run(() => {
-          removeDefinition('property-scenario-definition', ctx.id, key);
-          if (state.openPropertyScenario === key) state.openPropertyScenario = null;
-        }),
-      })));
+        class: 'btn tiny', title: 'Rename, change, or remove this property scenario',
+        onclick: () => editPropertyScenario(key, body),
+      }, 'Edit')));
 
-  if (state.renamingPropertyScenario === key) {
-    return h('div', { class: 'scenario' }, head, inlineForm({
-      question: 'What should this property scenario be called?',
-      placeholder: propertyScenarioName({ ...body, name: undefined }, propertyWords),
-      value: typeof body.name === 'string' ? body.name : '',
-      submitLabel: 'Rename',
-      onSubmit: (v) => {
-        const next = (v || '').trim();
-        state.renamingPropertyScenario = null;
-        run(() => {
-          const nextBody = { ...deepClone(body) };
-          if (next) nextBody.name = next; else delete nextBody.name;
-          updateDefinition('property-scenario-definition', ctx.id, key, nextBody);
-        });
-      },
-      onCancel: () => { state.renamingPropertyScenario = null; render(); },
-    }));
-  }
+  const card = h('div', {
+    class: 'scenario' + (open ? ' open' : ''),
+    ...scenarioDropTarget((from, before) => run(() => reorderPropertyScenarioByDrag(ctx, from, key, before))),
+  }, head);
 
-  if (!open) return h('div', { class: 'scenario' }, head);
+  if (!open) return card;
 
-  return h('div', { class: 'scenario open' }, head,
-    h('div', { class: 'sc-body' },
-      h('div', { class: 'muted tiny' }, 'Given'),
-      (body.given || []).length
-        ? (body.given || []).map((step) => h('div', { class: 'sc-line' },
-            h('span', { class: 'y' }, readable(step.event)),
-            h('span', { class: 'k' }, '  ' + payloadText(step.data))))
-        : h('div', { class: 'empty' }, 'nothing had happened yet'),
-      h('div', { class: 'muted tiny', style: 'margin-top:8px' }, 'For instance'),
-      h('div', { class: 'sc-line' }, h('span', { class: 'k' }, body.forInstance)),
-      h('div', { class: 'muted tiny', style: 'margin-top:8px' }, 'Then'),
-      result.status === 'broken'
-        ? h('div', { class: 'card', style: 'border-color:var(--danger)' },
-            h('div', { class: 'small' }, result.reason),
-            h('div', { class: 'muted tiny', style: 'margin-top:6px' },
-              'What it used to expect is kept below, so nothing is lost while you repair it.'),
-            entityOutcomeCard(result.expected, 'was'))
-        : result.status === 'drifted'
-          ? h('div', { class: 'drift' },
-              entityOutcomeCard(result.expected, 'this property scenario says'),
-              entityOutcomeCard(result.actual, 'the model now does'),
-              h('div', { class: 'adder' },
-                h('button', {
-                  class: 'btn primary',
-                  title: 'Store what the model now does as what this property scenario expects',
-                  onclick: () => run(() => {
-                    updateDefinition('property-scenario-definition', ctx.id, key,
-                      { ...deepClone(body), then: result.actual });
-                  }),
-                }, 'Accept this'),
-                h('span', { class: 'muted tiny' },
-                  'Nothing changes in the model — only what this property scenario expects of it.')))
-          : entityOutcomeCard(result.status === 'held' ? body.then : result.expected,
-              result.status === 'held' ? 'last accepted' : 'and it does')));
+  card.appendChild(h('div', { class: 'sc-body' },
+    h('div', { class: 'muted tiny' }, 'Given'),
+    (body.given || []).length
+      ? (body.given || []).map((step) => h('div', { class: 'sc-line' },
+          h('span', { class: 'y' }, readable(step.event)),
+          h('span', { class: 'k' }, '  ' + payloadText(step.data))))
+      : h('div', { class: 'empty' }, 'nothing had happened yet'),
+    h('div', { class: 'muted tiny', style: 'margin-top:8px' }, 'For instance'),
+    h('div', { class: 'sc-line' }, h('span', { class: 'k' }, body.forInstance)),
+    h('div', { class: 'muted tiny', style: 'margin-top:8px' }, 'Then'),
+    result.status === 'broken'
+      ? h('div', { class: 'card', style: 'border-color:var(--danger)' },
+          h('div', { class: 'small' }, result.reason),
+          h('div', { class: 'muted tiny', style: 'margin-top:6px' },
+            'What it used to expect is kept below, so nothing is lost while you repair it.'),
+          entityOutcomeCard(result.expected, 'was'))
+      : result.status === 'drifted'
+        ? h('div', { class: 'drift' },
+            entityOutcomeCard(result.expected, 'this property scenario says'),
+            entityOutcomeCard(result.actual, 'the model now does'),
+            h('div', { class: 'adder' },
+              h('button', {
+                class: 'btn primary',
+                title: 'Store what the model now does as what this property scenario expects',
+                onclick: () => run(() => {
+                  updateDefinition('property-scenario-definition', ctx.id, key,
+                    { ...deepClone(body), then: result.actual });
+                }),
+              }, 'Accept this'),
+              h('span', { class: 'muted tiny' },
+                'Nothing changes in the model — only what this property scenario expects of it.')))
+        : entityOutcomeCard(result.status === 'held' ? body.then : result.expected,
+            result.status === 'held' ? 'last accepted' : null)));
+  return card;
 }
 
-function startPropertyScenario(ctx, entityName) {
+// The property-scenario analogue of `scenarioFooter`.
+function propertyScenarioFooter(ctx, entityName, afterKey) {
+  return h('div', { class: 'sc-footer' },
+    h('button', {
+      class: 'btn tiny ghost', title: 'Start a new property scenario, placed right after this one',
+      onclick: () => startPropertyScenario(ctx, entityName, afterKey),
+    }, '+ new'),
+    h('button', {
+      class: 'btn tiny ghost',
+      title: 'Add a copy of this property scenario, placed right after it, open to tweak',
+      onclick: () => run(() => {
+        const copyKey = generateId();
+        const copyBody = deepClone(ctx['property-scenario-definitions'][afterKey]);
+        addDefinition('property-scenario-definition', ctx.id, copyKey, copyBody);
+        insertAfterSibling('property-scenario-definition', ctx.id, copyKey, afterKey);
+        closeForms();
+        state.propertyScenarioDraft = { key: copyKey, insertAfter: null, body: copyBody };
+      }),
+    }, '+ copy'));
+}
+
+function editPropertyScenario(key, body) {
+  closeForms();
+  state.entityTab = 'property-scenarios';
+  state.propertyScenarioDraft = { key, insertAfter: null, body: deepClone(body) };
+  render();
+}
+
+function startPropertyScenario(ctx, entityName, insertAfter) {
   closeForms();
   state.entityTab = 'property-scenarios';
   state.propertyScenarioDraft = {
     key: null,
+    insertAfter: insertAfter || null,
     body: { entity: entityName, forInstance: '', given: [], assert: [] },
   };
   render();
@@ -6776,7 +7000,17 @@ function propertyScenarioEditor(ctx) {
       h('button', {
         class: 'btn ghost',
         onclick: () => { state.propertyScenarioDraft = null; render(); },
-      }, 'Cancel')));
+      }, 'Cancel'),
+      draft.key
+        ? removeButton('property-scenario:' + draft.key, {
+            label: 'Remove', title: 'Remove this property scenario. Nothing else is touched.',
+            onRemove: () => run(() => {
+              removeDefinition('property-scenario-definition', ctx.id, draft.key);
+              state.openPropertyScenarios.delete(draft.key);
+              state.propertyScenarioDraft = null;
+            }),
+          })
+        : null));
 }
 
 // Deriving the Then is the save, exactly as it is for a scenario — see
@@ -6800,30 +7034,52 @@ function savePropertyScenario(ctx) {
   body.then = then;
   run(() => {
     const key = draft.key || generateId();
-    if (draft.key) updateDefinition('property-scenario-definition', ctx.id, key, body);
-    else addDefinition('property-scenario-definition', ctx.id, key, body);
+    if (draft.key) {
+      updateDefinition('property-scenario-definition', ctx.id, key, body);
+    } else {
+      addDefinition('property-scenario-definition', ctx.id, key, body);
+      if (draft.insertAfter) insertAfterSibling('property-scenario-definition', ctx.id, key, draft.insertAfter);
+    }
     state.propertyScenarioDraft = null;
-    state.openPropertyScenario = key;
+    state.openPropertyScenarios.add(key);
   });
 }
 
 function propertyScenarioPanel(ctx, entityName) {
   const entries = propertyScenariosOf(ctx, entityName);
+  const draft = state.propertyScenarioDraft;
+  const draftHere = !!draft && draft.body.entity === entityName;
+
+  const rows = [];
+  for (const entry of entries) {
+    if (draftHere && draft.key === entry.key) {
+      rows.push(propertyScenarioEditor(ctx));
+    } else {
+      rows.push(propertyScenarioRow(ctx, entry));
+      if (!draftHere) rows.push(propertyScenarioFooter(ctx, entityName, entry.key));
+    }
+    if (draftHere && !draft.key && draft.insertAfter === entry.key) {
+      rows.push(propertyScenarioEditor(ctx));
+    }
+  }
+  const standaloneDraft = draftHere && !draft.key && !draft.insertAfter;
+
   return h('div', { class: 'scenarios' },
-    entries.length
-      ? entries.map((entry) => propertyScenarioRow(ctx, entry))
-      : h('div', { class: 'blank small' },
+    rows.length ? rows : null,
+    !entries.length && !standaloneDraft
+      ? h('div', { class: 'blank small' },
           h('p', { class: 'muted small' },
             'Nothing exercises this entity yet. A property scenario is what had already happened and '
             + 'which of it to check — and it is the only thing here that notices when an edit '
-            + 'somewhere else changes what this entity ends up being.')),
-    state.propertyScenarioDraft && state.propertyScenarioDraft.body.entity === entityName
-      ? propertyScenarioEditor(ctx)
-      : h('div', { class: 'adder' },
-          h('button', {
-            class: 'btn' + (entries.length ? '' : ' primary'),
-            onclick: () => startPropertyScenario(ctx, entityName),
-          }, '+ New property scenario')));
+            + 'somewhere else changes what this entity ends up being.'))
+      : null,
+    !entries.length
+      ? (standaloneDraft
+          ? propertyScenarioEditor(ctx)
+          : h('div', { class: 'adder' },
+              h('button', { class: 'btn primary', onclick: () => startPropertyScenario(ctx, entityName) },
+                '+ New property scenario')))
+      : null);
 }
 
 function entityTabs(ctx, entityName) {

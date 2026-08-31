@@ -56,7 +56,7 @@ function open_(index) {
 const {
   evaluateCommand, foldEntityProperty, foldProjection, tagsOfEvent,
   deriveThen, runScenario, scenarioTouchesScript,
-  addDefinition, updateDefinition, removeDefinition, renameDefinition, renameMember,
+  addDefinition, updateDefinition, removeDefinition, renameDefinition, renameMember, reorderDefinitions,
   createDcbContext,
   generateId, scenarioName, deepClone, evSuccessor,
   contextToSchema, buildShareEnvelope, importContextFromEnvelope, envelopeHasScript,
@@ -659,6 +659,38 @@ function drive(ctx, log, command, args) {
     const scripted = openScripted().ctx();
     eq(scenarioTouchesScript(scripted, { command: 'Tick' }), true, 'reads a scripted property');
     eq(scenarioTouchesScript(scripted, { command: 'Ping' }), false, 'does not');
+  });
+
+  check('duplicating a scenario is a plain copy under a new id', () => {
+    const { id, ctx } = open_(0);
+    const key = store_(id, ctx(), scenarioBody());
+    const original = ctx()['scenario-definitions'][key];
+    const copyKey = generateId();
+    addDefinition('scenario-definition', id, copyKey, deepClone(original));
+    eq(copyKey === key, false, 'a fresh id');
+    eq(ctx()['scenario-definitions'][copyKey], original, 'same body');
+    eq(Object.keys(ctx()['scenario-definitions']), [key, copyKey], 'appended after the original');
+  });
+
+  check('reordering carries the swap through to how scenarios list', () => {
+    const { id, ctx } = open_(0);
+    const first = store_(id, ctx(), scenarioBody());
+    const second = store_(id, ctx(), { ...scenarioBody(), command: 'ArchiveCourse',
+      when: { arguments: { courseId: 'c1' } } });
+    eq(Object.keys(ctx()['scenario-definitions']), [first, second], 'as written');
+    reorderDefinitions('scenario-definition', id, [second, first]);
+    eq(Object.keys(ctx()['scenario-definitions']), [second, first], 'swapped');
+  });
+
+  check('reordering refuses an order that drops or invents a member', () => {
+    const { id, ctx } = open_(0);
+    const key = store_(id, ctx(), scenarioBody());
+    try {
+      reorderDefinitions('scenario-definition', id, [key, generateId()]);
+      throw new Error('did not refuse');
+    } catch (error) {
+      if (!/name every one of them, exactly once/.test(error.message)) throw error;
+    }
   });
 }
 

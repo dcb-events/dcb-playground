@@ -6,21 +6,14 @@
         "name": "StudentStatus",
         "schema": {
           "type": "string",
-          "enum": [
-            "NonExistent",
-            "Existent"
-          ]
+          "enum": ["NonExistent", "Existent"]
         }
       },
       {
         "name": "CourseStatus",
         "schema": {
           "type": "string",
-          "enum": [
-            "NonExistent",
-            "Existent",
-            "Archived"
-          ]
+          "enum": ["NonExistent", "Existent", "Archived"]
         }
       },
       {
@@ -85,17 +78,6 @@
         ]
       },
       {
-        "name": "StudentRegistered",
-        "properties": [
-          {
-            "name": "studentId",
-            "propertyType": "StudentId",
-            "isOptional": false,
-            "isList": false
-          }
-        ]
-      },
-      {
         "name": "StudentSubscribedToCourse",
         "properties": [
           {
@@ -135,24 +117,6 @@
         "name": "Student",
         "icon": "🧑‍🎓",
         "properties": [
-          {
-            "name": "status",
-            "propertyType": "StudentStatus",
-            "isOptional": false,
-            "isList": false,
-            "initialValue": {
-              "enumMember": "NonExistent"
-            },
-            "handlers": [
-              {
-                "event": "StudentRegistered",
-                "operation": "set",
-                "value": {
-                  "enumMember": "Existent"
-                }
-              }
-            ]
-          },
           {
             "name": "subscriptionCount",
             "propertyType": "integer",
@@ -323,7 +287,8 @@
               }
             }
           }
-        ]
+        ],
+        "icon": "📚"
       },
       {
         "name": "ChangeCourseCapacity",
@@ -371,6 +336,17 @@
             "rightHandSide": {
               "parameterName": "newCapacity"
             }
+          },
+          {
+            "leftHandSide": {
+              "alias": "course",
+              "property": "capacity"
+            },
+            "predicate": "equals",
+            "rightHandSide": {
+              "parameterName": "newCapacity"
+            },
+            "negate": true
           }
         ],
         "publishes": [
@@ -385,7 +361,8 @@
               }
             }
           }
-        ]
+        ],
+        "icon": "﹟"
       },
       {
         "name": "ArchiveCourse",
@@ -428,50 +405,8 @@
               }
             }
           }
-        ]
-      },
-      {
-        "name": "RegisterStudent",
-        "feature": "Student registration",
-        "properties": [
-          {
-            "name": "studentId",
-            "propertyType": "StudentId",
-            "isOptional": false,
-            "isList": false
-          }
         ],
-        "boundary": [
-          {
-            "alias": "student",
-            "entity": "Student",
-            "id": {
-              "parameterName": "studentId"
-            }
-          }
-        ],
-        "conditions": [
-          {
-            "leftHandSide": {
-              "alias": "student",
-              "property": "status"
-            },
-            "predicate": "equals",
-            "rightHandSide": {
-              "enumMember": "NonExistent"
-            }
-          }
-        ],
-        "publishes": [
-          {
-            "name": "StudentRegistered",
-            "parameters": {
-              "studentId": {
-                "parameterName": "studentId"
-              }
-            }
-          }
-        ]
+        "icon": "🗑️"
       },
       {
         "name": "SubscribeStudentToCourse",
@@ -510,16 +445,6 @@
           {
             "leftHandSide": {
               "alias": "course",
-              "property": "status"
-            },
-            "predicate": "equals",
-            "rightHandSide": {
-              "enumMember": "Existent"
-            }
-          },
-          {
-            "leftHandSide": {
-              "alias": "student",
               "property": "status"
             },
             "predicate": "equals",
@@ -570,7 +495,8 @@
               }
             }
           }
-        ]
+        ],
+        "icon": "🙋"
       },
       {
         "name": "UnsubscribeStudentFromCourse",
@@ -639,9 +565,870 @@
               }
             }
           }
-        ]
+        ],
+        "icon": "🙅‍♂️"
       }
     ],
-    "scenarioDefinitions": []
+    "scenarioDefinitions": [
+      {
+        "id": "58ad3591-7119-4faf-afc6-8551510ff6f3",
+        "command": "DefineCourse",
+        "given": [
+          {
+            "event": "CourseDefined",
+            "data": {
+              "courseId": "c1",
+              "capacity": 123
+            }
+          }
+        ],
+        "when": {
+          "arguments": {
+            "courseId": "c1",
+            "capacity": 123
+          }
+        },
+        "then": {
+          "outcome": "rejected",
+          "events": [],
+          "failedRule": {
+            "index": 0,
+            "text": "course.status == NonExistent",
+            "leftValue": "Existent",
+            "rightValue": "NonExistent",
+            "atInstance": null
+          }
+        }
+      },
+      {
+        "id": "5559c038-93c6-4a3c-8584-6928e5ba895e",
+        "command": "DefineCourse",
+        "given": [
+          {
+            "event": "CourseDefined",
+            "data": {
+              "courseId": "c1",
+              "capacity": 123
+            }
+          },
+          {
+            "event": "CourseArchived",
+            "data": {
+              "courseId": "c1"
+            }
+          }
+        ],
+        "when": {
+          "arguments": {
+            "courseId": "c1",
+            "capacity": 123
+          }
+        },
+        "then": {
+          "outcome": "rejected",
+          "events": [],
+          "failedRule": {
+            "index": 0,
+            "text": "course.status == NonExistent",
+            "leftValue": "Archived",
+            "rightValue": "NonExistent",
+            "atInstance": null
+          }
+        }
+      },
+      {
+        "id": "87b88865-77ac-4eee-acd6-bcc619381f4c",
+        "command": "DefineCourse",
+        "given": [],
+        "when": {
+          "arguments": {
+            "courseId": "c1",
+            "capacity": 123
+          }
+        },
+        "then": {
+          "outcome": "published",
+          "events": [
+            {
+              "type": "CourseDefined",
+              "data": {
+                "courseId": "c1",
+                "capacity": 123
+              }
+            }
+          ]
+        }
+      },
+      {
+        "id": "f587d9d4-a7b7-4d2a-94c9-8496e5d25992",
+        "command": "ChangeCourseCapacity",
+        "given": [],
+        "when": {
+          "arguments": {
+            "courseId": "c1",
+            "newCapacity": 123
+          }
+        },
+        "then": {
+          "outcome": "rejected",
+          "events": [],
+          "failedRule": {
+            "index": 0,
+            "text": "course.status == Existent",
+            "leftValue": "NonExistent",
+            "rightValue": "Existent",
+            "atInstance": null
+          }
+        }
+      },
+      {
+        "id": "b4db1996-266e-4348-91f9-a363a82e0f2e",
+        "command": "ChangeCourseCapacity",
+        "given": [
+          {
+            "event": "CourseDefined",
+            "data": {
+              "courseId": "c1",
+              "capacity": 123
+            }
+          }
+        ],
+        "when": {
+          "arguments": {
+            "courseId": "c1",
+            "newCapacity": 123
+          }
+        },
+        "then": {
+          "outcome": "rejected",
+          "events": [],
+          "failedRule": {
+            "index": 2,
+            "text": "not(course.capacity == newCapacity)",
+            "leftValue": 123,
+            "rightValue": 123,
+            "atInstance": null
+          }
+        }
+      },
+      {
+        "id": "a28646c9-3acb-4b95-b476-6c424e4ee6dc",
+        "command": "ChangeCourseCapacity",
+        "given": [
+          {
+            "event": "CourseDefined",
+            "data": {
+              "courseId": "c1",
+              "capacity": 2
+            }
+          },
+          {
+            "event": "StudentSubscribedToCourse",
+            "data": {
+              "courseId": "c1",
+              "studentId": "s1"
+            }
+          },
+          {
+            "event": "StudentSubscribedToCourse",
+            "data": {
+              "courseId": "c1",
+              "studentId": "s2"
+            }
+          }
+        ],
+        "when": {
+          "arguments": {
+            "courseId": "c1",
+            "newCapacity": 1
+          }
+        },
+        "then": {
+          "outcome": "rejected",
+          "events": [],
+          "failedRule": {
+            "index": 1,
+            "text": "course.subscriptionCount <= newCapacity",
+            "leftValue": 2,
+            "rightValue": 1,
+            "atInstance": null
+          }
+        }
+      },
+      {
+        "id": "46e39ef3-3364-4a44-9c9b-1a3d38a937e1",
+        "command": "ChangeCourseCapacity",
+        "given": [
+          {
+            "event": "CourseDefined",
+            "data": {
+              "courseId": "c1",
+              "capacity": 123
+            }
+          }
+        ],
+        "when": {
+          "arguments": {
+            "courseId": "c1",
+            "newCapacity": 100
+          }
+        },
+        "then": {
+          "outcome": "published",
+          "events": [
+            {
+              "type": "CourseCapacityChanged",
+              "data": {
+                "courseId": "c1",
+                "newCapacity": 100
+              }
+            }
+          ]
+        }
+      },
+      {
+        "id": "165aa88b-3beb-46db-8298-2c8cd61ceffc",
+        "command": "ArchiveCourse",
+        "given": [],
+        "when": {
+          "arguments": {
+            "courseId": "c1"
+          }
+        },
+        "then": {
+          "outcome": "rejected",
+          "events": [],
+          "failedRule": {
+            "index": 0,
+            "text": "course.status == Existent",
+            "leftValue": "NonExistent",
+            "rightValue": "Existent",
+            "atInstance": null
+          }
+        }
+      },
+      {
+        "id": "f0d8fa35-23b4-4a4c-951b-2c63fe22aa70",
+        "command": "ArchiveCourse",
+        "given": [
+          {
+            "event": "CourseDefined",
+            "data": {
+              "courseId": "c1",
+              "capacity": 123
+            }
+          },
+          {
+            "event": "CourseArchived",
+            "data": {
+              "courseId": "c1"
+            }
+          }
+        ],
+        "when": {
+          "arguments": {
+            "courseId": "c1"
+          }
+        },
+        "then": {
+          "outcome": "rejected",
+          "events": [],
+          "failedRule": {
+            "index": 0,
+            "text": "course.status == Existent",
+            "leftValue": "Archived",
+            "rightValue": "Existent",
+            "atInstance": null
+          }
+        }
+      },
+      {
+        "id": "6eb548dd-d9bc-404d-b8b8-a82f9cbe9bb5",
+        "command": "ArchiveCourse",
+        "given": [
+          {
+            "event": "CourseDefined",
+            "data": {
+              "courseId": "c1",
+              "capacity": 123
+            }
+          }
+        ],
+        "when": {
+          "arguments": {
+            "courseId": "c1"
+          }
+        },
+        "then": {
+          "outcome": "published",
+          "events": [
+            {
+              "type": "CourseArchived",
+              "data": {
+                "courseId": "c1"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "id": "4fde988a-3fc3-4fc9-a748-7434ac4d4553",
+        "command": "SubscribeStudentToCourse",
+        "given": [],
+        "when": {
+          "arguments": {
+            "courseId": "c1",
+            "studentId": "s1"
+          }
+        },
+        "then": {
+          "outcome": "rejected",
+          "events": [],
+          "failedRule": {
+            "index": 0,
+            "text": "course.status == Existent",
+            "leftValue": "NonExistent",
+            "rightValue": "Existent",
+            "atInstance": null
+          }
+        }
+      },
+      {
+        "id": "a9e0695f-3f17-4716-9656-aea90caea078",
+        "command": "SubscribeStudentToCourse",
+        "given": [
+          {
+            "event": "CourseDefined",
+            "data": {
+              "courseId": "c1",
+              "capacity": 2
+            }
+          },
+          {
+            "event": "StudentSubscribedToCourse",
+            "data": {
+              "courseId": "c1",
+              "studentId": "s1"
+            }
+          },
+          {
+            "event": "StudentSubscribedToCourse",
+            "data": {
+              "courseId": "c1",
+              "studentId": "s2"
+            }
+          }
+        ],
+        "when": {
+          "arguments": {
+            "courseId": "c1",
+            "studentId": "s3"
+          }
+        },
+        "then": {
+          "outcome": "rejected",
+          "events": [],
+          "failedRule": {
+            "index": 1,
+            "text": "course.subscriptionCount < course.capacity",
+            "leftValue": 2,
+            "rightValue": 2,
+            "atInstance": null
+          }
+        }
+      },
+      {
+        "id": "416446e0-8589-4c90-b0b2-064c4d14598d",
+        "command": "SubscribeStudentToCourse",
+        "given": [
+          {
+            "event": "CourseDefined",
+            "data": {
+              "courseId": "c1",
+              "capacity": 2
+            }
+          },
+          {
+            "event": "StudentSubscribedToCourse",
+            "data": {
+              "courseId": "c1",
+              "studentId": "s1"
+            }
+          }
+        ],
+        "when": {
+          "arguments": {
+            "courseId": "c1",
+            "studentId": "s1"
+          }
+        },
+        "then": {
+          "outcome": "rejected",
+          "events": [],
+          "failedRule": {
+            "index": 2,
+            "text": "not(course.subscribedStudentIds contains studentId)",
+            "leftValue": ["s1"],
+            "rightValue": "s1",
+            "atInstance": null
+          }
+        }
+      },
+      {
+        "id": "b9beaf9a-7467-4e4f-acc8-16674e27b0c2",
+        "command": "SubscribeStudentToCourse",
+        "given": [
+          {
+            "event": "StudentSubscribedToCourse",
+            "data": {
+              "courseId": "c1",
+              "studentId": "s1"
+            }
+          },
+          {
+            "event": "StudentSubscribedToCourse",
+            "data": {
+              "courseId": "c2",
+              "studentId": "s1"
+            }
+          },
+          {
+            "event": "StudentSubscribedToCourse",
+            "data": {
+              "courseId": "c3",
+              "studentId": "s1"
+            }
+          },
+          {
+            "event": "StudentSubscribedToCourse",
+            "data": {
+              "courseId": "c4",
+              "studentId": "s1"
+            }
+          },
+          {
+            "event": "StudentSubscribedToCourse",
+            "data": {
+              "courseId": "c5",
+              "studentId": "s1"
+            }
+          },
+          {
+            "event": "StudentSubscribedToCourse",
+            "data": {
+              "courseId": "c6",
+              "studentId": "s1"
+            }
+          },
+          {
+            "event": "StudentSubscribedToCourse",
+            "data": {
+              "courseId": "c7",
+              "studentId": "s1"
+            }
+          },
+          {
+            "event": "StudentSubscribedToCourse",
+            "data": {
+              "courseId": "c8",
+              "studentId": "s1"
+            }
+          },
+          {
+            "event": "StudentSubscribedToCourse",
+            "data": {
+              "courseId": "c9",
+              "studentId": "s1"
+            }
+          },
+          {
+            "event": "StudentSubscribedToCourse",
+            "data": {
+              "courseId": "c10",
+              "studentId": "s1"
+            }
+          },
+          {
+            "event": "CourseDefined",
+            "data": {
+              "courseId": "c11",
+              "capacity": 123
+            }
+          }
+        ],
+        "when": {
+          "arguments": {
+            "courseId": "c11",
+            "studentId": "s1"
+          }
+        },
+        "then": {
+          "outcome": "rejected",
+          "events": [],
+          "failedRule": {
+            "index": 3,
+            "text": "student.subscriptionCount < 10",
+            "leftValue": 10,
+            "rightValue": 10,
+            "atInstance": null
+          }
+        }
+      },
+      {
+        "id": "6e8de96d-dac2-4a0e-9785-3fab4f5ac237",
+        "command": "SubscribeStudentToCourse",
+        "given": [
+          {
+            "event": "CourseDefined",
+            "data": {
+              "courseId": "c1",
+              "capacity": 123
+            }
+          }
+        ],
+        "when": {
+          "arguments": {
+            "courseId": "c1",
+            "studentId": "s1"
+          }
+        },
+        "then": {
+          "outcome": "published",
+          "events": [
+            {
+              "type": "StudentSubscribedToCourse",
+              "data": {
+                "courseId": "c1",
+                "studentId": "s1"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "id": "4081614d-ffa5-4a90-bd61-c3d59b875042",
+        "command": "UnsubscribeStudentFromCourse",
+        "given": [],
+        "when": {
+          "arguments": {
+            "courseId": "c1",
+            "studentId": "s1"
+          }
+        },
+        "then": {
+          "outcome": "rejected",
+          "events": [],
+          "failedRule": {
+            "index": 0,
+            "text": "course.status == Existent",
+            "leftValue": "NonExistent",
+            "rightValue": "Existent",
+            "atInstance": null
+          }
+        }
+      },
+      {
+        "id": "6197d4cb-edd4-4b1a-92be-ebbce83b3d18",
+        "command": "UnsubscribeStudentFromCourse",
+        "given": [
+          {
+            "event": "CourseDefined",
+            "data": {
+              "courseId": "c1",
+              "capacity": 123
+            }
+          }
+        ],
+        "when": {
+          "arguments": {
+            "courseId": "c1",
+            "studentId": "s1"
+          }
+        },
+        "then": {
+          "outcome": "rejected",
+          "events": [],
+          "failedRule": {
+            "index": 1,
+            "text": "course.subscribedStudentIds contains studentId",
+            "leftValue": [],
+            "rightValue": "s1",
+            "atInstance": null
+          }
+        }
+      },
+      {
+        "id": "b4e51edb-b9a9-47d7-a128-9fdd619d1f65",
+        "command": "UnsubscribeStudentFromCourse",
+        "given": [
+          {
+            "event": "CourseDefined",
+            "data": {
+              "courseId": "c1",
+              "capacity": 123
+            }
+          },
+          {
+            "event": "StudentSubscribedToCourse",
+            "data": {
+              "courseId": "c1",
+              "studentId": "s1"
+            }
+          }
+        ],
+        "when": {
+          "arguments": {
+            "courseId": "c1",
+            "studentId": "s1"
+          }
+        },
+        "then": {
+          "outcome": "published",
+          "events": [
+            {
+              "type": "StudentUnsubscribedFromCourse",
+              "data": {
+                "courseId": "c1",
+                "studentId": "s1"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "id": "f0f9c2e7-21b8-4344-b830-c609bdedf0fa",
+        "command": "UnsubscribeStudentFromCourse",
+        "given": [
+          {
+            "event": "CourseDefined",
+            "data": {
+              "courseId": "c1",
+              "capacity": 123
+            }
+          },
+          {
+            "event": "StudentSubscribedToCourse",
+            "data": {
+              "courseId": "c1",
+              "studentId": "s1"
+            }
+          },
+          {
+            "event": "StudentUnsubscribedFromCourse",
+            "data": {
+              "courseId": "c1",
+              "studentId": "s1"
+            }
+          }
+        ],
+        "when": {
+          "arguments": {
+            "courseId": "c1",
+            "studentId": "s1"
+          }
+        },
+        "then": {
+          "outcome": "rejected",
+          "events": [],
+          "failedRule": {
+            "index": 1,
+            "text": "course.subscribedStudentIds contains studentId",
+            "leftValue": [],
+            "rightValue": "s1",
+            "atInstance": null
+          }
+        }
+      }
+    ]
+  },
+  "propertyScenarioDefinitions": [
+    {
+      "id": "b18450c8-ebd6-495b-89c5-5591ad94c2c0",
+      "entity": "Course",
+      "forInstance": "c1",
+      "given": [],
+      "then": {
+        "status": "NonExistent",
+        "capacity": 0,
+        "subscriptionCount": 0,
+        "subscribedStudentIds": []
+      }
+    },
+    {
+      "id": "8b57786e-d6f2-481c-9417-835d579c7be4",
+      "entity": "Course",
+      "forInstance": "c1",
+      "given": [
+        {
+          "event": "CourseDefined",
+          "data": {
+            "courseId": "c1",
+            "capacity": 123
+          }
+        }
+      ],
+      "then": {
+        "status": "Existent",
+        "capacity": 123,
+        "subscriptionCount": 0,
+        "subscribedStudentIds": []
+      }
+    },
+    {
+      "id": "3eca88c0-96ec-4635-8f07-69b635391aeb",
+      "entity": "Course",
+      "forInstance": "c1",
+      "given": [
+        {
+          "event": "CourseArchived",
+          "data": {
+            "courseId": "c1"
+          }
+        }
+      ],
+      "then": {
+        "status": "Archived"
+      }
+    },
+    {
+      "id": "aa241323-7b2c-4005-842a-846976b5b0ce",
+      "entity": "Course",
+      "forInstance": "c1",
+      "given": [
+        {
+          "event": "CourseDefined",
+          "data": {
+            "courseId": "c1",
+            "capacity": 123
+          }
+        },
+        {
+          "event": "StudentSubscribedToCourse",
+          "data": {
+            "courseId": "c1",
+            "studentId": "s1"
+          }
+        },
+        {
+          "event": "StudentSubscribedToCourse",
+          "data": {
+            "courseId": "c1",
+            "studentId": "s2"
+          }
+        },
+        {
+          "event": "StudentUnsubscribedFromCourse",
+          "data": {
+            "courseId": "c1",
+            "studentId": "s1"
+          }
+        }
+      ],
+      "then": {
+        "status": "Existent",
+        "capacity": 123,
+        "subscriptionCount": 1,
+        "subscribedStudentIds": ["s2"]
+      }
+    },
+    {
+      "id": "3abcfc79-8fa7-40cf-9542-0202df7e67ff",
+      "entity": "Student",
+      "forInstance": "s1",
+      "given": [],
+      "then": {
+        "subscriptionCount": 0
+      }
+    },
+    {
+      "id": "6774671a-ae27-4a1f-b9d0-7de36201be5a",
+      "entity": "Student",
+      "forInstance": "s1",
+      "given": [
+        {
+          "event": "StudentSubscribedToCourse",
+          "data": {
+            "courseId": "c1",
+            "studentId": "s1"
+          }
+        },
+        {
+          "event": "StudentSubscribedToCourse",
+          "data": {
+            "courseId": "c2",
+            "studentId": "s1"
+          }
+        },
+        {
+          "event": "StudentUnsubscribedFromCourse",
+          "data": {
+            "courseId": "c1",
+            "studentId": "s1"
+          }
+        }
+      ],
+      "then": {
+        "subscriptionCount": 1
+      }
+    }
+  ],
+  "sandbox": {
+    "steps": [
+      {
+        "command": "DefineCourse",
+        "args": {
+          "courseId": "course1",
+          "capacity": 30
+        }
+      },
+      {
+        "command": "ChangeCourseCapacity",
+        "args": {
+          "courseId": "course1",
+          "newCapacity": 35
+        }
+      },
+      {
+        "command": "SubscribeStudentToCourse",
+        "args": {
+          "courseId": "course1",
+          "studentId": "student1"
+        }
+      },
+      {
+        "command": "SubscribeStudentToCourse",
+        "args": {
+          "courseId": "course1",
+          "studentId": "student2"
+        }
+      },
+      {
+        "command": "DefineCourse",
+        "args": {
+          "courseId": "course2",
+          "capacity": 20
+        }
+      },
+      {
+        "command": "SubscribeStudentToCourse",
+        "args": {
+          "courseId": "course2",
+          "studentId": "student1"
+        }
+      },
+      {
+        "command": "SubscribeStudentToCourse",
+        "args": {
+          "courseId": "course2",
+          "studentId": "student3"
+        }
+      },
+      {
+        "command": "ArchiveCourse",
+        "args": {
+          "courseId": "course1"
+        }
+      }
+    ]
   }
 }

@@ -225,6 +225,12 @@ function apply(contexts, event) {
       return;
     }
     if (type === `${kind}-removed`) { delete coll[data.name]; return; }
+    if (type === `${kind}-reordered`) {
+      const next = {};
+      for (const key of data.order) if (coll[key] !== undefined) next[key] = coll[key];
+      ctx[DEF_COLLECTIONS[kind]] = next;
+      return;
+    }
   }
 }
 
@@ -2997,6 +3003,22 @@ function removeDefinition(kind, ctxId, name) {
     return;
   }
   appendEvents([{ type: `${kind}-removed`, data: { 'dcb-context-id': ctxId, name } }]);
+}
+
+// Changes the order this collection's members are stored in — the order
+// every listing reads directly off the collection, since nothing here
+// keeps a separate position field. `order` has to name every current
+// member exactly once; it says nothing about *which* moved, so the fold
+// just replays the collection in that order.
+function reorderDefinitions(kind, ctxId, order) {
+  const ctx = getCtxOrThrow(ctxId);
+  const coll = ctx[DEF_COLLECTIONS[kind]];
+  const current = Object.keys(coll);
+  const sameMembers = order.length === current.length && current.every((key) => order.includes(key));
+  if (!sameMembers) {
+    throw new DomainError(`Reordering ${humanize(kind)}s must name every one of them, exactly once.`);
+  }
+  appendEvents([{ type: `${kind}-reordered`, data: { 'dcb-context-id': ctxId, order } }]);
 }
 
 

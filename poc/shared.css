@@ -33,6 +33,7 @@
   --text: #0f172a;
   --muted: #64748b;
   --danger: #dc2626;
+  --danger-soft: #fef2f2;
   --radius: 8px;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
 }
@@ -60,6 +61,7 @@ body.f-dark {
   --text: #e2e8f0;
   --muted: #93a3b8;
   --danger: #f87171;
+  --danger-soft: #2d1414;
 }
 body.f-dark .chip.command { border-color: #1e40af; color: #bfdbfe; }
 body.f-dark .chip.event { border-color: #9a3412; color: #fed7aa; }
