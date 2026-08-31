@@ -111,10 +111,9 @@ body.f-dark .disclaimer { background: #2d2408; color: #fcd34d; border-bottom-col
 .app-bar .home { color: var(--muted); text-decoration: none; font-size: 12px; }
 .app-bar .home:hover { color: var(--command); }
 
-/* The mark and title double as the way back to Models — the same
-   place the forced first-run screen already lives, so there is only
-   one "start over" destination rather than a second one to keep in
-   sync with it. */
+/* The mark and title double as the way back to Models, for switching
+   or managing what's loaded — see `renderSplash` for the full-page
+   equivalent shown, unrequested, while nothing is loaded yet. */
 .brand-link {
   display: flex; align-items: center; gap: 16px;
   border: 0; background: none; padding: 0; margin: 0; font: inherit; color: inherit;

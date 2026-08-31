@@ -9,6 +9,10 @@
 <link rel="stylesheet" href="shared.css">
 <style>
   .layout { display: grid; grid-template-columns: 250px 1fr; min-height: calc(100vh - var(--topbar-h)); }
+  /* Nothing loaded means no rail to show — the splash takes the whole
+     row rather than sitting in a column sized for a rail that isn't
+     there. */
+  .layout.no-rail { grid-template-columns: 1fr; }
   .rail { border-right: 1px solid var(--border); background: var(--surface); padding: 14px 0; }
   .rail-backdrop { display: none; }
   /* Below the breakpoint the rail stops being a grid column and
@@ -446,6 +450,69 @@
   }
   .badge.clear { background: var(--entity); }
 
+  /* ---------- first-run splash ----------
+     The full page shown in #main while nothing is loaded — see
+     `renderSplash`. Its own max-width and centering, independent of
+     `.slice`, since this is a landing page rather than a model view. */
+  .splash { max-width: 860px; margin: 0 auto; padding: 56px 24px 80px; }
+
+  .splash-hero { text-align: center; margin-bottom: 32px; }
+  .splash-mark { width: 56px; height: 56px; display: block; margin: 0 auto 16px; }
+  .splash-hero h1 { font-size: 28px; font-weight: 700; margin: 0 0 8px; letter-spacing: -0.01em; }
+  .splash-tagline { color: var(--muted); font-size: 15px; margin: 0; }
+
+  .splash-intro { max-width: 600px; margin: 0 auto 30px; text-align: center; font-size: 15px; line-height: 1.65; }
+
+  .splash-cta { display: flex; flex-direction: column; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .splash-cta .btn.primary { font-size: 15px; padding: 13px 30px; }
+  .splash-hint { font-size: 12.5px; color: var(--muted); }
+  .splash .inline-form { max-width: 380px; margin: 0 auto 6px; }
+
+  .splash-import-link { margin-top: 18px; font-size: 12.5px; color: var(--muted); text-align: center; }
+  .splash-import-link a { font-weight: 600; }
+
+  .splash-section { margin-top: 52px; }
+  .splash-section h2 {
+    font-size: 11.5px; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--muted); margin: 0 0 16px; text-align: center; font-weight: 700;
+  }
+
+  .splash-examples { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  @media (max-width: 560px) { .splash-examples { grid-template-columns: 1fr; } }
+  .splash-example {
+    display: block; width: 100%; text-align: left; font: inherit; color: inherit;
+    border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--surface); padding: 14px 16px; cursor: pointer;
+  }
+  .splash-example:hover { border-color: var(--command); }
+  .splash-example .name { font-size: 13.5px; font-weight: 600; margin-bottom: 4px; }
+  .splash-example .desc { font-size: 12px; color: var(--muted); line-height: 1.5; }
+
+  .splash-video {
+    border: 1px dashed var(--border-strong); border-radius: var(--radius);
+    background: var(--surface); aspect-ratio: 16 / 6.2;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 10px; color: var(--muted);
+  }
+  .splash-video .play {
+    width: 50px; height: 50px; border-radius: 50%; border: 1.5px solid var(--border-strong);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .splash-video .caption { font-size: 12.5px; }
+
+  .splash-faq { border-top: 1px solid var(--border); }
+  .splash-faq-item { border-bottom: 1px solid var(--border); }
+  .splash-faq-q {
+    display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+    font: inherit; font-size: 14px; font-weight: 600; background: none; border: 0;
+    padding: 14px 2px; cursor: pointer; color: var(--text);
+  }
+  .splash-faq-q:hover { color: var(--command); }
+  .splash-faq-q .chev { flex: none; color: var(--muted); transition: transform .15s; display: flex; }
+  .splash-faq-a { padding: 0 2px 16px; font-size: 13px; color: var(--muted); line-height: 1.6; max-width: 620px; }
+
+  .splash-footer { margin-top: 56px; text-align: center; font-size: 12px; color: var(--muted); }
+
   /* ---------- the command, kept in view ----------
      Once the header has scrolled under its own sticky position, the
      parts of it that are not the answer to "which one" stand down. */
@@ -670,8 +737,8 @@
   <div class="disclaimer">Experimental — everything here is subject to change.</div>
   <div class="app-bar">
     <span id="menu-toggle"></span>
-    <button type="button" class="brand-link" title="Models — switch, load, or start a new one"
-            onclick="closeForms(); state.models = true; render();">
+    <button type="button" class="brand-link" title="Home — examples, FAQ, and starting a new model"
+            onclick="closeForms(); state.splash = true; render();">
       <img class="brand-mark" src="logo-mark.png" alt="" aria-hidden="true">
       <h1>DCB Playground</h1>
     </button>
@@ -745,10 +812,12 @@ const state = {
   eventIconPicker: null,    // the event whose mark is being chosen
   commandIconPicker: null,  // the command whose mark is being chosen
   confirmRemove: null,
-  models: false,            // the Models modal — also shown, unrequested, while nothing is loaded
-  newContext: false,        // within the Models modal: naming form for a brand-new context
+  splash: false,            // showing the splash on top of a model that's still loaded — see `paintPage`
+  models: false,            // the Models modal, opened on request — switch, load, or manage
+  newContext: false,        // naming form for a brand-new context — on the splash or in the modal
   loadingUrl: false,        // within the Models modal: form open, asking for a URL to load
   loadingJson: false,       // within the Models modal: form open, asking for pasted JSON
+  splashFaqOpen: { 0: true }, // which FAQ entries are expanded, on the first-run splash
   pendingImport: null,      // a decoded share envelope waiting on the scripted-code confirm
   settings: false,          // the settings modal
   problems: false,          // the loose-ends-and-drifted-scenarios panel
@@ -794,9 +863,11 @@ function finishImport(envelope) {
     const ctxId = importContextFromEnvelope(envelope);
     localStorage.setItem(CONTEXT_KEY, ctxId);
     state.slice = null; state.view = 'slice';
-    // A model is now loaded, so whatever asked the Models modal to open
-    // — a menu click, or nothing having been loaded yet — is answered.
+    // A model is now loaded, so whatever asked the Models modal or the
+    // splash to open — a menu click, the brand mark, or nothing having
+    // been loaded yet — is answered.
     state.models = false;
+    state.splash = false;
     const steps = (envelope.sandbox && envelope.sandbox.steps) || [];
     if (steps.length) {
       sessionReset();
@@ -812,9 +883,9 @@ function finishImport(envelope) {
 // another one: a URL someone else hosts, JSON pasted directly, or one
 // of the examples this page ships — loaded the same way as any other
 // shared model, over a relative fetch, so there is only one import path
-// to trust rather than two. Shown on request from the bar's model
-// button, and shown unrequested — see `renderModals` — whenever nothing
-// is loaded yet.
+// to trust rather than two. Shown on request, from the bar's model
+// button or from the first-run splash below — see `renderSplash` for
+// the page shown instead of this, unrequested, while nothing is loaded.
 
 function jsonLoadForm(onSubmit, onCancel) {
   let text = '';
@@ -852,7 +923,9 @@ function modelsModal() {
   const startNew = state.newContext
     ? inlineForm({
         question: 'What is this model called?', placeholder: 'Course subscriptions',
-        onSubmit: (v) => { state.newContext = false; createNamedContext(v); close(); },
+        onSubmit: (v) => {
+          state.newContext = false; state.splash = false; createNamedContext(v); close();
+        },
         onCancel: () => { state.newContext = false; render(); },
       })
     : state.loadingUrl
@@ -891,7 +964,7 @@ function modelsModal() {
         h('button', {
           class: 'btn' + (other.id === activeId ? ' primary' : ''),
           style: 'flex:1; text-align:left',
-          onclick: () => { localStorage.setItem(CONTEXT_KEY, other.id); close(); },
+          onclick: () => { localStorage.setItem(CONTEXT_KEY, other.id); state.splash = false; close(); },
         }, other.name),
         removeButton('context:' + other.id, {
           title: 'Remove this model and everything defined in it',
@@ -920,6 +993,114 @@ function modelsModal() {
       h('button', { class: 'btn primary', onclick: close }, 'Done')));
   setTimeout(() => modal.focus(), 0);
   return overlayAround(modal, close);
+}
+
+// ---------- first-run splash ----------
+//
+// The page shown, in #main, instead of the Models modal while nothing
+// is loaded — a full page to land on rather than a dialog standing in
+// front of one. "+ New empty model" and the examples below reuse the
+// exact paths the Models modal uses (`createNamedContext`, `beginImport`
+// over a relative fetch); everything else — a URL, pasted JSON, an
+// existing saved model — is one click away, through that same modal.
+
+const PLAY_ICON_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">'
+  + '<path d="M8 5v14l11-7z"></path></svg>';
+
+const CHEVRON_ICON_SVG = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" '
+  + 'stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<polyline points="9 6 15 12 9 18"></polyline></svg>';
+
+const SPLASH_FAQS = [
+  { q: 'What is a Dynamic Consistency Boundary?',
+    a: 'It replaces a fixed aggregate boundary with one a command declares for itself — '
+      + 'exactly the events it needs to stay consistent with, no more. This playground models '
+      + 'that boundary directly, so you can see its shape before it’s code.' },
+  { q: 'Do I need to know event sourcing already?',
+    a: 'It helps, but isn’t required. Commands, events, entities and projections are the '
+      + 'whole vocabulary — the playground shows how they connect as you build, one '
+      + 'definition at a time.' },
+  { q: 'Where is my model stored?',
+    a: 'In this browser only, until you say otherwise. Nothing is sent anywhere — export '
+      + 'it as JSON or copy a link when you want to keep it or hand it to someone else.' },
+  { q: 'Can I share a model with someone else?',
+    a: 'Yes. Export it as JSON, or copy a link that reopens it exactly as it is — both are '
+      + 'one click away from the import/export dialog.' },
+  { q: 'Can I come back to an example later, or switch models?',
+    a: 'Any time, from the Models menu — it lists everything saved in this browser '
+      + 'alongside the built-in examples.' },
+];
+
+function toggleSplashFaq(i) {
+  const open = Object.assign({}, state.splashFaqOpen);
+  open[i] = !open[i];
+  state.splashFaqOpen = open;
+  render();
+}
+
+function renderSplash(main) {
+  const openModels = () => { state.models = true; render(); };
+
+  const cta = state.newContext
+    ? inlineForm({
+        question: 'What is this model called?', placeholder: 'Course subscriptions',
+        onSubmit: (v) => { state.newContext = false; state.splash = false; createNamedContext(v); },
+        onCancel: () => { state.newContext = false; render(); },
+      })
+    : h('div', { class: 'splash-cta' },
+        h('button', { class: 'btn primary', onclick: () => { state.newContext = true; render(); } },
+          '+ New empty model'),
+        h('span', { class: 'splash-hint' }, 'or pick an example below'));
+
+  main.appendChild(h('div', { class: 'splash' },
+    h('div', { class: 'splash-hero' },
+      h('img', { class: 'splash-mark', src: 'logo-mark.png', alt: '', 'aria-hidden': 'true' }),
+      h('h1', {}, 'DCB Playground'),
+      h('p', { class: 'splash-tagline' }, 'Model consistency boundaries without writing a line of code.')),
+
+    h('p', { class: 'splash-intro' },
+      'Dynamic Consistency Boundary decouples what a command must stay consistent with from '
+        + 'any fixed aggregate. This playground lets you build that model by hand — events, entities, '
+        + 'projections and the commands that guard them — and watch the derived boundary take shape '
+        + 'as you go.'),
+
+    cta,
+
+    h('div', { class: 'splash-import-link' }, 'Already have a model? ',
+      h('a', { href: '#', onclick: (e) => { e.preventDefault(); openModels(); } },
+        'Import it as JSON or a link →')),
+
+    h('div', { class: 'splash-section' },
+      h('h2', {}, 'Examples'),
+      h('div', { class: 'splash-examples' },
+        PREDEFINED_CONTEXTS.map((entry) => h('button', {
+          class: 'splash-example',
+          onclick: () => runAsync(async () =>
+            beginImport(await loadContextFromUrl('examples/' + entry.slug + '.json'))),
+        }, h('div', { class: 'name' }, entry.name),
+          h('div', { class: 'desc' }, entry.description))))),
+
+    h('div', { class: 'splash-section' },
+      h('h2', {}, 'See it in motion'),
+      h('div', { class: 'splash-video' },
+        h('div', { class: 'play' }, h('span', { html: PLAY_ICON_SVG })),
+        h('div', { class: 'caption' }, 'Introduction video — coming soon'))),
+
+    h('div', { class: 'splash-section' },
+      h('h2', {}, 'FAQ'),
+      h('div', { class: 'splash-faq' },
+        SPLASH_FAQS.map((item, i) => {
+          const isOpen = !!state.splashFaqOpen[i];
+          return h('div', { class: 'splash-faq-item' },
+            h('button', { class: 'splash-faq-q', onclick: () => toggleSplashFaq(i) },
+              h('span', { class: 'chev', style: `transform: rotate(${isOpen ? 90 : 0}deg)` },
+                h('span', { html: CHEVRON_ICON_SVG })),
+              h('span', {}, item.q)),
+            isOpen ? h('div', { class: 'splash-faq-a' }, item.a) : null);
+        }))),
+
+    h('div', { class: 'splash-footer' }, 'Built around the Dynamic Consistency Boundary pattern — ',
+      h('a', { href: 'https://dcb.events', target: '_blank', rel: 'noopener' }, 'dcb.events ↗'))));
 }
 
 const NEW = ' new';         // sentinel row in a picker
@@ -1075,13 +1256,13 @@ function renderModals() {
   // stack with no way back down it. The import gate wins over
   // everything — it is not a panel someone opened, it is standing
   // between them and whatever they were about to do. The Models modal
-  // comes last: forced open while nothing is loaded, but never over
-  // Settings or Problems, both of which someone had to ask for.
+  // comes last, and only when someone asked for it — while nothing is
+  // loaded, `renderSplash` is the page rather than a panel over it.
   if (state.pendingImport) { host.appendChild(renderImportGate()); return; }
   if (state.problems) { host.appendChild(problemsPanel()); return; }
   if (state.settings) { renderSettingsModal(host); return; }
   if (state.importExport) { host.appendChild(renderImportExportModal()); return; }
-  if (state.models || !activeContextId()) { host.appendChild(modelsModal()); return; }
+  if (state.models) { host.appendChild(modelsModal()); return; }
 }
 
 function renderSettingsModal(host) {
@@ -2730,20 +2911,33 @@ function render() {
 
 function paintPage() {
   const ctx = activeContext();
+  // The splash also shows over a model that's still loaded — reached
+  // from the brand mark, see the button below. Escape (and picking a
+  // model, starting a new one, or loading one) clears `state.splash`
+  // and lands back here with `ctx` unchanged.
+  const showSplash = !ctx || state.splash;
 
   document.body.className = [
     isDark() ? 'f-dark' : null,
     window.scrollY > 60 ? 'scrolled' : null].filter(Boolean).join(' ');
 
   // Which model is open, front and center where the old dropdown used
-  // to be — click it to switch models, load another, or start one.
+  // to be. Off the splash it switches models, loads another, or starts
+  // one; on the splash with a model still loaded, it is the way back
+  // to it instead — no dialog needed for that trip.
   const modelSwitch = document.getElementById('model-switch');
   modelSwitch.innerHTML = '';
   modelSwitch.appendChild(h('button', {
     class: 'btn ghost', type: 'button',
-    title: ctx ? 'Switch or manage models' : 'Load a model',
-    onclick: () => { closeForms(); state.models = true; render(); },
-  }, ctx ? h('span', { class: 'model-name' }, ctx.name) : 'Load a model…'));
+    title: !ctx ? 'Load a model' : state.splash ? 'Back to ' + ctx.name : 'Switch or manage models',
+    onclick: ctx && state.splash
+      ? () => { state.splash = false; render(); }
+      : () => { closeForms(); state.models = true; render(); },
+  }, !ctx
+    ? 'Load a model…'
+    : state.splash
+      ? ['← Back to ', h('span', { class: 'model-name' }, ctx.name)]
+      : h('span', { class: 'model-name' }, ctx.name)));
 
   const tools = document.getElementById('tools');
   tools.innerHTML = '';
@@ -2754,13 +2948,17 @@ function paintPage() {
   const menuToggle = document.getElementById('menu-toggle');
   menuToggle.innerHTML = '';
 
-  if (!ctx) {
-    // Nothing loaded: nothing to search, share, or report a problem
-    // with, and no rail to open. The Models modal (forced open below)
-    // is the entire page.
+  document.querySelector('.layout').classList.toggle('no-rail', showSplash);
+
+  if (showSplash) {
+    // Nothing to search, share, or report a problem with while it's
+    // up, and no rail to open — the splash is the entire page.
     actions.appendChild(settingsButton());
     document.getElementById('rail').innerHTML = '';
-    document.getElementById('main').innerHTML = '';
+    const main = document.getElementById('main');
+    main.innerHTML = '';
+    main.className = '';
+    renderSplash(main);
     renderModals();
     renderPalette();
     return;
@@ -7151,6 +7349,13 @@ window.addEventListener('keydown', (e) => {
     state.newContext = false; state.loadingUrl = false; state.loadingJson = false;
     return render();
   }
+  // The splash's own naming form — reachable without the Models modal
+  // ever opening.
+  if (state.newContext) { state.newContext = false; return render(); }
+  // The splash itself, reached from the brand mark over a model that
+  // is still loaded — Escape is the quick way back to it. With nothing
+  // loaded the splash is the only page there is, so this is a no-op.
+  if (state.splash && activeContextId()) { state.splash = false; return render(); }
 
   // Inside a free text field, Escape is about the field: it steps out
   // and leaves everything else where it is. A second press then backs
