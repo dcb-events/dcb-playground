@@ -1764,17 +1764,29 @@ function renderPalette() {
   let active = 0;
 
   const list = h('div', { class: 'hits' });
+
+  // Which row reads as active — a class toggle on the rows `paint`
+  // already built, never a rebuild. `onmouseenter` used to call `paint`
+  // directly, which tears every row down and reappends fresh ones; a
+  // real click or tap lands in the same beat as the hover that precedes
+  // it, so the row it was about to land on was already gone by the time
+  // it arrived, and the click never reached anything.
+  const highlight = () => {
+    [...list.children].forEach((el, i) => el.classList.toggle('on', i === active));
+    const on = list.children[active];
+    if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest' });
+  };
+
   const paint = () => {
     list.innerHTML = '';
     if (!hits.length) { list.appendChild(h('div', { class: 'none' }, 'Nothing by that name.')); return; }
     hits.forEach((hit, i) => list.appendChild(h('div', {
-      class: 'hit' + (i === active ? ' on' : ''),
-      onmouseenter: () => { active = i; paint(); },
+      class: 'hit',
+      onmouseenter: () => { active = i; highlight(); },
       onclick: () => choose(hit),
     }, h('span', { class: 'what' }, hit.what), h('span', {}, hit.label),
       hit.where ? h('span', { class: 'where' }, hit.where) : null)));
-    const on = list.children[active];
-    if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest' });
+    highlight();
   };
 
   const choose = (hit) => {
@@ -1798,8 +1810,8 @@ function renderPalette() {
       paint();
     },
     onkeydown: (e) => {
-      if (e.key === 'ArrowDown') { e.preventDefault(); active = Math.min(active + 1, hits.length - 1); paint(); }
-      else if (e.key === 'ArrowUp') { e.preventDefault(); active = Math.max(active - 1, 0); paint(); }
+      if (e.key === 'ArrowDown') { e.preventDefault(); active = Math.min(active + 1, hits.length - 1); highlight(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); active = Math.max(active - 1, 0); highlight(); }
       else if (e.key === 'Enter') { e.preventDefault(); choose(hits[active]); }
       // Escape belongs to the palette while the palette is up, and the
       // handler at the bottom of this file must not also act on it.
@@ -2703,8 +2715,10 @@ function renderRail() {
 
   // Neither of these is a definition of its own — each reads across
   // every command at once rather than living on any one of theirs,
-  // the way Events reads across every command that publishes one.
-  if (Object.keys(ctx['command-definitions']).length) {
+  // the way Events reads across every command that publishes one. And
+  // unlike Events, neither holds anything a simple model would ever
+  // need to reach — so there is no "or it already has one" exception.
+  if (advanced() && Object.keys(ctx['command-definitions']).length) {
     rail.appendChild(h('h4', { style: 'margin-top:20px' }, 'Overview'));
     rail.appendChild(h('a', {
       href: '#', class: state.view === 'coupling' ? 'on' : '',
@@ -3005,7 +3019,7 @@ function paintPage() {
   if (state.view === 'events' && !advanced() && !Object.keys(ctx['event-definitions']).length) {
     state.view = 'slice';
   }
-  if ((state.view === 'coupling' || state.view === 'rulemap') && !names.length) {
+  if ((state.view === 'coupling' || state.view === 'rulemap') && (!advanced() || !names.length)) {
     state.view = 'slice';
   }
   // A thing removed from under its own page leaves the page with
