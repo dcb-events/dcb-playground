@@ -3,9 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <title>DCB Playground</title>
+<link rel="icon" type="image/png" href="logo-mark.png">
+<link rel="alternate icon" href="favicon.ico">
 <link rel="stylesheet" href="shared.css">
 <style>
-  .layout { display: grid; grid-template-columns: 250px 1fr; min-height: calc(100vh - 45px); }
+  .layout { display: grid; grid-template-columns: 250px 1fr; min-height: calc(100vh - 86px); }
   .rail { border-right: 1px solid var(--border); background: var(--surface); padding: 14px 0; }
   .rail h4 { padding: 0 16px 8px; }
   .rail a {
@@ -92,7 +94,12 @@
   .chip .x:hover { opacity: 1; color: var(--danger); }
 
   .slice { padding: 22px 30px 70px; max-width: 800px; }
-  .slice > header { margin-bottom: 22px; }
+  /* Pinned while its steps scroll by, so which command you are inside
+     is the one thing the page never loses. */
+  .slice > header {
+    position: sticky; top: 86px; z-index: 10;
+    background: var(--bg); margin: 0 -30px 22px; padding: 8px 30px;
+  }
   .slice > header .name { font-size: 20px; font-weight: 600; }
 
   /* Each step of the slice, in the order you meet it. */
@@ -113,31 +120,16 @@
   .card.rule { border-left: 3px solid var(--rule); }
   .step.emits > .dot { background: var(--event); }
   .step > .shead { display: flex; align-items: baseline; gap: 8px; margin-bottom: 7px; }
-  .step > .shead .btn { visibility: hidden; }
-  .step:hover > .shead .btn, .step.editing > .shead .btn { visibility: visible; }
 
   /* ---------- quiet rows ----------
      A row shows the thing itself. The machinery around it — the type,
      the stored identifier, the button that removes it — waits inside a
-     .reveal until the row is attended to. What counts as attending is
-     the only thing the reveal variants disagree about; everything below
-     this line is shared by all of them. */
+     .reveal until the row is clicked. */
   .qrow > .reveal { display: none; align-items: center; gap: 8px; }
   .qrow.open > .reveal { display: inline-flex; }
-  body.v-hover .qrow:hover > .reveal,
-  body.v-hover .qrow:focus-within > .reveal { display: inline-flex; }
-  /* A pointer is not the only way to attend to a row: what hides on
-     hover has to open on focus too, or a keyboard never reaches the
-     buttons inside it. Only where hovering is what opens a row — where
-     a row is opened by choosing it, the keyboard chooses it with Enter
-     and lets go of it with Escape, and focus on its own says nothing. */
-  body.v-hover .qrow:focus > .reveal { display: inline-flex; }
   .qrow:focus { outline: 1px solid var(--command); outline-offset: 1px; }
-  body.v-select .qrow, body.v-steps .qrow[tabindex] { cursor: pointer; }
-  body.v-select .qrow:hover, body.v-select .qrow.open,
-  body.v-steps .qrow[tabindex]:hover, body.v-steps .qrow[tabindex].open {
-    background: var(--command-soft);
-  }
+  .qrow { cursor: pointer; }
+  .qrow:hover, .qrow.open { background: var(--command-soft); }
   /* The collapsed adder: one quiet button where a row of empty controls
      used to sit. */
   .adder .btn.ghost { color: var(--muted); }
@@ -214,9 +206,9 @@
   }
   .lit { box-shadow: 0 0 0 2px var(--command); border-radius: 5px; }
   .fields { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); }
-  .field { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 2px 0; }
+  .field { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 2px 0; }
   .field .nm { min-width: 170px; }
-  .adder { display: flex; gap: 6px; align-items: center; margin-top: 7px; flex-wrap: wrap; }
+  .adder { display: flex; gap: 9px; align-items: center; margin-top: 7px; flex-wrap: wrap; }
   .dcb { font-family: var(--mono); font-size: 11.5px; line-height: 1.75; }
   .dcb .k { color: var(--muted); }
   .dcb .t { color: var(--entity); }
@@ -338,32 +330,53 @@
   .opt .label { font-size: 13px; font-weight: 600; }
   .opt .desc { font-size: 11.5px; color: var(--muted); }
 
-  /* ---------- experiments ----------
-     A setting above is a choice between ways of doing the same thing.
-     A flag below is a thing the interface does not do yet, and the two
-     should not look alike: one row, one switch, on or off. */
-  .flag {
-    display: flex; gap: 11px; align-items: flex-start; width: 100%; text-align: left;
-    font: inherit; color: inherit; cursor: pointer;
-    border: 1px solid transparent; border-radius: 7px;
-    background: transparent; padding: 7px 9px;
+  /* ---------- import & export ----------
+     One dialog for both directions a model crosses this browser's
+     boundary: pulling one in, from a URL or pasted JSON, and sending
+     this one out the same two ways. Tabs rather than a picker, since
+     unlike Settings there is a natural default per tab (a URL, JSON) an
+     answer usually only needs one of. */
+  .ie-tabs { display: flex; margin: 14px 0 16px; border-bottom: 1px solid var(--border); }
+  .ie-tab {
+    font: inherit; font-size: 13.5px; font-weight: 600; padding: 8px 4px; margin-right: 22px;
+    border: 0; background: none; color: var(--muted); cursor: pointer;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
   }
-  .flag:hover { background: var(--bg); }
-  .flag .sw {
-    flex: none; width: 30px; height: 17px; margin-top: 2px; border-radius: 999px;
-    background: var(--border-strong); position: relative; transition: background .12s;
+  .ie-tab:hover { color: var(--text); }
+  .ie-tab.on { color: var(--command); border-bottom-color: var(--command); }
+
+  .ie-subtoggle {
+    display: inline-flex; border: 1px solid var(--border-strong); border-radius: 7px;
+    overflow: hidden; margin-bottom: 14px;
   }
-  .flag .sw::after {
-    content: ""; position: absolute; top: 2px; left: 2px;
-    width: 13px; height: 13px; border-radius: 50%; background: var(--surface);
-    transition: transform .12s;
+  .ie-pill {
+    font: inherit; font-size: 12.5px; padding: 6px 13px; border: 0;
+    background: var(--surface); color: var(--muted); cursor: pointer;
   }
-  .flag.on .sw { background: var(--command); }
-  .flag.on .sw::after { transform: translateX(13px); }
-  .flag .label { font-size: 13px; font-weight: 600; }
-  .flag .desc { font-size: 11.5px; color: var(--muted); }
-  .flag .keys { font-family: var(--mono); font-size: 10px; color: var(--muted);
-                border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; margin-left: 6px; }
+  .ie-pill + .ie-pill { border-left: 1px solid var(--border-strong); }
+  .ie-pill.on { background: var(--command-soft); color: var(--command); font-weight: 600; }
+  .ie-pill:hover:not(.on) { color: var(--text); }
+
+  .ie-check-row { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; font-size: 12.5px; color: var(--muted); }
+  .ie-check-label { font-weight: 600; }
+  .ie-check { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; color: var(--text); }
+  .ie-check input { margin: 0; }
+
+  .ie-field label {
+    display: block; font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--muted); font-weight: 700; margin-bottom: 5px;
+  }
+  .ie-field input[type=text], .ie-field textarea {
+    width: 100%; font: inherit; font-size: 13px; padding: 9px 11px;
+    border: 1px solid var(--border-strong); border-radius: 6px;
+    background: var(--surface); color: var(--text); resize: vertical;
+  }
+  .ie-field input:focus, .ie-field textarea:focus { outline: none; border-color: var(--command); }
+  .ie-field textarea.mono, .ie-field input.mono { font-family: var(--mono); font-size: 11.5px; }
+  .ie-field textarea[readonly], .ie-field input[readonly] { background: #fbfcfe; color: var(--muted); }
+  body.f-dark .ie-field textarea[readonly], body.f-dark .ie-field input[readonly] { background: #101827; }
+  .ie-field .why { font-size: 11.5px; color: var(--muted); margin-top: 7px; line-height: 1.5; }
+  .ie-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
 
   /* ---------- quick open ----------
      Everything in the model, by name, from anywhere. It sits higher and
@@ -412,19 +425,13 @@
   .badge.clear { background: var(--entity); }
 
   /* ---------- the command, kept in view ----------
-     Which command you are inside is the one thing the page must not
-     lose while you scroll through its steps. Once it is pinned there,
-     the parts of the header that are not the answer to "which one"
-     stand down. */
-  body.f-sticky .slice > header {
-    position: sticky; top: 45px; z-index: 10;
-    background: var(--bg); margin: 0 -30px 22px; padding: 8px 30px;
-  }
-  body.f-sticky.scrolled .slice > header {
+     Once the header has scrolled under its own sticky position, the
+     parts of it that are not the answer to "which one" stand down. */
+  body.scrolled .slice > header {
     border-bottom: 1px solid var(--border); box-shadow: 0 6px 14px -12px rgba(15,23,42,.5);
   }
-  body.f-sticky.scrolled .slice > header .summary,
-  body.f-sticky.scrolled .slice > header .feature-of { display: none; }
+  body.scrolled .slice > header .summary,
+  body.scrolled .slice > header .feature-of { display: none; }
 
   /* A row the interface just moved you to. Long enough to find it,
      short enough not to become part of the page. */
@@ -637,13 +644,20 @@
 </head>
 <body>
 
-<div class="app-bar">
-  <h1>DCB Playground</h1>
-  <span class="muted small">experimental — everything here is subject to change</span>
-  <span class="spacer"></span>
-  <span id="tools"></span>
-  <span id="picker"></span>
-  <span id="settings"></span>
+<div class="topbar">
+  <div class="disclaimer">Experimental — everything here is subject to change.</div>
+  <div class="app-bar">
+    <button type="button" class="brand-link" title="Models — switch, load, or start a new one"
+            onclick="closeForms(); state.models = true; render();">
+      <img class="brand-mark" src="logo-mark.png" alt="" aria-hidden="true">
+      <h1>DCB Playground</h1>
+    </button>
+    <span id="model-switch"></span>
+    <span id="tools"></span>
+    <span class="spacer"></span>
+    <span id="jump"></span>
+    <span id="actions"></span>
+  </div>
 </div>
 
 <div class="layout">
@@ -677,8 +691,7 @@
 const state = {
   view: 'slice',            // 'slice' | 'entity' | 'types' | 'projections' | 'events'
   slice: null,
-  sel: null,                // the row being attended to (reveal: select)
-  editing: null,            // the step being edited (reveal: steps)
+  sel: null,                // the row being attended to
   adder: null,              // which "add another" is unfolded
   projDraft: null,          // { name, body } — a projection being edited
   newProjection: null,      // a projection being described
@@ -706,11 +719,25 @@ const state = {
   renamingEntity: null,
   iconPicker: null,         // the entity whose mark is being chosen
   eventIconPicker: null,    // the event whose mark is being chosen
+  commandIconPicker: null,  // the command whose mark is being chosen
   confirmRemove: null,
-  newContext: false,        // naming form for a brand-new context
+  models: false,            // the Models modal — also shown, unrequested, while nothing is loaded
+  newContext: false,        // within the Models modal: naming form for a brand-new context
+  loadingUrl: false,        // within the Models modal: form open, asking for a URL to load
+  loadingJson: false,       // within the Models modal: form open, asking for pasted JSON
+  pendingImport: null,      // a decoded share envelope waiting on the scripted-code confirm
   settings: false,          // the settings modal
-  health: false,            // the loose-ends panel (flag: health)
-  palette: false,           // quick open is up (flag: palette)
+  problems: false,          // the loose-ends-and-drifted-scenarios panel
+  importExport: false,      // the Import & Export modal
+  ieTab: 'import',          // within it: 'import' | 'export'
+  ieImportMode: 'url',      // within Import: 'url' | 'json'
+  ieExportMode: 'json',     // within Export: 'json' | 'link'
+  ieIncludeScenarios: true, // within Export: leave scenarios out of what is sent
+  ieIncludeSandbox: true,   // within Export: leave the recorded sandbox steps out
+  ieLink: null,             // within Export: the computed share link, once it resolves
+  ieCopiedJson: false,      // brief "Copied ✓" state on the Copy JSON button
+  ieCopiedLink: false,      // brief "Copied ✓" state on the Copy link button
+  palette: false,           // quick open is up
   lit: null,                // a reference pinned to its source
   land: null,               // a row to bring on screen after the repaint
   tab: 'definition',        // 'definition' | 'scenarios' on a command page
@@ -727,159 +754,178 @@ const state = {
   renamingPropertyScenario: null, // the property scenario whose name is being overwritten
 };
 
-// Called by the context picker in shared.js, which owns no forms itself.
-function onNewContext() { closeForms(); state.newContext = true; render(); }
+// A decoded share envelope, on its way in — from the URL fragment on
+// page load, or from any of the Models modal's ways to load one.
+// Scripted content is the one thing worth pausing for: everything else
+// an untrusted import might get wrong is caught by the same validating
+// commands manual editing goes through.
+function beginImport(envelope) {
+  if (envelopeHasScript(envelope)) { state.pendingImport = envelope; render(); return; }
+  finishImport(envelope);
+}
+
+function finishImport(envelope) {
+  run(() => {
+    const ctxId = importContextFromEnvelope(envelope);
+    localStorage.setItem(CONTEXT_KEY, ctxId);
+    state.slice = null; state.view = 'slice';
+    // A model is now loaded, so whatever asked the Models modal to open
+    // — a menu click, or nothing having been loaded yet — is answered.
+    state.models = false;
+    const steps = (envelope.sandbox && envelope.sandbox.steps) || [];
+    if (steps.length) {
+      sessionReset();
+      const ctx = projectState()[ctxId];
+      for (const step of steps) sessionRun(ctx, step.command, step.args);
+    }
+  });
+}
+
+// ---------- which model is open ----------
+//
+// Every model this browser knows about, and the three ways to get
+// another one: a URL someone else hosts, JSON pasted directly, or one
+// of the examples this page ships — loaded the same way as any other
+// shared model, over a relative fetch, so there is only one import path
+// to trust rather than two. Shown on request from the bar's model
+// button, and shown unrequested — see `renderModals` — whenever nothing
+// is loaded yet.
+
+function jsonLoadForm(onSubmit, onCancel) {
+  let text = '';
+  const textarea = h('textarea', {
+    placeholder: 'Paste a shared model’s JSON here…',
+    style: 'width:100%; min-height:140px; font-family:var(--mono); font-size:11px;',
+    oninput: (e) => { text = e.target.value; },
+    onkeydown: (e) => { if (e.key === 'Escape') { e.preventDefault(); onCancel(); } },
+  });
+  setTimeout(() => textarea.focus(), 0);
+  return h('div', { class: 'inline-form' },
+    h('div', { class: 'q' }, 'Paste the model’s JSON'),
+    textarea,
+    h('div', { class: 'adder', style: 'margin-top:8px' },
+      h('button', {
+        class: 'btn primary',
+        onclick: () => {
+          let envelope;
+          try { envelope = JSON.parse(text); } catch { return toast('That is not valid JSON.', true); }
+          onSubmit(envelope);
+        },
+      }, 'Load'),
+      h('button', { class: 'btn ghost', onclick: onCancel }, 'Cancel')));
+}
+
+function modelsModal() {
+  const activeId = activeContextId();
+  const saved = Object.values(projectState()).sort((a, b) => a.name.localeCompare(b.name));
+  const close = () => {
+    state.models = false;
+    state.newContext = false; state.loadingUrl = false; state.loadingJson = false;
+    render();
+  };
+
+  const startNew = state.newContext
+    ? inlineForm({
+        question: 'What is this model called?', placeholder: 'Course subscriptions',
+        onSubmit: (v) => { state.newContext = false; createNamedContext(v); close(); },
+        onCancel: () => { state.newContext = false; render(); },
+      })
+    : state.loadingUrl
+      ? inlineForm({
+          question: 'Where is the model hosted?', placeholder: 'https://…', submitLabel: 'Load',
+          onSubmit: (v) => {
+            state.loadingUrl = false;
+            runAsync(async () => beginImport(await loadContextFromUrl(v)));
+          },
+          onCancel: () => { state.loadingUrl = false; render(); },
+        })
+      : state.loadingJson
+        ? jsonLoadForm(
+            (envelope) => { state.loadingJson = false; beginImport(envelope); },
+            () => { state.loadingJson = false; render(); })
+        : h('div', { class: 'adder' },
+            h('button', { class: 'btn', onclick: () => { state.newContext = true; render(); } },
+              '+ New empty model'),
+            h('button', { class: 'btn', onclick: () => { state.loadingUrl = true; render(); } },
+              'From a URL…'),
+            h('button', { class: 'btn', onclick: () => { state.loadingJson = true; render(); } },
+              'From JSON…'));
+
+  const modal = h('div', { class: 'modal', tabindex: '-1', role: 'dialog', 'aria-modal': 'true' },
+    h('header', {},
+      h('h2', {}, 'Models'),
+      h('span', { class: 'grow' }),
+      h('button', { class: 'btn ghost', onclick: close, title: 'Close' }, '×')),
+    h('div', { class: 'muted small' },
+      activeId
+        ? 'Every model this browser knows about, and the ways to get another one.'
+        : 'Nothing is loaded yet — start a new model, load one, or try an example.'),
+    saved.length ? h('div', { class: 'setting' },
+      h('h4', {}, 'Your models'),
+      saved.map((other) => h('div', { class: 'row' },
+        h('button', {
+          class: 'btn' + (other.id === activeId ? ' primary' : ''),
+          style: 'flex:1; text-align:left',
+          onclick: () => { localStorage.setItem(CONTEXT_KEY, other.id); close(); },
+        }, other.name),
+        removeButton('context:' + other.id, {
+          title: 'Remove this model and everything defined in it',
+          confirm: 'Really remove this model?',
+          onRemove: () => run(() => {
+            const wasActive = other.id === activeContextId();
+            deleteDcbContext(other.id);
+            if (wasActive) {
+              const rest = Object.keys(projectState());
+              if (rest.length) localStorage.setItem(CONTEXT_KEY, rest[0]);
+              else localStorage.removeItem(CONTEXT_KEY);
+              state.slice = null; state.view = 'slice';
+            }
+          }),
+        })))) : null,
+    h('div', { class: 'setting' }, h('h4', {}, 'Start a new one'), startNew),
+    h('div', { class: 'setting' },
+      h('h4', {}, 'Or try an example'),
+      PREDEFINED_CONTEXTS.map((entry) => h('button', {
+        class: 'issue',
+        onclick: () => runAsync(async () =>
+          beginImport(await loadContextFromUrl('examples/' + entry.slug + '.json'))),
+      }, h('span', { style: 'flex:0 0 170px' }, entry.name),
+        h('span', { class: 'why', style: 'flex:1' }, entry.description)))),
+    h('div', { class: 'adder', style: 'margin-top:18px' },
+      h('button', { class: 'btn primary', onclick: close }, 'Done')));
+  setTimeout(() => modal.focus(), 0);
+  return overlayAround(modal, close);
+}
 
 const NEW = ' new';         // sentinel row in a picker
 
 // ---------- how much is on screen ----------
 //
-// The page is mostly lists, and a list row carried four things a reader
+// The page is mostly lists, and a list row carries four things a reader
 // rarely wants: the type, the stored identifier, a remove button, and
 // under every list a row of empty controls waiting to add another one.
-// All of that is now folded away; what unfolds it is the question these
-// variants exist to answer, so it is switchable rather than decided.
-//
-//   all     — nothing folded (what this interface did before)
-//   select  — click a row; it stays open until you click elsewhere
-//   hover   — under the pointer, or under the keyboard focus
-//   steps   — a whole step at a time, from its Edit button
-//
-// The adders fold away in every variant except `all`: an empty control
-// row is clutter no matter which gesture reveals the rest.
-
-const VARIANTS = [
-  ['all', 'Always', 'Nothing is hidden — the original interface'],
-  ['select', 'Click', 'A row opens when you click it, and stays open'],
-  ['hover', 'Hover', 'A row opens under the pointer or the keyboard focus'],
-  ['steps', 'Step', 'A whole step at a time, from its Edit button'],
-];
-const VARIANT_KEY = 'dcb-playground:reveal';
-
-function variant() {
-  const stored = localStorage.getItem(VARIANT_KEY);
-  return VARIANTS.some(([v]) => v === stored) ? stored : 'select';
-}
-
-function setVariant(value) {
-  localStorage.setItem(VARIANT_KEY, value);
-  state.sel = null; state.editing = null; state.adder = null;
-  render();
-}
-
-// Where a command's scenarios are shown. A sibling of the switch above
-// rather than part of section C, because `UI_SETTINGS` is built before
-// that section is reached — and because it is the same kind of thing:
-// a question about the interface that is not settled yet.
-const SCENARIO_PLACEMENTS = [
-  ['tab', 'Tab', 'Beside the command, on a tab of its own page'],
-  ['section', 'Below', 'A last step at the bottom of the command page'],
-  ['page', 'One page', 'Every scenario in the model, on a page of its own'],
-];
-const SCENARIO_PLACEMENT_KEY = 'dcb-playground:scenarios';
-
-function scenarioPlacement() {
-  const stored = localStorage.getItem(SCENARIO_PLACEMENT_KEY);
-  return SCENARIO_PLACEMENTS.some(([v]) => v === stored) ? stored : 'tab';
-}
-
-function setScenarioPlacement(value) {
-  localStorage.setItem(SCENARIO_PLACEMENT_KEY, value);
-  state.tab = 'definition';
-  if (state.view === 'scenarios' && value !== 'page') state.view = 'slice';
-  render();
-}
-
-// ---------- experiments ----------
-//
-// Things this interface does not do yet, each behind a switch that is
-// off until someone turns it on. A flag is not a preference: it is a
-// question about whether the behaviour is worth having at all, and the
-// answer is meant to be "fold it in" or "delete it" rather than "leave
-// it switchable forever".
-//
-// Every one of them is additive. With all seven off the page is exactly
-// what it was, which is what makes them safe to leave in.
-
-const FLAGS = [
-  {
-    key: 'palette', label: 'Quick open', keys: '⌘K',
-    why: 'Everything in the model by name, from anywhere — commands, features, the things '
-      + 'themselves, events, projections. The rail only lists commands; this reaches the rest.',
-  },
-  {
-    key: 'undo', label: 'Undo and redo', keys: '⌘Z / ⇧⌘Z',
-    why: 'The model is an append-only log, so undoing is dropping the last entries off the end '
-      + 'of it rather than a second history kept alongside.',
-  },
-  {
-    key: 'roving', label: 'Arrow keys move between rows', keys: '↑ ↓',
-    why: 'Reading a command is walking down its rows. Tab visits every button on the way; '
-      + 'the arrows visit only the rows.',
-  },
-  {
-    key: 'sticky', label: 'Keep the command in view',
-    why: 'Which command you are inside, pinned to the top while you scroll through its steps. '
-      + 'What is not the answer to "which one" stands down once it is.',
-  },
-  {
-    key: 'health', label: 'Count the loose ends',
-    why: 'Events nothing records, things nothing reads, commands that record nothing — gathered '
-      + 'into one count in the bar, each one a way back to what is missing.',
-  },
-  {
-    key: 'scrollref', label: 'Follow a reference to its source',
-    why: 'Clicking a value already lights up where it came from. This also brings it on screen, '
-      + 'which matters when the two are steps apart.',
-  },
-  {
-    key: 'roomy', label: 'Roomier fields',
-    why: 'Every text field, select and button on the page grows to a size worth aiming at — '
-      + 'wider name fields, taller targets. What is compact today is a choice, not a limit.',
-  },
-  {
-    key: 'dark', label: 'Dark',
-    why: 'The same palette after dark.',
-  },
-];
-
-const FLAGS_KEY = 'dcb-playground:flags';
-let flagCache = null;
-
-function flags() {
-  if (flagCache) return flagCache;
-  try { flagCache = JSON.parse(localStorage.getItem(FLAGS_KEY)) || {}; } catch (e) { flagCache = {}; }
-  return flagCache;
-}
-function flag(key) { return !!flags()[key]; }
-function setFlag(key, on) {
-  const next = { ...flags(), [key]: on };
-  localStorage.setItem(FLAGS_KEY, JSON.stringify(next));
-  flagCache = next;
-  // A flag that is switched off has to take its state with it, or the
-  // page keeps rendering around something that is no longer reachable.
-  if (!on && key === 'palette') closePalette();
-  if (!on && key === 'health') state.health = false;
-  render();
-}
+// All of that is folded away — a row opens on click, and stays open
+// until you click elsewhere; the adders fold to a single button too.
 
 // ---------- settings ----------
 //
 // Every choice about the interface itself, in one place. None of them
-// say anything about the model — which is why they are no longer in the
-// bar along the top, where everything else is about which model is open
-// and what is in it.
+// say anything about the model — which is why they live in a modal
+// rather than the bar along the top.
 //
 // Adding the next one is adding an entry here; the modal is written
 // from this list and knows nothing else about them.
 const UI_SETTINGS = [
   {
-    title: 'Show details on',
-    why: 'A row shows the thing itself. Its type, the identifier it is stored under and the '
-      + 'button that removes it wait until you ask — this is what counts as asking.',
-    options: VARIANTS,
-    get: variant,
-    set: setVariant,
+    title: 'Color theme',
+    why: 'Follows the system setting by default. Pick one to override it, in this browser only.',
+    options: [
+      ['system', 'System', 'Match the OS — light or dark, whichever it currently is'],
+      ['light', 'Light', 'Always light, regardless of the system setting'],
+      ['dark', 'Dark', 'Always dark, regardless of the system setting'],
+    ],
+    get: theme,
+    set: setTheme,
   },
   {
     title: 'How much of the model',
@@ -893,32 +939,122 @@ const UI_SETTINGS = [
     get: mode,
     set: setMode,
   },
-  {
-    title: 'Where scenarios go',
-    why: 'A command and the scenarios that exercise it are the same subject, and there is more '
-      + 'than one defensible place to put the second one. Switchable while that is still true.',
-    options: SCENARIO_PLACEMENTS,
-    get: scenarioPlacement,
-    set: setScenarioPlacement,
-  },
 ];
 
+const SEARCH_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+  + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>';
+
+const SETTINGS_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+  + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<circle cx="12" cy="12" r="3"></circle>'
+  + '<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 '
+  + '1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 '
+  + '0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 '
+  + '0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 '
+  + '1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 '
+  + '2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 '
+  + '0 0-1.51 1z"></path></svg>';
 function settingsButton() {
   return h('button', {
-    class: 'btn ghost', title: 'How this interface behaves',
+    class: 'icon-btn', type: 'button', title: 'Settings — how this interface behaves',
+    'aria-label': 'Settings',
     onclick: () => { state.settings = true; render(); },
-  }, '⚙ Settings');
+  }, h('span', { html: SETTINGS_ICON_SVG }));
 }
 
-function renderSettings() {
+// The import/export icon — two arrows crossing, drawn as an SVG rather
+// than a character, since no font carries this shape either.
+const IMPORT_EXPORT_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+  + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<path d="M16 3l4 4-4 4"></path><path d="M20 7H8"></path>'
+  + '<path d="M8 21l-4-4 4-4"></path><path d="M4 17h12"></path></svg>';
+function importExportIcon() { return h('span', { html: IMPORT_EXPORT_ICON_SVG }); }
+
+// ⌘S keeps its own quick path, unchanged: build the full link, land it
+// in the address bar, copy it, done. The Import & Export modal below
+// wants the same link on demand instead — see `refreshExportLink`.
+async function shareCurrentModel() {
+  const link = await buildShareLink(activeContext());
+  history.replaceState(null, '', link);
+  try {
+    await navigator.clipboard.writeText(link);
+    toast('Link copied — this page\'s address now reopens this model.');
+  } catch {
+    toast('This page\'s address now reopens this model — copy it from the address bar.');
+  }
+}
+
+// ---------- import & export modal ----------
+//
+// `buildShareEnvelope` (model.js) always carries everything — property
+// scenarios and the recorded sandbox steps included, since ⌘S and the
+// generated examples both want full fidelity. The modal offers to leave
+// either out, so a model can be sent without the walkthrough that
+// exercises it or the steps someone happened to be mid-sandbox on; that
+// trimming is a UI concern, not something the shared builder needs to
+// know about.
+function exportEnvelope(ctx, { includeScenarios, includeSandbox }) {
+  const steps = includeSandbox ? session.steps.map(({ command, args }) => ({ command, args })) : [];
+  const envelope = buildShareEnvelope(ctx, steps);
+  if (!includeScenarios) {
+    envelope.context.scenarioDefinitions = [];
+    delete envelope.propertyScenarioDefinitions;
+  }
+  return envelope;
+}
+
+// The same wrapping `buildShareLink` does, but around a caller-built
+// envelope instead of a freshly-built full one.
+async function computeExportLink(envelope) {
+  const encoded = await gzipToBase64Url(JSON.stringify(envelope));
+  return location.origin + location.pathname + '#context=' + encoded;
+}
+
+function refreshExportLink() {
+  const ctx = activeContext();
+  runAsync(async () => {
+    const envelope = exportEnvelope(ctx, {
+      includeScenarios: state.ieIncludeScenarios, includeSandbox: state.ieIncludeSandbox,
+    });
+    const link = await computeExportLink(envelope);
+    history.replaceState(null, '', link);
+    state.ieLink = link;
+  });
+}
+
+function openImportExport() {
+  state.importExport = true;
+  state.ieTab = 'export';
+  state.ieImportMode = 'url';
+  state.ieExportMode = 'link';
+  state.ieIncludeScenarios = true;
+  state.ieIncludeSandbox = true;
+  state.ieLink = null;
+  state.ieCopiedJson = false;
+  state.ieCopiedLink = false;
+  render();
+  refreshExportLink();
+}
+
+function renderModals() {
   const host = document.getElementById('modal-host');
   host.innerHTML = '';
-  // One host, one overlay: the settings and the loose-ends panel are
-  // both "the page, with something in front of it", and two of those at
-  // once would be a stack with no way back down it.
-  if (state.health && flag('health')) { host.appendChild(healthPanel()); return; }
-  if (!state.settings) return;
+  // One host, one overlay: every panel here is "the page, with
+  // something in front of it", and two of them at once would be a
+  // stack with no way back down it. The import gate wins over
+  // everything — it is not a panel someone opened, it is standing
+  // between them and whatever they were about to do. The Models modal
+  // comes last: forced open while nothing is loaded, but never over
+  // Settings or Problems, both of which someone had to ask for.
+  if (state.pendingImport) { host.appendChild(renderImportGate()); return; }
+  if (state.problems) { host.appendChild(problemsPanel()); return; }
+  if (state.settings) { renderSettingsModal(host); return; }
+  if (state.importExport) { host.appendChild(renderImportExportModal()); return; }
+  if (state.models || !activeContextId()) { host.appendChild(modelsModal()); return; }
+}
 
+function renderSettingsModal(host) {
   const close = () => { state.settings = false; render(); };
   const modal = h('div', { class: 'modal', tabindex: '-1', role: 'dialog', 'aria-modal': 'true' },
     h('header', {},
@@ -939,21 +1075,6 @@ function renderSettings() {
           h('div', { class: 'label' }, label),
           h('div', { class: 'desc' }, description)));
       }))),
-    h('div', { class: 'setting' },
-      h('h4', {}, 'Experiments'),
-      h('div', { class: 'why' }, 'Not decided yet. Each one is off until you turn it on, and '
-        + 'adds to the page rather than rearranging it — with all of them off this is the '
-        + 'interface as it was.'),
-      FLAGS.map((f) => {
-        const on = flag(f.key);
-        return h('button', {
-          class: 'flag' + (on ? ' on' : ''), 'aria-pressed': on ? 'true' : 'false',
-          onclick: () => setFlag(f.key, !on),
-        }, h('span', { class: 'sw' }), h('span', {},
-          h('div', { class: 'label' }, f.label,
-            f.keys ? h('span', { class: 'keys' }, f.keys) : null),
-          h('div', { class: 'desc' }, f.why)));
-      })),
     h('div', { class: 'adder', style: 'margin-top:18px' },
       h('button', { class: 'btn primary', onclick: close }, 'Done')));
 
@@ -971,13 +1092,187 @@ function overlayAround(modal, close) {
   }, modal);
 }
 
+// The one confirmation an import can force: the model it would build
+// runs authored code the moment anything touches it. Everything else an
+// untrusted import might get wrong is caught by the validating commands
+// `finishImport` replays it through, so there is nothing else to ask.
+function renderImportGate() {
+  const envelope = state.pendingImport;
+  const close = () => { state.pendingImport = null; render(); };
+  const modal = h('div', { class: 'modal', tabindex: '-1', role: 'dialog', 'aria-modal': 'true' },
+    h('header', {},
+      h('h2', {}, 'Import shared model'),
+      h('span', { class: 'grow' }),
+      h('button', { class: 'btn ghost', onclick: close, title: 'Close' }, '×')),
+    h('div', { class: 'setting' },
+      h('h4', {}, envelope.name || 'Untitled model'),
+      h('div', { class: 'why' },
+        'This model includes custom code that will run in your browser as soon as anything '
+        + 'exercises it — an entity property or a projection with a script. Only import it if '
+        + 'you trust where this came from.')),
+    h('div', { class: 'adder', style: 'margin-top:18px' },
+      h('button', {
+        class: 'btn primary',
+        onclick: () => { state.pendingImport = null; finishImport(envelope); },
+      }, 'Import anyway'),
+      h('button', { class: 'btn ghost', onclick: close }, 'Cancel')));
+  setTimeout(() => modal.focus(), 0);
+  return overlayAround(modal, close);
+}
+
+// Both directions a model crosses this browser's boundary, in one
+// dialog: pulling one in, from a URL or pasted JSON, and sending this
+// one out the same two ways. Reached from the bar's import/export
+// button, which opens straight to Export — the button used to be
+// "share", and this is that job's closest tab.
+function renderImportExportModal() {
+  const ctx = activeContext();
+  const close = () => { state.importExport = false; render(); };
+
+  let urlValue = '';
+  let jsonValue = '';
+
+  const doImportLoad = () => {
+    if (state.ieImportMode === 'url') {
+      if (!urlValue.trim()) return;
+      state.importExport = false;
+      runAsync(async () => beginImport(await loadContextFromUrl(urlValue.trim())));
+    } else {
+      if (!jsonValue.trim()) return;
+      let envelope;
+      try { envelope = JSON.parse(jsonValue); } catch { return toast('That is not valid JSON.', true); }
+      state.importExport = false;
+      beginImport(envelope);
+    }
+  };
+
+  const importPanel = h('div', {},
+    h('div', { class: 'ie-subtoggle' },
+      h('button', {
+        class: 'ie-pill' + (state.ieImportMode === 'url' ? ' on' : ''),
+        onclick: () => { state.ieImportMode = 'url'; render(); },
+      }, 'From a URL'),
+      h('button', {
+        class: 'ie-pill' + (state.ieImportMode === 'json' ? ' on' : ''),
+        onclick: () => { state.ieImportMode = 'json'; render(); },
+      }, 'Paste JSON')),
+    state.ieImportMode === 'url'
+      ? h('div', { class: 'ie-field' },
+          h('label', {}, 'Model URL'),
+          h('input', {
+            type: 'text', placeholder: 'https://example.com/course-model.json',
+            oninput: (e) => { urlValue = e.target.value; },
+            onkeydown: (e) => { if (e.key === 'Enter') doImportLoad(); },
+          }),
+          h('div', { class: 'why' }, 'Fetches a model definition from any URL that returns the exported JSON.'))
+      : h('div', { class: 'ie-field' },
+          h('label', {}, 'Model JSON'),
+          h('textarea', {
+            rows: '6', placeholder: 'Paste an exported model here…',
+            oninput: (e) => { jsonValue = e.target.value; },
+          }),
+          h('div', { class: 'why' }, 'Paste the contents of a file exported from here — or from '
+            + 'someone else’s playground.')),
+    h('div', { class: 'ie-actions' },
+      h('button', { class: 'btn primary', onclick: doImportLoad }, 'Load')));
+
+  async function copyToClipboard(text, flagKey) {
+    try {
+      await navigator.clipboard.writeText(text);
+      state[flagKey] = true; render();
+      setTimeout(() => { state[flagKey] = false; render(); }, 1500);
+    } catch {
+      toast('Could not copy — select the text and copy it manually.', true);
+    }
+  }
+
+  const setInclude = (key) => (e) => {
+    state[key] = e.target.checked;
+    state.ieLink = null;
+    render();
+    if (state.ieExportMode === 'link') refreshExportLink();
+  };
+
+  const optionsRow = h('div', { class: 'ie-check-row' },
+    h('span', { class: 'ie-check-label' }, 'Include:'),
+    h('label', { class: 'ie-check' },
+      h('input', { type: 'checkbox', checked: state.ieIncludeScenarios, onchange: setInclude('ieIncludeScenarios') }),
+      'Scenarios'),
+    h('label', { class: 'ie-check' },
+      h('input', { type: 'checkbox', checked: state.ieIncludeSandbox, onchange: setInclude('ieIncludeSandbox') }),
+      'Sandbox steps'));
+
+  const jsonExportText = ctx ? JSON.stringify(exportEnvelope(ctx, {
+    includeScenarios: state.ieIncludeScenarios, includeSandbox: state.ieIncludeSandbox,
+  }), null, 2) : '';
+
+  const exportPanel = h('div', {},
+    optionsRow,
+    h('div', { class: 'ie-subtoggle' },
+      h('button', {
+        class: 'ie-pill' + (state.ieExportMode === 'json' ? ' on' : ''),
+        onclick: () => { state.ieExportMode = 'json'; render(); },
+      }, 'As JSON'),
+      h('button', {
+        class: 'ie-pill' + (state.ieExportMode === 'link' ? ' on' : ''),
+        onclick: () => {
+          state.ieExportMode = 'link'; render();
+          if (!state.ieLink) refreshExportLink();
+        },
+      }, 'As a link')),
+    state.ieExportMode === 'json'
+      ? h('div', {},
+          h('div', { class: 'ie-field' },
+            h('label', {}, 'Exported model'),
+            h('textarea', { class: 'mono', rows: '6', readonly: true, value: jsonExportText }),
+            h('div', { class: 'why' }, 'A complete copy of this model — commands, events, entities, '
+              + 'projections and types.')),
+          h('div', { class: 'ie-actions' },
+            h('button', {
+              class: 'btn primary', onclick: () => copyToClipboard(jsonExportText, 'ieCopiedJson'),
+            }, state.ieCopiedJson ? 'Copied ✓' : 'Copy JSON')))
+      : h('div', {},
+          h('div', { class: 'ie-field' },
+            h('label', {}, 'Shareable link'),
+            h('input', { class: 'mono', type: 'text', readonly: true, value: state.ieLink || 'Computing…' }),
+            h('div', { class: 'why' }, 'Anyone who opens this link gets exactly this model — nothing '
+              + 'is uploaded to load it.')),
+          h('div', { class: 'ie-actions' },
+            h('button', {
+              class: 'btn primary', disabled: !state.ieLink,
+              onclick: () => copyToClipboard(state.ieLink, 'ieCopiedLink'),
+            }, state.ieCopiedLink ? 'Copied ✓' : 'Copy link'))));
+
+  const modal = h('div', { class: 'modal', tabindex: '-1', role: 'dialog', 'aria-modal': 'true' },
+    h('header', {},
+      h('h2', {}, 'Import & Export'),
+      h('span', { class: 'grow' }),
+      h('button', { class: 'btn ghost', onclick: close, title: 'Close' }, '×')),
+    h('div', { class: 'muted small' }, 'Bring in a model from somewhere else, or send this one out.'),
+    h('div', { class: 'ie-tabs' },
+      h('button', {
+        class: 'ie-tab' + (state.ieTab === 'import' ? ' on' : ''),
+        onclick: () => { state.ieTab = 'import'; render(); },
+      }, 'Import'),
+      h('button', {
+        class: 'ie-tab' + (state.ieTab === 'export' ? ' on' : ''),
+        onclick: () => { state.ieTab = 'export'; render(); },
+      }, 'Export')),
+    state.ieTab === 'import' ? importPanel : exportPanel,
+    h('div', { class: 'adder', style: 'margin-top:18px' },
+      h('button', { class: 'btn', onclick: close }, 'Done')));
+
+  setTimeout(() => modal.focus(), 0);
+  return overlayAround(modal, close);
+}
+
 // ============================================================
-// Experiments. Everything below this line is behind a flag, and every
-// one of them adds: nothing here is on the path the page takes with the
-// flags off, so the way to retire one is to delete its section.
+// Interface conveniences: undo, the loose-ends count, quick open, and
+// row-to-row arrow keys. Each of these used to be optional; all four
+// are just how the page behaves now.
 // ============================================================
 
-// ---------- undo (flag: undo) ----------
+// ---------- undo ----------
 //
 // The model is an append-only log and the state is a fold over it, so
 // the last change is undone by dropping what it appended off the end —
@@ -1013,7 +1308,6 @@ function changeLabel(appended) {
 // hundred call sites.
 const runOnce = run;
 run = function (fn) {
-  if (!flag('undo')) return runOnce(fn);
   const before = loadEvents().length;
   const out = runOnce(fn);
   const appended = loadEvents().slice(before);
@@ -1055,7 +1349,7 @@ function redo() {
   render();
 }
 
-// ---------- loose ends (flag: health) ----------
+// ---------- loose ends ----------
 //
 // Nothing here is an error: a model under construction is supposed to
 // have ends that are not tied yet. What it is for is that they are
@@ -1102,33 +1396,51 @@ function looseEnds(ctx) {
   return found;
 }
 
-function healthButton(ctx) {
-  const ends = looseEnds(ctx);
-  return h('button', {
-    class: 'btn ghost', title: ends.length ? 'Loose ends in this model' : 'Nothing left untied',
-    onclick: () => { closeForms(); state.health = true; render(); },
-  }, 'Loose ends', h('span', { class: 'badge' + (ends.length ? '' : ' clear') },
-    ends.length || '✓'));
+// Loose ends and scenarios the model no longer agrees with, gathered
+// into one list — everything wrong with this model that nobody had to
+// go looking for, each one a way back to it.
+function problems(ctx) {
+  const found = looseEnds(ctx).map((end) => ({ what: end.what, why: end.why, go: end.go }));
+  for (const { key, body, result } of scenarioTrouble(ctx)) {
+    found.push({
+      what: scenarioName(body, readable),
+      why: STATUS_WORDS[result.status][2],
+      go: () => {
+        state.view = 'slice'; state.slice = body.command;
+        state.tab = 'scenarios'; state.openScenario = key;
+      },
+    });
+  }
+  return found;
 }
 
-function healthPanel() {
+// Shown only when there is something to show — a clean model gets no
+// badge to reassure it is clean, the way "Loose ends ✓" used to.
+function problemsButton(ctx) {
+  const found = problems(ctx);
+  if (!found.length) return null;
+  return h('button', {
+    class: 'btn ghost', title: 'Problems in this model',
+    onclick: () => { closeForms(); state.problems = true; render(); },
+  }, 'Problems', h('span', { class: 'badge' }, found.length));
+}
+
+function problemsPanel() {
   const ctx = activeContext();
-  const ends = looseEnds(ctx);
-  const close = () => { state.health = false; render(); };
+  const found = problems(ctx);
+  const close = () => { state.problems = false; render(); };
   const modal = h('div', { class: 'modal', tabindex: '-1', role: 'dialog', 'aria-modal': 'true' },
     h('header', {},
-      h('h2', {}, 'Loose ends'),
+      h('h2', {}, 'Problems'),
       h('span', { class: 'grow' }),
       h('button', { class: 'btn ghost', onclick: close, title: 'Close' }, '×')),
     h('div', { class: 'muted small', style: 'margin-bottom:14px' },
-      ends.length
-        ? 'Not mistakes — ends the model has not tied yet. Each one is a way back to it.'
-        : 'Every event is recorded by something, everything is read by something, and every '
-          + 'command both takes something and keeps something.'),
-    ends.map((end) => h('button', {
+      'Loose ends this model has not tied yet, and scenarios it no longer agrees with. '
+      + 'Not mistakes — just ways back to what still needs attention.'),
+    found.map((p) => h('button', {
       class: 'issue',
-      onclick: () => { close(); end.go(); render(); },
-    }, h('span', {}, end.what), h('span', { class: 'why' }, end.why))),
+      onclick: () => { close(); p.go(); render(); },
+    }, h('span', {}, p.what), h('span', { class: 'why' }, p.why))),
     h('div', { class: 'adder', style: 'margin-top:14px' },
       h('button', { class: 'btn primary', onclick: close }, 'Done')));
   const overlay = overlayAround(modal, close);
@@ -1136,7 +1448,7 @@ function healthPanel() {
   return overlay;
 }
 
-// ---------- quick open (flag: palette) ----------
+// ---------- quick open ----------
 //
 // The rail lists commands. This lists everything: the features they sit
 // in, the things themselves, the events, the projections, the value
@@ -1152,7 +1464,7 @@ function paletteEntries(ctx) {
 
   for (const group of featureGroups(ctx)) {
     for (const name of group.commands) {
-      add('command', readable(name), group.name, () => {
+      add('command', commandIcon(ctx, name) + ' ' + readable(name), group.name, () => {
         state.view = 'slice'; state.slice = name;
       });
     }
@@ -1186,6 +1498,7 @@ function paletteEntries(ctx) {
     }
   }
   add('do', 'New command…', '', () => beginNewCommand(activeContext()));
+  add('do', 'Models…', 'switch, load, or start a model', () => { state.models = true; });
   add('do', 'Settings', '', () => { state.settings = true; });
   add('do', advanced() ? 'Switch to Simple' : 'Switch to Advanced', '',
     () => setMode(advanced() ? 'simple' : 'advanced'));
@@ -1223,14 +1536,14 @@ function closePalette() {
 
 function openPalette() {
   closeForms();
-  state.settings = false; state.health = false;
+  state.settings = false; state.problems = false; state.models = false;
   state.palette = true;
   render();
 }
 
 function renderPalette() {
   const host = document.getElementById('palette-host');
-  if (!state.palette || !flag('palette')) { host.innerHTML = ''; paletteEl = null; return; }
+  if (!state.palette) { host.innerHTML = ''; paletteEl = null; return; }
   // Already up and holding the caret: nothing about a repaint of the
   // page behind it should reach in here.
   if (paletteEl) return;
@@ -1261,7 +1574,7 @@ function renderPalette() {
   };
 
   const input = h('input', {
-    type: 'text', placeholder: 'Go to anything…', 'aria-label': 'Quick open',
+    type: 'text', placeholder: 'Quick open…', 'aria-label': 'Quick open',
     oninput: (e) => {
       const q = e.target.value.trim();
       hits = entries
@@ -1295,7 +1608,7 @@ function renderPalette() {
   setTimeout(() => input.focus(), 0);
 }
 
-// ---------- arrow keys between rows (flag: roving) ----------
+// ---------- arrow keys between rows ----------
 //
 // Tab reaches every button on the way down a command. The arrows reach
 // only the rows, which is how the page is read rather than edited.
@@ -1319,8 +1632,8 @@ function moveRow(step) {
 
 // ---------- bringing a row on screen ----------
 //
-// Used by two of the flags: following a reference to its source, and
-// landing on a row after the interface moved you somewhere.
+// Following a reference to its source, and landing on a row after the
+// interface moved you somewhere.
 
 function landOn(selector) {
   const target = document.querySelector(selector);
@@ -1335,19 +1648,10 @@ function landOn(selector) {
   target.classList.add('landed');
 }
 
-// Whether a row's machinery is on screen outright. The hover variant
-// answers "no" and lets the stylesheet answer for the pointer instead —
-// nothing there needs a repaint.
-function revealed(key, stepKey) {
-  switch (variant()) {
-    case 'all': return true;
-    case 'hover': return false;
-    // Only the slice has steps. Everywhere else — the entity manager,
-    // the inspector, the value types — the whole-step variant borrows
-    // the click one rather than leaving a row with no way to open.
-    case 'steps': return stepKey ? state.editing === stepKey : state.sel === key;
-    default: return state.sel === key;
-  }
+// Whether a row's machinery is on screen outright — a row opens on
+// click, and stays open until another one is clicked.
+function revealed(key) {
+  return state.sel === key;
 }
 
 // The part of a row that waits to be asked for.
@@ -1398,19 +1702,18 @@ function opRef(operand, eventName, text) {
       state.lit = state.lit === key ? null : key;
       // Lighting up a source three steps further up the page is only
       // half an answer while it is off screen.
-      if (state.lit && flag('scrollref')) state.land = `[data-src~="${CSS.escape(key)}"]`;
+      if (state.lit) state.land = `[data-src~="${CSS.escape(key)}"]`;
       render();
     },
   }, label);
 }
 
-// A row that is quiet by default. `key` names it for the click variant,
-// `step` for the whole-step one, `src` for anything that refers back
-// to it. Arrow keys always move along the page's flow — see
-// `navFlow` — and Backspace removes the row when `onRemove` is given.
-function qrow(tag, { cls = '', key, step: stepKey, src, onRemove }, ...children) {
-  const open = revealed(key, stepKey);
-  const byClick = variant() === 'select' || (variant() === 'steps' && !stepKey);
+// A row that is quiet by default: `key` names it, `src` for anything
+// that refers back to it. Arrow keys always move along the page's flow
+// — see `navFlow` — and Backspace removes the row when `onRemove` is
+// given.
+function qrow(tag, { cls = '', key, src, onRemove }, ...children) {
+  const open = revealed(key);
   const toggle = () => { state.sel = state.sel === key ? null : key; render(); };
   return h(tag, {
     class: (cls ? cls + ' ' : '') + 'qrow' + (open ? ' open' : ''),
@@ -1418,14 +1721,14 @@ function qrow(tag, { cls = '', key, step: stepKey, src, onRemove }, ...children)
     // Named in the document as well as in the state, so the keyboard
     // can be put back on the row it was on after a repaint.
     'data-key': key || null,
-    tabindex: byClick || variant() === 'hover' ? 0 : null,
-    onclick: byClick ? (e) => {
+    tabindex: 0,
+    onclick: (e) => {
       // A click meant for a control inside the row is not a click on
       // the row.
       if (e.target.closest('button, select, input, label, a, .chip.entity, .chip.linkable, .op.ent')) return;
       toggle();
-    } : null,
-    onkeydown: byClick ? (e) => {
+    },
+    onkeydown: (e) => {
       if (e.target !== e.currentTarget) return;
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); return; }
       if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { navFlow(e); return; }
@@ -1435,7 +1738,7 @@ function qrow(tag, { cls = '', key, step: stepKey, src, onRemove }, ...children)
         onRemove();
         if (at >= 0) focusFlowStopNear(Math.max(0, at - 1));
       }
-    } : null,
+    },
   }, ...children);
 }
 
@@ -1444,8 +1747,6 @@ function qrow(tag, { cls = '', key, step: stepKey, src, onRemove }, ...children)
 // — so the row above it and the step below it are both one arrow key
 // away, exactly the way an unfolded row would be.
 function adderSlot(key, stepKey, label, build) {
-  if (variant() === 'all') return build();
-  if (variant() === 'steps' && stepKey) return state.editing === stepKey ? build() : null;
   if (state.adder === key) return build();
   return h('div', { class: 'adder' }, h('button', {
     class: 'btn ghost tiny flow-adder',
@@ -1655,7 +1956,7 @@ function memberEditor(ctx, { member, where, types, allow = {}, onReplace, onRena
   return h('div', { class: 'member-editor' },
     h('div', { class: 'adder' },
       h('input', {
-        type: 'text', value: member.name, style: 'width:' + (flag('roomy') ? '190px' : '150px'),
+        type: 'text', value: member.name, style: 'width:190px',
         oninput: (e) => { name = e.target.value; },
         onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); doRename(); } },
       }),
@@ -1700,7 +2001,7 @@ function initialValueField(ctx, property, onReplace) {
   return h('div', { class: 'adder' },
     h('span', { class: 'muted tiny' }, 'starts as'),
     h('input', {
-      type: 'text', style: 'width:' + (flag('roomy') ? '150px' : '120px'),
+      type: 'text', style: 'width:150px',
       value: property.initialValue === undefined || property.initialValue === null
         ? '' : String(property.initialValue),
       onblur: (e) => {
@@ -1898,8 +2199,7 @@ function projectionRef(ctx, name, { cls = 'chip projection linkable', text } = {
 }
 
 // A specific scenario, wherever it is shown, is always reached the
-// same way regardless of where scenarios are placed on the command's
-// own page — see `scenarioCountButton`, which this mirrors.
+// same way — see `problems`, which this mirrors.
 function goToScenario(ctx, key) {
   const body = ctx['scenario-definitions'][key];
   if (!body) return;
@@ -2005,7 +2305,7 @@ function inlineForm({ question, placeholder, value = '', showsIdentifier, submit
     if (showsIdentifier && text.trim()) preview.appendChild(document.createTextNode('→ ' + toPascal(text)));
   };
   const input = h('input', {
-    type: 'text', value, placeholder, style: 'width:' + (flag('roomy') ? '280px' : '210px'),
+    type: 'text', value, placeholder, style: 'width:280px',
     oninput: (e) => { text = e.target.value; paint(); },
     onkeydown: (e) => {
       if (e.key === 'Enter') { e.preventDefault(); submit(); }
@@ -2031,11 +2331,12 @@ function inlineForm({ question, placeholder, value = '', showsIdentifier, submit
 // answers must not drift apart.
 const FORM_KEYS = [
   'namingCommand', 'newFeature', 'renamingFeature', 'newEntityAt', 'addingProp', 'addingMember',
-  'renamingEntity', 'iconPicker', 'eventIconPicker', 'confirmRemove', 'newContext', 'newType', 'renamingType',
+  'renamingEntity', 'iconPicker', 'eventIconPicker', 'commandIconPicker', 'confirmRemove', 'newType', 'renamingType',
   'newProjection', 'renamingProjection', 'projDraft', 'newEvent', 'renamingEvent',
   'renamingCommand', 'editMember', 'editRule', 'editBinding',
   'scenarioDraft', 'renamingScenario', 'sandboxDraft',
   'editHandler', 'propertyScenarioDraft', 'renamingPropertyScenario',
+  'pendingImport',
 ];
 
 // What a form was holding while it was open. These outlive the form
@@ -2348,7 +2649,7 @@ function createCommand(ctx, label) {
     state.view = 'slice'; state.slice = name; state.openEvent = eventName;
     // Straight into typing the first input — no click required to get
     // there.
-    state.adder = 'in'; state.editing = 'trigger';
+    state.adder = 'in';
   });
 }
 
@@ -2395,56 +2696,57 @@ function render() {
 
 function paintPage() {
   const ctx = activeContext();
-  const picker = document.getElementById('picker');
-  picker.innerHTML = '';
-  picker.appendChild(contextPicker());
-  // A model can be started from this picker, so it has to be possible
-  // to get rid of one from here too. Never the last one: with none at
-  // all the app loads a predefined copy on the next read, which would
-  // look like the removal did nothing.
-  if (Object.keys(projectState()).length > 1) {
-    picker.appendChild(removeButton('context:' + ctx.id, {
-      label: '×', confirm: 'Really remove this model?',
-      title: 'Remove this model and everything defined in it',
-      onRemove: () => run(() => {
-        deleteDcbContext(ctx.id);
-        localStorage.setItem(CONTEXT_KEY, Object.keys(projectState())[0]);
-        state.slice = null; state.view = 'slice';
-      }),
-    }));
-  }
-  // What the experiments put in the bar. Undo belongs next to the model
-  // it changes, and the loose-end count next to the model it counts —
-  // neither is a setting, so neither is behind the gear.
+
+  document.body.className = [
+    isDark() ? 'f-dark' : null,
+    window.scrollY > 60 ? 'scrolled' : null].filter(Boolean).join(' ');
+
+  // Which model is open, front and center where the old dropdown used
+  // to be — click it to switch models, load another, or start one.
+  const modelSwitch = document.getElementById('model-switch');
+  modelSwitch.innerHTML = '';
+  modelSwitch.appendChild(h('button', {
+    class: 'btn ghost', type: 'button',
+    title: ctx ? 'Switch or manage models' : 'Load a model',
+    onclick: () => { closeForms(); state.models = true; render(); },
+  }, ctx ? h('span', { class: 'model-name' }, ctx.name) : 'Load a model…'));
+
   const tools = document.getElementById('tools');
   tools.innerHTML = '';
-  if (flag('undo')) {
-    const log = undoLog();
-    tools.appendChild(h('button', {
-      class: 'btn ghost', title: log.done.length
-        ? 'Undo ' + log.done[log.done.length - 1].label : 'Nothing to undo',
-      disabled: !log.done.length, onclick: undo,
-    }, '⟲'));
-    tools.appendChild(h('button', {
-      class: 'btn ghost', title: log.undone.length
-        ? 'Redo ' + log.undone[log.undone.length - 1].label : 'Nothing to redo',
-      disabled: !log.undone.length, onclick: redo,
-    }, '⟳'));
-  }
-  if (flag('health')) tools.appendChild(healthButton(ctx));
-  // Not behind a flag: a scenario that no longer agrees with its
-  // command is the one thing in this model that can be wrong without
-  // anyone having touched it, and it belongs where the other count of
-  // what needs attention already is.
-  const scenarioCount = scenarioCountButton(ctx);
-  if (scenarioCount) tools.appendChild(scenarioCount);
+  const jump = document.getElementById('jump');
+  jump.innerHTML = '';
+  const actions = document.getElementById('actions');
+  actions.innerHTML = '';
 
-  document.getElementById('settings').innerHTML = '';
-  document.getElementById('settings').appendChild(settingsButton());
-  document.body.className = ['v-' + variant(),
-    ...FLAGS.filter((f) => flag(f.key)).map((f) => 'f-' + f.key),
-    window.scrollY > 60 ? 'scrolled' : null].filter(Boolean).join(' ');
-  renderSettings();
+  if (!ctx) {
+    // Nothing loaded: nothing to search, share, or report a problem
+    // with. The Models modal (forced open below) is the entire page.
+    actions.appendChild(settingsButton());
+    document.getElementById('rail').innerHTML = '';
+    document.getElementById('main').innerHTML = '';
+    renderModals();
+    renderPalette();
+    return;
+  }
+
+  // A scenario that no longer agrees with its command, or a loose end
+  // nobody has tied — the one count of what needs attention, shown
+  // only when there is any.
+  const problemsBtn = problemsButton(ctx);
+  if (problemsBtn) tools.appendChild(problemsBtn);
+
+  jump.appendChild(h('button', {
+    class: 'trigger', type: 'button', onclick: openPalette, 'aria-label': 'Quick open',
+  }, h('span', { html: SEARCH_ICON_SVG }), h('span', { class: 'label' }, 'Quick open…'),
+    h('span', { class: 'kbd' }, '⌘K')));
+
+  actions.appendChild(h('button', {
+    class: 'icon-btn', type: 'button', title: 'Import & export — ⌘S copies a link',
+    'aria-label': 'Import and export', onclick: openImportExport,
+  }, importExportIcon()));
+  actions.appendChild(settingsButton());
+
+  renderModals();
   renderPalette();
 
   const names = Object.keys(ctx['command-definitions']);
@@ -2453,7 +2755,6 @@ function paintPage() {
     state.tab = 'definition';
   }
   if (state.view === 'types' && !advanced()) state.view = 'slice';
-  if (state.view === 'scenarios' && scenarioPlacement() !== 'page') state.view = 'slice';
   if (state.view === 'projections' && !advanced() && !Object.keys(ctx['projection-definitions']).length) {
     state.view = 'slice';
   }
@@ -2477,17 +2778,6 @@ function paintPage() {
   main.innerHTML = '';
   main.className = 'slice' + (state.view === 'coupling' || state.view === 'rulemap' ? ' wide' : '');
 
-  if (state.newContext) {
-    main.appendChild(h('header', {}, h('div', { class: 'name' }, 'A new model')));
-    main.appendChild(inlineForm({
-      question: 'What is this model called?', placeholder: 'Course subscriptions',
-      onSubmit: (v) => { state.newContext = false; state.slice = null; createNamedContext(v); },
-      onCancel: () => { state.newContext = false; render(); },
-    }));
-    return;
-  }
-
-  if (state.view === 'scenarios') return renderScenarios(ctx, main);
   if (state.view === 'sandbox') return renderSandbox(ctx, main);
   if (state.view === 'entity') return renderEntity(ctx, main);
   if (state.view === 'types') return renderCustomTypes(ctx, main);
@@ -2563,6 +2853,15 @@ function paintPage() {
           onCancel: () => { state.renamingCommand = null; render(); },
         })
       : qrow('div', { cls: 'row', key: 'cmd:' + slice.name },
+          h('button', {
+            class: 'icon-btn', title: 'Choose the mark this is shown with',
+            onclick: () => {
+              const open = state.commandIconPicker === slice.name;
+              closeForms();
+              state.commandIconPicker = open ? null : slice.name;
+              render();
+            },
+          }, commandIcon(ctx, slice.name)),
           h('div', { class: 'name' }, named(slice.name)),
           h('span', { class: 'grow' }),
           // The command itself. Nothing in the model references a
@@ -2592,13 +2891,13 @@ function paintPage() {
       + (slice.emits.map((e) => readable(e.emission.name)).join(', ') || 'nothing')),
     featurePicker(ctx, slice)));
 
-  // Where the scenarios go is still an open question, so the page
-  // answers it three ways. Only the tab hides the definition; the other
-  // two leave this page exactly as it was and add to it.
-  const placement = scenarioPlacement();
-  if (placement === 'tab') main.appendChild(scenarioTabs(ctx, slice));
+  if (state.commandIconPicker === slice.name) {
+    main.appendChild(commandIconPicker(ctx, slice.name, ctx['command-definitions'][slice.name]));
+  }
 
-  if (placement === 'tab' && state.tab === 'scenarios') {
+  main.appendChild(scenarioTabs(ctx, slice));
+
+  if (state.tab === 'scenarios') {
     main.appendChild(scenarioPanel(ctx, slice.name));
     paintLit();
     return;
@@ -2612,11 +2911,6 @@ function paintPage() {
   if (advanced()) main.appendChild(stepConsistency(ctx, slice));
   else main.appendChild(h('div', { class: 'muted tiny', style: 'padding-left:26px' },
     'Switch to Advanced to see the consistency boundary this command derives.'));
-
-  if (placement === 'section') {
-    main.appendChild(step('scenarios', 'What this is supposed to do',
-      scenarioPanel(ctx, slice.name)));
-  }
 
   // A pinned reference outlives the repaint that follows clicking it.
   paintLit();
@@ -2641,16 +2935,9 @@ function featurePicker(ctx, slice) {
 }
 
 function step(kind, title, ...body) {
-  const editable = variant() === 'steps' && kind !== 'consistency';
-  const on = state.editing === kind;
-  return h('section', { class: 'step ' + kind + (on ? ' editing' : '') },
+  return h('section', { class: 'step ' + kind },
     h('span', { class: 'dot' }),
-    h('div', { class: 'shead' },
-      h('h4', {}, title),
-      editable ? h('button', {
-        class: 'btn tiny ghost',
-        onclick: () => { state.editing = on ? null : kind; state.adder = null; render(); },
-      }, on ? 'Done' : 'Edit') : null),
+    h('div', { class: 'shead' }, h('h4', {}, title)),
     ...body);
 }
 
@@ -2674,7 +2961,7 @@ function stepTrigger(ctx, slice) {
     const enumType = isStringEnumType(ctx, p.propertyType) ? p.propertyType : null;
     return [
       qrow('div', {
-        cls: 'field', key: 'in:' + p.name, step: 'trigger', src: 'param:' + p.name,
+        cls: 'field', key: 'in:' + p.name, src: 'param:' + p.name,
         onRemove: () => dropProperty(i),
       },
         h('span', { class: 'nm' }, propertyWords(p.name)),
@@ -2742,7 +3029,7 @@ function readCard(ctx, slice, binding, index, waitsFor) {
 
   return h('div', { class: 'card ' + (r.projection ? 'projection' : 'entity'),
       'data-src': 'alias:' + binding.alias },
-    qrow('div', { cls: 'row', key: 'read:' + binding.alias, step: 'reads' },
+    qrow('div', { cls: 'row', key: 'read:' + binding.alias },
       sentence,
       h('span', { class: 'grow' }),
       reveal(
@@ -2899,7 +3186,6 @@ function roundLabel(index, total) {
 function beginReadAdder() {
   closeForms();
   state.adder = 'read';
-  state.editing = 'reads';
   render();
   setTimeout(() => {
     const el = document.querySelector('.step.reads select, .step.reads input');
@@ -3062,7 +3348,7 @@ function stepRules(ctx, slice) {
     const p = conditionParts(condition);
     const quantifier = quantifierWords(ctx, slice.body, condition);
     return h('div', { class: 'card rule' },
-      qrow('div', { cls: 'row', key: 'rule:' + i, step: 'rules' },
+      qrow('div', { cls: 'row', key: 'rule:' + i },
         h('span', { class: 'sentence' },
           quantifier ? h('span', { class: 'verb' }, quantifier + ', ') : null,
           opRef(condition.leftHandSide, null, p.left), ' ', h('span', { class: 'verb' }, p.verb),
@@ -3216,7 +3502,7 @@ function stepEmits(ctx, slice) {
     // card keeps only what is specific to *this* publish binding: which
     // of this command's values fills which of the event's fields.
     return h('div', { class: 'card event' },
-      qrow('div', { cls: 'row', key: 'emit:' + emission.name, step: 'emits' },
+      qrow('div', { cls: 'row', key: 'emit:' + emission.name },
         event ? eventRef(ctx, emission.name)
           : h('span', { class: 'chip event' }, h('i', { class: 'ic' }, eventIcon(ctx, emission.name)), readable(emission.name)),
         h('span', { class: 'muted tiny' }, params.length + ' field' + (params.length === 1 ? '' : 's')),
@@ -3477,7 +3763,7 @@ function stepChanges(ctx, slice) {
       // pre-fill — it is edited where its code is, via scriptPanel.
       const scripted = effect.handler.code !== undefined;
       return qrow('div', {
-        cls: 'row', step: 'changes',
+        cls: 'row',
         key: 'chg:' + emission.name + ':' + effect.entity + '.' + effect.property.name,
       },
         h('span', { class: 'sentence' },
@@ -4341,6 +4627,49 @@ function eventIconPicker(ctx, name, event) {
       }, 'Clear') : null,
       h('button', {
         class: 'btn ghost', onclick: () => { state.eventIconPicker = null; render(); },
+      }, 'Done')));
+}
+
+// The command analogue of iconPicker and eventIconPicker. A command's
+// icon is also the default mark for whichever single event it
+// publishes (see `eventIcon`), so clearing it back to the neutral mark
+// changes that event's default too, unless the event has a mark of its
+// own already.
+function commandIconPicker(ctx, name, command) {
+  const current = commandIcon(ctx, name);
+  let typed = command.icon || '';
+  const set = (icon) => {
+    state.commandIconPicker = null;
+    patch('command-definition', name, (b) => {
+      const next = String(icon || '').trim();
+      if (next) b.icon = next;
+      else delete b.icon;
+    });
+  };
+  return h('div', { class: 'inline-form icons' },
+    h('div', { class: 'q' },
+      `The mark ${readable(name)} is shown with — and, by default, the event it records on `
+      + 'success, unless that event has a mark of its own.'),
+    h('div', { class: 'grid' }, ICON_CHOICES.map((icon) => h('button', {
+      class: 'ic-opt' + (icon === current ? ' on' : ''), title: 'Use this',
+      onclick: () => set(icon),
+    }, icon))),
+    h('div', { class: 'adder' },
+      h('input', {
+        type: 'text', value: typed, placeholder: 'or type one', style: 'width:110px',
+        oninput: (e) => { typed = e.target.value; },
+        onkeydown: (e) => {
+          if (e.key === 'Enter') { e.preventDefault(); set(typed); }
+          if (e.key === 'Escape') { e.preventDefault(); state.commandIconPicker = null; render(); }
+        },
+      }),
+      h('button', { class: 'btn', onclick: () => set(typed) }, 'Use'),
+      command.icon ? h('button', {
+        class: 'btn ghost', title: 'Back to the neutral mark',
+        onclick: () => set(''),
+      }, 'Clear') : null,
+      h('button', {
+        class: 'btn ghost', onclick: () => { state.commandIconPicker = null; render(); },
       }, 'Done')));
 }
 
@@ -5509,8 +5838,8 @@ function scenariosOf(ctx, commandName) {
     .map(([key, body]) => ({ key, body }));
 }
 
-// Every scenario in the model that is not saying "current", which is
-// the only number worth carrying in the bar.
+// Every scenario in the model that is not saying "current" — what
+// `problems` folds in alongside loose ends.
 function scenarioTrouble(ctx) {
   const out = [];
   for (const [key, body] of Object.entries(ctx['scenario-definitions'] || {})) {
@@ -5519,30 +5848,6 @@ function scenarioTrouble(ctx) {
     out.push({ key, body, result });
   }
   return out;
-}
-
-function scenarioCountButton(ctx) {
-  const trouble = scenarioTrouble(ctx);
-  const total = Object.keys(ctx['scenario-definitions'] || {}).length;
-  if (!total) return null;
-  return h('button', {
-    class: 'btn ghost',
-    title: trouble.length
-      ? 'Scenarios this model no longer agrees with'
-      : 'Every scenario agrees with what its command does',
-    onclick: () => {
-      closeForms();
-      const first = trouble[0];
-      if (first) {
-        state.view = 'slice';
-        state.slice = first.body.command;
-        state.tab = 'scenarios';
-        state.openScenario = first.key;
-      } else if (scenarioPlacement() === 'page') state.view = 'scenarios';
-      render();
-    },
-  }, 'Scenarios', h('span', { class: 'badge' + (trouble.length ? '' : ' clear') },
-    trouble.length || '✓'));
 }
 
 // ---------- values ----------
@@ -6006,45 +6311,6 @@ function scenarioTabs(ctx, slice) {
       entries.length
         ? h('span', { class: 'badge' + (trouble ? '' : ' clear') }, trouble || entries.length)
         : null));
-}
-
-// Every scenario in the model, grouped by the command it exercises —
-// the placement that answers "what did that rename break" in one look
-// rather than one command at a time.
-function renderScenarios(ctx, main) {
-  const commands = Object.keys(ctx['command-definitions']).sort();
-  main.appendChild(h('header', {},
-    h('div', { class: 'name' }, 'Scenarios'),
-    h('div', { class: 'muted small summary' },
-      'One command each, exercised against events written by hand. What they expect was worked '
-      + 'out here and frozen — so a difference is the report that something changed.')));
-
-  const orphaned = Object.entries(ctx['scenario-definitions'] || {})
-    .filter(([, body]) => !ctx['command-definitions'][body.command]);
-
-  for (const name of commands) {
-    const entries = scenariosOf(ctx, name);
-    if (!entries.length) continue;
-    main.appendChild(step('scenarios', readable(name),
-      h('div', { class: 'scenarios' }, entries.map((entry) => scenarioRow(ctx, entry)))));
-  }
-
-  if (orphaned.length) {
-    main.appendChild(step('scenarios', 'Commands that are gone',
-      h('div', { class: 'muted small' },
-        'These exercise a command this model no longer has. They are kept, and broken, because '
-        + 'deleting them was never what removing the command asked for.'),
-      h('div', { class: 'scenarios' },
-        orphaned.map(([key, body]) => scenarioRow(ctx, { key, body })))));
-  }
-
-  if (!Object.keys(ctx['scenario-definitions'] || {}).length) {
-    main.appendChild(h('div', { class: 'blank' },
-      h('h2', {}, 'Nothing exercised yet'),
-      h('p', { class: 'muted small' },
-        'A scenario belongs to a command, so it is written on that command page. This one '
-        + 'gathers them once there are some.')));
-  }
 }
 
 // ============================================================
@@ -6831,8 +7097,14 @@ window.addEventListener('keydown', (e) => {
   // Quick open handles its own Escape and stops it there, so reaching
   // this while it is up means it is already gone.
   if (state.palette) { closePalette(); return render(); }
-  if (state.health) { state.health = false; return render(); }
+  if (state.pendingImport) { state.pendingImport = null; return render(); }
+  if (state.problems) { state.problems = false; return render(); }
   if (state.settings) { state.settings = false; return render(); }
+  if (state.models) {
+    state.models = false;
+    state.newContext = false; state.loadingUrl = false; state.loadingJson = false;
+    return render();
+  }
 
   // Inside a free text field, Escape is about the field: it steps out
   // and leaves everything else where it is. A second press then backs
@@ -6843,10 +7115,9 @@ window.addEventListener('keydown', (e) => {
 
   if (formOpen()) { closeForms(); return render(); }
 
-  // A selected row, an adder unfolded under a list, a step opened for
-  // editing, a reference pinned to its source: whichever of these is
-  // on, Escape puts it back.
-  if (state.sel || state.adder || state.editing || state.lit) {
+  // A selected row, an adder unfolded under a list, a reference pinned
+  // to its source: whichever of these is on, Escape puts it back.
+  if (state.sel || state.adder || state.lit) {
     const key = state.sel;
     // An open adder folds back to a single button, which is fewer tab
     // stops than the form it replaces — closing it shifts everything
@@ -6859,8 +7130,8 @@ window.addEventListener('keydown', (e) => {
       ? document.activeElement.closest('.step')
       : null;
     const openStepKind = openStep
-      && [...openStep.classList].find((c) => c !== 'step' && c !== 'editing');
-    state.sel = null; state.adder = null; state.editing = null; state.lit = null;
+      && [...openStep.classList].find((c) => c !== 'step');
+    state.sel = null; state.adder = null; state.lit = null;
     render();
     // Deselecting must not also lose the keyboard's place on the page.
     if (key) {
@@ -6873,31 +7144,41 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-// Everything the experiments listen for. One handler rather than one
-// per flag: they share the question of whether the keystroke was meant
-// for a text field, and getting that answer in two places is how the
-// two answers drift apart.
+// ⌘K, ⌘S and ⌘Z: quick open, sharing and undo, all reachable from
+// anywhere in the page.
+window.addEventListener('keydown', (e) => {
+  if (e.defaultPrevented) return;
+  const command = e.metaKey || e.ctrlKey;
+  if (!command) return;
+  const key = e.key.toLowerCase();
+
+  if (key === 'k') {
+    if (!activeContextId()) return;
+    e.preventDefault();
+    if (state.palette) { closePalette(); render(); } else openPalette();
+  } else if (key === 's') {
+    if (!activeContextId()) return;
+    e.preventDefault();
+    runAsync(shareCurrentModel);
+  } else if (key === 'z') {
+    // Inside a field ⌘Z is the field's own undo, and taking it would
+    // make a half-typed name unrecoverable.
+    const inField = e.target instanceof Element
+      && e.target.closest('input, textarea, select');
+    if (inField) return;
+    e.preventDefault();
+    if (e.shiftKey) redo(); else undo();
+  }
+});
+
+// Arrow keys move between rows. Reading a command is walking down its
+// rows — Tab visits every button on the way, the arrows visit only the
+// rows.
 window.addEventListener('keydown', (e) => {
   if (e.defaultPrevented) return;
   const inField = e.target instanceof Element
     && e.target.closest('input, textarea, select');
-  const command = e.metaKey || e.ctrlKey;
-
-  if (flag('palette') && command && e.key.toLowerCase() === 'k') {
-    e.preventDefault();
-    if (state.palette) { closePalette(); render(); } else openPalette();
-    return;
-  }
-
-  // Inside a field ⌘Z is the field's own undo, and taking it would make
-  // a half-typed name unrecoverable.
-  if (flag('undo') && command && e.key.toLowerCase() === 'z' && !inField) {
-    e.preventDefault();
-    if (e.shiftKey) redo(); else undo();
-    return;
-  }
-
-  if (flag('roving') && !inField && !state.palette && !state.settings && !state.health
+  if (!inField && !state.palette && !state.settings && !state.problems && !state.models
       && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
     if (moveRow(e.key === 'ArrowDown' ? 1 : -1)) e.preventDefault();
   }
@@ -6906,11 +7187,29 @@ window.addEventListener('keydown', (e) => {
 // Whether the page has been scrolled at all — the only thing the pinned
 // header needs to know to decide how much of itself to keep.
 window.addEventListener('scroll', () => {
-  if (!flag('sticky')) return;
   document.body.classList.toggle('scrolled', window.scrollY > 60);
 }, { passive: true });
 
-window.addEventListener('DOMContentLoaded', render);
+// A `#context=…` fragment never reaches the server (there is none), so
+// this is the only place it is read. Cleared as soon as it is read,
+// successfully or not — a bad or already-consumed link should not keep
+// re-triggering on every reload.
+async function boot() {
+  render();
+  const hash = location.hash;
+  if (!hash.startsWith('#context=')) return;
+  history.replaceState(null, '', location.pathname + location.search);
+  let envelope;
+  try {
+    envelope = await decodeShareLink(hash.slice('#context='.length));
+  } catch (error) {
+    toast('That share link could not be read: ' + error.message, true);
+    return;
+  }
+  beginImport(envelope);
+}
+
+window.addEventListener('DOMContentLoaded', boot);
 </script>
 </body>
 </html>

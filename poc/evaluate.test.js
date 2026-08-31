@@ -59,6 +59,7 @@ const {
   addDefinition, updateDefinition, removeDefinition, renameDefinition, renameMember,
   createDcbContext,
   generateId, scenarioName, deepClone, evSuccessor,
+  contextToSchema, buildShareEnvelope, importContextFromEnvelope, envelopeHasScript,
 } = sandbox;
 
 // A fresh, empty context — for the ad-hoc identifier-type fixtures
@@ -1041,6 +1042,115 @@ function drive(ctx, log, command, args, at) {
     eq(foldProjection(ctx(), log, 'OpenRegionCount', { region: 'us' }), 1, 'us counted separately');
   });
 }
+
+// ---------------------------------------------------------------
+// Sharing: export to the schema shape, and the import synthesizer that
+// rebuilds a context from it.
+// ---------------------------------------------------------------
+{
+  // Dynamic Product Price (simple) is the case that actually needs the
+  // retry pool: `Item`, a standalone composite custom type, names
+  // `ProductId` — the identifier type `Product` derives, which does not
+  // exist until the entity does. A synthesizer that added every custom
+  // type before any entity would refuse this context.
+  const original = build(4);
+  const envelope = buildShareEnvelope(original, []);
+  const importedId = importContextFromEnvelope(envelope);
+  const imported = sandbox.projectState()[importedId];
+
+  check('a context with a standalone type naming an entity-derived id round-trips', () => {
+    eq(contextToSchema(imported), contextToSchema(original), 'the reconstructed context');
+  });
+
+  check('the imported context is independently valid — its own commands still run', () => {
+    const log = [];
+    drive(imported, log, 'DefineProduct', { productId: 'p1', price: 500 });
+    eq(foldEntityProperty(imported, log, 'Product', 'currentPrice', 'p1'), 500, 'the price DefineProduct set');
+  });
+}
+
+{
+  // Dynamic Product Price (with grace period) has a scripted entity
+  // property — `Product.validPrices`. A scripted property cannot go
+  // through the bare pass with empty handlers the way a declared one
+  // can (`validateScript` requires at least one), so it has to be left
+  // out of the bare entity entirely and added whole once events exist.
+  const original = build(5);
+  const importedId = importContextFromEnvelope(buildShareEnvelope(original, []));
+  const imported = sandbox.projectState()[importedId];
+
+  check('a context with a scripted entity property round-trips', () => {
+    eq(contextToSchema(imported), contextToSchema(original), 'the reconstructed context');
+  });
+
+  check('the imported scripted property still folds', () => {
+    const log = [];
+    drive(imported, log, 'DefineProduct', { productId: 'p1', price: 500 }, 0);
+    eq(foldEntityProperty(imported, log, 'Product', 'validPrices', 'p1', { now: 1000 }), [500], 'one valid price so far');
+  });
+}
+
+{
+  const plain = build(4);
+  const scripted = build(5); // Dynamic Product Price (with grace period) — a scripted entity property
+
+  check('envelopeHasScript is false for a context with no scripts', () => {
+    eq(envelopeHasScript(buildShareEnvelope(plain, [])), false, 'plain context');
+  });
+  check('envelopeHasScript is true for a scripted entity property', () => {
+    eq(envelopeHasScript(buildShareEnvelope(scripted, [])), true, 'scripted context');
+  });
+
+  // None of the shipped contexts have a scripted *projection* (only the
+  // scripted property above), so this checks that side with a small
+  // ad-hoc one instead.
+  const { id, ctx } = openBlank();
+  addDefinition('custom-type-definition', id, 'RegionCode', { schema: { type: 'string' }, isTag: true });
+  addDefinition('event-definition', id, 'RegionOpened', {
+    properties: [{ name: 'regionCode', propertyType: 'RegionCode', isOptional: false, isList: false }],
+  });
+  addDefinition('projection-definition', id, 'OpenRegionCount', {
+    valueType: 'integer',
+    script: { initialState: 0, tagFilter: ['RegionCode:{region}'], arguments: [{ name: 'region', propertyType: 'RegionCode' }] },
+    handlers: [{ event: 'RegionOpened', code: '(state || 0) + 1' }],
+  });
+  check('envelopeHasScript is true for a scripted (standalone) projection', () => {
+    eq(envelopeHasScript(buildShareEnvelope(ctx(), [])), true, 'scripted projection');
+  });
+}
+
+{
+  // Scenarios are the one kind identified by a generated id rather than
+  // a name — importing has to mint a fresh one rather than reuse
+  // whatever the export carried, the same way `saveScenario` does.
+  const { id, ctx } = openBlank();
+  addDefinition('event-definition', id, 'ThingHappened', { properties: [] });
+  addDefinition('command-definition', id, 'DoThing', {
+    properties: [], boundary: [], conditions: [],
+    publishes: [{ name: 'ThingHappened', parameters: {} }],
+  });
+  const body = { command: 'DoThing', given: [], when: { arguments: {} } };
+  body.then = deriveThen(ctx(), body);
+  const originalScenarioId = generateId();
+  addDefinition('scenario-definition', id, originalScenarioId, body);
+
+  const envelope = buildShareEnvelope(ctx(), []);
+  const importedId = importContextFromEnvelope(envelope);
+  const imported = sandbox.projectState()[importedId];
+  const importedScenarioIds = Object.keys(imported['scenario-definitions']);
+
+  check('an imported scenario keeps its content but gets a fresh id', () => {
+    eq(importedScenarioIds.length, 1, 'exactly one scenario carried over');
+    eq(importedScenarioIds[0] === originalScenarioId, false, 'a new id, not the exported one');
+    eq(imported['scenario-definitions'][importedScenarioIds[0]].command, 'DoThing', 'the scenario body itself');
+  });
+}
+
+check('an import missing the schema-shaped context is refused, not silently accepted', () => {
+  let threw = false;
+  try { importContextFromEnvelope({ name: 'Bad' }); } catch (error) { threw = !!error; }
+  eq(threw, true, 'importContextFromEnvelope without a context field');
+});
 
 console.log(`${passed} passed, ${failures.length} failed`);
 if (failures.length) {

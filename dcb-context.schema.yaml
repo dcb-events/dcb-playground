@@ -667,6 +667,21 @@ required:
     properties:
       name:
         "$ref": "#/$defs/CommandName"
+      icon:
+        description: |
+          A short glyph — one emoji, or a character or two — that stands
+          for this command wherever it is named. Presentation only: no
+          part of the model reads it, and two commands may share one.
+          Absent means an authoring tool picks its own placeholder. The
+          event this command publishes on success takes this same icon
+          by default (see `EventDefinition.icon`), which is why setting
+          one here is usually enough to mark both.
+        type: string
+        minLength: 1
+        maxLength: 8
+        examples:
+        - "\U0001F4DA"
+        - "\U0001F9FE"
       feature:
         description: |
           The feature this command belongs to — "Course management",
@@ -1460,6 +1475,21 @@ required:
     properties:
       name:
         "$ref": "#/$defs/EventName"
+      icon:
+        description: |
+          A short glyph — one emoji, or a character or two — that stands
+          for this event wherever it is named. Presentation only: no
+          part of the model reads it, and two events may share one.
+          Absent means an authoring tool picks its own placeholder —
+          conventionally the icon of the one command that publishes
+          this event, when exactly one does, and otherwise a neutral
+          mark of its own.
+        type: string
+        minLength: 1
+        maxLength: 8
+        examples:
+        - "\U0001F4DA"
+        - "\U0001F9FE"
       properties:
         type: array
         items:

@@ -3070,6 +3070,198 @@ function humanize(kind) {
 function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
 
 // ============================================================
+// Sharing a context with the outside world.
+//
+// The wire format is `{ name, context, propertyScenarioDefinitions?,
+// sandbox? }`. `context` is exactly the shape `dcb-context.schema.yaml`
+// describes — six kinds, each an array keyed by its own `name` (or, for
+// a scenario, `id`) — so a file built by another tool that only knows
+// that schema can be dropped straight into it. Property scenarios ride
+// as a sibling of `context` rather than inside it: the public schema
+// does not declare them yet and its root forbids extra properties, so
+// putting them there would make an otherwise-conformant export fail
+// against it. `sandbox`, if present, is a raw list of driven commands —
+// never validated, never part of the context, exactly the ephemeral
+// thing it already is everywhere else in this app.
+// ============================================================
+
+const SCHEMA_FIELD = {
+  'custom-type-definition': 'customTypeDefinitions',
+  'event-definition': 'eventDefinitions',
+  'entity-definition': 'entityDefinitions',
+  'projection-definition': 'projectionDefinitions',
+  'command-definition': 'commandDefinitions',
+  'scenario-definition': 'scenarioDefinitions',
+  'property-scenario-definition': 'propertyScenarioDefinitions',
+};
+
+// The six kinds `dcb-context.schema.yaml` documents — everything but
+// property scenarios, which are not part of it yet (see above).
+const SCHEMA_KINDS = [
+  'custom-type-definition', 'event-definition', 'entity-definition',
+  'projection-definition', 'command-definition', 'scenario-definition',
+];
+
+function definitionsToSchemaArray(kind, coll) {
+  const idField = isIdKeyed(kind) ? 'id' : 'name';
+  return Object.entries(coll || {}).map(([key, body]) => ({ [idField]: key, ...body }));
+}
+
+function schemaArrayToDefinitions(kind, list) {
+  const idField = isIdKeyed(kind) ? 'id' : 'name';
+  const coll = {};
+  for (const item of list || []) {
+    const { [idField]: key, ...body } = item;
+    coll[key] = body;
+  }
+  return coll;
+}
+
+function contextToSchema(ctx) {
+  const out = {};
+  for (const kind of SCHEMA_KINDS) {
+    out[SCHEMA_FIELD[kind]] = definitionsToSchemaArray(kind, ctx[DEF_COLLECTIONS[kind]]);
+  }
+  return out;
+}
+
+// `sandboxSteps` — `[{ command, args }]` — comes in from the caller
+// rather than being read off a global here: this file knows nothing of
+// the interactive session index.html keeps.
+function buildShareEnvelope(ctx, sandboxSteps) {
+  const envelope = { name: ctx.name, context: contextToSchema(ctx) };
+  const propertyScenarios = definitionsToSchemaArray(
+    'property-scenario-definition', ctx['property-scenario-definitions']
+  );
+  if (propertyScenarios.length) envelope.propertyScenarioDefinitions = propertyScenarios;
+  if (sandboxSteps && sandboxSteps.length) envelope.sandbox = { steps: sandboxSteps };
+  return envelope;
+}
+
+// Whether importing this envelope would run authored code the moment
+// anything touches it — a property or a projection carrying a `script`
+// both compile through the same unsandboxed path (see `evCompileHandler`
+// in evaluate.js). This is what gates the confirmation before import.
+function envelopeHasScript(envelope) {
+  const schema = envelope && envelope.context;
+  if (!schema) return false;
+  const propertyScripted = (schema.entityDefinitions || [])
+    .some((e) => (e.properties || []).some((p) => !!p.script));
+  const projectionScripted = (schema.projectionDefinitions || []).some((p) => !!p.script);
+  return propertyScripted || projectionScripted;
+}
+
+// An entity, stripped down to what can exist before the events its
+// properties name are added. A declared property is kept with its
+// handlers emptied — legal, since a handler-less property is simply one
+// no event has touched yet. Two kinds of property cannot go bare the
+// same way: a scripted one, since `validateScript` requires at least
+// one handler naming a real event; and one typed as another entity's
+// derived id, since two entities that each list the other's id (a
+// student's course ids, a course's student ids) would otherwise need
+// each other to exist first. Both are left out entirely here and added
+// for real, in one piece, once `updateDefinition` runs against the full
+// body after every entity — and every event — exists.
+function bareEntityBody(body, deferredTypeNames) {
+  return {
+    ...body,
+    properties: (body.properties || [])
+      .filter((p) => !p.script && !deferredTypeNames.has(p.propertyType))
+      .map((p) => ({ ...p, handlers: [] })),
+  };
+}
+
+// Adds a mixed batch of custom types and bare entities, retrying
+// whatever fails until a full pass makes no progress. The two kinds can
+// reference each other in either direction — a composite value type
+// naming an entity's derived identifier, or an entity's `identifierType`
+// naming a standalone value type — so neither can be finished first in
+// general; nothing downstream of this (events, full entities,
+// projections, commands, scenarios) has that problem, so it is the only
+// phase that needs retrying rather than a single ordered pass.
+function addManyWithRetry(ctxId, items) {
+  let remaining = items;
+  let lastError = null;
+  while (remaining.length) {
+    const next = [];
+    let progressed = false;
+    for (const item of remaining) {
+      try {
+        addDefinition(item.kind, ctxId, item.name, item.body);
+        progressed = true;
+      } catch (error) {
+        next.push(item);
+        lastError = error;
+      }
+    }
+    if (!progressed) throw lastError;
+    remaining = next;
+  }
+}
+
+// The synthesizer: rebuilds a shared context into a brand-new one by
+// replaying it through the same validating commands manual editing
+// uses, so an untrusted export can never land in a state those commands
+// would have refused. A failure partway leaves a partial-but-valid
+// context in place, exactly like a manual edit interrupted midway —
+// `deleteDcbContext` is the way out, not a rollback this adds.
+function importContextFromEnvelope(envelope) {
+  if (!envelope || typeof envelope !== 'object' || !envelope.context) {
+    throw new DomainError('That does not look like a shared DCB context.');
+  }
+  const schema = envelope.context;
+  const customTypes = schemaArrayToDefinitions('custom-type-definition', schema.customTypeDefinitions);
+  const events = schemaArrayToDefinitions('event-definition', schema.eventDefinitions);
+  const entities = schemaArrayToDefinitions('entity-definition', schema.entityDefinitions);
+  const projections = schemaArrayToDefinitions('projection-definition', schema.projectionDefinitions);
+  const commands = schemaArrayToDefinitions('command-definition', schema.commandDefinitions);
+  const scenarios = schemaArrayToDefinitions('scenario-definition', schema.scenarioDefinitions);
+  const propertyScenarios = schemaArrayToDefinitions(
+    'property-scenario-definition', envelope.propertyScenarioDefinitions
+  );
+
+  const ctxId = createDcbContext(envelope.name || 'Imported context');
+
+  // Created automatically by `addDefinition('entity-definition', ...)`
+  // — never added again here as a standalone value type, only enriched
+  // once its exported body is known to carry more than the bare default.
+  const derivedIdTypeNames = new Set(
+    Object.entries(entities).map(([name, body]) => body.identifierType || (name + 'Id'))
+  );
+
+  addManyWithRetry(ctxId, [
+    ...Object.entries(customTypes)
+      .filter(([name]) => !derivedIdTypeNames.has(name))
+      .map(([name, body]) => ({ kind: 'custom-type-definition', name, body })),
+    ...Object.entries(entities)
+      .map(([name, body]) => ({ kind: 'entity-definition', name, body: bareEntityBody(body, derivedIdTypeNames) })),
+  ]);
+
+  for (const [name, body] of Object.entries(events)) {
+    addDefinition('event-definition', ctxId, name, body);
+  }
+  for (const [name, body] of Object.entries(customTypes)) {
+    if (derivedIdTypeNames.has(name)) updateDefinition('custom-type-definition', ctxId, name, body);
+  }
+  for (const [name, body] of Object.entries(entities)) {
+    updateDefinition('entity-definition', ctxId, name, body);
+  }
+  for (const [name, body] of Object.entries(projections)) {
+    addDefinition('projection-definition', ctxId, name, body);
+  }
+  for (const [name, body] of Object.entries(commands)) {
+    addDefinition('command-definition', ctxId, name, body);
+  }
+  for (const body of Object.values(scenarios)) {
+    addDefinition('scenario-definition', ctxId, generateId(), body);
+  }
+  for (const body of Object.values(propertyScenarios)) {
+    addDefinition('property-scenario-definition', ctxId, generateId(), body);
+  }
+  return ctxId;
+}
+
+// ============================================================
 // Predefined contexts.
 //
 // Two models, each built in layers, because that is the order the
@@ -3776,18 +3968,21 @@ event.metadata.recordedAt >= args.now - ${GRACE_PERIOD}
 const PREDEFINED_CONTEXTS = [
   {
     name: 'Course Example (simple)',
+    slug: 'course-simple',
     description: 'Courses and students, capacity and subscriptions. '
       + 'Identifiers are supplied by the caller and checked with a state condition.',
     build: (ctxId) => { seedBase(ctxId); },
   },
   {
     name: 'Course Example (with sequence)',
+    slug: 'course-sequence',
     description: 'Adds a projection issuing c1, c2, c3… DefineCourse loses its identifier '
       + 'parameter and its conditions — binding the numbering guards it instead.',
     build: (ctxId) => { seedBase(ctxId); seedAddSequence(ctxId); },
   },
   {
     name: 'Course Example (with sequence and tenant)',
+    slug: 'course-tenant',
     description: 'The numbering restarts per tenant — the case a tagless sequence could not '
       + 'express. Identity stays globally minted; what restarts is the number, so no two '
       + 'tenants ever write the same Course tag.',
@@ -3795,12 +3990,14 @@ const PREDEFINED_CONTEXTS = [
   },
   {
     name: 'Course Example (with schedules)',
+    slug: 'course-schedules',
     description: 'Adds hourly slots and the rule that a student is never in two courses at '
       + 'once, checked against live schedules so courses can be rescheduled under subscribers.',
     build: (ctxId) => { seedBase(ctxId); seedAddSequence(ctxId); seedAddSchedules(ctxId); },
   },
 {
     name: 'Dynamic Product Price (simple)',
+    slug: 'pricing-simple',
     description: 'A cart ordered in one append. Each line names a product and the price shown '
       + 'to the customer; the boundary fans out over the lines and checks each price against '
       + 'the product it belongs to.',
@@ -3808,6 +4005,7 @@ const PREDEFINED_CONTEXTS = [
   },
   {
     name: 'Dynamic Product Price (with grace period)',
+    slug: 'pricing-grace-period',
     description: 'A repriced product honours its old price for an hour — the one rule here no '
       + 'declaration can express, so the property is scripted. The command is handed the instant '
       + 'to read at, the code compares it against when each event was recorded, and the derived '

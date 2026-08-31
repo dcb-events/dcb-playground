@@ -67,54 +67,47 @@ function mode() { return localStorage.getItem(MODE_KEY) === 'advanced' ? 'advanc
 function advanced() { return mode() === 'advanced'; }
 function setMode(next) { localStorage.setItem(MODE_KEY, next); if (typeof render === 'function') render(); }
 
+// ---------- light / dark ----------
+//
+// Defaults to whatever the system says, same as any other well-behaved
+// page; Settings can override that per browser. `isDark` is the one
+// question the rest of the page asks — nothing downstream needs to know
+// whether that answer came from the system or from a stored choice.
+
+const THEME_KEY = 'dcb-playground:theme';
+function theme() {
+  const stored = localStorage.getItem(THEME_KEY);
+  return stored === 'light' || stored === 'dark' ? stored : 'system';
+}
+function setTheme(next) { localStorage.setItem(THEME_KEY, next); if (typeof render === 'function') render(); }
+function isDark() {
+  const t = theme();
+  if (t !== 'system') return t === 'dark';
+  return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+}
+// Only "system" cares about this firing — an explicit choice already
+// repaints itself the moment it is made.
+if (window.matchMedia) {
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    if (theme() === 'system' && typeof render === 'function') render();
+  });
+}
+
 // ---------- which context is open ----------
 
 const CONTEXT_KEY = 'dcb-playground:context';
 
+// `null` is a real answer here, not an edge case to work around: a
+// browser that has never loaded anything has nothing stored, and the
+// Models modal is what asks the question rather than the page silently
+// picking an example on someone's behalf.
 function activeContextId() {
   const stored = localStorage.getItem(CONTEXT_KEY);
-  if (stored && projectState()[stored]) return stored;
-  const id = loadPredefinedContext(2);
-  localStorage.setItem(CONTEXT_KEY, id);
-  return id;
+  return stored && projectState()[stored] ? stored : null;
 }
 function activeContext() {
-  // Resolve the id first: it may create the context, and evaluating
-  // projectState() alongside it would snapshot the log too early.
   const id = activeContextId();
-  return projectState()[id];
-}
-
-function contextPicker() {
-  const contexts = Object.values(projectState());
-  const select = h('select', {
-    onchange: (e) => {
-      const v = e.target.value;
-      // The page owns the naming form; this only asks for it.
-      if (v === 'new:') {
-        if (typeof onNewContext === 'function') onNewContext();
-        else if (typeof render === 'function') render();
-        return;
-      }
-      if (v.startsWith('load:')) {
-        run(() => localStorage.setItem(CONTEXT_KEY, loadPredefinedContext(Number(v.slice(5)))));
-      } else {
-        localStorage.setItem(CONTEXT_KEY, v);
-        if (typeof render === 'function') render();
-      }
-    },
-  });
-  for (const ctx of contexts.sort((a, b) => a.name.localeCompare(b.name))) {
-    select.appendChild(h('option', { value: ctx.id, selected: ctx.id === activeContextId() }, ctx.name));
-  }
-  const fresh = h('optgroup', { label: 'Load a fresh copy' });
-  PREDEFINED_CONTEXTS.forEach((entry, i) =>
-    fresh.appendChild(h('option', { value: 'load:' + i }, entry.name)));
-  select.appendChild(fresh);
-  const start = h('optgroup', { label: 'Start over' });
-  start.appendChild(h('option', { value: 'new:' }, '+ New empty context…'));
-  select.appendChild(start);
-  return select;
+  return id ? projectState()[id] : null;
 }
 
 // A context with nothing in it at all — no entities, no events, no
@@ -131,6 +124,80 @@ function createNamedContext(name) {
     setPendingFeatures([]);
     return id;
   });
+}
+
+// ---------- sharing a context ----------
+//
+// Two ways a context leaves or enters this browser: a self-contained
+// link (`#context=<gzipped, base64url-encoded envelope>`, so a static
+// page with no backend can still hand someone a working copy of what
+// it built) and a URL someone else hosts, fetched and inflated on
+// demand. Both carry the same envelope — see `buildShareEnvelope` in
+// model.js. Compression is the native Streams API only, matching the
+// rest of this project's lack of a dependency story; there is no
+// fallback for a browser that lacks it.
+
+function base64UrlEncode(bytes) {
+  let binary = '';
+  bytes.forEach((b) => { binary += String.fromCharCode(b); });
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function base64UrlDecode(text) {
+  const padded = text.replace(/-/g, '+').replace(/_/g, '/')
+    .padEnd(text.length + (4 - (text.length % 4)) % 4, '=');
+  const binary = atob(padded);
+  return Uint8Array.from(binary, (c) => c.charCodeAt(0));
+}
+
+async function gzipToBase64Url(text) {
+  const stream = new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'));
+  const buffer = await new Response(stream).arrayBuffer();
+  return base64UrlEncode(new Uint8Array(buffer));
+}
+
+async function gunzipFromBase64Url(encoded) {
+  const stream = new Blob([base64UrlDecode(encoded)]).stream().pipeThrough(new DecompressionStream('gzip'));
+  return new Response(stream).text();
+}
+
+async function buildShareLink(ctx) {
+  const steps = session.steps.map(({ command, args }) => ({ command, args }));
+  const envelope = buildShareEnvelope(ctx, steps);
+  const encoded = await gzipToBase64Url(JSON.stringify(envelope));
+  return location.origin + location.pathname + '#context=' + encoded;
+}
+
+function decodeShareLink(encoded) {
+  return gunzipFromBase64Url(encoded).then((json) => JSON.parse(json));
+}
+
+// A URL someone else hosts — a gist, a bucket, another tool's export.
+// `fetch` only auto-decompresses a gzip `Content-Encoding`; a file whose
+// *content type* says gzip (a plain `.json.gz` sitting on a static
+// host) arrives untouched over the wire and has to be inflated by hand.
+async function loadContextFromUrl(url) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  const contentType = response.headers.get('Content-Type') || '';
+  const text = contentType.includes('gzip')
+    ? await new Response(response.body.pipeThrough(new DecompressionStream('gzip'))).text()
+    : await response.text();
+  return JSON.parse(text);
+}
+
+// The async twin of `run`: same error reporting, for a flow that has to
+// await a fetch or a compression stream before it knows whether it
+// worked.
+async function runAsync(fn) {
+  try {
+    const out = await fn();
+    if (typeof render === 'function') render();
+    return out;
+  } catch (err) {
+    if (err instanceof DomainError) toast(err.message, true);
+    else { console.error(err); toast('Unexpected error: ' + err.message, true); }
+  }
 }
 
 // ---------- the slice ----------
@@ -716,10 +783,44 @@ function defaultEventIcon(name) {
   return EVENT_MARKS[sum % EVENT_MARKS.length];
 }
 
+// A command earns the same legibility, from a third family again — a
+// tool, not a shape or a spark, since a page can hold all three kinds
+// at once and an unmarked glyph should never read as the wrong one.
+const COMMAND_MARKS = ['▶', '▷', '◈', '◉', '◐', '◑', '◒', '◓', '⬖', '⬗'];
+
+function defaultCommandIcon(name) {
+  let sum = 0;
+  for (const ch of String(name || '')) sum = (sum * 31 + ch.charCodeAt(0)) >>> 0;
+  return COMMAND_MARKS[sum % COMMAND_MARKS.length];
+}
+
+function commandIcon(ctx, name) {
+  const body = ctx && ctx['command-definitions'] ? ctx['command-definitions'][name] : null;
+  const chosen = body && typeof body.icon === 'string' ? body.icon.trim() : '';
+  return chosen || defaultCommandIcon(name);
+}
+
+// Every command that publishes this event — usually none or one, since
+// every shipped example records one event per command, but nothing
+// stops two commands recording the same fact.
+function commandsPublishing(ctx, eventName) {
+  return Object.entries(ctx['command-definitions'] || {})
+    .filter(([, body]) => (body.publishes || []).some((emission) => emission.name === eventName))
+    .map(([name]) => name);
+}
+
 function eventIcon(ctx, name) {
   const body = ctx && ctx['event-definitions'] ? ctx['event-definitions'][name] : null;
   const chosen = body && typeof body.icon === 'string' ? body.icon.trim() : '';
-  return chosen || defaultEventIcon(name);
+  if (chosen) return chosen;
+  // Unmarked, and the outcome of exactly one command: read as that
+  // command's doing by default, the same mark and all — a modeler who
+  // wants this event to look like its own thing gives it its own icon,
+  // same as always. Two commands recording the same event agree on
+  // nothing this way, so that case falls back to the neutral mark.
+  const commands = commandsPublishing(ctx, name);
+  if (commands.length === 1) return commandIcon(ctx, commands[0]);
+  return defaultEventIcon(name);
 }
 
 // Shown beside the type, never behind the Advanced gate: a value
