@@ -464,8 +464,7 @@ required:
 
       **The contract.** Each handler body is an expression over
       `state`, `event` and `args`, returning the next state. `event`
-      carries `data` (the payload) and `metadata` (the envelope —
-      see `EventMetadata`). `args` holds one entry per declared
+      carries `data` (the payload). `args` holds one entry per declared
       argument. Nothing else is in scope, and the same inputs must
       produce the same state: a body that consults an ambient clock
       would decide one thing and replay another.
@@ -577,37 +576,13 @@ required:
     description: |
       Where a handler's value comes from. Resolved while projecting a
       single event, so the only things in scope are that event's
-      properties, its envelope metadata, the property's own current
-      value, and literals.
+      properties, the property's own current value, and literals.
     oneOf:
     - "$ref": "#/$defs/EventPropertyValue"
-    - "$ref": "#/$defs/EventMetadataValue"
     - "$ref": "#/$defs/CurrentValue"
     - "$ref": "#/$defs/SuccessorValue"
     - "$ref": "#/$defs/EnumMemberValue"
     - "$ref": "#/$defs/StaticValue"
-
-  EventMetadataValue:
-    description: |
-      A field of the envelope every event carries — see
-      `EventMetadata`. Kept as its own operand kind rather than folded
-      into `EventPropertyValue` so that payload and envelope never
-      share a namespace: one namespace would let a modeller declare
-      `recordedAt` on an event and silently shadow the real one.
-
-      Legal in a handler, never in a condition. A projection reading
-      the clock still replays to the same state, because it reads when
-      an event *was written*. A condition reading it would decide
-      differently on replay than it decided originally, which is the
-      one thing a boundary may never do.
-    type: object
-    additionalProperties: false
-    properties:
-      eventMetadata:
-        enum:
-        - recordedAt
-    required:
-    - eventMetadata
 
   SuccessorValue:
     description: |
@@ -1204,8 +1179,7 @@ required:
 
   ScenarioGivenEvent:
     description: |
-      One event of a scenario's Given, with the payload it carried and
-      the instant it was recorded at.
+      One event of a scenario's Given, with the payload it carried.
     type: object
     additionalProperties: false
     properties:
@@ -1218,23 +1192,9 @@ required:
           every scenario written before it *broken*, which is the honest
           report: there is no value here to have evaluated with.
         type: object
-      recordedAt:
-        description: |
-          The envelope's `recordedAt` for this event, in whole seconds
-          since the epoch.
-
-          Required, and required for a reason: a projection may fold the
-          envelope, so a Given without stated instants would replay
-          against a different clock every time and its `then` would
-          drift for reasons that have nothing to do with the
-          definitions changing. An authoring tool assigns these on
-          first save and lets them be overridden; what it may not do is
-          leave them out.
-        type: integer
     required:
     - event
     - data
-    - recordedAt
 
   ScenarioWhen:
     description: The command call under test.
@@ -1467,9 +1427,7 @@ required:
   EventDefinition:
     description: |
       What an event carries. `properties` is the payload — the part
-      somebody emitting the event supplies. Every event *also* carries
-      the envelope described by `EventMetadata`, which is not declared
-      here and cannot be removed.
+      somebody emitting the event supplies.
     type: object
     additionalProperties: false
     properties:
@@ -1497,30 +1455,6 @@ required:
     required:
     - name
     - properties
-
-  EventMetadata:
-    description: |
-      The envelope: what every event carries besides its payload,
-      supplied by the store rather than by whatever emitted it. Not
-      declared on an event and not removable from one, which is why it
-      appears here as a fact about the log rather than as a field.
-
-      `recordedAt` is the instant the event was appended, typed
-      `timestamp`. It is readable by a handler — through
-      `EventMetadataValue`, or as `event.metadata.recordedAt` inside a
-      script — and never by a condition. A projection consulting it
-      still replays to the same state; a boundary consulting it would
-      not, and that asymmetry is the whole reason the envelope is
-      allowed near a projection at all.
-
-      This object is documentation. Nothing references it, because
-      nothing authors it.
-    type: object
-    additionalProperties: false
-    properties:
-      recordedAt:
-        "$ref": "#/$defs/TypeName"
-        const: timestamp
 
   EventName:
     type: string
@@ -1581,20 +1515,4 @@ required:
       - boolean
       - integer
       - string
-      - timestamp
     - "$ref": "#/$defs/CustomTypeName"
-
-  # `timestamp` is an instant in whole seconds since the epoch. It is
-  # built in rather than left to a custom type because the tooling has
-  # to recognise a clock reading on sight — to type the envelope's
-  # `recordedAt`, and to offer date affordances. A context-declared
-  # `Timestamp` would make that recognition depend on a name the
-  # modeller chose, which is exactly the coupling a built-in avoids.
-  #
-  # Only `set` is available to a timestamp property: an instant has no
-  # meaningful increment in this model.
-  #
-  # Durations are *not* a type. A window is arithmetic, and the only
-  # place this model does arithmetic is inside a script — where the
-  # duration is a number in the code, never an operand something else
-  # has to carry.

@@ -182,14 +182,12 @@ function evMatchesTags(ctx, event, tags) {
 // ============================================================
 
 // A handler operand, as a function of the state and the event it is
-// folding. These are the operands only a handler may use — a condition
-// gets a different set, because a condition may not read the envelope.
+// folding. `event-property` is only available to a handler — a
+// condition gets a different operand set.
 function evCompileHandlerOperand(operand) {
   switch (operandSource(operand)) {
     case 'event-property':
       return (state, event) => (event.data || {})[operand.eventProperty];
-    case 'event-metadata':
-      return (state, event) => (event.metadata || {})[operand.eventMetadata];
     case 'current-value':
       return (state) => state;
     case 'successor': {
@@ -619,7 +617,7 @@ function evCheckCondition(ctx, body, condition, scope) {
 // scenario's expected outcome keeps it; the sandbox shows it, because
 // "what did this command see when it decided" is the question a step
 // raises.
-function evaluateCommand(ctx, events, commandName, args, options) {
+function evaluateCommand(ctx, events, commandName, args) {
   const body = ctx['command-definitions'][commandName];
   if (!body) fail(`This context has no command "${commandName}".`);
 
@@ -676,11 +674,7 @@ function evaluateCommand(ctx, events, commandName, args, options) {
       }
       data[property.name] = evReadOperand(operand, scope);
     }
-    const event = { type: emission.name, data };
-    if (options && options.recordedAt !== undefined) {
-      event.metadata = { recordedAt: options.recordedAt };
-    }
-    published.push(event);
+    published.push({ type: emission.name, data });
   }
 
   return { outcome: 'published', events: published, reads: evDescribeReads(scope) };
@@ -744,21 +738,16 @@ function evSameOutcome(a, b) {
   return JSON.stringify(evCanonical(a)) === JSON.stringify(evCanonical(b));
 }
 
-// The Given, as the evaluator reads a log. The stored instant becomes
-// the envelope, which is what makes a projection that reads
-// `recordedAt` replay to the same state every time.
+// The Given, as the evaluator reads a log.
 function scenarioLog(scenario) {
   return (scenario.given || []).map((step) => ({
     type: step.event,
     data: step.data || {},
-    metadata: { recordedAt: step.recordedAt },
   }));
 }
 
 // What the current definitions make of this scenario — the same shape
-// that gets stored as its Then. Published events carry no envelope:
-// the instant one would be appended at is not a property of the
-// decision, and comparing it would report the clock as drift.
+// that gets stored as its Then.
 function deriveThen(ctx, scenario) {
   // A Given written against definitions that have since moved is not a
   // scenario that fails — it is one that cannot be run. Without this

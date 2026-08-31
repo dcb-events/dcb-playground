@@ -189,9 +189,6 @@
   .script textarea:focus, .script-handler textarea:focus {
     outline: none; border-color: var(--command);
   }
-  /* Envelope metadata: on the page so "every event carries this" is
-     visible where events are, and unmistakably not authored. */
-  .field.envelope { opacity: .6; }
   /* Rounds. The header carries the cost — how many times this command
      goes to the log — and the note under a card carries the reason it
      could not go earlier. Neither is authored: both are read off the
@@ -3980,16 +3977,6 @@ function eventFields(ctx, emission, event) {
 
   return h('div', { class: 'fields' },
     rows.length ? rows : h('div', { class: 'empty' }, 'Carries nothing yet.'),
-    // The envelope, shown where events are: nobody writes these and
-    // nobody can remove them, so they are on the page greyed rather
-    // than left as a claim only the schema makes. A handler may read
-    // one; a condition may not.
-    ...EVENT_METADATA.map((m) => h('div', { class: 'field envelope' },
-      h('span', { class: 'nm' }, propertyWords(m.name)),
-      h('span', { class: 'muted tiny' }, '← the store'),
-      h('span', { class: 'grow', style: 'flex:1' }),
-      h('span', { class: 'chip' }, readable(typeLabel(m))),
-      h('span', { class: 'muted tiny' }, 'always carried'))),
     missing.length ? h('div', { class: 'copy-missing' },
       h('span', { class: 'muted tiny' }, 'Given but not recorded: '),
       missing.map((p) => h('button', {
@@ -5212,7 +5199,7 @@ function projectionTypeOptions(ctx) {
 // caller here already treats as "not a number".
 function underlyingSchema(ctx, typeName) {
   const cls = classifyType(ctx, typeName);
-  if (cls.kind === 'simple') return { type: typeName === 'timestamp' ? 'integer' : typeName };
+  if (cls.kind === 'simple') return { type: typeName };
   if (cls.kind === 'value' && !cls.composite) {
     return ctx['custom-type-definitions'][typeName].schema || { type: 'string' };
   }
@@ -5981,12 +5968,6 @@ function eventFieldsEditor(ctx, name, event) {
 
   return h('div', { class: 'fields' },
     rows.length ? rows : h('div', { class: 'empty' }, 'Carries nothing yet.'),
-    ...EVENT_METADATA.map((m) => h('div', { class: 'field envelope' },
-      h('span', { class: 'nm' }, propertyWords(m.name)),
-      h('span', { class: 'muted tiny' }, '← the store'),
-      h('span', { class: 'grow', style: 'flex:1' }),
-      h('span', { class: 'chip' }, readable(typeLabel(m))),
-      h('span', { class: 'muted tiny' }, 'always carried'))),
     adderSlot('evown:' + name, null, '+ field', () => propertyAdder(ctx, {
       label: '+ Add field',
       onAdd: (property) => patch('event-definition', name, (b) => b.properties.push(property)),
@@ -6444,31 +6425,14 @@ function scenarioEditor(ctx) {
   const command = ctx['command-definitions'][body.command];
   const eventNames = Object.keys(ctx['event-definitions']).sort();
 
-  // Each Given event lands one second after the one before it, so a
-  // projection folding the envelope sees them in the order they are
-  // written. Any of them can be overwritten; none of them may be blank.
-  const nextInstant = () => {
-    const last = (body.given || []).reduce((max, s) => Math.max(max, s.recordedAt || 0), 0);
-    return last + 1;
-  };
-
   const givenRows = (body.given || []).map((step, index) => {
     const definition = ctx['event-definitions'][step.event] || {};
     return h('div', { class: 'card sc-step' },
       h('div', { class: 'row' },
         pick(eventNames.map((n) => [n, readable(n)]), step.event, (v) => patchScenarioDraft((b) => {
-          b.given[index] = { event: v, data: {}, recordedAt: step.recordedAt };
+          b.given[index] = { event: v, data: {} };
         })),
         h('span', { class: 'grow' }),
-        h('span', { class: 'muted tiny' }, 'at'),
-        h('input', {
-          class: 'vin tiny-in', value: step.recordedAt,
-          title: 'The instant this was recorded, in whole seconds. A projection may fold it.',
-          onchange: (e) => patchScenarioDraft((b) => {
-            const n = Number(e.target.value);
-            b.given[index].recordedAt = Number.isInteger(n) ? n : step.recordedAt;
-          }),
-        }),
         h('button', {
           class: 'btn tiny danger',
           onclick: () => patchScenarioDraft((b) => { b.given.splice(index, 1); }),
@@ -6488,8 +6452,7 @@ function scenarioEditor(ctx) {
       h('button', {
         class: 'btn tiny',
         onclick: () => patchScenarioDraft((b) => {
-          b.given = [...(b.given || []),
-            { event: eventNames[0], data: {}, recordedAt: nextInstant() }];
+          b.given = [...(b.given || []), { event: eventNames[0], data: {} }];
         }),
       }, '+ an event that had happened')),
 
@@ -6757,28 +6720,14 @@ function propertyScenarioEditor(ctx) {
   const entity = ctx['entity-definitions'][body.entity];
   const eventNames = Object.keys(ctx['event-definitions']).sort();
 
-  const nextInstant = () => {
-    const last = (body.given || []).reduce((max, s) => Math.max(max, s.recordedAt || 0), 0);
-    return last + 1;
-  };
-
   const givenRows = (body.given || []).map((step, index) => {
     const definition = ctx['event-definitions'][step.event] || {};
     return h('div', { class: 'card sc-step' },
       h('div', { class: 'row' },
         pick(eventNames.map((n) => [n, readable(n)]), step.event, (v) => patchPropertyScenarioDraft((b) => {
-          b.given[index] = { event: v, data: {}, recordedAt: step.recordedAt };
+          b.given[index] = { event: v, data: {} };
         })),
         h('span', { class: 'grow' }),
-        h('span', { class: 'muted tiny' }, 'at'),
-        h('input', {
-          class: 'vin tiny-in', value: step.recordedAt,
-          title: 'The instant this was recorded, in whole seconds. A projection may fold it.',
-          onchange: (e) => patchPropertyScenarioDraft((b) => {
-            const n = Number(e.target.value);
-            b.given[index].recordedAt = Number.isInteger(n) ? n : step.recordedAt;
-          }),
-        }),
         h('button', {
           class: 'btn tiny danger',
           onclick: () => patchPropertyScenarioDraft((b) => { b.given.splice(index, 1); }),
@@ -6809,8 +6758,7 @@ function propertyScenarioEditor(ctx) {
       h('button', {
         class: 'btn tiny',
         onclick: () => patchPropertyScenarioDraft((b) => {
-          b.given = [...(b.given || []),
-            { event: eventNames[0], data: {}, recordedAt: nextInstant() }];
+          b.given = [...(b.given || []), { event: eventNames[0], data: {} }];
         }),
       }, '+ an event that had happened')),
 
@@ -6928,7 +6876,6 @@ const session = {
   steps: [],      // one per command that went through: { command, args, from, to }
   at: null,       // how many events are visible; null means all of them
   pinned: [],     // 'Course:c1' — instances shown wherever you are
-  clock: 1000,    // the instant the next event is recorded at
 };
 
 function sessionReset() {
@@ -6936,7 +6883,6 @@ function sessionReset() {
   session.steps = [];
   session.at = null;
   session.pinned = [];
-  session.clock = 1000;
 }
 
 function sessionPosition() {
@@ -6958,11 +6904,11 @@ function sessionStepAt(position) {
 }
 
 // Drives a command against everything recorded so far. A refusal
-// changes nothing — not the log, not the clock, not the position.
+// changes nothing — not the log, not the position.
 function sessionRun(ctx, commandName, args) {
   let result;
   try {
-    result = evaluateCommand(ctx, session.log, commandName, args, { recordedAt: session.clock });
+    result = evaluateCommand(ctx, session.log, commandName, args);
   } catch (error) {
     if (error instanceof EvaluationError) return toast(error.message, true);
     throw error;
@@ -6974,7 +6920,6 @@ function sessionRun(ctx, commandName, args) {
   const from = session.log.length;
   session.log.push(...result.events);
   session.steps.push({ command: commandName, args, from, to: session.log.length });
-  session.clock += 1;
   session.at = null;
   state.sandboxDraft = null;
   render();

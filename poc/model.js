@@ -9,15 +9,8 @@
 // Loaded as a classic script (not a module) so the playground opens
 // straight from the filesystem without a server.
 //
-// Two things here are not in the declarative language proper and are
+// One thing here is not in the declarative language proper and is
 // worth finding before reading anything else.
-//
-// The **event envelope**: every event carries metadata the modeller
-// does not author and cannot remove — currently `recordedAt`, the
-// instant it was appended. A handler may read it; a condition may not.
-// A decision that consulted the clock would replay to a different
-// verdict than it reached, so the envelope stays on the projecting
-// side of the line and never reaches a boundary.
 //
 // **Scripted projections**: a property or a projection may replace its
 // declarative handlers with code, one body per event type. This is the
@@ -51,8 +44,11 @@
 // v10 merged identifier types into custom types: `isTag` now lives on
 // a custom type directly, an entity's derived identifier is an
 // ordinary custom type created alongside it, and there is no longer a
-// separate identifier-type-definition kind.
-const EVENT_LOG_KEY = 'dcb-playground:events:v11';
+// separate identifier-type-definition kind. v12 dropped the `timestamp`
+// type and the event envelope (`recordedAt`) entirely: no definition
+// referenced them structurally, but the envelope's asymmetry machinery
+// and the required instant on every Given step are gone.
+const EVENT_LOG_KEY = 'dcb-playground:events:v12';
 
 const DEF_KINDS = [
   'entity-definition',
@@ -106,27 +102,8 @@ const ID_KEYED_KINDS = ['scenario-definition', 'property-scenario-definition'];
 
 function isIdKeyed(kind) { return ID_KEYED_KINDS.includes(kind); }
 
-// `timestamp` is an instant in whole seconds since the epoch. It is
-// built in rather than a custom type because the tooling has to know a
-// clock reading when it sees one — to type the envelope's `recordedAt`,
-// and to offer date affordances over what is otherwise an anonymous
-// integer. A context-declared `Timestamp` would make that recognition
-// hang on a name the modeller happened to choose.
-const SIMPLE_TYPES = ['boolean', 'integer', 'string', 'timestamp'];
+const SIMPLE_TYPES = ['boolean', 'integer', 'string'];
 
-// The envelope. Every event carries these alongside its payload,
-// supplied by the store rather than by whatever emitted it, and no
-// definition declares or removes them.
-//
-// A handler may read one; a condition may not. That asymmetry is the
-// whole point: a projection that consults the clock still replays to
-// the same state, because it reads the instant an event *was written*.
-// A condition consulting the clock would decide differently on replay
-// than it decided originally, which is the one thing a boundary may
-// never do.
-const EVENT_METADATA = [
-  { name: 'recordedAt', propertyType: 'timestamp' },
-];
 // Nothing below enforces either of these: a lifecycle is an ordinary
 // enum custom type plus an ordinary property, like any other. They
 // exist purely as the convention the "new entity" scaffold offers —
@@ -695,7 +672,6 @@ function operandSource(operand) {
   if (operand.alias !== undefined) return 'alias-property';
   if (operand.enumMember !== undefined) return 'enum-member';
   if (operand.eventProperty !== undefined) return 'event-property';
-  if (operand.eventMetadata !== undefined) return 'event-metadata';
   if (operand.currentValue !== undefined) return 'current-value';
   if (operand.successor !== undefined) return 'successor';
   return 'static';
@@ -713,7 +689,6 @@ function operandText(operand) {
         : (operand.alias || '?');
     case 'enum-member': return operand.enumMember || '?';
     case 'event-property': return `event.${operand.eventProperty || '?'}`;
-    case 'event-metadata': return `event.metadata.${operand.eventMetadata || '?'}`;
     case 'current-value': return 'current';
     case 'successor': return `next(${operandText(operand.successor)})`;
     default:
@@ -847,8 +822,7 @@ function argumentsExpected(ctx, body, binding) {
   return out;
 }
 
-// The operations that make sense for a property's type. `timestamp` is
-// `set`-only — an instant has no meaningful increment here.
+// The operations that make sense for a property's type.
 function operationsFor(ctx, property) {
   if (property.isList) return ['set', 'append', 'remove'];
   if (property.propertyType === 'integer') return ['set', 'increment', 'decrement'];
@@ -958,7 +932,7 @@ function predicatesForType(resolved) {
       'contains', 'containsAny', 'isEmpty', 'isNotEmpty'];
   }
   if (resolved.propertyType === 'boolean') return ['equals', 'isTrue', 'isFalse'];
-  if (resolved.propertyType === 'integer' || resolved.propertyType === 'timestamp') {
+  if (resolved.propertyType === 'integer') {
     return ['equals', 'lessThan', 'lessThanOrEquals', 'greaterThan', 'greaterThanOrEquals'];
   }
   if (resolved.propertyType === 'string') {
@@ -1516,15 +1490,6 @@ function validateHandlers(ctx, label, target, handlers) {
           `Handler on ${label} reads "${leaf.eventProperty}", which "${handler.event}" does not carry.`
         );
       }
-    }
-    // The envelope is the same on every event, so this checks a name
-    // against the store's vocabulary rather than the event's.
-    if (operandSource(leaf) === 'event-metadata'
-        && !EVENT_METADATA.some((m) => m.name === leaf.eventMetadata)) {
-      throw new DomainError(
-        `Handler on ${label} reads "event.metadata.${leaf.eventMetadata}", which is not envelope ` +
-        `metadata (${EVENT_METADATA.map((m) => m.name).join(', ')}).`
-      );
     }
     if (members && operandSource(leaf) === 'enum-member'
         && !members.includes(leaf.enumMember)) {
@@ -2259,12 +2224,6 @@ function validateScenarioBody(ctx, body) {
   body.given.forEach((step, index) => {
     const where = `Given step ${index + 1}`;
     if (!step || !step.event) throw new DomainError(`${where} names no event.`);
-    if (!Number.isInteger(step.recordedAt)) {
-      throw new DomainError(
-        `${where} has no instant it was recorded at. Every Given event carries one, or a ` +
-        'projection that reads the envelope would replay differently every time.'
-      );
-    }
     checkPayload(step.data, (ctx['event-definitions'][step.event] || {}).properties,
       `${where} ("${step.event}")`);
   });
@@ -2330,12 +2289,6 @@ function validatePropertyScenarioBody(ctx, body) {
   body.given.forEach((step, index) => {
     const where = `Given step ${index + 1}`;
     if (!step || !step.event) throw new DomainError(`${where} names no event.`);
-    if (!Number.isInteger(step.recordedAt)) {
-      throw new DomainError(
-        `${where} has no instant it was recorded at. Every Given event carries one, or a ` +
-        'projection that reads the envelope would replay differently every time.'
-      );
-    }
     checkPayload(step.data, (ctx['event-definitions'][step.event] || {}).properties,
       `${where} ("${step.event}")`);
   });
@@ -3058,7 +3011,7 @@ function defaultInitialValue(ctx, property) {
   const members = enumMembersFor(ctx, property.propertyType);
   if (members) return { enumMember: members[0] || '' };
   if (property.isOptional) return null;
-  if (property.propertyType === 'integer' || property.propertyType === 'timestamp') return 0;
+  if (property.propertyType === 'integer') return 0;
   if (property.propertyType === 'boolean') return false;
   return '';
 }
@@ -3870,101 +3823,6 @@ function seedProductPricing(ctxId) {
   });
 }
 
-// Layer 2 of the pricing model, and the one example in this playground
-// that a declaration cannot reach: a repriced product honours what it
-// used to cost for an hour, so a customer quoted the old price can
-// still check out at it.
-//
-// Every declarative handler answers "what does this event do to the
-// value" without looking at anything else. This rule needs more: which
-// prices are still valid depends on *when* each was set relative to an
-// instant the command supplies, and the price in force an hour ago
-// counts even though the event that set it may be a year old. No
-// operation in the vocabulary carries that, and inventing one — a
-// retention window declared on the property — bought a single example
-// three concepts and a typing exception. So `validPrices` is scripted:
-// one code body per event type, keeping whatever state it needs.
-//
-// What the script keeps and what it exposes are different things.
-// `lastValidOldPrice` is bookkeeping — the newest price set *before*
-// the window opened, which is the one still in force when it did.
-// `validNewPrices` is the answer. `exposes` names the second, so a
-// condition reads a plain `Money[]` and never sees the accumulator.
-//
-// Time enters as an argument, never as an ambient clock. `OrderProducts`
-// is handed `now` and passes it to the binding; the code compares it
-// against `event.metadata.recordedAt`, which is the instant the event
-// was written and does not move. The same events and the same `now`
-// therefore always reach the same verdict, which is what makes the
-// decision replayable — and it is why the envelope is readable here
-// and not in a condition.
-//
-// `currentPrice` stays exactly as it was, declared, handling the same
-// two events with no window — it is what a catalogue page shows and
-// what ChangeProductPrice compares against. Two properties over one
-// history, answering two different questions, and the derived DCB is
-// unchanged by one of them being scripted: same tag, same event types,
-// still visible on the page.
-function seedAddPriceGracePeriod(ctxId) {
-  // One hour, in seconds. The grace period lives in the code because
-  // the code is the only part of this model that can do arithmetic —
-  // making the caller pre-compute a cutoff would move the rule this
-  // example exists to show out of the example.
-  const GRACE_PERIOD = 3600;
-
-  const keepIfInsideWindow = (priceField) => `
-// A price set inside the window is valid, and so is the one that was
-// in force when the window opened — keep the latter until something
-// newer displaces it.
-event.metadata.recordedAt >= args.now - ${GRACE_PERIOD}
-  ? {
-      lastValidOldPrice: state.lastValidOldPrice,
-      validNewPrices: [...state.validNewPrices, event.data.${priceField}],
-    }
-  : {
-      lastValidOldPrice: event.data.${priceField},
-      validNewPrices: state.validNewPrices,
-    }
-`.trim();
-
-  seedPatch('entity-definition', ctxId, 'Product', (product) => {
-    product.properties.push({
-      name: 'validPrices',
-      // The exposed reading, and the only thing a condition sees: the
-      // prices this product will still accept.
-      propertyType: 'Money',
-      isList: true,
-      script: {
-        initialState: { lastValidOldPrice: null, validNewPrices: [] },
-        exposes: 'validNewPrices',
-        arguments: [{ name: 'now', propertyType: 'timestamp' }],
-      },
-      handlers: [
-        { event: 'ProductDefined', code: keepIfInsideWindow('price') },
-        { event: 'ProductPriceChanged', code: keepIfInsideWindow('newPrice') },
-      ],
-    });
-  });
-
-  seedPatch('command-definition', ctxId, 'OrderProducts', (order) => {
-    order.properties.push(seedProp('now', 'timestamp'));
-    // Every product in the cart is read at one instant, so a cart that
-    // straddles the expiry of a price resolves one way for all of it.
-    order.boundary.find((binding) => binding.alias === 'product').arguments = {
-      now: seedParam('now'),
-    };
-    // The zipped check survives intact: still product[i] against
-    // items[i].price, still one fan root. Only the arity moves —
-    // `validPrices` is a list per product, `items.price` a single value
-    // per line — so `equals` becomes `contains`.
-    const priceCheck = order.conditions.find((condition) =>
-      condition.leftHandSide.alias === 'product'
-      && condition.leftHandSide.property === 'currentPrice');
-    priceCheck.leftHandSide = seedOf('product', 'validPrices');
-    priceCheck.predicate = 'contains';
-  });
-}
-
 const PREDEFINED_CONTEXTS = [
   {
     name: 'Course Example (simple)',
@@ -4002,15 +3860,6 @@ const PREDEFINED_CONTEXTS = [
       + 'to the customer; the boundary fans out over the lines and checks each price against '
       + 'the product it belongs to.',
     build: (ctxId) => { seedProductPricing(ctxId); },
-  },
-  {
-    name: 'Dynamic Product Price (with grace period)',
-    slug: 'pricing-grace-period',
-    description: 'A repriced product honours its old price for an hour — the one rule here no '
-      + 'declaration can express, so the property is scripted. The command is handed the instant '
-      + 'to read at, the code compares it against when each event was recorded, and the derived '
-      + 'boundary looks exactly as it would without a script.',
-    build: (ctxId) => { seedProductPricing(ctxId); seedAddPriceGracePeriod(ctxId); },
   },
 ];
 

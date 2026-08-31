@@ -1,7 +1,7 @@
 // ============================================================
 // DCB Playground — evaluation tests.
 //
-// Exercises `evaluate.js` against the six contexts the playground
+// Exercises `evaluate.js` against the five contexts the playground
 // ships, because those are the models the language was designed
 // against: a command driven here is the command a modeller would drive
 // in the interface, and a rule that fails here is the rule they would
@@ -63,12 +63,46 @@ const {
 } = sandbox;
 
 // A fresh, empty context — for the ad-hoc identifier-type fixtures
-// below, which want a minimal model rather than one of the six shipped
+// below, which want a minimal model rather than one of the five shipped
 // contexts.
 function openBlank(name) {
   store.clear();
   const id = createDcbContext(name || 'Ad-hoc');
   return { id, ctx: () => sandbox.projectState()[id] };
+}
+
+// A fresh context with a scripted entity property — for scripted-content
+// tests (script round-tripping, `envelopeHasScript`, `scenarioTouchesScript`)
+// that need a fixture no PREDEFINED_CONTEXTS example carries. `Tick` reads
+// the script through its boundary; `Ping` publishes the same event without
+// reading it, so both sides of "does this command touch a script" exist.
+function openScripted() {
+  const { id, ctx } = openBlank('Scripted');
+  addDefinition('entity-definition', id, 'Counter', { properties: [] });
+  addDefinition('event-definition', id, 'Ticked', {
+    properties: [{ name: 'counterId', propertyType: 'CounterId', isOptional: false, isList: false }],
+  });
+  updateDefinition('entity-definition', id, 'Counter', {
+    properties: [{
+      name: 'total',
+      propertyType: 'integer',
+      script: { initialState: 0, arguments: [] },
+      handlers: [{ event: 'Ticked', code: '(state || 0) + 1' }],
+    }],
+  });
+  addDefinition('command-definition', id, 'Tick', {
+    properties: [{ name: 'counterId', propertyType: 'CounterId', isOptional: false, isList: false }],
+    boundary: [{ alias: 'counter', entity: 'Counter', id: { parameterName: 'counterId' } }],
+    conditions: [{ leftHandSide: { alias: 'counter', property: 'total' }, predicate: 'lessThan', rightHandSide: 3 }],
+    publishes: [{ name: 'Ticked', parameters: { counterId: { parameterName: 'counterId' } } }],
+  });
+  addDefinition('command-definition', id, 'Ping', {
+    properties: [{ name: 'counterId', propertyType: 'CounterId', isOptional: false, isList: false }],
+    boundary: [{ alias: 'counter', entity: 'Counter', id: { parameterName: 'counterId' } }],
+    conditions: [],
+    publishes: [{ name: 'Ticked', parameters: { counterId: { parameterName: 'counterId' } } }],
+  });
+  return { id, ctx };
 }
 
 let passed = 0;
@@ -91,8 +125,8 @@ function eq(actual, expected, what) {
 
 // Drives a command and appends what it published, so a fixture is built
 // the way the sandbox will build one.
-function drive(ctx, log, command, args, at) {
-  const result = evaluateCommand(ctx, log, command, args, { recordedAt: at || 0 });
+function drive(ctx, log, command, args) {
+  const result = evaluateCommand(ctx, log, command, args);
   if (result.outcome !== 'published') {
     throw new Error(`${command} was refused by ${result.failedRule.text}`);
   }
@@ -109,7 +143,7 @@ function drive(ctx, log, command, args, at) {
   check('define a course, then a student, then subscribe', () => {
     const log = [];
     drive(ctx, log, 'DefineCourse', { courseId: 'c1', capacity: 2 });
-    eq(log[0], { type: 'CourseDefined', data: { courseId: 'c1', capacity: 2 }, metadata: { recordedAt: 0 } });
+    eq(log[0], { type: 'CourseDefined', data: { courseId: 'c1', capacity: 2 } });
     drive(ctx, log, 'RegisterStudent', { studentId: 's1' });
     drive(ctx, log, 'SubscribeStudentToCourse', { courseId: 'c1', studentId: 's1' });
     eq(log.length, 3, 'log length');
@@ -339,77 +373,6 @@ function drive(ctx, log, command, args, at) {
 }
 
 // ---------------------------------------------------------------
-// 6. A scripted property: the grace period on repricing.
-// ---------------------------------------------------------------
-{
-  const ctx = build(5);
-  const HOUR = 3600;
-
-  const setUp = () => {
-    const log = [];
-    drive(ctx, log, 'DefineProduct', { productId: 'p1', price: 100 }, 1000);
-    return log;
-  };
-
-  check('the script exposes only the prices a condition may see', () => {
-    const log = setUp();
-    eq(foldEntityProperty(ctx, log, 'Product', 'validPrices', 'p1', { now: 1000 }), [100], 'prices');
-  });
-
-  check('a repriced product still honours the old price inside the hour', () => {
-    const log = setUp();
-    drive(ctx, log, 'ChangeProductPrice', { productId: 'p1', newPrice: 120 }, 1000 + HOUR / 2);
-    const now = 1000 + HOUR / 2 + 10;
-    eq(foldEntityProperty(ctx, log, 'Product', 'validPrices', 'p1', { now }), [100, 120], 'both');
-    drive(ctx, log, 'OrderProducts', { orderId: 'o1', now, items: [{ productId: 'p1', price: 100 }] });
-  });
-
-  check('the old price stops being honoured once the window passes it', () => {
-    const log = setUp();
-    drive(ctx, log, 'ChangeProductPrice', { productId: 'p1', newPrice: 120 }, 1000 + HOUR / 2);
-    // The window still covers the repricing, so only the new price is
-    // left: 100 was set before the window opened. The comparison is
-    // `>=`, so one second past the hour is what puts it outside.
-    const now = 1000 + HOUR + 1;
-    eq(foldEntityProperty(ctx, log, 'Product', 'validPrices', 'p1', { now }), [120], 'new only');
-    const result = evaluateCommand(ctx, log, 'OrderProducts',
-      { orderId: 'o1', now, items: [{ productId: 'p1', price: 100 }] });
-    eq(result.outcome, 'rejected', 'outcome');
-  });
-
-  // Documents a defect in the *seeded model*, not in the evaluator.
-  // `lastValidOldPrice` is accumulated exactly as the script's comment
-  // describes, but `exposes: 'validNewPrices'` never surfaces it — so
-  // once the window has moved past every price event the product has no
-  // valid price at all and can never be ordered again. Kept as a test
-  // so that fixing the seed announces itself here.
-  check('KNOWN SEED DEFECT: a product goes unorderable an hour after its last repricing', () => {
-    const log = setUp();
-    drive(ctx, log, 'ChangeProductPrice', { productId: 'p1', newPrice: 120 }, 1000 + HOUR / 2);
-    const now = 1000 + HOUR * 3;
-    eq(foldEntityProperty(ctx, log, 'Product', 'validPrices', 'p1', { now }), [], 'nothing valid');
-    for (const price of [100, 120]) {
-      const result = evaluateCommand(ctx, log, 'OrderProducts',
-        { orderId: 'o1', now, items: [{ productId: 'p1', price }] });
-      eq(result.outcome, 'rejected', `ordering at ${price}`);
-    }
-  });
-
-  check('the instant is read once for the whole cart', () => {
-    const log = [];
-    drive(ctx, log, 'DefineProduct', { productId: 'p1', price: 100 }, 1000);
-    drive(ctx, log, 'DefineProduct', { productId: 'p2', price: 200 }, 1000);
-    drive(ctx, log, 'ChangeProductPrice', { productId: 'p1', newPrice: 110 }, 1000 + HOUR / 2);
-    drive(ctx, log, 'ChangeProductPrice', { productId: 'p2', newPrice: 210 }, 1000 + HOUR / 2);
-    const now = 1000 + HOUR / 2 + 10;
-    drive(ctx, log, 'OrderProducts', {
-      orderId: 'o1', now,
-      items: [{ productId: 'p1', price: 100 }, { productId: 'p2', price: 210 }],
-    }, now);
-  });
-}
-
-// ---------------------------------------------------------------
 // 7. Broken inputs are not rejections.
 // ---------------------------------------------------------------
 {
@@ -531,8 +494,8 @@ function drive(ctx, log, command, args, at) {
   const scenarioBody = () => ({
     command: 'SubscribeStudentToCourse',
     given: [
-      { event: 'CourseDefined', data: { courseId: 'c1', capacity: 2 }, recordedAt: 100 },
-      { event: 'StudentRegistered', data: { studentId: 's1' }, recordedAt: 200 },
+      { event: 'CourseDefined', data: { courseId: 'c1', capacity: 2 } },
+      { event: 'StudentRegistered', data: { studentId: 's1' } },
     ],
     when: { arguments: { courseId: 'c1', studentId: 's1' } },
   });
@@ -652,7 +615,7 @@ function drive(ctx, log, command, args, at) {
     const key = store_(id, ctx(), {
       command: 'OrderProducts',
       given: [
-        { event: 'ProductDefined', data: { productId: 'p1', price: 100 }, recordedAt: 10 },
+        { event: 'ProductDefined', data: { productId: 'p1', price: 100 } },
       ],
       when: { arguments: { orderId: 'o1', items: [{ productId: 'p1', price: 100 }] } },
     });
@@ -677,19 +640,6 @@ function drive(ctx, log, command, args, at) {
     eq(scenarioName(ctx()['scenario-definitions'][key]), 'the happy path', 'renamed by update');
   });
 
-  check('a Given event without an instant is refused at save', () => {
-    const { id, ctx } = open_(0);
-    const body = scenarioBody();
-    body.then = deriveThen(ctx(), body);
-    delete body.given[0].recordedAt;
-    try {
-      addDefinition('scenario-definition', id, generateId(), body);
-      throw new Error('did not refuse');
-    } catch (error) {
-      if (!/instant it was recorded at/.test(error.message)) throw error;
-    }
-  });
-
   check('a payload with a property the event does not have is refused', () => {
     const { id, ctx } = open_(0);
     const body = scenarioBody();
@@ -706,9 +656,9 @@ function drive(ctx, log, command, args, at) {
   check('a scenario knows whether running it would execute a script', () => {
     const plain = build(0);
     eq(scenarioTouchesScript(plain, { command: 'SubscribeStudentToCourse' }), false, 'declared only');
-    const scripted = build(5);
-    eq(scenarioTouchesScript(scripted, { command: 'OrderProducts' }), true, 'reads a scripted property');
-    eq(scenarioTouchesScript(scripted, { command: 'DefineProduct' }), false, 'does not');
+    const scripted = openScripted().ctx();
+    eq(scenarioTouchesScript(scripted, { command: 'Tick' }), true, 'reads a scripted property');
+    eq(scenarioTouchesScript(scripted, { command: 'Ping' }), false, 'does not');
   });
 }
 
@@ -1070,12 +1020,11 @@ function drive(ctx, log, command, args, at) {
 }
 
 {
-  // Dynamic Product Price (with grace period) has a scripted entity
-  // property — `Product.validPrices`. A scripted property cannot go
-  // through the bare pass with empty handlers the way a declared one
-  // can (`validateScript` requires at least one), so it has to be left
-  // out of the bare entity entirely and added whole once events exist.
-  const original = build(5);
+  // A scripted entity property cannot go through the bare pass with
+  // empty handlers the way a declared one can (`validateScript`
+  // requires at least one), so it has to be left out of the bare
+  // entity entirely and added whole once events exist.
+  const original = openScripted().ctx();
   const importedId = importContextFromEnvelope(buildShareEnvelope(original, []));
   const imported = sandbox.projectState()[importedId];
 
@@ -1085,14 +1034,14 @@ function drive(ctx, log, command, args, at) {
 
   check('the imported scripted property still folds', () => {
     const log = [];
-    drive(imported, log, 'DefineProduct', { productId: 'p1', price: 500 }, 0);
-    eq(foldEntityProperty(imported, log, 'Product', 'validPrices', 'p1', { now: 1000 }), [500], 'one valid price so far');
+    drive(imported, log, 'Tick', { counterId: 'x1' });
+    eq(foldEntityProperty(imported, log, 'Counter', 'total', 'x1'), 1, 'one tick folded');
   });
 }
 
 {
   const plain = build(4);
-  const scripted = build(5); // Dynamic Product Price (with grace period) — a scripted entity property
+  const scripted = openScripted().ctx(); // a scripted entity property
 
   check('envelopeHasScript is false for a context with no scripts', () => {
     eq(envelopeHasScript(buildShareEnvelope(plain, [])), false, 'plain context');
