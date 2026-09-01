@@ -510,6 +510,14 @@
 
   .splash-footer { margin-top: 56px; text-align: center; font-size: 12px; color: var(--muted); }
 
+  /* Site-wide, unlike .splash-footer above — it sits after .layout in
+     the document so it closes the page whether the splash or a loaded
+     model is what filled it. */
+  .site-footer {
+    text-align: center; font-size: 11.5px; color: var(--muted);
+    padding: 16px 18px; border-top: 1px solid var(--border);
+  }
+
   /* ---------- the command, kept in view ----------
      Once the header has scrolled under its own sticky position, the
      parts of it that are not the answer to "which one" stand down. */
@@ -774,6 +782,12 @@
   <aside class="rail" id="rail"></aside>
   <main class="slice" id="main"></main>
 </div>
+<footer class="site-footer">
+  © <span id="footer-year"></span> – Except where otherwise noted, content on this site is licensed under a
+  <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener">Creative Commons
+  Attribution-ShareAlike 4.0 International</a> license. ·
+  <a href="https://dcb.events" target="_blank" rel="noopener">dcb.events ↗</a>
+</footer>
 <div id="modal-host"></div>
 <div id="palette-host"></div>
 
@@ -7671,6 +7685,12 @@ function syncTopbarHeight() {
 }
 window.addEventListener('resize', syncTopbarHeight);
 
+// Set once at load — a copyright year has no reason to change again
+// before the next reload, unlike the topbar height above.
+function setFooterYear() {
+  document.getElementById('footer-year').textContent = new Date().getFullYear();
+}
+
 // The rail drawer closes itself once a link in it is actually followed
 // — on a narrow screen there is no other way back to the content it
 // was covering. Delegated once, on the rail's own element (which
@@ -7687,6 +7707,7 @@ document.getElementById('rail').addEventListener('click', (e) => {
 async function boot() {
   render();
   syncTopbarHeight();
+  setFooterYear();
   const hash = location.hash;
   if (!hash.startsWith('#model=')) return;
   history.replaceState(null, '', location.pathname + location.search);
