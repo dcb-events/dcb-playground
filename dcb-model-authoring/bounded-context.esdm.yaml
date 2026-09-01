@@ -1,10 +1,10 @@
 apiVersion: schema.esdm.io/core/v1
 kind: bounded-context
-name: dcb-context-authoring
+name: dcb-model-authoring
 description: |
   The editing surface of the playground. Modelers create, edit, rename
-  and delete DCB Contexts and the six kinds of definitions inside
-  them; viewers inspect a context without changing it.
+  and delete DCB Models and the six kinds of definitions inside
+  them; viewers inspect a model without changing it.
 
   Scenarios are one of those six rather than a bounded context of their
   own. A scenario names the command it exercises and every event its
@@ -12,21 +12,31 @@ description: |
   by the same rename machinery — a boundary drawn between them would
   have to be crossed by every rename, which is a boundary in name only.
   The sandbox is the exception that proves it: nothing it produces is
-  stored, so nothing in it is part of this context.
+  stored, so nothing in it is part of this model.
 scope:
   domain: dcb-playground
 ubiquitousLanguage:
-  - term: DCB Context
+  - term: DCB Model
     definition: |
       The complete authoring artifact a modeler builds — a named
       container of custom-type, event, entity, projection and command
       definitions describing one DCB-based system. Identified by a
       generated id; its name is a mutable display attribute.
+    avoid:
+      - term: DCB Context
+        reason: |
+          What this was called until the interface and the language were
+          reconciled: every word a modeler ever read said "model", and
+          only the code said "context". The qualifier was also doing all
+          the work — an unqualified "context" reads as Bounded Context
+          to exactly the audience this is for, and a DCB Model is not
+          one. A model is *valid within* a bounded context; it does not
+          draw one.
   - term: Entity Definition
     definition: |
       A modeled thing with an identity, a lifecycle status and a set of
-      projected properties. The organising unit of a DCB Context:
-      every projection in the context belongs to exactly one entity.
+      projected properties. The organising unit of a DCB Model:
+      every projection in the model belongs to exactly one entity.
       References event definitions (through its property handlers),
       custom-type definitions and other entities (through its property
       types); referenced in turn by event definitions, command
@@ -112,7 +122,7 @@ ubiquitousLanguage:
   - term: Feature
     definition: |
       A named group of commands — "Course management", "Checkout" — used
-      to organise a context for the people reading it.
+      to organise a model for the people reading it.
 
       The one thing a command carries that the modelled system does not
       read: no query, boundary, condition or tag depends on it. It is
@@ -123,7 +133,7 @@ ubiquitousLanguage:
       - term: Bounded Context
         reason: |
           A feature groups commands for presentation inside one DCB
-          Context. It draws no boundary, owns no language and has no
+          Model. It draws no boundary, owns no language and has no
           consistency meaning — borrowing the term would imply all
           three.
       - term: Module
@@ -132,7 +142,7 @@ ubiquitousLanguage:
           commands and nothing more.
   - term: Event Definition
     definition: |
-      A domain event modeled inside a DCB Context. Its property types
+      A domain event modeled inside a DCB Model. Its property types
       determine both its payload and its tags. Referenced by entity
       definitions (a property handler names the event it folds), by
       command definitions (in their `publishes` lists) and by
@@ -149,7 +159,7 @@ ubiquitousLanguage:
       entity's derived identifier, and the arguments a command supplies
       for them are the tags of the projection's query. Declare none and
       the query carries no tag at all — which is what a global
-      numbering is, and the only tagless query in a DCB Context.
+      numbering is, and the only tagless query in a DCB Model.
 
       Referenced only by command definitions, through the boundary
       bindings that read it; derives no type, so its name occupies a
@@ -354,11 +364,11 @@ ubiquitousLanguage:
     definition: |
       A name-based pointer from one definition's body to another (e.g.
       an entity's property handler naming the event definition it
-      folds). References resolve within the same DCB Context.
+      folds). References resolve within the same DCB Model.
   - term: Modeler
     definition: The human author who issues all editing commands.
   - term: Viewer
-    definition: The human consumer who reads, but does not change, a DCB Context.
+    definition: The human consumer who reads, but does not change, a DCB Model.
     avoid:
       - term: Reader
         reason: |

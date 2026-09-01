@@ -1,0 +1,256 @@
+# Read side: a single read-model materialising every DCB Model
+# with its full set of definitions, and two queries — one to list
+# all models (id + name) and one to fetch a single model's
+# detail. Both queries are open to the modeler and the viewer.
+#
+# One collection per definition kind, all five shaped alike: the
+# read model stays indifferent to what a `body` contains.
+
+apiVersion: schema.esdm.io/core/v1
+kind: read-model
+name: dcb-model-overview
+description: |
+  One record per currently-live DCB Model, carrying the model's
+  display name and the five definition collections (custom-type,
+  event, entity, projection, command) in their latest state.
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-model-authoring
+paradigm: document
+projections:
+  - boundedContext: dcb-model-authoring
+    event: dcb-model-created
+    rule: Insert a new record keyed by `dcb-model-id` with the carried `name` and five empty definition collections.
+  - boundedContext: dcb-model-authoring
+    event: dcb-model-renamed
+    rule: Update the matching record's `name` to the carried value.
+  - boundedContext: dcb-model-authoring
+    event: dcb-model-deleted
+    rule: Drop the matching record from the materialised collection.
+  - boundedContext: dcb-model-authoring
+    event: custom-type-definition-added
+    rule: Append the new definition (`name`, `body`) to the matching model's `custom-type-definitions` collection.
+  - boundedContext: dcb-model-authoring
+    event: custom-type-definition-updated
+    rule: Replace the `body` of the entry identified by `name` in the matching model's `custom-type-definitions` collection.
+  - boundedContext: dcb-model-authoring
+    event: custom-type-definition-renamed
+    rule: Replace the `name` of the entry identified by `previous-name` with the carried `name` in the matching model's `custom-type-definitions` collection.
+  - boundedContext: dcb-model-authoring
+    event: custom-type-definition-removed
+    rule: Drop the entry identified by `name` from the matching model's `custom-type-definitions` collection.
+  - boundedContext: dcb-model-authoring
+    event: event-definition-added
+    rule: Append the new definition to the matching model's `event-definitions` collection.
+  - boundedContext: dcb-model-authoring
+    event: event-definition-updated
+    rule: Replace the `body` of the entry identified by `name` in the matching model's `event-definitions` collection.
+  - boundedContext: dcb-model-authoring
+    event: event-definition-renamed
+    rule: Replace the `name` of the entry identified by `previous-name` with the carried `name` in the matching model's `event-definitions` collection.
+  - boundedContext: dcb-model-authoring
+    event: event-definition-removed
+    rule: Drop the entry identified by `name` from the matching model's `event-definitions` collection.
+  - boundedContext: dcb-model-authoring
+    event: entity-definition-added
+    rule: Append the new definition to the matching model's `entity-definitions` collection.
+  - boundedContext: dcb-model-authoring
+    event: entity-definition-updated
+    rule: Replace the `body` of the entry identified by `name` in the matching model's `entity-definitions` collection.
+  - boundedContext: dcb-model-authoring
+    event: entity-definition-renamed
+    rule: Replace the `name` of the entry identified by `previous-name` with the carried `name` in the matching model's `entity-definitions` collection.
+  - boundedContext: dcb-model-authoring
+    event: entity-definition-removed
+    rule: Drop the entry identified by `name` from the matching model's `entity-definitions` collection.
+  - boundedContext: dcb-model-authoring
+    event: projection-definition-added
+    rule: Append the new definition to the matching model's `projection-definitions` collection.
+  - boundedContext: dcb-model-authoring
+    event: projection-definition-updated
+    rule: Replace the `body` of the entry identified by `name` in the matching model's `projection-definitions` collection.
+  - boundedContext: dcb-model-authoring
+    event: projection-definition-renamed
+    rule: Replace the `name` of the entry identified by `previous-name` with the carried `name` in the matching model's `projection-definitions` collection.
+  - boundedContext: dcb-model-authoring
+    event: projection-definition-removed
+    rule: Drop the entry identified by `name` from the matching model's `projection-definitions` collection.
+  - boundedContext: dcb-model-authoring
+    event: command-definition-added
+    rule: Append the new definition to the matching model's `command-definitions` collection.
+  - boundedContext: dcb-model-authoring
+    event: command-definition-updated
+    rule: Replace the `body` of the entry identified by `name` in the matching model's `command-definitions` collection.
+  - boundedContext: dcb-model-authoring
+    event: command-definition-renamed
+    rule: Replace the `name` of the entry identified by `previous-name` with the carried `name` in the matching model's `command-definitions` collection.
+  - boundedContext: dcb-model-authoring
+    event: command-definition-removed
+    rule: Drop the entry identified by `name` from the matching model's `command-definitions` collection.
+schema:
+  type: array
+  items:
+    type: object
+    properties:
+      dcb-model-id:
+        type: string
+      name:
+        type: string
+      custom-type-definitions:
+        type: array
+        items:
+          type: object
+          properties:
+            name:
+              type: string
+            body:
+              type: object
+          required: [name, body]
+      event-definitions:
+        type: array
+        items:
+          type: object
+          properties:
+            name:
+              type: string
+            body:
+              type: object
+          required: [name, body]
+      entity-definitions:
+        type: array
+        items:
+          type: object
+          properties:
+            name:
+              type: string
+            body:
+              type: object
+          required: [name, body]
+      projection-definitions:
+        type: array
+        items:
+          type: object
+          properties:
+            name:
+              type: string
+            body:
+              type: object
+          required: [name, body]
+      command-definitions:
+        type: array
+        items:
+          type: object
+          properties:
+            name:
+              type: string
+            body:
+              type: object
+          required: [name, body]
+    required:
+      - dcb-model-id
+      - name
+      - custom-type-definitions
+      - event-definitions
+      - entity-definitions
+      - projection-definitions
+      - command-definitions
+---
+apiVersion: schema.esdm.io/core/v1
+kind: query
+name: list-dcb-models
+description: |
+  Returns a lightweight list of all live DCB Models — id and
+  display name only — for selection screens and overviews.
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-model-authoring
+readModel: dcb-model-overview
+paradigm: document
+parameters:
+  type: object
+  additionalProperties: false
+result:
+  type: array
+  items:
+    type: object
+    properties:
+      dcb-model-id:
+        type: string
+      name:
+        type: string
+    required: [dcb-model-id, name]
+constraints:
+  - name: light-shape
+    rule: |
+      Each record carries only `dcb-model-id` and `name`; the
+      five definition collections are stripped to keep listings
+      cheap to render.
+  - name: stable-order
+    rule: Sort by `name` ascending; break ties by `dcb-model-id`.
+actors:
+  - modeler
+  - viewer
+---
+apiVersion: schema.esdm.io/core/v1
+kind: query
+name: get-dcb-model
+description: |
+  Returns the full content of one DCB Model — name plus all five
+  definition collections in their latest state.
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-model-authoring
+readModel: dcb-model-overview
+paradigm: document
+parameters:
+  type: object
+  properties:
+    dcb-model-id:
+      type: string
+  required: [dcb-model-id]
+  additionalProperties: false
+result:
+  type: object
+  properties:
+    dcb-model-id:
+      type: string
+    name:
+      type: string
+    custom-type-definitions:
+      type: array
+      items:
+        type: object
+    event-definitions:
+      type: array
+      items:
+        type: object
+    entity-definitions:
+      type: array
+      items:
+        type: object
+    projection-definitions:
+      type: array
+      items:
+        type: object
+    command-definitions:
+      type: array
+      items:
+        type: object
+  required:
+    - dcb-model-id
+    - name
+    - custom-type-definitions
+    - event-definitions
+    - entity-definitions
+    - projection-definitions
+    - command-definitions
+constraints:
+  - name: lookup-by-id
+    rule: |
+      Return the single record whose `dcb-model-id` matches the
+      `dcb-model-id` parameter. If no record matches, the query
+      resolves to no result; the precise empty-result encoding is
+      an API-layer concern.
+actors:
+  - modeler
+  - viewer

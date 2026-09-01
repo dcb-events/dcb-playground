@@ -1,0 +1,1129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dcb.events/schemas/model/v1.json",
+  "title": "DCB Model",
+  "description": "A DCB model: every definition a modeller has authored for one\nDCB-based system, in the form the playground exports it. The same\ndocument travels both ways out of the playground, as readable JSON and\nas the gzipped payload of a share link.\n\nA model is organised around **entities**. An entity owns its\nidentifier type and every projection describing it — each of the\nentity's properties *is* a projection, folded over the events tagged\nwith that entity instance. A lifecycle is not a distinct concept: a\nmodeller who wants one declares an ordinary property named `status`\n(by convention only) typed with an ordinary enum custom type. There\nis no standalone constraint kind: conditions are inlined into the\ncommands that check them.\n\n**Tags come from value types, not from a separate kind.** Any\n`customTypeDefinition` may set `isTag: true`, which is what makes it\nan identifier. An entity's own derived identifier is such a value\ntype — created automatically when the entity is, and from then on\nedited exactly like any other value type. A composite value type is\nnever itself a tag; its tag-ness is derived by looking through it to\nwhichever of its fields are themselves tag-marked, which is what lets\ntwo unrelated entities share one component (a `TenantId` field) and\nbe scoped together by it.\n\n**Projections** are what is left when a fold belongs to no entity. A\n`projectionDefinition` states its own partition instead of inheriting\none: it declares typed parameters, and the arguments a command\nsupplies for them *are* its tags. Declare none and the query is\nscoped by event type alone — a global numbering. Declare one and the\nsame numbering restarts per tenant. Nothing else changes between the\ntwo, which is why there is one kind here and not two.\n\n**Versioning.** `dcbModelVersion` is what an importer dispatches on;\n`$schema` is for editors and is deliberately never read by one. A major\nbump means an older reader cannot correctly read the document and must\nrefuse it; a minor bump means it can, because the addition is one it\nignores. Note that \"additive\" is judged from the reader's side, not the\nschema's: a new member of a closed vocabulary — another condition\noperator, operand shape or handler operation — is a *major* change even\nthough this document merely grows an enum, because a reader that has\nnever heard of it fails on the value rather than passing it through.\n\nThis schema moves in place for minor changes; a major change is\npublished at a new `/vN.json` and this URL keeps serving what it always\nserved. `x-dcb-schema-revision` moves with every edit either way.\n\nThe format is young and the playground it describes is a prototype.\nExpect majors.\n",
+  "x-dcb-schema-revision": "1.0.0",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "description": "The schema this document is written against. Present so that editors\noffer completion and inline validation while someone hand-edits an\nexport; importers must ignore it. Deliberately unconstrained: a\nvalue repointed at a local copy or a mirror — to work offline, or\nagainst an unpublished revision — is a legitimate document, and\npinning it here would turn the one useful thing you can do with this\nfield into a corruption. What version the document *is* is\n`dcbModelVersion`, and only that.\n",
+      "type": "string"
+    },
+    "dcbModelVersion": {
+      "description": "The version of this format, `major.minor`. The only thing an importer\ndispatches on. A reader refuses a major it does not know and warns on\na minor newer than its own, which it may read because minors only\never add what an older reader ignores.\n\nThe pattern admits every 1.x rather than pinning one value, because\nthis schema is edited in place as minors ship and must keep\nvalidating documents written against the earlier ones.\n",
+      "type": "string",
+      "pattern": "^1\\.\\d+$",
+      "examples": [
+        "1.0"
+      ]
+    },
+    "name": {
+      "description": "What the model is called. Required: an importer can invent a name\nfor a document that lacks one, but a model called \"Imported model\"\nis a worse outcome than a document that says plainly it is\nmalformed.\n",
+      "type": "string",
+      "minLength": 1
+    },
+    "customTypeDefinitions": {
+      "description": "Value types — either **scalar** (an email string with a pattern,\na money amount, an enum of named members, a tag-bearing\nidentifier, …) or **composite** (a record of named fields, such\nas an order line pairing a product with the price it was\ndisplayed at). An enum is not a distinct form: it is a scalar\ntype whose `schema` carries the JSON Schema `enum` keyword. A\nmember reference is still modeled as `{\"enumMember\": \"...\"}`\nrather than a bare literal, so that renaming a member rewrites\nevery use of it.\n\nA scalar entry may set `isTag: true`, which is what makes it an\nidentifier — see `CustomTypeDefinition`. This is also where an\nentity's own derived identifier type lives: it is created\nautomatically alongside the entity (see\n`EntityDefinition.identifierType`), and from then on it is an\nordinary entry here, edited, retyped and renamed the same way any\nother value type is — the one thing that never changes about it\nis that it stays a tag, and it may only be removed by removing\nthe entity that owns it.\n\nA composite entry — whether entity-owned or standalone — is\nnever a tag itself; a field of it may be, and one deliberately\nshared across several entities' composite identifiers (a\n`TenantId` field, say) is what scopes them together.\n",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/CustomTypeDefinition"
+      }
+    },
+    "eventDefinitions": {
+      "description": "Domain events. An event property whose type is a tag-marked\n(`isTag: true`) value type *is* one or more tags on that event,\nrendered through that type's `tagSchema`, so\n`StudentSubscribedToCourse{courseId: CourseId, studentId: StudentId}`\ncarries the tags `CourseId:<courseId>` and `StudentId:<studentId>`\n(their default `tagSchema`). Tags are never declared separately;\nthey are derived from property types.\n\n**Tag derivation looks inside composites.** A property typed with\na composite value type contributes one tag per tag-marked field\nit contains — a `CourseId` composed of\n`{tenant: TenantId, number: CourseNumber}`, both tag-marked,\ncarries `Tenant:<…>` and `CourseNumber:<…>`, not a tag\nnamespaced under `CourseId`; a field that is not itself tag-marked\ncontributes nothing. A *list* of a composite contributes one such\ntag **per element** — so\n`ProductsOrdered{orderId: OrderId, items: Item[]}` where\n`Item{productId: ProductId, price: Money}` carries `OrderId:<…>`\nplus one `ProductId:<id>` for every item. This is how a single\nevent records something that happened to many instances at once.\n",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/EventDefinition"
+      }
+    },
+    "entityDefinitions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/EntityDefinition"
+      }
+    },
+    "projectionDefinitions": {
+      "description": "Folds that belong to no entity — a course numbering, a running\ntotal, the set of addresses already registered. Each holds one\nvalue and states its own partition through its parameters.\n",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ProjectionDefinition"
+      }
+    },
+    "commandDefinitions": {
+      "description": "Commands that modelers may issue against the modeled system.\nEach command carries a payload (properties), a boundary binding\nthe entity instances it consults, inline conditions over those\ninstances, and the events it publishes on success.\n",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/CommandDefinition"
+      }
+    },
+    "scenarioDefinitions": {
+      "description": "Worked examples: one command, exercised against a log written by\nhand, with the outcome the definitions produced frozen beside it.\n\nScenarios live in the model rather than beside it because a\nscenario *is* a reference — to the command it exercises and to\nevery event its Given is written from — and references are\nrewritten in one place. Renaming an event moves it in every\nscenario that records it, by the same machinery that moves it in\nevery handler that folds it.\n\nWhat a scenario deliberately may **not** do is refuse a change.\nDeleting a command a scenario exercises is allowed, and leaves\nthat scenario broken and saying so. A test reports what a change\nbroke; it never prevents the change.\n",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ScenarioDefinition"
+      },
+      "default": []
+    },
+    "propertyScenarioDefinitions": {
+      "description": "Scenarios asserting what an entity instance's properties project\nto, as opposed to what a command decides. Omitted rather than\nemitted empty; absent and empty mean the same thing.\n",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/PropertyScenarioDefinition"
+      }
+    },
+    "sandbox": {
+      "description": "The interactive session the export was taken during, if any.\nOmitted rather than emitted empty.\n",
+      "$ref": "#/$defs/Sandbox"
+    }
+  },
+  "required": [
+    "$schema",
+    "dcbModelVersion",
+    "name",
+    "customTypeDefinitions",
+    "eventDefinitions",
+    "entityDefinitions",
+    "projectionDefinitions",
+    "commandDefinitions"
+  ],
+  "$defs": {
+    "EntityDefinition": {
+      "description": "A modeled thing with an identity and a set of projected\nproperties.\n\nAn entity is projected state, **not** a consistency boundary. It\nholds no invariants, handles no commands and decides nothing on\nits own. Every decision is made by a command over the instances\nit binds in its `boundary` — dissolving the fixed aggregate is\nthe point of DCB, so an entity is deliberately not one.\n\nAn entity derives one identifier type, which *is* serialised —\nas an ordinary `customTypeDefinition`, created automatically when\nthe entity is (scalar, `isTag: true`, a plain string) and named\n`identifierType` unless overridden. From then on it is edited\nexactly like any other value type: its `schema` may change, it\nmay switch to `properties` and become composite, it may be\nrenamed. `isTag` and removability are the two things pinned to\nit for as long as the entity owns it — see\n`CustomTypeDefinition`.\n\nThe derived name is reserved: no other `customTypeDefinition` and\nno other entity may claim or derive the same name.\n\nA lifecycle is not a distinct concept here. A modeller who wants\none declares an ordinary property — by convention named `status`\n— typed with an ordinary enum value type, exactly like any other\nproperty. Nothing requires an entity to have such a property, and\nnothing stops it from having several.\n",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/EntityName"
+        },
+        "icon": {
+          "description": "A short glyph — one emoji, or a character or two — that stands\nfor this entity wherever it is named. Presentation only: no\npart of the model reads it, and two entities may share one.\nAbsent means an authoring tool picks its own placeholder.\n",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8,
+          "examples": [
+            "📚",
+            "🧾"
+          ]
+        },
+        "identifierType": {
+          "description": "The name of the entity's derived identifier value type.\nAbsent means the ordinary case: the name *is* `<name>Id` and\ntracks the entity's own name, so renaming the entity renames\nits identifier type too. Given once, it stops tracking — the\nentity may then be renamed freely without moving it.\n\nThis field only ever holds a *name*; the value type it names\nis created when the entity is and from then on is edited in\n`customTypeDefinitions`, never here — there is no\nentity-local schema, fields or tag-schema to author.\n",
+          "$ref": "#/$defs/CustomTypeName"
+        },
+        "properties": {
+          "description": "The entity's projections. Every entry folds the events it\nhandles over the DCB query\n`tag IN (the identifier's tags) AND type IN (handled event\ntypes)`; the partition is implicit and never authored.\n\nNo entry is reserved: a property named `status` (a\nconvention, not a rule) is authored, renamed and dropped like\nany other. An entity that consults its own tag but projects\nnothing beyond it — used purely as a reference — declares no\nproperties at all.\n",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EntityPropertyDefinition"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "properties"
+      ]
+    },
+    "EntityName": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 100,
+      "pattern": "^[A-Z][A-Za-z0-9]+$",
+      "examples": [
+        "Course",
+        "Student"
+      ]
+    },
+    "EntityPropertyDefinition": {
+      "description": "One projection belonging to an entity. `initialValue` is the\nvalue before any event has been applied; each handler turns one\nevent type into the next value.\n\nA property is advanced either by declared handlers — the ordinary\ncase — or by a `script`. With a script, `initialValue` is\nreplaced by `script.initialState` and every handler carries\n`code` instead of an operation and an operand. `propertyType` and\n`isList` keep their meaning either way: they describe the value a\ncondition reads, which is what keeps a scripted property legible\nto everything outside it.\n",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/PropertyName"
+        },
+        "propertyType": {
+          "$ref": "#/$defs/TypeName"
+        },
+        "isOptional": {
+          "type": "boolean",
+          "default": false
+        },
+        "isList": {
+          "type": "boolean",
+          "default": false
+        },
+        "script": {
+          "description": "Present when this property is advanced by code.\n\nAn entity property's script carries no `tagFilter` — the\nbinding that reads it already names the instance.\n",
+          "$ref": "#/$defs/ProjectionScript"
+        },
+        "initialValue": {
+          "description": "The value before any event has been applied. Given for a\ndeclared property and forbidden for a scripted one, whose\n`script.initialState` starts it instead.\n",
+          "$ref": "#/$defs/InitialValue"
+        },
+        "handlers": {
+          "description": "At most one handler per event type. Events not named here\nleave the property unchanged.\n",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PropertyHandler"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "propertyType",
+        "handlers"
+      ]
+    },
+    "InitialValue": {
+      "description": "A literal. Use `[]` for list properties, `null` for optional\nones, and `{\"enumMember\": \"...\"}` for enum-typed properties so\nthat renaming a member rewrites the reference instead of\nsilently breaking it.\n",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/StaticValue"
+        },
+        {
+          "$ref": "#/$defs/EnumMemberValue"
+        },
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "maxItems": 0
+        }
+      ]
+    },
+    "ProjectionDefinition": {
+      "description": "One folded value that belongs to no entity.\n\nMechanically this is an `entityPropertyDefinition` with the\nowning entity removed and the partition put back by hand. An\nentity property is a projection too — folded over\n`tag IN (the identifier's tags) AND type IN (handled events)`,\nwith the tag(s) implied by whose property it is. A\n`projectionDefinition` has no owner to imply one, so it declares\n`parameters` and a command supplies the arguments:\n\n  `tag IN (arguments) AND type IN (handled events)`\n\nWith no parameters there is no tag, and the query is scoped by\nevent type alone — which is what a global numbering is.\n\n**Numbering is not a special case.** `CourseNumbering` is a\nprojection whose value is set to the `successor` of the id each\n`CourseDefined` carried, so the value *is* the next number to\nissue at every point in its life — `initialValue` before anything\nhas happened, `successor(last)` after. There is no separate\ngenerator concept and no read-side operator: a command binds the\nprojection and reads it like anything else.\n\nAn implementation may still answer such a projection with a single\nbackwards lookup (`ORDER BY position DESC LIMIT 1`) instead of a\nscan — a fold whose every handler `set`s from event properties\nalone depends only on the last matching event. That is derived\nfrom the handlers rather than declared, so it holds for any\nprojection written that way, and for entity properties too.\n\n**The guard.** A command binding a projection contributes that\nprojection's query to its append condition, exactly as an entity\nbinding does. For a numbering this is what keeps it monotonic: a\nconcurrent command that minted from the same projection\ninvalidates the append.\n\n**Successor.** On an integer, `n + 1`. On a string, the trailing\nrun of digits is incremented and both the prefix and any\nzero-padding are preserved: `\"c1\"` → `\"c2\"`, `\"c9\"` → `\"c10\"`,\n`\"c007\"` → `\"c008\"`. The prefix is never declared — it rides on\n`initialValue`.\n",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/ProjectionName"
+        },
+        "parameters": {
+          "description": "What partitions this projection. Every parameter is typed\nwith a tag-bearing value type — one whose leaves resolve to\nat least one `isTag` type, scalar or through a composite's\nfields — and contributes the tag(s) those types' `tagSchema`\nrender: one for a tag-marked scalar, one per tag-marked field\nfor a composite. A command binding the projection supplies\none argument per parameter.\n\n**Tag-bearing types only.** A tag is the only thing that can\nnarrow a query, and only a tag-marked type is a tag. A parameter\ntyped `integer` could not restrict what the store returns —\nit could only discard events after reading them, which is a\npredicate, and predicates live in conditions. So \"numbering\nper year\" needs a `Year` entity; that requirement is what\nkeeps the read cheap.\n\nAn empty list is the ordinary case for a global numbering,\nand is what makes its query the only kind in this document\nthat carries no tag.\n\nA **scripted** projection has no parameters. Discarding after\nreading is exactly what its code does, so the values it needs\narrive as `script.arguments` instead, and the partition it\nwould otherwise have derived from parameters is stated\noutright in `script.tagFilter`.\n",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProjectionParameter"
+          },
+          "default": []
+        },
+        "valueType": {
+          "description": "The type of the value held. Never a composite value type:\nthe operations that advance a projection act on a single\nvalue, and a record of fields has none.\n",
+          "$ref": "#/$defs/TypeName"
+        },
+        "isOptional": {
+          "type": "boolean",
+          "default": false
+        },
+        "isList": {
+          "type": "boolean",
+          "default": false
+        },
+        "initialValue": {
+          "description": "The value before any event has been applied. For a numbering\nthis is the first number issued, and the only place a prefix\nis stated.\n",
+          "$ref": "#/$defs/InitialValue"
+        },
+        "script": {
+          "description": "Present when this projection is advanced by code. A\nstandalone script must carry a `tagFilter`: it has no owning\nentity to take a tag from and no parameters to derive one\nfrom, so it is the only thing that can say what the query\nreads.\n",
+          "$ref": "#/$defs/ProjectionScript"
+        },
+        "handlers": {
+          "description": "At most one handler per event type; the handled types are the\nprojection's query. Same operation vocabulary and same\noperand rules as an entity property — or, for a scripted\nprojection, one `code` body per event type.\n",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/PropertyHandler"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "valueType",
+        "handlers"
+      ]
+    },
+    "ProjectionName": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 100,
+      "pattern": "^[A-Z][A-Za-z0-9]+$",
+      "examples": [
+        "CourseNumbering",
+        "TenantCourseNumbering"
+      ]
+    },
+    "ProjectionParameter": {
+      "description": "One or more tags of a projection's query, named so a command can\nsupply it. `propertyType` must be a tag-bearing value type — an\nentity's derived identifier or a standalone one, scalar and\n`isTag: true` or composite with tag-marked fields.\n",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/PropertyName"
+        },
+        "propertyType": {
+          "$ref": "#/$defs/TypeName"
+        }
+      },
+      "required": [
+        "name",
+        "propertyType"
+      ]
+    },
+    "ProjectionScript": {
+      "description": "Code in place of declared handlers, for state whose accumulation\nno operation in this vocabulary can express — a window, a running\ncomparison, anything needing a value the earlier events implied\nrather than carried.\n\n**What it costs.** The code is stored and displayed; nothing\nparses it, checks it, or rewrites it. A scripted handler is\nchecked for the event it claims and nothing else, and renaming an\nevent's property leaves every mention of it inside the code\nuntouched. That is the price of the escape hatch and it is paid\nin full.\n\n**What it deliberately does not cost.** The derived DCB is\nunchanged: the query still comes from the handler keys, and the\ntags from the binding (entity property) or from `tagFilter`\n(standalone). A script may hide how a value is arrived at; it may\nnever hide what was read to arrive at it.\n\n**The contract.** Each handler body is an expression over\n`state`, `event` and `args`, returning the next state. `event`\ncarries `data` (the payload). `args` holds one entry per declared\nargument. Nothing else is in scope, and the same inputs must\nproduce the same state: a body that consults an ambient clock\nwould decide one thing and replay another.\n",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "initialState": {
+          "description": "The state before any event. Any JSON value — unlike a\ndeclared property's `initialValue` this is not typed, because\nnothing outside the code ever reads the state whole.\n"
+        },
+        "exposes": {
+          "description": "Which field of the state a condition reads, when the state is\na record. Absent means the state *is* the value.\n\nThis is what keeps an accumulator out of the boundary. The\ndeclared `propertyType`/`isList` (or `valueType`/`isList`)\ndescribe this exposed value, so conditions type-check exactly\nas they do over a declared property, and the bookkeeping the\ncode needs stays private to it.\n",
+          "$ref": "#/$defs/PropertyName"
+        },
+        "arguments": {
+          "description": "Values the reading command supplies, one entry per name, in\n`args` when the code runs. A binding that reads this\nprojection must supply exactly these — the same \"required\nhere, rejected there\" rule `excluding` follows.\n\nAn argument is **not a tag** and can never narrow a query:\nthe store returns the same events either way and the code\ndiscards what it does not want. That is the whole difference\nbetween an argument and a `ProjectionParameter`, and it is\nwhy a parameter must still be tag-bearing.\n",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProjectionArgument"
+          },
+          "default": []
+        },
+        "tagFilter": {
+          "description": "The tags of this projection's query, one entry each, ANDed.\nWritten as `TagType:value`, naming a scalar, `isTag: true`\nvalue type — a composite has no tag of its own to name; name\nits tag-marked fields' own types individually instead. The\nvalue may interpolate a declared argument as `{name}`.\n\nRequired on a standalone projection and forbidden on an\nentity property, whose binding already names the instance —\na second answer there could only disagree with the first.\n",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Za-z0-9]*:.+$"
+          },
+          "examples": [
+            [
+              "ProductId:{productId}"
+            ]
+          ]
+        }
+      },
+      "required": [
+        "initialState"
+      ]
+    },
+    "ProjectionArgument": {
+      "description": "One value a scripted projection asks its reader for. Any type —\nan argument reaches the code rather than the query, so the\nidentifier restriction that governs `ProjectionParameter` does\nnot apply.\n",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/PropertyName"
+        },
+        "propertyType": {
+          "$ref": "#/$defs/TypeName"
+        }
+      },
+      "required": [
+        "name",
+        "propertyType"
+      ]
+    },
+    "PropertyHandler": {
+      "description": "How one event type advances one property. Either declared —\n`operation` and `value`, with the vocabulary constrained by the\nproperty's type: `set` for any type, `increment`/`decrement` for\nintegers, `append`/`remove` for lists — or scripted, carrying\n`code` and neither of the other two.\n",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "event": {
+          "$ref": "#/$defs/EventName"
+        },
+        "operation": {
+          "enum": [
+            "set",
+            "increment",
+            "decrement",
+            "append",
+            "remove"
+          ]
+        },
+        "value": {
+          "$ref": "#/$defs/HandlerOperand"
+        },
+        "code": {
+          "description": "An expression over `state`, `event` and `args` returning the\nnext state. Present only on a property or projection that\ndeclares a `script`, and never alongside `operation` — the\ncode is the operation.\n",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "event"
+      ]
+    },
+    "HandlerOperand": {
+      "description": "Where a handler's value comes from. Resolved while projecting a\nsingle event, so the only things in scope are that event's\nproperties, the property's own current value, and literals.\n",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/EventPropertyValue"
+        },
+        {
+          "$ref": "#/$defs/CurrentValue"
+        },
+        {
+          "$ref": "#/$defs/SuccessorValue"
+        },
+        {
+          "$ref": "#/$defs/EnumMemberValue"
+        },
+        {
+          "$ref": "#/$defs/StaticValue"
+        }
+      ]
+    },
+    "SuccessorValue": {
+      "description": "The value that comes after another — `n + 1` on an integer; on a\nstring, the trailing run of digits incremented with the prefix\nand any zero-padding preserved (`\"c1\"` → `\"c2\"`, `\"c9\"` →\n`\"c10\"`, `\"c007\"` → `\"c008\"`).\n\nThis is where numbering lives. A projection that sets its value\nto `{successor: {eventProperty: courseId}}` holds *the next\nnumber to issue* at every point in its life: `initialValue`\nbefore any event, the successor of the last one issued after. The\nalternative — folding to the last id and applying successor at\nthe read — makes `initialValue` mean two different things\ndepending on whether anything has happened yet, and lets two\ncommands reading the same value disagree about it.\n\nNothing restricts this to projections: an entity property may\ntake a successor too.\n",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "successor": {
+          "$ref": "#/$defs/HandlerOperand"
+        }
+      },
+      "required": [
+        "successor"
+      ]
+    },
+    "EventPropertyValue": {
+      "description": "A property of the event being handled.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "eventProperty": {
+          "$ref": "#/$defs/PropertyName"
+        }
+      },
+      "required": [
+        "eventProperty"
+      ]
+    },
+    "CurrentValue": {
+      "description": "The property's value before this event is applied — the fold's\naccumulator.\n",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "currentValue": {
+          "const": true
+        }
+      },
+      "required": [
+        "currentValue"
+      ]
+    },
+    "CommandDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/CommandName"
+        },
+        "icon": {
+          "description": "A short glyph — one emoji, or a character or two — that stands\nfor this command wherever it is named. Presentation only: no\npart of the model reads it, and two commands may share one.\nAbsent means an authoring tool picks its own placeholder. The\nevent this command publishes on success takes this same icon\nby default (see `EventDefinition.icon`), which is why setting\none here is usually enough to mark both.\n",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8,
+          "examples": [
+            "📚",
+            "🧾"
+          ]
+        },
+        "feature": {
+          "description": "The feature this command belongs to — \"Course management\",\n\"Checkout\". Commands naming the same feature are presented\ntogether.\n\nIt is the one field in this document that the modelled system\ndoes not read. No query, boundary, condition or tag depends on\nit, and removing every `feature` changes no behaviour: it\nrecords how a *modeler* grouped their work, on a different\naxis from the entities the rest of the model is organised\naround.\n\nA feature is therefore never declared. It exists because\ncommands name it, which is why it costs nothing and why an\nempty one is not a thing that can be stored.\n",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "properties": {
+          "description": "The command payload.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PropertyDefinition"
+          }
+        },
+        "boundary": {
+          "description": "Everything this command reads — entity instances and\nprojections alike, each under a local alias. **This list is\nthe command's dynamic consistency boundary**, with nothing\ncontributed from outside it: the append condition's query is\nthe union of the bindings' queries, an entity binding\ncontributing its tag(s) — more than one when its identifier\nis composite — restricted to the event types reachable\nthrough the properties the conditions read, a projection\nbinding contributing its arguments as tags and its handled\ntypes.\n\nEvery identifier-typed property of every published event\nmust resolve to a binding in this list — a command may\nnot write a tag it did not consult. A property supplied from\na projection binding is exempt, provided that projection\nhandles the event being published: its query then already\ncovers every event that could have issued the value, and a\nfreshly minted identifier has no history to consult. The\nexemption is unconditional in the partition — a projection\nscoped so narrowly that two partitions can mint the same\nidentifier is a modelling error of the same class as folding\nthe wrong event, and is not checked here.\n\n**Coverage follows tag derivation into composites.** Since a\nproperty typed `Item[]` writes one `ProductId:<id>` per element,\ncoverage is checked against the identifier *leaves* of an\nemitted property's type, not its surface: emitting `items`\ninto `ProductsOrdered.items` is covered by a binding whose\n`id` is `{parameterName: items, property: productId}`. Without\nthe recursion the event carrying the most tags would be the\none checked least.\n\n**Declaration order is the chain.** A binding may draw its\noperands from a binding *above* it and never from one below,\nso a command can read one thing to learn which thing to read\nnext. One left-to-right pass resolves the chain, and a cycle\nis impossible to write.\n\n**Rounds are derived, never authored.** A binding waits only\nfor the bindings it actually references, so the number of\nround trips to the store is the *depth* of that dependency\ngraph, not the length of this list: two bindings that both\ntake their identifiers from the payload are one round, not\ntwo. Each binding's round is `1 + max(round of the bindings\nits operands name)`, or 1 when it names none — computable in\nthe same left-to-right pass, since the list is already\ntopologically sorted by the rule above.\n\nIt is a graph and not a tree: `id` and `excluding` may each\nname a different binding, and a binding's arguments may name\nseveral. That is why the structure is\nderived and rendered rather than written down as nesting,\nwhich could not represent a binding with two parents without\nduplicating it.\n\n**Execution.** The chain reads in rounds, but the whole\ncommand decides as of a single point in the log:\n\n  1. `P` := the position of the last event overall — a\n     backwards read of everything, limited to one.\n  2. Resolve the bindings round by round, every read\n     **bounded at `P`**. Bounding matters: a read past `P`\n     could decide on an event that the append condition then\n     rejects it for.\n  3. Evaluate the conditions over the resolved instances.\n  4. Append with the condition\n     `query = the union of every binding's query, after = P`.\n\nBecause the query covers everything read and `P` precedes\nevery read, any concurrent change to anything this command\nlooked at invalidates the append — and nothing else does.\n",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Binding"
+          }
+        },
+        "conditions": {
+          "description": "Conditions over the bound instances, all of which must hold\nbefore any event is emitted.\n\nA condition reading a **fanned-out** alias must hold for\n*every* instance that alias bound; an empty set satisfies it\nvacuously. The quantifier is not written down — it follows\nfrom the alias being plural.\n\n**Zipping.** When a binding fans out over a list, the elements\nof that list stay available to conditions about the instances\nit bound, at the matching index:\n\n  an operand rooted at a list that some alias in the *same*\n  condition also fans from is read at that iteration's index;\n  otherwise it is the whole list.\n\nSo with `product` bound over `items[].productId`,\n`product.currentPrice equals items[].price` compares each\nproduct against the price submitted *for that product*, while\n`items[].price greaterThan 0` — mentioning no alias fanned\nfrom `items` — is an ordinary universal over the list. The\npairing is provenance, not declaration: the operands are\ncorrelated because they came from the same list.\n\n**One fan root per condition.** A condition may quantify over\nat most one fanned-out root. Two distinct roots is rejected\nrather than read as a cross product: their lengths are\nunrelated, nothing in this document can assert otherwise, and\nthe zipped and crossed readings look identical on the page.\n\nAn empty list does **not** mean the command is unguarded: the\nappend condition is derived from the `boundary`, not from\nthis list. A command with no conditions at all can still be\nstrictly serialised — which is what binding a parameterless\nprojection does to it.\n",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Condition"
+          }
+        },
+        "publishes": {
+          "description": "Events the command emits on success. Each entry binds the\nemitted event's properties to operands drawn from the\ncommand's payload, a bound instance's properties, or\nliterals.\n",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/EventEmission"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "properties",
+        "boundary",
+        "conditions",
+        "publishes"
+      ]
+    },
+    "CommandName": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 100,
+      "pattern": "^[A-Z][A-Za-z0-9]+$",
+      "examples": [
+        "SubscribeStudentToCourse"
+      ]
+    },
+    "Binding": {
+      "description": "One thing the command reads. Distinguished by which of `entity`\nor `projection` it carries.\n",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/EntityBinding"
+        },
+        {
+          "$ref": "#/$defs/ProjectionBinding"
+        }
+      ]
+    },
+    "ProjectionBinding": {
+      "description": "One projection the command reads, under a local alias. The alias\ndefaults to the projection name with a lowercased first letter.\n\nA projection read is a binding rather than an inline operand\nbecause it is a read: it costs a round trip, it takes its place\nin the chain when an argument comes from a binding above it, and\nits query belongs in the append condition. Leaving it inline\nwould let a command that reads the store claim in its own\nboundary to read nothing.\n",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "alias": {
+          "$ref": "#/$defs/AliasName"
+        },
+        "projection": {
+          "$ref": "#/$defs/ProjectionName"
+        },
+        "arguments": {
+          "description": "One entry per parameter of the projection, keyed by parameter\nname; each value is the operand supplying that tag. A\nprojection with no parameters takes no arguments, and its\nquery carries no tag.\n\nAn argument operand may name a binding above this one, which\nis what puts a projection into the chain. It may not resolve\nto a list: a projection binding reads one partition, so there\nis no fan-out here.\n",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/CommandOperand"
+          },
+          "default": {}
+        }
+      },
+      "required": [
+        "alias",
+        "projection"
+      ]
+    },
+    "EntityBinding": {
+      "description": "One entity instance the command consults, under a local alias.\nThe alias defaults to the entity name with a lowercased first\nletter; an explicit alias is only needed when a command binds\ntwo instances of the same entity (e.g. transferring between two\ncourses).\n",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "alias": {
+          "$ref": "#/$defs/AliasName"
+        },
+        "entity": {
+          "$ref": "#/$defs/EntityName"
+        },
+        "id": {
+          "description": "Supplies the instance's identifier — typically a property of\nthe command payload, but equally a projected property of an\ninstance bound above this one, or the value of a projection\nbound above it.\n\n**A list operand binds many instances.** When the operand\nresolves to a list type, the binding covers one instance per\nelement and contributes one query item each. Reading a list\nproperty of an already-fanned-out alias yields a list of\nlists, which is flattened and de-duplicated. Nothing declares\nthis — it follows from the operand's type.\n",
+          "$ref": "#/$defs/CommandOperand"
+        },
+        "excluding": {
+          "description": "One identifier to drop from a fanned-out set. Only meaningful\non a fanned-out binding, and needed when the set is derived\nfrom instances that necessarily include the one being acted\non — rescheduling a course must compare against its\nsubscribers' *other* courses, and every subscriber is by\ndefinition also in this one.\n\nIt narrows the binding rather than the conditions on purpose:\na condition over a fanned-out alias must hold for every\ninstance, so \"except this one\" cannot be stated as a\ncondition without turning it into an implication.\n",
+          "$ref": "#/$defs/CommandOperand"
+        },
+        "arguments": {
+          "description": "Values handed to the scripted properties this binding reads,\nkeyed by argument name. Required exactly when a scripted\nproperty it consults declares one, and rejected otherwise —\nthe same rule `excluding` follows, and for the same reason: a\nfield that means nothing here is a mistake, not a no-op. Two\nscripted properties asking for the same name are answered\nonce: they are read through one binding, at one instant.\n\nThey are supplied, not ambient. A command that consults\ntime-sensitive state takes the instant as a payload property\nand passes it here, so the decision stays a pure function of\nits events and its parameters — the same events and the same\narguments always reach the same verdict. An implicit clock\nwould make replay disagree with the original decision.\n\nThey do not touch the append condition. The query still\ncovers the same tags and the same event types; an argument\ndecides how the events already read are projected, never\nwhich ones are read.\n",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/CommandOperand"
+          }
+        }
+      },
+      "required": [
+        "alias",
+        "entity",
+        "id"
+      ]
+    },
+    "AliasName": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 100,
+      "pattern": "^[a-z][A-Za-z0-9]*$",
+      "examples": [
+        "course",
+        "sourceCourse"
+      ]
+    },
+    "EventEmission": {
+      "description": "A command's emission of one event, plus bindings supplying the\nevent's property values.\n",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/EventName"
+        },
+        "parameters": {
+          "description": "Keys are the event's property names; each value is a\n`CommandOperand` describing where the value comes from at\nexecution time.\n",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/CommandOperand"
+          }
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "Condition": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/UnaryCondition"
+        },
+        {
+          "$ref": "#/$defs/BinaryCondition"
+        }
+      ]
+    },
+    "UnaryCondition": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "leftHandSide": {
+          "$ref": "#/$defs/CommandOperand"
+        },
+        "predicate": {
+          "enum": [
+            "isEmpty",
+            "isNotEmpty",
+            "isTrue",
+            "isFalse"
+          ]
+        },
+        "negate": {
+          "description": "When true the condition holds iff the predicate does *not*.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "leftHandSide",
+        "predicate"
+      ]
+    },
+    "BinaryCondition": {
+      "description": "`contains` asks whether a list holds one value; `containsAny` asks\nwhether two lists intersect, which is how \"these two schedules\nclash\" is stated. Both sides of `containsAny` must be lists of the\nsame type, and `negate` turns it into \"must not overlap\".\n",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "leftHandSide": {
+          "$ref": "#/$defs/CommandOperand"
+        },
+        "predicate": {
+          "enum": [
+            "equals",
+            "countEquals",
+            "countLessThan",
+            "countGreaterThan",
+            "contains",
+            "containsAny",
+            "lessThan",
+            "lessThanOrEquals",
+            "greaterThan",
+            "greaterThanOrEquals",
+            "startsWith",
+            "endsWith"
+          ]
+        },
+        "rightHandSide": {
+          "$ref": "#/$defs/CommandOperand"
+        },
+        "negate": {
+          "description": "When true the condition holds iff the predicate does *not*.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "leftHandSide",
+        "predicate",
+        "rightHandSide"
+      ]
+    },
+    "CommandOperand": {
+      "description": "Where a value comes from inside a command — its boundary, its\nconditions and its event emissions.\n",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ParameterValue"
+        },
+        {
+          "$ref": "#/$defs/AliasPropertyValue"
+        },
+        {
+          "$ref": "#/$defs/EnumMemberValue"
+        },
+        {
+          "$ref": "#/$defs/StaticValue"
+        }
+      ]
+    },
+    "ParameterValue": {
+      "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it —\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "parameterName": {
+          "$ref": "#/$defs/PropertyName"
+        },
+        "property": {
+          "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n",
+          "$ref": "#/$defs/PropertyName"
+        }
+      },
+      "required": [
+        "parameterName"
+      ]
+    },
+    "AliasPropertyValue": {
+      "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` is a projected property of\na bound entity instance. `{alias: courseNumbering}` — no\n`property` — is a bound projection's value.\n\n`property` is therefore **required on an entity alias** and\n**rejected on a projection alias**: an entity has many values and\nno single one to mean, a projection has exactly one and no name\nfor it. That is the same shape of rule `excluding` and\n`arguments` already follow — a field that means nothing in its\nposition is a mistake, not a no-op.\n",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "alias": {
+          "$ref": "#/$defs/AliasName"
+        },
+        "property": {
+          "$ref": "#/$defs/PropertyName"
+        }
+      },
+      "required": [
+        "alias"
+      ]
+    },
+    "EnumMemberValue": {
+      "description": "A member of an enum type — a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains — a plain string is by far the\ncommon case, but nothing here requires it.\n",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enumMember": {
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        }
+      },
+      "required": [
+        "enumMember"
+      ]
+    },
+    "ScenarioDefinition": {
+      "description": "One command, exercised. `given` is a log written by hand rather\nthan driven, `when` is the command and the arguments it is called\nwith, and `then` is what the definitions in this model made of\nthe two.\n\n**`then` is derived, and stored anyway.** No modeler is asked to\npredict it — an authoring tool computes it and freezes it. Storing\nit is the entire mechanism: the next evaluation either agrees with\nwhat is written here or it does not, and a disagreement is the\nreport that some edit changed this command's behaviour. A scenario\nwhose `then` is not stored can only ever say what a command does\nnow, never that it changed.\n\n**A scenario is identified by a generated id**, unlike every other\ndefinition in this document, whose name is its identity. Its\n`name` is derived from the outcome unless overridden, so two\nscenarios of one command may well want to be called the same\nthing — and a name that changes when the outcome changes cannot\nalso be the key everything else refers to it by.\n",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "Generated, opaque, and never shown. What makes this a scenario\nrather than what it is called.\n",
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "description": "What to call this scenario. Absent means it is read off the\noutcome — \"records StudentSubscribedToCourse\", \"is refused by\ncourse.status == Existent\". An authoring tool freezes the\nderived name once a scenario drifts, so the label does not\nmove under the reader at the moment they are trying to read\nthe difference.\n",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "command": {
+          "description": "The command this scenario exercises.",
+          "$ref": "#/$defs/CommandName"
+        },
+        "given": {
+          "description": "The events that had already been recorded, in order. Empty\nwhen the scenario starts from nothing.\n",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ScenarioGivenEvent"
+          },
+          "default": []
+        },
+        "when": {
+          "$ref": "#/$defs/ScenarioWhen"
+        },
+        "then": {
+          "$ref": "#/$defs/ScenarioThen"
+        }
+      },
+      "required": [
+        "id",
+        "command",
+        "given",
+        "when",
+        "then"
+      ]
+    },
+    "ScenarioGivenEvent": {
+      "description": "One event of a scenario's Given, with the payload it carried.\n",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "event": {
+          "$ref": "#/$defs/EventName"
+        },
+        "data": {
+          "description": "One entry per property the event declares — all of them, and\nnothing else. An event that later gains a property leaves\nevery scenario written before it *broken*, which is the honest\nreport: there is no value here to have evaluated with.\n",
+          "type": "object"
+        }
+      },
+      "required": [
+        "event",
+        "data"
+      ]
+    },
+    "ScenarioWhen": {
+      "description": "The command call under test.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "arguments": {
+          "description": "One entry per property the command declares — all of them, and\nnothing else.\n",
+          "type": "object"
+        }
+      },
+      "required": [
+        "arguments"
+      ]
+    },
+    "ScenarioThen": {
+      "description": "The outcome, as the definitions produced it when this scenario was\nlast accepted.\n\n`outcome` is a discriminator rather than a union of two shapes.\nPublishing an alternative event when a constraint fails — a\nrefusal that also records something — is then a change to what a\n`rejected` outcome carries, rather than a change to the shape\nevery stored scenario was written in.\n\nWhat is **not** kept here is the boundary the command read. It is\nderivable, it is large, and every edit to a definition would move\nit — so keeping it would turn every scenario into a snapshot of\neverything and every edit into a storm of differences. An\nauthoring tool shows the boundary; it does not assert it.\n",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "outcome": {
+          "description": "`published` when every condition held, `rejected` when one did\nnot.\n",
+          "enum": [
+            "published",
+            "rejected"
+          ]
+        },
+        "events": {
+          "description": "The events published, in order, each with the payload the\ncommand built. Empty for a refusal — until a refusal is\nallowed to record something too.\n",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ScenarioEmittedEvent"
+          },
+          "default": []
+        },
+        "failedRule": {
+          "description": "Which condition refused the command, and what it saw. Present\nexactly when `outcome` is `rejected`.\n",
+          "$ref": "#/$defs/ScenarioFailedRule"
+        }
+      },
+      "required": [
+        "outcome",
+        "events"
+      ]
+    },
+    "ScenarioEmittedEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/EventName"
+        },
+        "data": {
+          "description": "One entry per property the event declares.",
+          "type": "object"
+        }
+      },
+      "required": [
+        "type",
+        "data"
+      ]
+    },
+    "ScenarioFailedRule": {
+      "description": "The condition that refused the command. The values are kept\nalongside the text because a rule that still fails, on a different\nreading than before, is also a change in behaviour.\n",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "index": {
+          "description": "Position of the condition in the command's `conditions`.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "text": {
+          "description": "The condition as it reads — `course.subscriptionCount <\ncourse.capacity`. Stored so a drift can be reported without\nresolving the condition again, and so a scenario whose command\nwas deleted can still say what it used to check.\n",
+          "type": "string"
+        },
+        "leftValue": {
+          "description": "What the left-hand side read."
+        },
+        "rightValue": {
+          "description": "What the right-hand side read, or null for a unary predicate."
+        },
+        "atInstance": {
+          "description": "Which instance refused it, when the rule was quantified over a\nplural binding — the index of the cart line, the subscriber,\nthe clashing course. Null when the rule was checked once.\n",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "index",
+        "text"
+      ]
+    },
+    "CustomTypeDefinition": {
+      "description": "A value type — either **scalar** (an email string with a pattern,\na money amount, an enum of named members, …) or **composite** (a\nrecord of named fields, such as an order line pairing a product\nwith the price it was displayed at).\n\nExactly one of `schema` or `properties` is given, and the choice\nis what makes the type scalar or composite:\n\n  - `schema`     — an opaque JSON Schema describing one value.\n  - `properties` — a record of named, typed fields.\n\nA composite's fields are typed against the same universe as\neverything else, so a field typed `ProductId` is a real reference:\nrenaming the entity rewrites it, and tag derivation can see it. A\nraw JSON Schema could not offer either — inside one, a tag is\nindistinguishable from any other string.\n\n**`isTag`** is what makes a value type an identifier, and it is\nmeaningful only on the scalar form: a composite is never itself a\ntag, no matter how `isTag` reads on it. This is what lets two\nunrelated entities share one component (a `TenantId` field on\neach of their composite identifiers) and be scoped together by\nit — a composite that could opt into being its own tag would\nbreak that sharing. A composite's tag-ness is instead entirely\nderived by looking through it: every field whose own type is\n`isTag` contributes that field's tag to the whole, exactly as\n`eventDefinitions` describes for an event's identifier-typed\nproperties.\n\n**An entity's own derived identifier** is an ordinary\n`customTypeDefinition` like any other — see\n`EntityDefinition.identifierType`. It is created automatically\nwhen the entity is, scalar and `isTag: true` by default, and from\nthen on it is edited here exactly like a standalone value type:\nchange its `schema`, switch it to `properties`, rename it. The\none thing that stays fixed is that it may not stop being a tag —\nan entity that could not be tagged could not be bound in a DCB\nquery — and it may not be removed directly, only by removing the\nentity that owns it.\n",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/CustomTypeName"
+        },
+        "schema": {
+          "description": "The scalar form — an opaque JSON Schema for a single value.",
+          "$ref": "https://json-schema.org/draft/2020-12/schema"
+        },
+        "properties": {
+          "description": "The composite form — the type's fields, in declaration order.\n",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/CompositeFieldDefinition"
+          }
+        },
+        "isTag": {
+          "description": "Whether this value type is represented as a tag — meaningful\nonly when this is the scalar form. Defaults to `false`: a\nvalue type is an inert record of data unless it opts in.\n",
+          "type": "boolean",
+          "default": false
+        },
+        "tagSchema": {
+          "description": "Template rendering this type's value into its tag, when\n`isTag` is true. Interpolates `{type}` (this type's name) and\n`{value}` (the value); both are required, in either order,\nand nothing else is. `{type}:{value}` — the default — is what\nevery earlier example in this document assumes; rearranging\nit (`{type}={value}`) or restyling it changes what an event\nconsulting this type writes as its tag, everywhere.\n",
+          "type": "string",
+          "default": "{type}:{value}"
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "name",
+            "schema"
+          ]
+        },
+        {
+          "required": [
+            "name",
+            "properties"
+          ]
+        }
+      ]
+    },
+    "CompositeFieldDefinition": {
+      "description": "One field of a composite value type. Deliberately **not** a\n`PropertyDefinition`: a field is always singular and always\nrequired, and it may not itself be typed with a composite.\n\nAll three restrictions exist to keep *zipping* meaningful (see\n`CommandDefinition.conditions`). Zipping is index correlation\nbetween a fanned-out binding and the list it fanned from, and it\nonly holds while the two have the same length:\n\n  - a **list** field would flatten, as list-valued reads off a\n    plural alias already do, and a flattened list has a different\n    length than the list it came from;\n  - an **optional** identifier field would contribute a variable\n    number of tags, so a binding fanned from it would be shorter\n    than its source;\n  - a **nested** composite would need a path operand rather than\n    the single hop `{parameterName, property}` affords.\n\nEach is a way for the index to drift silently, with nothing on the\npage to show it had.\n",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/PropertyName"
+        },
+        "propertyType": {
+          "$ref": "#/$defs/TypeName"
+        }
+      },
+      "required": [
+        "name",
+        "propertyType"
+      ]
+    },
+    "CustomTypeName": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 100,
+      "pattern": "^[A-Z][A-Za-z0-9]+$",
+      "examples": [
+        "EmailAddress"
+      ]
+    },
+    "EventDefinition": {
+      "description": "What an event carries. `properties` is the payload — the part\nsomebody emitting the event supplies.\n",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/EventName"
+        },
+        "icon": {
+          "description": "A short glyph — one emoji, or a character or two — that stands\nfor this event wherever it is named. Presentation only: no\npart of the model reads it, and two events may share one.\nAbsent means an authoring tool picks its own placeholder —\nconventionally the icon of the one command that publishes\nthis event, when exactly one does, and otherwise a neutral\nmark of its own.\n",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8,
+          "examples": [
+            "📚",
+            "🧾"
+          ]
+        },
+        "properties": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PropertyDefinition"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "properties"
+      ]
+    },
+    "EventName": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 100,
+      "pattern": "^[A-Z][A-Za-z0-9]+$",
+      "examples": [
+        "CourseDefined",
+        "StudentSubscribedToCourse"
+      ]
+    },
+    "PropertyDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/PropertyName"
+        },
+        "propertyType": {
+          "$ref": "#/$defs/TypeName"
+        },
+        "isOptional": {
+          "type": "boolean",
+          "default": false
+        },
+        "isList": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "name",
+        "propertyType"
+      ]
+    },
+    "PropertyName": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 100,
+      "pattern": "^[a-z][A-Za-z0-9]+$",
+      "examples": [
+        "someProperty"
+      ]
+    },
+    "StaticValue": {
+      "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
+      "type": [
+        "string",
+        "number",
+        "boolean"
+      ]
+    },
+    "TypeName": {
+      "description": "A simple type, or a declared value type — scalar (which includes\nan enum and a tag-marked identifier) or composite, including an\nentity's own derived identifier (`<name>Id` unless overridden,\nitself an ordinary `customTypeDefinition`). Every declared value\ntype shares one namespace, so a name resolves against it.\n",
+      "type": "string",
+      "anyOf": [
+        {
+          "enum": [
+            "boolean",
+            "integer",
+            "string"
+          ]
+        },
+        {
+          "$ref": "#/$defs/CustomTypeName"
+        }
+      ]
+    },
+    "PropertyScenarioDefinition": {
+      "description": "A scenario over an entity instance's projected properties rather than\nover a command: given these events, the instance named by\n`forInstance` should have projected to exactly these values. Where a\n`ScenarioDefinition` asserts what a command decides, this asserts\nwhat the fold arrives at, which is the thing a command's decision\nreads.\n\nThese are listed separately from the six definition kinds because\nthey are authored against an entity as a whole and owned by no single\ndefinition in the model.\n",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "Generated, opaque, and never shown — the same identity a\n`ScenarioDefinition` carries, and for the same reason: two\nproperty scenarios over one entity are told apart by nothing else.\n",
+          "type": "string",
+          "minLength": 1
+        },
+        "entity": {
+          "description": "The entity whose properties this scenario asserts about.\n",
+          "$ref": "#/$defs/EntityName"
+        },
+        "forInstance": {
+          "description": "The identifier value naming *which* instance of that entity the\nassertion is about. A bare value, rendered through the entity's\nidentifier type — the events in `given` carry the same value in\nwhichever of their properties is tagged with it.\n",
+          "type": "string",
+          "minLength": 1
+        },
+        "given": {
+          "description": "The events to fold, in order. An empty array is meaningful and\ncommon: it asserts what the instance projects to before anything\nhas happened to it.\n",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ScenarioGivenEvent"
+          }
+        },
+        "then": {
+          "description": "One entry per property the entity declares, naming the value it\nshould have projected to. Keys are property names and values are\nof whatever type the property carries, so nothing here can be\nchecked against the model by this schema alone — an unknown\nproperty or a mistyped value is caught when the model is\nloaded, not when the document is validated.\n",
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "entity",
+        "forInstance",
+        "given",
+        "then"
+      ]
+    },
+    "Sandbox": {
+      "description": "The interactive session someone happened to be mid-way through when\nthey exported. Not part of the model — it is a walkthrough *of* the\nmodel, kept so that a shared link opens on the same state the sender\nwas looking at. Omitted entirely when no steps have been run.\n",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "steps": {
+          "description": "The commands driven so far, in the order they were driven.\n",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SandboxStep"
+          }
+        }
+      },
+      "required": [
+        "steps"
+      ]
+    },
+    "SandboxStep": {
+      "description": "One command drive: which command, and the arguments it was given.\n",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "description": "The command driven — a `commandDefinitions` entry by name.\n",
+          "$ref": "#/$defs/CommandName"
+        },
+        "args": {
+          "description": "One entry per parameter the command declares. Keys are parameter\nnames and values are of whatever type the parameter carries, so\nthis schema checks that the object is there and not what is in\nit — the same ceiling `PropertyScenarioDefinition.then` runs into,\nand for the same reason.\n",
+          "type": "object"
+        }
+      },
+      "required": [
+        "command",
+        "args"
+      ]
+    }
+  }
+}

@@ -1,5 +1,5 @@
-# Event definitions inside a DCB Context: events, DCBs, commands.
-# Identified within the context by `name` (the natural key).
+# Event definitions inside a DCB Model: events, DCBs, commands.
+# Identified within the model by `name` (the natural key).
 #
 # References out: custom-type-definitions and entity-derived types via
 # property types. A property typed with an entity identifier is what
@@ -23,11 +23,11 @@ kind: event
 name: event-definition-added
 scope:
   domain: dcb-playground
-  boundedContext: dcb-context-authoring
+  boundedContext: dcb-model-authoring
 data:
   type: object
   properties:
-    dcb-context-id:
+    dcb-model-id:
       type: string
     name:
       type: string
@@ -36,9 +36,9 @@ data:
       description: |
         The event-definition's authored content (its properties, and
         thereby its tags). Kept opaque here — the schema for a `body`
-        is the DCB Context schema this playground edits, which is the
+        is the DCB Model schema this playground edits, which is the
         subject of the tool, not of this domain model.
-  required: [dcb-context-id, name, body]
+  required: [dcb-model-id, name, body]
   additionalProperties: false
 ---
 apiVersion: schema.esdm.io/core/v1
@@ -46,17 +46,17 @@ kind: event
 name: event-definition-updated
 scope:
   domain: dcb-playground
-  boundedContext: dcb-context-authoring
+  boundedContext: dcb-model-authoring
 data:
   type: object
   properties:
-    dcb-context-id:
+    dcb-model-id:
       type: string
     name:
       type: string
     body:
       type: object
-  required: [dcb-context-id, name, body]
+  required: [dcb-model-id, name, body]
   additionalProperties: false
 ---
 apiVersion: schema.esdm.io/core/v1
@@ -64,17 +64,17 @@ kind: event
 name: event-definition-renamed
 scope:
   domain: dcb-playground
-  boundedContext: dcb-context-authoring
+  boundedContext: dcb-model-authoring
 data:
   type: object
   properties:
-    dcb-context-id:
+    dcb-model-id:
       type: string
     previous-name:
       type: string
     name:
       type: string
-  required: [dcb-context-id, previous-name, name]
+  required: [dcb-model-id, previous-name, name]
   additionalProperties: false
 ---
 apiVersion: schema.esdm.io/core/v1
@@ -82,15 +82,15 @@ kind: event
 name: event-definition-removed
 scope:
   domain: dcb-playground
-  boundedContext: dcb-context-authoring
+  boundedContext: dcb-model-authoring
 data:
   type: object
   properties:
-    dcb-context-id:
+    dcb-model-id:
       type: string
     name:
       type: string
-  required: [dcb-context-id, name]
+  required: [dcb-model-id, name]
   additionalProperties: false
 ---
 apiVersion: schema.esdm.io/core/v1
@@ -98,62 +98,62 @@ kind: dynamic-consistency-boundary
 name: event-definition-addition
 description: |
   Guards the addition of a new event-definition. Parameterised by
-  context id and the candidate name; consults the context lifecycle
+  model id and the candidate name; consults the model lifecycle
   (must be active), prior event-definition lifecycle events for the
   same name (must not currently identify a live definition), and the
   custom-type and entity lifecycles so the property types in the new
   body can be resolved in the same append.
 scope:
   domain: dcb-playground
-  boundedContext: dcb-context-authoring
+  boundedContext: dcb-model-authoring
 identifiedBy:
-  - name: dcb-context-id
+  - name: dcb-model-id
     source: command-payload
-    field: dcb-context-id
+    field: dcb-model-id
   - name: event-definition-name
     source: command-payload
     field: name
 consults:
-  - boundedContext: dcb-context-authoring
-    event: dcb-context-created
-    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
-  - boundedContext: dcb-context-authoring
-    event: dcb-context-deleted
-    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
-  - boundedContext: dcb-context-authoring
+  - boundedContext: dcb-model-authoring
+    event: dcb-model-created
+    criteria: events whose `dcb-model-id` matches this instance's `dcb-model-id`
+  - boundedContext: dcb-model-authoring
+    event: dcb-model-deleted
+    criteria: events whose `dcb-model-id` matches this instance's `dcb-model-id`
+  - boundedContext: dcb-model-authoring
     event: event-definition-added
-    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `event-definition-name`
-  - boundedContext: dcb-context-authoring
+    criteria: events with matching `dcb-model-id` and `name` equal to this instance's `event-definition-name`
+  - boundedContext: dcb-model-authoring
     event: event-definition-renamed
-    criteria: events with matching `dcb-context-id` whose new `name` or `previous-name` equals this instance's `event-definition-name`
-  - boundedContext: dcb-context-authoring
+    criteria: events with matching `dcb-model-id` whose new `name` or `previous-name` equals this instance's `event-definition-name`
+  - boundedContext: dcb-model-authoring
     event: event-definition-removed
-    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `event-definition-name`
-  - boundedContext: dcb-context-authoring
+    criteria: events with matching `dcb-model-id` and `name` equal to this instance's `event-definition-name`
+  - boundedContext: dcb-model-authoring
     event: custom-type-definition-added
-    criteria: every custom-type-definition added in this context — needed to resolve value-typed properties
-  - boundedContext: dcb-context-authoring
+    criteria: every custom-type-definition added in this model — needed to resolve value-typed properties
+  - boundedContext: dcb-model-authoring
     event: custom-type-definition-renamed
-    criteria: every custom-type-definition rename in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every custom-type-definition rename in this model
+  - boundedContext: dcb-model-authoring
     event: custom-type-definition-removed
-    criteria: every custom-type-definition removal in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every custom-type-definition removal in this model
+  - boundedContext: dcb-model-authoring
     event: entity-definition-added
-    criteria: every entity-definition added in this context — needed to resolve properties typed with a derived `<Entity>Id`
-  - boundedContext: dcb-context-authoring
+    criteria: every entity-definition added in this model — needed to resolve properties typed with a derived `<Entity>Id`
+  - boundedContext: dcb-model-authoring
     event: entity-definition-renamed
-    criteria: every entity-definition rename in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every entity-definition rename in this model
+  - boundedContext: dcb-model-authoring
     event: entity-definition-removed
-    criteria: every entity-definition removal in this context
+    criteria: every entity-definition removal in this model
 invariants:
-  - name: context-active
-    rule: The context has been created and has not been deleted.
+  - name: model-active
+    rule: The model has been created and has not been deleted.
   - name: name-not-in-use
     rule: |
       No event-definition currently goes by this name in this
-      context — folding the consulted add/rename/remove events
+      model — folding the consulted add/rename/remove events
       yields no live definition with this name.
   - name: references-resolve
     rule: |
@@ -174,76 +174,76 @@ description: |
   emitting command or a folding projection handler may still name.
 scope:
   domain: dcb-playground
-  boundedContext: dcb-context-authoring
+  boundedContext: dcb-model-authoring
 identifiedBy:
-  - name: dcb-context-id
+  - name: dcb-model-id
     source: command-payload
-    field: dcb-context-id
+    field: dcb-model-id
   - name: event-definition-name
     source: command-payload
     field: name
 consults:
-  - boundedContext: dcb-context-authoring
-    event: dcb-context-created
-    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
-  - boundedContext: dcb-context-authoring
-    event: dcb-context-deleted
-    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
-  - boundedContext: dcb-context-authoring
+  - boundedContext: dcb-model-authoring
+    event: dcb-model-created
+    criteria: events whose `dcb-model-id` matches this instance's `dcb-model-id`
+  - boundedContext: dcb-model-authoring
+    event: dcb-model-deleted
+    criteria: events whose `dcb-model-id` matches this instance's `dcb-model-id`
+  - boundedContext: dcb-model-authoring
     event: event-definition-added
-    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `event-definition-name`
-  - boundedContext: dcb-context-authoring
+    criteria: events with matching `dcb-model-id` and `name` equal to this instance's `event-definition-name`
+  - boundedContext: dcb-model-authoring
     event: event-definition-renamed
-    criteria: events with matching `dcb-context-id` whose new `name` or `previous-name` equals this instance's `event-definition-name`
-  - boundedContext: dcb-context-authoring
+    criteria: events with matching `dcb-model-id` whose new `name` or `previous-name` equals this instance's `event-definition-name`
+  - boundedContext: dcb-model-authoring
     event: event-definition-removed
-    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `event-definition-name`
-  - boundedContext: dcb-context-authoring
+    criteria: events with matching `dcb-model-id` and `name` equal to this instance's `event-definition-name`
+  - boundedContext: dcb-model-authoring
     event: custom-type-definition-added
-    criteria: every custom-type-definition added in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every custom-type-definition added in this model
+  - boundedContext: dcb-model-authoring
     event: custom-type-definition-renamed
-    criteria: every custom-type-definition rename in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every custom-type-definition rename in this model
+  - boundedContext: dcb-model-authoring
     event: custom-type-definition-removed
-    criteria: every custom-type-definition removal in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every custom-type-definition removal in this model
+  - boundedContext: dcb-model-authoring
     event: entity-definition-added
-    criteria: every entity-definition added in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every entity-definition added in this model
+  - boundedContext: dcb-model-authoring
     event: entity-definition-updated
-    criteria: every entity-definition update in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every entity-definition update in this model
+  - boundedContext: dcb-model-authoring
     event: entity-definition-renamed
-    criteria: every entity-definition rename in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every entity-definition rename in this model
+  - boundedContext: dcb-model-authoring
     event: entity-definition-removed
-    criteria: every entity-definition removal in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every entity-definition removal in this model
+  - boundedContext: dcb-model-authoring
     event: command-definition-added
-    criteria: every command-definition added in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every command-definition added in this model
+  - boundedContext: dcb-model-authoring
     event: command-definition-updated
-    criteria: every command-definition update in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every command-definition update in this model
+  - boundedContext: dcb-model-authoring
     event: command-definition-removed
-    criteria: every command-definition removal in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every command-definition removal in this model
+  - boundedContext: dcb-model-authoring
     event: projection-definition-added
-    criteria: every projection-definition added in this context — a projection handler names an event and may reach a property of it
-  - boundedContext: dcb-context-authoring
+    criteria: every projection-definition added in this model — a projection handler names an event and may reach a property of it
+  - boundedContext: dcb-model-authoring
     event: projection-definition-updated
-    criteria: every projection-definition update in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every projection-definition update in this model
+  - boundedContext: dcb-model-authoring
     event: projection-definition-removed
-    criteria: every projection-definition removal in this context
+    criteria: every projection-definition removal in this model
 invariants:
-  - name: context-active
-    rule: The context has been created and has not been deleted.
+  - name: model-active
+    rule: The model has been created and has not been deleted.
   - name: definition-exists
     rule: |
       An event-definition currently goes by this name in this
-      context — the consult history resolves to a live definition.
+      model — the consult history resolves to a live definition.
   - name: references-resolve
     rule: |
       Every property type in the updated body resolves to a simple
@@ -262,18 +262,18 @@ name: event-definition-rename
 description: |
   Guards renaming an event-definition. In addition to the
   event-definition lifecycle, the DCB consults all entity and command
-  lifecycle events for the context, so the triggering command can emit
+  lifecycle events for the model, so the triggering command can emit
   the reference-rewrite events for every entity (whose property
   handlers name the event) and every command (whose `publishes` list
   names it) currently referencing `previous-name` in one atomic
   append.
 scope:
   domain: dcb-playground
-  boundedContext: dcb-context-authoring
+  boundedContext: dcb-model-authoring
 identifiedBy:
-  - name: dcb-context-id
+  - name: dcb-model-id
     source: command-payload
-    field: dcb-context-id
+    field: dcb-model-id
   - name: previous-name
     source: command-payload
     field: previous-name
@@ -281,61 +281,61 @@ identifiedBy:
     source: command-payload
     field: name
 consults:
-  - boundedContext: dcb-context-authoring
-    event: dcb-context-created
-    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
-  - boundedContext: dcb-context-authoring
-    event: dcb-context-deleted
-    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
-  - boundedContext: dcb-context-authoring
+  - boundedContext: dcb-model-authoring
+    event: dcb-model-created
+    criteria: events whose `dcb-model-id` matches this instance's `dcb-model-id`
+  - boundedContext: dcb-model-authoring
+    event: dcb-model-deleted
+    criteria: events whose `dcb-model-id` matches this instance's `dcb-model-id`
+  - boundedContext: dcb-model-authoring
     event: event-definition-added
-    criteria: events with matching `dcb-context-id` whose `name` equals `previous-name` or `name`
-  - boundedContext: dcb-context-authoring
+    criteria: events with matching `dcb-model-id` whose `name` equals `previous-name` or `name`
+  - boundedContext: dcb-model-authoring
     event: event-definition-renamed
-    criteria: events with matching `dcb-context-id` whose new `name` or `previous-name` equals `previous-name` or `name`
-  - boundedContext: dcb-context-authoring
+    criteria: events with matching `dcb-model-id` whose new `name` or `previous-name` equals `previous-name` or `name`
+  - boundedContext: dcb-model-authoring
     event: event-definition-removed
-    criteria: events with matching `dcb-context-id` whose `name` equals `previous-name` or `name`
-  - boundedContext: dcb-context-authoring
+    criteria: events with matching `dcb-model-id` whose `name` equals `previous-name` or `name`
+  - boundedContext: dcb-model-authoring
     event: entity-definition-added
-    criteria: every entity-definition added in this context — needed to find property handlers to rewrite
-  - boundedContext: dcb-context-authoring
+    criteria: every entity-definition added in this model — needed to find property handlers to rewrite
+  - boundedContext: dcb-model-authoring
     event: entity-definition-updated
-    criteria: every entity-definition update in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every entity-definition update in this model
+  - boundedContext: dcb-model-authoring
     event: entity-definition-renamed
-    criteria: every entity-definition rename in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every entity-definition rename in this model
+  - boundedContext: dcb-model-authoring
     event: entity-definition-removed
-    criteria: every entity-definition removal in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every entity-definition removal in this model
+  - boundedContext: dcb-model-authoring
     event: command-definition-added
-    criteria: every command-definition added in this context — needed to find references to rewrite
-  - boundedContext: dcb-context-authoring
+    criteria: every command-definition added in this model — needed to find references to rewrite
+  - boundedContext: dcb-model-authoring
     event: command-definition-updated
-    criteria: every command-definition update in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every command-definition update in this model
+  - boundedContext: dcb-model-authoring
     event: command-definition-renamed
-    criteria: every command-definition rename in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every command-definition rename in this model
+  - boundedContext: dcb-model-authoring
     event: command-definition-removed
-    criteria: every command-definition removal in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every command-definition removal in this model
+  - boundedContext: dcb-model-authoring
     event: projection-definition-added
-    criteria: every projection-definition added in this context — a projection handler names an event and may reach a property of it
-  - boundedContext: dcb-context-authoring
+    criteria: every projection-definition added in this model — a projection handler names an event and may reach a property of it
+  - boundedContext: dcb-model-authoring
     event: projection-definition-updated
-    criteria: every projection-definition update in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every projection-definition update in this model
+  - boundedContext: dcb-model-authoring
     event: projection-definition-removed
-    criteria: every projection-definition removal in this context
+    criteria: every projection-definition removal in this model
 invariants:
-  - name: context-active
-    rule: The context has been created and has not been deleted.
+  - name: model-active
+    rule: The model has been created and has not been deleted.
   - name: previous-name-in-use
-    rule: An event-definition currently goes by `previous-name` in this context.
+    rule: An event-definition currently goes by `previous-name` in this model.
   - name: new-name-free
-    rule: No event-definition currently goes by `name` in this context.
+    rule: No event-definition currently goes by `name` in this model.
 ---
 apiVersion: schema.esdm.io/core/v1
 kind: dynamic-consistency-boundary
@@ -344,68 +344,68 @@ description: |
   Guards removal of an event-definition. Consults entity, command and
   projection lifecycle events to refuse removal while any entity (via a
   property handler), any command (via `publishes`) or any projection
-  (via a handler) in the same context still references the name.
+  (via a handler) in the same model still references the name.
 scope:
   domain: dcb-playground
-  boundedContext: dcb-context-authoring
+  boundedContext: dcb-model-authoring
 identifiedBy:
-  - name: dcb-context-id
+  - name: dcb-model-id
     source: command-payload
-    field: dcb-context-id
+    field: dcb-model-id
   - name: event-definition-name
     source: command-payload
     field: name
 consults:
-  - boundedContext: dcb-context-authoring
-    event: dcb-context-created
-    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
-  - boundedContext: dcb-context-authoring
-    event: dcb-context-deleted
-    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
-  - boundedContext: dcb-context-authoring
+  - boundedContext: dcb-model-authoring
+    event: dcb-model-created
+    criteria: events whose `dcb-model-id` matches this instance's `dcb-model-id`
+  - boundedContext: dcb-model-authoring
+    event: dcb-model-deleted
+    criteria: events whose `dcb-model-id` matches this instance's `dcb-model-id`
+  - boundedContext: dcb-model-authoring
     event: event-definition-added
-    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `event-definition-name`
-  - boundedContext: dcb-context-authoring
+    criteria: events with matching `dcb-model-id` and `name` equal to this instance's `event-definition-name`
+  - boundedContext: dcb-model-authoring
     event: event-definition-renamed
-    criteria: events with matching `dcb-context-id` whose new `name` or `previous-name` equals this instance's `event-definition-name`
-  - boundedContext: dcb-context-authoring
+    criteria: events with matching `dcb-model-id` whose new `name` or `previous-name` equals this instance's `event-definition-name`
+  - boundedContext: dcb-model-authoring
     event: event-definition-removed
-    criteria: events with matching `dcb-context-id` and `name` equal to this instance's `event-definition-name`
-  - boundedContext: dcb-context-authoring
+    criteria: events with matching `dcb-model-id` and `name` equal to this instance's `event-definition-name`
+  - boundedContext: dcb-model-authoring
     event: entity-definition-added
-    criteria: every entity-definition added in this context — needed to check for inbound references
-  - boundedContext: dcb-context-authoring
+    criteria: every entity-definition added in this model — needed to check for inbound references
+  - boundedContext: dcb-model-authoring
     event: entity-definition-updated
-    criteria: every entity-definition update in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every entity-definition update in this model
+  - boundedContext: dcb-model-authoring
     event: entity-definition-removed
-    criteria: every entity-definition removal in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every entity-definition removal in this model
+  - boundedContext: dcb-model-authoring
     event: command-definition-added
-    criteria: every command-definition added in this context — needed to check for inbound references via `publishes`
-  - boundedContext: dcb-context-authoring
+    criteria: every command-definition added in this model — needed to check for inbound references via `publishes`
+  - boundedContext: dcb-model-authoring
     event: command-definition-updated
-    criteria: every command-definition update in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every command-definition update in this model
+  - boundedContext: dcb-model-authoring
     event: command-definition-removed
-    criteria: every command-definition removal in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every command-definition removal in this model
+  - boundedContext: dcb-model-authoring
     event: projection-definition-added
-    criteria: every projection-definition added in this context — a projection handler names an event and may reach a property of it
-  - boundedContext: dcb-context-authoring
+    criteria: every projection-definition added in this model — a projection handler names an event and may reach a property of it
+  - boundedContext: dcb-model-authoring
     event: projection-definition-updated
-    criteria: every projection-definition update in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every projection-definition update in this model
+  - boundedContext: dcb-model-authoring
     event: projection-definition-removed
-    criteria: every projection-definition removal in this context
+    criteria: every projection-definition removal in this model
 invariants:
-  - name: context-active
-    rule: The context has been created and has not been deleted.
+  - name: model-active
+    rule: The model has been created and has not been deleted.
   - name: definition-exists
-    rule: An event-definition currently goes by this name in this context.
+    rule: An event-definition currently goes by this name in this model.
   - name: no-inbound-references
     rule: |
-      No entity-definition currently in the context names this
+      No entity-definition currently in the model names this
       event-definition in a property handler, no command-definition
       names it in `publishes`, and no projection-definition folds it.
       References are read from the latest body of each live definition.
@@ -415,18 +415,18 @@ kind: command
 name: add-event-definition
 scope:
   domain: dcb-playground
-  boundedContext: dcb-context-authoring
+  boundedContext: dcb-model-authoring
   dynamicConsistencyBoundary: event-definition-addition
 data:
   type: object
   properties:
-    dcb-context-id:
+    dcb-model-id:
       type: string
     name:
       type: string
     body:
       type: object
-  required: [dcb-context-id, name, body]
+  required: [dcb-model-id, name, body]
   additionalProperties: false
 publishes:
   - event-definition-added
@@ -438,18 +438,18 @@ kind: command
 name: update-event-definition
 scope:
   domain: dcb-playground
-  boundedContext: dcb-context-authoring
+  boundedContext: dcb-model-authoring
   dynamicConsistencyBoundary: event-definition-update
 data:
   type: object
   properties:
-    dcb-context-id:
+    dcb-model-id:
       type: string
     name:
       type: string
     body:
       type: object
-  required: [dcb-context-id, name, body]
+  required: [dcb-model-id, name, body]
   additionalProperties: false
 publishes:
   - event-definition-updated
@@ -469,18 +469,18 @@ description: |
   append correct.
 scope:
   domain: dcb-playground
-  boundedContext: dcb-context-authoring
+  boundedContext: dcb-model-authoring
   dynamicConsistencyBoundary: event-definition-rename
 data:
   type: object
   properties:
-    dcb-context-id:
+    dcb-model-id:
       type: string
     previous-name:
       type: string
     name:
       type: string
-  required: [dcb-context-id, previous-name, name]
+  required: [dcb-model-id, previous-name, name]
   additionalProperties: false
 publishes:
   - event-definition-renamed
@@ -491,21 +491,21 @@ constraints:
   - name: rewrite-entity-references
     rule: |
       Emit exactly one `entity-definition-updated` for every
-      entity-definition currently in the context with at least one
+      entity-definition currently in the model with at least one
       property handler whose `event` equals `previous-name`, with
       every occurrence replaced by `name`. Emit nothing for entities
       that do not handle the renamed event.
   - name: rewrite-command-references
     rule: |
       Emit exactly one `command-definition-updated` for every
-      command-definition currently in the context whose `publishes`
+      command-definition currently in the model whose `publishes`
       list named the event under `previous-name`, with the entry
       replaced by `name`. Emit nothing for commands that did not
       reference the renamed event.
   - name: rewrite-projection-references
     rule: |
       Emit exactly one `projection-definition-updated` for every
-      projection-definition currently in the context with a handler for the
+      projection-definition currently in the model with a handler for the
       event under `previous-name`, with the entry replaced by `name`.
       Emit nothing for projections that do not fold the renamed event.
 actors:
@@ -516,16 +516,16 @@ kind: command
 name: remove-event-definition
 scope:
   domain: dcb-playground
-  boundedContext: dcb-context-authoring
+  boundedContext: dcb-model-authoring
   dynamicConsistencyBoundary: event-definition-removal
 data:
   type: object
   properties:
-    dcb-context-id:
+    dcb-model-id:
       type: string
     name:
       type: string
-  required: [dcb-context-id, name]
+  required: [dcb-model-id, name]
   additionalProperties: false
 publishes:
   - event-definition-removed

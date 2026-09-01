@@ -2,13 +2,13 @@
 // DCB Playground — evaluation layer.
 //
 // `model.js` says what a definition *means*; this says what it *does*.
-// Given a context, a log of events and a command with its arguments,
+// Given a model, a log of events and a command with its arguments,
 // it resolves the boundary, folds every projection the boundary reads,
 // checks the conditions and returns either the events the command
 // publishes or the rule that refused it.
 //
 // Nothing here touches the DOM, `localStorage` or the event log the
-// playground stores its own history in. It takes a context object and
+// playground stores its own history in. It takes a model object and
 // a list of events and returns a value — which is what makes it usable
 // from a scenario, from the sandbox, and eventually from a worker,
 // without any of them knowing about the others.
@@ -144,12 +144,12 @@ function evAsNumber(value, where) {
 // place and cannot drift apart.
 // ============================================================
 
-function tagsOfEvent(ctx, eventName, data) {
-  const definition = ctx['event-definitions'][eventName];
+function tagsOfEvent(model, eventName, data) {
+  const definition = model['event-definitions'][eventName];
   if (!definition) return [];
   const tags = new Set();
   for (const property of definition.properties || []) {
-    const leaves = idLeavesOfType(ctx, property.propertyType);
+    const leaves = idLeavesOfType(model, property.propertyType);
     if (!leaves.length) continue;
     const held = (data || {})[property.name];
     const elements = property.isList ? evAsList(held) : [held];
@@ -158,16 +158,16 @@ function tagsOfEvent(ctx, eventName, data) {
       for (const leaf of leaves) {
         const value = leaf.field === null ? element : (element || {})[leaf.field];
         if (value === null || value === undefined) continue;
-        tags.add(renderTag(identifierTypeOf(ctx, leaf.identifierType), String(value)));
+        tags.add(renderTag(identifierTypeOf(model, leaf.identifierType), String(value)));
       }
     }
   }
   return [...tags];
 }
 
-function evMatchesTags(ctx, event, tags) {
+function evMatchesTags(model, event, tags) {
   if (!tags.length) return true;
-  const carried = tagsOfEvent(ctx, event.type, event.data);
+  const carried = tagsOfEvent(model, event.type, event.data);
   return tags.every((tag) => carried.includes(tag));
 }
 
@@ -259,7 +259,7 @@ function evCompileHandler(handler, label) {
 }
 
 // A projection or entity property, compiled once and folded many times.
-function evCompileTarget(ctx, target, label) {
+function evCompileTarget(model, target, label) {
   const script = scriptOf(target);
   const steps = new Map();
   for (const handler of target.handlers || []) {
@@ -270,7 +270,7 @@ function evCompileTarget(ctx, target, label) {
   const initial = script
     ? deepClone(script.initialState)
     : (target.initialValue === undefined
-      ? evNormalize(defaultInitialValue(ctx, target))
+      ? evNormalize(defaultInitialValue(model, target))
       : evNormalize(target.initialValue));
 
   // What a condition reads. A script may keep bookkeeping the boundary
@@ -309,27 +309,27 @@ function evCompileTarget(ctx, target, label) {
 // `tagsOfEvent`), so matching on all of them together is what "this
 // instance" means — the same union-of-component-tags rule, read
 // backwards.
-function tagsForEntityInstance(ctx, entityName, instanceId) {
-  const leaves = idLeavesOfType(ctx, idTypeOf(ctx, entityName));
+function tagsForEntityInstance(model, entityName, instanceId) {
+  const leaves = idLeavesOfType(model, idTypeOf(model, entityName));
   if (!leaves.length) return [`${entityName}:${instanceId}`];
   return leaves.map((leaf) => {
     const value = leaf.field === null ? instanceId : (instanceId || {})[leaf.field];
-    return renderTag(identifierTypeOf(ctx, leaf.identifierType), String(value));
+    return renderTag(identifierTypeOf(model, leaf.identifierType), String(value));
   });
 }
 
 // One property of one entity instance. The events are those carrying
 // the instance's tag(s); the compiled steps ignore the rest.
-function foldEntityProperty(ctx, events, entityName, propertyName, instanceId, args) {
-  const entity = ctx['entity-definitions'][entityName];
-  if (!entity) fail(`This context has no entity "${entityName}".`);
+function foldEntityProperty(model, events, entityName, propertyName, instanceId, args) {
+  const entity = model['entity-definitions'][entityName];
+  if (!entity) fail(`This model has no entity "${entityName}".`);
   const property = (entity.properties || []).find((p) => p.name === propertyName);
   if (!property) fail(`"${entityName}" has no property "${propertyName}".`);
 
-  const compiled = evCompileTarget(ctx, property, `${entityName}.${propertyName}`);
-  const tags = tagsForEntityInstance(ctx, entityName, instanceId);
+  const compiled = evCompileTarget(model, property, `${entityName}.${propertyName}`);
+  const tags = tagsForEntityInstance(model, entityName, instanceId);
   return compiled.fold(
-    events.filter((event) => evMatchesTags(ctx, event, tags)),
+    events.filter((event) => evMatchesTags(model, event, tags)),
     args
   );
 }
@@ -339,9 +339,9 @@ function foldEntityProperty(ctx, events, entityName, propertyName, instanceId, a
 // them select the events; a scripted one states its tags itself, with
 // those same arguments interpolated. Declare no parameters and there is
 // no tag, which is what a global numbering is.
-function foldProjection(ctx, events, projectionName, argumentValues) {
-  const projection = ctx['projection-definitions'][projectionName];
-  if (!projection) fail(`This context has no projection "${projectionName}".`);
+function foldProjection(model, events, projectionName, argumentValues) {
+  const projection = model['projection-definitions'][projectionName];
+  if (!projection) fail(`This model has no projection "${projectionName}".`);
 
   const values = argumentValues || {};
   const script = scriptOf(projection);
@@ -356,7 +356,7 @@ function foldProjection(ctx, events, projectionName, argumentValues) {
       if (!match) return String(template);
       const valueText = match[2].replace(TAG_PLACEHOLDER_RE, (whole, name) =>
         (values[name] === undefined ? whole : String(evNormalize(values[name]))));
-      const identifierType = identifierTypeOf(ctx, match[1]);
+      const identifierType = identifierTypeOf(model, match[1]);
       return identifierType ? renderTag(identifierType, valueText) : `${match[1]}:${valueText}`;
     })
     : (projection.parameters || []).flatMap((parameter) => {
@@ -365,20 +365,20 @@ function foldProjection(ctx, events, projectionName, argumentValues) {
         fail(`Projection "${projectionName}" was read without its parameter "${parameter.name}".`);
       }
       const normalized = evNormalize(value);
-      const leaves = idLeavesOfType(ctx, parameter.propertyType);
+      const leaves = idLeavesOfType(model, parameter.propertyType);
       if (!leaves.length) return [`${parameter.propertyType}:${normalized}`];
       // A composite parameter contributes the union of its components'
       // own tags — one per leaf, each rendered through that leaf's own
       // tagSchema, never renamespaced under the parameter's type.
       return leaves.map((leaf) => {
         const leafValue = leaf.field === null ? normalized : (normalized || {})[leaf.field];
-        return renderTag(identifierTypeOf(ctx, leaf.identifierType), String(leafValue));
+        return renderTag(identifierTypeOf(model, leaf.identifierType), String(leafValue));
       });
     });
 
-  const compiled = evCompileTarget(ctx, projection, `projection "${projectionName}"`);
+  const compiled = evCompileTarget(model, projection, `projection "${projectionName}"`);
   return compiled.fold(
-    events.filter((event) => evMatchesTags(ctx, event, tags)),
+    events.filter((event) => evMatchesTags(model, event, tags)),
     values
   );
 }
@@ -392,7 +392,7 @@ function foldProjection(ctx, events, projectionName, argumentValues) {
 // round may read an earlier one, so this grows as the rounds run.
 // ============================================================
 
-function evEntityInstance(ctx, events, entityName, id, args) {
+function evEntityInstance(model, events, entityName, id, args) {
   const cache = new Map();
   return {
     id,
@@ -401,7 +401,7 @@ function evEntityInstance(ctx, events, entityName, id, args) {
     cache,
     read(propertyName) {
       if (!cache.has(propertyName)) {
-        cache.set(propertyName, foldEntityProperty(ctx, events, entityName, propertyName, id, args));
+        cache.set(propertyName, foldEntityProperty(model, events, entityName, propertyName, id, args));
       }
       return cache.get(propertyName);
     },
@@ -452,7 +452,7 @@ function evReadOperand(operand, scope) {
 // The boundary.
 // ============================================================
 
-function evResolveBinding(ctx, events, body, binding, scope) {
+function evResolveBinding(model, events, body, binding, scope) {
   if (binding.projection) {
     const values = {};
     for (const [name, operand] of Object.entries(binding.arguments || {})) {
@@ -461,13 +461,13 @@ function evResolveBinding(ctx, events, body, binding, scope) {
     scope.bound[binding.alias] = {
       kind: 'projection',
       projection: binding.projection,
-      value: foldProjection(ctx, events, binding.projection, values),
+      value: foldProjection(model, events, binding.projection, values),
     };
     return;
   }
 
-  if (!ctx['entity-definitions'][binding.entity]) {
-    fail(`Binding "${binding.alias}" reads entity "${binding.entity}", which this context does not define.`);
+  if (!model['entity-definitions'][binding.entity]) {
+    fail(`Binding "${binding.alias}" reads entity "${binding.entity}", which this model does not define.`);
   }
 
   const values = {};
@@ -475,7 +475,7 @@ function evResolveBinding(ctx, events, body, binding, scope) {
     values[name] = evReadOperand(operand, scope);
   }
 
-  const fanned = isFannedOut(ctx, body, binding);
+  const fanned = isFannedOut(model, body, binding);
   const held = evReadOperand(binding.id, scope);
   // Order is preserved and duplicates are kept: a binding fanned from a
   // list parameter is read at the same index as that parameter, and
@@ -492,7 +492,7 @@ function evResolveBinding(ctx, events, body, binding, scope) {
     kind: 'entity',
     entity: binding.entity,
     fanned,
-    instances: ids.map((id) => evEntityInstance(ctx, events, binding.entity, evNormalize(id), values)),
+    instances: ids.map((id) => evEntityInstance(model, events, binding.entity, evNormalize(id), values)),
   };
 }
 
@@ -558,7 +558,7 @@ function evFannedAliasesOf(condition, scope) {
   return out;
 }
 
-function evCheckCondition(ctx, body, condition, scope) {
+function evCheckCondition(model, body, condition, scope) {
   const fannedAliases = evFannedAliasesOf(condition, scope);
 
   const readAt = (operand, index) => {
@@ -567,7 +567,7 @@ function evCheckCondition(ctx, body, condition, scope) {
     if (source === 'alias-property' && fannedAliases.includes(operand.alias)) {
       return scope.bound[operand.alias].instances[index].read(operand.property);
     }
-    if (source === 'parameter' && isZipped(ctx, body, condition, operand)) {
+    if (source === 'parameter' && isZipped(model, body, condition, operand)) {
       return evAsList(evReadOperand(operand, scope))[index];
     }
     return evReadOperand(operand, scope);
@@ -603,7 +603,7 @@ function evCheckCondition(ctx, body, condition, scope) {
 // Evaluating a command.
 // ============================================================
 
-// `(ctx, events, commandName, args)` in, one outcome out:
+// `(model, events, commandName, args)` in, one outcome out:
 //
 //   { outcome: 'published', events, reads }
 //   { outcome: 'rejected', failedRule, reads }
@@ -617,9 +617,9 @@ function evCheckCondition(ctx, body, condition, scope) {
 // scenario's expected outcome keeps it; the sandbox shows it, because
 // "what did this command see when it decided" is the question a step
 // raises.
-function evaluateCommand(ctx, events, commandName, args) {
-  const body = ctx['command-definitions'][commandName];
-  if (!body) fail(`This context has no command "${commandName}".`);
+function evaluateCommand(model, events, commandName, args) {
+  const body = model['command-definitions'][commandName];
+  if (!body) fail(`This model has no command "${commandName}".`);
 
   const supplied = args || {};
   const scope = { args: {}, bound: {} };
@@ -632,7 +632,7 @@ function evaluateCommand(ctx, events, commandName, args) {
 
   const log = events || [];
   for (const round of deriveRounds(body)) {
-    for (const { binding } of round) evResolveBinding(ctx, log, body, binding, scope);
+    for (const { binding } of round) evResolveBinding(model, log, body, binding, scope);
   }
 
   // Described at each way out rather than here, because a binding
@@ -642,7 +642,7 @@ function evaluateCommand(ctx, events, commandName, args) {
   for (let index = 0; index < conditions.length; index++) {
     const condition = conditions[index];
     if (!condition) continue;
-    const outcome = evCheckCondition(ctx, body, condition, scope);
+    const outcome = evCheckCondition(model, body, condition, scope);
     if (outcome.held) continue;
     return {
       outcome: 'rejected',
@@ -662,9 +662,9 @@ function evaluateCommand(ctx, events, commandName, args) {
   const published = [];
   for (const emission of body.publishes || []) {
     if (!emission || !emission.name) continue;
-    const definition = ctx['event-definitions'][emission.name];
+    const definition = model['event-definitions'][emission.name];
     if (!definition) {
-      fail(`"${commandName}" publishes "${emission.name}", which this context does not define.`);
+      fail(`"${commandName}" publishes "${emission.name}", which this model does not define.`);
     }
     const data = {};
     for (const property of definition.properties || []) {
@@ -748,16 +748,16 @@ function scenarioLog(scenario) {
 
 // What the current definitions make of this scenario — the same shape
 // that gets stored as its Then.
-function deriveThen(ctx, scenario) {
+function deriveThen(model, scenario) {
   // A Given written against definitions that have since moved is not a
   // scenario that fails — it is one that cannot be run. Without this
   // the fold would simply not match an event it no longer recognises,
   // and a deleted event would report as agreement rather than as the
   // repair it actually needs.
   (scenario.given || []).forEach((step, index) => {
-    const definition = ctx['event-definitions'][(step || {}).event];
+    const definition = model['event-definitions'][(step || {}).event];
     if (!definition) {
-      fail(`Given step ${index + 1} records "${(step || {}).event}", which this context no longer defines.`);
+      fail(`Given step ${index + 1} records "${(step || {}).event}", which this model no longer defines.`);
     }
     for (const property of definition.properties || []) {
       if (!((step.data || {})[property.name] !== undefined)) {
@@ -770,7 +770,7 @@ function deriveThen(ctx, scenario) {
   });
 
   const result = evaluateCommand(
-    ctx, scenarioLog(scenario), scenario.command, (scenario.when || {}).arguments
+    model, scenarioLog(scenario), scenario.command, (scenario.when || {}).arguments
   );
   return result.outcome === 'published'
     ? { outcome: 'published', events: result.events.map((e) => ({ type: e.type, data: e.data })) }
@@ -781,16 +781,16 @@ function deriveThen(ctx, scenario) {
 // to decide what may run unprompted: a script that loops forever hangs
 // the tab, and a hang while running scenarios on load leaves no way
 // back in to fix the script that caused it.
-function scenarioTouchesScript(ctx, scenario) {
-  const command = ctx['command-definitions'][scenario.command];
+function scenarioTouchesScript(model, scenario) {
+  const command = model['command-definitions'][scenario.command];
   if (!command) return false;
-  for (const item of deriveDcb(ctx, command).items) {
+  for (const item of deriveDcb(model, command).items) {
     if (item.projection) {
-      if (scriptOf(ctx['projection-definitions'][item.projection])) return true;
+      if (scriptOf(model['projection-definitions'][item.projection])) return true;
       continue;
     }
     const binding = (command.boundary || []).find((b) => b && b.alias === item.alias);
-    const entity = binding && ctx['entity-definitions'][binding.entity];
+    const entity = binding && model['entity-definitions'][binding.entity];
     if (!entity) continue;
     for (const property of entity.properties || []) {
       if (item.readProperties.includes(property.name) && scriptOf(property)) return true;
@@ -802,11 +802,11 @@ function scenarioTouchesScript(ctx, scenario) {
 // `{ status, expected, actual, reason }`. `reason` is set only when the
 // scenario is broken, and is the sentence to show instead of a
 // difference.
-function runScenario(ctx, scenario) {
+function runScenario(model, scenario) {
   const expected = scenario.then || null;
   let actual;
   try {
-    actual = deriveThen(ctx, scenario);
+    actual = deriveThen(model, scenario);
   } catch (error) {
     if (error instanceof EvaluationError) {
       return { status: 'broken', expected, actual: null, reason: error.message };
@@ -825,15 +825,15 @@ function runScenario(ctx, scenario) {
 // modeler chose to check, folded from the Given for the one instance
 // `forInstance` names. `scenarioLog` reads it unchanged — a property
 // scenario's Given is the same shape a command scenario's is.
-function derivePropertyScenarioThen(ctx, spec, propertyNames) {
+function derivePropertyScenarioThen(model, spec, propertyNames) {
   // A Given written against definitions that have since moved is not a
   // property scenario that fails — it is one that cannot be run. See
   // deriveThen for why this is checked ahead of the fold rather than
   // left to fall out of it as a silent, empty match.
   (spec.given || []).forEach((step, index) => {
-    const definition = ctx['event-definitions'][(step || {}).event];
+    const definition = model['event-definitions'][(step || {}).event];
     if (!definition) {
-      fail(`Given step ${index + 1} records "${(step || {}).event}", which this context no longer defines.`);
+      fail(`Given step ${index + 1} records "${(step || {}).event}", which this model no longer defines.`);
     }
     for (const property of definition.properties || []) {
       if (!((step.data || {})[property.name] !== undefined)) {
@@ -848,7 +848,7 @@ function derivePropertyScenarioThen(ctx, spec, propertyNames) {
   const events = scenarioLog(spec);
   const then = {};
   for (const propertyName of propertyNames) {
-    then[propertyName] = foldEntityProperty(ctx, events, spec.entity, propertyName, spec.forInstance, {});
+    then[propertyName] = foldEntityProperty(model, events, spec.entity, propertyName, spec.forInstance, {});
   }
   return then;
 }
@@ -857,8 +857,8 @@ function derivePropertyScenarioThen(ctx, spec, propertyNames) {
 // entity-property analogue of scenarioTouchesScript, simpler because a
 // property scenario names its entity directly rather than reaching one
 // through a command's boundary.
-function propertyScenarioTouchesScript(ctx, spec) {
-  const entity = ctx['entity-definitions'][spec.entity];
+function propertyScenarioTouchesScript(model, spec) {
+  const entity = model['entity-definitions'][spec.entity];
   if (!entity) return false;
   return Object.keys(spec.then || {}).some((propertyName) => {
     const property = (entity.properties || []).find((p) => p.name === propertyName);
@@ -870,11 +870,11 @@ function propertyScenarioTouchesScript(ctx, spec) {
 // of runScenario. `actual` is derived over the same property set the
 // last accepted Then checked, so a property deleted since surfaces as
 // broken rather than silently changing what is compared.
-function runPropertyScenario(ctx, spec) {
+function runPropertyScenario(model, spec) {
   const expected = spec.then || null;
   let actual;
   try {
-    actual = derivePropertyScenarioThen(ctx, spec, Object.keys(expected || {}));
+    actual = derivePropertyScenarioThen(model, spec, Object.keys(expected || {}));
   } catch (error) {
     if (error instanceof EvaluationError) {
       return { status: 'broken', expected, actual: null, reason: error.message };

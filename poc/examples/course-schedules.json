@@ -1,836 +1,836 @@
 {
+  "$schema": "https://dcb.events/schemas/model/v1.json",
+  "dcbModelVersion": "1.0",
   "name": "Course Example (with schedules)",
-  "context": {
-    "customTypeDefinitions": [
-      {
-        "name": "StudentStatus",
-        "schema": {
-          "type": "string",
-          "enum": [
-            "NonExistent",
-            "Existent"
-          ]
-        }
+  "customTypeDefinitions": [
+    {
+      "name": "StudentStatus",
+      "schema": {
+        "type": "string",
+        "enum": [
+          "NonExistent",
+          "Existent"
+        ]
+      }
+    },
+    {
+      "name": "CourseStatus",
+      "schema": {
+        "type": "string",
+        "enum": [
+          "NonExistent",
+          "Existent",
+          "Archived"
+        ]
+      }
+    },
+    {
+      "name": "StudentId",
+      "schema": {
+        "type": "string"
       },
-      {
-        "name": "CourseStatus",
-        "schema": {
-          "type": "string",
-          "enum": [
-            "NonExistent",
-            "Existent",
-            "Archived"
-          ]
-        }
+      "isTag": true
+    },
+    {
+      "name": "CourseId",
+      "schema": {
+        "type": "string",
+        "pattern": "^c[0-9]+$"
       },
-      {
-        "name": "StudentId",
-        "schema": {
-          "type": "string"
+      "isTag": true
+    },
+    {
+      "name": "TimeSlot",
+      "schema": {
+        "type": "string",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}$"
+      }
+    }
+  ],
+  "eventDefinitions": [
+    {
+      "name": "CourseDefined",
+      "properties": [
+        {
+          "name": "courseId",
+          "propertyType": "CourseId",
+          "isOptional": false,
+          "isList": false
         },
-        "isTag": true
-      },
-      {
-        "name": "CourseId",
-        "schema": {
-          "type": "string",
-          "pattern": "^c[0-9]+$"
+        {
+          "name": "capacity",
+          "propertyType": "integer",
+          "isOptional": false,
+          "isList": false
         },
-        "isTag": true
-      },
-      {
-        "name": "TimeSlot",
-        "schema": {
-          "type": "string",
-          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}$"
+        {
+          "name": "slots",
+          "propertyType": "TimeSlot",
+          "isOptional": false,
+          "isList": true
         }
-      }
-    ],
-    "eventDefinitions": [
-      {
-        "name": "CourseDefined",
-        "properties": [
-          {
-            "name": "courseId",
-            "propertyType": "CourseId",
-            "isOptional": false,
-            "isList": false
+      ]
+    },
+    {
+      "name": "CourseCapacityChanged",
+      "properties": [
+        {
+          "name": "courseId",
+          "propertyType": "CourseId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "newCapacity",
+          "propertyType": "integer",
+          "isOptional": false,
+          "isList": false
+        }
+      ]
+    },
+    {
+      "name": "CourseArchived",
+      "properties": [
+        {
+          "name": "courseId",
+          "propertyType": "CourseId",
+          "isOptional": false,
+          "isList": false
+        }
+      ]
+    },
+    {
+      "name": "StudentRegistered",
+      "properties": [
+        {
+          "name": "studentId",
+          "propertyType": "StudentId",
+          "isOptional": false,
+          "isList": false
+        }
+      ]
+    },
+    {
+      "name": "StudentSubscribedToCourse",
+      "properties": [
+        {
+          "name": "courseId",
+          "propertyType": "CourseId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "studentId",
+          "propertyType": "StudentId",
+          "isOptional": false,
+          "isList": false
+        }
+      ]
+    },
+    {
+      "name": "StudentUnsubscribedFromCourse",
+      "properties": [
+        {
+          "name": "courseId",
+          "propertyType": "CourseId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "studentId",
+          "propertyType": "StudentId",
+          "isOptional": false,
+          "isList": false
+        }
+      ]
+    },
+    {
+      "name": "CourseRescheduled",
+      "properties": [
+        {
+          "name": "courseId",
+          "propertyType": "CourseId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "slots",
+          "propertyType": "TimeSlot",
+          "isOptional": false,
+          "isList": true
+        }
+      ]
+    }
+  ],
+  "entityDefinitions": [
+    {
+      "name": "Student",
+      "icon": "🧑‍🎓",
+      "properties": [
+        {
+          "name": "status",
+          "propertyType": "StudentStatus",
+          "isOptional": false,
+          "isList": false,
+          "initialValue": {
+            "enumMember": "NonExistent"
           },
-          {
-            "name": "capacity",
-            "propertyType": "integer",
-            "isOptional": false,
-            "isList": false
-          },
-          {
-            "name": "slots",
-            "propertyType": "TimeSlot",
-            "isOptional": false,
-            "isList": true
-          }
-        ]
-      },
-      {
-        "name": "CourseCapacityChanged",
-        "properties": [
-          {
-            "name": "courseId",
-            "propertyType": "CourseId",
-            "isOptional": false,
-            "isList": false
-          },
-          {
-            "name": "newCapacity",
-            "propertyType": "integer",
-            "isOptional": false,
-            "isList": false
-          }
-        ]
-      },
-      {
-        "name": "CourseArchived",
-        "properties": [
-          {
-            "name": "courseId",
-            "propertyType": "CourseId",
-            "isOptional": false,
-            "isList": false
-          }
-        ]
-      },
-      {
-        "name": "StudentRegistered",
-        "properties": [
-          {
-            "name": "studentId",
-            "propertyType": "StudentId",
-            "isOptional": false,
-            "isList": false
-          }
-        ]
-      },
-      {
-        "name": "StudentSubscribedToCourse",
-        "properties": [
-          {
-            "name": "courseId",
-            "propertyType": "CourseId",
-            "isOptional": false,
-            "isList": false
-          },
-          {
-            "name": "studentId",
-            "propertyType": "StudentId",
-            "isOptional": false,
-            "isList": false
-          }
-        ]
-      },
-      {
-        "name": "StudentUnsubscribedFromCourse",
-        "properties": [
-          {
-            "name": "courseId",
-            "propertyType": "CourseId",
-            "isOptional": false,
-            "isList": false
-          },
-          {
-            "name": "studentId",
-            "propertyType": "StudentId",
-            "isOptional": false,
-            "isList": false
-          }
-        ]
-      },
-      {
-        "name": "CourseRescheduled",
-        "properties": [
-          {
-            "name": "courseId",
-            "propertyType": "CourseId",
-            "isOptional": false,
-            "isList": false
-          },
-          {
-            "name": "slots",
-            "propertyType": "TimeSlot",
-            "isOptional": false,
-            "isList": true
-          }
-        ]
-      }
-    ],
-    "entityDefinitions": [
-      {
-        "name": "Student",
-        "icon": "🧑‍🎓",
-        "properties": [
-          {
-            "name": "status",
-            "propertyType": "StudentStatus",
-            "isOptional": false,
-            "isList": false,
-            "initialValue": {
-              "enumMember": "NonExistent"
+          "handlers": [
+            {
+              "event": "StudentRegistered",
+              "operation": "set",
+              "value": {
+                "enumMember": "Existent"
+              }
+            }
+          ]
+        },
+        {
+          "name": "subscriptionCount",
+          "propertyType": "integer",
+          "isOptional": false,
+          "isList": false,
+          "initialValue": 0,
+          "handlers": [
+            {
+              "event": "StudentSubscribedToCourse",
+              "operation": "increment",
+              "value": 1
             },
-            "handlers": [
-              {
-                "event": "StudentRegistered",
-                "operation": "set",
-                "value": {
-                  "enumMember": "Existent"
-                }
+            {
+              "event": "StudentUnsubscribedFromCourse",
+              "operation": "decrement",
+              "value": 1
+            }
+          ]
+        },
+        {
+          "name": "subscribedCourseIds",
+          "propertyType": "CourseId",
+          "isOptional": false,
+          "isList": true,
+          "initialValue": [],
+          "handlers": [
+            {
+              "event": "StudentSubscribedToCourse",
+              "operation": "append",
+              "value": {
+                "eventProperty": "courseId"
               }
-            ]
-          },
-          {
-            "name": "subscriptionCount",
-            "propertyType": "integer",
-            "isOptional": false,
-            "isList": false,
-            "initialValue": 0,
-            "handlers": [
-              {
-                "event": "StudentSubscribedToCourse",
-                "operation": "increment",
-                "value": 1
-              },
-              {
-                "event": "StudentUnsubscribedFromCourse",
-                "operation": "decrement",
-                "value": 1
-              }
-            ]
-          },
-          {
-            "name": "subscribedCourseIds",
-            "propertyType": "CourseId",
-            "isOptional": false,
-            "isList": true,
-            "initialValue": [],
-            "handlers": [
-              {
-                "event": "StudentSubscribedToCourse",
-                "operation": "append",
-                "value": {
-                  "eventProperty": "courseId"
-                }
-              },
-              {
-                "event": "StudentUnsubscribedFromCourse",
-                "operation": "remove",
-                "value": {
-                  "eventProperty": "courseId"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      {
-        "name": "Course",
-        "icon": "📚",
-        "properties": [
-          {
-            "name": "status",
-            "propertyType": "CourseStatus",
-            "isOptional": false,
-            "isList": false,
-            "initialValue": {
-              "enumMember": "NonExistent"
             },
-            "handlers": [
-              {
-                "event": "CourseDefined",
-                "operation": "set",
-                "value": {
-                  "enumMember": "Existent"
-                }
-              },
-              {
-                "event": "CourseArchived",
-                "operation": "set",
-                "value": {
-                  "enumMember": "Archived"
-                }
-              }
-            ]
-          },
-          {
-            "name": "capacity",
-            "propertyType": "integer",
-            "isOptional": false,
-            "isList": false,
-            "initialValue": 0,
-            "handlers": [
-              {
-                "event": "CourseDefined",
-                "operation": "set",
-                "value": {
-                  "eventProperty": "capacity"
-                }
-              },
-              {
-                "event": "CourseCapacityChanged",
-                "operation": "set",
-                "value": {
-                  "eventProperty": "newCapacity"
-                }
-              }
-            ]
-          },
-          {
-            "name": "subscriptionCount",
-            "propertyType": "integer",
-            "isOptional": false,
-            "isList": false,
-            "initialValue": 0,
-            "handlers": [
-              {
-                "event": "StudentSubscribedToCourse",
-                "operation": "increment",
-                "value": 1
-              },
-              {
-                "event": "StudentUnsubscribedFromCourse",
-                "operation": "decrement",
-                "value": 1
-              }
-            ]
-          },
-          {
-            "name": "subscribedStudentIds",
-            "propertyType": "StudentId",
-            "isOptional": false,
-            "isList": true,
-            "initialValue": [],
-            "handlers": [
-              {
-                "event": "StudentSubscribedToCourse",
-                "operation": "append",
-                "value": {
-                  "eventProperty": "studentId"
-                }
-              },
-              {
-                "event": "StudentUnsubscribedFromCourse",
-                "operation": "remove",
-                "value": {
-                  "eventProperty": "studentId"
-                }
-              }
-            ]
-          },
-          {
-            "name": "slots",
-            "propertyType": "TimeSlot",
-            "isOptional": false,
-            "isList": true,
-            "initialValue": [],
-            "handlers": [
-              {
-                "event": "CourseDefined",
-                "operation": "set",
-                "value": {
-                  "eventProperty": "slots"
-                }
-              },
-              {
-                "event": "CourseRescheduled",
-                "operation": "set",
-                "value": {
-                  "eventProperty": "slots"
-                }
-              }
-            ]
-          }
-        ]
-      }
-    ],
-    "projectionDefinitions": [
-      {
-        "name": "CourseNumbering",
-        "parameters": [],
-        "valueType": "CourseId",
-        "isOptional": false,
-        "isList": false,
-        "initialValue": "c1",
-        "handlers": [
-          {
-            "event": "CourseDefined",
-            "operation": "set",
-            "value": {
-              "successor": {
+            {
+              "event": "StudentUnsubscribedFromCourse",
+              "operation": "remove",
+              "value": {
                 "eventProperty": "courseId"
               }
             }
-          }
-        ]
-      }
-    ],
-    "commandDefinitions": [
-      {
-        "name": "DefineCourse",
-        "feature": "Course management",
-        "properties": [
-          {
-            "name": "capacity",
-            "propertyType": "integer",
-            "isOptional": false,
-            "isList": false
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Course",
+      "icon": "📚",
+      "properties": [
+        {
+          "name": "status",
+          "propertyType": "CourseStatus",
+          "isOptional": false,
+          "isList": false,
+          "initialValue": {
+            "enumMember": "NonExistent"
           },
-          {
-            "name": "slots",
-            "propertyType": "TimeSlot",
-            "isOptional": false,
-            "isList": true
-          }
-        ],
-        "boundary": [
-          {
-            "alias": "courseNumbering",
-            "projection": "CourseNumbering",
-            "arguments": {}
-          }
-        ],
-        "conditions": [],
-        "publishes": [
-          {
-            "name": "CourseDefined",
-            "parameters": {
-              "courseId": {
-                "alias": "courseNumbering"
-              },
-              "capacity": {
-                "parameterName": "capacity"
-              },
-              "slots": {
-                "parameterName": "slots"
+          "handlers": [
+            {
+              "event": "CourseDefined",
+              "operation": "set",
+              "value": {
+                "enumMember": "Existent"
+              }
+            },
+            {
+              "event": "CourseArchived",
+              "operation": "set",
+              "value": {
+                "enumMember": "Archived"
               }
             }
+          ]
+        },
+        {
+          "name": "capacity",
+          "propertyType": "integer",
+          "isOptional": false,
+          "isList": false,
+          "initialValue": 0,
+          "handlers": [
+            {
+              "event": "CourseDefined",
+              "operation": "set",
+              "value": {
+                "eventProperty": "capacity"
+              }
+            },
+            {
+              "event": "CourseCapacityChanged",
+              "operation": "set",
+              "value": {
+                "eventProperty": "newCapacity"
+              }
+            }
+          ]
+        },
+        {
+          "name": "subscriptionCount",
+          "propertyType": "integer",
+          "isOptional": false,
+          "isList": false,
+          "initialValue": 0,
+          "handlers": [
+            {
+              "event": "StudentSubscribedToCourse",
+              "operation": "increment",
+              "value": 1
+            },
+            {
+              "event": "StudentUnsubscribedFromCourse",
+              "operation": "decrement",
+              "value": 1
+            }
+          ]
+        },
+        {
+          "name": "subscribedStudentIds",
+          "propertyType": "StudentId",
+          "isOptional": false,
+          "isList": true,
+          "initialValue": [],
+          "handlers": [
+            {
+              "event": "StudentSubscribedToCourse",
+              "operation": "append",
+              "value": {
+                "eventProperty": "studentId"
+              }
+            },
+            {
+              "event": "StudentUnsubscribedFromCourse",
+              "operation": "remove",
+              "value": {
+                "eventProperty": "studentId"
+              }
+            }
+          ]
+        },
+        {
+          "name": "slots",
+          "propertyType": "TimeSlot",
+          "isOptional": false,
+          "isList": true,
+          "initialValue": [],
+          "handlers": [
+            {
+              "event": "CourseDefined",
+              "operation": "set",
+              "value": {
+                "eventProperty": "slots"
+              }
+            },
+            {
+              "event": "CourseRescheduled",
+              "operation": "set",
+              "value": {
+                "eventProperty": "slots"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "projectionDefinitions": [
+    {
+      "name": "CourseNumbering",
+      "parameters": [],
+      "valueType": "CourseId",
+      "isOptional": false,
+      "isList": false,
+      "initialValue": "c1",
+      "handlers": [
+        {
+          "event": "CourseDefined",
+          "operation": "set",
+          "value": {
+            "successor": {
+              "eventProperty": "courseId"
+            }
           }
-        ]
-      },
-      {
-        "name": "ChangeCourseCapacity",
-        "feature": "Course management",
-        "properties": [
-          {
-            "name": "courseId",
-            "propertyType": "CourseId",
-            "isOptional": false,
-            "isList": false
-          },
-          {
-            "name": "newCapacity",
-            "propertyType": "integer",
-            "isOptional": false,
-            "isList": false
+        }
+      ]
+    }
+  ],
+  "commandDefinitions": [
+    {
+      "name": "DefineCourse",
+      "feature": "Course management",
+      "properties": [
+        {
+          "name": "capacity",
+          "propertyType": "integer",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "slots",
+          "propertyType": "TimeSlot",
+          "isOptional": false,
+          "isList": true
+        }
+      ],
+      "boundary": [
+        {
+          "alias": "courseNumbering",
+          "projection": "CourseNumbering",
+          "arguments": {}
+        }
+      ],
+      "conditions": [],
+      "publishes": [
+        {
+          "name": "CourseDefined",
+          "parameters": {
+            "courseId": {
+              "alias": "courseNumbering"
+            },
+            "capacity": {
+              "parameterName": "capacity"
+            },
+            "slots": {
+              "parameterName": "slots"
+            }
           }
-        ],
-        "boundary": [
-          {
+        }
+      ]
+    },
+    {
+      "name": "ChangeCourseCapacity",
+      "feature": "Course management",
+      "properties": [
+        {
+          "name": "courseId",
+          "propertyType": "CourseId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "newCapacity",
+          "propertyType": "integer",
+          "isOptional": false,
+          "isList": false
+        }
+      ],
+      "boundary": [
+        {
+          "alias": "course",
+          "entity": "Course",
+          "id": {
+            "parameterName": "courseId"
+          }
+        }
+      ],
+      "conditions": [
+        {
+          "leftHandSide": {
             "alias": "course",
-            "entity": "Course",
-            "id": {
-              "parameterName": "courseId"
-            }
-          }
-        ],
-        "conditions": [
-          {
-            "leftHandSide": {
-              "alias": "course",
-              "property": "status"
-            },
-            "predicate": "equals",
-            "rightHandSide": {
-              "enumMember": "Existent"
-            }
+            "property": "status"
           },
-          {
-            "leftHandSide": {
-              "alias": "course",
-              "property": "subscriptionCount"
+          "predicate": "equals",
+          "rightHandSide": {
+            "enumMember": "Existent"
+          }
+        },
+        {
+          "leftHandSide": {
+            "alias": "course",
+            "property": "subscriptionCount"
+          },
+          "predicate": "lessThanOrEquals",
+          "rightHandSide": {
+            "parameterName": "newCapacity"
+          }
+        }
+      ],
+      "publishes": [
+        {
+          "name": "CourseCapacityChanged",
+          "parameters": {
+            "courseId": {
+              "parameterName": "courseId"
             },
-            "predicate": "lessThanOrEquals",
-            "rightHandSide": {
+            "newCapacity": {
               "parameterName": "newCapacity"
             }
           }
-        ],
-        "publishes": [
-          {
-            "name": "CourseCapacityChanged",
-            "parameters": {
-              "courseId": {
-                "parameterName": "courseId"
-              },
-              "newCapacity": {
-                "parameterName": "newCapacity"
-              }
-            }
+        }
+      ]
+    },
+    {
+      "name": "ArchiveCourse",
+      "feature": "Course management",
+      "properties": [
+        {
+          "name": "courseId",
+          "propertyType": "CourseId",
+          "isOptional": false,
+          "isList": false
+        }
+      ],
+      "boundary": [
+        {
+          "alias": "course",
+          "entity": "Course",
+          "id": {
+            "parameterName": "courseId"
           }
-        ]
-      },
-      {
-        "name": "ArchiveCourse",
-        "feature": "Course management",
-        "properties": [
-          {
-            "name": "courseId",
-            "propertyType": "CourseId",
-            "isOptional": false,
-            "isList": false
-          }
-        ],
-        "boundary": [
-          {
+        }
+      ],
+      "conditions": [
+        {
+          "leftHandSide": {
             "alias": "course",
-            "entity": "Course",
-            "id": {
+            "property": "status"
+          },
+          "predicate": "equals",
+          "rightHandSide": {
+            "enumMember": "Existent"
+          }
+        }
+      ],
+      "publishes": [
+        {
+          "name": "CourseArchived",
+          "parameters": {
+            "courseId": {
               "parameterName": "courseId"
             }
           }
-        ],
-        "conditions": [
-          {
-            "leftHandSide": {
-              "alias": "course",
-              "property": "status"
-            },
-            "predicate": "equals",
-            "rightHandSide": {
-              "enumMember": "Existent"
-            }
+        }
+      ]
+    },
+    {
+      "name": "RegisterStudent",
+      "feature": "Student registration",
+      "properties": [
+        {
+          "name": "studentId",
+          "propertyType": "StudentId",
+          "isOptional": false,
+          "isList": false
+        }
+      ],
+      "boundary": [
+        {
+          "alias": "student",
+          "entity": "Student",
+          "id": {
+            "parameterName": "studentId"
           }
-        ],
-        "publishes": [
-          {
-            "name": "CourseArchived",
-            "parameters": {
-              "courseId": {
-                "parameterName": "courseId"
-              }
-            }
-          }
-        ]
-      },
-      {
-        "name": "RegisterStudent",
-        "feature": "Student registration",
-        "properties": [
-          {
-            "name": "studentId",
-            "propertyType": "StudentId",
-            "isOptional": false,
-            "isList": false
-          }
-        ],
-        "boundary": [
-          {
+        }
+      ],
+      "conditions": [
+        {
+          "leftHandSide": {
             "alias": "student",
-            "entity": "Student",
-            "id": {
+            "property": "status"
+          },
+          "predicate": "equals",
+          "rightHandSide": {
+            "enumMember": "NonExistent"
+          }
+        }
+      ],
+      "publishes": [
+        {
+          "name": "StudentRegistered",
+          "parameters": {
+            "studentId": {
               "parameterName": "studentId"
             }
           }
-        ],
-        "conditions": [
-          {
-            "leftHandSide": {
-              "alias": "student",
-              "property": "status"
-            },
-            "predicate": "equals",
-            "rightHandSide": {
-              "enumMember": "NonExistent"
-            }
+        }
+      ]
+    },
+    {
+      "name": "SubscribeStudentToCourse",
+      "feature": "Enrolment",
+      "properties": [
+        {
+          "name": "courseId",
+          "propertyType": "CourseId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "studentId",
+          "propertyType": "StudentId",
+          "isOptional": false,
+          "isList": false
+        }
+      ],
+      "boundary": [
+        {
+          "alias": "course",
+          "entity": "Course",
+          "id": {
+            "parameterName": "courseId"
           }
-        ],
-        "publishes": [
-          {
-            "name": "StudentRegistered",
-            "parameters": {
-              "studentId": {
-                "parameterName": "studentId"
-              }
-            }
+        },
+        {
+          "alias": "student",
+          "entity": "Student",
+          "id": {
+            "parameterName": "studentId"
           }
-        ]
-      },
-      {
-        "name": "SubscribeStudentToCourse",
-        "feature": "Enrolment",
-        "properties": [
-          {
-            "name": "courseId",
-            "propertyType": "CourseId",
-            "isOptional": false,
-            "isList": false
-          },
-          {
-            "name": "studentId",
-            "propertyType": "StudentId",
-            "isOptional": false,
-            "isList": false
+        },
+        {
+          "alias": "others",
+          "entity": "Course",
+          "id": {
+            "alias": "student",
+            "property": "subscribedCourseIds"
           }
-        ],
-        "boundary": [
-          {
+        }
+      ],
+      "conditions": [
+        {
+          "leftHandSide": {
             "alias": "course",
-            "entity": "Course",
-            "id": {
-              "parameterName": "courseId"
-            }
+            "property": "status"
           },
-          {
+          "predicate": "equals",
+          "rightHandSide": {
+            "enumMember": "Existent"
+          }
+        },
+        {
+          "leftHandSide": {
             "alias": "student",
-            "entity": "Student",
-            "id": {
-              "parameterName": "studentId"
-            }
+            "property": "status"
           },
-          {
+          "predicate": "equals",
+          "rightHandSide": {
+            "enumMember": "Existent"
+          }
+        },
+        {
+          "leftHandSide": {
+            "alias": "course",
+            "property": "subscriptionCount"
+          },
+          "predicate": "lessThan",
+          "rightHandSide": {
+            "alias": "course",
+            "property": "capacity"
+          }
+        },
+        {
+          "leftHandSide": {
+            "alias": "course",
+            "property": "subscribedStudentIds"
+          },
+          "predicate": "contains",
+          "rightHandSide": {
+            "parameterName": "studentId"
+          },
+          "negate": true
+        },
+        {
+          "leftHandSide": {
+            "alias": "student",
+            "property": "subscriptionCount"
+          },
+          "predicate": "lessThan",
+          "rightHandSide": 10
+        },
+        {
+          "leftHandSide": {
             "alias": "others",
-            "entity": "Course",
-            "id": {
-              "alias": "student",
-              "property": "subscribedCourseIds"
-            }
-          }
-        ],
-        "conditions": [
-          {
-            "leftHandSide": {
-              "alias": "course",
-              "property": "status"
-            },
-            "predicate": "equals",
-            "rightHandSide": {
-              "enumMember": "Existent"
-            }
+            "property": "slots"
           },
-          {
-            "leftHandSide": {
-              "alias": "student",
-              "property": "status"
-            },
-            "predicate": "equals",
-            "rightHandSide": {
-              "enumMember": "Existent"
-            }
-          },
-          {
-            "leftHandSide": {
-              "alias": "course",
-              "property": "subscriptionCount"
-            },
-            "predicate": "lessThan",
-            "rightHandSide": {
-              "alias": "course",
-              "property": "capacity"
-            }
-          },
-          {
-            "leftHandSide": {
-              "alias": "course",
-              "property": "subscribedStudentIds"
-            },
-            "predicate": "contains",
-            "rightHandSide": {
-              "parameterName": "studentId"
-            },
-            "negate": true
-          },
-          {
-            "leftHandSide": {
-              "alias": "student",
-              "property": "subscriptionCount"
-            },
-            "predicate": "lessThan",
-            "rightHandSide": 10
-          },
-          {
-            "leftHandSide": {
-              "alias": "others",
-              "property": "slots"
-            },
-            "predicate": "containsAny",
-            "rightHandSide": {
-              "alias": "course",
-              "property": "slots"
-            },
-            "negate": true
-          }
-        ],
-        "publishes": [
-          {
-            "name": "StudentSubscribedToCourse",
-            "parameters": {
-              "courseId": {
-                "parameterName": "courseId"
-              },
-              "studentId": {
-                "parameterName": "studentId"
-              }
-            }
-          }
-        ]
-      },
-      {
-        "name": "UnsubscribeStudentFromCourse",
-        "feature": "Enrolment",
-        "properties": [
-          {
-            "name": "courseId",
-            "propertyType": "CourseId",
-            "isOptional": false,
-            "isList": false
-          },
-          {
-            "name": "studentId",
-            "propertyType": "StudentId",
-            "isOptional": false,
-            "isList": false
-          }
-        ],
-        "boundary": [
-          {
+          "predicate": "containsAny",
+          "rightHandSide": {
             "alias": "course",
-            "entity": "Course",
-            "id": {
+            "property": "slots"
+          },
+          "negate": true
+        }
+      ],
+      "publishes": [
+        {
+          "name": "StudentSubscribedToCourse",
+          "parameters": {
+            "courseId": {
               "parameterName": "courseId"
-            }
-          },
-          {
-            "alias": "student",
-            "entity": "Student",
-            "id": {
+            },
+            "studentId": {
               "parameterName": "studentId"
             }
           }
-        ],
-        "conditions": [
-          {
-            "leftHandSide": {
-              "alias": "course",
-              "property": "status"
-            },
-            "predicate": "equals",
-            "rightHandSide": {
-              "enumMember": "Existent"
-            }
-          },
-          {
-            "leftHandSide": {
-              "alias": "course",
-              "property": "subscribedStudentIds"
-            },
-            "predicate": "contains",
-            "rightHandSide": {
-              "parameterName": "studentId"
-            }
+        }
+      ]
+    },
+    {
+      "name": "UnsubscribeStudentFromCourse",
+      "feature": "Enrolment",
+      "properties": [
+        {
+          "name": "courseId",
+          "propertyType": "CourseId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "studentId",
+          "propertyType": "StudentId",
+          "isOptional": false,
+          "isList": false
+        }
+      ],
+      "boundary": [
+        {
+          "alias": "course",
+          "entity": "Course",
+          "id": {
+            "parameterName": "courseId"
           }
-        ],
-        "publishes": [
-          {
-            "name": "StudentUnsubscribedFromCourse",
-            "parameters": {
-              "courseId": {
-                "parameterName": "courseId"
-              },
-              "studentId": {
-                "parameterName": "studentId"
-              }
-            }
+        },
+        {
+          "alias": "student",
+          "entity": "Student",
+          "id": {
+            "parameterName": "studentId"
           }
-        ]
-      },
-      {
-        "name": "RescheduleCourse",
-        "feature": "Course management",
-        "properties": [
-          {
-            "name": "courseId",
-            "propertyType": "CourseId",
-            "isOptional": false,
-            "isList": false
-          },
-          {
-            "name": "slots",
-            "propertyType": "TimeSlot",
-            "isOptional": false,
-            "isList": true
-          }
-        ],
-        "boundary": [
-          {
+        }
+      ],
+      "conditions": [
+        {
+          "leftHandSide": {
             "alias": "course",
-            "entity": "Course",
-            "id": {
-              "parameterName": "courseId"
-            }
+            "property": "status"
           },
-          {
+          "predicate": "equals",
+          "rightHandSide": {
+            "enumMember": "Existent"
+          }
+        },
+        {
+          "leftHandSide": {
+            "alias": "course",
+            "property": "subscribedStudentIds"
+          },
+          "predicate": "contains",
+          "rightHandSide": {
+            "parameterName": "studentId"
+          }
+        }
+      ],
+      "publishes": [
+        {
+          "name": "StudentUnsubscribedFromCourse",
+          "parameters": {
+            "courseId": {
+              "parameterName": "courseId"
+            },
+            "studentId": {
+              "parameterName": "studentId"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "RescheduleCourse",
+      "feature": "Course management",
+      "properties": [
+        {
+          "name": "courseId",
+          "propertyType": "CourseId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "slots",
+          "propertyType": "TimeSlot",
+          "isOptional": false,
+          "isList": true
+        }
+      ],
+      "boundary": [
+        {
+          "alias": "course",
+          "entity": "Course",
+          "id": {
+            "parameterName": "courseId"
+          }
+        },
+        {
+          "alias": "students",
+          "entity": "Student",
+          "id": {
+            "alias": "course",
+            "property": "subscribedStudentIds"
+          }
+        },
+        {
+          "alias": "theirs",
+          "entity": "Course",
+          "id": {
             "alias": "students",
-            "entity": "Student",
-            "id": {
-              "alias": "course",
-              "property": "subscribedStudentIds"
-            }
+            "property": "subscribedCourseIds"
           },
-          {
+          "excluding": {
+            "parameterName": "courseId"
+          }
+        }
+      ],
+      "conditions": [
+        {
+          "leftHandSide": {
+            "alias": "course",
+            "property": "status"
+          },
+          "predicate": "equals",
+          "rightHandSide": {
+            "enumMember": "Existent"
+          }
+        },
+        {
+          "leftHandSide": {
             "alias": "theirs",
-            "entity": "Course",
-            "id": {
-              "alias": "students",
-              "property": "subscribedCourseIds"
-            },
-            "excluding": {
-              "parameterName": "courseId"
-            }
-          }
-        ],
-        "conditions": [
-          {
-            "leftHandSide": {
-              "alias": "course",
-              "property": "status"
-            },
-            "predicate": "equals",
-            "rightHandSide": {
-              "enumMember": "Existent"
-            }
+            "property": "slots"
           },
-          {
-            "leftHandSide": {
-              "alias": "theirs",
-              "property": "slots"
+          "predicate": "containsAny",
+          "rightHandSide": {
+            "parameterName": "slots"
+          },
+          "negate": true
+        }
+      ],
+      "publishes": [
+        {
+          "name": "CourseRescheduled",
+          "parameters": {
+            "courseId": {
+              "parameterName": "courseId"
             },
-            "predicate": "containsAny",
-            "rightHandSide": {
+            "slots": {
               "parameterName": "slots"
-            },
-            "negate": true
-          }
-        ],
-        "publishes": [
-          {
-            "name": "CourseRescheduled",
-            "parameters": {
-              "courseId": {
-                "parameterName": "courseId"
-              },
-              "slots": {
-                "parameterName": "slots"
-              }
             }
           }
-        ]
-      }
-    ],
-    "scenarioDefinitions": []
-  }
+        }
+      ]
+    }
+  ],
+  "scenarioDefinitions": []
 }

@@ -3,7 +3,7 @@ kind: domain
 name: dcb-playground
 description: |
   A modeling tool to design and test DCB-based systems. Authors build
-  DCB Contexts — collections of custom-type, event, entity, projection
+  DCB Models — collections of custom-type, event, entity, projection
   and command definitions — and (in a later iteration) validate them against
   scenarios. Entities are the organising unit: each owns its
   identifier type, its lifecycle status and every projection describing

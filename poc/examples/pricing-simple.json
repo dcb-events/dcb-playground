@@ -1,387 +1,387 @@
 {
+  "$schema": "https://dcb.events/schemas/model/v1.json",
+  "dcbModelVersion": "1.0",
   "name": "Dynamic Product Price (simple)",
-  "context": {
-    "customTypeDefinitions": [
-      {
-        "name": "Money",
-        "schema": {
-          "type": "number",
-          "minimum": 0
-        }
+  "customTypeDefinitions": [
+    {
+      "name": "Money",
+      "schema": {
+        "type": "number",
+        "minimum": 0
+      }
+    },
+    {
+      "name": "ProductStatus",
+      "schema": {
+        "type": "string",
+        "enum": [
+          "NonExistent",
+          "Existent"
+        ]
+      }
+    },
+    {
+      "name": "OrderStatus",
+      "schema": {
+        "type": "string",
+        "enum": [
+          "NonExistent",
+          "Existent"
+        ]
+      }
+    },
+    {
+      "name": "ProductId",
+      "schema": {
+        "type": "string"
       },
-      {
-        "name": "ProductStatus",
-        "schema": {
-          "type": "string",
-          "enum": [
-            "NonExistent",
-            "Existent"
+      "isTag": true
+    },
+    {
+      "name": "OrderId",
+      "schema": {
+        "type": "string"
+      },
+      "isTag": true
+    },
+    {
+      "name": "Item",
+      "properties": [
+        {
+          "name": "productId",
+          "propertyType": "ProductId"
+        },
+        {
+          "name": "price",
+          "propertyType": "Money"
+        }
+      ]
+    }
+  ],
+  "eventDefinitions": [
+    {
+      "name": "ProductDefined",
+      "properties": [
+        {
+          "name": "productId",
+          "propertyType": "ProductId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "price",
+          "propertyType": "Money",
+          "isOptional": false,
+          "isList": false
+        }
+      ]
+    },
+    {
+      "name": "ProductPriceChanged",
+      "properties": [
+        {
+          "name": "productId",
+          "propertyType": "ProductId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "newPrice",
+          "propertyType": "Money",
+          "isOptional": false,
+          "isList": false
+        }
+      ]
+    },
+    {
+      "name": "ProductsOrdered",
+      "properties": [
+        {
+          "name": "orderId",
+          "propertyType": "OrderId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "items",
+          "propertyType": "Item",
+          "isOptional": false,
+          "isList": true
+        }
+      ]
+    }
+  ],
+  "entityDefinitions": [
+    {
+      "name": "Product",
+      "icon": "📦",
+      "properties": [
+        {
+          "name": "status",
+          "propertyType": "ProductStatus",
+          "isOptional": false,
+          "isList": false,
+          "initialValue": {
+            "enumMember": "NonExistent"
+          },
+          "handlers": [
+            {
+              "event": "ProductDefined",
+              "operation": "set",
+              "value": {
+                "enumMember": "Existent"
+              }
+            }
+          ]
+        },
+        {
+          "name": "currentPrice",
+          "propertyType": "Money",
+          "isOptional": true,
+          "isList": false,
+          "initialValue": null,
+          "handlers": [
+            {
+              "event": "ProductDefined",
+              "operation": "set",
+              "value": {
+                "eventProperty": "price"
+              }
+            },
+            {
+              "event": "ProductPriceChanged",
+              "operation": "set",
+              "value": {
+                "eventProperty": "newPrice"
+              }
+            }
           ]
         }
-      },
-      {
-        "name": "OrderStatus",
-        "schema": {
-          "type": "string",
-          "enum": [
-            "NonExistent",
-            "Existent"
+      ]
+    },
+    {
+      "name": "Order",
+      "icon": "🧾",
+      "properties": [
+        {
+          "name": "status",
+          "propertyType": "OrderStatus",
+          "isOptional": false,
+          "isList": false,
+          "initialValue": {
+            "enumMember": "NonExistent"
+          },
+          "handlers": [
+            {
+              "event": "ProductsOrdered",
+              "operation": "set",
+              "value": {
+                "enumMember": "Existent"
+              }
+            }
           ]
         }
-      },
-      {
-        "name": "ProductId",
-        "schema": {
-          "type": "string"
+      ]
+    }
+  ],
+  "projectionDefinitions": [],
+  "commandDefinitions": [
+    {
+      "name": "DefineProduct",
+      "feature": "Catalogue",
+      "properties": [
+        {
+          "name": "productId",
+          "propertyType": "ProductId",
+          "isOptional": false,
+          "isList": false
         },
-        "isTag": true
-      },
-      {
-        "name": "OrderId",
-        "schema": {
-          "type": "string"
+        {
+          "name": "price",
+          "propertyType": "Money",
+          "isOptional": false,
+          "isList": false
+        }
+      ],
+      "boundary": [
+        {
+          "alias": "product",
+          "entity": "Product",
+          "id": {
+            "parameterName": "productId"
+          }
+        }
+      ],
+      "conditions": [
+        {
+          "leftHandSide": {
+            "alias": "product",
+            "property": "status"
+          },
+          "predicate": "equals",
+          "rightHandSide": {
+            "enumMember": "NonExistent"
+          }
+        }
+      ],
+      "publishes": [
+        {
+          "name": "ProductDefined",
+          "parameters": {
+            "productId": {
+              "parameterName": "productId"
+            },
+            "price": {
+              "parameterName": "price"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ChangeProductPrice",
+      "feature": "Catalogue",
+      "properties": [
+        {
+          "name": "productId",
+          "propertyType": "ProductId",
+          "isOptional": false,
+          "isList": false
         },
-        "isTag": true
-      },
-      {
-        "name": "Item",
-        "properties": [
-          {
-            "name": "productId",
-            "propertyType": "ProductId"
-          },
-          {
-            "name": "price",
-            "propertyType": "Money"
+        {
+          "name": "newPrice",
+          "propertyType": "Money",
+          "isOptional": false,
+          "isList": false
+        }
+      ],
+      "boundary": [
+        {
+          "alias": "product",
+          "entity": "Product",
+          "id": {
+            "parameterName": "productId"
           }
-        ]
-      }
-    ],
-    "eventDefinitions": [
-      {
-        "name": "ProductDefined",
-        "properties": [
-          {
-            "name": "productId",
-            "propertyType": "ProductId",
-            "isOptional": false,
-            "isList": false
-          },
-          {
-            "name": "price",
-            "propertyType": "Money",
-            "isOptional": false,
-            "isList": false
-          }
-        ]
-      },
-      {
-        "name": "ProductPriceChanged",
-        "properties": [
-          {
-            "name": "productId",
-            "propertyType": "ProductId",
-            "isOptional": false,
-            "isList": false
-          },
-          {
-            "name": "newPrice",
-            "propertyType": "Money",
-            "isOptional": false,
-            "isList": false
-          }
-        ]
-      },
-      {
-        "name": "ProductsOrdered",
-        "properties": [
-          {
-            "name": "orderId",
-            "propertyType": "OrderId",
-            "isOptional": false,
-            "isList": false
-          },
-          {
-            "name": "items",
-            "propertyType": "Item",
-            "isOptional": false,
-            "isList": true
-          }
-        ]
-      }
-    ],
-    "entityDefinitions": [
-      {
-        "name": "Product",
-        "icon": "📦",
-        "properties": [
-          {
-            "name": "status",
-            "propertyType": "ProductStatus",
-            "isOptional": false,
-            "isList": false,
-            "initialValue": {
-              "enumMember": "NonExistent"
-            },
-            "handlers": [
-              {
-                "event": "ProductDefined",
-                "operation": "set",
-                "value": {
-                  "enumMember": "Existent"
-                }
-              }
-            ]
-          },
-          {
-            "name": "currentPrice",
-            "propertyType": "Money",
-            "isOptional": true,
-            "isList": false,
-            "initialValue": null,
-            "handlers": [
-              {
-                "event": "ProductDefined",
-                "operation": "set",
-                "value": {
-                  "eventProperty": "price"
-                }
-              },
-              {
-                "event": "ProductPriceChanged",
-                "operation": "set",
-                "value": {
-                  "eventProperty": "newPrice"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      {
-        "name": "Order",
-        "icon": "🧾",
-        "properties": [
-          {
-            "name": "status",
-            "propertyType": "OrderStatus",
-            "isOptional": false,
-            "isList": false,
-            "initialValue": {
-              "enumMember": "NonExistent"
-            },
-            "handlers": [
-              {
-                "event": "ProductsOrdered",
-                "operation": "set",
-                "value": {
-                  "enumMember": "Existent"
-                }
-              }
-            ]
-          }
-        ]
-      }
-    ],
-    "projectionDefinitions": [],
-    "commandDefinitions": [
-      {
-        "name": "DefineProduct",
-        "feature": "Catalogue",
-        "properties": [
-          {
-            "name": "productId",
-            "propertyType": "ProductId",
-            "isOptional": false,
-            "isList": false
-          },
-          {
-            "name": "price",
-            "propertyType": "Money",
-            "isOptional": false,
-            "isList": false
-          }
-        ],
-        "boundary": [
-          {
+        }
+      ],
+      "conditions": [
+        {
+          "leftHandSide": {
             "alias": "product",
-            "entity": "Product",
-            "id": {
-              "parameterName": "productId"
-            }
-          }
-        ],
-        "conditions": [
-          {
-            "leftHandSide": {
-              "alias": "product",
-              "property": "status"
-            },
-            "predicate": "equals",
-            "rightHandSide": {
-              "enumMember": "NonExistent"
-            }
-          }
-        ],
-        "publishes": [
-          {
-            "name": "ProductDefined",
-            "parameters": {
-              "productId": {
-                "parameterName": "productId"
-              },
-              "price": {
-                "parameterName": "price"
-              }
-            }
-          }
-        ]
-      },
-      {
-        "name": "ChangeProductPrice",
-        "feature": "Catalogue",
-        "properties": [
-          {
-            "name": "productId",
-            "propertyType": "ProductId",
-            "isOptional": false,
-            "isList": false
+            "property": "status"
           },
-          {
-            "name": "newPrice",
-            "propertyType": "Money",
-            "isOptional": false,
-            "isList": false
+          "predicate": "equals",
+          "rightHandSide": {
+            "enumMember": "Existent"
           }
-        ],
-        "boundary": [
-          {
+        },
+        {
+          "leftHandSide": {
             "alias": "product",
-            "entity": "Product",
-            "id": {
-              "parameterName": "productId"
-            }
-          }
-        ],
-        "conditions": [
-          {
-            "leftHandSide": {
-              "alias": "product",
-              "property": "status"
-            },
-            "predicate": "equals",
-            "rightHandSide": {
-              "enumMember": "Existent"
-            }
+            "property": "currentPrice"
           },
-          {
-            "leftHandSide": {
-              "alias": "product",
-              "property": "currentPrice"
+          "predicate": "equals",
+          "rightHandSide": {
+            "parameterName": "newPrice"
+          },
+          "negate": true
+        }
+      ],
+      "publishes": [
+        {
+          "name": "ProductPriceChanged",
+          "parameters": {
+            "productId": {
+              "parameterName": "productId"
             },
-            "predicate": "equals",
-            "rightHandSide": {
+            "newPrice": {
               "parameterName": "newPrice"
-            },
-            "negate": true
-          }
-        ],
-        "publishes": [
-          {
-            "name": "ProductPriceChanged",
-            "parameters": {
-              "productId": {
-                "parameterName": "productId"
-              },
-              "newPrice": {
-                "parameterName": "newPrice"
-              }
             }
           }
-        ]
-      },
-      {
-        "name": "OrderProducts",
-        "feature": "Checkout",
-        "properties": [
-          {
-            "name": "orderId",
-            "propertyType": "OrderId",
-            "isOptional": false,
-            "isList": false
-          },
-          {
-            "name": "items",
-            "propertyType": "Item",
-            "isOptional": false,
-            "isList": true
+        }
+      ]
+    },
+    {
+      "name": "OrderProducts",
+      "feature": "Checkout",
+      "properties": [
+        {
+          "name": "orderId",
+          "propertyType": "OrderId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "items",
+          "propertyType": "Item",
+          "isOptional": false,
+          "isList": true
+        }
+      ],
+      "boundary": [
+        {
+          "alias": "order",
+          "entity": "Order",
+          "id": {
+            "parameterName": "orderId"
           }
-        ],
-        "boundary": [
-          {
+        },
+        {
+          "alias": "product",
+          "entity": "Product",
+          "id": {
+            "parameterName": "items",
+            "property": "productId"
+          }
+        }
+      ],
+      "conditions": [
+        {
+          "leftHandSide": {
             "alias": "order",
-            "entity": "Order",
-            "id": {
-              "parameterName": "orderId"
-            }
+            "property": "status"
           },
-          {
+          "predicate": "equals",
+          "rightHandSide": {
+            "enumMember": "NonExistent"
+          }
+        },
+        {
+          "leftHandSide": {
             "alias": "product",
-            "entity": "Product",
-            "id": {
-              "parameterName": "items",
-              "property": "productId"
-            }
-          }
-        ],
-        "conditions": [
-          {
-            "leftHandSide": {
-              "alias": "order",
-              "property": "status"
-            },
-            "predicate": "equals",
-            "rightHandSide": {
-              "enumMember": "NonExistent"
-            }
+            "property": "status"
           },
-          {
-            "leftHandSide": {
-              "alias": "product",
-              "property": "status"
-            },
-            "predicate": "equals",
-            "rightHandSide": {
-              "enumMember": "Existent"
-            }
+          "predicate": "equals",
+          "rightHandSide": {
+            "enumMember": "Existent"
+          }
+        },
+        {
+          "leftHandSide": {
+            "alias": "product",
+            "property": "currentPrice"
           },
-          {
-            "leftHandSide": {
-              "alias": "product",
-              "property": "currentPrice"
+          "predicate": "equals",
+          "rightHandSide": {
+            "parameterName": "items",
+            "property": "price"
+          }
+        }
+      ],
+      "publishes": [
+        {
+          "name": "ProductsOrdered",
+          "parameters": {
+            "orderId": {
+              "parameterName": "orderId"
             },
-            "predicate": "equals",
-            "rightHandSide": {
-              "parameterName": "items",
-              "property": "price"
+            "items": {
+              "parameterName": "items"
             }
           }
-        ],
-        "publishes": [
-          {
-            "name": "ProductsOrdered",
-            "parameters": {
-              "orderId": {
-                "parameterName": "orderId"
-              },
-              "items": {
-                "parameterName": "items"
-              }
-            }
-          }
-        ]
-      }
-    ],
-    "scenarioDefinitions": []
-  }
+        }
+      ]
+    }
+  ],
+  "scenarioDefinitions": []
 }

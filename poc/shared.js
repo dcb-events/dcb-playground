@@ -93,43 +93,43 @@ if (window.matchMedia) {
   });
 }
 
-// ---------- which context is open ----------
+// ---------- which model is open ----------
 
-const CONTEXT_KEY = 'dcb-playground:context';
+const MODEL_KEY = 'dcb-playground:model';
 
 // `null` is a real answer here, not an edge case to work around: a
 // browser that has never loaded anything has nothing stored, and the
 // Models modal is what asks the question rather than the page silently
 // picking an example on someone's behalf.
-function activeContextId() {
-  const stored = localStorage.getItem(CONTEXT_KEY);
+function activeModelId() {
+  const stored = localStorage.getItem(MODEL_KEY);
   return stored && projectState()[stored] ? stored : null;
 }
-function activeContext() {
-  const id = activeContextId();
+function activeModel() {
+  const id = activeModelId();
   return id ? projectState()[id] : null;
 }
 
-// A context with nothing in it at all — no entities, no events, no
+// A model with nothing in it at all — no entities, no events, no
 // commands. Everything downstream has to cope with that, because it is
 // where a real model actually starts.
 //
 // The name is collected by the page (there are no browser dialogs in
 // here); this only does the creating.
-function createNamedContext(name) {
+function createNamedModel(name) {
   if (!name || !name.trim()) return null;
   return run(() => {
-    const id = createDcbContext(name.trim());
-    localStorage.setItem(CONTEXT_KEY, id);
+    const id = createDcbModel(name.trim());
+    localStorage.setItem(MODEL_KEY, id);
     setPendingFeatures([]);
     return id;
   });
 }
 
-// ---------- sharing a context ----------
+// ---------- sharing a model ----------
 //
-// Two ways a context leaves or enters this browser: a self-contained
-// link (`#context=<gzipped, base64url-encoded envelope>`, so a static
+// Two ways a model leaves or enters this browser: a self-contained
+// link (`#model=<gzipped, base64url-encoded envelope>`, so a static
 // page with no backend can still hand someone a working copy of what
 // it built) and a URL someone else hosts, fetched and inflated on
 // demand. Both carry the same envelope — see `buildShareEnvelope` in
@@ -161,11 +161,11 @@ async function gunzipFromBase64Url(encoded) {
   return new Response(stream).text();
 }
 
-async function buildShareLink(ctx) {
+async function buildShareLink(model) {
   const steps = session.steps.map(({ command, args }) => ({ command, args }));
-  const envelope = buildShareEnvelope(ctx, steps);
+  const envelope = buildShareEnvelope(model, steps);
   const encoded = await gzipToBase64Url(JSON.stringify(envelope));
-  return location.origin + location.pathname + '#context=' + encoded;
+  return location.origin + location.pathname + '#model=' + encoded;
 }
 
 function decodeShareLink(encoded) {
@@ -176,7 +176,7 @@ function decodeShareLink(encoded) {
 // `fetch` only auto-decompresses a gzip `Content-Encoding`; a file whose
 // *content type* says gzip (a plain `.json.gz` sitting on a static
 // host) arrives untouched over the wire and has to be inflated by hand.
-async function loadContextFromUrl(url) {
+async function loadModelFromUrl(url) {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
   const contentType = response.headers.get('Content-Type') || '';
@@ -205,9 +205,9 @@ async function runAsync(fn) {
 // Every entity property that handles this event — i.e. everything the
 // event changes. This is the link the original interface made you go
 // and find for yourself, one entity at a time.
-function effectsOf(ctx, eventName) {
+function effectsOf(model, eventName) {
   const out = [];
-  for (const [entityName, entity] of Object.entries(ctx['entity-definitions'])) {
+  for (const [entityName, entity] of Object.entries(model['entity-definitions'])) {
     for (const property of entity.properties || []) {
       for (const handler of property.handlers || []) {
         if (handler && handler.event === eventName) {
@@ -222,9 +222,9 @@ function effectsOf(ctx, eventName) {
 // Every command that publishes this event — zero, one, or many. An
 // event has no single owner the way an entity does, so this answers
 // "who records this" instead of a boundary binding.
-function publishersOf(ctx, eventName) {
+function publishersOf(model, eventName) {
   const out = [];
-  for (const [name, body] of Object.entries(ctx['command-definitions'])) {
+  for (const [name, body] of Object.entries(model['command-definitions'])) {
     for (const emission of body.publishes || []) {
       if (emission && emission.name === eventName) out.push({ command: name, emission });
     }
@@ -235,9 +235,9 @@ function publishersOf(ctx, eventName) {
 // Every standalone projection that handles this event — the same
 // relationship `effectsOf` gives for an entity's own properties, one
 // level over.
-function projectionsHandling(ctx, eventName) {
+function projectionsHandling(model, eventName) {
   const out = [];
-  for (const [name, body] of Object.entries(ctx['projection-definitions'])) {
+  for (const [name, body] of Object.entries(model['projection-definitions'])) {
     for (const handler of body.handlers || []) {
       if (handler && handler.event === eventName) out.push({ projection: name, body, handler });
     }
@@ -247,21 +247,21 @@ function projectionsHandling(ctx, eventName) {
 
 // Every scenario — ordinary or property — whose Given or Then names
 // this event.
-function scenariosReferencingEvent(ctx, eventName) {
-  const scenarios = Object.entries(ctx['scenario-definitions'] || {})
+function scenariosReferencingEvent(model, eventName) {
+  const scenarios = Object.entries(model['scenario-definitions'] || {})
     .filter(([, body]) =>
       (body.given || []).some((s) => s && s.event === eventName)
       || ((body.then || {}).events || []).some((e) => e && e.type === eventName))
     .map(([key, body]) => ({ key, body, property: false }));
-  const propertyScenarios = Object.entries(ctx['property-scenario-definitions'] || {})
+  const propertyScenarios = Object.entries(model['property-scenario-definitions'] || {})
     .filter(([, body]) => (body.given || []).some((s) => s && s.event === eventName))
     .map(([key, body]) => ({ key, body, property: true }));
   return [...scenarios, ...propertyScenarios];
 }
 
 // Everything one feature touches, in the order a reader meets it.
-function sliceOf(ctx, commandName) {
-  const body = ctx['command-definitions'][commandName];
+function sliceOf(model, commandName) {
+  const body = model['command-definitions'][commandName];
   if (!body) return null;
   return {
     name: commandName,
@@ -271,21 +271,21 @@ function sliceOf(ctx, commandName) {
     rules: body.conditions || [],
     emits: (body.publishes || []).map((emission) => ({
       emission,
-      event: ctx['event-definitions'][emission.name] || null,
-      effects: effectsOf(ctx, emission.name),
+      event: model['event-definitions'][emission.name] || null,
+      effects: effectsOf(model, emission.name),
     })),
     projections: projectionsRead(body),
     // Grouped by the trip to the store each read actually happens on,
     // which is the depth of the boundary's dependency graph and not
     // its length. Derived here so nothing has to author it.
     rounds: deriveRounds(body),
-    dcb: deriveDcb(ctx, body),
-    coverage: coverageIssues(ctx, body),
+    dcb: deriveDcb(model, body),
+    coverage: coverageIssues(model, body),
   };
 }
 
-function allSlices(ctx) {
-  return Object.keys(ctx['command-definitions']).map((n) => sliceOf(ctx, n));
+function allSlices(model) {
+  return Object.keys(model['command-definitions']).map((n) => sliceOf(model, n));
 }
 
 // ---------- coupling ----------
@@ -297,23 +297,23 @@ function allSlices(ctx) {
 // type is in a command's boundary the moment some read property's
 // handler names it, whether or not that command ever publishes it —
 // which is what lets a cell be produce-only, consume-only, or both.
-function couplingMatrix(ctx) {
-  const events = Object.keys(ctx['event-definitions']).sort();
-  const groups = featureGroups(ctx)
-    .map((group) => ({ name: group.name, commands: group.commands.map((n) => couplingRow(ctx, n, events)) }))
+function couplingMatrix(model) {
+  const events = Object.keys(model['event-definitions']).sort();
+  const groups = featureGroups(model)
+    .map((group) => ({ name: group.name, commands: group.commands.map((n) => couplingRow(model, n, events)) }))
     .filter((group) => group.commands.length);
   return { events, groups };
 }
 
-function couplingRow(ctx, name, events) {
-  const slice = sliceOf(ctx, name);
+function couplingRow(model, name, events) {
+  const slice = sliceOf(model, name);
   const produces = new Set((slice.body.publishes || []).map((e) => e && e.name).filter(Boolean));
   // event type -> Set of readable "where from" text.
   const via = {};
   for (const item of slice.dcb.items) {
     if (!item.types.length) continue;
     const binding = !item.projection && (slice.body.boundary || []).find((b) => b.alias === item.alias);
-    const entity = binding && ctx['entity-definitions'][binding.entity];
+    const entity = binding && model['entity-definitions'][binding.entity];
     for (const eventType of item.types) {
       if (!via[eventType]) via[eventType] = new Set();
       if (item.projection) {
@@ -501,10 +501,10 @@ function featureOf(body) {
 // Features in the order their first command appears, then the ones still
 // waiting for one, then the catch-all — so the rail never reshuffles
 // under you as you edit.
-function featureGroups(ctx) {
+function featureGroups(model) {
   const order = [];
   const byFeature = {};
-  for (const [name, body] of Object.entries(ctx['command-definitions'])) {
+  for (const [name, body] of Object.entries(model['command-definitions'])) {
     const feature = featureOf(body);
     if (!byFeature[feature]) { byFeature[feature] = []; if (feature !== UNGROUPED) order.push(feature); }
     byFeature[feature].push(name);
@@ -517,34 +517,34 @@ function featureGroups(ctx) {
   return order.map((name) => ({ name, commands: byFeature[name] || [] }));
 }
 
-function featureNames(ctx) {
-  return featureGroups(ctx).map((g) => g.name).filter((n) => n !== UNGROUPED);
+function featureNames(model) {
+  return featureGroups(model).map((g) => g.name).filter((n) => n !== UNGROUPED);
 }
 
 // Events no feature emits, and entities nothing reads — the loose ends
 // a command-centred view would otherwise hide.
-function orphans(ctx) {
+function orphans(model) {
   const emitted = new Set();
   const boundEntities = new Set();
-  for (const body of Object.values(ctx['command-definitions'])) {
+  for (const body of Object.values(model['command-definitions'])) {
     for (const e of body.publishes || []) emitted.add(e.name);
     for (const b of body.boundary || []) boundEntities.add(b.entity);
   }
   return {
-    events: Object.keys(ctx['event-definitions']).filter((n) => !emitted.has(n)),
-    entities: Object.keys(ctx['entity-definitions']).filter((n) => !boundEntities.has(n)),
+    events: Object.keys(model['event-definitions']).filter((n) => !emitted.has(n)),
+    entities: Object.keys(model['entity-definitions']).filter((n) => !boundEntities.has(n)),
   };
 }
 
 // Everything that happens to one property: which features move it, and
 // which features consult it. The inspector needs both halves to answer
 // "is this still earning its place?".
-function propertyUsage(ctx, entityName, propertyName) {
-  const entity = ctx['entity-definitions'][entityName];
+function propertyUsage(model, entityName, propertyName) {
+  const entity = model['entity-definitions'][entityName];
   const property = (entity ? entity.properties : []).find((p) => p.name === propertyName);
   const changedBy = [];
   const readBy = [];
-  for (const [command, body] of Object.entries(ctx['command-definitions'])) {
+  for (const [command, body] of Object.entries(model['command-definitions'])) {
     for (const emission of body.publishes || []) {
       const handler = ((property && property.handlers) || []).find((x) => x.event === emission.name);
       if (handler) changedBy.push({ command, event: emission.name, handler });
@@ -681,9 +681,9 @@ function conditionParts(condition) {
 // A condition as one plain sentence — the same words `conditionParts`
 // hands the slice page's rule editor, joined into a string for a
 // read-only overview that has nowhere to hang per-operand styling.
-function ruleSentence(ctx, body, condition) {
+function ruleSentence(model, body, condition) {
   const p = conditionParts(condition);
-  const quantifier = quantifierWords(ctx, body, condition);
+  const quantifier = quantifierWords(model, body, condition);
   return (quantifier ? quantifier + ', ' : '') + p.left + ' ' + p.verb + (p.right ? ' ' + p.right : '');
 }
 
@@ -710,9 +710,9 @@ function effectParts(effect) {
 }
 
 // A binding, in words: what it is and how the command found it.
-function readParts(ctx, body, binding) {
+function readParts(model, body, binding) {
   if (binding.projection) {
-    const projection = ctx['projection-definitions'][binding.projection] || {};
+    const projection = model['projection-definitions'][binding.projection] || {};
     return {
       alias: binding.alias,
       projection: binding.projection,
@@ -731,7 +731,7 @@ function readParts(ctx, body, binding) {
   return {
     alias: binding.alias,
     entity: binding.entity,
-    plural: isFannedOut(ctx, body, binding),
+    plural: isFannedOut(model, body, binding),
     from: operandWords(binding.id),
     excluding: binding.excluding !== undefined ? operandWords(binding.excluding) : null,
     // What the command hands a scripted property it reads.
@@ -763,8 +763,8 @@ function defaultEntityIcon(name) {
   return ENTITY_MARKS[sum % ENTITY_MARKS.length];
 }
 
-function entityIcon(ctx, name) {
-  const body = ctx && ctx['entity-definitions'] ? ctx['entity-definitions'][name] : null;
+function entityIcon(model, name) {
+  const body = model && model['entity-definitions'] ? model['entity-definitions'][name] : null;
   const chosen = body && typeof body.icon === 'string' ? body.icon.trim() : '';
   return chosen || defaultEntityIcon(name);
 }
@@ -794,8 +794,8 @@ function defaultCommandIcon(name) {
   return COMMAND_MARKS[sum % COMMAND_MARKS.length];
 }
 
-function commandIcon(ctx, name) {
-  const body = ctx && ctx['command-definitions'] ? ctx['command-definitions'][name] : null;
+function commandIcon(model, name) {
+  const body = model && model['command-definitions'] ? model['command-definitions'][name] : null;
   const chosen = body && typeof body.icon === 'string' ? body.icon.trim() : '';
   return chosen || defaultCommandIcon(name);
 }
@@ -803,14 +803,14 @@ function commandIcon(ctx, name) {
 // Every command that publishes this event — usually none or one, since
 // every shipped example records one event per command, but nothing
 // stops two commands recording the same fact.
-function commandsPublishing(ctx, eventName) {
-  return Object.entries(ctx['command-definitions'] || {})
+function commandsPublishing(model, eventName) {
+  return Object.entries(model['command-definitions'] || {})
     .filter(([, body]) => (body.publishes || []).some((emission) => emission.name === eventName))
     .map(([name]) => name);
 }
 
-function eventIcon(ctx, name) {
-  const body = ctx && ctx['event-definitions'] ? ctx['event-definitions'][name] : null;
+function eventIcon(model, name) {
+  const body = model && model['event-definitions'] ? model['event-definitions'][name] : null;
   const chosen = body && typeof body.icon === 'string' ? body.icon.trim() : '';
   if (chosen) return chosen;
   // Unmarked, and the outcome of exactly one command: read as that
@@ -818,8 +818,8 @@ function eventIcon(ctx, name) {
   // wants this event to look like its own thing gives it its own icon,
   // same as always. Two commands recording the same event agree on
   // nothing this way, so that case falls back to the neutral mark.
-  const commands = commandsPublishing(ctx, name);
-  if (commands.length === 1) return commandIcon(ctx, commands[0]);
+  const commands = commandsPublishing(model, name);
+  if (commands.length === 1) return commandIcon(model, commands[0]);
   return defaultEventIcon(name);
 }
 
@@ -834,11 +834,11 @@ function scriptLabel(property) {
 // fields. A composite is offered whole *and* field by field: the whole
 // value is what an emission wants, a field is what a boundary binding
 // or a rule wants.
-function payloadChoices(ctx, payload) {
+function payloadChoices(model, payload) {
   const out = [];
   for (const p of payload || []) {
     const label = 'given · ' + propertyWords(p.name);
-    const fields = compositeFieldsOf(ctx, p.propertyType);
+    const fields = compositeFieldsOf(model, p.propertyType);
     if (!fields) {
       out.push([JSON.stringify({ parameterName: p.name }), label]);
       continue;
@@ -858,14 +858,14 @@ function payloadChoices(ctx, payload) {
 // alias makes it universal; an operand rooted at the same list makes
 // the pairing by index. Both follow from the operands' types, so the
 // reader is told rather than left to work it out.
-function quantifierWords(ctx, body, condition) {
-  const roots = conditionFanRoots(ctx, body, condition);
+function quantifierWords(model, body, condition) {
+  const roots = conditionFanRoots(model, body, condition);
   if (roots.length !== 1) return '';
   const operands = conditionOperands(condition);
-  if (operands.some((o) => isZipped(ctx, body, condition, o))) {
+  if (operands.some((o) => isZipped(model, body, condition, o))) {
     return `for each entry of ${roots[0].replace(/^parameter:/, '')}`;
   }
   const alias = operands.find((o) =>
-    operandSource(o) === 'alias-property' && fanRootOf(ctx, body, o) === roots[0]);
+    operandSource(o) === 'alias-property' && fanRootOf(model, body, o) === roots[0]);
   return `for every ${alias ? alias.alias : roots[0].replace(/^binding:|^parameter:/, '')}`;
 }

@@ -1,5 +1,5 @@
-# Custom-type definitions inside a DCB Context: events, DCBs, commands.
-# Identified within the context by `name`.
+# Custom-type definitions inside a DCB Model: events, DCBs, commands.
+# Identified within the model by `name`.
 #
 # Custom types are *value* types only — there is no tag flag. Tags come
 # exclusively from entity identifiers. Custom types nevertheless share
@@ -28,11 +28,11 @@ kind: event
 name: custom-type-definition-added
 scope:
   domain: dcb-playground
-  boundedContext: dcb-context-authoring
+  boundedContext: dcb-model-authoring
 data:
   type: object
   properties:
-    dcb-context-id:
+    dcb-model-id:
       type: string
     name:
       type: string
@@ -41,8 +41,8 @@ data:
       description: |
         The custom-type's authored content — either its JSON Schema or
         its composite fields. Kept opaque here — the shape of a `body`
-        is owned by the DCB Context schema, not by this domain model.
-  required: [dcb-context-id, name, body]
+        is owned by the DCB Model schema, not by this domain model.
+  required: [dcb-model-id, name, body]
   additionalProperties: false
 ---
 apiVersion: schema.esdm.io/core/v1
@@ -50,17 +50,17 @@ kind: event
 name: custom-type-definition-updated
 scope:
   domain: dcb-playground
-  boundedContext: dcb-context-authoring
+  boundedContext: dcb-model-authoring
 data:
   type: object
   properties:
-    dcb-context-id:
+    dcb-model-id:
       type: string
     name:
       type: string
     body:
       type: object
-  required: [dcb-context-id, name, body]
+  required: [dcb-model-id, name, body]
   additionalProperties: false
 ---
 apiVersion: schema.esdm.io/core/v1
@@ -68,17 +68,17 @@ kind: event
 name: custom-type-definition-renamed
 scope:
   domain: dcb-playground
-  boundedContext: dcb-context-authoring
+  boundedContext: dcb-model-authoring
 data:
   type: object
   properties:
-    dcb-context-id:
+    dcb-model-id:
       type: string
     previous-name:
       type: string
     name:
       type: string
-  required: [dcb-context-id, previous-name, name]
+  required: [dcb-model-id, previous-name, name]
   additionalProperties: false
 ---
 apiVersion: schema.esdm.io/core/v1
@@ -86,15 +86,15 @@ kind: event
 name: custom-type-definition-removed
 scope:
   domain: dcb-playground
-  boundedContext: dcb-context-authoring
+  boundedContext: dcb-model-authoring
 data:
   type: object
   properties:
-    dcb-context-id:
+    dcb-model-id:
       type: string
     name:
       type: string
-  required: [dcb-context-id, name]
+  required: [dcb-model-id, name]
   additionalProperties: false
 ---
 apiVersion: schema.esdm.io/core/v1
@@ -102,54 +102,54 @@ kind: dynamic-consistency-boundary
 name: custom-type-definition-addition
 description: |
   Guards the addition of a new custom-type-definition. Beyond the
-  usual "context active + name not in use" checks it consults the
+  usual "model active + name not in use" checks it consults the
   entity lifecycle, because a custom type may not claim a name that a
   live entity already derives.
 scope:
   domain: dcb-playground
-  boundedContext: dcb-context-authoring
+  boundedContext: dcb-model-authoring
 identifiedBy:
-  - name: dcb-context-id
+  - name: dcb-model-id
     source: command-payload
-    field: dcb-context-id
+    field: dcb-model-id
   - name: custom-type-definition-name
     source: command-payload
     field: name
 consults:
-  - boundedContext: dcb-context-authoring
-    event: dcb-context-created
-    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
-  - boundedContext: dcb-context-authoring
-    event: dcb-context-deleted
-    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
-  - boundedContext: dcb-context-authoring
+  - boundedContext: dcb-model-authoring
+    event: dcb-model-created
+    criteria: events whose `dcb-model-id` matches this instance's `dcb-model-id`
+  - boundedContext: dcb-model-authoring
+    event: dcb-model-deleted
+    criteria: events whose `dcb-model-id` matches this instance's `dcb-model-id`
+  - boundedContext: dcb-model-authoring
     event: custom-type-definition-added
-    criteria: every custom-type-definition added in this context — for the name check, and to resolve composite field types
-  - boundedContext: dcb-context-authoring
+    criteria: every custom-type-definition added in this model — for the name check, and to resolve composite field types
+  - boundedContext: dcb-model-authoring
     event: custom-type-definition-updated
-    criteria: every custom-type-definition update in this context — a body may have become composite
-  - boundedContext: dcb-context-authoring
+    criteria: every custom-type-definition update in this model — a body may have become composite
+  - boundedContext: dcb-model-authoring
     event: custom-type-definition-renamed
-    criteria: every custom-type-definition rename in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every custom-type-definition rename in this model
+  - boundedContext: dcb-model-authoring
     event: custom-type-definition-removed
-    criteria: every custom-type-definition removal in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every custom-type-definition removal in this model
+  - boundedContext: dcb-model-authoring
     event: entity-definition-added
-    criteria: every entity-definition added in this context — the candidate name must not collide with a derived type name, and composite fields may be typed with a derived one
-  - boundedContext: dcb-context-authoring
+    criteria: every entity-definition added in this model — the candidate name must not collide with a derived type name, and composite fields may be typed with a derived one
+  - boundedContext: dcb-model-authoring
     event: entity-definition-renamed
-    criteria: every entity-definition rename in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every entity-definition rename in this model
+  - boundedContext: dcb-model-authoring
     event: entity-definition-removed
-    criteria: every entity-definition removal in this context
+    criteria: every entity-definition removal in this model
 invariants:
-  - name: context-active
-    rule: The context has been created and has not been deleted.
+  - name: model-active
+    rule: The model has been created and has not been deleted.
   - name: name-not-in-use
     rule: |
       No custom-type-definition currently goes by this name in this
-      context — folding the consulted add/rename/remove events yields
+      model — folding the consulted add/rename/remove events yields
       no live definition with this name.
   - name: name-not-derived
     rule: |
@@ -177,47 +177,47 @@ description: |
   use", since an update claims no new name.
 scope:
   domain: dcb-playground
-  boundedContext: dcb-context-authoring
+  boundedContext: dcb-model-authoring
 identifiedBy:
-  - name: dcb-context-id
+  - name: dcb-model-id
     source: command-payload
-    field: dcb-context-id
+    field: dcb-model-id
   - name: custom-type-definition-name
     source: command-payload
     field: name
 consults:
-  - boundedContext: dcb-context-authoring
-    event: dcb-context-created
-    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
-  - boundedContext: dcb-context-authoring
-    event: dcb-context-deleted
-    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
-  - boundedContext: dcb-context-authoring
+  - boundedContext: dcb-model-authoring
+    event: dcb-model-created
+    criteria: events whose `dcb-model-id` matches this instance's `dcb-model-id`
+  - boundedContext: dcb-model-authoring
+    event: dcb-model-deleted
+    criteria: events whose `dcb-model-id` matches this instance's `dcb-model-id`
+  - boundedContext: dcb-model-authoring
     event: custom-type-definition-added
-    criteria: every custom-type-definition added in this context — for the existence check, and to resolve composite field types
-  - boundedContext: dcb-context-authoring
+    criteria: every custom-type-definition added in this model — for the existence check, and to resolve composite field types
+  - boundedContext: dcb-model-authoring
     event: custom-type-definition-updated
-    criteria: every custom-type-definition update in this context — a body may have become composite
-  - boundedContext: dcb-context-authoring
+    criteria: every custom-type-definition update in this model — a body may have become composite
+  - boundedContext: dcb-model-authoring
     event: custom-type-definition-renamed
-    criteria: every custom-type-definition rename in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every custom-type-definition rename in this model
+  - boundedContext: dcb-model-authoring
     event: custom-type-definition-removed
-    criteria: every custom-type-definition removal in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every custom-type-definition removal in this model
+  - boundedContext: dcb-model-authoring
     event: entity-definition-added
-    criteria: every entity-definition added in this context — composite fields may be typed with a derived type
-  - boundedContext: dcb-context-authoring
+    criteria: every entity-definition added in this model — composite fields may be typed with a derived type
+  - boundedContext: dcb-model-authoring
     event: entity-definition-renamed
-    criteria: every entity-definition rename in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every entity-definition rename in this model
+  - boundedContext: dcb-model-authoring
     event: entity-definition-removed
-    criteria: every entity-definition removal in this context
+    criteria: every entity-definition removal in this model
 invariants:
-  - name: context-active
-    rule: The context has been created and has not been deleted.
+  - name: model-active
+    rule: The model has been created and has not been deleted.
   - name: definition-exists
-    rule: A custom-type-definition currently goes by this name in this context.
+    rule: A custom-type-definition currently goes by this name in this model.
   - name: field-types-resolve
     rule: |
       If the new body is composite, every field's type names a simple
@@ -250,11 +250,11 @@ description: |
   `Item.price`.
 scope:
   domain: dcb-playground
-  boundedContext: dcb-context-authoring
+  boundedContext: dcb-model-authoring
 identifiedBy:
-  - name: dcb-context-id
+  - name: dcb-model-id
     source: command-payload
-    field: dcb-context-id
+    field: dcb-model-id
   - name: previous-name
     source: command-payload
     field: previous-name
@@ -262,76 +262,76 @@ identifiedBy:
     source: command-payload
     field: name
 consults:
-  - boundedContext: dcb-context-authoring
-    event: dcb-context-created
-    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
-  - boundedContext: dcb-context-authoring
-    event: dcb-context-deleted
-    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
-  - boundedContext: dcb-context-authoring
+  - boundedContext: dcb-model-authoring
+    event: dcb-model-created
+    criteria: events whose `dcb-model-id` matches this instance's `dcb-model-id`
+  - boundedContext: dcb-model-authoring
+    event: dcb-model-deleted
+    criteria: events whose `dcb-model-id` matches this instance's `dcb-model-id`
+  - boundedContext: dcb-model-authoring
     event: custom-type-definition-added
-    criteria: every custom-type-definition added in this context — for the name checks, and to find composite field types to rewrite
-  - boundedContext: dcb-context-authoring
+    criteria: every custom-type-definition added in this model — for the name checks, and to find composite field types to rewrite
+  - boundedContext: dcb-model-authoring
     event: custom-type-definition-updated
-    criteria: every custom-type-definition update in this context — a composite's fields are read from its latest body
-  - boundedContext: dcb-context-authoring
+    criteria: every custom-type-definition update in this model — a composite's fields are read from its latest body
+  - boundedContext: dcb-model-authoring
     event: custom-type-definition-renamed
-    criteria: every custom-type-definition rename in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every custom-type-definition rename in this model
+  - boundedContext: dcb-model-authoring
     event: custom-type-definition-removed
-    criteria: every custom-type-definition removal in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every custom-type-definition removal in this model
+  - boundedContext: dcb-model-authoring
     event: event-definition-added
-    criteria: every event-definition added in this context — needed to find property types to rewrite
-  - boundedContext: dcb-context-authoring
+    criteria: every event-definition added in this model — needed to find property types to rewrite
+  - boundedContext: dcb-model-authoring
     event: event-definition-updated
-    criteria: every event-definition update in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every event-definition update in this model
+  - boundedContext: dcb-model-authoring
     event: event-definition-renamed
-    criteria: every event-definition rename in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every event-definition rename in this model
+  - boundedContext: dcb-model-authoring
     event: event-definition-removed
-    criteria: every event-definition removal in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every event-definition removal in this model
+  - boundedContext: dcb-model-authoring
     event: entity-definition-added
-    criteria: every entity-definition added in this context — needed both for the collision check on `name` and to find property types to rewrite
-  - boundedContext: dcb-context-authoring
+    criteria: every entity-definition added in this model — needed both for the collision check on `name` and to find property types to rewrite
+  - boundedContext: dcb-model-authoring
     event: entity-definition-updated
-    criteria: every entity-definition update in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every entity-definition update in this model
+  - boundedContext: dcb-model-authoring
     event: entity-definition-renamed
-    criteria: every entity-definition rename in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every entity-definition rename in this model
+  - boundedContext: dcb-model-authoring
     event: entity-definition-removed
-    criteria: every entity-definition removal in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every entity-definition removal in this model
+  - boundedContext: dcb-model-authoring
     event: command-definition-added
-    criteria: every command-definition added in this context — needed to find property types to rewrite
-  - boundedContext: dcb-context-authoring
+    criteria: every command-definition added in this model — needed to find property types to rewrite
+  - boundedContext: dcb-model-authoring
     event: command-definition-updated
-    criteria: every command-definition update in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every command-definition update in this model
+  - boundedContext: dcb-model-authoring
     event: command-definition-renamed
-    criteria: every command-definition rename in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every command-definition rename in this model
+  - boundedContext: dcb-model-authoring
     event: command-definition-removed
-    criteria: every command-definition removal in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every command-definition removal in this model
+  - boundedContext: dcb-model-authoring
     event: projection-definition-added
-    criteria: every projection-definition added in this context — a projection's `valueType` names a type
-  - boundedContext: dcb-context-authoring
+    criteria: every projection-definition added in this model — a projection's `valueType` names a type
+  - boundedContext: dcb-model-authoring
     event: projection-definition-updated
-    criteria: every projection-definition update in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every projection-definition update in this model
+  - boundedContext: dcb-model-authoring
     event: projection-definition-removed
-    criteria: every projection-definition removal in this context
+    criteria: every projection-definition removal in this model
 invariants:
-  - name: context-active
-    rule: The context has been created and has not been deleted.
+  - name: model-active
+    rule: The model has been created and has not been deleted.
   - name: previous-name-in-use
-    rule: A custom-type-definition currently goes by `previous-name` in this context.
+    rule: A custom-type-definition currently goes by `previous-name` in this model.
   - name: new-name-free
-    rule: No custom-type-definition currently goes by `name` in this context.
+    rule: No custom-type-definition currently goes by `name` in this model.
   - name: new-name-not-derived
     rule: |
       No live entity-definition derives `name`: for no live entity `E`
@@ -347,78 +347,78 @@ description: |
   field* type, or as a projection's `valueType`.
 scope:
   domain: dcb-playground
-  boundedContext: dcb-context-authoring
+  boundedContext: dcb-model-authoring
 identifiedBy:
-  - name: dcb-context-id
+  - name: dcb-model-id
     source: command-payload
-    field: dcb-context-id
+    field: dcb-model-id
   - name: custom-type-definition-name
     source: command-payload
     field: name
 consults:
-  - boundedContext: dcb-context-authoring
-    event: dcb-context-created
-    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
-  - boundedContext: dcb-context-authoring
-    event: dcb-context-deleted
-    criteria: events whose `dcb-context-id` matches this instance's `dcb-context-id`
-  - boundedContext: dcb-context-authoring
+  - boundedContext: dcb-model-authoring
+    event: dcb-model-created
+    criteria: events whose `dcb-model-id` matches this instance's `dcb-model-id`
+  - boundedContext: dcb-model-authoring
+    event: dcb-model-deleted
+    criteria: events whose `dcb-model-id` matches this instance's `dcb-model-id`
+  - boundedContext: dcb-model-authoring
     event: custom-type-definition-added
-    criteria: every custom-type-definition added in this context — for the existence check, and to check composite fields for inbound references
-  - boundedContext: dcb-context-authoring
+    criteria: every custom-type-definition added in this model — for the existence check, and to check composite fields for inbound references
+  - boundedContext: dcb-model-authoring
     event: custom-type-definition-updated
-    criteria: every custom-type-definition update in this context — fields are read from the latest body
-  - boundedContext: dcb-context-authoring
+    criteria: every custom-type-definition update in this model — fields are read from the latest body
+  - boundedContext: dcb-model-authoring
     event: custom-type-definition-renamed
-    criteria: every custom-type-definition rename in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every custom-type-definition rename in this model
+  - boundedContext: dcb-model-authoring
     event: custom-type-definition-removed
-    criteria: every custom-type-definition removal in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every custom-type-definition removal in this model
+  - boundedContext: dcb-model-authoring
     event: event-definition-added
-    criteria: every event-definition added in this context — needed to check for inbound references
-  - boundedContext: dcb-context-authoring
+    criteria: every event-definition added in this model — needed to check for inbound references
+  - boundedContext: dcb-model-authoring
     event: event-definition-updated
-    criteria: every event-definition update in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every event-definition update in this model
+  - boundedContext: dcb-model-authoring
     event: event-definition-removed
-    criteria: every event-definition removal in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every event-definition removal in this model
+  - boundedContext: dcb-model-authoring
     event: entity-definition-added
-    criteria: every entity-definition added in this context — needed to check for inbound references
-  - boundedContext: dcb-context-authoring
+    criteria: every entity-definition added in this model — needed to check for inbound references
+  - boundedContext: dcb-model-authoring
     event: entity-definition-updated
-    criteria: every entity-definition update in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every entity-definition update in this model
+  - boundedContext: dcb-model-authoring
     event: entity-definition-removed
-    criteria: every entity-definition removal in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every entity-definition removal in this model
+  - boundedContext: dcb-model-authoring
     event: command-definition-added
-    criteria: every command-definition added in this context — needed to check for inbound references
-  - boundedContext: dcb-context-authoring
+    criteria: every command-definition added in this model — needed to check for inbound references
+  - boundedContext: dcb-model-authoring
     event: command-definition-updated
-    criteria: every command-definition update in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every command-definition update in this model
+  - boundedContext: dcb-model-authoring
     event: command-definition-removed
-    criteria: every command-definition removal in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every command-definition removal in this model
+  - boundedContext: dcb-model-authoring
     event: projection-definition-added
-    criteria: every projection-definition added in this context — a projection's `valueType` names a type
-  - boundedContext: dcb-context-authoring
+    criteria: every projection-definition added in this model — a projection's `valueType` names a type
+  - boundedContext: dcb-model-authoring
     event: projection-definition-updated
-    criteria: every projection-definition update in this context
-  - boundedContext: dcb-context-authoring
+    criteria: every projection-definition update in this model
+  - boundedContext: dcb-model-authoring
     event: projection-definition-removed
-    criteria: every projection-definition removal in this context
+    criteria: every projection-definition removal in this model
 invariants:
-  - name: context-active
-    rule: The context has been created and has not been deleted.
+  - name: model-active
+    rule: The model has been created and has not been deleted.
   - name: definition-exists
-    rule: A custom-type-definition currently goes by this name in this context.
+    rule: A custom-type-definition currently goes by this name in this model.
   - name: no-inbound-references
     rule: |
       No live event-definition, entity-definition or
-      command-definition in this context types a property with this
+      command-definition in this model types a property with this
       name, no live composite custom-type-definition types a *field*
       with it, and no live projection-definition issues it as its
       `valueType`. References are read from the latest body of each
@@ -429,18 +429,18 @@ kind: command
 name: add-custom-type-definition
 scope:
   domain: dcb-playground
-  boundedContext: dcb-context-authoring
+  boundedContext: dcb-model-authoring
   dynamicConsistencyBoundary: custom-type-definition-addition
 data:
   type: object
   properties:
-    dcb-context-id:
+    dcb-model-id:
       type: string
     name:
       type: string
     body:
       type: object
-  required: [dcb-context-id, name, body]
+  required: [dcb-model-id, name, body]
   additionalProperties: false
 publishes:
   - custom-type-definition-added
@@ -452,18 +452,18 @@ kind: command
 name: update-custom-type-definition
 scope:
   domain: dcb-playground
-  boundedContext: dcb-context-authoring
+  boundedContext: dcb-model-authoring
   dynamicConsistencyBoundary: custom-type-definition-update
 data:
   type: object
   properties:
-    dcb-context-id:
+    dcb-model-id:
       type: string
     name:
       type: string
     body:
       type: object
-  required: [dcb-context-id, name, body]
+  required: [dcb-model-id, name, body]
   additionalProperties: false
 publishes:
   - custom-type-definition-updated
@@ -481,18 +481,18 @@ description: |
   replaced by `name`.
 scope:
   domain: dcb-playground
-  boundedContext: dcb-context-authoring
+  boundedContext: dcb-model-authoring
   dynamicConsistencyBoundary: custom-type-definition-rename
 data:
   type: object
   properties:
-    dcb-context-id:
+    dcb-model-id:
       type: string
     previous-name:
       type: string
     name:
       type: string
-  required: [dcb-context-id, previous-name, name]
+  required: [dcb-model-id, previous-name, name]
   additionalProperties: false
 publishes:
   - custom-type-definition-renamed
@@ -505,14 +505,14 @@ constraints:
   - name: rewrite-property-type-references
     rule: |
       Emit exactly one `*-updated` event for every event-, entity- and
-      command-definition currently in the context with at least one
+      command-definition currently in the model with at least one
       property typed `previous-name`, with every occurrence replaced
       by `name`. Emit nothing for definitions that did not reference
       the renamed type.
   - name: rewrite-composite-field-types
     rule: |
       Emit exactly one `custom-type-definition-updated` for every
-      *other* composite custom-type-definition currently in the context
+      *other* composite custom-type-definition currently in the model
       with at least one field typed `previous-name`, with every
       occurrence replaced by `name`. Emit nothing for scalar types,
       which reference nothing, nor for composites that did not name the
@@ -520,7 +520,7 @@ constraints:
   - name: rewrite-projection-value-types
     rule: |
       Emit exactly one `projection-definition-updated` for every
-      projection-definition currently in the context whose `valueType`
+      projection-definition currently in the model whose `valueType`
       is `previous-name`, replaced by `name`. Emit nothing for
       projections holding another type.
 actors:
@@ -531,16 +531,16 @@ kind: command
 name: remove-custom-type-definition
 scope:
   domain: dcb-playground
-  boundedContext: dcb-context-authoring
+  boundedContext: dcb-model-authoring
   dynamicConsistencyBoundary: custom-type-definition-removal
 data:
   type: object
   properties:
-    dcb-context-id:
+    dcb-model-id:
       type: string
     name:
       type: string
-  required: [dcb-context-id, name]
+  required: [dcb-model-id, name]
   additionalProperties: false
 publishes:
   - custom-type-definition-removed

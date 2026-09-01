@@ -4,7 +4,7 @@
 // The semantics behind `index.html`. Nothing here touches the DOM: it
 // is the event log, the projection over it, type resolution, reference
 // tracking, validation, DCB derivation, the editing commands and the
-// predefined contexts.
+// predefined models.
 //
 // Loaded as a classic script (not a module) so the playground opens
 // straight from the filesystem without a server.
@@ -27,8 +27,8 @@
 // Command bodies carry an optional `feature`, naming the group a
 // command belongs to. Nothing in the model reads it — it rides along
 // untouched through validation, references and renames — and it is the
-// one field a DCB Context carries that the modelled system does not
-// read. See `CommandDefinition.feature` in dcb-context.schema.yaml.
+// one field a DCB Model carries that the modelled system does not
+// read. See `CommandDefinition.feature` in dcb-model.schema.json.
 // ============================================================
 
 // ============================================================
@@ -36,7 +36,7 @@
 // ============================================================
 // Bumped whenever a stored definition changes shape. The log is the
 // whole state, so an old log replayed against new validation would
-// produce contexts this build refuses to save — a fresh key is honest
+// produce models this build refuses to save — a fresh key is honest
 // about that where a silent migration would not be. v8 dropped
 // property retention and a binding's `asOf`. v9 dropped the reserved
 // `status` property and its entity-derived enum: a lifecycle is now an
@@ -47,8 +47,13 @@
 // separate identifier-type-definition kind. v12 dropped the `timestamp`
 // type and the event envelope (`recordedAt`) entirely: no definition
 // referenced them structurally, but the envelope's asymmetry machinery
-// and the required instant on every Given step are gone.
-const EVENT_LOG_KEY = 'dcb-playground:events:v12';
+// and the required instant on every Given step are gone. v13 renamed
+// the artifact from "DCB Context" to "DCB Model": the three lifecycle
+// event types and the `dcb-context-id` they carried are spelled with
+// `model` now, and nothing reads the old spelling. This is the one bump
+// so far that changes no shape at all — only names — which is exactly
+// why it needs a fresh key rather than a quiet coexistence.
+const EVENT_LOG_KEY = 'dcb-playground:events:v13';
 
 const DEF_KINDS = [
   'entity-definition',
@@ -89,7 +94,7 @@ const KIND_SECTION_TITLE = {
 };
 
 // A scenario is identified by a generated id rather than by its name,
-// which is the same shape a DCB Context itself has and for the same
+// which is the same shape a DCB Model itself has and for the same
 // reason: its name is derived from what the command did and is the
 // modeler's to overwrite, so two scenarios of one command may well want
 // to be called the same thing. Every other definition kind is keyed by
@@ -174,43 +179,43 @@ function generateId() {
 
 // ============================================================
 // Projection: derive current state from the event log.
-// Mirrors `dcb-context-overview` in the ESDM model.
+// Mirrors `dcb-model-overview` in the ESDM model.
 // ============================================================
 
-function emptyContext(id, name) {
-  const ctx = { id, name };
-  for (const kind of DEF_KINDS) ctx[DEF_COLLECTIONS[kind]] = {};
-  return ctx;
+function emptyModel(id, name) {
+  const model = { id, name };
+  for (const kind of DEF_KINDS) model[DEF_COLLECTIONS[kind]] = {};
+  return model;
 }
 
 function projectState() {
-  const contexts = {};
-  for (const event of loadEvents()) apply(contexts, event);
-  return contexts;
+  const models = {};
+  for (const event of loadEvents()) apply(models, event);
+  return models;
 }
 
-function apply(contexts, event) {
+function apply(models, event) {
   const { type, data } = event;
-  const ctxId = data['dcb-context-id'];
+  const modelId = data['dcb-model-id'];
 
-  if (type === 'dcb-context-created') {
-    contexts[ctxId] = emptyContext(ctxId, data.name);
+  if (type === 'dcb-model-created') {
+    models[modelId] = emptyModel(modelId, data.name);
     return;
   }
-  if (type === 'dcb-context-renamed') {
-    if (contexts[ctxId]) contexts[ctxId].name = data.name;
+  if (type === 'dcb-model-renamed') {
+    if (models[modelId]) models[modelId].name = data.name;
     return;
   }
-  if (type === 'dcb-context-deleted') {
-    delete contexts[ctxId];
+  if (type === 'dcb-model-deleted') {
+    delete models[modelId];
     return;
   }
 
-  const ctx = contexts[ctxId];
-  if (!ctx) return;
+  const model = models[modelId];
+  if (!model) return;
 
   for (const kind of DEF_KINDS) {
-    const coll = ctx[DEF_COLLECTIONS[kind]];
+    const coll = model[DEF_COLLECTIONS[kind]];
     if (type === `${kind}-added`) { coll[data.name] = data.body; return; }
     if (type === `${kind}-updated`) {
       if (coll[data.name] !== undefined) coll[data.name] = data.body;
@@ -228,7 +233,7 @@ function apply(contexts, event) {
     if (type === `${kind}-reordered`) {
       const next = {};
       for (const key of data.order) if (coll[key] !== undefined) next[key] = coll[key];
-      ctx[DEF_COLLECTIONS[kind]] = next;
+      model[DEF_COLLECTIONS[kind]] = next;
       return;
     }
   }
@@ -247,11 +252,11 @@ function apply(contexts, event) {
 
 // `entityName`'s derived identifier type name — `identifierType` when
 // the entity gives one, otherwise `<name>Id`, tracking the entity's own
-// name for as long as nothing overrides it. Reads straight off `ctx`,
+// name for as long as nothing overrides it. Reads straight off `model`,
 // so renaming the entity moves this automatically: the name is
 // recomputed fresh every time, never stored on the entity itself.
-function idTypeOf(ctx, entityName) {
-  const entity = ctx['entity-definitions'][entityName];
+function idTypeOf(model, entityName) {
+  const entity = model['entity-definitions'][entityName];
   return (entity && entity.identifierType) || (entityName + 'Id');
 }
 
@@ -260,26 +265,26 @@ function idTypeOf(ctx, entityName) {
 // derives, not stored on the value type itself — which is what lets a
 // rename of the entity (while its identifier type is still tracking)
 // move the ownership along with the recomputed name, for free.
-function entityOfIdType(ctx, typeName) {
-  for (const entityName of Object.keys(ctx['entity-definitions'])) {
-    if (idTypeOf(ctx, entityName) === typeName) return entityName;
+function entityOfIdType(model, typeName) {
+  for (const entityName of Object.keys(model['entity-definitions'])) {
+    if (idTypeOf(model, entityName) === typeName) return entityName;
   }
   return null;
 }
 
-// Classifies a type name against a context: simple, a declared value
+// Classifies a type name against a model: simple, a declared value
 // type (entity-owned or standalone — same shape either way), or
 // unresolved.
-function classifyType(ctx, typeName) {
+function classifyType(model, typeName) {
   if (!typeName) return { kind: 'unresolved' };
   if (SIMPLE_TYPES.includes(typeName)) return { kind: 'simple' };
-  const valueType = ctx['custom-type-definitions'][typeName];
+  const valueType = model['custom-type-definitions'][typeName];
   if (valueType !== undefined) {
     return {
       kind: 'value',
       composite: Array.isArray(valueType.properties),
       isTag: !!valueType.isTag,
-      ownerEntity: entityOfIdType(ctx, typeName),
+      ownerEntity: entityOfIdType(model, typeName),
     };
   }
   return { kind: 'unresolved' };
@@ -289,10 +294,10 @@ function classifyType(ctx, typeName) {
 // tag is rendered from — entity-owned or standalone alike — or null
 // for anything else (unresolved, not a value type, composite, or not
 // marked `isTag`).
-function identifierTypeOf(ctx, typeName) {
-  const cls = classifyType(ctx, typeName);
+function identifierTypeOf(model, typeName) {
+  const cls = classifyType(model, typeName);
   if (cls.kind !== 'value' || cls.composite || !cls.isTag) return null;
-  const body = ctx['custom-type-definitions'][typeName];
+  const body = model['custom-type-definitions'][typeName];
   return { name: typeName, composite: false, ownerEntity: cls.ownerEntity, tagSchema: (body && body.tagSchema) || '{type}:{value}' };
 }
 
@@ -308,18 +313,18 @@ function renderTag(identifierType, valueText) {
 // The fields of a composite value type, or null for anything else.
 // Universal — a composite's fields may be any value type, tag-marked
 // or not; `idLeavesOfType` is what picks out the tag-marked ones.
-function compositeFieldsOf(ctx, typeName) {
-  const cls = classifyType(ctx, typeName);
+function compositeFieldsOf(model, typeName) {
+  const cls = classifyType(model, typeName);
   if (cls.kind !== 'value' || !cls.composite) return null;
-  return ctx['custom-type-definitions'][typeName].properties || [];
+  return model['custom-type-definitions'][typeName].properties || [];
 }
 
 // Whether a type carries at least one tag — a tag-marked scalar, or a
 // composite with at least one tag-marked field. Used wherever something
 // must be able to narrow a query: a projection parameter, a tag filter,
 // an entity's own derived identifier.
-function isTagBearing(ctx, typeName) {
-  return idLeavesOfType(ctx, typeName).length > 0;
+function isTagBearing(model, typeName) {
+  return idLeavesOfType(model, typeName).length > 0;
 }
 
 // Tag derivation, looking *through* a composite to its fields.
@@ -333,16 +338,16 @@ function isTagBearing(ctx, typeName) {
 //
 // A composite's fields may not themselves be composite, so this is
 // always one hop and cannot recurse further.
-function idLeavesOfType(ctx, typeName) {
-  const cls = classifyType(ctx, typeName);
+function idLeavesOfType(model, typeName) {
+  const cls = classifyType(model, typeName);
   if (cls.kind !== 'value') return [];
   if (!cls.composite) {
     return cls.isTag ? [{ field: null, identifierType: typeName }] : [];
   }
-  const fields = compositeFieldsOf(ctx, typeName) || [];
+  const fields = compositeFieldsOf(model, typeName) || [];
   const out = [];
   for (const field of fields) {
-    const fieldCls = classifyType(ctx, field.propertyType);
+    const fieldCls = classifyType(model, field.propertyType);
     if (fieldCls.kind === 'value' && !fieldCls.composite && fieldCls.isTag) {
       out.push({ field: field.name, identifierType: field.propertyType });
     }
@@ -350,10 +355,10 @@ function idLeavesOfType(ctx, typeName) {
   return out;
 }
 
-function allTypeNames(ctx) {
+function allTypeNames(model) {
   return [
     ...SIMPLE_TYPES,
-    ...Object.keys(ctx['custom-type-definitions']).sort(),
+    ...Object.keys(model['custom-type-definitions']).sort(),
   ];
 }
 
@@ -362,10 +367,10 @@ function allTypeNames(ctx) {
 // of a non-empty `enum` array is what the tooling treats as "this
 // resolves to an enum" — the one keyword that unambiguously means
 // "these are the only legal values".
-function enumMembersFor(ctx, typeName) {
-  const cls = classifyType(ctx, typeName);
+function enumMembersFor(model, typeName) {
+  const cls = classifyType(model, typeName);
   if (cls.kind !== 'value' || cls.composite) return null;
-  const valueType = ctx['custom-type-definitions'][typeName];
+  const valueType = model['custom-type-definitions'][typeName];
   const members = valueType && valueType.schema && valueType.schema.enum;
   return Array.isArray(members) && members.length ? members : null;
 }
@@ -376,18 +381,18 @@ function enumMembersFor(ctx, typeName) {
 // enum still evaluates correctly through the ordinary operand
 // machinery; it just does not get that authoring convenience, and is
 // edited as raw JSON Schema instead.
-function isStringEnumType(ctx, typeName) {
-  const members = enumMembersFor(ctx, typeName);
+function isStringEnumType(model, typeName) {
+  const members = enumMembersFor(model, typeName);
   return !!members && members.every((m) => typeof m === 'string');
 }
 
-// A context with one definition overlaid — used so that a body being
+// A model with one definition overlaid — used so that a body being
 // validated can reference the very definition it belongs to (an
 // entity's own properties may reference its own derived `<Entity>Id`).
-function withPending(ctx, kind, name, body) {
-  const next = { ...ctx };
+function withPending(model, kind, name, body) {
+  const next = { ...model };
   const collName = DEF_COLLECTIONS[kind];
-  next[collName] = { ...ctx[collName], [name]: body };
+  next[collName] = { ...model[collName], [name]: body };
   return next;
 }
 
@@ -415,7 +420,7 @@ function uniqueAlias(base, taken) {
 // ============================================================
 // Reference computation and rewriting.
 //
-// References are derived from the body shape (per the DCB Context
+// References are derived from the body shape (per the DCB Model
 // schema) — never stored alongside it. An entity's own derived
 // identifier is an ordinary custom-type-definition, referenced by the
 // entity through `identifierType` exactly like any property type
@@ -432,12 +437,12 @@ function emptyRefs() {
 
 function uniq(arr) { return [...new Set(arr)]; }
 
-function pushTypeRef(ctx, refs, typeName) {
-  const cls = classifyType(ctx, typeName);
+function pushTypeRef(model, refs, typeName) {
+  const cls = classifyType(model, typeName);
   if (cls.kind === 'value') refs['custom-type-definition'].push(typeName);
 }
 
-function computeReferences(ctx, kind, name, body) {
+function computeReferences(model, kind, name, body) {
   const refs = emptyRefs();
   if (!body || typeof body !== 'object') return refs;
 
@@ -446,18 +451,18 @@ function computeReferences(ctx, kind, name, body) {
       // A scalar type's schema is opaque and references nothing. A
       // composite's fields are typed against the shared universe, so
       // they reference exactly like any other property list does.
-      for (const f of body.properties || []) pushTypeRef(ctx, refs, f.propertyType);
+      for (const f of body.properties || []) pushTypeRef(model, refs, f.propertyType);
       break;
     case 'event-definition':
-      for (const p of body.properties || []) pushTypeRef(ctx, refs, p.propertyType);
+      for (const p of body.properties || []) pushTypeRef(model, refs, p.propertyType);
       break;
     case 'entity-definition':
       for (const p of body.properties || []) {
-        pushTypeRef(ctx, refs, p.propertyType);
+        pushTypeRef(model, refs, p.propertyType);
         // A script's arguments are typed like anything else. Its code
         // is not walked: it is a string this model does not parse, and
         // guessing at names inside it is how a rename corrupts a script.
-        for (const a of (scriptOf(p) || {}).arguments || []) pushTypeRef(ctx, refs, a.propertyType);
+        for (const a of (scriptOf(p) || {}).arguments || []) pushTypeRef(model, refs, a.propertyType);
         for (const handler of p.handlers || []) {
           if (handler && handler.event) refs['event-definition'].push(handler.event);
         }
@@ -468,22 +473,22 @@ function computeReferences(ctx, kind, name, body) {
       // the ordinary generic machinery: the entity turns up as a
       // referencer exactly like any property typed with it would.
       // Mirrors `idTypeOf`, but read off `body`/`name` directly rather
-      // than through `ctx`, since a body being validated may not be
+      // than through `model`, since a body being validated may not be
       // committed there yet.
       if (name) refs['custom-type-definition'].push(body.identifierType || (name + 'Id'));
       break;
     case 'projection-definition':
-      pushTypeRef(ctx, refs, body.valueType);
+      pushTypeRef(model, refs, body.valueType);
       // A parameter is always a tag-bearing value type, so it
       // references it the same way a property type does.
-      for (const p of body.parameters || []) pushTypeRef(ctx, refs, p.propertyType);
-      for (const a of (scriptOf(body) || {}).arguments || []) pushTypeRef(ctx, refs, a.propertyType);
+      for (const p of body.parameters || []) pushTypeRef(model, refs, p.propertyType);
+      for (const a of (scriptOf(body) || {}).arguments || []) pushTypeRef(model, refs, a.propertyType);
       // A tag filter names a value type outright — the one place in
       // this model a type is referenced by bare name rather than
       // through a property type.
       for (const t of (scriptOf(body) || {}).tagFilter || []) {
         const match = TAG_FILTER_RE.exec(String(t || ''));
-        const cls = match && classifyType(ctx, match[1]);
+        const cls = match && classifyType(model, match[1]);
         if (cls && cls.kind === 'value') refs['custom-type-definition'].push(match[1]);
       }
       for (const handler of body.handlers || []) {
@@ -491,7 +496,7 @@ function computeReferences(ctx, kind, name, body) {
       }
       break;
     case 'command-definition':
-      for (const p of body.properties || []) pushTypeRef(ctx, refs, p.propertyType);
+      for (const p of body.properties || []) pushTypeRef(model, refs, p.propertyType);
       for (const binding of body.boundary || []) {
         if (!binding) continue;
         if (binding.entity) refs['entity-definition'].push(binding.entity);
@@ -646,12 +651,12 @@ function rewriteReferences(kind, body, targetKind, oldName, newName) {
   return next;
 }
 
-function findReferencers(ctx, targetKind, targetName) {
+function findReferencers(model, targetKind, targetName) {
   const out = [];
   for (const referrerKind of DEF_KINDS) {
-    const coll = ctx[DEF_COLLECTIONS[referrerKind]];
+    const coll = model[DEF_COLLECTIONS[referrerKind]];
     for (const [name, body] of Object.entries(coll)) {
-      const refs = computeReferences(ctx, referrerKind, name, body);
+      const refs = computeReferences(model, referrerKind, name, body);
       if (refs[targetKind].includes(targetName)) {
         out.push({ kind: referrerKind, name, body });
       }
@@ -792,19 +797,19 @@ function tagFilterPlaceholders(template) {
   return [...String(template || '').matchAll(TAG_PLACEHOLDER_RE)].map((m) => m[1]);
 }
 
-function resolveTagFilter(ctx, template, args) {
+function resolveTagFilter(model, template, args) {
   const match = TAG_FILTER_RE.exec(String(template || ''));
   if (!match) return String(template || '');
   const valueText = match[2].replace(TAG_PLACEHOLDER_RE, (whole, name) =>
     args[name] === undefined ? whole : operandText(args[name]));
-  const identifierType = identifierTypeOf(ctx, match[1]);
+  const identifierType = identifierTypeOf(model, match[1]);
   return identifierType ? renderTag(identifierType, valueText) : `${match[1]}:${valueText}`;
 }
 
 // Every scripted property an alias is read through, which is what
 // decides the arguments its binding has to supply.
-function scriptedPropertiesRead(ctx, body, binding) {
-  const entity = ctx['entity-definitions'][binding.entity];
+function scriptedPropertiesRead(model, body, binding) {
+  const entity = model['entity-definitions'][binding.entity];
   if (!entity) return [];
   const found = [];
   forEachCommandOperand(body, (operand) => {
@@ -818,9 +823,9 @@ function scriptedPropertiesRead(ctx, body, binding) {
 // The arguments a binding owes, gathered from everything it reads. Two
 // scripted properties asking for the same name ask for the same value —
 // they are read at one instant, through one binding.
-function argumentsExpected(ctx, body, binding) {
+function argumentsExpected(model, body, binding) {
   const out = [];
-  for (const property of scriptedPropertiesRead(ctx, body, binding)) {
+  for (const property of scriptedPropertiesRead(model, body, binding)) {
     for (const argument of scriptOf(property).arguments || []) {
       if (!out.some((a) => a.name === argument.name)) out.push(argument);
     }
@@ -829,7 +834,7 @@ function argumentsExpected(ctx, body, binding) {
 }
 
 // The operations that make sense for a property's type.
-function operationsFor(ctx, property) {
+function operationsFor(model, property) {
   if (property.isList) return ['set', 'append', 'remove'];
   if (property.propertyType === 'integer') return ['set', 'increment', 'decrement'];
   return ['set'];
@@ -889,18 +894,18 @@ function forEachCommandOperand(body, visit) {
 
 // The type an operand resolves to, or null when it cannot be worked out
 // (a literal, or a reference that does not resolve).
-function resolveOperandType(operand, { boundary, commandProperties, ctx }) {
+function resolveOperandType(operand, { boundary, commandProperties, model }) {
   const source = operandSource(operand);
   if (source === 'alias-property') {
     const binding = (boundary || []).find((b) => b.alias === operand.alias);
     if (!binding) return null;
     if (binding.projection) {
       // A projection holds one value, so the alias alone names it.
-      const projection = ctx['projection-definitions'][binding.projection];
+      const projection = model['projection-definitions'][binding.projection];
       if (!projection || operand.property) return null;
       return { propertyType: projection.valueType, isList: !!projection.isList };
     }
-    const entity = ctx['entity-definitions'][binding.entity];
+    const entity = model['entity-definitions'][binding.entity];
     if (!entity) return null;
     const property = (entity.properties || []).find((p) => p.name === operand.property);
     if (!property) return null;
@@ -918,7 +923,7 @@ function resolveOperandType(operand, { boundary, commandProperties, ctx }) {
     // A field of a composite parameter. Fields are never lists
     // themselves, so the arity is entirely the parameter's: reading a
     // field of `Item[]` yields one value per element.
-    const fields = compositeFieldsOf(ctx, property.propertyType);
+    const fields = compositeFieldsOf(model, property.propertyType);
     if (!fields) return null;
     const field = fields.find((f) => f.name === operand.property);
     return field ? { propertyType: field.propertyType, isList: !!property.isList } : null;
@@ -967,7 +972,7 @@ function rightHandExpectedType(predicate, leftType) {
 // element — nothing declares it, it follows from the operand's type. A
 // list read off an already-fanned-out alias is a list of lists, which
 // flattens; either way the binding is plural.
-function isFannedOut(ctx, body, binding) {
+function isFannedOut(model, body, binding) {
   if (!binding) return false;
   // A projection binding reads one partition: every argument is a
   // single tag, so there is nothing for it to fan over.
@@ -975,13 +980,13 @@ function isFannedOut(ctx, body, binding) {
   const resolved = resolveOperandType(binding.id, {
     boundary: body.boundary || [],
     commandProperties: body.properties || [],
-    ctx,
+    model,
   });
   if (resolved && resolved.isList) return true;
   // Reading a scalar property off a plural alias is itself plural.
   if (operandSource(binding.id) === 'alias-property') {
     const source = (body.boundary || []).find((b) => b && b.alias === binding.id.alias);
-    if (source && source !== binding) return isFannedOut(ctx, body, source);
+    if (source && source !== binding) return isFannedOut(model, body, source);
   }
   return false;
 }
@@ -992,8 +997,8 @@ function isFannedOut(ctx, body, binding) {
 // This is what makes zipping decidable: two operands are correlated
 // exactly when they carry the same root, because that is what "they
 // came from the same list" means.
-function bindingFanRoot(ctx, body, binding, seen = []) {
-  if (!binding || !isFannedOut(ctx, body, binding)) return null;
+function bindingFanRoot(model, body, binding, seen = []) {
+  if (!binding || !isFannedOut(model, body, binding)) return null;
   if (seen.includes(binding.alias)) return null;
   if (operandSource(binding.id) === 'parameter') {
     return `parameter:${binding.id.parameterName}`;
@@ -1003,17 +1008,17 @@ function bindingFanRoot(ctx, body, binding, seen = []) {
     // A binding fanned from a plural *projection* has no list
     // parameter behind it, so it is its own root.
     const inherited = source && source !== binding
-      ? bindingFanRoot(ctx, body, source, [...seen, binding.alias])
+      ? bindingFanRoot(model, body, source, [...seen, binding.alias])
       : null;
     return inherited || `binding:${binding.alias}`;
   }
   return `binding:${binding.alias}`;
 }
 
-function fanRootOf(ctx, body, operand) {
+function fanRootOf(model, body, operand) {
   const source = operandSource(operand);
   if (source === 'alias-property') {
-    return bindingFanRoot(ctx, body,
+    return bindingFanRoot(model, body,
       (body.boundary || []).find((b) => b && b.alias === operand.alias));
   }
   if (source === 'parameter') {
@@ -1023,7 +1028,7 @@ function fanRootOf(ctx, body, operand) {
     // reading it alongside a fanned alias is not a second quantifier.
     const root = `parameter:${operand.parameterName}`;
     const iterated = (body.boundary || []).some(
-      (b) => bindingFanRoot(ctx, body, b) === root);
+      (b) => bindingFanRoot(model, body, b) === root);
     return iterated ? root : null;
   }
   return null;
@@ -1039,10 +1044,10 @@ function conditionOperands(condition) {
 
 // The distinct roots a condition quantifies over. More than one is
 // rejected: the lengths are unrelated and nothing can assert otherwise.
-function conditionFanRoots(ctx, body, condition) {
+function conditionFanRoots(model, body, condition) {
   return uniq(
     conditionOperands(condition)
-      .map((operand) => fanRootOf(ctx, body, operand))
+      .map((operand) => fanRootOf(model, body, operand))
       .filter(Boolean)
   );
 }
@@ -1053,25 +1058,25 @@ function conditionFanRoots(ctx, body, condition) {
 // very list the operand is rooted at — that alias is what supplies the
 // index. An operand rooted at a list nothing else iterates stays a
 // plain list, and is quantified over on its own.
-function isZipped(ctx, body, condition, operand) {
-  const root = fanRootOf(ctx, body, operand);
+function isZipped(model, body, condition, operand) {
+  const root = fanRootOf(model, body, operand);
   if (!root || operandSource(operand) !== 'parameter') return false;
   return conditionOperands(condition).some((other) =>
     other !== operand
     && operandSource(other) === 'alias-property'
-    && fanRootOf(ctx, body, other) === root);
+    && fanRootOf(model, body, other) === root);
 }
 
 // An operand's type as the condition actually reads it: zipping drops
 // the list, because the index has already been applied.
-function conditionOperandType(ctx, body, condition, operand) {
+function conditionOperandType(model, body, condition, operand) {
   const resolved = resolveOperandType(operand, {
     boundary: body.boundary || [],
     commandProperties: body.properties || [],
-    ctx,
+    model,
   });
   if (!resolved) return null;
-  if (resolved.isList && isZipped(ctx, body, condition, operand)) {
+  if (resolved.isList && isZipped(model, body, condition, operand)) {
     return { ...resolved, isList: false };
   }
   return resolved;
@@ -1102,8 +1107,8 @@ function operandForLeaf(operand, leaf) {
 // Shared by every DCB preview (a projection binding's arguments, an
 // event's published properties): all of them read the same union of
 // component tags that `eventDefinitions` describes.
-function tagsForIdentifierValue(ctx, identifierTypeName, operand, { each } = {}) {
-  const leaves = idLeavesOfType(ctx, identifierTypeName);
+function tagsForIdentifierValue(model, identifierTypeName, operand, { each } = {}) {
+  const leaves = idLeavesOfType(model, identifierTypeName);
   if (!leaves.length) {
     // Unresolved mid-edit — nothing to render through, so fall back to
     // the type name literally rather than showing nothing at all.
@@ -1112,14 +1117,14 @@ function tagsForIdentifierValue(ctx, identifierTypeName, operand, { each } = {})
   }
   return leaves.map((leaf) => {
     const shown = operand === undefined ? '?' : operandText(operandForLeaf(operand, leaf));
-    return renderTag(identifierTypeOf(ctx, leaf.identifierType), each ? `each(${shown})` : shown);
+    return renderTag(identifierTypeOf(model, leaf.identifierType), each ? `each(${shown})` : shown);
   });
 }
 
 // The tag(s) an entity binding contributes — one per leaf of the
 // entity's own derived identifier, scalar or composite alike.
-function entityBindingTags(ctx, entityName, idOperand, excludingOperand, fannedOut) {
-  const leaves = idLeavesOfType(ctx, idTypeOf(ctx, entityName));
+function entityBindingTags(model, entityName, idOperand, excludingOperand, fannedOut) {
+  const leaves = idLeavesOfType(model, idTypeOf(model, entityName));
   if (!leaves.length) {
     // An unknown entity mid-edit has no derived identifier to look up —
     // fall back to its bare name so a body still being typed renders
@@ -1134,18 +1139,18 @@ function entityBindingTags(ctx, entityName, idOperand, excludingOperand, fannedO
     const valueText = fannedOut
       ? `each(${shownValue}${shownExcluding !== null ? ` except ${shownExcluding}` : ''})`
       : shownValue;
-    return renderTag(identifierTypeOf(ctx, leaf.identifierType), valueText);
+    return renderTag(identifierTypeOf(model, leaf.identifierType), valueText);
   });
 }
 
-function deriveDcb(ctx, body) {
+function deriveDcb(model, body) {
   const items = [];
 
   for (const binding of body.boundary || []) {
     if (!binding) continue;
 
     if (binding.projection) {
-      const projection = ctx['projection-definitions'][binding.projection];
+      const projection = model['projection-definitions'][binding.projection];
       if (!projection) continue;
       // A declared projection's parameters *are* its tags, so the query
       // is written from the parameter list rather than from anything
@@ -1156,9 +1161,9 @@ function deriveDcb(ctx, body) {
       // reads.
       const script = scriptOf(projection);
       const tags = script
-        ? (script.tagFilter || []).map((t) => resolveTagFilter(ctx, t, binding.arguments || {}))
+        ? (script.tagFilter || []).map((t) => resolveTagFilter(model, t, binding.arguments || {}))
         : (projection.parameters || []).flatMap((p) =>
-            tagsForIdentifierValue(ctx, p.propertyType, (binding.arguments || {})[p.name]));
+            tagsForIdentifierValue(model, p.propertyType, (binding.arguments || {})[p.name]));
       items.push({
         projection: binding.projection,
         alias: binding.alias,
@@ -1177,7 +1182,7 @@ function deriveDcb(ctx, body) {
       }
     });
     // The boundary binding's own id operand is not a read of the entity.
-    const entity = ctx['entity-definitions'][binding.entity];
+    const entity = model['entity-definitions'][binding.entity];
     const types = new Set();
     if (entity) {
       for (const property of entity.properties || []) {
@@ -1187,10 +1192,10 @@ function deriveDcb(ctx, body) {
         }
       }
     }
-    const fannedOut = isFannedOut(ctx, body, binding);
+    const fannedOut = isFannedOut(model, body, binding);
     items.push({
       alias: binding.alias,
-      tags: entityBindingTags(ctx, binding.entity, binding.id, binding.excluding, fannedOut),
+      tags: entityBindingTags(model, binding.entity, binding.id, binding.excluding, fannedOut),
       fannedOut,
       types: [...types].sort(),
       readProperties: [...readProperties].sort(),
@@ -1200,15 +1205,15 @@ function deriveDcb(ctx, body) {
   const writes = [];
   for (const emission of body.publishes || []) {
     if (!emission) continue;
-    const event = ctx['event-definitions'][emission.name];
+    const event = model['event-definitions'][emission.name];
     if (!event) continue;
     for (const property of event.properties || []) {
       const operand = (emission.parameters || {})[property.name];
       const listed = property.isList || (operand !== undefined && operandSource(operand) === 'parameter'
         && (body.properties || []).some((p) => p.name === operand.parameterName && p.isList));
-      for (const leaf of idLeavesOfType(ctx, property.propertyType)) {
+      for (const leaf of idLeavesOfType(model, property.propertyType)) {
         const shown = operand === undefined ? '?' : operandText(operandForLeaf(operand, leaf));
-        writes.push(renderTag(identifierTypeOf(ctx, leaf.identifierType), listed ? `each(${shown})` : shown));
+        writes.push(renderTag(identifierTypeOf(model, leaf.identifierType), listed ? `each(${shown})` : shown));
       }
     }
   }
@@ -1271,32 +1276,32 @@ function deriveRounds(body) {
 // so narrowly that two partitions can mint the same identifier is a
 // modelling error of the same class as handling the wrong event, and
 // catching it is not this check's job.
-function mintsFromProjection(ctx, body, operand, eventName) {
+function mintsFromProjection(model, body, operand, eventName) {
   if (operandSource(operand) !== 'alias-property' || operand.property) return false;
   const binding = (body.boundary || []).find((b) => b && b.alias === operand.alias);
   if (!binding || !binding.projection) return false;
-  const projection = ctx['projection-definitions'][binding.projection];
+  const projection = model['projection-definitions'][binding.projection];
   return !!projection && (projection.handlers || []).some((h) => h && h.event === eventName);
 }
 
-function coverageIssues(ctx, body) {
+function coverageIssues(model, body) {
   const issues = [];
   for (const emission of body.publishes || []) {
     if (!emission) continue;
-    const event = ctx['event-definitions'][emission.name];
+    const event = model['event-definitions'][emission.name];
     if (!event) continue;
     for (const property of event.properties || []) {
       const operand = (emission.parameters || {})[property.name];
-      if (mintsFromProjection(ctx, body, operand, emission.name)) continue;
+      if (mintsFromProjection(model, body, operand, emission.name)) continue;
       // Checked against the identifier *leaves* of the property's
       // type, not its surface: a property typed `Item[]` writes one
       // tag per element, and each has to have been consulted.
-      for (const leaf of idLeavesOfType(ctx, property.propertyType)) {
+      for (const leaf of idLeavesOfType(model, property.propertyType)) {
         // A leaf whose identifier type is standalone — a component with
         // no entity of its own — has no entity binding that could ever
         // cover it, so there is nothing to check here: coverage is
         // stated in terms of the entity instances a command binds.
-        const ownerEntity = entityOfIdType(ctx, leaf.identifierType);
+        const ownerEntity = entityOfIdType(model, leaf.identifierType);
         if (!ownerEntity) continue;
         const required = leaf.field === null
           ? operand
@@ -1352,49 +1357,49 @@ function validateDefinitionKey(kind, value, label) {
   return trimmed;
 }
 
-function validateContextName(value) {
+function validateModelName(value) {
   const trimmed = (value || '').trim();
-  if (!trimmed) throw new DomainError('Context name must not be empty.');
+  if (!trimmed) throw new DomainError('Model name must not be empty.');
   return trimmed;
 }
 
-// Context lifecycle ------------------------------------------------------
+// Model lifecycle ------------------------------------------------------
 
-function createDcbContext(name) {
-  const trimmed = validateContextName(name);
+function createDcbModel(name) {
+  const trimmed = validateModelName(name);
   const id = generateId();
-  appendEvents([{ type: 'dcb-context-created', data: { 'dcb-context-id': id, name: trimmed } }]);
+  appendEvents([{ type: 'dcb-model-created', data: { 'dcb-model-id': id, name: trimmed } }]);
   return id;
 }
 
-function renameDcbContext(id, newName) {
-  const trimmed = validateContextName(newName);
-  if (!projectState()[id]) throw new DomainError('Context does not exist.');
-  appendEvents([{ type: 'dcb-context-renamed', data: { 'dcb-context-id': id, name: trimmed } }]);
+function renameDcbModel(id, newName) {
+  const trimmed = validateModelName(newName);
+  if (!projectState()[id]) throw new DomainError('Model does not exist.');
+  appendEvents([{ type: 'dcb-model-renamed', data: { 'dcb-model-id': id, name: trimmed } }]);
 }
 
-function deleteDcbContext(id) {
-  if (!projectState()[id]) throw new DomainError('Context does not exist.');
-  appendEvents([{ type: 'dcb-context-deleted', data: { 'dcb-context-id': id } }]);
+function deleteDcbModel(id) {
+  if (!projectState()[id]) throw new DomainError('Model does not exist.');
+  appendEvents([{ type: 'dcb-model-deleted', data: { 'dcb-model-id': id } }]);
 }
 
 // Definitions ------------------------------------------------------------
 
-function getCtxOrThrow(ctxId) {
-  const ctx = projectState()[ctxId];
-  if (!ctx) throw new DomainError('Context does not exist (it may have been deleted).');
-  return ctx;
+function getCtxOrThrow(modelId) {
+  const model = projectState()[modelId];
+  if (!model) throw new DomainError('Model does not exist (it may have been deleted).');
+  return model;
 }
 
-function validateReferences(ctx, kind, name, body) {
-  const resolved = withPending(ctx, kind, name, body);
+function validateReferences(model, kind, name, body) {
+  const resolved = withPending(model, kind, name, body);
   const refs = computeReferences(resolved, kind, name, body);
   for (const targetKind of DEF_KINDS) {
     const coll = resolved[DEF_COLLECTIONS[targetKind]];
     for (const targetName of refs[targetKind]) {
       if (!(targetName in coll)) {
         throw new DomainError(
-          `Reference does not resolve: ${humanize(targetKind)} "${targetName}" does not exist in this context.`
+          `Reference does not resolve: ${humanize(targetKind)} "${targetName}" does not exist in this model.`
         );
       }
     }
@@ -1409,7 +1414,7 @@ function validateReferences(ctx, kind, name, body) {
       if (seen.has(p.name)) throw new DomainError(`${label} declares "${p.name}" twice.`);
       seen.add(p.name);
       if (classifyType(resolved, p.propertyType).kind === 'unresolved') {
-        throw new DomainError(`Type "${p.propertyType}" (property "${p.name}") does not resolve in this context.`);
+        throw new DomainError(`Type "${p.propertyType}" (property "${p.name}") does not resolve in this model.`);
       }
     }
   };
@@ -1429,10 +1434,10 @@ function validateReferences(ctx, kind, name, body) {
 // the two project identically, and the only difference is whose value
 // is advanced. `target` is a property-shaped object: `name`,
 // `propertyType`, `isList`, `script`.
-function validateHandlers(ctx, label, target, handlers) {
-  if (scriptOf(target)) return validateScriptedHandlers(ctx, label, handlers);
-  const allowedOperations = operationsFor(ctx, target);
-  const members = enumMembersFor(ctx, target.propertyType);
+function validateHandlers(model, label, target, handlers) {
+  if (scriptOf(target)) return validateScriptedHandlers(model, label, handlers);
+  const allowedOperations = operationsFor(model, target);
+  const members = enumMembersFor(model, target.propertyType);
   const handledEvents = new Set();
 
   // `successor` wraps another operand, so recognising an operand means
@@ -1447,7 +1452,7 @@ function validateHandlers(ctx, label, target, handlers) {
       // set, and "the next member" means nothing. Nor does a
       // composite: it is a record of values, not one value, and
       // auto-incrementing a record means nothing either.
-      const cls = classifyType(ctx, target.propertyType);
+      const cls = classifyType(model, target.propertyType);
       if (cls.kind === 'value' && cls.composite) {
         throw new DomainError(
           `${where} takes a successor, but ${label} is typed "${target.propertyType}", a composite. ` +
@@ -1456,7 +1461,7 @@ function validateHandlers(ctx, label, target, handlers) {
         );
       }
       const underlying = cls.kind === 'simple' ? target.propertyType
-        : (enumMembersFor(ctx, target.propertyType) ? 'enum' : 'string');
+        : (enumMembersFor(model, target.propertyType) ? 'enum' : 'string');
       if (!successorTypes.includes(underlying)) {
         throw new DomainError(
           `${where} takes a successor, but ${label} is typed ${target.propertyType}. ` +
@@ -1483,9 +1488,9 @@ function validateHandlers(ctx, label, target, handlers) {
         `(allowed: ${allowedOperations.join(', ')}).`
       );
     }
-    const event = ctx['event-definitions'][handler.event];
+    const event = model['event-definitions'][handler.event];
     if (!event) {
-      throw new DomainError(`${label} handles "${handler.event}", which this context does not define.`);
+      throw new DomainError(`${label} handles "${handler.event}", which this model does not define.`);
     }
     const where = `The handler for "${handler.event}" on ${label}`;
     const leaf = checkOperand(handler.value, where);
@@ -1510,7 +1515,7 @@ function validateHandlers(ctx, label, target, handlers) {
 // What can still be checked is what it *claims*: the event exists and
 // is claimed once. That is exactly the part the derived DCB reads, so
 // the boundary stays trustworthy while the accumulation does not.
-function validateScriptedHandlers(ctx, label, handlers) {
+function validateScriptedHandlers(model, label, handlers) {
   const handledEvents = new Set();
   for (const handler of handlers || []) {
     if (!handler || !handler.event) {
@@ -1520,8 +1525,8 @@ function validateScriptedHandlers(ctx, label, handlers) {
       throw new DomainError(`${label} handles "${handler.event}" twice.`);
     }
     handledEvents.add(handler.event);
-    if (!ctx['event-definitions'][handler.event]) {
-      throw new DomainError(`${label} handles "${handler.event}", which this context does not define.`);
+    if (!model['event-definitions'][handler.event]) {
+      throw new DomainError(`${label} handles "${handler.event}", which this model does not define.`);
     }
     if (typeof handler.code !== 'string' || !handler.code.trim()) {
       throw new DomainError(
@@ -1548,7 +1553,7 @@ function validateScriptedHandlers(ctx, label, handlers) {
 // events either way, and the code discards what it does not want. That
 // is the whole difference between an argument and a tag, and it is why
 // a tag must still be an identifier.
-function validateScript(ctx, label, target, { standalone }) {
+function validateScript(model, label, target, { standalone }) {
   const script = scriptOf(target);
   if ((target.handlers || []).length === 0) {
     throw new DomainError(`${label} is scripted but handles no events, so nothing would ever run.`);
@@ -1590,10 +1595,10 @@ function validateScript(ctx, label, target, { standalone }) {
       throw new DomainError(`${label} declares argument "${argument.name}" twice.`);
     }
     seen.add(argument.name);
-    if (classifyType(ctx, argument.propertyType).kind === 'unresolved') {
+    if (classifyType(model, argument.propertyType).kind === 'unresolved') {
       throw new DomainError(
         `Argument "${argument.name}" on ${label} is typed "${argument.propertyType}", ` +
-        'which does not resolve in this context.'
+        'which does not resolve in this model.'
       );
     }
   }
@@ -1624,7 +1629,7 @@ function validateScript(ctx, label, target, { standalone }) {
         'the value may be a "{argument}" placeholder.'
       );
     }
-    const cls = classifyType(ctx, match[1]);
+    const cls = classifyType(model, match[1]);
     if (cls.kind !== 'value') {
       throw new DomainError(
         `Tag filter "${template}" on ${label} names "${match[1]}", which is not a value type.`
@@ -1657,11 +1662,11 @@ function validateScript(ctx, label, target, { standalone }) {
 // handlers, same operations, same operands. What replaces the owning
 // entity is `parameters` — the tags a command supplies when it binds
 // it. No parameters means no tag, which is what a global numbering is.
-function validateProjectionBody(ctx, projectionName, body) {
-  const valueCls = classifyType(ctx, body.valueType);
+function validateProjectionBody(model, projectionName, body) {
+  const valueCls = classifyType(model, body.valueType);
   if (valueCls.kind === 'unresolved') {
     throw new DomainError(
-      `Type "${body.valueType}" (projection "${projectionName}") does not resolve in this context.`
+      `Type "${body.valueType}" (projection "${projectionName}") does not resolve in this model.`
     );
   }
   if (valueCls.kind === 'value' && valueCls.composite) {
@@ -1683,8 +1688,8 @@ function validateProjectionBody(ctx, projectionName, body) {
         'projection states its tags in its tag filter and takes arguments instead.'
       );
     }
-    validateScript(ctx, `projection "${projectionName}"`, body, { standalone: true });
-    validateHandlers(ctx, `projection "${projectionName}"`, body, body.handlers);
+    validateScript(model, `projection "${projectionName}"`, body, { standalone: true });
+    validateHandlers(model, `projection "${projectionName}"`, body, body.handlers);
     return;
   }
 
@@ -1710,7 +1715,7 @@ function validateProjectionBody(ctx, projectionName, body) {
       throw new DomainError(`Projection "${projectionName}" declares parameter "${parameter.name}" twice.`);
     }
     seenParameters.add(parameter.name);
-    if (classifyType(ctx, parameter.propertyType).kind !== 'value' || !isTagBearing(ctx, parameter.propertyType)) {
+    if (classifyType(model, parameter.propertyType).kind !== 'value' || !isTagBearing(model, parameter.propertyType)) {
       throw new DomainError(
         `Parameter "${parameter.name}" on projection "${projectionName}" is typed ` +
         `"${parameter.propertyType}", which carries no tag. A parameter becomes a tag, and only ` +
@@ -1724,7 +1729,7 @@ function validateProjectionBody(ctx, projectionName, body) {
       `Projection "${projectionName}" handles no events, so it could only ever read its initial value.`
     );
   }
-  validateHandlers(ctx, `projection "${projectionName}"`, body, body.handlers);
+  validateHandlers(model, `projection "${projectionName}"`, body, body.handlers);
 }
 
 // A value type is scalar (an opaque JSON Schema) or composite (typed
@@ -1742,7 +1747,7 @@ function validateProjectionBody(ctx, projectionName, body) {
 // flattens, an optional tag-marked field contributes a variable number
 // of tags, and either way the index drifts with nothing on the page to
 // show it.
-function validateCustomTypeBody(ctx, typeName, body) {
+function validateCustomTypeBody(model, typeName, body) {
   const hasSchema = body.schema !== undefined;
   const hasFields = body.properties !== undefined;
   if (hasSchema && hasFields) {
@@ -1774,10 +1779,10 @@ function validateCustomTypeBody(ctx, typeName, body) {
         throw new DomainError(`Composite type "${typeName}" declares field "${field.name}" twice.`);
       }
       seen.add(field.name);
-      const cls = classifyType(ctx, field.propertyType);
+      const cls = classifyType(model, field.propertyType);
       if (cls.kind === 'unresolved') {
         throw new DomainError(
-          `Type "${field.propertyType}" (field "${typeName}.${field.name}") does not resolve in this context.`
+          `Type "${field.propertyType}" (field "${typeName}.${field.name}") does not resolve in this model.`
         );
       }
       // Composites do not nest — an operand reaches one field, never a path.
@@ -1802,8 +1807,8 @@ function validateCustomTypeBody(ctx, typeName, body) {
     }
   }
 
-  const owner = entityOfIdType(ctx, typeName);
-  if (owner && !isTagBearing(ctx, typeName)) {
+  const owner = entityOfIdType(model, typeName);
+  if (owner && !isTagBearing(model, typeName)) {
     throw new DomainError(
       `"${typeName}" is entity "${owner}"'s derived identifier — it must stay tag-bearing (a scalar ` +
       'marked "represented as a tag", or a composite with at least one tag-marked field).'
@@ -1811,7 +1816,7 @@ function validateCustomTypeBody(ctx, typeName, body) {
   }
 }
 
-function validateEntityBody(ctx, entityName, body) {
+function validateEntityBody(model, entityName, body) {
   if (body.identifierType !== undefined && !PASCAL_RE.test(body.identifierType)) {
     throw new DomainError(
       `Entity "${entityName}"'s identifierType "${body.identifierType}" must be PascalCase.`
@@ -1827,15 +1832,15 @@ function validateEntityBody(ctx, entityName, body) {
     }
     if (seen.has(property.name)) throw new DomainError(`Entity declares property "${property.name}" twice.`);
     seen.add(property.name);
-    if (classifyType(ctx, property.propertyType).kind === 'unresolved') {
+    if (classifyType(model, property.propertyType).kind === 'unresolved') {
       throw new DomainError(`Type "${property.propertyType}" (property "${property.name}") does not resolve.`);
     }
 
     if (scriptOf(property)) {
-      validateScript(ctx, `property "${property.name}"`, property, { standalone: false });
+      validateScript(model, `property "${property.name}"`, property, { standalone: false });
     }
 
-    const members = enumMembersFor(ctx, property.propertyType);
+    const members = enumMembersFor(model, property.propertyType);
     if (members && operandSource(property.initialValue) === 'enum-member'
         && !members.includes(property.initialValue.enumMember)) {
       throw new DomainError(
@@ -1843,11 +1848,11 @@ function validateEntityBody(ctx, entityName, body) {
       );
     }
 
-    validateHandlers(ctx, `property "${property.name}"`, property, property.handlers);
+    validateHandlers(model, `property "${property.name}"`, property, property.handlers);
   }
 }
 
-function validateCommandBody(ctx, body) {
+function validateCommandBody(model, body) {
   const boundary = body.boundary || [];
   const aliases = new Set();
   // Declaration order *is* the chain: a binding may take its identifier
@@ -1866,7 +1871,7 @@ function validateCommandBody(ctx, body) {
     // lives here: its arguments put it in the chain, and its query
     // belongs in the append condition.
     if (binding.projection !== undefined) {
-      const projection = ctx['projection-definitions'][binding.projection];
+      const projection = model['projection-definitions'][binding.projection];
       if (!projection) {
         throw new DomainError(
           `Boundary binding "${binding.alias}" names unknown projection "${binding.projection}".`
@@ -1921,7 +1926,7 @@ function validateCommandBody(ctx, body) {
       continue;
     }
 
-    if (!ctx['entity-definitions'][binding.entity]) {
+    if (!model['entity-definitions'][binding.entity]) {
       throw new DomainError(`Boundary binding "${binding.alias}" names unknown entity "${binding.entity}".`);
     }
     if (binding.id === undefined || binding.id === null || operandText(binding.id).includes('?')) {
@@ -1938,7 +1943,7 @@ function validateCommandBody(ctx, body) {
         );
       }
     }
-    if (binding.excluding !== undefined && !isFannedOut(ctx, body, binding)) {
+    if (binding.excluding !== undefined && !isFannedOut(model, body, binding)) {
       throw new DomainError(
         `Boundary binding "${binding.alias}" excludes ${operandText(binding.excluding)}, ` +
         `but it binds a single instance — there is nothing to exclude it from.`
@@ -1954,7 +1959,7 @@ function validateCommandBody(ctx, body) {
     for (const [key, operand] of Object.entries(emission.parameters)) {
       if (operandSource(operand) !== 'alias-property') continue;
       const binding = boundary.find((b) => b.alias === operand.alias);
-      if (binding && isFannedOut(ctx, body, binding)) {
+      if (binding && isFannedOut(model, body, binding)) {
         throw new DomainError(
           `"${emission.name}.${key}" takes its value from "${operandText(operand)}", but "${operand.alias}" ` +
           `binds many instances. A fanned-out instance can be checked, not emitted.`
@@ -1969,7 +1974,7 @@ function validateCommandBody(ctx, body) {
   // zipped and crossed readings look identical on the page.
   for (const condition of body.conditions || []) {
     if (!condition) continue;
-    const roots = conditionFanRoots(ctx, body, condition);
+    const roots = conditionFanRoots(model, body, condition);
     if (roots.length > 1) {
       throw new DomainError(
         `Condition "${conditionText(condition)}" quantifies over ${roots.length} different lists ` +
@@ -1981,8 +1986,8 @@ function validateCommandBody(ctx, body) {
 
   for (const condition of body.conditions || []) {
     if (!condition || condition.predicate !== 'containsAny') continue;
-    const left = conditionOperandType(ctx, body, condition, condition.leftHandSide);
-    const right = conditionOperandType(ctx, body, condition, condition.rightHandSide);
+    const left = conditionOperandType(model, body, condition, condition.leftHandSide);
+    const right = conditionOperandType(model, body, condition, condition.rightHandSide);
     for (const [side, label] of [[left, 'Left'], [right, 'Right']]) {
       if (side && !side.isList) {
         throw new DomainError(
@@ -2003,8 +2008,8 @@ function validateCommandBody(ctx, body) {
   // stating: a list on the left, one value on the right.
   for (const condition of body.conditions || []) {
     if (!condition || condition.predicate !== 'contains') continue;
-    const left = conditionOperandType(ctx, body, condition, condition.leftHandSide);
-    const right = conditionOperandType(ctx, body, condition, condition.rightHandSide);
+    const left = conditionOperandType(model, body, condition, condition.leftHandSide);
+    const right = conditionOperandType(model, body, condition, condition.rightHandSide);
     if (left && !left.isList) {
       throw new DomainError(
         `Left side of "${conditionText(condition)}" is not a list — ` +
@@ -2037,7 +2042,7 @@ function validateCommandBody(ctx, body) {
     }
     if (source === 'parameter' && operand.property) {
       const parameter = (body.properties || []).find((p) => p.name === operand.parameterName);
-      const fields = parameter && compositeFieldsOf(ctx, parameter.propertyType);
+      const fields = parameter && compositeFieldsOf(model, parameter.propertyType);
       if (!fields) {
         failure = `${meta.where} reads "${operandText(operand)}", but "${operand.parameterName}" is typed `
           + `${parameter ? `"${parameter.propertyType}"` : '?'}, which has no fields.`;
@@ -2069,7 +2074,7 @@ function validateCommandBody(ctx, body) {
           + `${binding.entity}, which holds many — name the one it means.`;
         return;
       }
-      const entity = ctx['entity-definitions'][binding.entity];
+      const entity = model['entity-definitions'][binding.entity];
       const known = entity && (entity.properties || []).some((p) => p.name === operand.property);
       if (!known) {
         failure = `${meta.where} reads "${operandText(operand)}", but ${binding.entity} has no property "${operand.property}".`;
@@ -2085,9 +2090,9 @@ function validateCommandBody(ctx, body) {
   // and saying so is more use than quietly ignoring it.
   for (const binding of boundary) {
     if (binding.projection !== undefined) continue;
-    const entity = ctx['entity-definitions'][binding.entity];
+    const entity = model['entity-definitions'][binding.entity];
     if (!entity) continue;
-    const expected = argumentsExpected(ctx, body, binding);
+    const expected = argumentsExpected(model, body, binding);
     const supplied = Object.keys(binding.arguments || {});
     for (const argument of expected) {
       if (!supplied.includes(argument.name)) {
@@ -2107,7 +2112,7 @@ function validateCommandBody(ctx, body) {
       }
       const operand = binding.arguments[key];
       const resolved = resolveOperandType(operand, {
-        boundary, commandProperties: body.properties || [], ctx,
+        boundary, commandProperties: body.properties || [], model,
       });
       if (resolved && (resolved.propertyType !== argument.propertyType || resolved.isList)) {
         throw new DomainError(
@@ -2133,10 +2138,10 @@ function validateCommandBody(ctx, body) {
       if (operandSource(other) !== 'alias-property') continue;
       const binding = boundary.find((b) => b.alias === other.alias);
       if (!binding) continue;
-      const entity = ctx['entity-definitions'][binding.entity];
+      const entity = model['entity-definitions'][binding.entity];
       const property = (entity.properties || []).find((p) => p.name === other.property);
       if (!property) continue;
-      const members = enumMembersFor(ctx, property.propertyType);
+      const members = enumMembersFor(model, property.propertyType);
       if (members && !members.includes(maybeEnum.enumMember)) {
         throw new DomainError(
           `"${maybeEnum.enumMember}" is not a member of ${property.propertyType} ` +
@@ -2150,7 +2155,7 @@ function validateCommandBody(ctx, body) {
     throw new DomainError('A command must publish at least one event.');
   }
 
-  const issues = coverageIssues(ctx, body);
+  const issues = coverageIssues(model, body);
   if (issues.length > 0) {
     const first = issues[0];
     // Two different failures wear the same name. Either the emission
@@ -2195,12 +2200,12 @@ function validateCommandBody(ctx, body) {
 // the rest is the evaluator's to discover.
 // ============================================================
 
-function validateScenarioBody(ctx, body) {
+function validateScenarioBody(model, body) {
   if (body.name !== undefined && typeof body.name !== 'string') {
     throw new DomainError('A scenario name is text, or absent when the derived one will do.');
   }
   if (!body.command) throw new DomainError('A scenario has to name the command it exercises.');
-  const command = ctx['command-definitions'][body.command];
+  const command = model['command-definitions'][body.command];
 
   // Checks a stored payload against the properties it is written from.
   // Both directions matter: a missing one cannot be evaluated, and an
@@ -2230,7 +2235,7 @@ function validateScenarioBody(ctx, body) {
   body.given.forEach((step, index) => {
     const where = `Given step ${index + 1}`;
     if (!step || !step.event) throw new DomainError(`${where} names no event.`);
-    checkPayload(step.data, (ctx['event-definitions'][step.event] || {}).properties,
+    checkPayload(step.data, (model['event-definitions'][step.event] || {}).properties,
       `${where} ("${step.event}")`);
   });
 
@@ -2246,7 +2251,7 @@ function validateScenarioBody(ctx, body) {
   }
   then.events.forEach((event, index) => {
     if (!event || !event.type) throw new DomainError(`Expected event ${index + 1} names no type.`);
-    checkPayload(event.data, (ctx['event-definitions'][event.type] || {}).properties,
+    checkPayload(event.data, (model['event-definitions'][event.type] || {}).properties,
       `Expected event ${index + 1} ("${event.type}")`);
   });
   if (then.outcome === 'rejected' && !then.failedRule) {
@@ -2260,12 +2265,12 @@ function validateScenarioBody(ctx, body) {
 // names it outright. `then` is *derived*, exactly like a scenario's,
 // but partial — only the properties a modeler chose to check appear,
 // each frozen at the moment it was accepted.
-function validatePropertyScenarioBody(ctx, body) {
+function validatePropertyScenarioBody(model, body) {
   if (body.name !== undefined && typeof body.name !== 'string') {
     throw new DomainError('A property scenario name is text, or absent when the derived one will do.');
   }
   if (!body.entity) throw new DomainError('A property scenario has to name the entity it tests.');
-  const entity = ctx['entity-definitions'][body.entity];
+  const entity = model['entity-definitions'][body.entity];
   if (typeof body.forInstance !== 'string' || !body.forInstance.trim()) {
     throw new DomainError('A property scenario has to say which instance it tests.');
   }
@@ -2295,7 +2300,7 @@ function validatePropertyScenarioBody(ctx, body) {
   body.given.forEach((step, index) => {
     const where = `Given step ${index + 1}`;
     if (!step || !step.event) throw new DomainError(`${where} names no event.`);
-    checkPayload(step.data, (ctx['event-definitions'][step.event] || {}).properties,
+    checkPayload(step.data, (model['event-definitions'][step.event] || {}).properties,
       `${where} ("${step.event}")`);
   });
 
@@ -2311,12 +2316,12 @@ function validatePropertyScenarioBody(ctx, body) {
   }
 }
 
-function addDefinition(kind, ctxId, name, body) {
-  const ctx = getCtxOrThrow(ctxId);
+function addDefinition(kind, modelId, name, body) {
+  const model = getCtxOrThrow(modelId);
   const trimmed = validateDefinitionKey(kind, name, `${humanize(kind)} name`);
-  const coll = ctx[DEF_COLLECTIONS[kind]];
+  const coll = model[DEF_COLLECTIONS[kind]];
   if (trimmed in coll) {
-    throw new DomainError(`A ${humanize(kind)} named "${trimmed}" already exists in this context.`);
+    throw new DomainError(`A ${humanize(kind)} named "${trimmed}" already exists in this model.`);
   }
   if (kind === 'entity-definition') {
     // An entity's derived identifier is an ordinary value type, created
@@ -2327,28 +2332,28 @@ function addDefinition(kind, ctxId, name, body) {
     // refused exactly like any other name collision.
     const idTypeName = body.identifierType || (trimmed + 'Id');
     validateDefinitionKey('custom-type-definition', idTypeName, 'Value type name');
-    if (ctx['custom-type-definitions'][idTypeName] !== undefined) {
+    if (model['custom-type-definitions'][idTypeName] !== undefined) {
       throw new DomainError(
         `Entity "${trimmed}" would derive the type "${idTypeName}", but a value type by that name already exists.`
       );
     }
     const idTypeBody = { schema: { type: 'string' }, isTag: true };
-    validateReferences(withPending(ctx, 'custom-type-definition', idTypeName, idTypeBody), kind, trimmed, body);
+    validateReferences(withPending(model, 'custom-type-definition', idTypeName, idTypeBody), kind, trimmed, body);
     appendEvents([
-      { type: 'custom-type-definition-added', data: { 'dcb-context-id': ctxId, name: idTypeName, body: idTypeBody } },
-      { type: 'entity-definition-added', data: { 'dcb-context-id': ctxId, name: trimmed, body } },
+      { type: 'custom-type-definition-added', data: { 'dcb-model-id': modelId, name: idTypeName, body: idTypeBody } },
+      { type: 'entity-definition-added', data: { 'dcb-model-id': modelId, name: trimmed, body } },
     ]);
     return;
   }
-  validateReferences(ctx, kind, trimmed, body);
-  appendEvents([{ type: `${kind}-added`, data: { 'dcb-context-id': ctxId, name: trimmed, body } }]);
+  validateReferences(model, kind, trimmed, body);
+  appendEvents([{ type: `${kind}-added`, data: { 'dcb-model-id': modelId, name: trimmed, body } }]);
 }
 
-function updateDefinition(kind, ctxId, name, body) {
-  const ctx = getCtxOrThrow(ctxId);
-  const coll = ctx[DEF_COLLECTIONS[kind]];
+function updateDefinition(kind, modelId, name, body) {
+  const model = getCtxOrThrow(modelId);
+  const coll = model[DEF_COLLECTIONS[kind]];
   if (!(name in coll)) {
-    throw new DomainError(`No ${humanize(kind)} named "${name}" exists in this context.`);
+    throw new DomainError(`No ${humanize(kind)} named "${name}" exists in this model.`);
   }
   if (kind === 'entity-definition' && (coll[name].identifierType || null) !== (body.identifierType || null)) {
     // Changing `identifierType` moves which value type the entity
@@ -2361,11 +2366,11 @@ function updateDefinition(kind, ctxId, name, body) {
       'itself instead, which moves this reference along with every other.'
     );
   }
-  validateReferences(ctx, kind, name, body);
-  if (kind === 'entity-definition') assertEntityUpdateKeepsInboundReferences(ctx, name, body);
-  if (kind === 'custom-type-definition') assertCustomTypeUpdateKeepsInboundReferences(ctx, name, body);
-  if (kind === 'projection-definition') assertProjectionUpdateKeepsBindingsFitting(ctx, name, body);
-  appendEvents([{ type: `${kind}-updated`, data: { 'dcb-context-id': ctxId, name, body } }]);
+  validateReferences(model, kind, name, body);
+  if (kind === 'entity-definition') assertEntityUpdateKeepsInboundReferences(model, name, body);
+  if (kind === 'custom-type-definition') assertCustomTypeUpdateKeepsInboundReferences(model, name, body);
+  if (kind === 'projection-definition') assertProjectionUpdateKeepsBindingsFitting(model, name, body);
+  appendEvents([{ type: `${kind}-updated`, data: { 'dcb-model-id': modelId, name, body } }]);
 }
 
 // A projection's parameters are supplied by *key*, so changing them
@@ -2373,9 +2378,9 @@ function updateDefinition(kind, ctxId, name, body) {
 // arguments for a partition that no longer exists. Renaming one is a
 // `renameMember` — which moves the keys in the same append — and this
 // is what stops it happening any other way.
-function assertProjectionUpdateKeepsBindingsFitting(ctx, projectionName, body) {
+function assertProjectionUpdateKeepsBindingsFitting(model, projectionName, body) {
   const parameters = (body.parameters || []).map((p) => p && p.name);
-  for (const [commandName, command] of Object.entries(ctx['command-definitions'])) {
+  for (const [commandName, command] of Object.entries(model['command-definitions'])) {
     for (const binding of command.boundary || []) {
       if (!binding || binding.projection !== projectionName) continue;
       const supplied = Object.keys(binding.arguments || {});
@@ -2395,9 +2400,9 @@ function assertProjectionUpdateKeepsBindingsFitting(ctx, projectionName, body) {
 
 // Dropping a property that a command still reads is refused rather
 // than silently breaking the command.
-function assertEntityUpdateKeepsInboundReferences(ctx, entityName, body) {
+function assertEntityUpdateKeepsInboundReferences(model, entityName, body) {
   const propertyNames = new Set((body.properties || []).map((p) => p.name));
-  for (const [commandName, command] of Object.entries(ctx['command-definitions'])) {
+  for (const [commandName, command] of Object.entries(model['command-definitions'])) {
     const aliases = (command.boundary || [])
       .filter((b) => b && b.entity === entityName)
       .map((b) => b.alias);
@@ -2427,13 +2432,13 @@ function assertEntityUpdateKeepsInboundReferences(ctx, entityName, body) {
 // reference it. Mirrors `assertEntityUpdateKeepsInboundReferences`
 // exactly, checking conditions only — the same narrower guarantee the
 // reserved status property carried before it.
-function assertCustomTypeUpdateKeepsInboundReferences(ctx, typeName, body) {
-  const previousMembers = enumMembersFor(ctx, typeName);
+function assertCustomTypeUpdateKeepsInboundReferences(model, typeName, body) {
+  const previousMembers = enumMembersFor(model, typeName);
   if (!previousMembers) return;
   const nextMembers = new Set(
     Array.isArray(body.schema && body.schema.enum) ? body.schema.enum : []
   );
-  for (const [commandName, command] of Object.entries(ctx['command-definitions'])) {
+  for (const [commandName, command] of Object.entries(model['command-definitions'])) {
     for (const condition of command.conditions || []) {
       if (!condition) continue;
       for (const side of [condition.leftHandSide, condition.rightHandSide]) {
@@ -2443,7 +2448,7 @@ function assertCustomTypeUpdateKeepsInboundReferences(ctx, typeName, body) {
         const resolved = resolveOperandType(other, {
           boundary: command.boundary || [],
           commandProperties: command.properties || [],
-          ctx,
+          model,
         });
         if (resolved && resolved.propertyType === typeName) {
           throw new DomainError(
@@ -2463,15 +2468,15 @@ function assertCustomTypeUpdateKeepsInboundReferences(ctx, typeName, body) {
 // parse the body, and a textual pass over an unparsed language would
 // eventually rewrite a comment or a string literal and corrupt someone
 // else's work. So the rename goes through and this says what to check.
-function scriptedHandlersOf(ctx, eventName) {
+function scriptedHandlersOf(model, eventName) {
   const out = [];
   const handles = (target) => (target.handlers || []).some((h) => h && h.event === eventName);
-  for (const [name, entity] of Object.entries(ctx['entity-definitions'])) {
+  for (const [name, entity] of Object.entries(model['entity-definitions'])) {
     for (const property of entity.properties || []) {
       if (scriptOf(property) && handles(property)) out.push(`${name}.${property.name}`);
     }
   }
-  for (const [name, projection] of Object.entries(ctx['projection-definitions'])) {
+  for (const [name, projection] of Object.entries(model['projection-definitions'])) {
     if (scriptOf(projection) && handles(projection)) out.push(name);
   }
   return out;
@@ -2487,19 +2492,19 @@ function scriptedHandlersOf(ctx, eventName) {
 // type) into one append, and because an entity with an *explicit*
 // `identifierType` needs none of this — that case falls through to the
 // ordinary path, which renames only the entity.
-function renameEntityDefinition(ctx, ctxId, previousName, trimmed) {
-  const entityBody = ctx['entity-definitions'][previousName];
+function renameEntityDefinition(model, modelId, previousName, trimmed) {
+  const entityBody = model['entity-definitions'][previousName];
   const oldIdType = previousName + 'Id';
   const newIdType = trimmed + 'Id';
-  if (ctx['custom-type-definitions'][newIdType] !== undefined) {
+  if (model['custom-type-definitions'][newIdType] !== undefined) {
     throw new DomainError(
       `Entity "${trimmed}" would derive the type "${newIdType}", but a value type by that name already exists.`
     );
   }
 
   const events = [
-    { type: 'entity-definition-renamed', data: { 'dcb-context-id': ctxId, 'previous-name': previousName, name: trimmed } },
-    { type: 'custom-type-definition-renamed', data: { 'dcb-context-id': ctxId, 'previous-name': oldIdType, name: newIdType } },
+    { type: 'entity-definition-renamed', data: { 'dcb-model-id': modelId, 'previous-name': previousName, name: trimmed } },
+    { type: 'custom-type-definition-renamed', data: { 'dcb-model-id': modelId, 'previous-name': oldIdType, name: newIdType } },
   ];
   const touched = new Map();
   const addRewrite = (ref) => {
@@ -2509,16 +2514,16 @@ function renameEntityDefinition(ctx, ctxId, previousName, trimmed) {
     body = rewriteReferences(ref.kind, body, 'custom-type-definition', oldIdType, newIdType);
     touched.set(key, { kind: ref.kind, name: ref.kind === 'entity-definition' && ref.name === previousName ? trimmed : ref.name, body });
   };
-  for (const ref of findReferencers(ctx, 'entity-definition', previousName)) addRewrite(ref);
-  for (const ref of findReferencers(ctx, 'custom-type-definition', oldIdType)) addRewrite(ref);
+  for (const ref of findReferencers(model, 'entity-definition', previousName)) addRewrite(ref);
+  for (const ref of findReferencers(model, 'custom-type-definition', oldIdType)) addRewrite(ref);
   for (const { kind: refKind, name, body } of touched.values()) {
-    events.push({ type: `${refKind}-updated`, data: { 'dcb-context-id': ctxId, name, body } });
+    events.push({ type: `${refKind}-updated`, data: { 'dcb-model-id': modelId, name, body } });
   }
   appendEvents(events);
 }
 
-function renameDefinition(kind, ctxId, previousName, newName) {
-  const ctx = getCtxOrThrow(ctxId);
+function renameDefinition(kind, modelId, previousName, newName) {
+  const model = getCtxOrThrow(modelId);
   if (isIdKeyed(kind)) {
     throw new DomainError(
       `A ${humanize(kind)} is identified by a generated id and its name lives in its body, ` +
@@ -2526,24 +2531,24 @@ function renameDefinition(kind, ctxId, previousName, newName) {
     );
   }
   const trimmed = validateName(newName, `New ${humanize(kind)} name`);
-  const coll = ctx[DEF_COLLECTIONS[kind]];
+  const coll = model[DEF_COLLECTIONS[kind]];
   if (!(previousName in coll)) {
-    throw new DomainError(`No ${humanize(kind)} named "${previousName}" exists in this context.`);
+    throw new DomainError(`No ${humanize(kind)} named "${previousName}" exists in this model.`);
   }
   if (trimmed === previousName) return;
   if (trimmed in coll) {
-    throw new DomainError(`A ${humanize(kind)} named "${trimmed}" already exists in this context.`);
+    throw new DomainError(`A ${humanize(kind)} named "${trimmed}" already exists in this model.`);
   }
 
   if (kind === 'entity-definition' && coll[previousName].identifierType === undefined) {
-    renameEntityDefinition(ctx, ctxId, previousName, trimmed);
+    renameEntityDefinition(model, modelId, previousName, trimmed);
     return;
   }
 
-  const referencers = findReferencers(ctx, kind, previousName);
+  const referencers = findReferencers(model, kind, previousName);
   const events = [{
     type: `${kind}-renamed`,
-    data: { 'dcb-context-id': ctxId, 'previous-name': previousName, name: trimmed },
+    data: { 'dcb-model-id': modelId, 'previous-name': previousName, name: trimmed },
   }];
   for (const ref of referencers) {
     // A value type can reference itself — a composite field typed with
@@ -2562,7 +2567,7 @@ function renameDefinition(kind, ctxId, previousName, newName) {
     }
     events.push({
       type: `${ref.kind}-updated`,
-      data: { 'dcb-context-id': ctxId, name: isSelf ? trimmed : ref.name, body: rewritten },
+      data: { 'dcb-model-id': modelId, name: isSelf ? trimmed : ref.name, body: rewritten },
     });
   }
   appendEvents(events);
@@ -2626,12 +2631,12 @@ function setAtDottedPath(obj, path, value) {
 }
 
 // The rewrites each member kind implies, as
-// `(ctx, definitionName, previous, next) => [{kind, name, body}]`.
+// `(model, definitionName, previous, next) => [{kind, name, body}]`.
 const MEMBER_REWRITES = {
   // An entity property is read as `{alias, property}` by any command
   // that binds this entity under that alias.
-  'entity-definition:property': (ctx, entityName, previous, next) =>
-    rewriteCommands(ctx, (command) => {
+  'entity-definition:property': (model, entityName, previous, next) =>
+    rewriteCommands(model, (command) => {
       const aliases = (command.boundary || [])
         .filter((b) => b && b.entity === entityName).map((b) => b.alias);
       let touched = false;
@@ -2648,12 +2653,12 @@ const MEMBER_REWRITES = {
   // An enum member is an `{enumMember}` operand. The type it belongs to
   // may now be referenced by properties on any number of entities, so
   // this reaches every one of them rather than one private owner.
-  'custom-type-definition:member': (ctx, typeName, previous, next) => {
+  'custom-type-definition:member': (model, typeName, previous, next) => {
     const out = [];
 
     // Every entity property typed with this enum refers to its own
     // members through its initial value and its handler values.
-    for (const [entityName, entity] of Object.entries(ctx['entity-definitions'])) {
+    for (const [entityName, entity] of Object.entries(model['entity-definitions'])) {
       const body = deepClone(entity);
       let touched = false;
       for (const property of body.properties || []) {
@@ -2675,7 +2680,7 @@ const MEMBER_REWRITES = {
     // A command condition compares an entity's enum-typed property
     // against a member by value — resolved through the boundary rather
     // than assumed, since the bound entity is whichever the alias names.
-    out.push(...rewriteCommands(ctx, (command) => {
+    out.push(...rewriteCommands(model, (command) => {
       let touched = false;
       for (const condition of command.conditions || []) {
         if (!condition) continue;
@@ -2689,7 +2694,7 @@ const MEMBER_REWRITES = {
           const resolved = resolveOperandType(other, {
             boundary: command.boundary || [],
             commandProperties: command.properties || [],
-            ctx,
+            model,
           });
           if (!resolved || resolved.propertyType !== typeName) continue;
           maybeEnum.enumMember = next;
@@ -2704,11 +2709,11 @@ const MEMBER_REWRITES = {
 
   // An event property is read by whatever handles the event, and written
   // by whatever emits it.
-  'event-definition:property': (ctx, eventName, previous, next) => {
+  'event-definition:property': (model, eventName, previous, next) => {
     const out = [];
     const handlesIt = (handlers) => (handlers || []).some((h) => h && h.event === eventName);
 
-    for (const [name, entity] of Object.entries(ctx['entity-definitions'])) {
+    for (const [name, entity] of Object.entries(model['entity-definitions'])) {
       const body = deepClone(entity);
       let touched = false;
       for (const property of body.properties || []) {
@@ -2722,7 +2727,7 @@ const MEMBER_REWRITES = {
       if (touched) out.push({ kind: 'entity-definition', name, body });
     }
 
-    for (const [name, projection] of Object.entries(ctx['projection-definitions'])) {
+    for (const [name, projection] of Object.entries(model['projection-definitions'])) {
       if (!handlesIt(projection.handlers)) continue;
       const body = deepClone(projection);
       let touched = false;
@@ -2737,7 +2742,7 @@ const MEMBER_REWRITES = {
 
     // An emission binds by *key*, so this is a key rename rather than
     // an operand rewrite.
-    out.push(...rewriteCommands(ctx, (command) => {
+    out.push(...rewriteCommands(model, (command) => {
       let touched = false;
       for (const emission of command.publishes || []) {
         if (!emission || emission.name !== eventName) continue;
@@ -2751,9 +2756,9 @@ const MEMBER_REWRITES = {
 
     // A scenario holds this event's payload by key, in its Given and in
     // the outcome it expects.
-    out.push(...rewriteScenarios(ctx, (scenario) => {
+    out.push(...rewriteScenarios(model, (scenario) => {
       let touched = false;
-      for (const payload of scenarioPayloads(ctx, scenario)) {
+      for (const payload of scenarioPayloads(model, scenario)) {
         if (payload.event !== eventName) continue;
         if (payload.owner[payload.key] && previous in payload.owner[payload.key]) {
           payload.owner[payload.key] = renameKey(payload.owner[payload.key], previous, next);
@@ -2767,8 +2772,8 @@ const MEMBER_REWRITES = {
 
   // A command's payload is local to it — except that every scenario
   // exercising it supplies that payload by key.
-  'command-definition:property': (ctx, commandName, previous, next) => [
-    ...rewriteCommands(ctx, (command, name) => {
+  'command-definition:property': (model, commandName, previous, next) => [
+    ...rewriteCommands(model, (command, name) => {
       if (name !== commandName) return false;
       let touched = false;
       forEachCommandOperand(command, (operand) => {
@@ -2779,7 +2784,7 @@ const MEMBER_REWRITES = {
       });
       return touched;
     }),
-    ...rewriteScenarios(ctx, (scenario) => {
+    ...rewriteScenarios(model, (scenario) => {
       if (scenario.command !== commandName) return false;
       const when = scenario.when;
       if (!when || !when.arguments || !(previous in when.arguments)) return false;
@@ -2790,8 +2795,8 @@ const MEMBER_REWRITES = {
 
   // A composite's field is reached only through a parameter typed with
   // that composite — `{parameterName: items, property: productId}`.
-  'custom-type-definition:field': (ctx, typeName, previous, next) => [
-    ...rewriteCommands(ctx, (command) => {
+  'custom-type-definition:field': (model, typeName, previous, next) => [
+    ...rewriteCommands(model, (command) => {
       const parameters = new Set((command.properties || [])
         .filter((p) => p.propertyType === typeName).map((p) => p.name));
       let touched = false;
@@ -2807,9 +2812,9 @@ const MEMBER_REWRITES = {
     // A scenario holds composites as values, so the field name is a key
     // inside the payload rather than a reference beside it — one level
     // deeper than anywhere else this rename reaches.
-    ...rewriteScenarios(ctx, (scenario) => {
+    ...rewriteScenarios(model, (scenario) => {
       let touched = false;
-      for (const payload of scenarioPayloads(ctx, scenario)) {
+      for (const payload of scenarioPayloads(model, scenario)) {
         const held = payload.owner[payload.key] || {};
         for (const property of payload.properties || []) {
           if (property.propertyType !== typeName) continue;
@@ -2829,8 +2834,8 @@ const MEMBER_REWRITES = {
   ],
 
   // A projection parameter is supplied by key in a binding.
-  'projection-definition:parameter': (ctx, projectionName, previous, next) =>
-    rewriteCommands(ctx, (command) => {
+  'projection-definition:parameter': (model, projectionName, previous, next) =>
+    rewriteCommands(model, (command) => {
       let touched = false;
       for (const binding of command.boundary || []) {
         if (!binding || binding.projection !== projectionName) continue;
@@ -2851,9 +2856,9 @@ const MEMBER_REWRITES = {
 // an operand. Renaming an event's property has to move that key in
 // every Given step written from it and in every expected event holding
 // it, or the scenario would report the rename as a change in behaviour.
-function rewriteScenarios(ctx, mutate) {
+function rewriteScenarios(model, mutate) {
   const out = [];
-  for (const [name, scenario] of Object.entries(ctx['scenario-definitions'] || {})) {
+  for (const [name, scenario] of Object.entries(model['scenario-definitions'] || {})) {
     const body = deepClone(scenario);
     if (mutate(body, name)) out.push({ kind: 'scenario-definition', name, body });
   }
@@ -2864,21 +2869,21 @@ function rewriteScenarios(ctx, mutate) {
 // are written from. One walk serves both the event-property rename and
 // the composite-field rename, which reach the same objects by different
 // routes.
-function scenarioPayloads(ctx, scenario) {
+function scenarioPayloads(model, scenario) {
   const out = [];
   for (const step of scenario.given || []) {
     if (!step || !step.event) continue;
-    const event = ctx['event-definitions'][step.event];
+    const event = model['event-definitions'][step.event];
     if (event) out.push({ owner: step, key: 'data', event: step.event, properties: event.properties });
   }
   for (const event of (scenario.then || {}).events || []) {
     if (!event || !event.type) continue;
-    const definition = ctx['event-definitions'][event.type];
+    const definition = model['event-definitions'][event.type];
     if (definition) {
       out.push({ owner: event, key: 'data', event: event.type, properties: definition.properties });
     }
   }
-  const command = ctx['command-definitions'][scenario.command];
+  const command = model['command-definitions'][scenario.command];
   if (command && scenario.when) {
     out.push({ owner: scenario.when, key: 'arguments', command: scenario.command,
       properties: command.properties });
@@ -2888,9 +2893,9 @@ function scenarioPayloads(ctx, scenario) {
 
 // Applies `mutate` to a deep copy of every command and returns the ones
 // it actually changed.
-function rewriteCommands(ctx, mutate) {
+function rewriteCommands(model, mutate) {
   const out = [];
-  for (const [name, command] of Object.entries(ctx['command-definitions'])) {
+  for (const [name, command] of Object.entries(model['command-definitions'])) {
     const body = deepClone(command);
     if (mutate(body, name)) out.push({ kind: 'command-definition', name, body });
   }
@@ -2910,11 +2915,11 @@ const MEMBER_SHAPE = {
   parameter: { list: 'parameters', named: true, label: 'Parameter', pattern: CAMEL_RE, style: 'camelCase' },
 };
 
-function renameMember(kind, ctxId, definitionName, memberKind, previousName, newName) {
-  const ctx = getCtxOrThrow(ctxId);
-  const body = (ctx[DEF_COLLECTIONS[kind]] || {})[definitionName];
+function renameMember(kind, modelId, definitionName, memberKind, previousName, newName) {
+  const model = getCtxOrThrow(modelId);
+  const body = (model[DEF_COLLECTIONS[kind]] || {})[definitionName];
   if (!body) {
-    throw new DomainError(`No ${humanize(kind)} named "${definitionName}" exists in this context.`);
+    throw new DomainError(`No ${humanize(kind)} named "${definitionName}" exists in this model.`);
   }
   const shape = MEMBER_SHAPE[memberKind];
   const rewrite = MEMBER_REWRITES[`${kind}:${memberKind}`];
@@ -2945,7 +2950,7 @@ function renameMember(kind, ctxId, definitionName, memberKind, previousName, new
   // here, uniformly, so each rewrite has one job. When a rewrite also
   // lands on the owning definition, its body is the one the list
   // rename is applied to.
-  const rewrites = rewrite(ctx, definitionName, previousName, trimmed);
+  const rewrites = rewrite(model, definitionName, previousName, trimmed);
   const ownerRewrite = rewrites.find((r) => r.kind === kind && r.name === definitionName);
   const ownerBody = deepClone(ownerRewrite ? ownerRewrite.body : body);
   setAtDottedPath(ownerBody, shape.list, (getAtDottedPath(ownerBody, shape.list) || []).map((m) => {
@@ -2955,25 +2960,25 @@ function renameMember(kind, ctxId, definitionName, memberKind, previousName, new
 
   const events = [{
     type: `${kind}-updated`,
-    data: { 'dcb-context-id': ctxId, name: definitionName, body: ownerBody },
+    data: { 'dcb-model-id': modelId, name: definitionName, body: ownerBody },
   }];
   for (const r of rewrites) {
     if (r.kind === kind && r.name === definitionName) continue;
     events.push({
       type: `${r.kind}-updated`,
-      data: { 'dcb-context-id': ctxId, name: r.name, body: r.body },
+      data: { 'dcb-model-id': modelId, name: r.name, body: r.body },
     });
   }
   appendEvents(events);
 }
 
-function removeDefinition(kind, ctxId, name) {
-  const ctx = getCtxOrThrow(ctxId);
-  const coll = ctx[DEF_COLLECTIONS[kind]];
+function removeDefinition(kind, modelId, name) {
+  const model = getCtxOrThrow(modelId);
+  const coll = model[DEF_COLLECTIONS[kind]];
   if (!(name in coll)) {
-    throw new DomainError(`No ${humanize(kind)} named "${name}" exists in this context.`);
+    throw new DomainError(`No ${humanize(kind)} named "${name}" exists in this model.`);
   }
-  const referencers = findReferencers(ctx, kind, name)
+  const referencers = findReferencers(model, kind, name)
     .filter((r) => !(r.kind === kind && r.name === name))
     // A scenario or property scenario names what it tests, but it may
     // never refuse the change: a test exists to report what a change
@@ -2995,14 +3000,14 @@ function removeDefinition(kind, ctxId, name) {
     // already reports every other broken reference: a scenario left
     // saying what it used to check, a property scenario left reporting
     // what it found.
-    const idType = idTypeOf(ctx, name);
+    const idType = idTypeOf(model, name);
     appendEvents([
-      { type: 'entity-definition-removed', data: { 'dcb-context-id': ctxId, name } },
-      { type: 'custom-type-definition-removed', data: { 'dcb-context-id': ctxId, name: idType } },
+      { type: 'entity-definition-removed', data: { 'dcb-model-id': modelId, name } },
+      { type: 'custom-type-definition-removed', data: { 'dcb-model-id': modelId, name: idType } },
     ]);
     return;
   }
-  appendEvents([{ type: `${kind}-removed`, data: { 'dcb-context-id': ctxId, name } }]);
+  appendEvents([{ type: `${kind}-removed`, data: { 'dcb-model-id': modelId, name } }]);
 }
 
 // Changes the order this collection's members are stored in — the order
@@ -3010,15 +3015,15 @@ function removeDefinition(kind, ctxId, name) {
 // keeps a separate position field. `order` has to name every current
 // member exactly once; it says nothing about *which* moved, so the fold
 // just replays the collection in that order.
-function reorderDefinitions(kind, ctxId, order) {
-  const ctx = getCtxOrThrow(ctxId);
-  const coll = ctx[DEF_COLLECTIONS[kind]];
+function reorderDefinitions(kind, modelId, order) {
+  const model = getCtxOrThrow(modelId);
+  const coll = model[DEF_COLLECTIONS[kind]];
   const current = Object.keys(coll);
   const sameMembers = order.length === current.length && current.every((key) => order.includes(key));
   if (!sameMembers) {
     throw new DomainError(`Reordering ${humanize(kind)}s must name every one of them, exactly once.`);
   }
-  appendEvents([{ type: `${kind}-reordered`, data: { 'dcb-context-id': ctxId, order } }]);
+  appendEvents([{ type: `${kind}-reordered`, data: { 'dcb-model-id': modelId, order } }]);
 }
 
 
@@ -3028,9 +3033,9 @@ function reorderDefinitions(kind, ctxId, order) {
 
 // The value a freshly created property starts from, chosen from its
 // type so a modeler never has to state one.
-function defaultInitialValue(ctx, property) {
+function defaultInitialValue(model, property) {
   if (property.isList) return [];
-  const members = enumMembersFor(ctx, property.propertyType);
+  const members = enumMembersFor(model, property.propertyType);
   if (members) return { enumMember: members[0] || '' };
   if (property.isOptional) return null;
   if (property.propertyType === 'integer') return 0;
@@ -3045,20 +3050,56 @@ function humanize(kind) {
 function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
 
 // ============================================================
-// Sharing a context with the outside world.
+// Sharing a model with the outside world.
 //
-// The wire format is `{ name, context, propertyScenarioDefinitions?,
-// sandbox? }`. `context` is exactly the shape `dcb-context.schema.yaml`
-// describes — six kinds, each an array keyed by its own `name` (or, for
-// a scenario, `id`) — so a file built by another tool that only knows
-// that schema can be dropped straight into it. Property scenarios ride
-// as a sibling of `context` rather than inside it: the public schema
-// does not declare them yet and its root forbids extra properties, so
-// putting them there would make an otherwise-conformant export fail
-// against it. `sandbox`, if present, is a raw list of driven commands —
-// never validated, never part of the context, exactly the ephemeral
-// thing it already is everywhere else in this app.
+// The wire format is `{ $schema, dcbModelVersion, name }` followed by
+// the definition arrays themselves — the six kinds, plus
+// `propertyScenarioDefinitions?` and `sandbox?` — and it is exactly what
+// `dcb-model.schema.json` describes, so a file built by another tool
+// against that schema drops straight in.
+//
+// The arrays sit at the top level rather than under a wrapper. They used
+// to be nested, back when the published schema described only that inner
+// object and an external tool needed something to target; once the
+// schema grew to cover the whole document there was nothing left for the
+// nesting to do but make the file claim to contain a model rather than
+// be one. Flattening also stops `propertyScenarioDefinitions` reading as
+// a second-class kind: it is listed apart from the six only because it
+// hangs off an entity rather than being one of them.
+//
+// Two markers say what a document is, and they are not
+// interchangeable. `dcbModelVersion` is the one an importer
+// dispatches on. `$schema` is for editors — it is what makes a
+// hand-edited export complete and validate in place — and nothing here
+// ever reads it, deliberately: repointing it at a local copy to work
+// offline is a legitimate thing to do to a document, and a reader that
+// checked it would reject exactly the files someone had been careful
+// with.
+//
+// Both ride in both directions out of the playground — readable JSON
+// and the gzipped payload of a share link — because a marker one
+// channel may omit is a marker `importModelFromEnvelope` could not
+// insist on.
+//
+// `sandbox`, if present, is a list of driven commands: never part of
+// the model, exactly the ephemeral thing it already is everywhere
+// else in this app, and carried only so that a shared link opens on the
+// state its sender was looking at.
 // ============================================================
+
+// The version of the wire format above, `major.minor`. A major bump
+// means a reader built against an earlier one cannot correctly read the
+// document; a minor means it can, because the addition is one it
+// ignores — which the validation in this file makes possible by
+// checking only what it knows about and never rejecting a key it has
+// not heard of (`CommandDefinition.feature` has ridden along that way
+// from the start). What counts as additive is judged from the reader's
+// side, though, not the schema's: another member of a closed vocabulary
+// — a condition operator, an operand shape, a handler operation — is a
+// *major* change even where the schema merely grows an enum, because
+// `operationsFor` fails on the value rather than passing it through.
+const MODEL_VERSION = '1.0';
+const MODEL_SCHEMA_URL = 'https://dcb.events/schemas/model/v1.json';
 
 const SCHEMA_FIELD = {
   'custom-type-definition': 'customTypeDefinitions',
@@ -3070,8 +3111,9 @@ const SCHEMA_FIELD = {
   'property-scenario-definition': 'propertyScenarioDefinitions',
 };
 
-// The six kinds `dcb-context.schema.yaml` documents — everything but
-// property scenarios, which are not part of it yet (see above).
+// The six kinds that carry a definition each. Property scenarios are the
+// seventh the schema documents; they are assembled separately only
+// because they hang off an entity rather than being one of these.
 const SCHEMA_KINDS = [
   'custom-type-definition', 'event-definition', 'entity-definition',
   'projection-definition', 'command-definition', 'scenario-definition',
@@ -3092,10 +3134,10 @@ function schemaArrayToDefinitions(kind, list) {
   return coll;
 }
 
-function contextToSchema(ctx) {
+function definitionsToSchema(model) {
   const out = {};
   for (const kind of SCHEMA_KINDS) {
-    out[SCHEMA_FIELD[kind]] = definitionsToSchemaArray(kind, ctx[DEF_COLLECTIONS[kind]]);
+    out[SCHEMA_FIELD[kind]] = definitionsToSchemaArray(kind, model[DEF_COLLECTIONS[kind]]);
   }
   return out;
 }
@@ -3103,10 +3145,15 @@ function contextToSchema(ctx) {
 // `sandboxSteps` — `[{ command, args }]` — comes in from the caller
 // rather than being read off a global here: this file knows nothing of
 // the interactive session index.html keeps.
-function buildShareEnvelope(ctx, sandboxSteps) {
-  const envelope = { name: ctx.name, context: contextToSchema(ctx) };
+function buildShareEnvelope(model, sandboxSteps) {
+  const envelope = {
+    $schema: MODEL_SCHEMA_URL,
+    dcbModelVersion: MODEL_VERSION,
+    name: model.name,
+    ...definitionsToSchema(model),
+  };
   const propertyScenarios = definitionsToSchemaArray(
-    'property-scenario-definition', ctx['property-scenario-definitions']
+    'property-scenario-definition', model['property-scenario-definitions']
   );
   if (propertyScenarios.length) envelope.propertyScenarioDefinitions = propertyScenarios;
   if (sandboxSteps && sandboxSteps.length) envelope.sandbox = { steps: sandboxSteps };
@@ -3118,11 +3165,10 @@ function buildShareEnvelope(ctx, sandboxSteps) {
 // both compile through the same unsandboxed path (see `evCompileHandler`
 // in evaluate.js). This is what gates the confirmation before import.
 function envelopeHasScript(envelope) {
-  const schema = envelope && envelope.context;
-  if (!schema) return false;
-  const propertyScripted = (schema.entityDefinitions || [])
+  if (!envelope || typeof envelope !== 'object') return false;
+  const propertyScripted = (envelope.entityDefinitions || [])
     .some((e) => (e.properties || []).some((p) => !!p.script));
-  const projectionScripted = (schema.projectionDefinitions || []).some((p) => !!p.script);
+  const projectionScripted = (envelope.projectionDefinitions || []).some((p) => !!p.script);
   return propertyScripted || projectionScripted;
 }
 
@@ -3154,7 +3200,7 @@ function bareEntityBody(body, deferredTypeNames) {
 // general; nothing downstream of this (events, full entities,
 // projections, commands, scenarios) has that problem, so it is the only
 // phase that needs retrying rather than a single ordered pass.
-function addManyWithRetry(ctxId, items) {
+function addManyWithRetry(modelId, items) {
   let remaining = items;
   let lastError = null;
   while (remaining.length) {
@@ -3162,7 +3208,7 @@ function addManyWithRetry(ctxId, items) {
     let progressed = false;
     for (const item of remaining) {
       try {
-        addDefinition(item.kind, ctxId, item.name, item.body);
+        addDefinition(item.kind, modelId, item.name, item.body);
         progressed = true;
       } catch (error) {
         next.push(item);
@@ -3174,28 +3220,102 @@ function addManyWithRetry(ctxId, items) {
   }
 }
 
-// The synthesizer: rebuilds a shared context into a brand-new one by
+// The synthesizer: rebuilds a shared model into a brand-new one by
 // replaying it through the same validating commands manual editing
 // uses, so an untrusted export can never land in a state those commands
 // would have refused. A failure partway leaves a partial-but-valid
-// context in place, exactly like a manual edit interrupted midway —
-// `deleteDcbContext` is the way out, not a rollback this adds.
-function importContextFromEnvelope(envelope) {
-  if (!envelope || typeof envelope !== 'object' || !envelope.context) {
-    throw new DomainError('That does not look like a shared DCB context.');
+// model in place, exactly like a manual edit interrupted midway —
+// `deleteDcbModel` is the way out, not a rollback this adds.
+// The wire format's two markers, checked. Only `dcbModelVersion` is
+// read: `$schema` has to be *present*, because a document without one
+// was not written by anything that knows this format and its shape is
+// a guess from there — but what it points at is the author's business,
+// and a reader that insisted on a particular URL would reject exactly
+// the file someone had repointed at a local copy to work offline.
+//
+// A major this build does not know is refused rather than half-read. A
+// newer minor is read, since a minor only ever adds what an older
+// reader ignores; `envelopeVersionWarning` is how that gets said out
+// loud instead of silently.
+function parseEnvelopeVersion(envelope) {
+  const raw = envelope && envelope.dcbModelVersion;
+  const match = typeof raw === 'string' && /^(\d+)\.(\d+)$/.exec(raw);
+  if (!match) return null;
+  return { raw, major: Number(match[1]), minor: Number(match[2]) };
+}
+
+function assertEnvelopeVersion(envelope) {
+  if (!envelope || typeof envelope !== 'object') {
+    throw new DomainError('That does not look like a shared DCB model.');
   }
-  const schema = envelope.context;
-  const customTypes = schemaArrayToDefinitions('custom-type-definition', schema.customTypeDefinitions);
-  const events = schemaArrayToDefinitions('event-definition', schema.eventDefinitions);
-  const entities = schemaArrayToDefinitions('entity-definition', schema.entityDefinitions);
-  const projections = schemaArrayToDefinitions('projection-definition', schema.projectionDefinitions);
-  const commands = schemaArrayToDefinitions('command-definition', schema.commandDefinitions);
-  const scenarios = schemaArrayToDefinitions('scenario-definition', schema.scenarioDefinitions);
+  if (typeof envelope.$schema !== 'string' || !envelope.$schema) {
+    throw new DomainError(
+      'That file declares no "$schema", so it was not written against the DCB '
+      + 'model format.'
+    );
+  }
+  const version = parseEnvelopeVersion(envelope);
+  if (!version) {
+    throw new DomainError(
+      'That file declares no readable "dcbModelVersion", so there is no way '
+      + 'to tell which format it is in.'
+    );
+  }
+  const expected = parseEnvelopeVersion({ dcbModelVersion: MODEL_VERSION });
+  if (version.major !== expected.major) {
+    throw new DomainError(
+      `That file is DCB model ${version.raw}, and this playground reads `
+      + `${expected.major}.x (currently ${MODEL_VERSION}). Nothing here would `
+      + 'read it correctly, so it is refused rather than half-read.'
+    );
+  }
+  return version;
+}
+
+// Non-empty when a document comes from a newer minor than this build
+// knows: readable, because that is what a minor promises, but it may
+// carry things this playground drops without ever mentioning them.
+function envelopeVersionWarning(envelope) {
+  const version = parseEnvelopeVersion(envelope);
+  const expected = parseEnvelopeVersion({ dcbModelVersion: MODEL_VERSION });
+  if (!version || version.major !== expected.major) return '';
+  if (version.minor <= expected.minor) return '';
+  return `This model is version ${version.raw}; this playground knows `
+    + `${MODEL_VERSION}. It will load, but anything the newer format adds is `
+    + 'being ignored.';
+}
+
+// The five kinds a model must declare, even if empty. `scenarioDefinitions`
+// is the sixth and is optional, the same way the schema has it.
+const REQUIRED_SCHEMA_KINDS = SCHEMA_KINDS.filter((kind) => kind !== 'scenario-definition');
+
+function importModelFromEnvelope(envelope) {
+  assertEnvelopeVersion(envelope);
+  // There is no wrapper object to look for any more — the definition
+  // arrays sit directly on the envelope — so what identifies a model is
+  // that the kinds one must declare are actually there and are lists.
+  for (const kind of REQUIRED_SCHEMA_KINDS) {
+    if (!Array.isArray(envelope[SCHEMA_FIELD[kind]])) {
+      throw new DomainError('That does not look like a shared DCB model.');
+    }
+  }
+  // Required, and deliberately not defaulted: inventing a name for a
+  // document that has none buries the fact that it was malformed under
+  // a model called something plausible.
+  if (typeof envelope.name !== 'string' || !envelope.name) {
+    throw new DomainError('That model has no name.');
+  }
+  const customTypes = schemaArrayToDefinitions('custom-type-definition', envelope.customTypeDefinitions);
+  const events = schemaArrayToDefinitions('event-definition', envelope.eventDefinitions);
+  const entities = schemaArrayToDefinitions('entity-definition', envelope.entityDefinitions);
+  const projections = schemaArrayToDefinitions('projection-definition', envelope.projectionDefinitions);
+  const commands = schemaArrayToDefinitions('command-definition', envelope.commandDefinitions);
+  const scenarios = schemaArrayToDefinitions('scenario-definition', envelope.scenarioDefinitions);
   const propertyScenarios = schemaArrayToDefinitions(
     'property-scenario-definition', envelope.propertyScenarioDefinitions
   );
 
-  const ctxId = createDcbContext(envelope.name || 'Imported context');
+  const modelId = createDcbModel(envelope.name);
 
   // Created automatically by `addDefinition('entity-definition', ...)`
   // — never added again here as a standalone value type, only enriched
@@ -3204,7 +3324,7 @@ function importContextFromEnvelope(envelope) {
     Object.entries(entities).map(([name, body]) => body.identifierType || (name + 'Id'))
   );
 
-  addManyWithRetry(ctxId, [
+  addManyWithRetry(modelId, [
     ...Object.entries(customTypes)
       .filter(([name]) => !derivedIdTypeNames.has(name))
       .map(([name, body]) => ({ kind: 'custom-type-definition', name, body })),
@@ -3213,31 +3333,35 @@ function importContextFromEnvelope(envelope) {
   ]);
 
   for (const [name, body] of Object.entries(events)) {
-    addDefinition('event-definition', ctxId, name, body);
+    addDefinition('event-definition', modelId, name, body);
   }
   for (const [name, body] of Object.entries(customTypes)) {
-    if (derivedIdTypeNames.has(name)) updateDefinition('custom-type-definition', ctxId, name, body);
+    if (derivedIdTypeNames.has(name)) updateDefinition('custom-type-definition', modelId, name, body);
   }
   for (const [name, body] of Object.entries(entities)) {
-    updateDefinition('entity-definition', ctxId, name, body);
+    updateDefinition('entity-definition', modelId, name, body);
   }
   for (const [name, body] of Object.entries(projections)) {
-    addDefinition('projection-definition', ctxId, name, body);
+    addDefinition('projection-definition', modelId, name, body);
   }
   for (const [name, body] of Object.entries(commands)) {
-    addDefinition('command-definition', ctxId, name, body);
+    addDefinition('command-definition', modelId, name, body);
   }
-  for (const body of Object.values(scenarios)) {
-    addDefinition('scenario-definition', ctxId, generateId(), body);
+  // Scenario ids come across as they were exported rather than being
+  // reissued here, so that a model survives a round trip unchanged and
+  // a re-import can be diffed against what was sent. `generateId` is the
+  // fallback for a hand-written file that reached this point without one.
+  for (const [id, body] of Object.entries(scenarios)) {
+    addDefinition('scenario-definition', modelId, id || generateId(), body);
   }
-  for (const body of Object.values(propertyScenarios)) {
-    addDefinition('property-scenario-definition', ctxId, generateId(), body);
+  for (const [id, body] of Object.entries(propertyScenarios)) {
+    addDefinition('property-scenario-definition', modelId, id || generateId(), body);
   }
-  return ctxId;
+  return modelId;
 }
 
 // ============================================================
-// Predefined contexts.
+// Predefined models.
 //
 // Two models, each built in layers, because that is the order the
 // design was arrived at: a course-subscription model as the plain
@@ -3274,13 +3398,13 @@ const seedReadProjection = (alias, projection, args = {}) =>
 
 // Reads a definition back and writes the modified copy, so a later
 // layer never has to restate the shape an earlier one produced.
-function seedPatch(kind, ctxId, name, mutate) {
-  const body = deepClone(getCtxOrThrow(ctxId)[DEF_COLLECTIONS[kind]][name]);
+function seedPatch(kind, modelId, name, mutate) {
+  const body = deepClone(getCtxOrThrow(modelId)[DEF_COLLECTIONS[kind]][name]);
   mutate(body);
-  updateDefinition(kind, ctxId, name, body);
+  updateDefinition(kind, modelId, name, body);
 }
 
-function seedBase(ctxId) {
+function seedBase(modelId) {
   const property = seedProperty;
   const statusProperty = seedStatusProperty;
   const prop = seedProp;
@@ -3292,17 +3416,17 @@ function seedBase(ctxId) {
   // 1. The lifecycle enums, declared like any other custom type. Then
   //    entities without handlers. Student first, since Course refers
   //    to StudentId.
-  addDefinition('custom-type-definition', ctxId, 'StudentStatus', seedEnumType('StudentStatus', ['NonExistent', 'Existent']));
-  addDefinition('custom-type-definition', ctxId, 'CourseStatus', seedEnumType('CourseStatus', ['NonExistent', 'Existent', 'Archived']));
+  addDefinition('custom-type-definition', modelId, 'StudentStatus', seedEnumType('StudentStatus', ['NonExistent', 'Existent']));
+  addDefinition('custom-type-definition', modelId, 'CourseStatus', seedEnumType('CourseStatus', ['NonExistent', 'Existent', 'Archived']));
 
-  addDefinition('entity-definition', ctxId, 'Student', {
+  addDefinition('entity-definition', modelId, 'Student', {
     icon: '🧑‍🎓',
     properties: [
       statusProperty('StudentStatus', 'NonExistent'),
       property('subscriptionCount', 'integer', 0),
     ],
   });
-  addDefinition('entity-definition', ctxId, 'Course', {
+  addDefinition('entity-definition', modelId, 'Course', {
     icon: '📚',
     properties: [
       statusProperty('CourseStatus', 'NonExistent'),
@@ -3314,7 +3438,7 @@ function seedBase(ctxId) {
 
   // 2. Events. Their entity-id properties are what carry the tags.
   const event = (name, properties) =>
-    addDefinition('event-definition', ctxId, name, { properties });
+    addDefinition('event-definition', modelId, name, { properties });
 
   event('CourseDefined', [prop('courseId', 'CourseId'), prop('capacity', 'integer')]);
   event('CourseCapacityChanged', [prop('courseId', 'CourseId'), prop('newCapacity', 'integer')]);
@@ -3324,7 +3448,7 @@ function seedBase(ctxId) {
   event('StudentUnsubscribedFromCourse', [prop('courseId', 'CourseId'), prop('studentId', 'StudentId')]);
 
   // 3. Entities again, now with handlers.
-  updateDefinition('entity-definition', ctxId, 'Student', {
+  updateDefinition('entity-definition', modelId, 'Student', {
     icon: '🧑‍🎓',
     properties: [
       { ...statusProperty('StudentStatus', 'NonExistent'),
@@ -3336,7 +3460,7 @@ function seedBase(ctxId) {
         ] },
     ],
   });
-  updateDefinition('entity-definition', ctxId, 'Course', {
+  updateDefinition('entity-definition', modelId, 'Course', {
     icon: '📚',
     properties: [
       { ...statusProperty('CourseStatus', 'NonExistent'),
@@ -3363,7 +3487,7 @@ function seedBase(ctxId) {
   });
 
   // 4. Commands. The boundary is the DCB.
-  const command = (name, body) => addDefinition('command-definition', ctxId, name, body);
+  const command = (name, body) => addDefinition('command-definition', modelId, name, body);
 
   command('DefineCourse', {
     feature: 'Course management',
@@ -3457,12 +3581,12 @@ function seedBase(ctxId) {
 // life — `c1` before anything has happened, `successor(last)` after.
 // Project to the last id instead and `initialValue` would have to mean
 // two different things depending on whether anything had happened yet.
-function seedAddSequence(ctxId) {
-  seedPatch('custom-type-definition', ctxId, 'CourseId', (courseId) => {
+function seedAddSequence(modelId) {
+  seedPatch('custom-type-definition', modelId, 'CourseId', (courseId) => {
     courseId.schema = { type: 'string', pattern: '^c[0-9]+$' };
   });
 
-  addDefinition('projection-definition', ctxId, 'CourseNumbering', {
+  addDefinition('projection-definition', modelId, 'CourseNumbering', {
     parameters: [],
     valueType: 'CourseId',
     isOptional: false,
@@ -3473,7 +3597,7 @@ function seedAddSequence(ctxId) {
     ],
   });
 
-  updateDefinition('command-definition', ctxId, 'DefineCourse', {
+  updateDefinition('command-definition', modelId, 'DefineCourse', {
     feature: 'Course management',
     properties: [seedProp('capacity', 'integer')],
     boundary: [seedReadProjection('courseNumbering', 'CourseNumbering')],
@@ -3507,25 +3631,25 @@ function seedAddSequence(ctxId) {
 // A side effect worth naming: because `CourseNumber` is not an
 // identifier type, the minted value is not a tag, so write coverage
 // has nothing to exempt here.
-function seedAddTenancy(ctxId) {
-  addDefinition('custom-type-definition', ctxId, 'TenantStatus', seedEnumType('TenantStatus', ['NonExistent', 'Existent']));
-  addDefinition('entity-definition', ctxId, 'Tenant', {
+function seedAddTenancy(modelId) {
+  addDefinition('custom-type-definition', modelId, 'TenantStatus', seedEnumType('TenantStatus', ['NonExistent', 'Existent']));
+  addDefinition('entity-definition', modelId, 'Tenant', {
     icon: '🏢',
     properties: [seedStatusProperty('TenantStatus', 'NonExistent')],
   });
-  addDefinition('custom-type-definition', ctxId, 'CourseNumber', {
+  addDefinition('custom-type-definition', modelId, 'CourseNumber', {
     schema: { type: 'string', pattern: '^[0-9]+$' },
   });
 
-  addDefinition('event-definition', ctxId, 'TenantRegistered', {
+  addDefinition('event-definition', modelId, 'TenantRegistered', {
     properties: [seedProp('tenantId', 'TenantId')],
   });
-  seedPatch('event-definition', ctxId, 'CourseDefined', (event) => {
+  seedPatch('event-definition', modelId, 'CourseDefined', (event) => {
     event.properties.unshift(seedProp('tenantId', 'TenantId'));
     event.properties.push(seedProp('courseNumber', 'CourseNumber'));
   });
 
-  seedPatch('entity-definition', ctxId, 'Tenant', (tenant) => {
+  seedPatch('entity-definition', modelId, 'Tenant', (tenant) => {
     tenant.properties[0].handlers = [
       seedHandler('TenantRegistered', 'set', { enumMember: 'Existent' }),
     ];
@@ -3535,7 +3659,7 @@ function seedAddTenancy(ctxId) {
   // Drop the parameter and this is the global numbering again — that
   // is the whole difference between the two, which is why there is one
   // kind here and not two.
-  addDefinition('projection-definition', ctxId, 'TenantCourseNumbering', {
+  addDefinition('projection-definition', modelId, 'TenantCourseNumbering', {
     parameters: [{ name: 'tenantId', propertyType: 'TenantId' }],
     valueType: 'CourseNumber',
     isOptional: false,
@@ -3546,7 +3670,7 @@ function seedAddTenancy(ctxId) {
     ],
   });
 
-  addDefinition('command-definition', ctxId, 'RegisterTenant', {
+  addDefinition('command-definition', modelId, 'RegisterTenant', {
     feature: 'Tenancy',
     properties: [seedProp('tenantId', 'TenantId')],
     boundary: [seedBind('tenant', 'Tenant', 'tenantId')],
@@ -3560,7 +3684,7 @@ function seedAddTenancy(ctxId) {
   // Three reads, all in round 1: none of them names another, so they
   // come back together. This is why rounds are counted by the depth of
   // the dependency graph and not by the length of the boundary.
-  seedPatch('command-definition', ctxId, 'DefineCourse', (define) => {
+  seedPatch('command-definition', modelId, 'DefineCourse', (define) => {
     define.properties.unshift(seedProp('tenantId', 'TenantId'));
     define.boundary.unshift(seedBind('tenant', 'Tenant', 'tenantId'));
     define.boundary.push(seedReadProjection('tenantCourseNumbering', 'TenantCourseNumbering', {
@@ -3585,19 +3709,19 @@ function seedAddTenancy(ctxId) {
 // it is read from each course's current schedule at check time, which
 // is exactly what lets a course be rescheduled underneath its
 // subscribers without invalidating anything.
-function seedAddSchedules(ctxId) {
-  addDefinition('custom-type-definition', ctxId, 'TimeSlot', {
+function seedAddSchedules(modelId) {
+  addDefinition('custom-type-definition', modelId, 'TimeSlot', {
     schema: { type: 'string', pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}$' },
   });
 
-  seedPatch('event-definition', ctxId, 'CourseDefined', (event) => {
+  seedPatch('event-definition', modelId, 'CourseDefined', (event) => {
     event.properties.push(seedListProp('slots', 'TimeSlot'));
   });
-  addDefinition('event-definition', ctxId, 'CourseRescheduled', {
+  addDefinition('event-definition', modelId, 'CourseRescheduled', {
     properties: [seedProp('courseId', 'CourseId'), seedListProp('slots', 'TimeSlot')],
   });
 
-  seedPatch('entity-definition', ctxId, 'Course', (course) => {
+  seedPatch('entity-definition', modelId, 'Course', (course) => {
     course.properties.push({
       ...seedProperty('slots', 'TimeSlot', [], { isList: true }),
       handlers: [
@@ -3608,7 +3732,7 @@ function seedAddSchedules(ctxId) {
   });
   // Names the courses whose *current* schedules the overlap check
   // reads. Nothing about time is stored here.
-  seedPatch('entity-definition', ctxId, 'Student', (student) => {
+  seedPatch('entity-definition', modelId, 'Student', (student) => {
     student.properties.push({
       ...seedProperty('subscribedCourseIds', 'CourseId', [], { isList: true }),
       handlers: [
@@ -3618,7 +3742,7 @@ function seedAddSchedules(ctxId) {
     });
   });
 
-  seedPatch('command-definition', ctxId, 'DefineCourse', (define) => {
+  seedPatch('command-definition', modelId, 'DefineCourse', (define) => {
     define.properties.push(seedListProp('slots', 'TimeSlot'));
     define.publishes[0].parameters.slots = seedParam('slots');
   });
@@ -3629,7 +3753,7 @@ function seedAddSchedules(ctxId) {
   // require none of those schedules to touch the new slots. `theirs`
   // would otherwise include this very course — every subscriber is in
   // it — and a course almost always overlaps its own old schedule.
-  addDefinition('command-definition', ctxId, 'RescheduleCourse', {
+  addDefinition('command-definition', modelId, 'RescheduleCourse', {
     feature: 'Course management',
     properties: [seedProp('courseId', 'CourseId'), seedListProp('slots', 'TimeSlot')],
     boundary: [
@@ -3652,7 +3776,7 @@ function seedAddSchedules(ctxId) {
   // `others` is the second link of the chain: the student names its
   // courses, and those courses' current schedules answer whether this
   // one clashes. The condition holds for every course bound.
-  seedPatch('command-definition', ctxId, 'SubscribeStudentToCourse', (subscribe) => {
+  seedPatch('command-definition', modelId, 'SubscribeStudentToCourse', (subscribe) => {
     subscribe.boundary.push({
       alias: 'others', entity: 'Course', id: seedOf('student', 'subscribedCourseIds'),
     });
@@ -3687,7 +3811,7 @@ function seedAddSchedules(ctxId) {
 //
 // `order` is bound singularly beside it, so the same boundary holds one
 // instance and many, and the derived DCB shows both shapes at once.
-function seedProductPricing(ctxId) {
+function seedProductPricing(modelId) {
   const property = seedProperty;
   const statusProperty = seedStatusProperty;
   const prop = seedProp;
@@ -3699,15 +3823,15 @@ function seedProductPricing(ctxId) {
   //    productId field is what turns a list of them into tags. The
   //    lifecycle enums are scalar too — just with `enum` instead of a
   //    numeric schema.
-  addDefinition('custom-type-definition', ctxId, 'Money', {
+  addDefinition('custom-type-definition', modelId, 'Money', {
     schema: { type: 'number', minimum: 0 },
   });
-  addDefinition('custom-type-definition', ctxId, 'ProductStatus', seedEnumType('ProductStatus', ['NonExistent', 'Existent']));
-  addDefinition('custom-type-definition', ctxId, 'OrderStatus', seedEnumType('OrderStatus', ['NonExistent', 'Existent']));
+  addDefinition('custom-type-definition', modelId, 'ProductStatus', seedEnumType('ProductStatus', ['NonExistent', 'Existent']));
+  addDefinition('custom-type-definition', modelId, 'OrderStatus', seedEnumType('OrderStatus', ['NonExistent', 'Existent']));
 
   // 2. Entities, first without handlers — Item cannot be declared
   //    until ProductId exists, and ProductId comes from Product.
-  addDefinition('entity-definition', ctxId, 'Product', {
+  addDefinition('entity-definition', modelId, 'Product', {
     icon: '📦',
     properties: [
       statusProperty('ProductStatus', 'NonExistent'),
@@ -3717,12 +3841,12 @@ function seedProductPricing(ctxId) {
       property('currentPrice', 'Money', null, { isOptional: true }),
     ],
   });
-  addDefinition('entity-definition', ctxId, 'Order', {
+  addDefinition('entity-definition', modelId, 'Order', {
     icon: '🧾',
     properties: [statusProperty('OrderStatus', 'NonExistent')],
   });
 
-  addDefinition('custom-type-definition', ctxId, 'Item', {
+  addDefinition('custom-type-definition', modelId, 'Item', {
     properties: [
       { name: 'productId', propertyType: 'ProductId' },
       { name: 'price', propertyType: 'Money' },
@@ -3731,7 +3855,7 @@ function seedProductPricing(ctxId) {
 
   // 3. Events.
   const event = (name, properties) =>
-    addDefinition('event-definition', ctxId, name, { properties });
+    addDefinition('event-definition', modelId, name, { properties });
 
   event('ProductDefined', [prop('productId', 'ProductId'), prop('price', 'Money')]);
   event('ProductPriceChanged', [prop('productId', 'ProductId'), prop('newPrice', 'Money')]);
@@ -3742,7 +3866,7 @@ function seedProductPricing(ctxId) {
   //    handles ProductsOrdered: a value-style handler would need to
   //    pick *this* product's line out of the event, which the model
   //    cannot yet express.
-  updateDefinition('entity-definition', ctxId, 'Product', {
+  updateDefinition('entity-definition', modelId, 'Product', {
     icon: '📦',
     properties: [
       { ...statusProperty('ProductStatus', 'NonExistent'),
@@ -3754,7 +3878,7 @@ function seedProductPricing(ctxId) {
         ] },
     ],
   });
-  updateDefinition('entity-definition', ctxId, 'Order', {
+  updateDefinition('entity-definition', modelId, 'Order', {
     icon: '🧾',
     properties: [
       { ...statusProperty('OrderStatus', 'NonExistent'),
@@ -3764,7 +3888,7 @@ function seedProductPricing(ctxId) {
 
   // 5. Commands defining and repricing a single product, so the
   //    example can be exercised before anything is ordered.
-  addDefinition('command-definition', ctxId, 'DefineProduct', {
+  addDefinition('command-definition', modelId, 'DefineProduct', {
     feature: 'Catalogue',
     properties: [prop('productId', 'ProductId'), prop('price', 'Money')],
     boundary: [seedBind('product', 'Product', 'productId')],
@@ -3778,7 +3902,7 @@ function seedProductPricing(ctxId) {
       parameters: { productId: param('productId'), price: param('price') },
     }],
   });
-  addDefinition('command-definition', ctxId, 'ChangeProductPrice', {
+  addDefinition('command-definition', modelId, 'ChangeProductPrice', {
     feature: 'Catalogue',
     properties: [prop('productId', 'ProductId'), prop('newPrice', 'Money')],
     boundary: [seedBind('product', 'Product', 'productId')],
@@ -3808,7 +3932,7 @@ function seedProductPricing(ctxId) {
   });
 
   // 6. The command the example exists for.
-  addDefinition('command-definition', ctxId, 'OrderProducts', {
+  addDefinition('command-definition', modelId, 'OrderProducts', {
     feature: 'Checkout',
     properties: [prop('orderId', 'OrderId'), seedListProp('items', 'Item')],
     boundary: [
@@ -3845,20 +3969,20 @@ function seedProductPricing(ctxId) {
   });
 }
 
-const PREDEFINED_CONTEXTS = [
+const PREDEFINED_MODELS = [
   {
     name: 'Course Example (simple)',
     slug: 'course-simple',
     description: 'Courses and students, capacity and subscriptions. '
       + 'Identifiers are supplied by the caller and checked with a state condition.',
-    build: (ctxId) => { seedBase(ctxId); },
+    build: (modelId) => { seedBase(modelId); },
   },
   {
     name: 'Course Example (with sequence)',
     slug: 'course-sequence',
     description: 'Adds a projection issuing c1, c2, c3… DefineCourse loses its identifier '
       + 'parameter and its conditions — binding the numbering guards it instead.',
-    build: (ctxId) => { seedBase(ctxId); seedAddSequence(ctxId); },
+    build: (modelId) => { seedBase(modelId); seedAddSequence(modelId); },
   },
   {
     name: 'Course Example (with sequence and tenant)',
@@ -3866,14 +3990,14 @@ const PREDEFINED_CONTEXTS = [
     description: 'The numbering restarts per tenant — the case a tagless sequence could not '
       + 'express. Identity stays globally minted; what restarts is the number, so no two '
       + 'tenants ever write the same Course tag.',
-    build: (ctxId) => { seedBase(ctxId); seedAddSequence(ctxId); seedAddTenancy(ctxId); },
+    build: (modelId) => { seedBase(modelId); seedAddSequence(modelId); seedAddTenancy(modelId); },
   },
   {
     name: 'Course Example (with schedules)',
     slug: 'course-schedules',
     description: 'Adds hourly slots and the rule that a student is never in two courses at '
       + 'once, checked against live schedules so courses can be rescheduled under subscribers.',
-    build: (ctxId) => { seedBase(ctxId); seedAddSequence(ctxId); seedAddSchedules(ctxId); },
+    build: (modelId) => { seedBase(modelId); seedAddSequence(modelId); seedAddSchedules(modelId); },
   },
 {
     name: 'Dynamic Product Price (simple)',
@@ -3881,15 +4005,15 @@ const PREDEFINED_CONTEXTS = [
     description: 'A cart ordered in one append. Each line names a product and the price shown '
       + 'to the customer; the boundary fans out over the lines and checks each price against '
       + 'the product it belongs to.',
-    build: (ctxId) => { seedProductPricing(ctxId); },
+    build: (modelId) => { seedProductPricing(modelId); },
   },
 ];
 
-function loadPredefinedContext(index) {
-  const entry = PREDEFINED_CONTEXTS[index];
-  if (!entry) throw new DomainError('No such predefined context.');
-  const ctxId = createDcbContext(entry.name);
-  entry.build(ctxId);
-  return ctxId;
+function loadPredefinedModel(index) {
+  const entry = PREDEFINED_MODELS[index];
+  if (!entry) throw new DomainError('No such predefined model.');
+  const modelId = createDcbModel(entry.name);
+  entry.build(modelId);
+  return modelId;
 }
 

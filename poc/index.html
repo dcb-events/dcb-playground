@@ -833,7 +833,7 @@ const state = {
   confirmRemove: null,
   splash: false,            // showing the splash on top of a model that's still loaded — see `paintPage`
   models: false,            // the Models modal, opened on request — switch, load, or manage
-  newContext: false,        // naming form for a brand-new context — on the splash or in the modal
+  newModel: false,        // naming form for a brand-new model — on the splash or in the modal
   loadingUrl: false,        // within the Models modal: form open, asking for a URL to load
   loadingJson: false,       // within the Models modal: form open, asking for pasted JSON
   splashFaqOpen: { 0: true }, // which FAQ entries are expanded, on the first-run splash
@@ -882,8 +882,8 @@ function beginImport(envelope) {
 
 function finishImport(envelope) {
   run(() => {
-    const ctxId = importContextFromEnvelope(envelope);
-    localStorage.setItem(CONTEXT_KEY, ctxId);
+    const modelId = importModelFromEnvelope(envelope);
+    localStorage.setItem(MODEL_KEY, modelId);
     state.slice = null; state.view = 'slice';
     // A model is now loaded, so whatever asked the Models modal or the
     // splash to open — a menu click, the brand mark, or nothing having
@@ -893,9 +893,14 @@ function finishImport(envelope) {
     const steps = (envelope.sandbox && envelope.sandbox.steps) || [];
     if (steps.length) {
       sessionReset();
-      const ctx = projectState()[ctxId];
-      for (const step of steps) sessionRun(ctx, step.command, step.args);
+      const model = projectState()[modelId];
+      for (const step of steps) sessionRun(model, step.command, step.args);
     }
+    // A newer minor loaded fine — that is what a minor promises — but
+    // whatever it added is being ignored, and saying so beats letting
+    // someone wonder later why part of their model did not survive.
+    const warning = envelopeVersionWarning(envelope);
+    if (warning) toast(warning, true);
   });
 }
 
@@ -934,28 +939,28 @@ function jsonLoadForm(onSubmit, onCancel) {
 }
 
 function modelsModal() {
-  const activeId = activeContextId();
+  const activeId = activeModelId();
   const saved = Object.values(projectState()).sort((a, b) => a.name.localeCompare(b.name));
   const close = () => {
     state.models = false;
-    state.newContext = false; state.loadingUrl = false; state.loadingJson = false;
+    state.newModel = false; state.loadingUrl = false; state.loadingJson = false;
     render();
   };
 
-  const startNew = state.newContext
+  const startNew = state.newModel
     ? inlineForm({
         question: 'What is this model called?', placeholder: 'Course subscriptions',
         onSubmit: (v) => {
-          state.newContext = false; state.splash = false; createNamedContext(v); close();
+          state.newModel = false; state.splash = false; createNamedModel(v); close();
         },
-        onCancel: () => { state.newContext = false; render(); },
+        onCancel: () => { state.newModel = false; render(); },
       })
     : state.loadingUrl
       ? inlineForm({
           question: 'Where is the model hosted?', placeholder: 'https://…', submitLabel: 'Load',
           onSubmit: (v) => {
             state.loadingUrl = false;
-            runAsync(async () => beginImport(await loadContextFromUrl(v)));
+            runAsync(async () => beginImport(await loadModelFromUrl(v)));
           },
           onCancel: () => { state.loadingUrl = false; render(); },
         })
@@ -964,7 +969,7 @@ function modelsModal() {
             (envelope) => { state.loadingJson = false; beginImport(envelope); },
             () => { state.loadingJson = false; render(); })
         : h('div', { class: 'adder' },
-            h('button', { class: 'btn', onclick: () => { state.newContext = true; render(); } },
+            h('button', { class: 'btn', onclick: () => { state.newModel = true; render(); } },
               '+ New empty model'),
             h('button', { class: 'btn', onclick: () => { state.loadingUrl = true; render(); } },
               'From a URL…'),
@@ -986,18 +991,18 @@ function modelsModal() {
         h('button', {
           class: 'btn' + (other.id === activeId ? ' primary' : ''),
           style: 'flex:1; text-align:left',
-          onclick: () => { localStorage.setItem(CONTEXT_KEY, other.id); state.splash = false; close(); },
+          onclick: () => { localStorage.setItem(MODEL_KEY, other.id); state.splash = false; close(); },
         }, other.name),
-        removeButton('context:' + other.id, {
+        removeButton('model:' + other.id, {
           title: 'Remove this model and everything defined in it',
           confirm: 'Really remove this model?',
           onRemove: () => run(() => {
-            const wasActive = other.id === activeContextId();
-            deleteDcbContext(other.id);
+            const wasActive = other.id === activeModelId();
+            deleteDcbModel(other.id);
             if (wasActive) {
               const rest = Object.keys(projectState());
-              if (rest.length) localStorage.setItem(CONTEXT_KEY, rest[0]);
-              else localStorage.removeItem(CONTEXT_KEY);
+              if (rest.length) localStorage.setItem(MODEL_KEY, rest[0]);
+              else localStorage.removeItem(MODEL_KEY);
               state.slice = null; state.view = 'slice';
             }
           }),
@@ -1005,10 +1010,10 @@ function modelsModal() {
     h('div', { class: 'setting' }, h('h4', {}, 'Start a new one'), startNew),
     h('div', { class: 'setting' },
       h('h4', {}, 'Or try an example'),
-      PREDEFINED_CONTEXTS.map((entry) => h('button', {
+      PREDEFINED_MODELS.map((entry) => h('button', {
         class: 'issue',
         onclick: () => runAsync(async () =>
-          beginImport(await loadContextFromUrl('examples/' + entry.slug + '.json'))),
+          beginImport(await loadModelFromUrl('examples/' + entry.slug + '.json'))),
       }, h('span', { style: 'flex:0 0 170px' }, entry.name),
         h('span', { class: 'why', style: 'flex:1' }, entry.description)))),
     h('div', { class: 'adder', style: 'margin-top:18px' },
@@ -1022,7 +1027,7 @@ function modelsModal() {
 // The page shown, in #main, instead of the Models modal while nothing
 // is loaded — a full page to land on rather than a dialog standing in
 // front of one. "+ New empty model" and the examples below reuse the
-// exact paths the Models modal uses (`createNamedContext`, `beginImport`
+// exact paths the Models modal uses (`createNamedModel`, `beginImport`
 // over a relative fetch); everything else — a URL, pasted JSON, an
 // existing saved model — is one click away, through that same modal.
 
@@ -1063,14 +1068,14 @@ function toggleSplashFaq(i) {
 function renderSplash(main) {
   const openModels = () => { state.models = true; render(); };
 
-  const cta = state.newContext
+  const cta = state.newModel
     ? inlineForm({
         question: 'What is this model called?', placeholder: 'Course subscriptions',
-        onSubmit: (v) => { state.newContext = false; state.splash = false; createNamedContext(v); },
-        onCancel: () => { state.newContext = false; render(); },
+        onSubmit: (v) => { state.newModel = false; state.splash = false; createNamedModel(v); },
+        onCancel: () => { state.newModel = false; render(); },
       })
     : h('div', { class: 'splash-cta' },
-        h('button', { class: 'btn primary', onclick: () => { state.newContext = true; render(); } },
+        h('button', { class: 'btn primary', onclick: () => { state.newModel = true; render(); } },
           '+ New empty model'),
         h('span', { class: 'splash-hint' }, 'or pick an example below'));
 
@@ -1095,10 +1100,10 @@ function renderSplash(main) {
     h('div', { class: 'splash-section' },
       h('h2', {}, 'Examples'),
       h('div', { class: 'splash-examples' },
-        PREDEFINED_CONTEXTS.map((entry) => h('button', {
+        PREDEFINED_MODELS.map((entry) => h('button', {
           class: 'splash-example',
           onclick: () => runAsync(async () =>
-            beginImport(await loadContextFromUrl('examples/' + entry.slug + '.json'))),
+            beginImport(await loadModelFromUrl('examples/' + entry.slug + '.json'))),
         }, h('div', { class: 'name' }, entry.name),
           h('div', { class: 'desc' }, entry.description))))),
 
@@ -1208,7 +1213,7 @@ function importExportIcon() { return h('span', { html: IMPORT_EXPORT_ICON_SVG })
 // in the address bar, copy it, done. The Import & Export modal below
 // wants the same link on demand instead — see `refreshExportLink`.
 async function shareCurrentModel() {
-  const link = await buildShareLink(activeContext());
+  const link = await buildShareLink(activeModel());
   history.replaceState(null, '', link);
   try {
     await navigator.clipboard.writeText(link);
@@ -1227,11 +1232,11 @@ async function shareCurrentModel() {
 // exercises it or the steps someone happened to be mid-sandbox on; that
 // trimming is a UI concern, not something the shared builder needs to
 // know about.
-function exportEnvelope(ctx, { includeScenarios, includeSandbox }) {
+function exportEnvelope(model, { includeScenarios, includeSandbox }) {
   const steps = includeSandbox ? session.steps.map(({ command, args }) => ({ command, args })) : [];
-  const envelope = buildShareEnvelope(ctx, steps);
+  const envelope = buildShareEnvelope(model, steps);
   if (!includeScenarios) {
-    envelope.context.scenarioDefinitions = [];
+    envelope.scenarioDefinitions = [];
     delete envelope.propertyScenarioDefinitions;
   }
   return envelope;
@@ -1241,13 +1246,13 @@ function exportEnvelope(ctx, { includeScenarios, includeSandbox }) {
 // envelope instead of a freshly-built full one.
 async function computeExportLink(envelope) {
   const encoded = await gzipToBase64Url(JSON.stringify(envelope));
-  return location.origin + location.pathname + '#context=' + encoded;
+  return location.origin + location.pathname + '#model=' + encoded;
 }
 
 function refreshExportLink() {
-  const ctx = activeContext();
+  const model = activeModel();
   runAsync(async () => {
-    const envelope = exportEnvelope(ctx, {
+    const envelope = exportEnvelope(model, {
       includeScenarios: state.ieIncludeScenarios, includeSandbox: state.ieIncludeSandbox,
     });
     const link = await computeExportLink(envelope);
@@ -1359,7 +1364,7 @@ function renderImportGate() {
 // button, which opens straight to Export — the button used to be
 // "share", and this is that job's closest tab.
 function renderImportExportModal() {
-  const ctx = activeContext();
+  const model = activeModel();
   const close = () => { state.importExport = false; render(); };
 
   let urlValue = '';
@@ -1369,7 +1374,7 @@ function renderImportExportModal() {
     if (state.ieImportMode === 'url') {
       if (!urlValue.trim()) return;
       state.importExport = false;
-      runAsync(async () => beginImport(await loadContextFromUrl(urlValue.trim())));
+      runAsync(async () => beginImport(await loadModelFromUrl(urlValue.trim())));
     } else {
       if (!jsonValue.trim()) return;
       let envelope;
@@ -1435,7 +1440,7 @@ function renderImportExportModal() {
       h('input', { type: 'checkbox', checked: state.ieIncludeSandbox, onchange: setInclude('ieIncludeSandbox') }),
       'Sandbox steps'));
 
-  const jsonExportText = ctx ? JSON.stringify(exportEnvelope(ctx, {
+  const jsonExportText = model ? JSON.stringify(exportEnvelope(model, {
     includeScenarios: state.ieIncludeScenarios, includeSandbox: state.ieIncludeSandbox,
   }), null, 2) : '';
 
@@ -1589,9 +1594,9 @@ function redo() {
 // findable — an event no command records is invisible from a page built
 // around commands, and it is the interface's job to say so.
 
-function looseEnds(ctx) {
+function looseEnds(model) {
   const found = [];
-  const loose = orphans(ctx);
+  const loose = orphans(model);
   for (const name of loose.events) {
     found.push({
       what: readable(name), why: 'no command records this event',
@@ -1604,7 +1609,7 @@ function looseEnds(ctx) {
       go: () => { state.view = 'entity'; state.entity = name; },
     });
   }
-  for (const slice of allSlices(ctx)) {
+  for (const slice of allSlices(model)) {
     const open = (why) => found.push({
       what: readable(slice.name), why,
       go: () => { state.view = 'slice'; state.slice = slice.name; },
@@ -1615,9 +1620,9 @@ function looseEnds(ctx) {
       open('writes ' + readable(gap.entity) + ' without reading it first');
     }
   }
-  for (const [entity, body] of Object.entries(ctx['entity-definitions'])) {
+  for (const [entity, body] of Object.entries(model['entity-definitions'])) {
     for (const property of body.properties || []) {
-      const usage = propertyUsage(ctx, entity, property.name);
+      const usage = propertyUsage(model, entity, property.name);
       if (usage.changedBy.length || usage.readBy.length) continue;
       found.push({
         what: readable(entity) + ' · ' + propertyWords(property.name),
@@ -1632,9 +1637,9 @@ function looseEnds(ctx) {
 // Loose ends and scenarios the model no longer agrees with, gathered
 // into one list — everything wrong with this model that nobody had to
 // go looking for, each one a way back to it.
-function problems(ctx) {
-  const found = looseEnds(ctx).map((end) => ({ what: end.what, why: end.why, go: end.go }));
-  for (const { key, body, result } of scenarioTrouble(ctx)) {
+function problems(model) {
+  const found = looseEnds(model).map((end) => ({ what: end.what, why: end.why, go: end.go }));
+  for (const { key, body, result } of scenarioTrouble(model)) {
     found.push({
       what: scenarioName(body, readable),
       why: STATUS_WORDS[result.status][2],
@@ -1649,8 +1654,8 @@ function problems(ctx) {
 
 // Shown only when there is something to show — a clean model gets no
 // badge to reassure it is clean, the way "Loose ends ✓" used to.
-function problemsButton(ctx) {
-  const found = problems(ctx);
+function problemsButton(model) {
+  const found = problems(model);
   if (!found.length) return null;
   return h('button', {
     class: 'btn ghost', title: 'Problems in this model',
@@ -1659,8 +1664,8 @@ function problemsButton(ctx) {
 }
 
 function problemsPanel() {
-  const ctx = activeContext();
-  const found = problems(ctx);
+  const model = activeModel();
+  const found = problems(model);
   const close = () => { state.problems = false; render(); };
   const modal = h('div', { class: 'modal', tabindex: '-1', role: 'dialog', 'aria-modal': 'true' },
     h('header', {},
@@ -1691,13 +1696,13 @@ function problemsPanel() {
 // type, because a repaint of the whole page under a text field is a
 // repaint that takes the caret with it.
 
-function paletteEntries(ctx) {
+function paletteEntries(model) {
   const entries = [];
   const add = (what, label, where, go) => entries.push({ what, label, where, go, key: label + ' ' + where });
 
-  for (const group of featureGroups(ctx)) {
+  for (const group of featureGroups(model)) {
     for (const name of group.commands) {
-      add('command', commandIcon(ctx, name) + ' ' + readable(name), group.name, () => {
+      add('command', commandIcon(model, name) + ' ' + readable(name), group.name, () => {
         state.view = 'slice'; state.slice = name;
       });
     }
@@ -1708,29 +1713,29 @@ function paletteEntries(ctx) {
       });
     }
   }
-  for (const name of Object.keys(ctx['entity-definitions'])) {
-    add('entity', entityIcon(ctx, name) + ' ' + readable(name), 'the things themselves', () => {
+  for (const name of Object.keys(model['entity-definitions'])) {
+    add('entity', entityIcon(model, name) + ' ' + readable(name), 'the things themselves', () => {
       state.entitiesCollapsed = false; state.view = 'entity'; state.entity = name;
     });
   }
   const records = {};
-  for (const slice of allSlices(ctx)) {
+  for (const slice of allSlices(model)) {
     for (const emit of slice.emits) records[emit.emission.name] = slice.name;
   }
-  for (const name of Object.keys(ctx['event-definitions'])) {
+  for (const name of Object.keys(model['event-definitions'])) {
     const from = records[name];
-    add('event', eventIcon(ctx, name) + ' ' + readable(name),
+    add('event', eventIcon(model, name) + ' ' + readable(name),
       from ? 'recorded by ' + readable(from) : 'recorded by nothing', () => goToEvent(name));
   }
-  for (const name of Object.keys(ctx['projection-definitions'])) {
+  for (const name of Object.keys(model['projection-definitions'])) {
     add('projection', readable(name), 'projections', () => goToProjection(name));
   }
   if (advanced()) {
-    for (const name of Object.keys(ctx['custom-type-definitions'])) {
+    for (const name of Object.keys(model['custom-type-definitions'])) {
       add('custom type', readable(name), 'custom types', () => goToCustomType(name));
     }
   }
-  add('do', 'New command…', '', () => beginNewCommand(activeContext()));
+  add('do', 'New command…', '', () => beginNewCommand(activeModel()));
   add('do', 'Models…', 'switch, load, or start a model', () => { state.models = true; });
   add('do', 'Settings', '', () => { state.settings = true; });
   add('do', advanced() ? 'Switch to Simple' : 'Switch to Advanced', '',
@@ -1781,7 +1786,7 @@ function renderPalette() {
   // page behind it should reach in here.
   if (paletteEl) return;
 
-  const entries = paletteEntries(activeContext());
+  const entries = paletteEntries(activeModel());
   let hits = entries.slice(0, 12);
   let active = 0;
 
@@ -2055,7 +2060,7 @@ function removeButton(key, { label = '×', title, confirm = 'Really remove?', on
 // reverse: it pops the row just added. An empty name field is also
 // where a list ends: Enter there with nothing typed means "done with
 // these", which is `onEmptyEnter`'s to interpret.
-function propertyAdder(ctx, {
+function propertyAdder(model, {
   placeholder = 'course id', label = '+ Add', type = 'string',
   onAdd, onRemoveLast, onEmptyEnter,
 }) {
@@ -2083,7 +2088,7 @@ function propertyAdder(ctx, {
     },
   },
     input,
-    pick(typeOptions(ctx), chosen, (v) => { chosen = v; }),
+    pick(typeOptions(model), chosen, (v) => { chosen = v; }),
     h('label', { class: 'tiny muted' },
       h('input', { type: 'checkbox', onchange: (e) => { isList = e.target.checked; } }), ' many'),
     h('label', { class: 'tiny muted' },
@@ -2155,7 +2160,7 @@ function openMember(where, name) {
 // invalidate its handlers: `append` means nothing on a scalar,
 // `increment` nothing on a string. Rather than let the model refuse
 // the update, the ones that no longer apply are dropped and said so.
-function retypeProperty(ctx, property, changes) {
+function retypeProperty(model, property, changes) {
   const next = { ...property, ...changes };
   // A scripted property has neither an initial value nor an operation
   // to invalidate: retyping changes what a condition reads out of it,
@@ -2165,9 +2170,9 @@ function retypeProperty(ctx, property, changes) {
   if (next.propertyType !== property.propertyType
       || next.isList !== property.isList
       || next.isOptional !== property.isOptional) {
-    next.initialValue = defaultInitialValue(ctx, next);
+    next.initialValue = defaultInitialValue(model, next);
     if (next.handlers) {
-      const allowed = operationsFor(ctx, next);
+      const allowed = operationsFor(model, next);
       const kept = next.handlers.filter((h) => allowed.includes(h.operation));
       if (kept.length !== next.handlers.length) {
         toast(`Dropped ${next.handlers.length - kept.length} handler(s) that no longer apply to `
@@ -2186,10 +2191,10 @@ function retypeProperty(ctx, property, changes) {
 // `allow` says which knobs this site has: an event property has no
 // initial value to state, a projection parameter is always a single
 // required identifier.
-function memberEditor(ctx, { member, where, types, allow = {}, onReplace, onRename }) {
+function memberEditor(model, { member, where, types, allow = {}, onReplace, onRename }) {
   const close = () => { state.editMember = null; render(); };
   let name = member.name;
-  const options = types || typeOptions(ctx);
+  const options = types || typeOptions(model);
   const doRename = () => {
     const next = toCamel(name);
     if (!next) return toast('Give it a name.', true);
@@ -2210,32 +2215,32 @@ function memberEditor(ctx, { member, where, types, allow = {}, onReplace, onRena
         onclick: doRename,
       }, 'Rename'),
       h('span', { class: 'muted tiny' }, 'is a'),
-      pick(options, member.propertyType, (v) => onReplace(retypeProperty(ctx, member, { propertyType: v }))),
+      pick(options, member.propertyType, (v) => onReplace(retypeProperty(model, member, { propertyType: v }))),
       allow.arity === false ? null : h('label', { class: 'tiny muted' },
         h('input', {
           type: 'checkbox', checked: !!member.isList,
-          onchange: (e) => onReplace(retypeProperty(ctx, member, { isList: e.target.checked })),
+          onchange: (e) => onReplace(retypeProperty(model, member, { isList: e.target.checked })),
         }), ' many'),
       allow.arity === false ? null : h('label', { class: 'tiny muted' },
         h('input', {
           type: 'checkbox', checked: !!member.isOptional,
-          onchange: (e) => onReplace(retypeProperty(ctx, member, { isOptional: e.target.checked })),
+          onchange: (e) => onReplace(retypeProperty(model, member, { isOptional: e.target.checked })),
         }), ' optional'),
       h('button', { class: 'btn ghost tiny', onclick: close }, 'Done')),
-    allow.initialValue ? initialValueField(ctx, member, onReplace) : null);
+    allow.initialValue ? initialValueField(model, member, onReplace) : null);
 }
 
 // What a property reads before any event has been applied. Offered as
 // a picker over the enum's members when it has one, and as a literal
 // otherwise — a list or an optional property has only one sensible
 // starting value, so neither is asked about.
-function initialValueField(ctx, property, onReplace) {
+function initialValueField(model, property, onReplace) {
   if (property.isList || property.isOptional) {
     return h('div', { class: 'adder' },
       h('span', { class: 'muted tiny' }, 'starts as ',
         h('code', {}, property.isList ? 'nothing yet' : 'unset')));
   }
-  const members = enumMembersFor(ctx, property.propertyType);
+  const members = enumMembersFor(model, property.propertyType);
   if (members) {
     return h('div', { class: 'adder' },
       h('span', { class: 'muted tiny' }, 'starts as'),
@@ -2250,7 +2255,7 @@ function initialValueField(ctx, property, onReplace) {
       value: property.initialValue === undefined || property.initialValue === null
         ? '' : String(property.initialValue),
       onblur: (e) => {
-        const parsed = literalOfType(ctx, property.propertyType, e.target.value);
+        const parsed = literalOfType(model, property.propertyType, e.target.value);
         if (parsed === undefined) return toast('That is not a ' + readable(property.propertyType) + '.', true);
         onReplace({ ...property, initialValue: parsed });
       },
@@ -2261,9 +2266,9 @@ function initialValueField(ctx, property, onReplace) {
 // Reads a typed literal out of what someone typed. `undefined` means
 // it does not belong to the type, which is a refusal rather than a
 // silent coercion.
-function literalOfType(ctx, typeName, text) {
+function literalOfType(model, typeName, text) {
   const trimmed = (text || '').trim();
-  const schema = underlyingSchema(ctx, typeName);
+  const schema = underlyingSchema(model, typeName);
   const kind = schema && schema.type;
   if (kind === 'integer' || kind === 'number') {
     const n = Number(trimmed);
@@ -2333,17 +2338,17 @@ function operandPicker(choices, draft, key, { placeholder, allowLiteral = true }
 // payload, and the bindings declared *above* this one. A binding may
 // only draw from what came before it, so the list is what makes that
 // rule visible instead of only enforced.
-function operandChoicesAbove(ctx, slice, index) {
-  const out = [...payloadChoices(ctx, slice.payload)];
+function operandChoicesAbove(model, slice, index) {
+  const out = [...payloadChoices(model, slice.payload)];
   slice.reads.slice(0, index === undefined ? undefined : index).forEach((b) => {
     if (b.projection) {
       out.push([JSON.stringify({ alias: b.alias }), propertyWords(b.alias)]);
       return;
     }
-    const entity = ctx['entity-definitions'][b.entity];
+    const entity = model['entity-definitions'][b.entity];
     (entity ? entity.properties : []).forEach((p) =>
       out.push([JSON.stringify({ alias: b.alias, property: p.name }),
-        entityIcon(ctx, b.entity) + ' ' + memberWords(b.alias, p.name)]));
+        entityIcon(model, b.entity) + ' ' + memberWords(b.alias, p.name)]));
   });
   return out;
 }
@@ -2351,10 +2356,10 @@ function operandChoicesAbove(ctx, slice, index) {
 // ---------- small helpers ----------
 
 function patch(kind, name, mutate) {
-  const ctx = activeContext();
-  const body = deepClone(ctx[DEF_COLLECTIONS[kind]][name]);
+  const model = activeModel();
+  const body = deepClone(model[DEF_COLLECTIONS[kind]][name]);
   mutate(body);
-  run(() => updateDefinition(kind, ctx.id, name, body));
+  run(() => updateDefinition(kind, model.id, name, body));
 }
 const patchSlice = (mutate) => patch('command-definition', state.slice, mutate);
 
@@ -2380,11 +2385,11 @@ function openEntity(name) {
 
 // Every mention of a thing, anywhere: its mark, its name, and the way
 // in. One shape, so the mark is worth learning.
-function entityRef(ctx, name, { cls = 'chip entity', text } = {}) {
+function entityRef(model, name, { cls = 'chip entity', text } = {}) {
   return h('span', {
     class: cls, title: 'Open ' + readable(name),
     onclick: () => openEntity(name),
-  }, h('i', { class: 'ic' }, entityIcon(ctx, name)),
+  }, h('i', { class: 'ic' }, entityIcon(model, name)),
     text === undefined ? readable(name) : text);
 }
 
@@ -2399,11 +2404,11 @@ function goToEvent(name) {
   state.land = `[data-key="${CSS.escape('event:' + name)}"]`;
   render();
 }
-function eventRef(ctx, name, { cls = 'chip event linkable', text } = {}) {
+function eventRef(model, name, { cls = 'chip event linkable', text } = {}) {
   return h('span', {
     class: cls, title: 'Open ' + readable(name),
     onclick: () => goToEvent(name),
-  }, h('i', { class: 'ic' }, eventIcon(ctx, name)), text === undefined ? readable(name) : text);
+  }, h('i', { class: 'ic' }, eventIcon(model, name)), text === undefined ? readable(name) : text);
 }
 
 // A custom type has no page of its own — it lives as a card in Custom
@@ -2423,11 +2428,11 @@ function goToCommand(name) {
   state.tab = 'definition';
   render();
 }
-function commandRef(ctx, name, { cls = 'chip command linkable', text } = {}) {
+function commandRef(model, name, { cls = 'chip command linkable', text } = {}) {
   return h('span', {
     class: cls, title: 'Open ' + readable(name),
     onclick: () => goToCommand(name),
-  }, text === undefined ? readable(name) : text);
+  }, h('i', { class: 'ic' }, commandIcon(model, name)), text === undefined ? readable(name) : text);
 }
 
 function goToProjection(name) {
@@ -2436,7 +2441,7 @@ function goToProjection(name) {
   state.land = `[data-key="${CSS.escape('projection:' + name)}"]`;
   render();
 }
-function projectionRef(ctx, name, { cls = 'chip projection linkable', text } = {}) {
+function projectionRef(model, name, { cls = 'chip projection linkable', text } = {}) {
   return h('span', {
     class: cls, title: 'Open ' + readable(name),
     onclick: () => goToProjection(name),
@@ -2445,8 +2450,8 @@ function projectionRef(ctx, name, { cls = 'chip projection linkable', text } = {
 
 // A specific scenario, wherever it is shown, is always reached the
 // same way — see `problems`, which this mirrors.
-function goToScenario(ctx, key) {
-  const body = ctx['scenario-definitions'][key];
+function goToScenario(model, key) {
+  const body = model['scenario-definitions'][key];
   if (!body) return;
   closeForms();
   state.view = 'slice';
@@ -2455,8 +2460,8 @@ function goToScenario(ctx, key) {
   state.openScenarios.add(key);
   render();
 }
-function goToPropertyScenario(ctx, key) {
-  const body = ctx['property-scenario-definitions'][key];
+function goToPropertyScenario(model, key) {
+  const body = model['property-scenario-definitions'][key];
   if (!body) return;
   closeForms();
   state.view = 'entity';
@@ -2466,12 +2471,12 @@ function goToPropertyScenario(ctx, key) {
   render();
 }
 
-function typeChoices(ctx) {
-  if (advanced()) return allTypeNames(ctx);
-  return [...SIMPLE_TYPES, ...Object.keys(ctx['entity-definitions']).sort().map((n) => idTypeOf(ctx, n))];
+function typeChoices(model) {
+  if (advanced()) return allTypeNames(model);
+  return [...SIMPLE_TYPES, ...Object.keys(model['entity-definitions']).sort().map((n) => idTypeOf(model, n))];
 }
-function typeOptions(ctx) {
-  return typeChoices(ctx).map((t) => [t, readable(t)]);
+function typeOptions(model) {
+  return typeChoices(model).map((t) => [t, readable(t)]);
 }
 
 // An option built as "🔖 Name" reads fine, but a native <option> has
@@ -2600,7 +2605,7 @@ const closeForms = () => {
 // ---------- rail ----------
 
 function renderRail() {
-  const ctx = activeContext();
+  const model = activeModel();
   const rail = document.getElementById('rail');
   // Only meaningful on a narrow screen — off-canvas there, an ordinary
   // column everywhere else, entirely by CSS. See `.rail` / media query.
@@ -2609,11 +2614,11 @@ function renderRail() {
   rail.innerHTML = '';
   rail.appendChild(h('h4', {}, 'Features'));
 
-  for (const group of featureGroups(ctx)) {
+  for (const group of featureGroups(model)) {
     if (state.renamingFeature === group.name) {
       rail.appendChild(inlineForm({
         question: 'Rename this feature', value: group.name, submitLabel: 'Rename',
-        onSubmit: (v) => { renameFeature(ctx, group.name, v); },
+        onSubmit: (v) => { renameFeature(model, group.name, v); },
         onCancel: () => { state.renamingFeature = null; render(); },
       }));
     } else {
@@ -2639,7 +2644,7 @@ function renderRail() {
         },
           removeButton('feature:' + group.name, {
             title: 'Remove this feature. Its commands stay, ungrouped.',
-            onRemove: () => removeFeature(ctx, group.name),
+            onRemove: () => removeFeature(model, group.name),
           }))));
       if (collapsed) continue;
     }
@@ -2655,13 +2660,13 @@ function renderRail() {
           e.preventDefault(); closeForms();
           state.slice = name; state.openEvent = null; state.view = 'slice'; render();
         },
-      }, readable(name)));
+      }, h('i', { class: 'ic' }, commandIcon(model, name)), readable(name)));
     }
     if (!group.commands.length) rail.appendChild(h('div', { class: 'gempty' }, 'nothing in it yet'));
   }
 
   rail.appendChild(h('div', { class: 'add' },
-    h('button', { class: 'btn', onclick: () => beginNewCommand(ctx) }, '+ Command'),
+    h('button', { class: 'btn', onclick: () => beginNewCommand(model) }, '+ Command'),
     h('button', {
       class: 'btn ghost', onclick: () => { closeForms(); state.newFeature = true; render(); },
     }, '+ Feature')));
@@ -2669,7 +2674,7 @@ function renderRail() {
   if (state.namingCommand) {
     rail.appendChild(inlineForm({
       question: 'What can someone do?', placeholder: 'define course', showsIdentifier: true,
-      onSubmit: (v) => createCommand(ctx, v),
+      onSubmit: (v) => createCommand(model, v),
       onCancel: () => { state.namingCommand = false; render(); },
     }));
   }
@@ -2679,17 +2684,17 @@ function renderRail() {
       question: 'What should this group of commands be called?',
       placeholder: 'Course management',
       onSubmit: (v) => {
-        if (featureGroups(ctx).some((g) => g.name === v)) return toast('That feature already exists.', true);
+        if (featureGroups(model).some((g) => g.name === v)) return toast('That feature already exists.', true);
         addPendingFeature(v); state.newFeature = false; render();
       },
       onCancel: () => { state.newFeature = false; render(); },
     }));
   }
 
-  // Projections are advanced by nature, but a context that already has
+  // Projections are advanced by nature, but a model that already has
   // one has to offer a way in whatever mode you are in — otherwise the
   // model holds something the interface refuses to show.
-  const projectionNames = Object.keys(ctx['projection-definitions']);
+  const projectionNames = Object.keys(model['projection-definitions']);
   {
     rail.appendChild(h('h4', { style: 'margin-top:20px' }, 'Model'));
     // The things themselves are not an advanced idea: a first model is
@@ -2699,11 +2704,11 @@ function renderRail() {
     // They are listed one by one, like the commands above: a thing has
     // a page, and the rail is where you get to it and where you see
     // how many of them the model has grown.
-    rail.appendChild(renderEntityRail(ctx));
+    rail.appendChild(renderEntityRail(model));
     if (advanced()) {
       rail.appendChild(h('a', {
         href: '#', class: state.view === 'types' ? 'on' : '',
-        title: Object.keys(ctx['custom-type-definitions']).length + ' declared',
+        title: Object.keys(model['custom-type-definitions']).length + ' declared',
         onclick: (e) => {
           e.preventDefault(); closeForms();
           state.view = 'types'; render();
@@ -2723,7 +2728,7 @@ function renderRail() {
         state.view = 'projections'; render();
       },
     }, 'Projections'));
-    const eventNames = Object.keys(ctx['event-definitions']);
+    const eventNames = Object.keys(model['event-definitions']);
     if (advanced() || eventNames.length) rail.appendChild(h('a', {
       href: '#', class: state.view === 'events' ? 'on' : '',
       'data-src': eventNames.map((n) => 'event:' + n).join(' ') || null,
@@ -2740,7 +2745,7 @@ function renderRail() {
   // the way Events reads across every command that publishes one. And
   // unlike Events, neither holds anything a simple model would ever
   // need to reach — so there is no "or it already has one" exception.
-  if (advanced() && Object.keys(ctx['command-definitions']).length) {
+  if (advanced() && Object.keys(model['command-definitions']).length) {
     rail.appendChild(h('h4', { style: 'margin-top:20px' }, 'Overview'));
     rail.appendChild(h('a', {
       href: '#', class: state.view === 'coupling' ? 'on' : '',
@@ -2774,17 +2779,17 @@ function renderRail() {
   // never be refused. An orphaned event is not shown here any more —
   // the Events page above is now the one place for those, recorded or
   // not.
-  const loose = orphans(ctx);
+  const loose = orphans(model);
   if (loose.entities.length) {
     rail.appendChild(h('h4', { style: 'margin-top:20px' }, 'Nothing uses these'));
     const looseRow = (kind, name, chip) => rail.appendChild(
       qrow('div', { cls: 'loose', key: 'loose:' + name }, chip, h('span', { style: 'flex:1' }),
         reveal(removeButton(kind + ':' + name, {
           title: 'Remove this definition', onRemove: () => run(() =>
-            removeDefinition('entity-definition', ctx.id, name)),
+            removeDefinition('entity-definition', model.id, name)),
         }))));
     for (const n of loose.entities) {
-      looseRow('entity', n, entityRef(ctx, n));
+      looseRow('entity', n, entityRef(model, n));
     }
   }
 }
@@ -2792,8 +2797,8 @@ function renderRail() {
 // The things themselves, in the rail: one entry each, under a heading
 // that folds them away — the same two levels the features above use,
 // because they are read the same way.
-function renderEntityRail(ctx) {
-  const names = Object.keys(ctx['entity-definitions']).sort();
+function renderEntityRail(model) {
+  const names = Object.keys(model['entity-definitions']).sort();
   const collapsed = state.entitiesCollapsed;
   const toggle = () => { state.entitiesCollapsed = !collapsed; render(); };
   const box = h('div', {});
@@ -2810,7 +2815,7 @@ function renderEntityRail(ctx) {
       class: 'cmd ent' + (state.view === 'entity' && state.entity === name ? ' on' : ''),
       title: name,
       onclick: (e) => { e.preventDefault(); openEntity(name); },
-    }, h('i', { class: 'ic' }, entityIcon(ctx, name)), readable(name)));
+    }, h('i', { class: 'ic' }, entityIcon(model, name)), readable(name)));
   }
   if (!names.length) box.appendChild(h('div', { class: 'gempty' }, 'nothing modelled yet'));
 
@@ -2820,7 +2825,7 @@ function renderEntityRail(ctx) {
       showsIdentifier: true,
       onSubmit: (v) => {
         state.newEntityAt = null;
-        const created = createEntity(ctx, v);
+        const created = createEntity(model, v);
         if (created) openEntity(created);
       },
       onCancel: () => { state.newEntityAt = null; render(); },
@@ -2836,26 +2841,26 @@ function renderEntityRail(ctx) {
 
 // The feature name comes off every command that carries it; the
 // commands themselves are untouched.
-function removeFeature(ctx, name) {
+function removeFeature(model, name) {
   run(() => {
-    for (const [command, body] of Object.entries(activeContext()['command-definitions'])) {
+    for (const [command, body] of Object.entries(activeModel()['command-definitions'])) {
       if (featureOf(body) !== name) continue;
       const next = deepClone(body);
       delete next.feature;
-      updateDefinition('command-definition', ctx.id, command, next);
+      updateDefinition('command-definition', model.id, command, next);
     }
     setPendingFeatures(pendingFeatures().filter((p) => p !== name));
   });
 }
 
-function renameFeature(ctx, from, to) {
+function renameFeature(model, from, to) {
   if (from === UNGROUPED || to === from) { state.renamingFeature = null; return render(); }
   run(() => {
-    for (const [cmd, body] of Object.entries(activeContext()['command-definitions'])) {
+    for (const [cmd, body] of Object.entries(activeModel()['command-definitions'])) {
       if (featureOf(body) !== from) continue;
       const next = deepClone(body);
       next.feature = to;
-      updateDefinition('command-definition', ctx.id, cmd, next);
+      updateDefinition('command-definition', model.id, cmd, next);
     }
     setPendingFeatures(pendingFeatures().filter((p) => p !== from).concat(to));
     state.renamingFeature = null;
@@ -2869,17 +2874,17 @@ function renameFeature(ctx, from, to) {
 // own. Everything else (what it takes, what it reads, what it decides,
 // what it records) is added afterwards, on the command's own page,
 // the same way it would be for a command that already existed.
-function beginNewCommand(ctx) {
+function beginNewCommand(model) {
   closeForms();
   state.namingCommand = true;
   render();
 }
 
-function createCommand(ctx, label) {
+function createCommand(model, label) {
   const name = toPascal(label);
   if (!name) return toast('Give it a name.', true);
-  const current = state.slice && ctx['command-definitions'][state.slice]
-    ? featureOf(ctx['command-definitions'][state.slice]) : UNGROUPED;
+  const current = state.slice && model['command-definitions'][state.slice]
+    ? featureOf(model['command-definitions'][state.slice]) : UNGROUPED;
   // A command with nothing it records is not one the model can hold —
   // so a starting event comes along with it, guessed from the command's
   // own name the same way the event field always was. It is an ordinary
@@ -2887,15 +2892,15 @@ function createCommand(ctx, label) {
   // on this same page.
   const eventName = toPascal(suggestEventName(label));
   run(() => {
-    if (!activeContext()['event-definitions'][eventName]) {
-      addDefinition('event-definition', ctx.id, eventName, { properties: [] });
+    if (!activeModel()['event-definitions'][eventName]) {
+      addDefinition('event-definition', model.id, eventName, { properties: [] });
     }
     const body = {
       properties: [], boundary: [], conditions: [],
       publishes: [{ name: eventName, parameters: {} }],
     };
     if (current !== UNGROUPED) body.feature = current;
-    addDefinition('command-definition', ctx.id, name, body);
+    addDefinition('command-definition', model.id, name, body);
     state.namingCommand = false;
     state.view = 'slice'; state.slice = name; state.openEvent = eventName;
     // Straight into typing the first input — no click required to get
@@ -2946,12 +2951,12 @@ function render() {
 }
 
 function paintPage() {
-  const ctx = activeContext();
+  const model = activeModel();
   // The splash also shows over a model that's still loaded — reached
   // from the brand mark, see the button below. Escape (and picking a
   // model, starting a new one, or loading one) clears `state.splash`
-  // and lands back here with `ctx` unchanged.
-  const showSplash = !ctx || state.splash;
+  // and lands back here with `model` unchanged.
+  const showSplash = !model || state.splash;
 
   document.body.className = [
     isDark() ? 'f-dark' : null,
@@ -2965,15 +2970,15 @@ function paintPage() {
   modelSwitch.innerHTML = '';
   modelSwitch.appendChild(h('button', {
     class: 'btn ghost', type: 'button',
-    title: !ctx ? 'Load a model' : state.splash ? 'Back to ' + ctx.name : 'Switch or manage models',
-    onclick: ctx && state.splash
+    title: !model ? 'Load a model' : state.splash ? 'Back to ' + model.name : 'Switch or manage models',
+    onclick: model && state.splash
       ? () => { state.splash = false; render(); }
       : () => { closeForms(); state.models = true; render(); },
-  }, !ctx
+  }, !model
     ? 'Load a model…'
     : state.splash
-      ? ['← Back to ', h('span', { class: 'model-name' }, ctx.name)]
-      : h('span', { class: 'model-name' }, ctx.name)));
+      ? ['← Back to ', h('span', { class: 'model-name' }, model.name)]
+      : h('span', { class: 'model-name' }, model.name)));
 
   const tools = document.getElementById('tools');
   tools.innerHTML = '';
@@ -3012,7 +3017,7 @@ function paintPage() {
   // A scenario that no longer agrees with its command, or a loose end
   // nobody has tied — the one count of what needs attention, shown
   // only when there is any.
-  const problemsBtn = problemsButton(ctx);
+  const problemsBtn = problemsButton(model);
   if (problemsBtn) tools.appendChild(problemsBtn);
 
   jump.appendChild(h('button', {
@@ -3029,16 +3034,16 @@ function paintPage() {
   renderModals();
   renderPalette();
 
-  const names = Object.keys(ctx['command-definitions']);
+  const names = Object.keys(model['command-definitions']);
   if (state.view === 'slice' && (!state.slice || !names.includes(state.slice))) {
     state.slice = names[0] || null;
     state.tab = 'definition';
   }
   if (state.view === 'types' && !advanced()) state.view = 'slice';
-  if (state.view === 'projections' && !advanced() && !Object.keys(ctx['projection-definitions']).length) {
+  if (state.view === 'projections' && !advanced() && !Object.keys(model['projection-definitions']).length) {
     state.view = 'slice';
   }
-  if (state.view === 'events' && !advanced() && !Object.keys(ctx['event-definitions']).length) {
+  if (state.view === 'events' && !advanced() && !Object.keys(model['event-definitions']).length) {
     state.view = 'slice';
   }
   if ((state.view === 'coupling' || state.view === 'rulemap') && (!advanced() || !names.length)) {
@@ -3046,8 +3051,8 @@ function paintPage() {
   }
   // A thing removed from under its own page leaves the page with
   // nothing to show; the next one along is a better answer than a blank.
-  if (state.view === 'entity' && !ctx['entity-definitions'][state.entity]) {
-    const rest = Object.keys(ctx['entity-definitions']).sort();
+  if (state.view === 'entity' && !model['entity-definitions'][state.entity]) {
+    const rest = Object.keys(model['entity-definitions']).sort();
     state.entity = rest[0] || null;
     state.entityTab = 'definition';
     if (!state.entity) state.view = 'slice';
@@ -3058,20 +3063,20 @@ function paintPage() {
   main.innerHTML = '';
   main.className = 'slice' + (state.view === 'coupling' || state.view === 'rulemap' ? ' wide' : '');
 
-  if (state.view === 'sandbox') return renderSandbox(ctx, main);
-  if (state.view === 'entity') return renderEntity(ctx, main);
-  if (state.view === 'types') return renderCustomTypes(ctx, main);
-  if (state.view === 'projections') return renderProjections(ctx, main);
-  if (state.view === 'events') return renderEvents(ctx, main);
-  if (state.view === 'coupling') return renderCoupling(ctx, main);
-  if (state.view === 'rulemap') return renderRuleMap(ctx, main);
+  if (state.view === 'sandbox') return renderSandbox(model, main);
+  if (state.view === 'entity') return renderEntity(model, main);
+  if (state.view === 'types') return renderCustomTypes(model, main);
+  if (state.view === 'projections') return renderProjections(model, main);
+  if (state.view === 'events') return renderEvents(model, main);
+  if (state.view === 'coupling') return renderCoupling(model, main);
+  if (state.view === 'rulemap') return renderRuleMap(model, main);
 
   if (!state.slice) {
     // With nothing to keep track of, a command has no identifier to be
     // given and every event it records is tagless — a model that cannot
-    // say what any of it is *about*. So an empty context is pointed at a
+    // say what any of it is *about*. So an empty model is pointed at a
     // thing first, and only then at what someone can do to one.
-    if (!Object.keys(ctx['entity-definitions']).length) {
+    if (!Object.keys(model['entity-definitions']).length) {
       main.appendChild(h('div', { class: 'blank' },
         h('h2', {}, 'Nothing here yet'),
         h('p', { class: 'muted small' },
@@ -3085,7 +3090,7 @@ function paintPage() {
               showsIdentifier: true,
               onSubmit: (v) => {
                 state.newEntityAt = null;
-                const created = createEntity(ctx, v);
+                const created = createEntity(model, v);
                 if (created) openEntity(created);
               },
               onCancel: () => { state.newEntityAt = null; render(); },
@@ -3097,7 +3102,7 @@ function paintPage() {
               }, '+ First entity'),
               // Not a dead end: a model whose first move really is a
               // command should not have to argue with the page.
-              h('button', { class: 'btn ghost', onclick: () => beginNewCommand(ctx) },
+              h('button', { class: 'btn ghost', onclick: () => beginNewCommand(model) },
                 'or start with a command'))));
       return;
     }
@@ -3107,11 +3112,11 @@ function paintPage() {
         'Start with something someone can do. Name it and the rest of the model — what it '
         + 'reads, what it decides, what it records, what it changes, the things themselves — '
         + 'gets built from inside it.'),
-      h('button', { class: 'btn primary', onclick: () => beginNewCommand(ctx) }, '+ First command')));
+      h('button', { class: 'btn primary', onclick: () => beginNewCommand(model) }, '+ First command')));
     return;
   }
 
-  const slice = sliceOf(ctx, state.slice);
+  const slice = sliceOf(model, state.slice);
   main.appendChild(h('header', {},
     state.renamingCommand === slice.name
       ? inlineForm({
@@ -3125,7 +3130,7 @@ function paintPage() {
             state.renamingCommand = null;
             if (next && next !== from) {
               run(() => {
-                renameDefinition('command-definition', ctx.id, from, next);
+                renameDefinition('command-definition', model.id, from, next);
                 state.slice = next;
               });
             } else render();
@@ -3141,7 +3146,7 @@ function paintPage() {
               state.commandIconPicker = open ? null : slice.name;
               render();
             },
-          }, commandIcon(ctx, slice.name)),
+          }, commandIcon(model, slice.name)),
           h('div', { class: 'name' }, named(slice.name)),
           h('span', { class: 'grow' }),
           // The command itself. Nothing in the model references a
@@ -3156,7 +3161,7 @@ function paintPage() {
               label: 'Remove command',
               title: 'Remove this command. The events it recorded and the things it read stay.',
               onRemove: () => run(() => {
-                removeDefinition('command-definition', ctx.id, slice.name);
+                removeDefinition('command-definition', model.id, slice.name);
                 state.slice = null;
               }),
             }))),
@@ -3169,26 +3174,26 @@ function paintPage() {
       + ' · '
       + slice.rules.length + ' rule' + (slice.rules.length === 1 ? '' : 's') + ' · records '
       + (slice.emits.map((e) => readable(e.emission.name)).join(', ') || 'nothing')),
-    featurePicker(ctx, slice)));
+    featurePicker(model, slice)));
 
   if (state.commandIconPicker === slice.name) {
-    main.appendChild(commandIconPicker(ctx, slice.name, ctx['command-definitions'][slice.name]));
+    main.appendChild(commandIconPicker(model, slice.name, model['command-definitions'][slice.name]));
   }
 
-  main.appendChild(scenarioTabs(ctx, slice));
+  main.appendChild(scenarioTabs(model, slice));
 
   if (state.tab === 'scenarios') {
-    main.appendChild(scenarioPanel(ctx, slice.name));
+    main.appendChild(scenarioPanel(model, slice.name));
     paintLit();
     return;
   }
 
-  main.appendChild(stepTrigger(ctx, slice));
-  main.appendChild(stepReads(ctx, slice));
-  main.appendChild(stepRules(ctx, slice));
-  main.appendChild(stepEmits(ctx, slice));
-  main.appendChild(stepChanges(ctx, slice));
-  if (advanced()) main.appendChild(stepConsistency(ctx, slice));
+  main.appendChild(stepTrigger(model, slice));
+  main.appendChild(stepReads(model, slice));
+  main.appendChild(stepRules(model, slice));
+  main.appendChild(stepEmits(model, slice));
+  main.appendChild(stepChanges(model, slice));
+  if (advanced()) main.appendChild(stepConsistency(model, slice));
   else main.appendChild(h('div', { class: 'muted tiny', style: 'padding-left:26px' },
     'Switch to Advanced to see the consistency boundary this command derives.'));
 
@@ -3196,7 +3201,7 @@ function paintPage() {
   paintLit();
 }
 
-function featurePicker(ctx, slice) {
+function featurePicker(model, slice) {
   const current = featureOf(slice.body);
   if (state.newFeature === 'slice') {
     return inlineForm({
@@ -3207,7 +3212,7 @@ function featurePicker(ctx, slice) {
   }
   return h('div', { class: 'feature-of' },
     h('span', { class: 'muted tiny' }, 'part of'),
-    pick([...featureNames(ctx).map((n) => [n, n]), [UNGROUPED, '— ungrouped —'], [NEW, '+ New feature…']],
+    pick([...featureNames(model).map((n) => [n, n]), [UNGROUPED, '— ungrouped —'], [NEW, '+ New feature…']],
       current, (v) => {
         if (v === NEW) { state.newFeature = 'slice'; return render(); }
         patchSlice((b) => { if (v === UNGROUPED) delete b.feature; else b.feature = v; });
@@ -3221,24 +3226,24 @@ function step(kind, title, ...body) {
     ...body);
 }
 
-function stepTrigger(ctx, slice) {
+function stepTrigger(model, slice) {
   const where = 'payload:' + slice.name;
   // A stale reference from before `removeEventField` existed would
   // otherwise refuse this removal for a reason no longer visible
   // anywhere — see the comment there.
   const dropProperty = (i) => patchSlice((b) => {
-    pruneDanglingEmissionParameters(ctx, b);
+    pruneDanglingEmissionParameters(model, b);
     b.properties.splice(i, 1);
   });
   const rows = slice.payload.map((p, i) => {
     if (editingMember(where, p.name)) {
-      return memberEditor(ctx, {
+      return memberEditor(model, {
         member: p, where,
         onReplace: (next) => patchSlice((b) => { b.properties[i] = next; }),
-        onRename: (name) => renameMember('command-definition', ctx.id, slice.name, 'property', p.name, name),
+        onRename: (name) => renameMember('command-definition', model.id, slice.name, 'property', p.name, name),
       });
     }
-    const enumType = isStringEnumType(ctx, p.propertyType) ? p.propertyType : null;
+    const enumType = isStringEnumType(model, p.propertyType) ? p.propertyType : null;
     return [
       qrow('div', {
         cls: 'field', key: 'in:' + p.name, src: 'param:' + p.name,
@@ -3254,14 +3259,14 @@ function stepTrigger(ctx, slice) {
           advanced() ? h('span', { class: 'tech' }, p.name) : null,
           h('button', { class: 'btn tiny danger', onclick: () => dropProperty(i) }, '×'))),
       enumType ? h('div', { class: 'use' },
-        h('span', { class: 'muted' }, 'can be '), ...enumMemberChips(ctx, enumType)) : null,
+        h('span', { class: 'muted' }, 'can be '), ...enumMemberChips(model, enumType)) : null,
     ];
   });
   if (!rows.length) rows.push(h('div', { class: 'empty' }, 'Takes no input.'));
 
   return step('trigger', 'Someone asks for this, providing',
     h('div', { class: 'card command' }, rows,
-      adderSlot('in', 'trigger', '+ input', () => propertyAdder(ctx, {
+      adderSlot('in', 'trigger', '+ input', () => propertyAdder(model, {
         label: '+ Add input',
         onAdd: (property) => patchSlice((b) => b.properties.push(property)),
         onRemoveLast: slice.payload.length ? () => dropProperty(slice.payload.length - 1) : undefined,
@@ -3272,8 +3277,8 @@ function stepTrigger(ctx, slice) {
 // One binding, as a card. `index` is its position in the authored
 // boundary, which is what removal needs — the rounds regroup the cards
 // but never renumber the list underneath them.
-function readCard(ctx, slice, binding, index, waitsFor) {
-  const r = readParts(ctx, slice.body, binding);
+function readCard(model, slice, binding, index, waitsFor) {
+  const r = readParts(model, slice.body, binding);
   const sentence = r.projection
     ? h('span', { class: 'sentence' },
         h('span', { class: 'chip projection', title: 'Open ' + readable(r.projection),
@@ -3290,7 +3295,7 @@ function readCard(ctx, slice, binding, index, waitsFor) {
               ]))
           : h('span', { class: 'verb' }, ' — the whole log'))
     : h('span', { class: 'sentence' },
-        entityRef(ctx, r.entity),
+        entityRef(model, r.entity),
         ' as ', h('span', { class: 'op' }, r.alias),
         h('span', { class: 'verb' }, r.plural ? ' — one for each ' : ' — identified by '),
         opRef(binding.id, null, r.from),
@@ -3325,7 +3330,7 @@ function readCard(ctx, slice, binding, index, waitsFor) {
           class: 'btn tiny danger',
           onclick: () => patchSlice((b) => { b.boundary.splice(index, 1); }),
         }, '×'))),
-    state.editBinding === binding.alias ? bindingEditor(ctx, slice, binding, index) : null,
+    state.editBinding === binding.alias ? bindingEditor(model, slice, binding, index) : null,
     // Which read this one had to wait for. The round header carries
     // the cost; this carries the reason, and stays useful once a round
     // holds more than one card.
@@ -3347,9 +3352,9 @@ function readCard(ctx, slice, binding, index, waitsFor) {
 // for, which is the same rule the model enforces. A field that could
 // not mean anything here is left off the page rather than shown and
 // then refused.
-function bindingEditor(ctx, slice, binding, index) {
+function bindingEditor(model, slice, binding, index) {
   const close = () => { state.editBinding = null; render(); };
-  const expected = binding.projection ? [] : argumentsExpected(ctx, slice.body, binding);
+  const expected = binding.projection ? [] : argumentsExpected(model, slice.body, binding);
   const draft = state.bindingDraft && state.bindingDraft.alias === binding.alias
     ? state.bindingDraft
     : (state.bindingDraft = expected.reduce(
@@ -3363,8 +3368,8 @@ function bindingEditor(ctx, slice, binding, index) {
         }
       ));
 
-  const above = operandChoicesAbove(ctx, slice, index);
-  const fanned = isFannedOut(ctx, slice.body, binding);
+  const above = operandChoicesAbove(model, slice, index);
+  const fanned = isFannedOut(model, slice.body, binding);
 
   const apply = (mutate) => patchSlice((b) => mutate(b.boundary[index]));
 
@@ -3473,7 +3478,7 @@ function beginReadAdder() {
   }, 0);
 }
 
-function stepReads(ctx, slice) {
+function stepReads(model, slice) {
   const rounds = slice.rounds || [];
   const indexOfBinding = new Map(slice.reads.map((b, i) => [b, i]));
 
@@ -3484,29 +3489,29 @@ function stepReads(ctx, slice) {
         h('span', { class: 'rule' }),
         h('span', { class: 'label' }, roundLabel(i, rounds.length))),
       ...round.map((entry) =>
-        readCard(ctx, slice, entry.binding, indexOfBinding.get(entry.binding), entry.waitsFor)),
+        readCard(model, slice, entry.binding, indexOfBinding.get(entry.binding), entry.waitsFor)),
     ]);
   } else {
-    cards = slice.reads.map((binding, i) => readCard(ctx, slice, binding, i, []));
+    cards = slice.reads.map((binding, i) => readCard(model, slice, binding, i, []));
   }
   if (!cards.length) cards.push(h('div', { class: 'empty' }, 'Reads nothing — it decides unconditionally.'));
 
   const sources = [
-    ...payloadChoices(ctx, slice.payload),
+    ...payloadChoices(model, slice.payload),
     ...slice.reads.flatMap((b) => {
       if (b.projection) return [[JSON.stringify({ alias: b.alias }), propertyWords(b.alias)]];
-      const entity = ctx['entity-definitions'][b.entity];
+      const entity = model['entity-definitions'][b.entity];
       return (entity ? entity.properties : []).map((p) =>
         [JSON.stringify({ alias: b.alias, property: p.name }),
-          entityIcon(ctx, b.entity) + ' ' + memberWords(b.alias, p.name)]);
+          entityIcon(model, b.entity) + ' ' + memberWords(b.alias, p.name)]);
     }),
   ];
-  const entityNames = Object.keys(ctx['entity-definitions']).sort();
-  const projectionNames = Object.keys(ctx['projection-definitions']).sort();
+  const entityNames = Object.keys(model['entity-definitions']).sort();
+  const projectionNames = Object.keys(model['projection-definitions']).sort();
   // Projections are offered in the same picker as entities, prefixed
   // so the two never look like the same kind of thing.
   const readables = [
-    ...entityNames.map((n) => [n, entityIcon(ctx, n) + ' ' + readable(n)]),
+    ...entityNames.map((n) => [n, entityIcon(model, n) + ' ' + readable(n)]),
     ...projectionNames.map((n) => ['projection:' + n, readable(n) + ' (projection)']),
   ];
   // Held in `state` rather than in a local: picking a projection has to
@@ -3531,7 +3536,7 @@ function stepReads(ctx, slice) {
     body.push(inlineForm({
       question: 'What kind of thing do we need to keep track of?', placeholder: 'course',
       showsIdentifier: true,
-      onSubmit: (v) => { state.newEntityAt = null; createEntity(ctx, v); },
+      onSubmit: (v) => { state.newEntityAt = null; createEntity(model, v); },
       onCancel: () => { state.newEntityAt = null; render(); },
     }));
   } else if (!entityNames.length) {
@@ -3547,7 +3552,7 @@ function stepReads(ctx, slice) {
     // A projection asks for one operand per parameter — none at all
     // when it has none, which is what a global numbering looks like.
     const chosenProjection = draft.entity.startsWith('projection:')
-      ? ctx['projection-definitions'][draft.entity.slice('projection:'.length)]
+      ? model['projection-definitions'][draft.entity.slice('projection:'.length)]
       : null;
     const parameters = chosenProjection ? (chosenProjection.parameters || []) : [];
 
@@ -3622,11 +3627,11 @@ function stepReads(ctx, slice) {
   return step('reads', 'To decide, it reads', ...body);
 }
 
-function stepRules(ctx, slice) {
+function stepRules(model, slice) {
   const cards = slice.rules.map((condition, i) => {
-    if (state.editRule === i) return h('div', { class: 'card rule' }, ruleEditor(ctx, slice, i));
+    if (state.editRule === i) return h('div', { class: 'card rule' }, ruleEditor(model, slice, i));
     const p = conditionParts(condition);
-    const quantifier = quantifierWords(ctx, slice.body, condition);
+    const quantifier = quantifierWords(model, slice.body, condition);
     return h('div', { class: 'card rule' },
       qrow('div', { cls: 'row', key: 'rule:' + i },
         h('span', { class: 'sentence' },
@@ -3655,7 +3660,7 @@ function stepRules(ctx, slice) {
   if (!cards.length) cards.push(h('div', { class: 'empty' }, 'No rules — always allowed.'));
 
   return step('rules', 'It is only allowed if', h('div', {}, cards),
-    adderSlot('rule', 'rules', '+ rule', () => h('div', { class: 'card' }, ruleEditor(ctx, slice, null))));
+    adderSlot('rule', 'rules', '+ rule', () => h('div', { class: 'card' }, ruleEditor(model, slice, null))));
 }
 
 // One condition, open for editing — the same form whether it already
@@ -3666,12 +3671,12 @@ function stepRules(ctx, slice) {
 // declared anywhere, so it has to be typeable. A unary predicate takes
 // no right-hand side at all, so that half of the form goes away when
 // one is chosen rather than being ignored.
-function ruleEditor(ctx, slice, index) {
+function ruleEditor(model, slice, index) {
   // A rule being edited always has a draft; a rule about to be created
   // grows one the first time it is painted, and keeps it across every
   // repaint a keystroke causes from then on.
   const draft = state.ruleDraft || (state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' });
-  const scope = operandChoicesAbove(ctx, slice);
+  const scope = operandChoicesAbove(model, slice);
   // A rule's left side says what it's about, and that's always
   // something read — a value the command was merely given belongs on
   // the right, compared against. Left keeps only what came off the
@@ -3679,7 +3684,7 @@ function ruleEditor(ctx, slice, index) {
   // right side's sake.
   const leftScope = scope.filter(([v]) => !('parameterName' in JSON.parse(v)));
   const leftType = resolveOperandType(draftOperand(draft, 'left'),
-    { boundary: slice.reads, commandProperties: slice.payload, ctx });
+    { boundary: slice.reads, commandProperties: slice.payload, model });
 
   // The predicate list narrows to what the left side's type supports —
   // "starts with" against an integer could never be true — and the
@@ -3702,7 +3707,7 @@ function ruleEditor(ctx, slice, index) {
   const rightScope = (rightType
     ? scope.filter(([v]) => {
         const resolved = resolveOperandType(JSON.parse(v),
-          { boundary: slice.reads, commandProperties: slice.payload, ctx });
+          { boundary: slice.reads, commandProperties: slice.payload, model });
         return resolved && resolved.propertyType === rightType.propertyType
           && resolved.isList === rightType.isList;
       })
@@ -3713,7 +3718,7 @@ function ruleEditor(ctx, slice, index) {
   // shipped" through, which nothing could ever satisfy.
   const leftOperand = draftOperand(draft, 'left');
   const leftPropertyName = leftOperand && (leftOperand.property || leftOperand.parameterName);
-  const enumMembers = leftType ? enumMembersFor(ctx, leftType.propertyType) : null;
+  const enumMembers = leftType ? enumMembersFor(model, leftType.propertyType) : null;
   const enums = (enumMembers && rightType && !rightType.isList
     && rightType.propertyType === leftType.propertyType)
     ? enumMembers.map((m) =>
@@ -3771,7 +3776,7 @@ function ruleEditor(ctx, slice, index) {
     h('button', { class: 'btn ghost tiny', onclick: close }, 'Cancel'));
 }
 
-function stepEmits(ctx, slice) {
+function stepEmits(model, slice) {
   const cards = slice.emits.map(({ emission, event }, i) => {
     const open = state.openEvent === emission.name;
     const params = event ? (event.properties || []) : [];
@@ -3783,8 +3788,8 @@ function stepEmits(ctx, slice) {
     // of this command's values fills which of the event's fields.
     return h('div', { class: 'card event' },
       qrow('div', { cls: 'row', key: 'emit:' + emission.name },
-        event ? eventRef(ctx, emission.name)
-          : h('span', { class: 'chip event' }, h('i', { class: 'ic' }, eventIcon(ctx, emission.name)), readable(emission.name)),
+        event ? eventRef(model, emission.name)
+          : h('span', { class: 'chip event' }, h('i', { class: 'ic' }, eventIcon(model, emission.name)), readable(emission.name)),
         h('span', { class: 'muted tiny' }, params.length + ' field' + (params.length === 1 ? '' : 's')),
         h('span', { class: 'grow' }),
         reveal(
@@ -3799,11 +3804,11 @@ function stepEmits(ctx, slice) {
               + 'page once no command records it.',
             onclick: () => patchSlice((b) => { b.publishes.splice(i, 1); }),
           }, '×'))),
-      open ? eventFields(ctx, emission, event) : null);
+      open ? eventFields(model, emission, event) : null);
   });
   if (!cards.length) cards.push(h('div', { class: 'empty' }, 'Records nothing yet.'));
 
-  const existing = Object.keys(ctx['event-definitions']).sort()
+  const existing = Object.keys(model['event-definitions']).sort()
     .filter((n) => !slice.emits.some((e) => e.emission.name === n));
   let chosen = existing[0] || '';
 
@@ -3816,8 +3821,8 @@ function stepEmits(ctx, slice) {
         const name = toPascal(v);
         state.newEntityAt = null;
         run(() => {
-          if (!activeContext()['event-definitions'][name]) {
-            addDefinition('event-definition', ctx.id, name, { properties: [] });
+          if (!activeModel()['event-definitions'][name]) {
+            addDefinition('event-definition', model.id, name, { properties: [] });
           }
           patchSlice((b) => b.publishes.push({ name, parameters: {} }));
           state.openEvent = name;
@@ -3865,8 +3870,8 @@ function stepEmits(ctx, slice) {
 // script, and a textual pass over an unparsed language would sooner or
 // later rewrite a comment or a string literal. So the rename goes
 // through and this says which scripts to go and read.
-function warnScripted(ctx, eventName) {
-  const scripted = scriptedHandlersOf(ctx, eventName);
+function warnScripted(model, eventName) {
+  const scripted = scriptedHandlersOf(model, eventName);
   if (!scripted.length) return;
   toast(`Renamed. ${scripted.join(', ')} handle${scripted.length === 1 ? 's' : ''} `
     + `${readable(eventName)} in code, which was not rewritten — check ${
@@ -3879,10 +3884,10 @@ function warnScripted(ctx, eventName) {
 // before `removeEventField` cleaned up after itself; swept here, on
 // every payload edit, so a leftover like that never blocks removing the
 // value it still, invisibly, claimed to use.
-function pruneDanglingEmissionParameters(ctx, body) {
+function pruneDanglingEmissionParameters(model, body) {
   for (const emission of body.publishes || []) {
     if (!emission.parameters) continue;
-    const eventDef = ctx['event-definitions'][emission.name];
+    const eventDef = model['event-definitions'][emission.name];
     const known = new Set((eventDef ? eventDef.properties : []).map((q) => q.name));
     for (const key of Object.keys(emission.parameters)) {
       if (!known.has(key)) delete emission.parameters[key];
@@ -3898,13 +3903,13 @@ function pruneDanglingEmissionParameters(ctx, body) {
 // still shows a field for it to belong to. Left in place, it keeps
 // "using" that value forever, which is what later refuses to let the
 // value itself be removed for a reason no longer visible anywhere.
-function removeEventField(ctx, eventName, index, propertyName) {
+function removeEventField(model, eventName, index, propertyName) {
   run(() => {
-    const eventBody = deepClone(activeContext()['event-definitions'][eventName]);
+    const eventBody = deepClone(activeModel()['event-definitions'][eventName]);
     eventBody.properties.splice(index, 1);
-    updateDefinition('event-definition', ctx.id, eventName, eventBody);
+    updateDefinition('event-definition', model.id, eventName, eventBody);
 
-    for (const [name, body] of Object.entries(activeContext()['command-definitions'])) {
+    for (const [name, body] of Object.entries(activeModel()['command-definitions'])) {
       const bound = (body.publishes || [])
         .some((e) => e.name === eventName && e.parameters && propertyName in e.parameters);
       if (!bound) continue;
@@ -3912,7 +3917,7 @@ function removeEventField(ctx, eventName, index, propertyName) {
       for (const e of next.publishes || []) {
         if (e.name === eventName && e.parameters) delete e.parameters[propertyName];
       }
-      updateDefinition('command-definition', ctx.id, name, next);
+      updateDefinition('command-definition', model.id, name, next);
     }
   });
 }
@@ -3925,9 +3930,9 @@ function removeEventField(ctx, eventName, index, propertyName) {
 // This stays specific to *this* binding for the same reason
 // `copyFromCommand` below has to: only this command knows what it was
 // given.
-function eventFields(ctx, emission, event) {
+function eventFields(model, emission, event) {
   if (!event) return h('div', { class: 'fields empty' }, 'This event no longer exists.');
-  const command = activeContext()['command-definitions'][state.slice];
+  const command = activeModel()['command-definitions'][state.slice];
   const boundary = command.boundary || [];
   const commandProperties = command.properties || [];
   const options = [
@@ -3939,8 +3944,8 @@ function eventFields(ctx, emission, event) {
       if (b.projection) {
         return [[JSON.stringify({ alias: b.alias }), propertyWords(b.alias)]];
       }
-      const entity = ctx['entity-definitions'][b.entity];
-      const icon = entityIcon(ctx, b.entity) + ' ';
+      const entity = model['entity-definitions'][b.entity];
+      const icon = entityIcon(model, b.entity) + ' ';
       const props = (entity ? entity.properties : []).map((q) =>
         [JSON.stringify({ alias: b.alias, property: q.name }), icon + memberWords(b.alias, q.name)]);
       // An alias identified straight off a payload parameter already
@@ -3961,7 +3966,7 @@ function eventFields(ctx, emission, event) {
     // Only options whose resolved type actually matches this field are
     // offered — a field typed `StudentId` has no use for a capacity.
     const fieldOptions = options.filter(([v]) => {
-      const resolved = resolveOperandType(JSON.parse(v), { boundary, commandProperties, ctx });
+      const resolved = resolveOperandType(JSON.parse(v), { boundary, commandProperties, model });
       return resolved && resolved.propertyType === p.propertyType && resolved.isList === !!p.isList;
     });
     return h('div', { class: 'field', 'data-src': 'evprop:' + emission.name + '.' + p.name },
@@ -4024,7 +4029,7 @@ function eventFields(ctx, emission, event) {
       }, 'Rename, retype or add fields on ' + readable(emission.name) + ' →')));
 }
 
-function stepChanges(ctx, slice) {
+function stepChanges(model, slice) {
   const cards = [];
   for (const { emission, effects } of slice.emits) {
     const rows = effects.map((effect) => {
@@ -4037,7 +4042,7 @@ function stepChanges(ctx, slice) {
         key: 'chg:' + emission.name + ':' + effect.entity + '.' + effect.property.name,
       },
         h('span', { class: 'sentence' },
-          entityRef(ctx, effect.entity, { cls: 'op ent', text: p.subject }), ' ',
+          entityRef(model, effect.entity, { cls: 'op ent', text: p.subject }), ' ',
           h('span', { class: 'verb' }, p.verb), ' ',
           opRef(effect.handler.value, emission.name, p.object)),
         h('span', { class: 'grow' }),
@@ -4065,28 +4070,28 @@ function stepChanges(ctx, slice) {
     });
     cards.push(h('div', { class: 'card entity' },
       h('div', { class: 'row' }, h('span', { class: 'chip event' },
-          h('i', { class: 'ic' }, eventIcon(ctx, emission.name)), readable(emission.name)),
+          h('i', { class: 'ic' }, eventIcon(model, emission.name)), readable(emission.name)),
         h('span', { class: 'muted tiny' }, 'changes')),
       h('div', { style: 'margin-top:6px' },
         rows.length ? rows : h('div', { class: 'empty' }, 'Changes nothing we know.')),
-      changeAdder(ctx, emission.name)));
+      changeAdder(model, emission.name)));
   }
   if (!cards.length) cards.push(h('div', { class: 'empty' }, 'Nothing to change until it records something.'));
   return step('changes', 'Which changes what we know', h('div', {}, cards));
 }
 
-function changeAdder(ctx, eventName) {
-  const event = ctx['event-definitions'][eventName];
+function changeAdder(model, eventName) {
+  const event = model['event-definitions'][eventName];
 
   if (state.newEntityAt === 'changes:' + eventName) {
     return inlineForm({
       question: 'What kind of thing do we need to keep track of?', placeholder: 'course',
       showsIdentifier: true,
-      onSubmit: (v) => { state.newEntityAt = null; createEntity(ctx, v); },
+      onSubmit: (v) => { state.newEntityAt = null; createEntity(model, v); },
       onCancel: () => { state.newEntityAt = null; render(); },
     });
   }
-  if (!Object.keys(ctx['entity-definitions']).length) {
+  if (!Object.keys(model['entity-definitions']).length) {
     return h('div', { class: 'adder' },
       h('span', { class: 'muted tiny' }, 'Nothing to change yet.'),
       h('button', {
@@ -4099,10 +4104,10 @@ function changeAdder(ctx, eventName) {
   // operation and an operand, and a scripted property takes neither.
   // Its handlers are edited where its code is.
   const targets = [
-    ...Object.entries(ctx['entity-definitions']).flatMap(([name, entity]) =>
+    ...Object.entries(model['entity-definitions']).flatMap(([name, entity]) =>
       (entity.properties || []).filter((p) => !p.script).map((p) =>
         [JSON.stringify([name, p.name]),
-          `${entityIcon(ctx, name)} ${readable(name)} · ${propertyWords(p.name)}`])),
+          `${entityIcon(model, name)} ${readable(name)} · ${propertyWords(p.name)}`])),
     [NEW, '+ New property…'],
   ];
   // The draft outlives a repaint, which a typed literal needs: the
@@ -4124,9 +4129,9 @@ function changeAdder(ctx, eventName) {
   const [targetEntity, targetPropertyName] =
     draft.target && draft.target !== NEW ? JSON.parse(draft.target) : [null, null];
   const targetProperty = targetEntity
-    ? (ctx['entity-definitions'][targetEntity].properties || []).find((p) => p.name === targetPropertyName)
+    ? (model['entity-definitions'][targetEntity].properties || []).find((p) => p.name === targetPropertyName)
     : null;
-  const targetEnumMembers = targetProperty ? enumMembersFor(ctx, targetProperty.propertyType) : null;
+  const targetEnumMembers = targetProperty ? enumMembersFor(model, targetProperty.propertyType) : null;
   const values = [
     ...(event ? event.properties : []).flatMap((p) => [
       [JSON.stringify({ eventProperty: p.name }), "the event's " + propertyWords(p.name)],
@@ -4176,9 +4181,9 @@ function changeAdder(ctx, eventName) {
       ...operandPicker(values, draft, 'value', { allowLiteral: !targetEnumMembers }),
       h('button', { class: 'btn', onclick: submitChange }, '+ Record a change')))];
 
-  if (state.addingProp && state.addingProp.eventName === eventName) rows.push(newPropertyForm(ctx));
+  if (state.addingProp && state.addingProp.eventName === eventName) rows.push(newPropertyForm(model));
   if (state.addingMember && state.addingMember.eventName === eventName) {
-    rows.push(addEnumMemberForm(ctx, state.addingMember.type));
+    rows.push(addEnumMemberForm(model, state.addingMember.type));
   }
   return h('div', {}, rows);
 }
@@ -4189,7 +4194,7 @@ function changeAdder(ctx, eventName) {
 // opens it pre-filled to edit that handler in place rather than add a
 // new one; the event is fixed then, since changing it would leave the
 // original handler behind rather than move it.
-function entityHandlerAdder(ctx, entityName, property, existing) {
+function entityHandlerAdder(model, entityName, property, existing) {
   const key = entityName + '.' + property.name;
   const draft = state.entityHandlerDraft && state.entityHandlerDraft.key === key
     ? state.entityHandlerDraft
@@ -4199,15 +4204,15 @@ function entityHandlerAdder(ctx, entityName, property, existing) {
 
   // Only events that actually carry a tag for this entity — anything
   // else could never identify one of its instances.
-  const eventNames = Object.keys(ctx['event-definitions'])
-    .filter((n) => (ctx['event-definitions'][n].properties || [])
-      .some((p) => idLeavesOfType(ctx, p.propertyType)
-        .some((leaf) => entityOfIdType(ctx, leaf.identifierType) === entityName)))
+  const eventNames = Object.keys(model['event-definitions'])
+    .filter((n) => (model['event-definitions'][n].properties || [])
+      .some((p) => idLeavesOfType(model, p.propertyType)
+        .some((leaf) => entityOfIdType(model, leaf.identifierType) === entityName)))
     .filter((n) => existing || !(property.handlers || []).some((h) => h.event === n))
     .sort();
 
   const chosenEventName = existing ? existing.event : draft.event;
-  const chosenEvent = ctx['event-definitions'][chosenEventName];
+  const chosenEvent = model['event-definitions'][chosenEventName];
   const values = [
     ...(chosenEvent ? chosenEvent.properties : []).flatMap((p) => [
       [JSON.stringify({ eventProperty: p.name }), "the event's " + propertyWords(p.name)],
@@ -4215,17 +4220,17 @@ function entityHandlerAdder(ctx, entityName, property, existing) {
         "the one after the event's " + propertyWords(p.name)],
     ]),
     [JSON.stringify({ currentValue: true }), 'its current value'],
-    ...(enumMembersFor(ctx, property.propertyType) || [])
+    ...(enumMembersFor(model, property.propertyType) || [])
       .map((m) => [JSON.stringify({ enumMember: m }), propertyWords(property.name) + ' · ' + readable(m)]),
   ];
-  const propEnumMembers = enumMembersFor(ctx, property.propertyType);
+  const propEnumMembers = enumMembersFor(model, property.propertyType);
 
   const close = () => { state.editHandler = null; state.entityHandlerDraft = null; render(); };
 
   return h('div', { class: 'adder' },
     existing
-      ? h('span', { class: 'chip event' }, h('i', { class: 'ic' }, eventIcon(ctx, existing.event)), readable(existing.event))
-      : pick(eventNames.map((n) => [n, eventIcon(ctx, n) + ' ' + readable(n)]), draft.event,
+      ? h('span', { class: 'chip event' }, h('i', { class: 'ic' }, eventIcon(model, existing.event)), readable(existing.event))
+      : pick(eventNames.map((n) => [n, eventIcon(model, n) + ' ' + readable(n)]), draft.event,
           (v) => { draft.event = v; render(); },
           eventNames.length ? '— which event? —' : '— nothing fits this yet —'),
     pick(Object.entries(OPERATION_WORDS), draft.operation, (v) => { draft.operation = v; }),
@@ -4251,7 +4256,7 @@ function entityHandlerAdder(ctx, entityName, property, existing) {
 
 // ---------- creating things ----------
 
-function createEntity(ctx, label) {
+function createEntity(model, label) {
   const name = toPascal(label);
   if (!name) return toast('Give it a name.', true);
   // A lifecycle is not required — but almost every entity wants one, so
@@ -4261,9 +4266,9 @@ function createEntity(ctx, label) {
   // say "it exists" by recording a change, not by declaring an enum.
   const statusType = name + 'Status';
   return run(() => {
-    addDefinition('custom-type-definition', ctx.id, statusType,
+    addDefinition('custom-type-definition', model.id, statusType,
       { schema: { type: 'string', enum: [...DEFAULT_STATUSES] } });
-    addDefinition('entity-definition', ctx.id, name, {
+    addDefinition('entity-definition', model.id, name, {
       properties: [{
         name: STATUS_PROPERTY, propertyType: statusType,
         isOptional: false, isList: false,
@@ -4274,24 +4279,24 @@ function createEntity(ctx, label) {
   });
 }
 
-function newPropertyForm(ctx) {
-  let entity = Object.keys(ctx['entity-definitions'])[0] || '';
+function newPropertyForm(model) {
+  let entity = Object.keys(model['entity-definitions'])[0] || '';
   let name = '', type = 'integer', isList = false;
   return h('div', { class: 'inline-form' },
     h('div', { class: 'q' }, 'What else should we know, and about what?'),
     h('div', { class: 'adder' },
-      pick(Object.keys(ctx['entity-definitions']).sort()
-        .map((n) => [n, entityIcon(ctx, n) + ' ' + readable(n)]),
+      pick(Object.keys(model['entity-definitions']).sort()
+        .map((n) => [n, entityIcon(model, n) + ' ' + readable(n)]),
         entity, (v) => { entity = v; }),
       h('input', { type: 'text', placeholder: 'seat count', oninput: (e) => { name = e.target.value; } }),
-      pick(typeOptions(ctx), type, (v) => { type = v; }),
+      pick(typeOptions(model), type, (v) => { type = v; }),
       h('label', { class: 'tiny muted' },
         h('input', { type: 'checkbox', onchange: (e) => { isList = e.target.checked; } }), ' many'),
       h('button', {
         class: 'btn primary', onclick: () => {
           if (!name.trim()) return toast('Give it a name.', true);
           const property = { name: toCamel(name), propertyType: type, isOptional: false, isList };
-          property.initialValue = defaultInitialValue(ctx, property);
+          property.initialValue = defaultInitialValue(model, property);
           property.handlers = [];
           state.addingProp = null;
           patch('entity-definition', entity, (b) => b.properties.push(property));
@@ -4306,8 +4311,8 @@ function newPropertyForm(ctx) {
 // enum-member operand that resolves to *this* type; removing goes
 // through the same guard an ordinary drop does, and refuses while a
 // command still compares against the member.
-function enumMemberChips(ctx, typeName) {
-  const body = ctx['custom-type-definitions'][typeName];
+function enumMemberChips(model, typeName) {
+  const body = model['custom-type-definitions'][typeName];
   const members = (body && body.schema && body.schema.enum) || [];
   const where = 'member:' + typeName;
   const chips = members.map((member) => {
@@ -4319,7 +4324,7 @@ function enumMemberChips(ctx, typeName) {
           const next = toPascal(v);
           state.editMember = null;
           if (next && next !== member) {
-            run(() => renameMember('custom-type-definition', ctx.id, typeName, 'member', member, next));
+            run(() => renameMember('custom-type-definition', model.id, typeName, 'member', member, next));
           } else render();
         },
         onCancel: () => { state.editMember = null; render(); },
@@ -4332,7 +4337,7 @@ function enumMemberChips(ctx, typeName) {
       class: 'x', title: 'Remove this member',
       onclick: () => {
         if (members.length === 1) return toast('An enum needs at least one member.', true);
-        run(() => updateDefinition('custom-type-definition', ctx.id, typeName,
+        run(() => updateDefinition('custom-type-definition', model.id, typeName,
           { ...body, schema: { ...body.schema, enum: members.filter((x) => x !== member) } }));
       },
     }, '×'));
@@ -4342,7 +4347,7 @@ function enumMemberChips(ctx, typeName) {
     onclick: () => { closeForms(); state.addingMember = { type: typeName }; render(); },
   }, '+ member'));
   if (state.addingMember && state.addingMember.type === typeName && !state.addingMember.eventName) {
-    chips.push(addEnumMemberForm(ctx, typeName));
+    chips.push(addEnumMemberForm(model, typeName));
   }
   return chips;
 }
@@ -4350,8 +4355,8 @@ function enumMemberChips(ctx, typeName) {
 // The "+ New member" form, shared between the enum's own card and
 // wherever else a member is added inline (wiring a handler that sets
 // one that does not exist yet).
-function addEnumMemberForm(ctx, typeName) {
-  const body = ctx['custom-type-definitions'][typeName];
+function addEnumMemberForm(model, typeName) {
+  const body = model['custom-type-definitions'][typeName];
   const members = (body && body.schema && body.schema.enum) || [];
   return inlineForm({
     question: `What else can a ${readable(typeName)} be?`, placeholder: 'archived',
@@ -4359,7 +4364,7 @@ function addEnumMemberForm(ctx, typeName) {
     onSubmit: (v) => {
       const member = toPascal(v);
       state.addingMember = null;
-      run(() => updateDefinition('custom-type-definition', ctx.id, typeName,
+      run(() => updateDefinition('custom-type-definition', model.id, typeName,
         { ...body, schema: { ...body.schema, enum: [...members, member] } }));
     },
     onCancel: () => { state.addingMember = null; render(); },
@@ -4373,7 +4378,7 @@ function addEnumMemberForm(ctx, typeName) {
 // and the model does not parse what is typed. That is the price of the
 // escape hatch, so the panel says it outright rather than implying a
 // safety it does not have.
-function scriptPanel(ctx, entityName, property) {
+function scriptPanel(model, entityName, property) {
   const script = property.script;
   const apply = (mutate) => patch('entity-definition', entityName, (b) => {
     mutate(b.properties.find((x) => x.name === property.name));
@@ -4398,7 +4403,7 @@ function scriptPanel(ctx, entityName, property) {
 
     ...(property.handlers || []).map((handler) => h('div', { class: 'script-handler' },
       h('div', { class: 'tiny' },
-        h('span', { class: 'chip event' }, h('i', { class: 'ic' }, eventIcon(ctx, handler.event)), readable(handler.event)),
+        h('span', { class: 'chip event' }, h('i', { class: 'ic' }, eventIcon(model, handler.event)), readable(handler.event)),
         h('button', {
           class: 'btn tiny danger',
           title: 'Stop handling this event',
@@ -4419,7 +4424,7 @@ function scriptPanel(ctx, entityName, property) {
 
     h('div', { class: 'adder' },
       pick(
-        Object.keys(ctx['event-definitions']).sort()
+        Object.keys(model['event-definitions']).sort()
           .filter((e) => !(property.handlers || []).some((h2) => h2.event === e))
           .map((e) => [e, readable(e)]),
         '',
@@ -4477,7 +4482,7 @@ function tagSchemaField(name, body) {
 // from `propertyAdder` rather than extending it, since that function
 // is shared with event fields and command inputs, neither of which
 // have scripts.
-function entityPropertyAdder(ctx, entityName) {
+function entityPropertyAdder(model, entityName) {
   const draft = state.entityPropertyDraft && state.entityPropertyDraft.entity === entityName
     ? state.entityPropertyDraft
     : (state.entityPropertyDraft = {
@@ -4485,10 +4490,10 @@ function entityPropertyAdder(ctx, entityName) {
         scripted: false, initialStateText: '', handlerEvent: '', handlerCode: 'state',
       });
 
-  const eventNames = Object.keys(ctx['event-definitions'])
-    .filter((n) => (ctx['event-definitions'][n].properties || [])
-      .some((p) => idLeavesOfType(ctx, p.propertyType)
-        .some((leaf) => entityOfIdType(ctx, leaf.identifierType) === entityName)))
+  const eventNames = Object.keys(model['event-definitions'])
+    .filter((n) => (model['event-definitions'][n].properties || [])
+      .some((p) => idLeavesOfType(model, p.propertyType)
+        .some((leaf) => entityOfIdType(model, leaf.identifierType) === entityName)))
     .sort();
 
   const scriptedFields = draft.scripted ? [
@@ -4512,7 +4517,7 @@ function entityPropertyAdder(ctx, entityName) {
       type: 'text', placeholder: 'seat count', value: draft.name,
       oninput: (e) => { draft.name = e.target.value; },
     }),
-    pick(typeOptions(ctx), draft.propertyType, (v) => { draft.propertyType = v; }),
+    pick(typeOptions(model), draft.propertyType, (v) => { draft.propertyType = v; }),
     h('label', { class: 'tiny muted' },
       h('input', {
         type: 'checkbox', checked: draft.isList,
@@ -4529,7 +4534,7 @@ function entityPropertyAdder(ctx, entityName) {
         onchange: (e) => {
           draft.scripted = e.target.checked;
           if (draft.scripted && !draft.initialStateText) {
-            draft.initialStateText = JSON.stringify(defaultInitialValue(ctx,
+            draft.initialStateText = JSON.stringify(defaultInitialValue(model,
               { propertyType: draft.propertyType, isList: draft.isList, isOptional: draft.isOptional }));
           }
           render();
@@ -4551,7 +4556,7 @@ function entityPropertyAdder(ctx, entityName) {
           property.script = { initialState };
           property.handlers = [{ event: draft.handlerEvent, code: draft.handlerCode || 'state' }];
         } else {
-          property.initialValue = defaultInitialValue(ctx, property);
+          property.initialValue = defaultInitialValue(model, property);
           property.handlers = [];
         }
         state.entityPropertyDraft = null;
@@ -4560,16 +4565,16 @@ function entityPropertyAdder(ctx, entityName) {
     }, '+ Property'));
 }
 
-function renderEntity(ctx, main) {
+function renderEntity(model, main) {
   const name = state.entity;
-  const entity = ctx['entity-definitions'][name];
+  const entity = model['entity-definitions'][name];
   if (!entity) return;
   const properties = entity.properties || [];
 
   const readers = new Set();
   const writers = new Set();
   for (const property of properties) {
-    const usage = propertyUsage(ctx, name, property.name);
+    const usage = propertyUsage(model, name, property.name);
     usage.readBy.forEach((c) => readers.add(c));
     usage.changedBy.forEach((u) => writers.add(u.command));
   }
@@ -4583,7 +4588,7 @@ function renderEntity(ctx, main) {
         state.renamingEntity = null;
         if (next && next !== name) {
           run(() => {
-            renameDefinition('entity-definition', ctx.id, name, next);
+            renameDefinition('entity-definition', model.id, name, next);
             state.entity = next;
           });
         } else render();
@@ -4605,7 +4610,7 @@ function renderEntity(ctx, main) {
             state.iconPicker = open ? null : name;
             render();
           },
-        }, entityIcon(ctx, name)),
+        }, entityIcon(model, name)),
         h('div', { class: 'name' }, named(name)),
         h('span', { class: 'grow' }),
         reveal(
@@ -4616,7 +4621,7 @@ function renderEntity(ctx, main) {
           removeButton('entity:' + name, {
             label: 'Remove', title: 'Remove this entity entirely',
             onRemove: () => run(() => {
-              removeDefinition('entity-definition', ctx.id, name);
+              removeDefinition('entity-definition', model.id, name);
               state.entity = null;
             }),
           }))),
@@ -4626,15 +4631,15 @@ function renderEntity(ctx, main) {
         + `read by ${readers.size}`)));
   }
 
-  if (state.iconPicker === name) main.appendChild(iconPicker(ctx, name, entity));
+  if (state.iconPicker === name) main.appendChild(iconPicker(model, name, entity));
 
-  main.appendChild(entityTabs(ctx, name));
+  main.appendChild(entityTabs(model, name));
   if (state.entityTab === 'property-scenarios') {
-    main.appendChild(propertyScenarioPanel(ctx, name));
+    main.appendChild(propertyScenarioPanel(model, name));
     return;
   }
 
-  main.appendChild(identityBlock(ctx, name, entity));
+  main.appendChild(identityBlock(model, name, entity));
 
   const section = h('section', { class: 'esection' },
     h('h4', {}, 'What we know about each one'),
@@ -4645,15 +4650,15 @@ function renderEntity(ctx, main) {
   if (!properties.length) {
     section.appendChild(h('div', { class: 'empty' }, 'Nothing yet.'));
   }
-  for (const property of properties) section.appendChild(propertyCard(ctx, name, entity, property));
+  for (const property of properties) section.appendChild(propertyCard(model, name, entity, property));
 
   section.appendChild(adderSlot('prop:' + name, null, '+ property',
-    () => entityPropertyAdder(ctx, name)));
+    () => entityPropertyAdder(model, name)));
   main.appendChild(section);
 }
 
 // The half of an entity nobody authored: the identifier is the only
-// kind of tag a DCB context has, and nothing declared it — it comes
+// kind of tag a DCB model has, and nothing declared it — it comes
 // with being a thing at all. A lifecycle, unlike the identifier, is not
 // part of this: it is an ordinary enum property, listed below with
 // everything else a modeler chose to track.
@@ -4662,8 +4667,8 @@ function renderEntity(ctx, main) {
 // the entity — this row is a read-only pointer at it, not an editor.
 // Changing its schema, composing it, or renaming it all happen in
 // Custom Types, which is what the chip opens.
-function identityBlock(ctx, name, entity) {
-  const idType = idTypeOf(ctx, name);
+function identityBlock(model, name, entity) {
+  const idType = idTypeOf(model, name);
   const box = h('section', { class: 'ident' },
     h('h4', {}, 'Identity'),
     h('div', { class: 'muted tiny why' },
@@ -4687,7 +4692,7 @@ function identityBlock(ctx, name, entity) {
 // entry per command that publishes a handled event, so several
 // entries can share the same handler; this collapses that back down to
 // one row per event, which is what can actually be edited or removed.
-function handlerList(ctx, entityName, property, usage) {
+function handlerList(model, entityName, property, usage) {
   const byEvent = new Map();
   for (const u of usage.changedBy) byEvent.set(u.event, u);
 
@@ -4696,11 +4701,11 @@ function handlerList(ctx, entityName, property, usage) {
       && state.editHandler.entity === entityName
       && state.editHandler.property === property.name
       && state.editHandler.event === u.event;
-    if (editing) return entityHandlerAdder(ctx, entityName, property, u.handler);
+    if (editing) return entityHandlerAdder(model, entityName, property, u.handler);
     const p = effectParts({ entity: entityName, property, handler: u.handler });
     return h('div', { class: 'row' },
       h('span', { class: 'sentence' },
-        h('span', { class: 'chip event' }, h('i', { class: 'ic' }, eventIcon(ctx, u.event)), readable(u.event)), ' ',
+        h('span', { class: 'chip event' }, h('i', { class: 'ic' }, eventIcon(model, u.event)), readable(u.event)), ' ',
         h('span', { class: 'verb' }, p.verb), ' ', opRef(u.handler.value, u.event, p.object)),
       h('span', { class: 'grow' }),
       reveal(
@@ -4724,25 +4729,25 @@ function handlerList(ctx, entityName, property, usage) {
   return h('div', { class: 'handlers' },
     rows.length ? rows : h('div', {}, 'nothing moves it'),
     adderSlot('wire:' + entityName + '.' + property.name, null, '+ wire an event',
-      () => entityHandlerAdder(ctx, entityName, property)));
+      () => entityHandlerAdder(model, entityName, property)));
 }
 
 // One property: what it is called and what it holds on the first line,
 // who moves it and who reads it on the second. Two different questions,
 // so they do not share a line and fight for the room.
-function propertyCard(ctx, entityName, entity, property) {
+function propertyCard(model, entityName, entity, property) {
   const where = 'entity:' + entityName;
 
   if (editingMember(where, property.name)) {
     const index = (entity.properties || []).findIndex((p) => p.name === property.name);
-    return memberEditor(ctx, {
+    return memberEditor(model, {
       member: property, where, allow: { initialValue: true },
       onReplace: (next) => patch('entity-definition', entityName, (b) => { b.properties[index] = next; }),
-      onRename: (to) => renameMember('entity-definition', ctx.id, entityName, 'property', property.name, to),
+      onRename: (to) => renameMember('entity-definition', model.id, entityName, 'property', property.name, to),
     });
   }
 
-  const usage = propertyUsage(ctx, entityName, property.name);
+  const usage = propertyUsage(model, entityName, property.name);
   const dead = !usage.changedBy.length && !usage.readBy.length;
   const jump = (command) => h('b', {
     title: 'Open ' + readable(command),
@@ -4753,11 +4758,11 @@ function propertyCard(ctx, entityName, entity, property) {
   // A property typed with another thing's identifier is a reference to
   // that thing, so it carries that thing's mark — the same one the rail
   // and every command show it under.
-  const referenced = entityOfIdType(ctx, property.propertyType);
+  const referenced = entityOfIdType(model, property.propertyType);
   // A string-only enum gets its members editable right here, wherever a
   // property of that type is shown — the same convenience a lifecycle
   // status used to get for free, now available to any enum property.
-  const enumType = isStringEnumType(ctx, property.propertyType) ? property.propertyType : null;
+  const enumType = isStringEnumType(model, property.propertyType) ? property.propertyType : null;
 
   return h('div', { class: 'prop' + (dead ? ' dead' : '') },
     qrow('div', { cls: 'top', key: 'prop:' + entityName + '.' + property.name },
@@ -4768,7 +4773,7 @@ function propertyCard(ctx, entityName, entity, property) {
       h('span', {
         class: 'chip editable', title: 'Rename or retype this',
         onclick: () => openMember(where, property.name),
-      }, referenced ? h('i', { class: 'ic' }, entityIcon(ctx, referenced)) : null,
+      }, referenced ? h('i', { class: 'ic' }, entityIcon(model, referenced)) : null,
         readable(typeLabel(property))),
       // A scripted property stays marked on screen: a value arrived at
       // by code is a different kind of claim from one arrived at by a
@@ -4788,7 +4793,7 @@ function propertyCard(ctx, entityName, entity, property) {
           }),
         }, '×'))),
     enumType ? h('div', { class: 'use' },
-      h('span', { class: 'muted' }, 'can be '), ...enumMemberChips(ctx, enumType)) : null,
+      h('span', { class: 'muted' }, 'can be '), ...enumMemberChips(model, enumType)) : null,
     h('div', { class: 'use' },
       // A scripted property's handlers live in its own code, in
       // scriptPanel below — this list is for the declarative ones,
@@ -4797,7 +4802,7 @@ function propertyCard(ctx, entityName, entity, property) {
         ? h('div', {}, usage.changedBy.length
             ? ['moved by ', ...listed(uniq(usage.changedBy.map((u) => u.command)))]
             : 'nothing moves it')
-        : handlerList(ctx, entityName, property, usage),
+        : handlerList(model, entityName, property, usage),
       h('div', {}, usage.readBy.length
         ? ['read by ', ...listed(usage.readBy)]
         : 'nothing reads it')),
@@ -4805,7 +4810,7 @@ function propertyCard(ctx, entityName, entity, property) {
     // is the whole definition of the property, not a detail of it.
     // Advanced only — a scripted property is not something to meet
     // before the declarative ones make sense.
-    property.script && advanced() ? scriptPanel(ctx, entityName, property) : null);
+    property.script && advanced() ? scriptPanel(model, entityName, property) : null);
 }
 
 // The marks on offer. A grid rather than a text field, because the
@@ -4820,8 +4825,8 @@ const ICON_CHOICES = [
   '💡', '🎯', '🧪', '🩺', '📈', '📊', '🎵', '🎬', '⚽', '♟️',
 ];
 
-function iconPicker(ctx, name, entity) {
-  const current = entityIcon(ctx, name);
+function iconPicker(model, name, entity) {
+  const current = entityIcon(model, name);
   let typed = entity.icon || '';
   const set = (icon) => {
     state.iconPicker = null;
@@ -4862,8 +4867,8 @@ function iconPicker(ctx, name, entity) {
 // than a parameterised one — a rename or a patch call reads plainly
 // this way, and the two forms are alike by coincidence of shape, not
 // by being the same form on two collections.
-function eventIconPicker(ctx, name, event) {
-  const current = eventIcon(ctx, name);
+function eventIconPicker(model, name, event) {
+  const current = eventIcon(model, name);
   let typed = event.icon || '';
   const set = (icon) => {
     state.eventIconPicker = null;
@@ -4905,8 +4910,8 @@ function eventIconPicker(ctx, name, event) {
 // publishes (see `eventIcon`), so clearing it back to the neutral mark
 // changes that event's default too, unless the event has a mark of its
 // own already.
-function commandIconPicker(ctx, name, command) {
-  const current = commandIcon(ctx, name);
+function commandIconPicker(model, name, command) {
+  const current = commandIcon(model, name);
   let typed = command.icon || '';
   const set = (icon) => {
     state.commandIconPicker = null;
@@ -4954,7 +4959,7 @@ function commandIconPicker(ctx, name, command) {
 // Fields are offered as name-and-type only. There are no list or
 // optional controls, because a composite's fields may be neither — the
 // editor declines to ask rather than asking and then refusing.
-function renderCustomTypes(ctx, main) {
+function renderCustomTypes(model, main) {
   main.appendChild(h('header', {},
     h('div', { class: 'name' }, 'Custom types'),
     h('div', { class: 'muted small' },
@@ -4963,15 +4968,15 @@ function renderCustomTypes(ctx, main) {
       + 'with. An entity’s own derived identifier lives here too, created automatically '
       + 'alongside it, and stays pinned as a tag for as long as the entity owns it.')));
 
-  const names = Object.keys(ctx['custom-type-definitions']).sort();
+  const names = Object.keys(model['custom-type-definitions']).sort();
   if (!names.length) {
     main.appendChild(h('div', { class: 'empty' }, 'None yet.'));
   }
 
   for (const name of names) {
-    const body = ctx['custom-type-definitions'][name];
+    const body = model['custom-type-definitions'][name];
     const composite = Array.isArray(body.properties);
-    const owner = entityOfIdType(ctx, name);
+    const owner = entityOfIdType(model, name);
     const card = h('div', { class: 'ecard' });
 
     if (state.renamingType === name) {
@@ -4981,15 +4986,15 @@ function renderCustomTypes(ctx, main) {
         onSubmit: (v) => {
           const next = toPascal(v);
           state.renamingType = null;
-          if (next && next !== name) run(() => renameDefinition('custom-type-definition', ctx.id, name, next));
+          if (next && next !== name) run(() => renameDefinition('custom-type-definition', model.id, name, next));
           else render();
         },
         onCancel: () => { state.renamingType = null; render(); },
       }));
     } else {
       const tags = composite
-        ? idLeavesOfType(ctx, name).map((l) =>
-            `${readable(entityOfIdType(ctx, l.identifierType) || l.identifierType)} (from ${readable(l.field)})`)
+        ? idLeavesOfType(model, name).map((l) =>
+            `${readable(entityOfIdType(model, l.identifierType) || l.identifierType)} (from ${readable(l.field)})`)
         : [];
       card.appendChild(qrow('div', { cls: 'ehead', key: 'type:' + name },
         h('span', { class: 'chip' }, readable(name)),
@@ -4999,7 +5004,7 @@ function renderCustomTypes(ctx, main) {
         owner ? h('span', {
           class: 'chip entity', title: 'Open ' + readable(owner),
           onclick: () => openEntity(owner),
-        }, h('i', { class: 'ic' }, entityIcon(ctx, owner)), 'identifier of ' + readable(owner)) : null,
+        }, h('i', { class: 'ic' }, entityIcon(model, owner)), 'identifier of ' + readable(owner)) : null,
         tags.length
           ? h('span', { class: 'muted tiny' }, ' · tags whatever carries it: ' + tags.join(', '))
           : null,
@@ -5015,7 +5020,7 @@ function renderCustomTypes(ctx, main) {
             }, 'Remove')
           : removeButton('custom-type:' + name, {
               label: 'Remove', title: 'Remove this custom type',
-              onRemove: () => run(() => removeDefinition('custom-type-definition', ctx.id, name)),
+              onRemove: () => run(() => removeDefinition('custom-type-definition', model.id, name)),
             }))));
     }
 
@@ -5026,20 +5031,20 @@ function renderCustomTypes(ctx, main) {
         // what keeps a list of records the same length as the bindings
         // fanned out over it — so arity is not offered here.
         if (editingMember(where, field.name)) {
-          return memberEditor(ctx, {
-            member: field, where, allow: { arity: false }, types: fieldTypeOptions(ctx),
+          return memberEditor(model, {
+            member: field, where, allow: { arity: false }, types: fieldTypeOptions(model),
             onReplace: (next) => patch('custom-type-definition', name, (b) => {
               b.properties[i] = { name: next.name, propertyType: next.propertyType };
             }),
-            onRename: (to) => renameMember('custom-type-definition', ctx.id, name, 'field', field.name, to),
+            onRename: (to) => renameMember('custom-type-definition', model.id, name, 'field', field.name, to),
           });
         }
-        const cls = classifyType(ctx, field.propertyType);
+        const cls = classifyType(model, field.propertyType);
         const isId = cls.kind === 'value' && !cls.composite && cls.isTag;
         // A standalone tag-marked type has no owning entity — nothing
         // to mark it with and nothing to name in the sentence below.
         const ownerEntity = isId ? cls.ownerEntity : null;
-        const enumType = isStringEnumType(ctx, field.propertyType) ? field.propertyType : null;
+        const enumType = isStringEnumType(model, field.propertyType) ? field.propertyType : null;
         // A record field is its type — that one stays on screen even
         // here, because with it hidden the row would say nothing.
         return [
@@ -5049,11 +5054,11 @@ function renderCustomTypes(ctx, main) {
               class: (ownerEntity ? 'chip entity' : 'chip') + ' editable',
               title: 'Rename or retype this field',
               onclick: () => openMember(where, field.name),
-            }, ownerEntity ? h('i', { class: 'ic' }, entityIcon(ctx, ownerEntity)) : null,
+            }, ownerEntity ? h('i', { class: 'ic' }, entityIcon(model, ownerEntity)) : null,
               readable(field.propertyType)),
             isId ? h('span', { class: 'tiny muted' },
               ownerEntity
-                ? ('identifies a ' + entityIcon(ctx, ownerEntity) + ' ' + readable(ownerEntity)
+                ? ('identifies a ' + entityIcon(model, ownerEntity) + ' ' + readable(ownerEntity)
                   + ' — every event carrying this is tagged with it')
                 : 'a standalone tag — every event carrying this is tagged with it') : null,
             h('span', { style: 'flex:1' }),
@@ -5071,14 +5076,14 @@ function renderCustomTypes(ctx, main) {
               },
             }, '×'))),
           enumType ? h('div', { class: 'use' },
-            h('span', { class: 'muted' }, 'can be '), ...enumMemberChips(ctx, enumType)) : null,
+            h('span', { class: 'muted' }, 'can be '), ...enumMemberChips(model, enumType)) : null,
         ];
       })));
 
       let fname = '', ftype = 'string';
       card.appendChild(adderSlot('field:' + name, null, '+ field', () => h('div', { class: 'adder' },
         h('input', { type: 'text', placeholder: 'price', oninput: (e) => { fname = e.target.value; } }),
-        pick(fieldTypeOptions(ctx), ftype, (v) => { ftype = v; }),
+        pick(fieldTypeOptions(model), ftype, (v) => { ftype = v; }),
         h('button', {
           class: 'btn', onclick: () => {
             if (!fname.trim()) return toast('Give the field a name.', true);
@@ -5089,12 +5094,12 @@ function renderCustomTypes(ctx, main) {
         }, '+ Field'),
         h('span', { style: 'flex:1' }),
         h('span', { class: 'tiny muted' }, 'fields are single and required'))));
-    } else if (isStringEnumType(ctx, name)) {
+    } else if (isStringEnumType(model, name)) {
       // An enum is not a distinct form of type — it is a scalar whose
       // schema carries `enum` — so this is the same card as any other
       // scalar, just with a chip editor over that one keyword instead
       // of a raw-text view of the whole schema.
-      card.appendChild(h('div', { class: 'irow' }, ...enumMemberChips(ctx, name)));
+      card.appendChild(h('div', { class: 'irow' }, ...enumMemberChips(model, name)));
     } else {
       let text = JSON.stringify(body.schema == null ? { type: 'string' } : body.schema);
       card.appendChild(h('div', { class: 'adder' },
@@ -5107,7 +5112,7 @@ function renderCustomTypes(ctx, main) {
             let parsed;
             try { parsed = JSON.parse(text); }
             catch (e) { throw new DomainError('That is not valid JSON: ' + e.message); }
-            updateDefinition('custom-type-definition', ctx.id, name, { ...body, schema: parsed });
+            updateDefinition('custom-type-definition', model.id, name, { ...body, schema: parsed });
           }),
         }, 'Save')));
     }
@@ -5144,7 +5149,7 @@ function renderCustomTypes(ctx, main) {
         const typeName = toPascal(v);
         const form = state.newType;
         state.newType = null;
-        run(() => addDefinition('custom-type-definition', ctx.id, typeName,
+        run(() => addDefinition('custom-type-definition', model.id, typeName,
           form === 'composite'
             // A record needs a field to exist at all, so it starts with
             // one the modeler is expected to rename rather than with an
@@ -5177,10 +5182,10 @@ function renderCustomTypes(ctx, main) {
 
 // What a composite field may be typed with: anything except another
 // composite, since records do not nest.
-function fieldTypeOptions(ctx) {
-  return typeChoices(ctx)
+function fieldTypeOptions(model) {
+  return typeChoices(model)
     .filter((t) => {
-      const cls = classifyType(ctx, t);
+      const cls = classifyType(model, t);
       return !(cls.kind === 'value' && cls.composite);
     })
     .map((t) => [t, readable(t)]);
@@ -5192,7 +5197,7 @@ function fieldTypeOptions(ctx) {
 // same handlers, same operands. What replaces the owner is
 // `parameters` — the tags a command supplies when it binds one.
 // Declare none and the query carries no tag at all, which is what a
-// global numbering is, and the only tagless query in a DCB context.
+// global numbering is, and the only tagless query in a DCB model.
 //
 // Numbering is not a concept here, it is a use: a value set to the
 // *successor* of what an event carried holds the next number to issue
@@ -5207,10 +5212,10 @@ function fieldTypeOptions(ctx) {
 
 // What a projection may hold: any scalar — including an enum — but
 // never a composite, since there is no single value there to advance.
-function projectionTypeOptions(ctx) {
-  return allTypeNames(ctx)
+function projectionTypeOptions(model) {
+  return allTypeNames(model)
     .filter((t) => {
-      const cls = classifyType(ctx, t);
+      const cls = classifyType(model, t);
       if (cls.kind === 'value') return !cls.composite;
       return t === 'integer' || t === 'string';
     })
@@ -5222,17 +5227,17 @@ function projectionTypeOptions(ctx) {
 // has no single scalar schema to bottom out in — its value is a plain
 // object matching its fields — so this reads null for one, which every
 // caller here already treats as "not a number".
-function underlyingSchema(ctx, typeName) {
-  const cls = classifyType(ctx, typeName);
+function underlyingSchema(model, typeName) {
+  const cls = classifyType(model, typeName);
   if (cls.kind === 'simple') return { type: typeName };
   if (cls.kind === 'value' && !cls.composite) {
-    return ctx['custom-type-definitions'][typeName].schema || { type: 'string' };
+    return model['custom-type-definitions'][typeName].schema || { type: 'string' };
   }
   return null;
 }
 
-function projectionLiteral(ctx, valueType, text) {
-  const schema = underlyingSchema(ctx, valueType);
+function projectionLiteral(model, valueType, text) {
+  const schema = underlyingSchema(model, valueType);
   const numeric = schema && (schema.type === 'integer' || schema.type === 'number');
   if (!numeric) return text;
   const n = Number(text);
@@ -5240,7 +5245,7 @@ function projectionLiteral(ctx, valueType, text) {
 }
 
 // A projection in one sentence, for the card that is not being edited.
-function projectionWords(ctx, body) {
+function projectionWords(model, body) {
   const moves = (body.handlers || []).map((handler) => readable(handler.event)).join(', ');
   const held = `holds ${readable(body.valueType)}${body.isList ? ' (a list)' : ''}`;
   // A scripted projection has no parameters to partition by and states
@@ -5262,9 +5267,9 @@ function projectionWords(ctx, body) {
 // nothing else appears — an entity's own derived identifier as much as
 // a standalone tag-marked type, scalar or composite (through its
 // tag-marked fields) either way.
-function partitionTypeOptions(ctx) {
-  return allTypeNames(ctx)
-    .filter((t) => classifyType(ctx, t).kind === 'value' && isTagBearing(ctx, t))
+function partitionTypeOptions(model) {
+  return allTypeNames(model)
+    .filter((t) => classifyType(model, t).kind === 'value' && isTagBearing(model, t))
     .map((t) => [t, readable(t)]);
 }
 
@@ -5272,7 +5277,7 @@ function partitionTypeOptions(ctx) {
 // sense for the type it holds. `successor` is what turns a plain
 // projection into a numbering, so it is a value on this list rather
 // than a concept of its own.
-function handlerValueChoices(ctx, draft, event) {
+function handlerValueChoices(model, draft, event) {
   const properties = event ? (event.properties || []) : [];
   const matching = properties.filter(
     (p) => p.propertyType === draft.valueType && !p.isList && !p.isOptional);
@@ -5283,7 +5288,7 @@ function handlerValueChoices(ctx, draft, event) {
       `the one after ${propertyWords(p.name)}`]);
   }
   out.push([JSON.stringify({ currentValue: true }), 'its current value']);
-  const enumMembers = enumMembersFor(ctx, draft.valueType);
+  const enumMembers = enumMembersFor(model, draft.valueType);
   if (enumMembers) {
     for (const m of enumMembers) out.push([JSON.stringify({ enumMember: m }), readable(m)]);
   }
@@ -5293,18 +5298,18 @@ function handlerValueChoices(ctx, draft, event) {
 // What the parameter at this position is called in the stored
 // definition — null while a projection is still being described, and
 // null for a parameter added to the draft but not yet saved.
-function savedParameterName(ctx, draft, index) {
+function savedParameterName(model, draft, index) {
   if (!state.projDraft || state.projDraft.body !== draft) return null;
-  const stored = ctx['projection-definitions'][state.projDraft.name];
+  const stored = model['projection-definitions'][state.projDraft.name];
   const parameter = stored && (stored.parameters || [])[index];
   return parameter ? parameter.name : null;
 }
 
 // The fields of a projection, shared by the editor and the new-one
 // form. `draft` is mutated in place and only reaches the model on Save.
-function projectionFields(ctx, draft) {
-  const eventNames = Object.keys(ctx['event-definitions']).sort();
-  const partitionOptions = partitionTypeOptions(ctx);
+function projectionFields(model, draft) {
+  const eventNames = Object.keys(model['event-definitions']).sort();
+  const partitionOptions = partitionTypeOptions(model);
 
   // A scripted projection is read here and edited nowhere: this form
   // writes parameters, operations and operands, and a scripted one has
@@ -5321,7 +5326,7 @@ function projectionFields(ctx, draft) {
       h('div', { class: 'tiny muted' }, 'over ',
         h('code', {}, (draft.script.tagFilter || []).join(', ') || 'nothing')),
       ...(draft.handlers || []).map((handler) => h('div', { class: 'script-handler' },
-        h('div', { class: 'tiny' }, h('span', { class: 'chip event' }, h('i', { class: 'ic' }, eventIcon(ctx, handler.event)), readable(handler.event))),
+        h('div', { class: 'tiny' }, h('span', { class: 'chip event' }, h('i', { class: 'ic' }, eventIcon(model, handler.event)), readable(handler.event))),
         h('textarea', { class: 'mono', rows: 6, value: handler.code || '', readonly: true }))),
     ];
   }
@@ -5333,7 +5338,7 @@ function projectionFields(ctx, draft) {
   // the name this parameter currently has in the stored definition, or
   // null while the projection is still being described.
   const parameterRows = (draft.parameters || []).map((parameter, i) => {
-    const saved = savedParameterName(ctx, draft, i);
+    const saved = savedParameterName(model, draft, i);
     return h('div', { class: 'adder' },
       h('input', {
         type: 'text', value: parameter.name || '', placeholder: 'tenantId',
@@ -5347,7 +5352,7 @@ function projectionFields(ctx, draft) {
         onclick: () => {
           if (toCamel(parameter.name) === saved) return;
           run(() => {
-            renameMember('projection-definition', ctx.id, state.projDraft.name,
+            renameMember('projection-definition', model.id, state.projDraft.name,
               'parameter', saved, toCamel(parameter.name));
             state.projDraft = null;
           });
@@ -5363,11 +5368,11 @@ function projectionFields(ctx, draft) {
   });
 
   const handlerRows = (draft.handlers || []).map((handler, i) => {
-    const event = ctx['event-definitions'][handler.event];
-    const values = handlerValueChoices(ctx, draft, event);
-    const operations = operationsFor(ctx, draft);
+    const event = model['event-definitions'][handler.event];
+    const values = handlerValueChoices(model, draft, event);
+    const operations = operationsFor(model, draft);
     return h('div', { class: 'adder' },
-      pick(eventNames.map((n) => [n, eventIcon(ctx, n) + ' ' + readable(n)]), handler.event,
+      pick(eventNames.map((n) => [n, eventIcon(model, n) + ' ' + readable(n)]), handler.event,
         (v) => { handler.event = v; handler.value = ''; render(); }, '— which event? —'),
       pick(operations.map((op) => [op, op]), handler.operation,
         (v) => { handler.operation = v; render(); }, '— do what? —'),
@@ -5382,25 +5387,25 @@ function projectionFields(ctx, draft) {
       }, '×'));
   });
 
-  const enumType = isStringEnumType(ctx, draft.valueType) ? draft.valueType : null;
+  const enumType = isStringEnumType(model, draft.valueType) ? draft.valueType : null;
 
   return [
     h('div', { class: 'row' },
       h('span', { class: 'muted tiny', style: 'min-width:90px' }, 'it holds'),
-      pick(projectionTypeOptions(ctx), draft.valueType, (v) => {
+      pick(projectionTypeOptions(model), draft.valueType, (v) => {
         draft.valueType = v;
         // The value picker is scoped by type, so stale picks go with it.
         for (const handler of draft.handlers || []) handler.value = '';
         render();
       }, '— which type? —')),
     enumType ? h('div', { class: 'use' },
-      h('span', { class: 'muted' }, 'can be '), ...enumMemberChips(ctx, enumType)) : null,
+      h('span', { class: 'muted' }, 'can be '), ...enumMemberChips(model, enumType)) : null,
     h('div', { class: 'row' },
       h('span', { class: 'muted tiny', style: 'min-width:90px' }, 'starting at'),
       h('input', {
         type: 'text', value: draft.initialValue === undefined ? '' : String(draft.initialValue),
         placeholder: 'c1',
-        oninput: (e) => { draft.initialValue = projectionLiteral(ctx, draft.valueType, e.target.value); },
+        oninput: (e) => { draft.initialValue = projectionLiteral(model, draft.valueType, e.target.value); },
       }),
       h('span', { class: 'muted tiny' }, 'for a numbering, the only place a prefix is stated — c1, then c2, c3…')),
     h('div', { style: 'margin-top:8px' },
@@ -5444,8 +5449,8 @@ function projectionFields(ctx, draft) {
                 // will. Assuming the parameter's type name works
                 // directly here was the bug this replaced.
                 ? (draft.parameters || []).flatMap((p) =>
-                    idLeavesOfType(ctx, p.propertyType).map((leaf) => {
-                      const identifierType = identifierTypeOf(ctx, leaf.identifierType);
+                    idLeavesOfType(model, p.propertyType).map((leaf) => {
+                      const identifierType = identifierTypeOf(model, leaf.identifierType);
                       const placeholder = `<${p.name || '?'}${leaf.field ? '.' + leaf.field : ''}>`;
                       return identifierType ? renderTag(identifierType, placeholder)
                         : `${leaf.identifierType}:${placeholder}`;
@@ -5462,7 +5467,7 @@ function projectionFields(ctx, draft) {
   ];
 }
 
-function renderProjections(ctx, main) {
+function renderProjections(model, main) {
   main.appendChild(h('header', {},
     h('div', { class: 'name' }, 'Projections'),
     h('div', { class: 'muted small' },
@@ -5475,13 +5480,13 @@ function renderProjections(ctx, main) {
       + 'and edited on their entity’s own page.')));
 
   main.appendChild(h('h4', {}, 'Standalone projections'));
-  const names = Object.keys(ctx['projection-definitions']).sort();
+  const names = Object.keys(model['projection-definitions']).sort();
   if (!names.length && !state.newProjection) {
     main.appendChild(h('div', { class: 'empty' }, 'No projections yet.'));
   }
 
   for (const name of names) {
-    const body = ctx['projection-definitions'][name];
+    const body = model['projection-definitions'][name];
     const card = h('div', { class: 'ecard' });
     const editing = state.projDraft && state.projDraft.name === name;
 
@@ -5492,7 +5497,7 @@ function renderProjections(ctx, main) {
         onSubmit: (v) => {
           const next = toPascal(v);
           state.renamingProjection = null;
-          if (next && next !== name) run(() => renameDefinition('projection-definition', ctx.id, name, next));
+          if (next && next !== name) run(() => renameDefinition('projection-definition', model.id, name, next));
           else render();
         },
         onCancel: () => { state.renamingProjection = null; render(); },
@@ -5500,7 +5505,7 @@ function renderProjections(ctx, main) {
     } else {
       card.appendChild(qrow('div', { cls: 'ehead', key: 'projection:' + name },
         h('span', { class: 'chip projection' }, readable(name)),
-        h('span', { class: 'muted tiny' }, projectionWords(ctx, body)),
+        h('span', { class: 'muted tiny' }, projectionWords(model, body)),
         h('span', { style: 'flex:1' }),
         reveal(
           advanced() ? h('span', { class: 'tech' }, name) : null,
@@ -5518,19 +5523,19 @@ function renderProjections(ctx, main) {
           }, 'Rename'),
           removeButton('projection:' + name, {
             label: 'Remove', title: 'Remove this projection',
-            onRemove: () => run(() => removeDefinition('projection-definition', ctx.id, name)),
+            onRemove: () => run(() => removeDefinition('projection-definition', model.id, name)),
           }))));
     }
 
     if (editing) {
       const draft = state.projDraft.body;
       card.appendChild(h('div', { class: 'card projection' },
-        ...projectionFields(ctx, draft),
+        ...projectionFields(model, draft),
         h('div', { class: 'adder', style: 'margin-top:10px' },
           h('button', {
             class: 'btn primary',
             onclick: () => run(() => {
-              updateDefinition('projection-definition', ctx.id, name, draft);
+              updateDefinition('projection-definition', model.id, name, draft);
               state.projDraft = null;
             }),
           }, 'Save'),
@@ -5554,7 +5559,7 @@ function renderProjections(ctx, main) {
         type: 'text', value: draft.name, placeholder: 'course numbering',
         oninput: (e) => { draft.name = e.target.value; },
       })));
-    card.appendChild(h('div', { class: 'card projection' }, ...projectionFields(ctx, draft.body)));
+    card.appendChild(h('div', { class: 'card projection' }, ...projectionFields(model, draft.body)));
     card.appendChild(h('div', { class: 'adder', style: 'margin-top:10px' },
       h('button', {
         class: 'btn primary',
@@ -5562,7 +5567,7 @@ function renderProjections(ctx, main) {
           const projectionName = toPascal(draft.name);
           if (!projectionName) return toast('Give the projection a name.', true);
           run(() => {
-            addDefinition('projection-definition', ctx.id, projectionName, draft.body);
+            addDefinition('projection-definition', model.id, projectionName, draft.body);
             state.newProjection = null;
           });
         },
@@ -5578,7 +5583,7 @@ function renderProjections(ctx, main) {
           state.newProjection = {
             name: '',
             body: {
-              valueType: projectionTypeOptions(ctx)[0] ? projectionTypeOptions(ctx)[0][0] : 'string',
+              valueType: projectionTypeOptions(model)[0] ? projectionTypeOptions(model)[0][0] : 'string',
               initialValue: '', advancedBy: [{ event: '', property: '' }],
             },
           };
@@ -5590,14 +5595,14 @@ function renderProjections(ctx, main) {
   // Entity projections, indexed rather than edited: the entity's own
   // page already does that, and a second form editing the same stored
   // property is exactly the drift two independent editors invite.
-  const entityNames = Object.keys(ctx['entity-definitions']).sort()
-    .filter((n) => (ctx['entity-definitions'][n].properties || []).length);
+  const entityNames = Object.keys(model['entity-definitions']).sort()
+    .filter((n) => (model['entity-definitions'][n].properties || []).length);
   if (entityNames.length) {
     main.appendChild(h('h4', { style: 'margin-top:28px' }, 'Entity projections'));
     for (const entityName of entityNames) {
-      const entity = ctx['entity-definitions'][entityName];
+      const entity = model['entity-definitions'][entityName];
       main.appendChild(h('div', { class: 'ecard' },
-        h('div', { class: 'ehead' }, entityRef(ctx, entityName)),
+        h('div', { class: 'ehead' }, entityRef(model, entityName)),
         h('div', { class: 'row', style: 'flex-wrap:wrap;gap:6px;margin-top:8px' },
           (entity.properties || []).map((p) => h('span', {
             class: 'chip entity linkable', title: 'Open ' + readable(entityName) + ' to edit this',
@@ -5616,7 +5621,7 @@ function renderProjections(ctx, main) {
 // fields — is owned here; a command's own page keeps only how *it*
 // maps its own values into an already-declared field
 // (see `eventFields`).
-function renderEvents(ctx, main) {
+function renderEvents(model, main) {
   main.appendChild(h('header', {},
     h('div', { class: 'name' }, 'Events'),
     h('div', { class: 'muted small' },
@@ -5624,12 +5629,12 @@ function renderEvents(ctx, main) {
       + 'command, one, or several — and read by no projection, one, or several — which is why it '
       + 'has a page of its own rather than living on any one of theirs.')));
 
-  const names = Object.keys(ctx['event-definitions']).sort();
+  const names = Object.keys(model['event-definitions']).sort();
   if (!names.length && !state.newEvent) {
     main.appendChild(h('div', { class: 'empty' }, 'No events yet.'));
   }
 
-  for (const name of names) main.appendChild(eventCard(ctx, name));
+  for (const name of names) main.appendChild(eventCard(model, name));
 
   if (state.newEvent) {
     const draft = state.newEvent;
@@ -5649,7 +5654,7 @@ function renderEvents(ctx, main) {
           const eventName = toPascal(draft.name);
           if (!eventName) return toast('Give the event a name.', true);
           run(() => {
-            addDefinition('event-definition', ctx.id, eventName, { properties: [] });
+            addDefinition('event-definition', model.id, eventName, { properties: [] });
             state.newEvent = null;
             state.openEvent = eventName;
           });
@@ -5668,12 +5673,12 @@ function renderEvents(ctx, main) {
   }
 }
 
-function eventCard(ctx, name) {
-  const event = ctx['event-definitions'][name];
+function eventCard(model, name) {
+  const event = model['event-definitions'][name];
   const open = state.openEvent === name;
-  const publishers = publishersOf(ctx, name);
-  const subscribers = [...effectsOf(ctx, name), ...projectionsHandling(ctx, name)];
-  const scenarios = scenariosReferencingEvent(ctx, name);
+  const publishers = publishersOf(model, name);
+  const subscribers = [...effectsOf(model, name), ...projectionsHandling(model, name)];
+  const scenarios = scenariosReferencingEvent(model, name);
   const card = h('div', { class: 'ecard' });
 
   // Renaming rewrites every entity handler, every projection handler,
@@ -5688,8 +5693,8 @@ function eventCard(ctx, name) {
         state.renamingEvent = null;
         if (next && next !== name) {
           run(() => {
-            warnScripted(ctx, name);
-            renameDefinition('event-definition', ctx.id, name, next);
+            warnScripted(model, name);
+            renameDefinition('event-definition', model.id, name, next);
             if (state.openEvent === name) state.openEvent = next;
           });
         } else render();
@@ -5709,7 +5714,7 @@ function eventCard(ctx, name) {
         state.eventIconPicker = wasOpen ? null : name;
         render();
       },
-    }, eventIcon(ctx, name)),
+    }, eventIcon(model, name)),
     h('span', { class: 'chip event' }, readable(name)),
     h('span', { class: 'muted tiny' },
       (event.properties || []).length + ' field' + ((event.properties || []).length === 1 ? '' : 's')),
@@ -5728,34 +5733,34 @@ function eventCard(ctx, name) {
       }, 'Rename'),
       removeButton('event:' + name, {
         label: 'Remove', title: 'Remove this event',
-        onRemove: () => run(() => removeDefinition('event-definition', ctx.id, name)),
+        onRemove: () => run(() => removeDefinition('event-definition', model.id, name)),
       }))));
 
-  if (pickingIcon) card.appendChild(eventIconPicker(ctx, name, event));
+  if (pickingIcon) card.appendChild(eventIconPicker(model, name, event));
 
   if (open) {
     card.appendChild(h('div', { class: 'card event' },
-      eventFieldsEditor(ctx, name, event),
+      eventFieldsEditor(model, name, event),
       h('div', { class: 'refs', style: 'margin-top:12px' },
         h('div', { class: 'muted tiny' }, 'Recorded by'),
         publishers.length
           ? h('div', { class: 'row', style: 'flex-wrap:wrap;gap:6px;margin-top:4px' },
-              publishers.map((p) => commandRef(ctx, p.command)))
+              publishers.map((p) => commandRef(model, p.command)))
           : h('div', { class: 'empty tiny' }, 'no command records this yet')),
       h('div', { class: 'refs', style: 'margin-top:10px' },
         h('div', { class: 'muted tiny' }, 'Handled by'),
         subscribers.length
           ? h('div', { class: 'row', style: 'flex-wrap:wrap;gap:6px;margin-top:4px' },
               subscribers.map((s) => s.entity
-                ? entityRef(ctx, s.entity, { text: readable(s.entity) + ' · ' + propertyWords(s.property.name) })
-                : projectionRef(ctx, s.projection)))
+                ? entityRef(model, s.entity, { text: readable(s.entity) + ' · ' + propertyWords(s.property.name) })
+                : projectionRef(model, s.projection)))
           : h('div', { class: 'empty tiny' }, 'nothing reads this yet')),
       scenarios.length ? h('div', { class: 'refs', style: 'margin-top:10px' },
         h('div', { class: 'muted tiny' }, 'Referenced by'),
         h('div', { class: 'row', style: 'flex-wrap:wrap;gap:6px;margin-top:4px' },
           scenarios.map((s) => h('span', {
             class: 'chip linkable', title: 'Open this scenario',
-            onclick: () => (s.property ? goToPropertyScenario(ctx, s.key) : goToScenario(ctx, s.key)),
+            onclick: () => (s.property ? goToPropertyScenario(model, s.key) : goToScenario(model, s.key)),
           }, s.property ? propertyScenarioName(s.body, readable) : scenarioName(s.body, readable))))) : null));
   }
 
@@ -5768,7 +5773,7 @@ function eventCard(ctx, name) {
 // gathered once into a matrix — the same boundary each command's own
 // page derives one at a time (`stepConsistency`), read here across all
 // of them at once rather than one command deep.
-function renderCoupling(ctx, main) {
+function renderCoupling(model, main) {
   main.appendChild(h('header', {},
     h('div', { class: 'name' }, 'Coupling'),
     h('div', { class: 'muted small' },
@@ -5776,7 +5781,7 @@ function renderCoupling(ctx, main) {
       + 'boundary each command derives on its own page, laid out as one matrix. A filled mark '
       + 'writes the event; a ringed mark reads it back first.')));
 
-  const matrix = couplingMatrix(ctx);
+  const matrix = couplingMatrix(model);
   if (!matrix.events.length || !matrix.groups.length) {
     main.appendChild(h('div', { class: 'empty' },
       matrix.events.length ? 'No commands yet.' : 'No events yet.'));
@@ -5873,7 +5878,7 @@ function renderCoupling(ctx, main) {
     // A non-breaking space between the icon and the first word keeps
     // them on the same line — an icon stranded alone on its own line
     // is the one wrapping outcome worth avoiding.
-    const label = eventIcon(ctx, event) + ' ' + readable(event);
+    const label = eventIcon(model, event) + ' ' + readable(event);
     grid.appendChild(h('div', {
       class: 'coupling-colhead' + (clusterStartsAt(i) ? ' cluster-start' : ''),
       title: (bridge ? 'Bridge — removing this splits its cluster in two. ' : '') + 'Open ' + readable(event),
@@ -5893,7 +5898,7 @@ function renderCoupling(ctx, main) {
     row.cells.forEach((cell, i) => {
       const markClass = cell.produces && cell.consumes ? 'both'
         : cell.produces ? 'produces' : cell.consumes ? 'consumes' : null;
-      const label = eventIcon(ctx, cell.event) + ' ' + readable(cell.event);
+      const label = eventIcon(model, cell.event) + ' ' + readable(cell.event);
       const tip = !markClass ? null
         : cell.produces && cell.consumes
           ? label + ' — written here, read back via ' + cell.via.join(', ')
@@ -5913,14 +5918,14 @@ function renderCoupling(ctx, main) {
 // Every command, the rules guarding it, and what it records once they
 // all hold — the same conditions and emissions from `stepRules` and
 // `stepEmits`, read here across every command at once.
-function renderRuleMap(ctx, main) {
+function renderRuleMap(model, main) {
   main.appendChild(h('header', {},
     h('div', { class: 'name' }, 'Rule map'),
     h('div', { class: 'muted small' },
       'Every command, the rules guarding it, and what it records once they all hold — the same '
       + 'conditions and emissions from each command’s own page, gathered across all of them.')));
 
-  const groups = featureGroups(ctx).filter((g) => g.commands.length);
+  const groups = featureGroups(model).filter((g) => g.commands.length);
   if (!groups.length) {
     main.appendChild(h('div', { class: 'empty' }, 'No commands yet.'));
     return;
@@ -5929,10 +5934,10 @@ function renderRuleMap(ctx, main) {
   for (const group of groups) {
     main.appendChild(h('h3', { class: 'rulemap-feature' }, group.name));
     for (const name of group.commands) {
-      const slice = sliceOf(ctx, name);
-      const rules = slice.rules.map((condition) => ruleSentence(ctx, slice.body, condition));
+      const slice = sliceOf(model, name);
+      const rules = slice.rules.map((condition) => ruleSentence(model, slice.body, condition));
       main.appendChild(h('div', { class: 'card command rulemap-row' },
-        h('div', { class: 'rulemap-cmd' }, commandRef(ctx, name)),
+        h('div', { class: 'rulemap-cmd' }, commandRef(model, name)),
         h('div', { class: 'rulemap-arrow' }, '→'),
         h('div', { class: 'rulemap-rules' },
           rules.length
@@ -5941,7 +5946,7 @@ function renderRuleMap(ctx, main) {
         h('div', { class: 'rulemap-arrow' }, '→'),
         h('div', { class: 'rulemap-events' },
           slice.emits.length
-            ? slice.emits.map(({ emission }) => eventRef(ctx, emission.name))
+            ? slice.emits.map(({ emission }) => eventRef(model, emission.name))
             : h('div', { class: 'empty tiny' }, 'records nothing yet'))));
     }
   }
@@ -5952,23 +5957,23 @@ function renderRuleMap(ctx, main) {
 // particular command — that mapping is `eventFields`' job, on the
 // command's own page, because it is specific to that command's payload
 // and this page is not.
-function eventFieldsEditor(ctx, name, event) {
+function eventFieldsEditor(model, name, event) {
   const where = 'event:' + name;
   const rows = (event.properties || []).map((p, i) => {
     if (editingMember(where, p.name)) {
       // An event property has no initial value — nothing projects it,
       // it is simply carried.
-      return memberEditor(ctx, {
+      return memberEditor(model, {
         member: p, where,
         onReplace: (next) => patch('event-definition', name, (b) => { b.properties[i] = next; }),
         onRename: (newName) => {
-          warnScripted(ctx, name);
-          return renameMember('event-definition', ctx.id, name, 'property', p.name, newName);
+          warnScripted(model, name);
+          return renameMember('event-definition', model.id, name, 'property', p.name, newName);
         },
       });
     }
-    const enumType = isStringEnumType(ctx, p.propertyType) ? p.propertyType : null;
-    const dropField = () => removeEventField(ctx, name, i, p.name);
+    const enumType = isStringEnumType(model, p.propertyType) ? p.propertyType : null;
+    const dropField = () => removeEventField(model, name, i, p.name);
     return [
       qrow('div', {
         cls: 'field', key: 'evown:' + name + ':' + p.name,
@@ -5987,23 +5992,23 @@ function eventFieldsEditor(ctx, name, event) {
             onclick: dropField,
           }, '×'))),
       enumType ? h('div', { class: 'use' },
-        h('span', { class: 'muted' }, 'can be '), ...enumMemberChips(ctx, enumType)) : null,
+        h('span', { class: 'muted' }, 'can be '), ...enumMemberChips(model, enumType)) : null,
     ];
   });
 
   return h('div', { class: 'fields' },
     rows.length ? rows : h('div', { class: 'empty' }, 'Carries nothing yet.'),
-    adderSlot('evown:' + name, null, '+ field', () => propertyAdder(ctx, {
+    adderSlot('evown:' + name, null, '+ field', () => propertyAdder(model, {
       label: '+ Add field',
       onAdd: (property) => patch('event-definition', name, (b) => b.properties.push(property)),
       onRemoveLast: rows.length
-        ? () => removeEventField(ctx, name, event.properties.length - 1,
+        ? () => removeEventField(model, name, event.properties.length - 1,
             event.properties[event.properties.length - 1].name)
         : undefined,
     })));
 }
 
-function stepConsistency(ctx, slice) {
+function stepConsistency(model, slice) {
   // Every item is a binding, projections included — there is no
   // longer a query that arrives from outside the boundary. An item's
   // tags are ANDed with each other and with its types; the items are
@@ -6071,8 +6076,8 @@ function stepConsistency(ctx, slice) {
 
 const heldRuns = new Map();
 
-function scenarioResult(ctx, key, body) {
-  if (!scenarioTouchesScript(ctx, body)) return runScenario(ctx, body);
+function scenarioResult(model, key, body) {
+  if (!scenarioTouchesScript(model, body)) return runScenario(model, body);
   const cached = heldRuns.get(key);
   // The log length stands in for "nothing has changed since": every
   // edit to this model is an append, so a run made before one is a run
@@ -6084,8 +6089,8 @@ function scenarioResult(ctx, key, body) {
   };
 }
 
-function runHeldScenario(ctx, key, body) {
-  heldRuns.set(key, { at: loadEvents().length, result: runScenario(ctx, body) });
+function runHeldScenario(model, key, body) {
+  heldRuns.set(key, { at: loadEvents().length, result: runScenario(model, body) });
   render();
 }
 
@@ -6096,8 +6101,8 @@ const STATUS_WORDS = {
   held: ['·', 'Not run', 'Reads a script, so it runs only when asked'],
 };
 
-function scenariosOf(ctx, commandName) {
-  return Object.entries(ctx['scenario-definitions'] || {})
+function scenariosOf(model, commandName) {
+  return Object.entries(model['scenario-definitions'] || {})
     .filter(([, body]) => body.command === commandName)
     .map(([key, body]) => ({ key, body }));
 }
@@ -6107,22 +6112,22 @@ function scenariosOf(ctx, commandName) {
 // it at the end of the collection, since nothing else ever inserts
 // anywhere but there. Shared by both scenario kinds and by the "+ copy" /
 // "+ new" footer, since the move is identical either way.
-function insertAfterSibling(kind, ctxId, key, afterKey) {
-  const fresh = projectState()[ctxId];
+function insertAfterSibling(kind, modelId, key, afterKey) {
+  const fresh = projectState()[modelId];
   const order = Object.keys(fresh[DEF_COLLECTIONS[kind]]).filter((k) => k !== key);
   order.splice(order.indexOf(afterKey) + 1, 0, key);
-  reorderDefinitions(kind, ctxId, order);
+  reorderDefinitions(kind, modelId, order);
 }
 
 // Drops `fromKey` right against `toKey`'s edge — the drag gesture's
 // equivalent of the old up/down swap, against any edge rather than just
 // one neighbor at a time. Everything outside the two keys involved keeps
 // its place, the same as every other reorder here.
-function reorderScenarioByDrag(ctx, fromKey, toKey, before) {
+function reorderScenarioByDrag(model, fromKey, toKey, before) {
   if (fromKey === toKey) return;
-  const order = Object.keys(ctx['scenario-definitions']).filter((k) => k !== fromKey);
+  const order = Object.keys(model['scenario-definitions']).filter((k) => k !== fromKey);
   order.splice(order.indexOf(toKey) + (before ? 0 : 1), 0, fromKey);
-  reorderDefinitions('scenario-definition', ctx.id, order);
+  reorderDefinitions('scenario-definition', model.id, order);
 }
 
 // What each of this command's scenarios currently derives — judged
@@ -6131,9 +6136,9 @@ function reorderScenarioByDrag(ctx, fromKey, toKey, before) {
 // moment something upstream drifts. A held scenario (unrun since its last
 // edit — see `scenarioResult`) has no current derivation to read, so it
 // is judged by what it last recorded instead.
-function currentScenarioThens(ctx, commandName) {
-  return scenariosOf(ctx, commandName).map(({ key, body: scenario }) => {
-    const result = scenarioResult(ctx, key, scenario);
+function currentScenarioThens(model, commandName) {
+  return scenariosOf(model, commandName).map(({ key, body: scenario }) => {
+    const result = scenarioResult(model, key, scenario);
     return result.status === 'held' ? scenario.then : result.actual;
   }).filter(Boolean);
 }
@@ -6142,12 +6147,12 @@ function currentScenarioThens(ctx, commandName) {
 // *refusing* — the gap between a condition being present and a condition
 // being proven to matter. A condition only ever seen holding true could
 // be removed tomorrow and nothing here would notice.
-function uncoveredRules(ctx, commandName) {
-  const body = ctx['command-definitions'][commandName];
+function uncoveredRules(model, commandName) {
+  const body = model['command-definitions'][commandName];
   const conditions = (body && body.conditions) || [];
   if (!conditions.length) return [];
   const covered = new Set();
-  for (const then of currentScenarioThens(ctx, commandName)) {
+  for (const then of currentScenarioThens(model, commandName)) {
     if (then.outcome === 'rejected' && then.failedRule) covered.add(then.failedRule.index);
   }
   return conditions
@@ -6159,16 +6164,16 @@ function uncoveredRules(ctx, commandName) {
 // rule can be individually proven to refuse and the happy path still go
 // untested, which is its own gap: nothing here says the rules, taken
 // together, ever let the command through at all.
-function happyPathUntested(ctx, commandName) {
-  return !currentScenarioThens(ctx, commandName).some((then) => then.outcome === 'published');
+function happyPathUntested(model, commandName) {
+  return !currentScenarioThens(model, commandName).some((then) => then.outcome === 'published');
 }
 
 // Every scenario in the model that is not saying "current" — what
 // `problems` folds in alongside loose ends.
-function scenarioTrouble(ctx) {
+function scenarioTrouble(model) {
   const out = [];
-  for (const [key, body] of Object.entries(ctx['scenario-definitions'] || {})) {
-    const result = scenarioResult(ctx, key, body);
+  for (const [key, body] of Object.entries(model['scenario-definitions'] || {})) {
+    const result = scenarioResult(model, key, body);
     if (result.status === 'current' || result.status === 'held') continue;
     out.push({ key, body, result });
   }
@@ -6219,15 +6224,15 @@ function setAtPath(root, path, value) {
 // scenario. Read at the moment the field is used rather than the moment
 // it was drawn, so an id typed into the Given is offered in the When
 // without anything having to repaint in between.
-function identifiersInUse(ctx, body, entityName) {
+function identifiersInUse(model, body, entityName) {
   const found = new Set();
   const harvest = (values, properties) => {
     for (const property of properties || []) {
       const value = (values || {})[property.name];
       if (value === undefined || value === null) continue;
       const elements = property.isList ? (Array.isArray(value) ? value : []) : [value];
-      for (const leaf of idLeavesOfType(ctx, property.propertyType)) {
-        if (entityOfIdType(ctx, leaf.identifierType) !== entityName) continue;
+      for (const leaf of idLeavesOfType(model, property.propertyType)) {
+        if (entityOfIdType(model, leaf.identifierType) !== entityName) continue;
         for (const element of elements) {
           const held = leaf.field === null ? element : (element || {})[leaf.field];
           if (held !== undefined && held !== null && held !== '') found.add(String(held));
@@ -6236,33 +6241,33 @@ function identifiersInUse(ctx, body, entityName) {
     }
   };
   for (const step of body.given || []) {
-    harvest(step.data, (ctx['event-definitions'][step.event] || {}).properties);
+    harvest(step.data, (model['event-definitions'][step.event] || {}).properties);
   }
-  harvest((body.when || {}).arguments, (ctx['command-definitions'][body.command] || {}).properties);
+  harvest((body.when || {}).arguments, (model['command-definitions'][body.command] || {}).properties);
   return [...found].sort();
 }
 
 // One value of one declared type, at one place in the draft. Lists
 // repeat it, composites nest it, and everything else is a field with
 // the type's own vocabulary behind it.
-function valueEditor(ctx, property, path, where) {
+function valueEditor(model, property, path, where) {
   const draft = where.root;
   // A composite value's fields — whether the type is tag-bearing (an
   // entity's own derived identifier, say) or an ordinary record — are
   // one shape, `{name, propertyType}`, so the recursion below does not
   // have to know which kind it is nesting into.
-  const fields = compositeFieldsOf(ctx, property.propertyType);
+  const fields = compositeFieldsOf(model, property.propertyType);
 
   const scalar = (at) => {
     const held = atPath(draft(), at);
-    const enumMembers = enumMembersFor(ctx, property.propertyType);
+    const enumMembers = enumMembersFor(model, property.propertyType);
     if (enumMembers) {
       return h('span', { class: 'vwrap' },
         pick(enumMembers.map((m) => [m, readable(m)]),
           held === undefined || held === null ? '' : String(held),
           (v) => setAtPath(draft(), at, v), '— choose —'));
     }
-    const entity = entityOfIdType(ctx, property.propertyType);
+    const entity = entityOfIdType(model, property.propertyType);
     const listId = entity ? `sug-${++suggestionSeq}` : null;
     const options = () => where.suggest(entity);
     return h('span', { class: 'vwrap' },
@@ -6279,7 +6284,7 @@ function valueEditor(ctx, property, path, where) {
           for (const value of options()) list.appendChild(h('option', { value }));
         } : null,
         onchange: (e) => {
-          const parsed = literalOfType(ctx, property.propertyType, e.target.value);
+          const parsed = literalOfType(model, property.propertyType, e.target.value);
           if (parsed === undefined) {
             return toast('That is not a ' + readable(property.propertyType) + '.', true);
           }
@@ -6292,7 +6297,7 @@ function valueEditor(ctx, property, path, where) {
   const composite = (at) => h('span', { class: 'vgroup' },
     fields.map((field) => h('span', { class: 'vfield' },
       h('span', { class: 'vlabel' }, propertyWords(field.name)),
-      valueEditor(ctx, { ...field, isList: false }, [...at, field.name], where))));
+      valueEditor(model, { ...field, isList: false }, [...at, field.name], where))));
 
   const one = fields ? composite : scalar;
 
@@ -6321,14 +6326,14 @@ function valueEditor(ctx, property, path, where) {
 
 // The payload of one event or one command call: every property it
 // declares, in the order it declares them.
-function payloadEditor(ctx, properties, path, where) {
+function payloadEditor(model, properties, path, where) {
   if (!(properties || []).length) {
     return h('span', { class: 'muted tiny' }, 'nothing to fill in');
   }
   return h('span', { class: 'vpayload' },
     (properties || []).map((property) => h('span', { class: 'vfield' },
       h('span', { class: 'vlabel' }, propertyWords(property.name)),
-      valueEditor(ctx, property, [...path, property.name], where))));
+      valueEditor(model, property, [...path, property.name], where))));
 }
 
 // Where a payload being written lives, and what it can be helped with.
@@ -6336,17 +6341,17 @@ function payloadEditor(ctx, properties, path, where) {
 // because nothing else exists yet. The sandbox suggests the ones that
 // actually do — every instance its log has mentioned — which is a
 // stronger answer and only available because a session has a history.
-function scenarioWhere(ctx) {
+function scenarioWhere(model) {
   return {
     root: () => state.scenarioDraft.body,
-    suggest: (entity) => identifiersInUse(ctx, state.scenarioDraft.body, entity),
+    suggest: (entity) => identifiersInUse(model, state.scenarioDraft.body, entity),
   };
 }
 
-function sandboxWhere(ctx) {
+function sandboxWhere(model) {
   return {
     root: () => state.sandboxDraft,
-    suggest: (entity) => sessionInstances(ctx)
+    suggest: (entity) => sessionInstances(model)
       .filter((tag) => tag.startsWith(entity + ':'))
       .map((tag) => tag.slice(entity.length + 1)),
   };
@@ -6360,7 +6365,7 @@ function payloadText(values) {
   return entries.map(([k, v]) => `${propertyWords(k)} ${JSON.stringify(v)}`).join(', ');
 }
 
-function outcomeCard(ctx, outcome, title) {
+function outcomeCard(model, outcome, title) {
   if (!outcome) return h('div', { class: 'card' }, h('div', { class: 'empty' }, 'nothing'));
   const rule = outcome.failedRule;
   const cls = 'card ' + (outcome.outcome === 'rejected' ? 'outcome-rejected' : 'outcome-published');
@@ -6424,9 +6429,9 @@ function scenarioDropTarget(onDrop) {
   };
 }
 
-function scenarioRow(ctx, entry) {
+function scenarioRow(model, entry) {
   const { key, body } = entry;
-  const result = scenarioResult(ctx, key, body);
+  const result = scenarioResult(model, key, body);
   const [mark, word, why] = STATUS_WORDS[result.status];
   const open = state.openScenarios.has(key);
 
@@ -6445,7 +6450,7 @@ function scenarioRow(ctx, entry) {
       result.status === 'held'
         ? h('button', {
             class: 'btn tiny', title: 'Run this one now',
-            onclick: () => runHeldScenario(ctx, key, body),
+            onclick: () => runHeldScenario(model, key, body),
           }, 'Run')
         : null,
       h('span', {
@@ -6465,7 +6470,7 @@ function scenarioRow(ctx, entry) {
 
   const card = h('div', {
     class: 'scenario' + (open ? ' open' : ''),
-    ...scenarioDropTarget((from, before) => run(() => reorderScenarioByDrag(ctx, from, key, before))),
+    ...scenarioDropTarget((from, before) => run(() => reorderScenarioByDrag(model, from, key, before))),
   }, head);
 
   if (!open) return card;
@@ -6487,23 +6492,23 @@ function scenarioRow(ctx, entry) {
           h('div', { class: 'small' }, result.reason),
           h('div', { class: 'muted tiny', style: 'margin-top:6px' },
             'What it used to expect is kept below, so nothing is lost while you repair it.'),
-          outcomeCard(ctx, result.expected, 'was'))
+          outcomeCard(model, result.expected, 'was'))
       : result.status === 'drifted'
         ? h('div', { class: 'drift' },
-            outcomeCard(ctx, result.expected, 'this scenario says'),
-            outcomeCard(ctx, result.actual, 'the model now does'),
+            outcomeCard(model, result.expected, 'this scenario says'),
+            outcomeCard(model, result.actual, 'the model now does'),
             h('div', { class: 'adder' },
               h('button', {
                 class: 'btn primary',
                 title: 'Store what the model now does as what this scenario expects',
                 onclick: () => run(() => {
-                  updateDefinition('scenario-definition', ctx.id, key,
+                  updateDefinition('scenario-definition', model.id, key,
                     { ...deepClone(body), then: result.actual });
                 }),
               }, 'Accept this'),
               h('span', { class: 'muted tiny' },
                 'Nothing changes in the model — only what this scenario expects of it.')))
-        : outcomeCard(ctx, result.status === 'held' ? body.then : result.expected,
+        : outcomeCard(model, result.status === 'held' ? body.then : result.expected,
             result.status === 'held' ? 'last accepted' : null)));
   return card;
 }
@@ -6512,19 +6517,19 @@ function scenarioRow(ctx, entry) {
 // this one, each landing directly below the row it hangs from. Together
 // they cover what a bottom-of-list "+ New scenario" button used to —
 // see `scenarioPanel` for the one case nothing hangs a footer off of.
-function scenarioFooter(ctx, commandName, afterKey) {
+function scenarioFooter(model, commandName, afterKey) {
   return h('div', { class: 'sc-footer' },
     h('button', {
       class: 'btn tiny ghost', title: 'Start a new scenario, placed right after this one',
-      onclick: () => startScenario(ctx, commandName, afterKey),
+      onclick: () => startScenario(model, commandName, afterKey),
     }, '+ new'),
     h('button', {
       class: 'btn tiny ghost', title: 'Add a copy of this scenario, placed right after it, open to tweak',
       onclick: () => run(() => {
         const copyKey = generateId();
-        const copyBody = deepClone(ctx['scenario-definitions'][afterKey]);
-        addDefinition('scenario-definition', ctx.id, copyKey, copyBody);
-        insertAfterSibling('scenario-definition', ctx.id, copyKey, afterKey);
+        const copyBody = deepClone(model['scenario-definitions'][afterKey]);
+        addDefinition('scenario-definition', model.id, copyKey, copyBody);
+        insertAfterSibling('scenario-definition', model.id, copyKey, afterKey);
         closeForms();
         state.scenarioDraft = { key: copyKey, insertAfter: null, body: copyBody };
       }),
@@ -6540,7 +6545,7 @@ function editScenario(key, body) {
   render();
 }
 
-function startScenario(ctx, commandName, insertAfter) {
+function startScenario(model, commandName, insertAfter) {
   closeForms();
   state.tab = 'scenarios';
   state.scenarioDraft = {
@@ -6558,14 +6563,14 @@ function patchScenarioDraft(mutate) {
   render();
 }
 
-function scenarioEditor(ctx) {
+function scenarioEditor(model) {
   const draft = state.scenarioDraft;
   const body = draft.body;
-  const command = ctx['command-definitions'][body.command];
-  const eventNames = Object.keys(ctx['event-definitions']).sort();
+  const command = model['command-definitions'][body.command];
+  const eventNames = Object.keys(model['event-definitions']).sort();
 
   const givenRows = (body.given || []).map((step, index) => {
-    const definition = ctx['event-definitions'][step.event] || {};
+    const definition = model['event-definitions'][step.event] || {};
     return h('div', { class: 'card sc-step' },
       h('div', { class: 'row' },
         pick(eventNames.map((n) => [n, readable(n)]), step.event, (v) => patchScenarioDraft((b) => {
@@ -6576,7 +6581,7 @@ function scenarioEditor(ctx) {
           class: 'btn tiny danger',
           onclick: () => patchScenarioDraft((b) => { b.given.splice(index, 1); }),
         }, '×')),
-      payloadEditor(ctx, definition.properties, ['given', index, 'data'], scenarioWhere(ctx)));
+      payloadEditor(model, definition.properties, ['given', index, 'data'], scenarioWhere(model)));
   });
 
   return h('div', { class: 'card sc-editor' },
@@ -6598,10 +6603,10 @@ function scenarioEditor(ctx) {
     h('div', { class: 'muted tiny', style: 'margin-top:12px' }, 'When'),
     h('div', { class: 'card sc-step' },
       h('div', { class: 'row' }, h('span', { class: 'y' }, readable(body.command))),
-      payloadEditor(ctx, (command || {}).properties, ['when', 'arguments'], scenarioWhere(ctx))),
+      payloadEditor(model, (command || {}).properties, ['when', 'arguments'], scenarioWhere(model))),
 
     h('div', { class: 'adder', style: 'margin-top:14px' },
-      h('button', { class: 'btn primary', onclick: () => saveScenario(ctx) },
+      h('button', { class: 'btn primary', onclick: () => saveScenario(model) },
         draft.key ? 'Save' : 'Work out what happens'),
       h('button', {
         class: 'btn ghost',
@@ -6611,7 +6616,7 @@ function scenarioEditor(ctx) {
         ? removeButton('scenario:' + draft.key, {
             label: 'Remove', title: 'Remove this scenario. Nothing else is touched.',
             onRemove: () => run(() => {
-              removeDefinition('scenario-definition', ctx.id, draft.key);
+              removeDefinition('scenario-definition', model.id, draft.key);
               state.openScenarios.delete(draft.key);
               state.scenarioDraft = null;
             }),
@@ -6622,12 +6627,12 @@ function scenarioEditor(ctx) {
 // Deriving the Then is the save. A scenario that cannot be evaluated
 // cannot be created either — there would be nothing to freeze — and the
 // message says which part of it did not resolve.
-function saveScenario(ctx) {
+function saveScenario(model) {
   const draft = state.scenarioDraft;
   const body = deepClone(draft.body);
   let then;
   try {
-    then = deriveThen(ctx, body);
+    then = deriveThen(model, body);
   } catch (error) {
     return toast(error instanceof EvaluationError
       ? error.message
@@ -6637,10 +6642,10 @@ function saveScenario(ctx) {
   run(() => {
     const key = draft.key || generateId();
     if (draft.key) {
-      updateDefinition('scenario-definition', ctx.id, key, body);
+      updateDefinition('scenario-definition', model.id, key, body);
     } else {
-      addDefinition('scenario-definition', ctx.id, key, body);
-      if (draft.insertAfter) insertAfterSibling('scenario-definition', ctx.id, key, draft.insertAfter);
+      addDefinition('scenario-definition', model.id, key, body);
+      if (draft.insertAfter) insertAfterSibling('scenario-definition', model.id, key, draft.insertAfter);
     }
     state.scenarioDraft = null;
     state.openScenarios.add(key);
@@ -6654,9 +6659,9 @@ function saveScenario(ctx) {
 // refusing (see `uncoveredRules`). Shown ahead of the scenarios
 // themselves, since it is read before writing the scenario that would
 // close a gap.
-function coverageGapsCard(ctx, commandName) {
-  const missingRules = uncoveredRules(ctx, commandName);
-  const noHappyPath = happyPathUntested(ctx, commandName);
+function coverageGapsCard(model, commandName) {
+  const missingRules = uncoveredRules(model, commandName);
+  const noHappyPath = happyPathUntested(model, commandName);
   if (!missingRules.length && !noHappyPath) return null;
   return h('div', { class: 'card uncovered-rules' },
     noHappyPath
@@ -6669,30 +6674,30 @@ function coverageGapsCard(ctx, commandName) {
             : missingRules.length + ' rules no scenario here refuses yet')
       : null,
     missingRules.map(({ condition }) =>
-      h('div', { class: 'rulemap-rule' }, ruleSentence(ctx, ctx['command-definitions'][commandName], condition))));
+      h('div', { class: 'rulemap-rule' }, ruleSentence(model, model['command-definitions'][commandName], condition))));
 }
 
-function scenarioPanel(ctx, commandName) {
-  const entries = scenariosOf(ctx, commandName);
+function scenarioPanel(model, commandName) {
+  const entries = scenariosOf(model, commandName);
   const draft = state.scenarioDraft;
   const draftHere = !!draft && draft.body.command === commandName;
 
   const rows = [];
   for (const entry of entries) {
     if (draftHere && draft.key === entry.key) {
-      rows.push(scenarioEditor(ctx));
+      rows.push(scenarioEditor(model));
     } else {
-      rows.push(scenarioRow(ctx, entry));
-      if (!draftHere) rows.push(scenarioFooter(ctx, commandName, entry.key));
+      rows.push(scenarioRow(model, entry));
+      if (!draftHere) rows.push(scenarioFooter(model, commandName, entry.key));
     }
     if (draftHere && !draft.key && draft.insertAfter === entry.key) {
-      rows.push(scenarioEditor(ctx));
+      rows.push(scenarioEditor(model));
     }
   }
   const standaloneDraft = draftHere && !draft.key && !draft.insertAfter;
 
   return h('div', { class: 'scenarios' },
-    coverageGapsCard(ctx, commandName),
+    coverageGapsCard(model, commandName),
     rows.length ? rows : null,
     !entries.length && !standaloneDraft
       ? h('div', { class: 'blank small' },
@@ -6703,17 +6708,17 @@ function scenarioPanel(ctx, commandName) {
       : null,
     !entries.length
       ? (standaloneDraft
-          ? scenarioEditor(ctx)
+          ? scenarioEditor(model)
           : h('div', { class: 'adder' },
-              h('button', { class: 'btn primary', onclick: () => startScenario(ctx, commandName) },
+              h('button', { class: 'btn primary', onclick: () => startScenario(model, commandName) },
                 '+ New scenario')))
       : null);
 }
 
-function scenarioTabs(ctx, slice) {
-  const entries = scenariosOf(ctx, slice.name);
+function scenarioTabs(model, slice) {
+  const entries = scenariosOf(model, slice.name);
   const trouble = entries.filter((e) => {
-    const status = scenarioResult(ctx, e.key, e.body).status;
+    const status = scenarioResult(model, e.key, e.body).status;
     return status === 'drifted' || status === 'broken';
   }).length;
   const tab = (key, label, extra) => h('button', {
@@ -6748,8 +6753,8 @@ function scenarioTabs(ctx, slice) {
 
 const heldPropertyScenarioRuns = new Map();
 
-function propertyScenarioResult(ctx, key, body) {
-  if (!propertyScenarioTouchesScript(ctx, body)) return runPropertyScenario(ctx, body);
+function propertyScenarioResult(model, key, body) {
+  if (!propertyScenarioTouchesScript(model, body)) return runPropertyScenario(model, body);
   const cached = heldPropertyScenarioRuns.get(key);
   if (cached && cached.at === loadEvents().length) return cached.result;
   return {
@@ -6758,8 +6763,8 @@ function propertyScenarioResult(ctx, key, body) {
   };
 }
 
-function runHeldPropertyScenario(ctx, key, body) {
-  heldPropertyScenarioRuns.set(key, { at: loadEvents().length, result: runPropertyScenario(ctx, body) });
+function runHeldPropertyScenario(model, key, body) {
+  heldPropertyScenarioRuns.set(key, { at: loadEvents().length, result: runPropertyScenario(model, body) });
   render();
 }
 
@@ -6770,28 +6775,28 @@ const PROPERTY_SCENARIO_STATUS_WORDS = {
   held: ['·', 'Not run', 'Checks a script, so it runs only when asked'],
 };
 
-function propertyScenariosOf(ctx, entityName) {
-  return Object.entries(ctx['property-scenario-definitions'] || {})
+function propertyScenariosOf(model, entityName) {
+  return Object.entries(model['property-scenario-definitions'] || {})
     .filter(([, body]) => body.entity === entityName)
     .map(([key, body]) => ({ key, body }));
 }
 
 // The property-scenario analogue of `reorderScenarioByDrag`.
-function reorderPropertyScenarioByDrag(ctx, fromKey, toKey, before) {
+function reorderPropertyScenarioByDrag(model, fromKey, toKey, before) {
   if (fromKey === toKey) return;
-  const order = Object.keys(ctx['property-scenario-definitions']).filter((k) => k !== fromKey);
+  const order = Object.keys(model['property-scenario-definitions']).filter((k) => k !== fromKey);
   order.splice(order.indexOf(toKey) + (before ? 0 : 1), 0, fromKey);
-  reorderDefinitions('property-scenario-definition', ctx.id, order);
+  reorderDefinitions('property-scenario-definition', model.id, order);
 }
 
 // Where a property scenario's Given lives, and what it can be helped with
 // — the same identifiers-already-written suggestion Scenarios' Given
 // gets. `identifiersInUse` reads `body.given`/`body.when` generically;
 // a property scenario simply has no `when`; there is nothing to harvest.
-function specWhere(ctx) {
+function specWhere(model) {
   return {
     root: () => state.propertyScenarioDraft.body,
-    suggest: (entity) => identifiersInUse(ctx, state.propertyScenarioDraft.body, entity),
+    suggest: (entity) => identifiersInUse(model, state.propertyScenarioDraft.body, entity),
   };
 }
 
@@ -6810,9 +6815,9 @@ function entityOutcomeCard(then, title) {
       : h('div', { class: 'empty' }, 'nothing checked'));
 }
 
-function propertyScenarioRow(ctx, entry) {
+function propertyScenarioRow(model, entry) {
   const { key, body } = entry;
-  const result = propertyScenarioResult(ctx, key, body);
+  const result = propertyScenarioResult(model, key, body);
   const [mark, word, why] = PROPERTY_SCENARIO_STATUS_WORDS[result.status];
   const open = state.openPropertyScenarios.has(key);
 
@@ -6831,7 +6836,7 @@ function propertyScenarioRow(ctx, entry) {
       result.status === 'held'
         ? h('button', {
             class: 'btn tiny', title: 'Run this one now',
-            onclick: () => runHeldPropertyScenario(ctx, key, body),
+            onclick: () => runHeldPropertyScenario(model, key, body),
           }, 'Run')
         : null,
       h('span', {
@@ -6851,7 +6856,7 @@ function propertyScenarioRow(ctx, entry) {
 
   const card = h('div', {
     class: 'scenario' + (open ? ' open' : ''),
-    ...scenarioDropTarget((from, before) => run(() => reorderPropertyScenarioByDrag(ctx, from, key, before))),
+    ...scenarioDropTarget((from, before) => run(() => reorderPropertyScenarioByDrag(model, from, key, before))),
   }, head);
 
   if (!open) return card;
@@ -6881,7 +6886,7 @@ function propertyScenarioRow(ctx, entry) {
                 class: 'btn primary',
                 title: 'Store what the model now does as what this property scenario expects',
                 onclick: () => run(() => {
-                  updateDefinition('property-scenario-definition', ctx.id, key,
+                  updateDefinition('property-scenario-definition', model.id, key,
                     { ...deepClone(body), then: result.actual });
                 }),
               }, 'Accept this'),
@@ -6893,20 +6898,20 @@ function propertyScenarioRow(ctx, entry) {
 }
 
 // The property-scenario analogue of `scenarioFooter`.
-function propertyScenarioFooter(ctx, entityName, afterKey) {
+function propertyScenarioFooter(model, entityName, afterKey) {
   return h('div', { class: 'sc-footer' },
     h('button', {
       class: 'btn tiny ghost', title: 'Start a new property scenario, placed right after this one',
-      onclick: () => startPropertyScenario(ctx, entityName, afterKey),
+      onclick: () => startPropertyScenario(model, entityName, afterKey),
     }, '+ new'),
     h('button', {
       class: 'btn tiny ghost',
       title: 'Add a copy of this property scenario, placed right after it, open to tweak',
       onclick: () => run(() => {
         const copyKey = generateId();
-        const copyBody = deepClone(ctx['property-scenario-definitions'][afterKey]);
-        addDefinition('property-scenario-definition', ctx.id, copyKey, copyBody);
-        insertAfterSibling('property-scenario-definition', ctx.id, copyKey, afterKey);
+        const copyBody = deepClone(model['property-scenario-definitions'][afterKey]);
+        addDefinition('property-scenario-definition', model.id, copyKey, copyBody);
+        insertAfterSibling('property-scenario-definition', model.id, copyKey, afterKey);
         closeForms();
         state.propertyScenarioDraft = { key: copyKey, insertAfter: null, body: copyBody };
       }),
@@ -6920,7 +6925,7 @@ function editPropertyScenario(key, body) {
   render();
 }
 
-function startPropertyScenario(ctx, entityName, insertAfter) {
+function startPropertyScenario(model, entityName, insertAfter) {
   closeForms();
   state.entityTab = 'property-scenarios';
   state.propertyScenarioDraft = {
@@ -6938,14 +6943,14 @@ function patchPropertyScenarioDraft(mutate) {
   render();
 }
 
-function propertyScenarioEditor(ctx) {
+function propertyScenarioEditor(model) {
   const draft = state.propertyScenarioDraft;
   const body = draft.body;
-  const entity = ctx['entity-definitions'][body.entity];
-  const eventNames = Object.keys(ctx['event-definitions']).sort();
+  const entity = model['entity-definitions'][body.entity];
+  const eventNames = Object.keys(model['event-definitions']).sort();
 
   const givenRows = (body.given || []).map((step, index) => {
-    const definition = ctx['event-definitions'][step.event] || {};
+    const definition = model['event-definitions'][step.event] || {};
     return h('div', { class: 'card sc-step' },
       h('div', { class: 'row' },
         pick(eventNames.map((n) => [n, readable(n)]), step.event, (v) => patchPropertyScenarioDraft((b) => {
@@ -6956,7 +6961,7 @@ function propertyScenarioEditor(ctx) {
           class: 'btn tiny danger',
           onclick: () => patchPropertyScenarioDraft((b) => { b.given.splice(index, 1); }),
         }, '×')),
-      payloadEditor(ctx, definition.properties, ['given', index, 'data'], specWhere(ctx)));
+      payloadEditor(model, definition.properties, ['given', index, 'data'], specWhere(model)));
   });
 
   const properties = entity ? entity.properties : [];
@@ -6988,14 +6993,14 @@ function propertyScenarioEditor(ctx) {
 
     h('div', { class: 'muted tiny', style: 'margin-top:12px' }, 'For instance'),
     h('div', { class: 'card sc-step' },
-      valueEditor(ctx, { name: 'forInstance', propertyType: idTypeOf(ctx, body.entity), isList: false },
-        ['forInstance'], specWhere(ctx))),
+      valueEditor(model, { name: 'forInstance', propertyType: idTypeOf(model, body.entity), isList: false },
+        ['forInstance'], specWhere(model))),
 
     h('div', { class: 'muted tiny', style: 'margin-top:12px' }, 'Then, check'),
     assertRows.length ? assertRows : h('div', { class: 'empty' }, 'nothing to check yet'),
 
     h('div', { class: 'adder', style: 'margin-top:14px' },
-      h('button', { class: 'btn primary', onclick: () => savePropertyScenario(ctx) },
+      h('button', { class: 'btn primary', onclick: () => savePropertyScenario(model) },
         draft.key ? 'Save' : 'Work out what happens'),
       h('button', {
         class: 'btn ghost',
@@ -7005,7 +7010,7 @@ function propertyScenarioEditor(ctx) {
         ? removeButton('property-scenario:' + draft.key, {
             label: 'Remove', title: 'Remove this property scenario. Nothing else is touched.',
             onRemove: () => run(() => {
-              removeDefinition('property-scenario-definition', ctx.id, draft.key);
+              removeDefinition('property-scenario-definition', model.id, draft.key);
               state.openPropertyScenarios.delete(draft.key);
               state.propertyScenarioDraft = null;
             }),
@@ -7018,14 +7023,14 @@ function propertyScenarioEditor(ctx) {
 // only on the draft; the saved body keeps just their folded values,
 // under `then`, which is also what re-opening this for editing reads
 // the checked set back from.
-function savePropertyScenario(ctx) {
+function savePropertyScenario(model) {
   const draft = state.propertyScenarioDraft;
   const body = deepClone(draft.body);
   const propertyNames = body.assert || [];
   delete body.assert;
   let then;
   try {
-    then = derivePropertyScenarioThen(ctx, body, propertyNames);
+    then = derivePropertyScenarioThen(model, body, propertyNames);
   } catch (error) {
     return toast(error instanceof EvaluationError
       ? error.message
@@ -7035,31 +7040,31 @@ function savePropertyScenario(ctx) {
   run(() => {
     const key = draft.key || generateId();
     if (draft.key) {
-      updateDefinition('property-scenario-definition', ctx.id, key, body);
+      updateDefinition('property-scenario-definition', model.id, key, body);
     } else {
-      addDefinition('property-scenario-definition', ctx.id, key, body);
-      if (draft.insertAfter) insertAfterSibling('property-scenario-definition', ctx.id, key, draft.insertAfter);
+      addDefinition('property-scenario-definition', model.id, key, body);
+      if (draft.insertAfter) insertAfterSibling('property-scenario-definition', model.id, key, draft.insertAfter);
     }
     state.propertyScenarioDraft = null;
     state.openPropertyScenarios.add(key);
   });
 }
 
-function propertyScenarioPanel(ctx, entityName) {
-  const entries = propertyScenariosOf(ctx, entityName);
+function propertyScenarioPanel(model, entityName) {
+  const entries = propertyScenariosOf(model, entityName);
   const draft = state.propertyScenarioDraft;
   const draftHere = !!draft && draft.body.entity === entityName;
 
   const rows = [];
   for (const entry of entries) {
     if (draftHere && draft.key === entry.key) {
-      rows.push(propertyScenarioEditor(ctx));
+      rows.push(propertyScenarioEditor(model));
     } else {
-      rows.push(propertyScenarioRow(ctx, entry));
-      if (!draftHere) rows.push(propertyScenarioFooter(ctx, entityName, entry.key));
+      rows.push(propertyScenarioRow(model, entry));
+      if (!draftHere) rows.push(propertyScenarioFooter(model, entityName, entry.key));
     }
     if (draftHere && !draft.key && draft.insertAfter === entry.key) {
-      rows.push(propertyScenarioEditor(ctx));
+      rows.push(propertyScenarioEditor(model));
     }
   }
   const standaloneDraft = draftHere && !draft.key && !draft.insertAfter;
@@ -7075,17 +7080,17 @@ function propertyScenarioPanel(ctx, entityName) {
       : null,
     !entries.length
       ? (standaloneDraft
-          ? propertyScenarioEditor(ctx)
+          ? propertyScenarioEditor(model)
           : h('div', { class: 'adder' },
-              h('button', { class: 'btn primary', onclick: () => startPropertyScenario(ctx, entityName) },
+              h('button', { class: 'btn primary', onclick: () => startPropertyScenario(model, entityName) },
                 '+ New property scenario')))
       : null);
 }
 
-function entityTabs(ctx, entityName) {
-  const entries = propertyScenariosOf(ctx, entityName);
+function entityTabs(model, entityName) {
+  const entries = propertyScenariosOf(model, entityName);
   const trouble = entries.filter((e) => {
-    const status = propertyScenarioResult(ctx, e.key, e.body).status;
+    const status = propertyScenarioResult(model, e.key, e.body).status;
     return status === 'drifted' || status === 'broken';
   }).length;
   const tab = (key, label, extra) => h('button', {
@@ -7161,10 +7166,10 @@ function sessionStepAt(position) {
 
 // Drives a command against everything recorded so far. A refusal
 // changes nothing — not the log, not the position.
-function sessionRun(ctx, commandName, args) {
+function sessionRun(model, commandName, args) {
   let result;
   try {
-    result = evaluateCommand(ctx, session.log, commandName, args);
+    result = evaluateCommand(model, session.log, commandName, args);
   } catch (error) {
     if (error instanceof EvaluationError) return toast(error.message, true);
     throw error;
@@ -7184,10 +7189,10 @@ function sessionRun(ctx, commandName, args) {
 // Every instance any visible event is about, as `Entity:id`. Tags are
 // the only thing that says so, which is why this reads them rather
 // than the payloads.
-function sessionInstances(ctx) {
+function sessionInstances(model) {
   const found = new Set();
   for (const event of sessionVisible()) {
-    for (const tag of tagsOfEvent(ctx, event.type, event.data)) found.add(tag);
+    for (const tag of tagsOfEvent(model, event.type, event.data)) found.add(tag);
   }
   return [...found].sort();
 }
@@ -7195,9 +7200,9 @@ function sessionInstances(ctx) {
 // One instance, projected over what is visible. A scripted property is
 // read through a binding that supplies its arguments, and there is no
 // binding here — so it says so rather than guessing at them.
-function sessionInstanceState(ctx, tag) {
+function sessionInstanceState(model, tag) {
   const [entityName, id] = [tag.slice(0, tag.indexOf(':')), tag.slice(tag.indexOf(':') + 1)];
-  const entity = ctx['entity-definitions'][entityName];
+  const entity = model['entity-definitions'][entityName];
   if (!entity) return null;
   const log = sessionVisible();
   return {
@@ -7210,7 +7215,7 @@ function sessionInstanceState(ctx, tag) {
       try {
         return {
           name: property.name,
-          value: foldEntityProperty(ctx, log, entityName, property.name, id),
+          value: foldEntityProperty(model, log, entityName, property.name, id),
         };
       } catch (error) {
         if (error instanceof EvaluationError) return { name: property.name, error: error.message };
@@ -7223,8 +7228,8 @@ function sessionInstanceState(ctx, tag) {
 
 // ---------- driving one ----------
 
-function sandboxDriver(ctx) {
-  const names = Object.keys(ctx['command-definitions']);
+function sandboxDriver(model) {
+  const names = Object.keys(model['command-definitions']);
   if (!names.length) return null;
   if (!state.sandboxDraft) {
     return h('div', { class: 'adder' },
@@ -7238,19 +7243,19 @@ function sandboxDriver(ctx) {
   }
 
   const draft = state.sandboxDraft;
-  const command = ctx['command-definitions'][draft.command];
+  const command = model['command-definitions'][draft.command];
   return h('div', { class: 'card sc-editor' },
     h('div', { class: 'row' },
-      pick(names.map((n) => [n, readable(n)]), draft.command, (v) => {
+      pick(names.map((n) => [n, commandIcon(model, n) + ' ' + readable(n)]), draft.command, (v) => {
         state.sandboxDraft = { command: v, arguments: {} };
         render();
       }),
       h('span', { class: 'grow' })),
-    payloadEditor(ctx, (command || {}).properties, ['arguments'], sandboxWhere(ctx)),
+    payloadEditor(model, (command || {}).properties, ['arguments'], sandboxWhere(model)),
     h('div', { class: 'adder', style: 'margin-top:12px' },
       h('button', {
         class: 'btn primary',
-        onclick: () => sessionRun(ctx, draft.command, draft.arguments),
+        onclick: () => sessionRun(model, draft.command, draft.arguments),
       }, 'Do it'),
       h('button', {
         class: 'btn ghost',
@@ -7272,7 +7277,7 @@ function scrubToPointer(e, goTo) {
   if (step) goTo(Number(step.dataset.index) + 1);
 }
 
-function sandboxTimeline(ctx) {
+function sandboxTimeline(model) {
   const total = session.log.length;
   const position = sessionPosition();
   const goTo = (next) => {
@@ -7308,7 +7313,7 @@ function sandboxTimeline(ctx) {
       title: readable(event.type) + (step ? ' — from ' + readable(step.command) : '')
         + (Object.keys(event.data || {}).length ? ' · ' + payloadText(event.data) : ''),
       onclick: () => goTo(i + 1),
-    }, eventIcon(ctx, event.type)));
+    }, eventIcon(model, event.type)));
   });
   if (position === total) items.push(h('span', { class: 'eplayhead' }));
 
@@ -7352,7 +7357,7 @@ function sandboxTimeline(ctx) {
 // script that loops forever is undone by reloading the page — where a
 // stored scenario running on load would hang again on the way back in,
 // and there would be no way to reach the script to fix it.
-function sandboxDecision(ctx) {
+function sandboxDecision(model) {
   const position = sessionPosition();
   const step = sessionStepAt(position);
   if (!step) {
@@ -7362,7 +7367,7 @@ function sandboxDecision(ctx) {
 
   let result;
   try {
-    result = evaluateCommand(ctx, session.log.slice(0, step.from), step.command, step.args);
+    result = evaluateCommand(model, session.log.slice(0, step.from), step.command, step.args);
   } catch (error) {
     if (!(error instanceof EvaluationError)) throw error;
     return h('div', { class: 'card', style: 'border-color:var(--danger)' },
@@ -7414,8 +7419,8 @@ function pinButton(tag) {
 
 // One instance's full current state, as a card — the same rendering
 // whether it got here by being pinned or by having been read.
-function instanceStateCard(ctx, tag) {
-  const held = sessionInstanceState(ctx, tag);
+function instanceStateCard(model, tag) {
+  const held = sessionInstanceState(model, tag);
   if (!held) {
     return h('div', { class: 'card' },
       h('div', { class: 'sc-line' }, pinButton(tag),
@@ -7434,13 +7439,13 @@ function instanceStateCard(ctx, tag) {
           : h('span', {}, JSON.stringify(property.value)))));
 }
 
-function sandboxWatched(ctx) {
+function sandboxWatched(model) {
   if (!session.pinned.length) return null;
   return step('scenarios', 'Watched',
     h('div', { class: 'muted small' },
       'Followed wherever you are on the timeline, whether or not the step you are looking at '
       + 'read them.'),
-    session.pinned.map((tag) => instanceStateCard(ctx, tag)));
+    session.pinned.map((tag) => instanceStateCard(model, tag)));
 }
 
 // ---------- what the involved decision models look like now ----------
@@ -7453,7 +7458,7 @@ function sandboxWatched(ctx) {
 // enumerate, so its "now" is just a fresh fold — gotten by deciding the
 // same command again against the log as it stands here, which is also
 // the only way to recover the argument values it was folded with.
-function sandboxNow(ctx) {
+function sandboxNow(model) {
   const position = sessionPosition();
   const step = sessionStepAt(position);
   if (!step) {
@@ -7463,7 +7468,7 @@ function sandboxNow(ctx) {
 
   let then;
   try {
-    then = evaluateCommand(ctx, session.log.slice(0, step.from), step.command, step.args);
+    then = evaluateCommand(model, session.log.slice(0, step.from), step.command, step.args);
   } catch (error) {
     if (!(error instanceof EvaluationError)) throw error;
     return h('div', { class: 'card' },
@@ -7478,7 +7483,7 @@ function sandboxNow(ctx) {
   let now = null;
   let nowError = null;
   try {
-    now = evaluateCommand(ctx, sessionVisible(), step.command, step.args);
+    now = evaluateCommand(model, sessionVisible(), step.command, step.args);
   } catch (error) {
     if (!(error instanceof EvaluationError)) throw error;
     nowError = error.message;
@@ -7497,12 +7502,12 @@ function sandboxNow(ctx) {
             alias + ' — ' + readable(read.entity)
               + (read.fanned ? ` (${read.instances.length})` : '')),
           read.instances.map((instance) =>
-            instanceStateCard(ctx, read.entity + ':' + instance.id)))));
+            instanceStateCard(model, read.entity + ':' + instance.id)))));
 }
 
 // ---------- the page ----------
 
-function renderSandbox(ctx, main) {
+function renderSandbox(model, main) {
   main.appendChild(h('header', {},
     qrow('div', { cls: 'row', key: 'sandbox' },
       h('div', { class: 'name' }, 'Sandbox'),
@@ -7519,25 +7524,25 @@ function renderSandbox(ctx, main) {
       'Drive the commands and watch what happens. Nothing here is kept — it is gone when this '
       + 'page reloads, and the model itself is never written to.')));
 
-  main.appendChild(step('trigger', 'Do something', sandboxDriver(ctx)
+  main.appendChild(step('trigger', 'Do something', sandboxDriver(model)
     || h('div', { class: 'empty' }, 'This model has no commands to drive yet.')));
 
   if (session.log.length) {
     main.appendChild(step('emits', 'What has happened',
-      sandboxTimeline(ctx),
+      sandboxTimeline(model),
       h('div', { class: 'card sc-line', style: 'margin-top:8px' },
         sessionVisible().length
           ? sessionVisible().map((event, index) => h('div', {
               class: index === sessionPosition() - 1 ? 'lit' : '',
             },
-              h('span', { class: 'ic' }, eventIcon(ctx, event.type)),
+              h('span', { class: 'ic' }, eventIcon(model, event.type)),
               h('span', { class: 'y' }, readable(event.type)),
               h('span', { class: 'k' }, '  ' + payloadText(event.data))))
           : h('div', { class: 'empty' }, 'nothing yet'))));
 
-    main.appendChild(step('reads', 'What it read to decide', sandboxDecision(ctx)));
-    main.appendChild(step('now', 'What it looks like now', sandboxNow(ctx)));
-    const watched = sandboxWatched(ctx);
+    main.appendChild(step('reads', 'What it read to decide', sandboxDecision(model)));
+    main.appendChild(step('now', 'What it looks like now', sandboxNow(model)));
+    const watched = sandboxWatched(model);
     if (watched) main.appendChild(watched);
   }
 }
@@ -7561,16 +7566,16 @@ window.addEventListener('keydown', (e) => {
   if (state.settings) { state.settings = false; return render(); }
   if (state.models) {
     state.models = false;
-    state.newContext = false; state.loadingUrl = false; state.loadingJson = false;
+    state.newModel = false; state.loadingUrl = false; state.loadingJson = false;
     return render();
   }
   // The splash's own naming form — reachable without the Models modal
   // ever opening.
-  if (state.newContext) { state.newContext = false; return render(); }
+  if (state.newModel) { state.newModel = false; return render(); }
   // The splash itself, reached from the brand mark over a model that
   // is still loaded — Escape is the quick way back to it. With nothing
   // loaded the splash is the only page there is, so this is a no-op.
-  if (state.splash && activeContextId()) { state.splash = false; return render(); }
+  if (state.splash && activeModelId()) { state.splash = false; return render(); }
 
   // Inside a free text field, Escape is about the field: it steps out
   // and leaves everything else where it is. A second press then backs
@@ -7619,11 +7624,11 @@ window.addEventListener('keydown', (e) => {
   const key = e.key.toLowerCase();
 
   if (key === 'k') {
-    if (!activeContextId()) return;
+    if (!activeModelId()) return;
     e.preventDefault();
     if (state.palette) { closePalette(); render(); } else openPalette();
   } else if (key === 's') {
-    if (!activeContextId()) return;
+    if (!activeModelId()) return;
     e.preventDefault();
     runAsync(shareCurrentModel);
   } else if (key === 'z') {
@@ -7675,7 +7680,7 @@ document.getElementById('rail').addEventListener('click', (e) => {
   if (state.railOpen && e.target.closest('a')) { state.railOpen = false; render(); }
 });
 
-// A `#context=…` fragment never reaches the server (there is none), so
+// A `#model=…` fragment never reaches the server (there is none), so
 // this is the only place it is read. Cleared as soon as it is read,
 // successfully or not — a bad or already-consumed link should not keep
 // re-triggering on every reload.
@@ -7683,11 +7688,11 @@ async function boot() {
   render();
   syncTopbarHeight();
   const hash = location.hash;
-  if (!hash.startsWith('#context=')) return;
+  if (!hash.startsWith('#model=')) return;
   history.replaceState(null, '', location.pathname + location.search);
   let envelope;
   try {
-    envelope = await decodeShareLink(hash.slice('#context='.length));
+    envelope = await decodeShareLink(hash.slice('#model='.length));
   } catch (error) {
     toast('That share link could not be read: ' + error.message, true);
     return;

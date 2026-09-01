@@ -3,12 +3,12 @@ kind: actor
 name: modeler
 scope:
   domain: dcb-playground
-  boundedContext: dcb-context-authoring
+  boundedContext: dcb-model-authoring
 type: human
 responsibilities:
-  - Creates, renames and deletes DCB Contexts.
+  - Creates, renames and deletes DCB Models.
   - Adds, updates, renames and removes the five kinds of definitions
-    inside a DCB Context (custom-type, event, projection, constraint,
+    inside a DCB Model (custom-type, event, projection, constraint,
     command).
 ---
 apiVersion: schema.esdm.io/core/v1
@@ -16,8 +16,8 @@ kind: actor
 name: viewer
 scope:
   domain: dcb-playground
-  boundedContext: dcb-context-authoring
+  boundedContext: dcb-model-authoring
 type: human
 responsibilities:
-  - Inspects an existing DCB Context — its definitions and their
+  - Inspects an existing DCB Model — its definitions and their
     bodies — without changing anything.

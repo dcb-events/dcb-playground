@@ -1,0 +1,163 @@
+# Lifecycle of a DCB Model: events, DCBs, commands.
+# A `dcb-model` is identified by a generated id, minted at creation.
+# Its name is a mutable display attribute, not an identifier.
+
+apiVersion: schema.esdm.io/core/v1
+kind: event
+name: dcb-model-created
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-model-authoring
+data:
+  type: object
+  properties:
+    dcb-model-id:
+      type: string
+    name:
+      type: string
+  required: [dcb-model-id, name]
+  additionalProperties: false
+---
+apiVersion: schema.esdm.io/core/v1
+kind: event
+name: dcb-model-renamed
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-model-authoring
+data:
+  type: object
+  properties:
+    dcb-model-id:
+      type: string
+    name:
+      type: string
+  required: [dcb-model-id, name]
+  additionalProperties: false
+---
+apiVersion: schema.esdm.io/core/v1
+kind: event
+name: dcb-model-deleted
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-model-authoring
+data:
+  type: object
+  properties:
+    dcb-model-id:
+      type: string
+  required: [dcb-model-id]
+  additionalProperties: false
+---
+apiVersion: schema.esdm.io/core/v1
+kind: dynamic-consistency-boundary
+name: dcb-model-creation
+description: |
+  Guards the creation of a fresh DCB Model. The instance is
+  parameterised by the new id; the consult surface is the lifecycle
+  events for that id, so re-creation is refused.
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-model-authoring
+identifiedBy:
+  - name: dcb-model-id
+    source: command-payload
+    field: dcb-model-id
+consults:
+  - boundedContext: dcb-model-authoring
+    event: dcb-model-created
+    criteria: events whose `dcb-model-id` equals this instance's id
+invariants:
+  - name: id-fresh
+    rule: No `dcb-model-created` event has been recorded for this id.
+---
+apiVersion: schema.esdm.io/core/v1
+kind: dynamic-consistency-boundary
+name: dcb-model-revision
+description: |
+  Guards changes to an existing DCB Model — renaming and deletion.
+  Same consult surface and same invariants for both, so the two
+  commands share this single DCB.
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-model-authoring
+identifiedBy:
+  - name: dcb-model-id
+    source: command-payload
+    field: dcb-model-id
+consults:
+  - boundedContext: dcb-model-authoring
+    event: dcb-model-created
+    criteria: events whose `dcb-model-id` equals this instance's id
+  - boundedContext: dcb-model-authoring
+    event: dcb-model-deleted
+    criteria: events whose `dcb-model-id` equals this instance's id
+invariants:
+  - name: model-exists
+    rule: A `dcb-model-created` event has been recorded for this id.
+  - name: model-not-deleted
+    rule: No `dcb-model-deleted` event has been recorded for this id.
+---
+apiVersion: schema.esdm.io/core/v1
+kind: command
+name: create-dcb-model
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-model-authoring
+  dynamicConsistencyBoundary: dcb-model-creation
+data:
+  type: object
+  properties:
+    dcb-model-id:
+      type: string
+      description: |
+        Freshly minted id for the new model. Generation happens
+        before the command is dispatched; the DCB then refuses
+        re-use of an id that has already been seen.
+    name:
+      type: string
+  required: [dcb-model-id, name]
+  additionalProperties: false
+publishes:
+  - dcb-model-created
+actors:
+  - modeler
+---
+apiVersion: schema.esdm.io/core/v1
+kind: command
+name: rename-dcb-model
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-model-authoring
+  dynamicConsistencyBoundary: dcb-model-revision
+data:
+  type: object
+  properties:
+    dcb-model-id:
+      type: string
+    name:
+      type: string
+  required: [dcb-model-id, name]
+  additionalProperties: false
+publishes:
+  - dcb-model-renamed
+actors:
+  - modeler
+---
+apiVersion: schema.esdm.io/core/v1
+kind: command
+name: delete-dcb-model
+scope:
+  domain: dcb-playground
+  boundedContext: dcb-model-authoring
+  dynamicConsistencyBoundary: dcb-model-revision
+data:
+  type: object
+  properties:
+    dcb-model-id:
+      type: string
+  required: [dcb-model-id]
+  additionalProperties: false
+publishes:
+  - dcb-model-deleted
+actors:
+  - modeler
