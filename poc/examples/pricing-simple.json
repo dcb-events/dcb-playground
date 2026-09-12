@@ -1,6 +1,6 @@
 {
-  "$schema": "https://dcb.events/schemas/model/v1.json",
-  "dcbModelVersion": "1.0",
+  "$schema": "https://dcb.events/schemas/model/v2.json",
+  "dcbModelVersion": "2.0",
   "name": "Dynamic Product Price (simple)",
   "customTypeDefinitions": [
     {
@@ -118,44 +118,11 @@
       "properties": [
         {
           "name": "status",
-          "propertyType": "ProductStatus",
-          "isOptional": false,
-          "isList": false,
-          "initialValue": {
-            "enumMember": "NonExistent"
-          },
-          "handlers": [
-            {
-              "event": "ProductDefined",
-              "operation": "set",
-              "value": {
-                "enumMember": "Existent"
-              }
-            }
-          ]
+          "projection": "ProductStatus"
         },
         {
           "name": "currentPrice",
-          "propertyType": "Money",
-          "isOptional": true,
-          "isList": false,
-          "initialValue": null,
-          "handlers": [
-            {
-              "event": "ProductDefined",
-              "operation": "set",
-              "value": {
-                "eventProperty": "price"
-              }
-            },
-            {
-              "event": "ProductPriceChanged",
-              "operation": "set",
-              "value": {
-                "eventProperty": "newPrice"
-              }
-            }
-          ]
+          "projection": "ProductCurrentPrice"
         }
       ]
     },
@@ -165,26 +132,87 @@
       "properties": [
         {
           "name": "status",
-          "propertyType": "OrderStatus",
-          "isOptional": false,
-          "isList": false,
-          "initialValue": {
-            "enumMember": "NonExistent"
-          },
-          "handlers": [
-            {
-              "event": "ProductsOrdered",
-              "operation": "set",
-              "value": {
-                "enumMember": "Existent"
-              }
-            }
-          ]
+          "projection": "OrderStatus"
         }
       ]
     }
   ],
-  "projectionDefinitions": [],
+  "projectionDefinitions": [
+    {
+      "name": "ProductStatus",
+      "parameters": [
+        {
+          "name": "productId",
+          "propertyType": "ProductId"
+        }
+      ],
+      "valueType": "ProductStatus",
+      "isList": false,
+      "initialValue": {
+        "enumMember": "NonExistent"
+      },
+      "handlers": [
+        {
+          "event": "ProductDefined",
+          "operation": "set",
+          "value": {
+            "enumMember": "Existent"
+          }
+        }
+      ]
+    },
+    {
+      "name": "ProductCurrentPrice",
+      "parameters": [
+        {
+          "name": "productId",
+          "propertyType": "ProductId"
+        }
+      ],
+      "valueType": "Money",
+      "isList": false,
+      "initialValue": null,
+      "handlers": [
+        {
+          "event": "ProductDefined",
+          "operation": "set",
+          "value": {
+            "eventProperty": "price"
+          }
+        },
+        {
+          "event": "ProductPriceChanged",
+          "operation": "set",
+          "value": {
+            "eventProperty": "newPrice"
+          }
+        }
+      ]
+    },
+    {
+      "name": "OrderStatus",
+      "parameters": [
+        {
+          "name": "orderId",
+          "propertyType": "OrderId"
+        }
+      ],
+      "valueType": "OrderStatus",
+      "isList": false,
+      "initialValue": {
+        "enumMember": "NonExistent"
+      },
+      "handlers": [
+        {
+          "event": "ProductsOrdered",
+          "operation": "set",
+          "value": {
+            "enumMember": "Existent"
+          }
+        }
+      ]
+    }
+  ],
   "commandDefinitions": [
     {
       "name": "DefineProduct",

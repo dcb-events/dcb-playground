@@ -226,6 +226,14 @@ body.f-dark .disclaimer { background: #2d2408; color: #fcd34d; border-bottom-col
 .chip.event { background: var(--event-soft); border-color: #fed7aa; color: #9a3412; }
 .chip.entity, .chip.projection { background: var(--entity-soft); border-color: #bbf7d0; color: #166534; }
 .chip.rule { background: var(--rule-soft); border-color: #f5d0fe; color: #86198f; }
+/* No value yet. Drawn as an absence — dashed, unfilled, italic — so it
+   never reads as a value someone typed. `""` and `[]` are values and
+   are drawn as values; this is the one that is not, and the whole
+   point of the distinction is that you can see it. */
+.chip.unset {
+  background: transparent; border-style: dashed; color: var(--muted);
+  font-style: italic; font-family: inherit;
+}
 
 .muted { color: var(--muted); }
 .small { font-size: 12px; }

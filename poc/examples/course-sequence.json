@@ -1,6 +1,6 @@
 {
-  "$schema": "https://dcb.events/schemas/model/v1.json",
-  "dcbModelVersion": "1.0",
+  "$schema": "https://dcb.events/schemas/model/v2.json",
+  "dcbModelVersion": "2.0",
   "name": "Course Example (with sequence)",
   "customTypeDefinitions": [
     {
@@ -139,40 +139,11 @@
       "properties": [
         {
           "name": "status",
-          "propertyType": "StudentStatus",
-          "isOptional": false,
-          "isList": false,
-          "initialValue": {
-            "enumMember": "NonExistent"
-          },
-          "handlers": [
-            {
-              "event": "StudentRegistered",
-              "operation": "set",
-              "value": {
-                "enumMember": "Existent"
-              }
-            }
-          ]
+          "projection": "StudentStatus"
         },
         {
           "name": "subscriptionCount",
-          "propertyType": "integer",
-          "isOptional": false,
-          "isList": false,
-          "initialValue": 0,
-          "handlers": [
-            {
-              "event": "StudentSubscribedToCourse",
-              "operation": "increment",
-              "value": 1
-            },
-            {
-              "event": "StudentUnsubscribedFromCourse",
-              "operation": "decrement",
-              "value": 1
-            }
-          ]
+          "projection": "StudentSubscriptionCount"
         }
       ]
     },
@@ -182,103 +153,185 @@
       "properties": [
         {
           "name": "status",
-          "propertyType": "CourseStatus",
-          "isOptional": false,
-          "isList": false,
-          "initialValue": {
-            "enumMember": "NonExistent"
-          },
-          "handlers": [
-            {
-              "event": "CourseDefined",
-              "operation": "set",
-              "value": {
-                "enumMember": "Existent"
-              }
-            },
-            {
-              "event": "CourseArchived",
-              "operation": "set",
-              "value": {
-                "enumMember": "Archived"
-              }
-            }
-          ]
+          "projection": "CourseStatus"
         },
         {
           "name": "capacity",
-          "propertyType": "integer",
-          "isOptional": false,
-          "isList": false,
-          "initialValue": 0,
-          "handlers": [
-            {
-              "event": "CourseDefined",
-              "operation": "set",
-              "value": {
-                "eventProperty": "capacity"
-              }
-            },
-            {
-              "event": "CourseCapacityChanged",
-              "operation": "set",
-              "value": {
-                "eventProperty": "newCapacity"
-              }
-            }
-          ]
+          "projection": "CourseCapacity"
         },
         {
           "name": "subscriptionCount",
-          "propertyType": "integer",
-          "isOptional": false,
-          "isList": false,
-          "initialValue": 0,
-          "handlers": [
-            {
-              "event": "StudentSubscribedToCourse",
-              "operation": "increment",
-              "value": 1
-            },
-            {
-              "event": "StudentUnsubscribedFromCourse",
-              "operation": "decrement",
-              "value": 1
-            }
-          ]
+          "projection": "CourseSubscriptionCount"
         },
         {
           "name": "subscribedStudentIds",
-          "propertyType": "StudentId",
-          "isOptional": false,
-          "isList": true,
-          "initialValue": [],
-          "handlers": [
-            {
-              "event": "StudentSubscribedToCourse",
-              "operation": "append",
-              "value": {
-                "eventProperty": "studentId"
-              }
-            },
-            {
-              "event": "StudentUnsubscribedFromCourse",
-              "operation": "remove",
-              "value": {
-                "eventProperty": "studentId"
-              }
-            }
-          ]
+          "projection": "CourseSubscribedStudentIds"
         }
       ]
     }
   ],
   "projectionDefinitions": [
     {
+      "name": "StudentStatus",
+      "parameters": [
+        {
+          "name": "studentId",
+          "propertyType": "StudentId"
+        }
+      ],
+      "valueType": "StudentStatus",
+      "isList": false,
+      "initialValue": {
+        "enumMember": "NonExistent"
+      },
+      "handlers": [
+        {
+          "event": "StudentRegistered",
+          "operation": "set",
+          "value": {
+            "enumMember": "Existent"
+          }
+        }
+      ]
+    },
+    {
+      "name": "StudentSubscriptionCount",
+      "parameters": [
+        {
+          "name": "studentId",
+          "propertyType": "StudentId"
+        }
+      ],
+      "valueType": "integer",
+      "isList": false,
+      "initialValue": 0,
+      "handlers": [
+        {
+          "event": "StudentSubscribedToCourse",
+          "operation": "increment",
+          "value": 1
+        },
+        {
+          "event": "StudentUnsubscribedFromCourse",
+          "operation": "decrement",
+          "value": 1
+        }
+      ]
+    },
+    {
+      "name": "CourseStatus",
+      "parameters": [
+        {
+          "name": "courseId",
+          "propertyType": "CourseId"
+        }
+      ],
+      "valueType": "CourseStatus",
+      "isList": false,
+      "initialValue": {
+        "enumMember": "NonExistent"
+      },
+      "handlers": [
+        {
+          "event": "CourseDefined",
+          "operation": "set",
+          "value": {
+            "enumMember": "Existent"
+          }
+        },
+        {
+          "event": "CourseArchived",
+          "operation": "set",
+          "value": {
+            "enumMember": "Archived"
+          }
+        }
+      ]
+    },
+    {
+      "name": "CourseCapacity",
+      "parameters": [
+        {
+          "name": "courseId",
+          "propertyType": "CourseId"
+        }
+      ],
+      "valueType": "integer",
+      "isList": false,
+      "initialValue": 0,
+      "handlers": [
+        {
+          "event": "CourseDefined",
+          "operation": "set",
+          "value": {
+            "eventProperty": "capacity"
+          }
+        },
+        {
+          "event": "CourseCapacityChanged",
+          "operation": "set",
+          "value": {
+            "eventProperty": "newCapacity"
+          }
+        }
+      ]
+    },
+    {
+      "name": "CourseSubscriptionCount",
+      "parameters": [
+        {
+          "name": "courseId",
+          "propertyType": "CourseId"
+        }
+      ],
+      "valueType": "integer",
+      "isList": false,
+      "initialValue": 0,
+      "handlers": [
+        {
+          "event": "StudentSubscribedToCourse",
+          "operation": "increment",
+          "value": 1
+        },
+        {
+          "event": "StudentUnsubscribedFromCourse",
+          "operation": "decrement",
+          "value": 1
+        }
+      ]
+    },
+    {
+      "name": "CourseSubscribedStudentIds",
+      "parameters": [
+        {
+          "name": "courseId",
+          "propertyType": "CourseId"
+        }
+      ],
+      "valueType": "StudentId",
+      "isList": true,
+      "initialValue": [],
+      "handlers": [
+        {
+          "event": "StudentSubscribedToCourse",
+          "operation": "append",
+          "value": {
+            "eventProperty": "studentId"
+          }
+        },
+        {
+          "event": "StudentUnsubscribedFromCourse",
+          "operation": "remove",
+          "value": {
+            "eventProperty": "studentId"
+          }
+        }
+      ]
+    },
+    {
       "name": "CourseNumbering",
       "parameters": [],
       "valueType": "CourseId",
-      "isOptional": false,
       "isList": false,
       "initialValue": "c1",
       "handlers": [
@@ -645,5 +698,52 @@
       ]
     }
   ],
-  "scenarioDefinitions": []
+  "scenarioDefinitions": [],
+  "projectionScenarioDefinitions": [
+    {
+      "id": "a29c2e1f-6b04-4f5a-9d13-5f0a2d7c8e41",
+      "name": "issues c1 before anything has happened",
+      "given": [],
+      "reads": [
+        {
+          "alias": "numbering",
+          "projection": "CourseNumbering",
+          "arguments": {}
+        }
+      ],
+      "then": {
+        "numbering": "c1"
+      }
+    },
+    {
+      "id": "f47b9c30-2a8d-4e16-b5c7-9e3a1d604f28",
+      "name": "issues c3 once two courses exist",
+      "given": [
+        {
+          "event": "CourseDefined",
+          "data": {
+            "courseId": "c1",
+            "capacity": 10
+          }
+        },
+        {
+          "event": "CourseDefined",
+          "data": {
+            "courseId": "c2",
+            "capacity": 10
+          }
+        }
+      ],
+      "reads": [
+        {
+          "alias": "numbering",
+          "projection": "CourseNumbering",
+          "arguments": {}
+        }
+      ],
+      "then": {
+        "numbering": "c3"
+      }
+    }
+  ]
 }

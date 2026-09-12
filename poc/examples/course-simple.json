@@ -1,6 +1,6 @@
 {
-  "$schema": "https://dcb.events/schemas/model/v1.json",
-  "dcbModelVersion": "1.0",
+  "$schema": "https://dcb.events/schemas/model/v2.json",
+  "dcbModelVersion": "2.0",
   "name": "Course Example (simple)",
   "customTypeDefinitions": [
     {
@@ -127,22 +127,7 @@
       "properties": [
         {
           "name": "subscriptionCount",
-          "propertyType": "integer",
-          "isOptional": false,
-          "isList": false,
-          "initialValue": 0,
-          "handlers": [
-            {
-              "event": "StudentSubscribedToCourse",
-              "operation": "increment",
-              "value": 1
-            },
-            {
-              "event": "StudentUnsubscribedFromCourse",
-              "operation": "decrement",
-              "value": 1
-            }
-          ]
+          "projection": "StudentSubscriptionCount"
         }
       ]
     },
@@ -152,98 +137,159 @@
       "properties": [
         {
           "name": "status",
-          "propertyType": "CourseStatus",
-          "isOptional": false,
-          "isList": false,
-          "initialValue": {
-            "enumMember": "NonExistent"
-          },
-          "handlers": [
-            {
-              "event": "CourseDefined",
-              "operation": "set",
-              "value": {
-                "enumMember": "Existent"
-              }
-            },
-            {
-              "event": "CourseArchived",
-              "operation": "set",
-              "value": {
-                "enumMember": "Archived"
-              }
-            }
-          ]
+          "projection": "CourseStatus"
         },
         {
           "name": "capacity",
-          "propertyType": "integer",
-          "isOptional": false,
-          "isList": false,
-          "initialValue": 0,
-          "handlers": [
-            {
-              "event": "CourseDefined",
-              "operation": "set",
-              "value": {
-                "eventProperty": "capacity"
-              }
-            },
-            {
-              "event": "CourseCapacityChanged",
-              "operation": "set",
-              "value": {
-                "eventProperty": "newCapacity"
-              }
-            }
-          ]
+          "projection": "CourseCapacity"
         },
         {
           "name": "subscriptionCount",
-          "propertyType": "integer",
-          "isOptional": false,
-          "isList": false,
-          "initialValue": 0,
-          "handlers": [
-            {
-              "event": "StudentSubscribedToCourse",
-              "operation": "increment",
-              "value": 1
-            },
-            {
-              "event": "StudentUnsubscribedFromCourse",
-              "operation": "decrement",
-              "value": 1
-            }
-          ]
+          "projection": "CourseSubscriptionCount"
         },
         {
           "name": "subscribedStudentIds",
-          "propertyType": "StudentId",
-          "isOptional": false,
-          "isList": true,
-          "initialValue": [],
-          "handlers": [
-            {
-              "event": "StudentSubscribedToCourse",
-              "operation": "append",
-              "value": {
-                "eventProperty": "studentId"
-              }
-            },
-            {
-              "event": "StudentUnsubscribedFromCourse",
-              "operation": "remove",
-              "value": {
-                "eventProperty": "studentId"
-              }
-            }
-          ]
+          "projection": "CourseSubscribedStudentIds"
         }
       ]
     }
   ],
-  "projectionDefinitions": [],
+  "projectionDefinitions": [
+    {
+      "name": "StudentSubscriptionCount",
+      "parameters": [
+        {
+          "name": "studentId",
+          "propertyType": "StudentId"
+        }
+      ],
+      "valueType": "integer",
+      "isList": false,
+      "initialValue": 0,
+      "handlers": [
+        {
+          "event": "StudentSubscribedToCourse",
+          "operation": "increment",
+          "value": 1
+        },
+        {
+          "event": "StudentUnsubscribedFromCourse",
+          "operation": "decrement",
+          "value": 1
+        }
+      ]
+    },
+    {
+      "name": "CourseStatus",
+      "parameters": [
+        {
+          "name": "courseId",
+          "propertyType": "CourseId"
+        }
+      ],
+      "valueType": "CourseStatus",
+      "isList": false,
+      "initialValue": {
+        "enumMember": "NonExistent"
+      },
+      "handlers": [
+        {
+          "event": "CourseDefined",
+          "operation": "set",
+          "value": {
+            "enumMember": "Existent"
+          }
+        },
+        {
+          "event": "CourseArchived",
+          "operation": "set",
+          "value": {
+            "enumMember": "Archived"
+          }
+        }
+      ]
+    },
+    {
+      "name": "CourseCapacity",
+      "parameters": [
+        {
+          "name": "courseId",
+          "propertyType": "CourseId"
+        }
+      ],
+      "valueType": "integer",
+      "isList": false,
+      "initialValue": 0,
+      "handlers": [
+        {
+          "event": "CourseDefined",
+          "operation": "set",
+          "value": {
+            "eventProperty": "capacity"
+          }
+        },
+        {
+          "event": "CourseCapacityChanged",
+          "operation": "set",
+          "value": {
+            "eventProperty": "newCapacity"
+          }
+        }
+      ]
+    },
+    {
+      "name": "CourseSubscriptionCount",
+      "parameters": [
+        {
+          "name": "courseId",
+          "propertyType": "CourseId"
+        }
+      ],
+      "valueType": "integer",
+      "isList": false,
+      "initialValue": 0,
+      "handlers": [
+        {
+          "event": "StudentSubscribedToCourse",
+          "operation": "increment",
+          "value": 1
+        },
+        {
+          "event": "StudentUnsubscribedFromCourse",
+          "operation": "decrement",
+          "value": 1
+        }
+      ]
+    },
+    {
+      "name": "CourseSubscribedStudentIds",
+      "parameters": [
+        {
+          "name": "courseId",
+          "propertyType": "CourseId"
+        }
+      ],
+      "valueType": "StudentId",
+      "isList": true,
+      "initialValue": [],
+      "handlers": [
+        {
+          "event": "StudentSubscribedToCourse",
+          "operation": "append",
+          "value": {
+            "eventProperty": "studentId"
+          }
+        },
+        {
+          "event": "StudentUnsubscribedFromCourse",
+          "operation": "remove",
+          "value": {
+            "eventProperty": "studentId"
+          }
+        }
+      ]
+    }
+  ],
   "commandDefinitions": [
     {
       "name": "DefineCourse",
@@ -1250,139 +1296,6 @@
       }
     }
   ],
-  "propertyScenarioDefinitions": [
-    {
-      "id": "b18450c8-ebd6-495b-89c5-5591ad94c2c0",
-      "entity": "Course",
-      "forInstance": "c1",
-      "given": [],
-      "then": {
-        "status": "NonExistent",
-        "capacity": 0,
-        "subscriptionCount": 0,
-        "subscribedStudentIds": []
-      }
-    },
-    {
-      "id": "8b57786e-d6f2-481c-9417-835d579c7be4",
-      "entity": "Course",
-      "forInstance": "c1",
-      "given": [
-        {
-          "event": "CourseDefined",
-          "data": {
-            "courseId": "c1",
-            "capacity": 123
-          }
-        }
-      ],
-      "then": {
-        "status": "Existent",
-        "capacity": 123,
-        "subscriptionCount": 0,
-        "subscribedStudentIds": []
-      }
-    },
-    {
-      "id": "3eca88c0-96ec-4635-8f07-69b635391aeb",
-      "entity": "Course",
-      "forInstance": "c1",
-      "given": [
-        {
-          "event": "CourseArchived",
-          "data": {
-            "courseId": "c1"
-          }
-        }
-      ],
-      "then": {
-        "status": "Archived"
-      }
-    },
-    {
-      "id": "aa241323-7b2c-4005-842a-846976b5b0ce",
-      "entity": "Course",
-      "forInstance": "c1",
-      "given": [
-        {
-          "event": "CourseDefined",
-          "data": {
-            "courseId": "c1",
-            "capacity": 123
-          }
-        },
-        {
-          "event": "StudentSubscribedToCourse",
-          "data": {
-            "courseId": "c1",
-            "studentId": "s1"
-          }
-        },
-        {
-          "event": "StudentSubscribedToCourse",
-          "data": {
-            "courseId": "c1",
-            "studentId": "s2"
-          }
-        },
-        {
-          "event": "StudentUnsubscribedFromCourse",
-          "data": {
-            "courseId": "c1",
-            "studentId": "s1"
-          }
-        }
-      ],
-      "then": {
-        "status": "Existent",
-        "capacity": 123,
-        "subscriptionCount": 1,
-        "subscribedStudentIds": [
-          "s2"
-        ]
-      }
-    },
-    {
-      "id": "3abcfc79-8fa7-40cf-9542-0202df7e67ff",
-      "entity": "Student",
-      "forInstance": "s1",
-      "given": [],
-      "then": {
-        "subscriptionCount": 0
-      }
-    },
-    {
-      "id": "6774671a-ae27-4a1f-b9d0-7de36201be5a",
-      "entity": "Student",
-      "forInstance": "s1",
-      "given": [
-        {
-          "event": "StudentSubscribedToCourse",
-          "data": {
-            "courseId": "c1",
-            "studentId": "s1"
-          }
-        },
-        {
-          "event": "StudentSubscribedToCourse",
-          "data": {
-            "courseId": "c2",
-            "studentId": "s1"
-          }
-        },
-        {
-          "event": "StudentUnsubscribedFromCourse",
-          "data": {
-            "courseId": "c1",
-            "studentId": "s1"
-          }
-        }
-      ],
-      "then": {
-        "subscriptionCount": 1
-      }
-    }
-  ],
   "sandbox": {
     "steps": [
       {
@@ -1441,5 +1354,243 @@
         }
       }
     ]
-  }
+  },
+  "projectionScenarioDefinitions": [
+    {
+      "id": "b18450c8-ebd6-495b-89c5-5591ad94c2c0",
+      "given": [],
+      "reads": [
+        {
+          "alias": "status",
+          "projection": "CourseStatus",
+          "arguments": {
+            "courseId": "c1"
+          }
+        },
+        {
+          "alias": "capacity",
+          "projection": "CourseCapacity",
+          "arguments": {
+            "courseId": "c1"
+          }
+        },
+        {
+          "alias": "subscriptionCount",
+          "projection": "CourseSubscriptionCount",
+          "arguments": {
+            "courseId": "c1"
+          }
+        },
+        {
+          "alias": "subscribedStudentIds",
+          "projection": "CourseSubscribedStudentIds",
+          "arguments": {
+            "courseId": "c1"
+          }
+        }
+      ],
+      "then": {
+        "status": "NonExistent",
+        "capacity": 0,
+        "subscriptionCount": 0,
+        "subscribedStudentIds": []
+      }
+    },
+    {
+      "id": "8b57786e-d6f2-481c-9417-835d579c7be4",
+      "given": [
+        {
+          "event": "CourseDefined",
+          "data": {
+            "courseId": "c1",
+            "capacity": 123
+          }
+        }
+      ],
+      "reads": [
+        {
+          "alias": "status",
+          "projection": "CourseStatus",
+          "arguments": {
+            "courseId": "c1"
+          }
+        },
+        {
+          "alias": "capacity",
+          "projection": "CourseCapacity",
+          "arguments": {
+            "courseId": "c1"
+          }
+        },
+        {
+          "alias": "subscriptionCount",
+          "projection": "CourseSubscriptionCount",
+          "arguments": {
+            "courseId": "c1"
+          }
+        },
+        {
+          "alias": "subscribedStudentIds",
+          "projection": "CourseSubscribedStudentIds",
+          "arguments": {
+            "courseId": "c1"
+          }
+        }
+      ],
+      "then": {
+        "status": "Existent",
+        "capacity": 123,
+        "subscriptionCount": 0,
+        "subscribedStudentIds": []
+      }
+    },
+    {
+      "id": "3eca88c0-96ec-4635-8f07-69b635391aeb",
+      "given": [
+        {
+          "event": "CourseArchived",
+          "data": {
+            "courseId": "c1"
+          }
+        }
+      ],
+      "reads": [
+        {
+          "alias": "status",
+          "projection": "CourseStatus",
+          "arguments": {
+            "courseId": "c1"
+          }
+        }
+      ],
+      "then": {
+        "status": "Archived"
+      }
+    },
+    {
+      "id": "aa241323-7b2c-4005-842a-846976b5b0ce",
+      "given": [
+        {
+          "event": "CourseDefined",
+          "data": {
+            "courseId": "c1",
+            "capacity": 123
+          }
+        },
+        {
+          "event": "StudentSubscribedToCourse",
+          "data": {
+            "courseId": "c1",
+            "studentId": "s1"
+          }
+        },
+        {
+          "event": "StudentSubscribedToCourse",
+          "data": {
+            "courseId": "c1",
+            "studentId": "s2"
+          }
+        },
+        {
+          "event": "StudentUnsubscribedFromCourse",
+          "data": {
+            "courseId": "c1",
+            "studentId": "s1"
+          }
+        }
+      ],
+      "reads": [
+        {
+          "alias": "status",
+          "projection": "CourseStatus",
+          "arguments": {
+            "courseId": "c1"
+          }
+        },
+        {
+          "alias": "capacity",
+          "projection": "CourseCapacity",
+          "arguments": {
+            "courseId": "c1"
+          }
+        },
+        {
+          "alias": "subscriptionCount",
+          "projection": "CourseSubscriptionCount",
+          "arguments": {
+            "courseId": "c1"
+          }
+        },
+        {
+          "alias": "subscribedStudentIds",
+          "projection": "CourseSubscribedStudentIds",
+          "arguments": {
+            "courseId": "c1"
+          }
+        }
+      ],
+      "then": {
+        "status": "Existent",
+        "capacity": 123,
+        "subscriptionCount": 1,
+        "subscribedStudentIds": [
+          "s2"
+        ]
+      }
+    },
+    {
+      "id": "3abcfc79-8fa7-40cf-9542-0202df7e67ff",
+      "given": [],
+      "reads": [
+        {
+          "alias": "subscriptionCount",
+          "projection": "StudentSubscriptionCount",
+          "arguments": {
+            "studentId": "s1"
+          }
+        }
+      ],
+      "then": {
+        "subscriptionCount": 0
+      }
+    },
+    {
+      "id": "6774671a-ae27-4a1f-b9d0-7de36201be5a",
+      "given": [
+        {
+          "event": "StudentSubscribedToCourse",
+          "data": {
+            "courseId": "c1",
+            "studentId": "s1"
+          }
+        },
+        {
+          "event": "StudentSubscribedToCourse",
+          "data": {
+            "courseId": "c2",
+            "studentId": "s1"
+          }
+        },
+        {
+          "event": "StudentUnsubscribedFromCourse",
+          "data": {
+            "courseId": "c1",
+            "studentId": "s1"
+          }
+        }
+      ],
+      "reads": [
+        {
+          "alias": "subscriptionCount",
+          "projection": "StudentSubscriptionCount",
+          "arguments": {
+            "studentId": "s1"
+          }
+        }
+      ],
+      "then": {
+        "subscriptionCount": 1
+      }
+    }
+  ]
 }

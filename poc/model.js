@@ -53,7 +53,15 @@
 // `model` now, and nothing reads the old spelling. This is the one bump
 // so far that changes no shape at all — only names — which is exactly
 // why it needs a fresh key rather than a quiet coexistence.
-const EVENT_LOG_KEY = 'dcb-playground:events:v13';
+// v14 unified projections: an entity property is now a *binding* —
+// `{name, projection}` — pointing at an ordinary `projection-definition`,
+// every projection declares its partition as explicit `parameters`,
+// `isOptional` is gone, and an initial value may be any typed literal
+// including a non-empty list. v15 generalised property scenarios into
+// projection scenarios: one asserts over a list of `reads` rather than
+// over one entity instance's properties, which is the same
+// generalisation v14 made to the thing being asserted about.
+const EVENT_LOG_KEY = 'dcb-playground:events:v15';
 
 const DEF_KINDS = [
   'entity-definition',
@@ -62,7 +70,7 @@ const DEF_KINDS = [
   'command-definition',
   'custom-type-definition',
   'scenario-definition',
-  'property-scenario-definition',
+  'projection-scenario-definition',
 ];
 const DEF_COLLECTIONS = {
   'entity-definition': 'entity-definitions',
@@ -71,7 +79,7 @@ const DEF_COLLECTIONS = {
   'command-definition': 'command-definitions',
   'custom-type-definition': 'custom-type-definitions',
   'scenario-definition': 'scenario-definitions',
-  'property-scenario-definition': 'property-scenario-definitions',
+  'projection-scenario-definition': 'projection-scenario-definitions',
 };
 const KIND_COLOR_CLASS = {
   'entity-definition': 'entity',
@@ -80,7 +88,7 @@ const KIND_COLOR_CLASS = {
   'command-definition': 'command',
   'custom-type-definition': 'custom-type',
   'scenario-definition': 'scenario',
-  'property-scenario-definition': 'scenario',
+  'projection-scenario-definition': 'scenario',
 };
 
 const KIND_SECTION_TITLE = {
@@ -90,7 +98,7 @@ const KIND_SECTION_TITLE = {
   'command-definition': 'Commands',
   'custom-type-definition': 'Custom Types',
   'scenario-definition': 'Scenarios',
-  'property-scenario-definition': 'Property scenarios',
+  'projection-scenario-definition': 'Projection scenarios',
 };
 
 // A scenario is identified by a generated id rather than by its name,
@@ -99,11 +107,11 @@ const KIND_SECTION_TITLE = {
 // modeler's to overwrite, so two scenarios of one command may well want
 // to be called the same thing. Every other definition kind is keyed by
 // a name that *is* its identity, and renaming one is what moves every
-// reference to it. A property scenario is the same shape for the same
+// reference to it. A projection scenario is the same shape for the same
 // reason, one level down: it belongs to an entity rather than a
 // command, but its name is still derived from what it found, not
 // chosen up front.
-const ID_KEYED_KINDS = ['scenario-definition', 'property-scenario-definition'];
+const ID_KEYED_KINDS = ['scenario-definition', 'projection-scenario-definition'];
 
 function isIdKeyed(kind) { return ID_KEYED_KINDS.includes(kind); }
 
@@ -457,15 +465,12 @@ function computeReferences(model, kind, name, body) {
       for (const p of body.properties || []) pushTypeRef(model, refs, p.propertyType);
       break;
     case 'entity-definition':
+      // A property is a binding `{name, projection}`: everything the
+      // fold needs — type, initial value, handlers, script — lives on
+      // the projection it names, so the binding references exactly one
+      // thing.
       for (const p of body.properties || []) {
-        pushTypeRef(model, refs, p.propertyType);
-        // A script's arguments are typed like anything else. Its code
-        // is not walked: it is a string this model does not parse, and
-        // guessing at names inside it is how a rename corrupts a script.
-        for (const a of (scriptOf(p) || {}).arguments || []) pushTypeRef(model, refs, a.propertyType);
-        for (const handler of p.handlers || []) {
-          if (handler && handler.event) refs['event-definition'].push(handler.event);
-        }
+        if (p && p.projection) refs['projection-definition'].push(p.projection);
       }
       // An entity references its own derived identifier by name —
       // whatever it currently resolves to, tracking or overridden. This
@@ -519,13 +524,15 @@ function computeReferences(model, kind, name, body) {
         if (event && event.type) refs['event-definition'].push(event.type);
       }
       break;
-    case 'property-scenario-definition':
-      // A property scenario names the entity it tests and every event
-      // its Given is written from. Neither may stop one from being
-      // deleted — a property scenario exists to report what that broke,
-      // not to prevent it. Its Then holds property names, not references:
+    case 'projection-scenario-definition':
+      // A projection scenario names every projection it folds and every
+      // event its Given is written from. Neither may stop one from being
+      // deleted — a scenario exists to report what that broke, not to
+      // prevent it. Its Then holds its own aliases, not references:
       // nothing else in the model is identified by one.
-      if (body.entity) refs['entity-definition'].push(body.entity);
+      for (const read of body.reads || []) {
+        if (read && read.projection) refs['projection-definition'].push(read.projection);
+      }
       for (const step of body.given || []) {
         if (step && step.event) refs['event-definition'].push(step.event);
       }
@@ -571,7 +578,6 @@ function rewriteReferences(kind, body, targetKind, oldName, newName) {
       rewriteProperties(next.properties);
       break;
     case 'entity-definition':
-      rewriteProperties(next.properties);
       // The entity's own derived identifier moves with it — but only
       // when an explicit `identifierType` names the old value. While
       // it is absent (still tracking `<name>Id`), nothing here needs
@@ -580,11 +586,11 @@ function rewriteReferences(kind, body, targetKind, oldName, newName) {
       if (targetKind === 'custom-type-definition' && next.identifierType === oldName) {
         next.identifierType = newName;
       }
-      if (targetKind === 'event-definition') {
+      // A property binding names its projection outright, so renaming
+      // the projection moves every binding pointing at it.
+      if (targetKind === 'projection-definition') {
         for (const p of next.properties || []) {
-          for (const handler of p.handlers || []) {
-            if (handler && handler.event === oldName) handler.event = newName;
-          }
+          if (p && p.projection === oldName) p.projection = newName;
         }
       }
       break;
@@ -635,17 +641,19 @@ function rewriteReferences(kind, body, targetKind, oldName, newName) {
         }
       }
       break;
-    case 'property-scenario-definition':
-      if (targetKind === 'entity-definition' && next.entity === oldName) {
-        next.entity = newName;
+    case 'projection-scenario-definition':
+      if (targetKind === 'projection-definition') {
+        for (const read of next.reads || []) {
+          if (read && read.projection === oldName) read.projection = newName;
+        }
       }
       if (targetKind === 'event-definition') {
         for (const step of next.given || []) {
           if (step && step.event === oldName) step.event = newName;
         }
       }
-      // Then holds property names, not references — nothing to rewrite
-      // there for either target kind.
+      // Then is keyed by this scenario's own aliases, which are local to
+      // it — nothing to rewrite there for either target kind.
       break;
   }
   return next;
@@ -757,13 +765,13 @@ function scenarioName(body, spell = (n) => n) {
   return types.length ? `records ${types.map(spell).join(' and ')}` : 'is accepted';
 }
 
-// The same derivation as scenarioName, one level down: a property
-// scenario has no outcome to name itself after, only the properties a
+// The same derivation as scenarioName, one level down: a projection
+// scenario has no outcome to name itself after, only the reads a
 // modeler chose to check and what they folded to.
-function propertyScenarioName(body, spell = (n) => n) {
+function projectionScenarioName(body, spell = (n) => n) {
   if (body && typeof body.name === 'string' && body.name.trim()) return body.name.trim();
   const then = (body || {}).then;
-  if (!then || !Object.keys(then).length) return 'an unrun property scenario';
+  if (!then || !Object.keys(then).length) return 'an unrun projection scenario';
   const parts = Object.entries(then).map(([k, v]) => `${spell(k)} ${JSON.stringify(v)}`);
   return `ends up with ${parts.join(', ')}`;
 }
@@ -774,10 +782,52 @@ function handlerText(handler) {
   return `${handler.event || '?'} → ${handler.operation || '?'} ${operandText(handler.value)}`;
 }
 
-// The script a property or projection is advanced by, or null when its
-// handlers are declared the ordinary way.
+// The script a projection is advanced by, or null when its handlers
+// are declared the ordinary way.
 function scriptOf(target) {
   return target && target.script ? target.script : null;
+}
+
+// The slot of a projection that an entity property binding fills with
+// the bound instance's identifier: the parameter (declared) or script
+// argument (scripted) typed with the entity's own derived identifier.
+// Null when the projection has no such slot — which is what makes it
+// unbindable as that entity's property.
+function entityIdSlotOf(model, entityName, projection) {
+  if (!projection) return null;
+  const idType = idTypeOf(model, entityName);
+  const script = scriptOf(projection);
+  const slots = script ? (script.arguments || []) : (projection.parameters || []);
+  return slots.find((slot) => slot && slot.propertyType === idType) || null;
+}
+
+// An entity property is a binding `{name, projection}` pointing at an
+// ordinary projection definition. This resolves one to the projection
+// it names — `{ binding, projection }`, either half null when the name
+// does not resolve — so every reader walks the reference the same way.
+function entityPropertyTarget(model, entityName, propertyName) {
+  const entity = model['entity-definitions'][entityName];
+  const binding = entity && (entity.properties || []).find((p) => p && p.name === propertyName);
+  if (!binding) return { binding: null, projection: null };
+  return {
+    binding,
+    projection: model['projection-definitions'][binding.projection] || null,
+  };
+}
+
+// What a bare literal of this type looks like at runtime — the shape an
+// initial value element is checked against. A declared value type is
+// read through its scalar schema's `type`; anything unstated is a
+// string, which is what every identifier is underneath.
+function literalKindOf(model, typeName) {
+  if (typeName === 'integer') return 'number';
+  if (typeName === 'boolean') return 'boolean';
+  if (typeName === 'string') return 'string';
+  const body = model['custom-type-definitions'][typeName];
+  const declared = body && body.schema && body.schema.type;
+  if (declared === 'integer' || declared === 'number') return 'number';
+  if (declared === 'boolean') return 'boolean';
+  return 'string';
 }
 
 // A scripted *standalone* projection states its own tags, because
@@ -791,52 +841,66 @@ function scriptOf(target) {
 // actual tag is rendered through that identifier type's own
 // `tagSchema`, which may not even use `:` — see `renderTag`.
 const TAG_FILTER_RE = /^([A-Z][A-Za-z0-9]*):(.+)$/;
-const TAG_PLACEHOLDER_RE = /\{([A-Za-z][A-Za-z0-9]*)\}/g;
+// A placeholder names an argument, optionally reaching one field into
+// it — `{courseId}` or `{courseId.tenant}` — for the argument whose
+// value is a composite identifier and whose tag comes from one leaf.
+const TAG_PLACEHOLDER_RE = /\{([A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)*)\}/g;
 
+// The argument names a template interpolates — the root of each
+// placeholder, with any field access stripped.
 function tagFilterPlaceholders(template) {
-  return [...String(template || '').matchAll(TAG_PLACEHOLDER_RE)].map((m) => m[1]);
+  return [...String(template || '').matchAll(TAG_PLACEHOLDER_RE)].map((m) => m[1].split('.')[0]);
 }
 
 function resolveTagFilter(model, template, args) {
   const match = TAG_FILTER_RE.exec(String(template || ''));
   if (!match) return String(template || '');
-  const valueText = match[2].replace(TAG_PLACEHOLDER_RE, (whole, name) =>
-    args[name] === undefined ? whole : operandText(args[name]));
+  const valueText = match[2].replace(TAG_PLACEHOLDER_RE, (whole, path) => {
+    const [root, ...fields] = path.split('.');
+    if (args[root] === undefined) return whole;
+    const shown = operandText(args[root]);
+    return fields.length ? `${shown}.${fields.join('.')}` : shown;
+  });
   const identifierType = identifierTypeOf(model, match[1]);
   return identifierType ? renderTag(identifierType, valueText) : `${match[1]}:${valueText}`;
 }
 
-// Every scripted property an alias is read through, which is what
-// decides the arguments its binding has to supply.
+// Every scripted projection an entity alias is read through — resolved
+// through the property bindings — which is what decides the arguments
+// its binding has to supply.
 function scriptedPropertiesRead(model, body, binding) {
   const entity = model['entity-definitions'][binding.entity];
   if (!entity) return [];
   const found = [];
   forEachCommandOperand(body, (operand) => {
     if (operandSource(operand) !== 'alias-property' || operand.alias !== binding.alias) return;
-    const property = (entity.properties || []).find((p) => p.name === operand.property);
-    if (property && scriptOf(property) && !found.includes(property)) found.push(property);
+    const { projection } = entityPropertyTarget(model, binding.entity, operand.property);
+    if (projection && scriptOf(projection) && !found.includes(projection)) found.push(projection);
   });
   return found;
 }
 
 // The arguments a binding owes, gathered from everything it reads. Two
-// scripted properties asking for the same name ask for the same value —
-// they are read at one instant, through one binding.
+// scripted projections asking for the same name ask for the same value —
+// they are read at one instant, through one binding. The entity's own
+// identifier slot is never owed: the binding supplies the instance it
+// bound, without being asked.
 function argumentsExpected(model, body, binding) {
+  const idType = idTypeOf(model, binding.entity);
   const out = [];
-  for (const property of scriptedPropertiesRead(model, body, binding)) {
-    for (const argument of scriptOf(property).arguments || []) {
+  for (const projection of scriptedPropertiesRead(model, body, binding)) {
+    for (const argument of scriptOf(projection).arguments || []) {
+      if (argument.propertyType === idType) continue;
       if (!out.some((a) => a.name === argument.name)) out.push(argument);
     }
   }
   return out;
 }
 
-// The operations that make sense for a property's type.
-function operationsFor(model, property) {
-  if (property.isList) return ['set', 'append', 'remove'];
-  if (property.propertyType === 'integer') return ['set', 'increment', 'decrement'];
+// The operations that make sense for a projection's type.
+function operationsFor(model, target) {
+  if (target.isList) return ['set', 'append', 'remove'];
+  if (target.valueType === 'integer') return ['set', 'increment', 'decrement'];
   return ['set'];
 }
 
@@ -905,14 +969,13 @@ function resolveOperandType(operand, { boundary, commandProperties, model }) {
       if (!projection || operand.property) return null;
       return { propertyType: projection.valueType, isList: !!projection.isList };
     }
-    const entity = model['entity-definitions'][binding.entity];
-    if (!entity) return null;
-    const property = (entity.properties || []).find((p) => p.name === operand.property);
-    if (!property) return null;
-    // A scripted property is no different here: `propertyType` and
+    const { projection } = entityPropertyTarget(model, binding.entity, operand.property);
+    if (!projection) return null;
+    // A property is a binding, so its type is the bound projection's.
+    // A scripted projection is no different here: `valueType` and
     // `isList` describe the value a condition reads, whatever shape the
     // code carries internally to arrive at it.
-    return { propertyType: property.propertyType, isList: !!property.isList };
+    return { propertyType: projection.valueType, isList: !!projection.isList };
   }
   if (source === 'parameter') {
     const property = (commandProperties || []).find((p) => p.name === operand.parameterName);
@@ -1187,7 +1250,8 @@ function deriveDcb(model, body) {
     if (entity) {
       for (const property of entity.properties || []) {
         if (!readProperties.has(property.name)) continue;
-        for (const handler of property.handlers || []) {
+        const projection = model['projection-definitions'][property.projection];
+        for (const handler of (projection && projection.handlers) || []) {
           if (handler && handler.event) types.add(handler.event);
         }
       }
@@ -1427,17 +1491,16 @@ function validateReferences(model, kind, name, body) {
   if (kind === 'projection-definition') validateProjectionBody(resolved, name, body);
   if (kind === 'command-definition') validateCommandBody(resolved, body);
   if (kind === 'scenario-definition') validateScenarioBody(resolved, body);
-  if (kind === 'property-scenario-definition') validatePropertyScenarioBody(resolved, body);
+  if (kind === 'projection-scenario-definition') validateProjectionScenarioBody(resolved, body);
 }
 
-// Handler validation, shared by entity properties and projections —
-// the two project identically, and the only difference is whose value
-// is advanced. `target` is a property-shaped object: `name`,
-// `propertyType`, `isList`, `script`.
+// Handler validation. `target` is a projection body: `valueType`,
+// `isList`, `script` — an entity property is a binding to one, so
+// there is exactly one shape to validate.
 function validateHandlers(model, label, target, handlers) {
   if (scriptOf(target)) return validateScriptedHandlers(model, label, handlers);
   const allowedOperations = operationsFor(model, target);
-  const members = enumMembersFor(model, target.propertyType);
+  const members = enumMembersFor(model, target.valueType);
   const handledEvents = new Set();
 
   // `successor` wraps another operand, so recognising an operand means
@@ -1449,22 +1512,15 @@ function validateHandlers(model, label, target, handlers) {
     if (operandSource(operand) === 'successor') {
       // A scalar value type, tag-marked or not, is a string underneath,
       // so it has a successor. An enum does not: its members are a
-      // set, and "the next member" means nothing. Nor does a
-      // composite: it is a record of values, not one value, and
-      // auto-incrementing a record means nothing either.
-      const cls = classifyType(model, target.propertyType);
-      if (cls.kind === 'value' && cls.composite) {
-        throw new DomainError(
-          `${where} takes a successor, but ${label} is typed "${target.propertyType}", a composite. ` +
-          'A composite identifier has no successor — auto-incrementing makes sense for a single ' +
-          'value, and a composite is a record of them.'
-        );
-      }
-      const underlying = cls.kind === 'simple' ? target.propertyType
-        : (enumMembersFor(model, target.propertyType) ? 'enum' : 'string');
+      // set, and "the next member" means nothing. (A composite has no
+      // successor either, but a projection never holds one — its
+      // valueType is refused before this runs.)
+      const cls = classifyType(model, target.valueType);
+      const underlying = cls.kind === 'simple' ? target.valueType
+        : (enumMembersFor(model, target.valueType) ? 'enum' : 'string');
       if (!successorTypes.includes(underlying)) {
         throw new DomainError(
-          `${where} takes a successor, but ${label} is typed ${target.propertyType}. ` +
+          `${where} takes a successor, but ${label} is typed ${target.valueType}. ` +
           'A successor is defined on integers and on strings ending in digits.'
         );
       }
@@ -1505,7 +1561,7 @@ function validateHandlers(model, label, target, handlers) {
     if (members && operandSource(leaf) === 'enum-member'
         && !members.includes(leaf.enumMember)) {
       throw new DomainError(
-        `Handler on ${label} sets "${leaf.enumMember}", which is not a member of ${target.propertyType}.`
+        `Handler on ${label} sets "${leaf.enumMember}", which is not a member of ${target.valueType}.`
       );
     }
   }
@@ -1553,11 +1609,8 @@ function validateScriptedHandlers(model, label, handlers) {
 // events either way, and the code discards what it does not want. That
 // is the whole difference between an argument and a tag, and it is why
 // a tag must still be an identifier.
-function validateScript(model, label, target, { standalone }) {
+function validateScript(model, label, target) {
   const script = scriptOf(target);
-  if ((target.handlers || []).length === 0) {
-    throw new DomainError(`${label} is scripted but handles no events, so nothing would ever run.`);
-  }
   if (script.initialState === undefined) {
     throw new DomainError(`${label} needs an initial state — it is the state before any event.`);
   }
@@ -1603,25 +1656,20 @@ function validateScript(model, label, target, { standalone }) {
     }
   }
 
-  // An entity property is read through a binding that already names the
-  // instance, so a tag filter there would be a second answer to a
-  // question already settled — and the binding is the one that wins.
-  if (!standalone && script.tagFilter !== undefined) {
+  // Every scripted projection states its own tags: a declared one
+  // derives them from its parameters, a scripted one has none, so the
+  // filter is the only thing that can say what the query reads. An
+  // empty list is legal and means the whole log — the same thing zero
+  // parameters mean on a declared projection. An entity property that
+  // binds a scripted projection scopes it by interpolating the
+  // identifier-typed argument the binding supplies.
+  if (!Array.isArray(script.tagFilter)) {
     throw new DomainError(
-      `${label} states a tag filter, but it belongs to an entity: the binding that reads it ` +
-      'already names the instance, and a second answer could only disagree with the first.'
+      `${label} is scripted and states no tag filter. A declared projection derives its tags ` +
+      'from its parameters; a scripted one must say what it reads — an empty list means the whole log.'
     );
   }
-  if (!standalone) return;
-
-  const tagFilter = script.tagFilter || [];
-  if (!tagFilter.length) {
-    throw new DomainError(
-      `${label} is a scripted projection and states no tag filter. A declared projection derives ` +
-      'its tags from its parameters; a scripted one has none, so it must say what it reads.'
-    );
-  }
-  for (const template of tagFilter) {
+  for (const template of script.tagFilter) {
     const match = TAG_FILTER_RE.exec(String(template || ''));
     if (!match) {
       throw new DomainError(
@@ -1658,10 +1706,71 @@ function validateScript(model, label, target, { standalone }) {
   }
 }
 
-// A projection is an entity property that lost its entity: same
-// handlers, same operations, same operands. What replaces the owning
-// entity is `parameters` — the tags a command supplies when it binds
-// it. No parameters means no tag, which is what a global numbering is.
+// The initial value, checked against the declared type. `null` is
+// legal for any type — it is the state before anything has happened,
+// and distinct from the empty string. A list-typed projection starts
+// at a list, empty or not, of typed elements; `null` never appears
+// inside one, because a list of nothing-yets says nothing a shorter
+// list does not.
+function validateInitialValue(model, label, body) {
+  const members = enumMembersFor(model, body.valueType);
+  const expected = literalKindOf(model, body.valueType);
+
+  const checkElement = (element, where) => {
+    if (operandSource(element) === 'enum-member') {
+      if (!members) {
+        throw new DomainError(
+          `${where} names an enum member, but "${body.valueType}" is not an enum.`
+        );
+      }
+      if (!members.includes(element.enumMember)) {
+        throw new DomainError(
+          `${where} starts in "${element.enumMember}", which is not a member of ${body.valueType}.`
+        );
+      }
+      return;
+    }
+    if (element === null || (element !== null && typeof element === 'object')) {
+      throw new DomainError(
+        `${where} is not a literal — a list element is a value of the list's type, never null ` +
+        'and never a record.'
+      );
+    }
+    if (members) {
+      throw new DomainError(
+        `${where} is a bare literal, but "${body.valueType}" is an enum — name the member as ` +
+        '{"enumMember": "..."} so renaming it rewrites this too.'
+      );
+    }
+    if (typeof element !== expected) {
+      throw new DomainError(
+        `${where} is ${JSON.stringify(element)}, which is not a ${body.valueType}.`
+      );
+    }
+  };
+
+  const value = body.initialValue;
+  if (value === null) return;
+  if (body.isList) {
+    if (!Array.isArray(value)) {
+      throw new DomainError(
+        `${label} holds a list, so its initial value is one — empty, or holding typed elements.`
+      );
+    }
+    value.forEach((element, index) => checkElement(element, `${label}'s initial element ${index + 1}`));
+    return;
+  }
+  if (Array.isArray(value)) {
+    throw new DomainError(`${label} holds a single value, but its initial value is a list.`);
+  }
+  checkElement(value, `${label}'s initial value`);
+}
+
+// One projection — the one shape behind an entity property and a
+// standalone read alike: same handlers, same operations, same
+// operands. The partition is `parameters` — the tags a command (or an
+// entity property binding) supplies when it binds it. No parameters
+// means no tag, which is what a global numbering is.
 function validateProjectionBody(model, projectionName, body) {
   const valueCls = classifyType(model, body.valueType);
   if (valueCls.kind === 'unresolved') {
@@ -1688,7 +1797,7 @@ function validateProjectionBody(model, projectionName, body) {
         'projection states its tags in its tag filter and takes arguments instead.'
       );
     }
-    validateScript(model, `projection "${projectionName}"`, body, { standalone: true });
+    validateScript(model, `projection "${projectionName}"`, body);
     validateHandlers(model, `projection "${projectionName}"`, body, body.handlers);
     return;
   }
@@ -1696,9 +1805,11 @@ function validateProjectionBody(model, projectionName, body) {
   if (body.initialValue === undefined) {
     throw new DomainError(
       `Projection "${projectionName}" needs an initial value — it is the value before any event ` +
-      'has been applied, and for a numbering it is where the prefix is stated.'
+      'has been applied, and for a numbering it is where the prefix is stated. ' +
+      '"null" is a value: no value yet.'
     );
   }
+  validateInitialValue(model, `Projection "${projectionName}"`, body);
 
   // Only a tag-bearing type can narrow a query. A parameter of any
   // other type could not restrict what the store returns — it could
@@ -1724,11 +1835,8 @@ function validateProjectionBody(model, projectionName, body) {
     }
   }
 
-  if ((body.handlers || []).length === 0) {
-    throw new DomainError(
-      `Projection "${projectionName}" handles no events, so it could only ever read its initial value.`
-    );
-  }
+  // Zero handlers is a legitimate draft: a projection nothing moves
+  // yet reads as its initial value, and the interface says so.
   validateHandlers(model, `projection "${projectionName}"`, body, body.handlers);
 }
 
@@ -1816,6 +1924,13 @@ function validateCustomTypeBody(model, typeName, body) {
   }
 }
 
+// An entity's properties are bindings — `{name, projection}` — and
+// what makes a projection bindable is its partition: it must carry
+// exactly the slot this binding can fill, one parameter (or, scripted,
+// one argument) typed with the entity's own derived identifier. A
+// scripted projection must also actually scope by it — a tag filter
+// that never interpolates the identifier would fold the whole log and
+// call it one instance.
 function validateEntityBody(model, entityName, body) {
   if (body.identifierType !== undefined && !PASCAL_RE.test(body.identifierType)) {
     throw new DomainError(
@@ -1823,32 +1938,50 @@ function validateEntityBody(model, entityName, body) {
     );
   }
 
-  const properties = body.properties || [];
-
+  const idType = body.identifierType || (entityName + 'Id');
   const seen = new Set();
-  for (const property of properties) {
-    if (!CAMEL_RE.test(property.name || '')) {
-      throw new DomainError(`Property name "${property.name}" must be camelCase.`);
+  for (const property of body.properties || []) {
+    if (!property || !CAMEL_RE.test(property.name || '')) {
+      throw new DomainError(`Property name "${(property || {}).name}" must be camelCase.`);
     }
     if (seen.has(property.name)) throw new DomainError(`Entity declares property "${property.name}" twice.`);
     seen.add(property.name);
-    if (classifyType(model, property.propertyType).kind === 'unresolved') {
-      throw new DomainError(`Type "${property.propertyType}" (property "${property.name}") does not resolve.`);
-    }
 
-    if (scriptOf(property)) {
-      validateScript(model, `property "${property.name}"`, property, { standalone: false });
-    }
-
-    const members = enumMembersFor(model, property.propertyType);
-    if (members && operandSource(property.initialValue) === 'enum-member'
-        && !members.includes(property.initialValue.enumMember)) {
+    const projection = model['projection-definitions'][property.projection];
+    if (!projection) {
       throw new DomainError(
-        `Property "${property.name}" starts in "${property.initialValue.enumMember}", which is not a member of ${property.propertyType}.`
+        `Property "${property.name}" binds projection "${property.projection}", ` +
+        'which this model does not define.'
       );
     }
-
-    validateHandlers(model, `property "${property.name}"`, property, property.handlers);
+    const script = scriptOf(projection);
+    if (script) {
+      const slot = (script.arguments || []).find((a) => a && a.propertyType === idType);
+      if (!slot) {
+        throw new DomainError(
+          `Property "${property.name}" binds "${property.projection}", which declares no ` +
+          `${idType}-typed argument — nothing would carry the instance into its code.`
+        );
+      }
+      const scoped = (script.tagFilter || []).some((template) =>
+        tagFilterPlaceholders(template).includes(slot.name));
+      if (!scoped) {
+        throw new DomainError(
+          `Property "${property.name}" binds "${property.projection}", whose tag filter never ` +
+          `interpolates "{${slot.name}}" — it would fold the same events for every instance.`
+        );
+      }
+      continue;
+    }
+    const parameters = projection.parameters || [];
+    if (parameters.length !== 1 || parameters[0].propertyType !== idType) {
+      throw new DomainError(
+        `Property "${property.name}" binds "${property.projection}", which is partitioned by ` +
+        `${parameters.length ? parameters.map((p) => `"${p.name}" (${p.propertyType})`).join(', ')
+          : 'nothing'} — an entity property needs exactly one parameter typed ${idType}, ` +
+        'so the binding can supply the instance.'
+      );
+    }
   }
 }
 
@@ -2265,14 +2398,9 @@ function validateScenarioBody(model, body) {
 // names it outright. `then` is *derived*, exactly like a scenario's,
 // but partial — only the properties a modeler chose to check appear,
 // each frozen at the moment it was accepted.
-function validatePropertyScenarioBody(model, body) {
+function validateProjectionScenarioBody(model, body) {
   if (body.name !== undefined && typeof body.name !== 'string') {
-    throw new DomainError('A property scenario name is text, or absent when the derived one will do.');
-  }
-  if (!body.entity) throw new DomainError('A property scenario has to name the entity it tests.');
-  const entity = model['entity-definitions'][body.entity];
-  if (typeof body.forInstance !== 'string' || !body.forInstance.trim()) {
-    throw new DomainError('A property scenario has to say which instance it tests.');
+    throw new DomainError('A projection scenario name is text, or absent when the derived one will do.');
   }
 
   const checkPayload = (values, properties, label) => {
@@ -2295,7 +2423,7 @@ function validatePropertyScenarioBody(model, body) {
   };
 
   if (!Array.isArray(body.given)) {
-    throw new DomainError('A property scenario\'s Given is a list of events, empty when nothing has happened yet.');
+    throw new DomainError('A projection scenario\'s Given is a list of events, empty when nothing has happened yet.');
   }
   body.given.forEach((step, index) => {
     const where = `Given step ${index + 1}`;
@@ -2304,14 +2432,57 @@ function validatePropertyScenarioBody(model, body) {
       `${where} ("${step.event}")`);
   });
 
+  if (!Array.isArray(body.reads) || !body.reads.length) {
+    throw new DomainError('A projection scenario has to read at least one projection — that is what it asserts about.');
+  }
+  const aliases = new Set();
+  for (const read of body.reads) {
+    if (!read || !CAMEL_RE.test(read.alias || '')) {
+      throw new DomainError(`A read on this projection scenario needs a camelCase alias.`);
+    }
+    if (aliases.has(read.alias)) {
+      throw new DomainError(`This projection scenario reads "${read.alias}" twice.`);
+    }
+    aliases.add(read.alias);
+    const projection = model['projection-definitions'][read.projection];
+    if (!projection) {
+      throw new DomainError(
+        `"${read.alias}" reads projection "${read.projection}", which this model does not define.`
+      );
+    }
+    // The arguments a read owes are the projection's own — its
+    // parameters when declared, its script's arguments when scripted.
+    // The same "required here, rejected there" rule a command binding
+    // follows, and for the same reason: an argument that means nothing
+    // is a mistake, not a no-op.
+    const script = scriptOf(projection);
+    const expected = script ? (script.arguments || []) : (projection.parameters || []);
+    const supplied = Object.keys(read.arguments || {});
+    for (const parameter of expected) {
+      if (!supplied.includes(parameter.name)) {
+        throw new DomainError(
+          `"${read.alias}" supplies no "${parameter.name}", which "${read.projection}" ` +
+          `${script ? 'takes as an argument' : 'is partitioned by'}.`
+        );
+      }
+    }
+    for (const key of supplied) {
+      if (!expected.some((p) => p.name === key)) {
+        throw new DomainError(
+          `"${read.alias}" supplies "${key}", which "${read.projection}" does not declare as ` +
+          `${script ? 'an argument' : 'a parameter'}.`
+        );
+      }
+    }
+  }
+
   const then = body.then;
   if (!then || typeof then !== 'object' || Array.isArray(then)) {
-    throw new DomainError('A property scenario\'s Then holds the properties it checks, empty when it checks none.');
+    throw new DomainError('A projection scenario\'s Then holds what each read folded to.');
   }
-  const propertyNames = new Set((entity ? entity.properties : []).map((p) => p.name));
-  for (const propertyName of Object.keys(then)) {
-    if (!propertyNames.has(propertyName)) {
-      throw new DomainError(`Then checks "${propertyName}", which "${body.entity}" has no property called.`);
+  for (const alias of Object.keys(then)) {
+    if (!aliases.has(alias)) {
+      throw new DomainError(`Then checks "${alias}", which this projection scenario does not read.`);
     }
   }
 }
@@ -2379,6 +2550,25 @@ function updateDefinition(kind, modelId, name, body) {
 // `renameMember` — which moves the keys in the same append — and this
 // is what stops it happening any other way.
 function assertProjectionUpdateKeepsBindingsFitting(model, projectionName, body) {
+  // An entity property binding fits while the projection keeps the one
+  // slot the binding fills — reshaping the partition under a bound
+  // property is refused the same way reshaping it under a command is.
+  for (const [entityName, entity] of Object.entries(model['entity-definitions'])) {
+    for (const property of entity.properties || []) {
+      if (!property || property.projection !== projectionName) continue;
+      const idType = idTypeOf(model, entityName);
+      const script = scriptOf(body);
+      const fits = script
+        ? (script.arguments || []).some((a) => a && a.propertyType === idType)
+        : ((body.parameters || []).length === 1 && body.parameters[0].propertyType === idType);
+      if (!fits) {
+        throw new DomainError(
+          `"${entityName}.${property.name}" binds "${projectionName}", and this change would leave ` +
+          `it without the ${idType}-typed slot that binding fills. Unbind the property first.`
+        );
+      }
+    }
+  }
   const parameters = (body.parameters || []).map((p) => p && p.name);
   for (const [commandName, command] of Object.entries(model['command-definitions'])) {
     for (const binding of command.boundary || []) {
@@ -2471,13 +2661,17 @@ function assertCustomTypeUpdateKeepsInboundReferences(model, typeName, body) {
 function scriptedHandlersOf(model, eventName) {
   const out = [];
   const handles = (target) => (target.handlers || []).some((h) => h && h.event === eventName);
-  for (const [name, entity] of Object.entries(model['entity-definitions'])) {
-    for (const property of entity.properties || []) {
-      if (scriptOf(property) && handles(property)) out.push(`${name}.${property.name}`);
-    }
-  }
   for (const [name, projection] of Object.entries(model['projection-definitions'])) {
-    if (scriptOf(projection) && handles(projection)) out.push(name);
+    if (!scriptOf(projection) || !handles(projection)) continue;
+    // Named the way a person would say it: through the property that
+    // binds it where one does, bare where none does.
+    const labels = [];
+    for (const [entityName, entity] of Object.entries(model['entity-definitions'])) {
+      for (const property of entity.properties || []) {
+        if (property && property.projection === name) labels.push(`${entityName}.${property.name}`);
+      }
+    }
+    out.push(...(labels.length ? labels : [name]));
   }
   return out;
 }
@@ -2651,30 +2845,34 @@ const MEMBER_REWRITES = {
     }),
 
   // An enum member is an `{enumMember}` operand. The type it belongs to
-  // may now be referenced by properties on any number of entities, so
-  // this reaches every one of them rather than one private owner.
+  // may be held by any number of projections, so this reaches every one
+  // of them rather than one private owner.
   'custom-type-definition:member': (model, typeName, previous, next) => {
     const out = [];
 
-    // Every entity property typed with this enum refers to its own
-    // members through its initial value and its handler values.
-    for (const [entityName, entity] of Object.entries(model['entity-definitions'])) {
-      const body = deepClone(entity);
+    // Every projection typed with this enum refers to its members
+    // through its initial value — scalar or an element of a list — and
+    // its handler values.
+    for (const [name, projection] of Object.entries(model['projection-definitions'])) {
+      if (projection.valueType !== typeName) continue;
+      const body = deepClone(projection);
       let touched = false;
-      for (const property of body.properties || []) {
-        if (property.propertyType !== typeName) continue;
-        if (operandSource(property.initialValue) === 'enum-member'
-            && property.initialValue.enumMember === previous) {
-          property.initialValue = { enumMember: next };
+      const renamed = (value) => {
+        if (operandSource(value) === 'enum-member' && value.enumMember === previous) {
           touched = true;
+          return { enumMember: next };
         }
-        for (const handler of property.handlers || []) {
-          rewriteHandlerOperand(handler && handler.value, (operand) => {
-            if (operand.enumMember === previous) { operand.enumMember = next; touched = true; }
-          });
-        }
+        return value;
+      };
+      body.initialValue = Array.isArray(body.initialValue)
+        ? body.initialValue.map(renamed)
+        : renamed(body.initialValue);
+      for (const handler of body.handlers || []) {
+        rewriteHandlerOperand(handler && handler.value, (operand) => {
+          if (operand.enumMember === previous) { operand.enumMember = next; touched = true; }
+        });
       }
-      if (touched) out.push({ kind: 'entity-definition', name: entityName, body });
+      if (touched) out.push({ kind: 'projection-definition', name, body });
     }
 
     // A command condition compares an entity's enum-typed property
@@ -2713,20 +2911,8 @@ const MEMBER_REWRITES = {
     const out = [];
     const handlesIt = (handlers) => (handlers || []).some((h) => h && h.event === eventName);
 
-    for (const [name, entity] of Object.entries(model['entity-definitions'])) {
-      const body = deepClone(entity);
-      let touched = false;
-      for (const property of body.properties || []) {
-        for (const handler of property.handlers || []) {
-          if (!handler || handler.event !== eventName) continue;
-          rewriteHandlerOperand(handler.value, (operand) => {
-            if (operand.eventProperty === previous) { operand.eventProperty = next; touched = true; }
-          });
-        }
-      }
-      if (touched) out.push({ kind: 'entity-definition', name, body });
-    }
-
+    // Handlers live only on projections now — an entity property is a
+    // binding with nothing inside it for this rename to reach.
     for (const [name, projection] of Object.entries(model['projection-definitions'])) {
       if (!handlesIt(projection.handlers)) continue;
       const body = deepClone(projection);
@@ -2980,11 +3166,11 @@ function removeDefinition(kind, modelId, name) {
   }
   const referencers = findReferencers(model, kind, name)
     .filter((r) => !(r.kind === kind && r.name === name))
-    // A scenario or property scenario names what it tests, but it may
+    // A scenario or projection scenario names what it tests, but it may
     // never refuse the change: a test exists to report what a change
     // broke, not to prevent it. Deleting what one reads leaves it
     // broken and says so, which is the whole point of keeping it.
-    .filter((r) => r.kind !== 'scenario-definition' && r.kind !== 'property-scenario-definition');
+    .filter((r) => r.kind !== 'scenario-definition' && r.kind !== 'projection-scenario-definition');
   if (referencers.length > 0) {
     const list = referencers.map((r) => `${humanize(r.kind)} "${r.name}"`).join(', ');
     throw new DomainError(`Cannot remove ${humanize(kind)} "${name}" — still referenced by: ${list}.`);
@@ -2998,7 +3184,7 @@ function removeDefinition(kind, modelId, name) {
     // above, which is what makes that block work). Anything else still
     // naming it is left broken, reported the same way this system
     // already reports every other broken reference: a scenario left
-    // saying what it used to check, a property scenario left reporting
+    // saying what it used to check, a projection scenario left reporting
     // what it found.
     const idType = idTypeOf(model, name);
     appendEvents([
@@ -3031,15 +3217,15 @@ function reorderDefinitions(kind, modelId, order) {
 // Utilities the model layer leans on.
 // ============================================================
 
-// The value a freshly created property starts from, chosen from its
-// type so a modeler never has to state one.
-function defaultInitialValue(model, property) {
-  if (property.isList) return [];
-  const members = enumMembersFor(model, property.propertyType);
+// The value a freshly created projection starts from, chosen from its
+// type so the editor can pre-fill one — the stored value is always
+// explicit, this is only the suggestion.
+function defaultInitialValue(model, target) {
+  if (target.isList) return [];
+  const members = enumMembersFor(model, target.valueType);
   if (members) return { enumMember: members[0] || '' };
-  if (property.isOptional) return null;
-  if (property.propertyType === 'integer') return 0;
-  if (property.propertyType === 'boolean') return false;
+  if (literalKindOf(model, target.valueType) === 'number') return 0;
+  if (literalKindOf(model, target.valueType) === 'boolean') return false;
   return '';
 }
 
@@ -3054,7 +3240,7 @@ function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
 //
 // The wire format is `{ $schema, dcbModelVersion, name }` followed by
 // the definition arrays themselves — the six kinds, plus
-// `propertyScenarioDefinitions?` and `sandbox?` — and it is exactly what
+// `projectionScenarioDefinitions?` and `sandbox?` — and it is exactly what
 // `dcb-model.schema.json` describes, so a file built by another tool
 // against that schema drops straight in.
 //
@@ -3063,7 +3249,7 @@ function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
 // object and an external tool needed something to target; once the
 // schema grew to cover the whole document there was nothing left for the
 // nesting to do but make the file claim to contain a model rather than
-// be one. Flattening also stops `propertyScenarioDefinitions` reading as
+// be one. Flattening also stops `projectionScenarioDefinitions` reading as
 // a second-class kind: it is listed apart from the six only because it
 // hangs off an entity rather than being one of them.
 //
@@ -3098,8 +3284,14 @@ function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
 // — a condition operator, an operand shape, a handler operation — is a
 // *major* change even where the schema merely grows an enum, because
 // `operationsFor` fails on the value rather than passing it through.
-const MODEL_VERSION = '1.0';
-const MODEL_SCHEMA_URL = 'https://dcb.events/schemas/model/v1.json';
+// 2.0 unified projections: entity properties became bindings to
+// ordinary projection definitions, partitions became explicit
+// parameters, `isOptional` was dropped and initial values grew typed
+// (possibly non-empty) lists, and property scenarios became projection
+// scenarios asserting over a list of reads — every one of them a change
+// a 1.x reader would misread rather than ignore.
+const MODEL_VERSION = '2.0';
+const MODEL_SCHEMA_URL = 'https://dcb.events/schemas/model/v2.json';
 
 const SCHEMA_FIELD = {
   'custom-type-definition': 'customTypeDefinitions',
@@ -3108,12 +3300,13 @@ const SCHEMA_FIELD = {
   'projection-definition': 'projectionDefinitions',
   'command-definition': 'commandDefinitions',
   'scenario-definition': 'scenarioDefinitions',
-  'property-scenario-definition': 'propertyScenarioDefinitions',
+  'projection-scenario-definition': 'projectionScenarioDefinitions',
 };
 
-// The six kinds that carry a definition each. Property scenarios are the
-// seventh the schema documents; they are assembled separately only
-// because they hang off an entity rather than being one of these.
+// The six kinds that carry a definition each. Projection scenarios are
+// the seventh the schema documents; they are assembled separately only
+// because they are authored against whatever set of projections someone
+// wanted to check at once rather than being one of these.
 const SCHEMA_KINDS = [
   'custom-type-definition', 'event-definition', 'entity-definition',
   'projection-definition', 'command-definition', 'scenario-definition',
@@ -3153,9 +3346,9 @@ function buildShareEnvelope(model, sandboxSteps) {
     ...definitionsToSchema(model),
   };
   const propertyScenarios = definitionsToSchemaArray(
-    'property-scenario-definition', model['property-scenario-definitions']
+    'projection-scenario-definition', model['projection-scenario-definitions']
   );
-  if (propertyScenarios.length) envelope.propertyScenarioDefinitions = propertyScenarios;
+  if (propertyScenarios.length) envelope.projectionScenarioDefinitions = propertyScenarios;
   if (sandboxSteps && sandboxSteps.length) envelope.sandbox = { steps: sandboxSteps };
   return envelope;
 }
@@ -3166,30 +3359,18 @@ function buildShareEnvelope(model, sandboxSteps) {
 // in evaluate.js). This is what gates the confirmation before import.
 function envelopeHasScript(envelope) {
   if (!envelope || typeof envelope !== 'object') return false;
-  const propertyScripted = (envelope.entityDefinitions || [])
-    .some((e) => (e.properties || []).some((p) => !!p.script));
-  const projectionScripted = (envelope.projectionDefinitions || []).some((p) => !!p.script);
-  return propertyScripted || projectionScripted;
+  // Scripts live only on projections — an entity property is a binding
+  // and carries none of its own.
+  return (envelope.projectionDefinitions || []).some((p) => !!p.script);
 }
 
-// An entity, stripped down to what can exist before the events its
-// properties name are added. A declared property is kept with its
-// handlers emptied — legal, since a handler-less property is simply one
-// no event has touched yet. Two kinds of property cannot go bare the
-// same way: a scripted one, since `validateScript` requires at least
-// one handler naming a real event; and one typed as another entity's
-// derived id, since two entities that each list the other's id (a
-// student's course ids, a course's student ids) would otherwise need
-// each other to exist first. Both are left out entirely here and added
-// for real, in one piece, once `updateDefinition` runs against the full
-// body after every entity — and every event — exists.
-function bareEntityBody(body, deferredTypeNames) {
-  return {
-    ...body,
-    properties: (body.properties || [])
-      .filter((p) => !p.script && !deferredTypeNames.has(p.propertyType))
-      .map((p) => ({ ...p, handlers: [] })),
-  };
+// An entity, stripped down to what can exist before the projections
+// its properties bind are added: the bindings are dropped wholesale
+// and put back by `updateDefinition` once every projection exists. An
+// entity with no properties is legal — one consulted purely by tag —
+// so the bare form is always addable.
+function bareEntityBody(body) {
+  return { ...body, properties: [] };
 }
 
 // Adds a mixed batch of custom types and bare entities, retrying
@@ -3312,7 +3493,7 @@ function importModelFromEnvelope(envelope) {
   const commands = schemaArrayToDefinitions('command-definition', envelope.commandDefinitions);
   const scenarios = schemaArrayToDefinitions('scenario-definition', envelope.scenarioDefinitions);
   const propertyScenarios = schemaArrayToDefinitions(
-    'property-scenario-definition', envelope.propertyScenarioDefinitions
+    'projection-scenario-definition', envelope.projectionScenarioDefinitions
   );
 
   const modelId = createDcbModel(envelope.name);
@@ -3329,7 +3510,7 @@ function importModelFromEnvelope(envelope) {
       .filter(([name]) => !derivedIdTypeNames.has(name))
       .map(([name, body]) => ({ kind: 'custom-type-definition', name, body })),
     ...Object.entries(entities)
-      .map(([name, body]) => ({ kind: 'entity-definition', name, body: bareEntityBody(body, derivedIdTypeNames) })),
+      .map(([name, body]) => ({ kind: 'entity-definition', name, body: bareEntityBody(body) })),
   ]);
 
   for (const [name, body] of Object.entries(events)) {
@@ -3338,11 +3519,13 @@ function importModelFromEnvelope(envelope) {
   for (const [name, body] of Object.entries(customTypes)) {
     if (derivedIdTypeNames.has(name)) updateDefinition('custom-type-definition', modelId, name, body);
   }
-  for (const [name, body] of Object.entries(entities)) {
-    updateDefinition('entity-definition', modelId, name, body);
-  }
+  // Projections before the full entities: a property binding names a
+  // projection, so every projection has to exist before the bindings do.
   for (const [name, body] of Object.entries(projections)) {
     addDefinition('projection-definition', modelId, name, body);
+  }
+  for (const [name, body] of Object.entries(entities)) {
+    updateDefinition('entity-definition', modelId, name, body);
   }
   for (const [name, body] of Object.entries(commands)) {
     addDefinition('command-definition', modelId, name, body);
@@ -3355,7 +3538,7 @@ function importModelFromEnvelope(envelope) {
     addDefinition('scenario-definition', modelId, id || generateId(), body);
   }
   for (const [id, body] of Object.entries(propertyScenarios)) {
-    addDefinition('property-scenario-definition', modelId, id || generateId(), body);
+    addDefinition('projection-scenario-definition', modelId, id || generateId(), body);
   }
   return modelId;
 }
@@ -3376,16 +3559,10 @@ function importModelFromEnvelope(envelope) {
 // then the entities again with their handlers, then the commands.
 // ============================================================
 
-const seedProperty = (name, type, initialValue, extra = {}) => ({
-  name, propertyType: type, isOptional: false, isList: false,
-  initialValue, handlers: [], ...extra,
-});
 // A lifecycle enum is an ordinary scalar custom type whose schema
 // carries `enum`, declared once and referenced from an ordinary
 // `status` property — the same shape any other enum property has.
 const seedEnumType = (name, members) => ({ schema: { type: 'string', enum: members } });
-const seedStatusProperty = (statusType, first) =>
-  seedProperty(STATUS_PROPERTY, statusType, { enumMember: first });
 const seedProp = (name, type) => ({ name, propertyType: type, isOptional: false, isList: false });
 const seedListProp = (name, type) => ({ name, propertyType: type, isOptional: false, isList: true });
 const seedHandler = (event, operation, value) => ({ event, operation, value });
@@ -3395,6 +3572,21 @@ const seedOf = (alias, property) => (property === undefined ? { alias } : { alia
 const seedBind = (alias, entity, idParam) => ({ alias, entity, id: seedParam(idParam) });
 const seedReadProjection = (alias, projection, args = {}) =>
   ({ alias, projection, arguments: args });
+// The projection behind one entity property: partitioned by exactly
+// the owning entity's identifier, which is what makes it bindable.
+const seedPropertyProjection = (entityName, valueType, initialValue, handlers, extra = {}) => ({
+  parameters: [{ name: defaultAlias(entityName) + 'Id', propertyType: entityName + 'Id' }],
+  valueType, isList: false, initialValue, handlers, ...extra,
+});
+// The binding itself — everything else lives on the projection.
+const seedBindProp = (name, projection) => ({ name, projection });
+
+// A scenario a seed ships with. The id is written out rather than
+// generated so that regenerating an example produces the same file —
+// a fresh id on every run would make every regeneration a diff.
+function seedProjectionScenario(modelId, id, body) {
+  addDefinition('projection-scenario-definition', modelId, id, body);
+}
 
 // Reads a definition back and writes the modified copy, so a later
 // layer never has to restate the shape an earlier one produced.
@@ -3405,36 +3597,22 @@ function seedPatch(kind, modelId, name, mutate) {
 }
 
 function seedBase(modelId) {
-  const property = seedProperty;
-  const statusProperty = seedStatusProperty;
   const prop = seedProp;
   const handler = seedHandler;
   const param = seedParam;
   const of = seedOf;
   const bind = seedBind;
+  const bindProp = seedBindProp;
 
   // 1. The lifecycle enums, declared like any other custom type. Then
-  //    entities without handlers. Student first, since Course refers
-  //    to StudentId.
+  //    the entities, bare: a property is a binding to a projection, and
+  //    no projection exists yet. Student first, since Course's
+  //    subscriber list is typed StudentId.
   addDefinition('custom-type-definition', modelId, 'StudentStatus', seedEnumType('StudentStatus', ['NonExistent', 'Existent']));
   addDefinition('custom-type-definition', modelId, 'CourseStatus', seedEnumType('CourseStatus', ['NonExistent', 'Existent', 'Archived']));
 
-  addDefinition('entity-definition', modelId, 'Student', {
-    icon: '🧑‍🎓',
-    properties: [
-      statusProperty('StudentStatus', 'NonExistent'),
-      property('subscriptionCount', 'integer', 0),
-    ],
-  });
-  addDefinition('entity-definition', modelId, 'Course', {
-    icon: '📚',
-    properties: [
-      statusProperty('CourseStatus', 'NonExistent'),
-      property('capacity', 'integer', 0),
-      property('subscriptionCount', 'integer', 0),
-      property('subscribedStudentIds', 'StudentId', [], { isList: true }),
-    ],
-  });
+  addDefinition('entity-definition', modelId, 'Student', { icon: '🧑‍🎓', properties: [] });
+  addDefinition('entity-definition', modelId, 'Course', { icon: '📚', properties: [] });
 
   // 2. Events. Their entity-id properties are what carry the tags.
   const event = (name, properties) =>
@@ -3447,46 +3625,58 @@ function seedBase(modelId) {
   event('StudentSubscribedToCourse', [prop('courseId', 'CourseId'), prop('studentId', 'StudentId')]);
   event('StudentUnsubscribedFromCourse', [prop('courseId', 'CourseId'), prop('studentId', 'StudentId')]);
 
-  // 3. Entities again, now with handlers.
-  updateDefinition('entity-definition', modelId, 'Student', {
-    icon: '🧑‍🎓',
-    properties: [
-      { ...statusProperty('StudentStatus', 'NonExistent'),
-        handlers: [handler('StudentRegistered', 'set', { enumMember: 'Existent' })] },
-      { ...property('subscriptionCount', 'integer', 0),
-        handlers: [
-          handler('StudentSubscribedToCourse', 'increment', 1),
-          handler('StudentUnsubscribedFromCourse', 'decrement', 1),
-        ] },
-    ],
+  // 3. The projections themselves — ordinary definitions, each
+  //    partitioned by the identifier of the entity whose property will
+  //    bind it. Nothing about them says "entity property": that is
+  //    entirely the binding's doing.
+  const projection = (name, body) =>
+    addDefinition('projection-definition', modelId, name, body);
+
+  projection('StudentStatus', seedPropertyProjection('Student', 'StudentStatus',
+    { enumMember: 'NonExistent' },
+    [handler('StudentRegistered', 'set', { enumMember: 'Existent' })]));
+  projection('StudentSubscriptionCount', seedPropertyProjection('Student', 'integer', 0, [
+    handler('StudentSubscribedToCourse', 'increment', 1),
+    handler('StudentUnsubscribedFromCourse', 'decrement', 1),
+  ]));
+
+  projection('CourseStatus', seedPropertyProjection('Course', 'CourseStatus',
+    { enumMember: 'NonExistent' }, [
+      handler('CourseDefined', 'set', { enumMember: 'Existent' }),
+      handler('CourseArchived', 'set', { enumMember: 'Archived' }),
+    ]));
+  projection('CourseCapacity', seedPropertyProjection('Course', 'integer', 0, [
+    handler('CourseDefined', 'set', { eventProperty: 'capacity' }),
+    handler('CourseCapacityChanged', 'set', { eventProperty: 'newCapacity' }),
+  ]));
+  projection('CourseSubscriptionCount', seedPropertyProjection('Course', 'integer', 0, [
+    handler('StudentSubscribedToCourse', 'increment', 1),
+    handler('StudentUnsubscribedFromCourse', 'decrement', 1),
+  ]));
+  projection('CourseSubscribedStudentIds', seedPropertyProjection('Course', 'StudentId', [], [
+    handler('StudentSubscribedToCourse', 'append', { eventProperty: 'studentId' }),
+    handler('StudentUnsubscribedFromCourse', 'remove', { eventProperty: 'studentId' }),
+  ], { isList: true }));
+
+  // 4. The entities again, now binding them. A binding names the
+  //    projection and nothing else — there is no second place where a
+  //    type or an initial value could disagree with the first.
+  seedPatch('entity-definition', modelId, 'Student', (student) => {
+    student.properties = [
+      bindProp(STATUS_PROPERTY, 'StudentStatus'),
+      bindProp('subscriptionCount', 'StudentSubscriptionCount'),
+    ];
   });
-  updateDefinition('entity-definition', modelId, 'Course', {
-    icon: '📚',
-    properties: [
-      { ...statusProperty('CourseStatus', 'NonExistent'),
-        handlers: [
-          handler('CourseDefined', 'set', { enumMember: 'Existent' }),
-          handler('CourseArchived', 'set', { enumMember: 'Archived' }),
-        ] },
-      { ...property('capacity', 'integer', 0),
-        handlers: [
-          handler('CourseDefined', 'set', { eventProperty: 'capacity' }),
-          handler('CourseCapacityChanged', 'set', { eventProperty: 'newCapacity' }),
-        ] },
-      { ...property('subscriptionCount', 'integer', 0),
-        handlers: [
-          handler('StudentSubscribedToCourse', 'increment', 1),
-          handler('StudentUnsubscribedFromCourse', 'decrement', 1),
-        ] },
-      { ...property('subscribedStudentIds', 'StudentId', [], { isList: true }),
-        handlers: [
-          handler('StudentSubscribedToCourse', 'append', { eventProperty: 'studentId' }),
-          handler('StudentUnsubscribedFromCourse', 'remove', { eventProperty: 'studentId' }),
-        ] },
-    ],
+  seedPatch('entity-definition', modelId, 'Course', (course) => {
+    course.properties = [
+      bindProp(STATUS_PROPERTY, 'CourseStatus'),
+      bindProp('capacity', 'CourseCapacity'),
+      bindProp('subscriptionCount', 'CourseSubscriptionCount'),
+      bindProp('subscribedStudentIds', 'CourseSubscribedStudentIds'),
+    ];
   });
 
-  // 4. Commands. The boundary is the DCB.
+  // 5. Commands. The boundary is the DCB.
   const command = (name, body) => addDefinition('command-definition', modelId, name, body);
 
   command('DefineCourse', {
@@ -3589,7 +3779,6 @@ function seedAddSequence(modelId) {
   addDefinition('projection-definition', modelId, 'CourseNumbering', {
     parameters: [],
     valueType: 'CourseId',
-    isOptional: false,
     isList: false,
     initialValue: 'c1',
     handlers: [
@@ -3609,6 +3798,41 @@ function seedAddSequence(modelId) {
         capacity: seedParam('capacity'),
       },
     }],
+  });
+
+}
+
+// Two scenarios over the numbering itself — the thing no entity owns
+// and no command page shows in isolation. A numbering is exactly the
+// case worth asserting directly: its whole contract is "the next value
+// to issue", at every point in its life, and that is a claim about the
+// fold rather than about any decision made from it.
+//
+// A layer of its own rather than part of `seedAddSequence`, because a
+// Given is written against the events as they are *now*: the tenancy
+// and schedule layers both add properties to `CourseDefined`, and a
+// scenario written before them is broken by them. That is the
+// mechanism reporting honestly, and the models that go on to grow the
+// event should not ship already saying so.
+//
+// The Then is stated here rather than derived, because a seed runs
+// against `model.js` alone and the evaluator is not loaded. A test
+// (`ui.test.js`) runs every shipped scenario to keep that honest.
+function seedSequenceScenarios(modelId) {
+  seedProjectionScenario(modelId, 'a29c2e1f-6b04-4f5a-9d13-5f0a2d7c8e41', {
+    name: 'issues c1 before anything has happened',
+    given: [],
+    reads: [{ alias: 'numbering', projection: 'CourseNumbering', arguments: {} }],
+    then: { numbering: 'c1' },
+  });
+  seedProjectionScenario(modelId, 'f47b9c30-2a8d-4e16-b5c7-9e3a1d604f28', {
+    name: 'issues c3 once two courses exist',
+    given: [
+      { event: 'CourseDefined', data: { courseId: 'c1', capacity: 10 } },
+      { event: 'CourseDefined', data: { courseId: 'c2', capacity: 10 } },
+    ],
+    reads: [{ alias: 'numbering', projection: 'CourseNumbering', arguments: {} }],
+    then: { numbering: 'c3' },
   });
 }
 
@@ -3633,10 +3857,7 @@ function seedAddSequence(modelId) {
 // has nothing to exempt here.
 function seedAddTenancy(modelId) {
   addDefinition('custom-type-definition', modelId, 'TenantStatus', seedEnumType('TenantStatus', ['NonExistent', 'Existent']));
-  addDefinition('entity-definition', modelId, 'Tenant', {
-    icon: '🏢',
-    properties: [seedStatusProperty('TenantStatus', 'NonExistent')],
-  });
+  addDefinition('entity-definition', modelId, 'Tenant', { icon: '🏢', properties: [] });
   addDefinition('custom-type-definition', modelId, 'CourseNumber', {
     schema: { type: 'string', pattern: '^[0-9]+$' },
   });
@@ -3649,10 +3870,11 @@ function seedAddTenancy(modelId) {
     event.properties.push(seedProp('courseNumber', 'CourseNumber'));
   });
 
+  addDefinition('projection-definition', modelId, 'TenantStatus',
+    seedPropertyProjection('Tenant', 'TenantStatus', { enumMember: 'NonExistent' },
+      [seedHandler('TenantRegistered', 'set', { enumMember: 'Existent' })]));
   seedPatch('entity-definition', modelId, 'Tenant', (tenant) => {
-    tenant.properties[0].handlers = [
-      seedHandler('TenantRegistered', 'set', { enumMember: 'Existent' }),
-    ];
+    tenant.properties = [seedBindProp(STATUS_PROPERTY, 'TenantStatus')];
   });
 
   // One parameter, so one tag: `Tenant:<id> AND type CourseDefined`.
@@ -3662,7 +3884,6 @@ function seedAddTenancy(modelId) {
   addDefinition('projection-definition', modelId, 'TenantCourseNumbering', {
     parameters: [{ name: 'tenantId', propertyType: 'TenantId' }],
     valueType: 'CourseNumber',
-    isOptional: false,
     isList: false,
     initialValue: '1',
     handlers: [
@@ -3721,25 +3942,24 @@ function seedAddSchedules(modelId) {
     properties: [seedProp('courseId', 'CourseId'), seedListProp('slots', 'TimeSlot')],
   });
 
-  seedPatch('entity-definition', modelId, 'Course', (course) => {
-    course.properties.push({
-      ...seedProperty('slots', 'TimeSlot', [], { isList: true }),
-      handlers: [
-        seedHandler('CourseDefined', 'set', { eventProperty: 'slots' }),
-        seedHandler('CourseRescheduled', 'set', { eventProperty: 'slots' }),
-      ],
-    });
-  });
+  addDefinition('projection-definition', modelId, 'CourseSlots',
+    seedPropertyProjection('Course', 'TimeSlot', [], [
+      seedHandler('CourseDefined', 'set', { eventProperty: 'slots' }),
+      seedHandler('CourseRescheduled', 'set', { eventProperty: 'slots' }),
+    ], { isList: true }));
   // Names the courses whose *current* schedules the overlap check
   // reads. Nothing about time is stored here.
+  addDefinition('projection-definition', modelId, 'StudentSubscribedCourseIds',
+    seedPropertyProjection('Student', 'CourseId', [], [
+      seedHandler('StudentSubscribedToCourse', 'append', { eventProperty: 'courseId' }),
+      seedHandler('StudentUnsubscribedFromCourse', 'remove', { eventProperty: 'courseId' }),
+    ], { isList: true }));
+
+  seedPatch('entity-definition', modelId, 'Course', (course) => {
+    course.properties.push(seedBindProp('slots', 'CourseSlots'));
+  });
   seedPatch('entity-definition', modelId, 'Student', (student) => {
-    student.properties.push({
-      ...seedProperty('subscribedCourseIds', 'CourseId', [], { isList: true }),
-      handlers: [
-        seedHandler('StudentSubscribedToCourse', 'append', { eventProperty: 'courseId' }),
-        seedHandler('StudentUnsubscribedFromCourse', 'remove', { eventProperty: 'courseId' }),
-      ],
-    });
+    student.properties.push(seedBindProp('subscribedCourseIds', 'StudentSubscribedCourseIds'));
   });
 
   seedPatch('command-definition', modelId, 'DefineCourse', (define) => {
@@ -3812,8 +4032,6 @@ function seedAddSchedules(modelId) {
 // `order` is bound singularly beside it, so the same boundary holds one
 // instance and many, and the derived DCB shows both shapes at once.
 function seedProductPricing(modelId) {
-  const property = seedProperty;
-  const statusProperty = seedStatusProperty;
   const prop = seedProp;
   const handler = seedHandler;
   const param = seedParam;
@@ -3829,22 +4047,10 @@ function seedProductPricing(modelId) {
   addDefinition('custom-type-definition', modelId, 'ProductStatus', seedEnumType('ProductStatus', ['NonExistent', 'Existent']));
   addDefinition('custom-type-definition', modelId, 'OrderStatus', seedEnumType('OrderStatus', ['NonExistent', 'Existent']));
 
-  // 2. Entities, first without handlers — Item cannot be declared
-  //    until ProductId exists, and ProductId comes from Product.
-  addDefinition('entity-definition', modelId, 'Product', {
-    icon: '📦',
-    properties: [
-      statusProperty('ProductStatus', 'NonExistent'),
-      // Optional, and null until the product is defined: a price of 0
-      // on a product that does not exist would be a lie the model then
-      // has to defend.
-      property('currentPrice', 'Money', null, { isOptional: true }),
-    ],
-  });
-  addDefinition('entity-definition', modelId, 'Order', {
-    icon: '🧾',
-    properties: [statusProperty('OrderStatus', 'NonExistent')],
-  });
+  // 2. Entities, bare — Item cannot be declared until ProductId
+  //    exists, and ProductId comes from Product.
+  addDefinition('entity-definition', modelId, 'Product', { icon: '📦', properties: [] });
+  addDefinition('entity-definition', modelId, 'Order', { icon: '🧾', properties: [] });
 
   addDefinition('custom-type-definition', modelId, 'Item', {
     properties: [
@@ -3862,28 +4068,33 @@ function seedProductPricing(modelId) {
   // One event, many tags: Order:<orderId> plus one Product per item.
   event('ProductsOrdered', [prop('orderId', 'OrderId'), seedListProp('items', 'Item')]);
 
-  // 4. Product again, now handling the price events. Neither property
+  // 4. The projections, then the bindings. Neither product projection
   //    handles ProductsOrdered: a value-style handler would need to
   //    pick *this* product's line out of the event, which the model
   //    cannot yet express.
-  updateDefinition('entity-definition', modelId, 'Product', {
-    icon: '📦',
-    properties: [
-      { ...statusProperty('ProductStatus', 'NonExistent'),
-        handlers: [handler('ProductDefined', 'set', { enumMember: 'Existent' })] },
-      { ...property('currentPrice', 'Money', null, { isOptional: true }),
-        handlers: [
-          handler('ProductDefined', 'set', { eventProperty: 'price' }),
-          handler('ProductPriceChanged', 'set', { eventProperty: 'newPrice' }),
-        ] },
-    ],
+  addDefinition('projection-definition', modelId, 'ProductStatus',
+    seedPropertyProjection('Product', 'ProductStatus', { enumMember: 'NonExistent' },
+      [handler('ProductDefined', 'set', { enumMember: 'Existent' })]));
+  // Starts at null — no value yet. A price of 0 on a product that does
+  // not exist would be a lie the model then has to defend, and null is
+  // a different answer from both 0 and "".
+  addDefinition('projection-definition', modelId, 'ProductCurrentPrice',
+    seedPropertyProjection('Product', 'Money', null, [
+      handler('ProductDefined', 'set', { eventProperty: 'price' }),
+      handler('ProductPriceChanged', 'set', { eventProperty: 'newPrice' }),
+    ]));
+  addDefinition('projection-definition', modelId, 'OrderStatus',
+    seedPropertyProjection('Order', 'OrderStatus', { enumMember: 'NonExistent' },
+      [handler('ProductsOrdered', 'set', { enumMember: 'Existent' })]));
+
+  seedPatch('entity-definition', modelId, 'Product', (product) => {
+    product.properties = [
+      seedBindProp(STATUS_PROPERTY, 'ProductStatus'),
+      seedBindProp('currentPrice', 'ProductCurrentPrice'),
+    ];
   });
-  updateDefinition('entity-definition', modelId, 'Order', {
-    icon: '🧾',
-    properties: [
-      { ...statusProperty('OrderStatus', 'NonExistent'),
-        handlers: [handler('ProductsOrdered', 'set', { enumMember: 'Existent' })] },
-    ],
+  seedPatch('entity-definition', modelId, 'Order', (order) => {
+    order.properties = [seedBindProp(STATUS_PROPERTY, 'OrderStatus')];
   });
 
   // 5. Commands defining and repricing a single product, so the
@@ -3982,7 +4193,7 @@ const PREDEFINED_MODELS = [
     slug: 'course-sequence',
     description: 'Adds a projection issuing c1, c2, c3… DefineCourse loses its identifier '
       + 'parameter and its conditions — binding the numbering guards it instead.',
-    build: (modelId) => { seedBase(modelId); seedAddSequence(modelId); },
+    build: (modelId) => { seedBase(modelId); seedAddSequence(modelId); seedSequenceScenarios(modelId); },
   },
   {
     name: 'Course Example (with sequence and tenant)',

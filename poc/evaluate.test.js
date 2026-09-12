@@ -56,6 +56,7 @@ function open_(index) {
 const {
   evaluateCommand, foldEntityProperty, foldProjection, tagsOfEvent,
   deriveThen, runScenario, scenarioTouchesScript,
+  deriveProjectionScenarioThen, runProjectionScenario, projectionScenarioTouchesScript,
   addDefinition, updateDefinition, removeDefinition, renameDefinition, renameMember, reorderDefinitions,
   createDcbModel,
   generateId, scenarioName, deepClone, evSuccessor,
@@ -72,24 +73,34 @@ function openBlank(name) {
   return { id, model: () => sandbox.projectState()[id] };
 }
 
-// A fresh model with a scripted entity property — for scripted-content
-// tests (script round-tripping, `envelopeHasScript`, `scenarioTouchesScript`)
-// that need a fixture no PREDEFINED_MODELS example carries. `Tick` reads
-// the script through its boundary; `Ping` publishes the same event without
-// reading it, so both sides of "does this command touch a script" exist.
+// A fresh model with a scripted projection bound as an entity property
+// — for scripted-content tests (script round-tripping,
+// `envelopeHasScript`, `scenarioTouchesScript`) that need a fixture no
+// PREDEFINED_MODELS example carries. `Tick` reads the script through its
+// boundary; `Ping` publishes the same event without reading it, so both
+// sides of "does this command touch a script" exist.
+//
+// The script scopes itself the way every scripted projection does: an
+// identifier-typed argument interpolated into its tag filter. Binding it
+// as `Counter.total` is what supplies that argument.
 function openScripted() {
   const { id, model } = openBlank('Scripted');
   addDefinition('entity-definition', id, 'Counter', { properties: [] });
   addDefinition('event-definition', id, 'Ticked', {
     properties: [{ name: 'counterId', propertyType: 'CounterId', isOptional: false, isList: false }],
   });
+  addDefinition('projection-definition', id, 'CounterTotal', {
+    valueType: 'integer',
+    isList: false,
+    script: {
+      initialState: 0,
+      tagFilter: ['CounterId:{counterId}'],
+      arguments: [{ name: 'counterId', propertyType: 'CounterId' }],
+    },
+    handlers: [{ event: 'Ticked', code: '(state || 0) + 1' }],
+  });
   updateDefinition('entity-definition', id, 'Counter', {
-    properties: [{
-      name: 'total',
-      propertyType: 'integer',
-      script: { initialState: 0, arguments: [] },
-      handlers: [{ event: 'Ticked', code: '(state || 0) + 1' }],
-    }],
+    properties: [{ name: 'total', projection: 'CounterTotal' }],
   });
   addDefinition('command-definition', id, 'Tick', {
     properties: [{ name: 'counterId', propertyType: 'CounterId', isOptional: false, isList: false }],
@@ -231,7 +242,8 @@ function drive(model, log, command, args) {
     const log = [];
     const result = evaluateCommand(model, log, 'DefineCourse', { capacity: 1 });
     eq(result.outcome, 'published', 'outcome');
-    eq(result.reads.courseNumbering, { kind: 'projection', projection: 'CourseNumbering', value: 'c1' }, 'reads');
+    eq(result.reads.courseNumbering,
+      { kind: 'projection', projection: 'CourseNumbering', arguments: {}, value: 'c1' }, 'reads');
   });
 }
 
@@ -735,7 +747,9 @@ function drive(model, log, command, args) {
     const seq = build(1);
     const result = evaluateCommand(seq, [], 'DefineCourse', { capacity: 3 });
     eq(result.reads.courseNumbering, {
-      kind: 'projection', projection: 'CourseNumbering', value: 'c1',
+      // The arguments ride along with the value: a partition is half of
+      // what a read was, and a reader following it needs both.
+      kind: 'projection', projection: 'CourseNumbering', arguments: {}, value: 'c1',
     }, 'the numbering');
   });
 }
@@ -752,17 +766,19 @@ function drive(model, log, command, args) {
   addDefinition('event-definition', id, 'WidgetDefined', {
     properties: [{ name: 'widgetId', propertyType: 'WidgetId', isOptional: false, isList: false }],
   });
+  addDefinition('projection-definition', id, 'WidgetIsDefined', {
+    parameters: [{ name: 'widgetId', propertyType: 'WidgetId' }],
+    valueType: 'boolean',
+    isList: false,
+    initialValue: false,
+    handlers: [{ event: 'WidgetDefined', operation: 'set', value: true }],
+  });
   updateDefinition('entity-definition', id, 'Widget', {
-    properties: [{
-      name: 'defined', propertyType: 'boolean', isOptional: false, isList: false,
-      initialValue: false,
-      handlers: [{ event: 'WidgetDefined', operation: 'set', value: true }],
-    }],
+    properties: [{ name: 'defined', projection: 'WidgetIsDefined' }],
   });
   addDefinition('projection-definition', id, 'WidgetNumbering', {
     parameters: [],
     valueType: 'WidgetId',
-    isOptional: false,
     isList: false,
     initialValue: 1,
     handlers: [{ event: 'WidgetDefined', operation: 'set', value: { successor: { eventProperty: 'widgetId' } } }],
@@ -841,18 +857,18 @@ function drive(model, log, command, args) {
     eq(invoiceTags, ['TenantTag:t1', 'InvoiceSeriesId:i1'], 'invoice tags, entity-derived component included');
   });
 
-  check('declaring a successor over a composite identifier is refused at validation time', () => {
+  check('a projection may not hold a composite, so no successor over one can be declared', () => {
     try {
-      addDefinition('entity-definition', id, 'Ledger', {
-        properties: [{
-          name: 'lastCourseId', propertyType: 'CourseId', isOptional: true, isList: false,
-          initialValue: null,
-          handlers: [{ event: 'CourseDefined', operation: 'set', value: { successor: { eventProperty: 'courseId' } } }],
-        }],
+      addDefinition('projection-definition', id, 'LastCourseId', {
+        parameters: [],
+        valueType: 'CourseId',
+        isList: false,
+        initialValue: null,
+        handlers: [{ event: 'CourseDefined', operation: 'set', value: { successor: { eventProperty: 'courseId' } } }],
       });
       throw new Error('did not refuse');
     } catch (error) {
-      if (!/composite identifier has no successor/.test(error.message)) throw error;
+      if (!/which is a composite/.test(error.message)) throw error;
     }
   });
 }
@@ -1008,6 +1024,7 @@ function drive(model, log, command, args) {
   });
   addDefinition('projection-definition', id, 'OpenRegionCount', {
     valueType: 'integer',
+    isList: false,
     script: {
       initialState: 0,
       tagFilter: ['RegionCode:{region}'],
@@ -1093,6 +1110,7 @@ function drive(model, log, command, args) {
   });
   addDefinition('projection-definition', id, 'OpenRegionCount', {
     valueType: 'integer',
+    isList: false,
     script: { initialState: 0, tagFilter: ['RegionCode:{region}'], arguments: [{ name: 'region', propertyType: 'RegionCode' }] },
     handlers: [{ event: 'RegionOpened', code: '(state || 0) + 1' }],
   });
@@ -1153,8 +1171,8 @@ check('an import missing the definition arrays is refused, not silently accepted
   // from: these two strings are the published contract, and a test that
   // derived them from the source could not notice one of them changing.
   check('an export carries both markers', () => {
-    eq(good.$schema, 'https://dcb.events/schemas/model/v1.json', '$schema');
-    eq(/^1\.\d+$/.test(good.dcbModelVersion), true, 'dcbModelVersion is a 1.x');
+    eq(good.$schema, 'https://dcb.events/schemas/model/v2.json', '$schema');
+    eq(/^2\.\d+$/.test(good.dcbModelVersion), true, 'dcbModelVersion is a 2.x');
   });
 
   check('the definition arrays sit at the top level, under no wrapper', () => {
@@ -1177,8 +1195,10 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('an import from an unknown major is refused', () => {
-    refuses({ ...good, dcbModelVersion: '2.0' }, 'a newer major');
-    refuses({ ...good, dcbModelVersion: '0.9' }, 'an older major');
+    refuses({ ...good, dcbModelVersion: '3.0' }, 'a newer major');
+    // 1.x is where entity properties were definitions rather than
+    // bindings — readable as JSON, and misread as a model.
+    refuses({ ...good, dcbModelVersion: '1.0' }, 'the major before this one');
   });
 
   check('$schema is required but never read, so a repointed one still imports', () => {
@@ -1187,7 +1207,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('a newer minor imports, and says what it is dropping', () => {
-    const newer = { ...good, dcbModelVersion: '1.99' };
+    const newer = { ...good, dcbModelVersion: '2.99' };
     eq(typeof importModelFromEnvelope(newer), 'string', 'imported');
     eq(envelopeVersionWarning(newer).length > 0, true, 'warned');
     eq(envelopeVersionWarning(good), '', 'nothing to warn about at the current version');
@@ -1196,6 +1216,390 @@ check('an import missing the definition arrays is refused, not silently accepted
   check('an import with no name is refused rather than named for the user', () => {
     refuses({ ...good, name: undefined }, 'no name');
     refuses({ ...good, name: '' }, 'an empty name');
+  });
+}
+
+// ---------------------------------------------------------------
+// 18. One kind of fold.
+//
+// An entity property is a binding to an ordinary projection, so the
+// things that used to be true of only one of them are now true of
+// both — and the things that told them apart are gone.
+// ---------------------------------------------------------------
+{
+  const refuses = (pattern, what, fn) => check(what, () => {
+    try {
+      fn();
+    } catch (error) {
+      if (!pattern.test(error.message)) throw new Error(`wrong message: ${error.message}`);
+      return;
+    }
+    throw new Error('did not refuse');
+  });
+
+  check('a property and a direct read of the same projection agree', () => {
+    const model = build(0);
+    const log = [];
+    drive(model, log, 'DefineCourse', { courseId: 'c1', capacity: 7 });
+    // Through the entity, and through the projection it binds. Same
+    // fold, reached two ways.
+    eq(foldEntityProperty(model, log, 'Course', 'capacity', 'c1'), 7, 'as a property');
+    eq(foldProjection(model, log, 'CourseCapacity', { courseId: 'c1' }), 7, 'as a projection');
+  });
+
+  check('one projection may be bound by two entities that share an identifier', () => {
+    const { id, model } = openBlank();
+    addDefinition('entity-definition', id, 'Course', { properties: [] });
+    addDefinition('event-definition', id, 'CourseDefined', {
+      properties: [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false }],
+    });
+    addDefinition('projection-definition', id, 'CourseExists', {
+      parameters: [{ name: 'courseId', propertyType: 'CourseId' }],
+      valueType: 'boolean', isList: false, initialValue: false,
+      handlers: [{ event: 'CourseDefined', operation: 'set', value: true }],
+    });
+    // Two names for one fold, on the same entity — legal, and the
+    // point of a property being a reference rather than a definition.
+    updateDefinition('entity-definition', id, 'Course', {
+      properties: [
+        { name: 'exists', projection: 'CourseExists' },
+        { name: 'isDefined', projection: 'CourseExists' },
+      ],
+    });
+    const log = [{ type: 'CourseDefined', data: { courseId: 'c1' } }];
+    eq(foldEntityProperty(model(), log, 'Course', 'exists', 'c1'), true, 'under one name');
+    eq(foldEntityProperty(model(), log, 'Course', 'isDefined', 'c1'), true, 'under the other');
+  });
+
+  check('a bound projection cannot be deleted out from under its property', () => {
+    const { id } = open_(0);
+    try {
+      removeDefinition('projection-definition', id, 'CourseCapacity');
+      throw new Error('did not refuse');
+    } catch (error) {
+      if (!/still referenced by/.test(error.message)) throw error;
+    }
+  });
+
+  check('renaming a projection moves every property that binds it', () => {
+    const { id, model } = open_(0);
+    renameDefinition('projection-definition', id, 'CourseCapacity', 'CourseSeats');
+    const course = model()['entity-definitions'].Course;
+    eq(course.properties.find((p) => p.name === 'capacity').projection, 'CourseSeats', 'the binding followed');
+    const log = [];
+    drive(model(), log, 'DefineCourse', { courseId: 'c1', capacity: 4 });
+    eq(foldEntityProperty(model(), log, 'Course', 'capacity', 'c1'), 4, 'still folds');
+  });
+
+  refuses(/exactly one parameter typed CourseId/,
+    'a projection partitioned by nothing cannot be an entity property', () => {
+      const { id } = open_(1);
+      // CourseNumbering is global — there is no instance for a
+      // property binding to name.
+      updateDefinition('entity-definition', id, 'Course', {
+        icon: '📚', properties: [{ name: 'numbering', projection: 'CourseNumbering' }],
+      });
+    });
+
+  refuses(/would leave it without the CourseId-typed slot/,
+    'a bound projection cannot have its partition reshaped', () => {
+      const { id, model } = open_(0);
+      const body = { ...deepClone(model()['projection-definitions'].CourseCapacity), parameters: [] };
+      updateDefinition('projection-definition', id, 'CourseCapacity', body);
+    });
+
+  check('a scripted projection bound as a property is scoped by the instance', () => {
+    const { model } = openScripted();
+    const log = [
+      { type: 'Ticked', data: { counterId: 'x1' } },
+      { type: 'Ticked', data: { counterId: 'x2' } },
+      { type: 'Ticked', data: { counterId: 'x1' } },
+    ];
+    eq(foldEntityProperty(model(), log, 'Counter', 'total', 'x1'), 2, 'x1 counted its own');
+    eq(foldEntityProperty(model(), log, 'Counter', 'total', 'x2'), 1, 'x2 counted its own');
+  });
+
+  refuses(/never interpolates "\{counterId\}"/,
+    'a scripted projection that ignores the instance cannot be bound as a property', () => {
+      const { id } = openScripted();
+      const body = {
+        valueType: 'integer', isList: false,
+        script: {
+          initialState: 0, tagFilter: [],
+          arguments: [{ name: 'counterId', propertyType: 'CounterId' }],
+        },
+        handlers: [{ event: 'Ticked', code: '(state || 0) + 1' }],
+      };
+      addDefinition('projection-definition', id, 'GlobalTicks', body);
+      updateDefinition('entity-definition', id, 'Counter', {
+        properties: [{ name: 'ticks', projection: 'GlobalTicks' }],
+      });
+    });
+}
+
+// ---------------------------------------------------------------
+// 19. Initial values: typed, and `null` is one of them.
+// ---------------------------------------------------------------
+{
+  const { id, model } = openBlank();
+  addDefinition('custom-type-definition', id, 'Colour', {
+    schema: { type: 'string', enum: ['Red', 'Green'] },
+  });
+  addDefinition('custom-type-definition', id, 'Slot', { schema: { type: 'string' } });
+  addDefinition('event-definition', id, 'Nudged', { properties: [] });
+
+  const add = (name, body) => addDefinition('projection-definition', id, name, {
+    parameters: [], isList: false, handlers: [], ...body,
+  });
+  const refused = (body) => {
+    try {
+      add('Attempt' + Math.random().toString(36).slice(2, 8).replace(/[0-9]/g, 'x'), body);
+    } catch (error) {
+      return error.message;
+    }
+    return null;
+  };
+
+  check('null is a legal initial value of every type', () => {
+    add('NoNumberYet', { valueType: 'integer', initialValue: null });
+    add('NoTextYet', { valueType: 'string', initialValue: null });
+    add('NoFlagYet', { valueType: 'boolean', initialValue: null });
+    add('NoColourYet', { valueType: 'Colour', initialValue: null });
+    eq(model()['projection-definitions'].NoNumberYet.initialValue, null, 'stored as null');
+  });
+
+  check('null and the empty string are different stored values', () => {
+    add('EmptyText', { valueType: 'string', initialValue: '' });
+    const stored = model()['projection-definitions'];
+    eq(stored.NoTextYet.initialValue, null, 'no value yet');
+    eq(stored.EmptyText.initialValue, '', 'an empty string');
+    eq(stored.NoTextYet.initialValue === stored.EmptyText.initialValue, false, 'never conflated');
+  });
+
+  check('a list may start non-empty, with typed elements', () => {
+    add('Reserved', { valueType: 'Slot', isList: true, initialValue: ['a', 'b'] });
+    eq(model()['projection-definitions'].Reserved.initialValue, ['a', 'b'], 'kept whole');
+    eq(foldProjection(model(), [], 'Reserved', {}), ['a', 'b'], 'and folds to it');
+  });
+
+  check('an initial value is checked against the declared type', () => {
+    eq(/is not a integer/.test(refused({ valueType: 'integer', initialValue: 'lots' })), true, 'text for an integer');
+    eq(/is not a boolean/.test(refused({ valueType: 'boolean', initialValue: 1 })), true, 'a number for a boolean');
+    eq(/not a literal/.test(refused({ valueType: 'Slot', isList: true, initialValue: ['a', null] })), true,
+      'null inside a list');
+    eq(/is a list/.test(refused({ valueType: 'Slot', initialValue: ['a'] })), true, 'a list for a single value');
+    eq(/its initial value is one/.test(refused({ valueType: 'Slot', isList: true, initialValue: 'a' })), true,
+      'a single value for a list');
+    eq(/not a member of Colour/.test(refused({ valueType: 'Colour', initialValue: { enumMember: 'Blue' } })), true,
+      'an enum member that does not exist');
+    eq(/is an enum/.test(refused({ valueType: 'Colour', initialValue: 'Red' })), true,
+      'a bare literal where a member reference belongs');
+  });
+
+  check('a projection nothing moves yet is legal and reads as where it starts', () => {
+    add('Untouched', { valueType: 'integer', initialValue: 41, handlers: [] });
+    eq(foldProjection(model(), [{ type: 'Nudged', data: {} }], 'Untouched', {}), 41, 'nothing moved it');
+  });
+
+  check('an integer projection is offered increment and decrement', () => {
+    // The operations a standalone projection may use come from its own
+    // declared type, exactly as an entity property's always did.
+    add('Nudges', {
+      valueType: 'integer', initialValue: 0,
+      handlers: [{ event: 'Nudged', operation: 'increment', value: 1 }],
+    });
+    eq(foldProjection(model(), [{ type: 'Nudged', data: {} }, { type: 'Nudged', data: {} }], 'Nudges', {}),
+      2, 'incremented twice');
+  });
+}
+
+// ---------------------------------------------------------------
+// 20. Scenarios over projections.
+//
+// One kind, whichever kind of projection it reads: an entity
+// instance's properties are several reads sharing an identifier, and a
+// standalone projection is one read with whatever arguments it takes.
+// ---------------------------------------------------------------
+{
+  const store_ = (id, model, body) => {
+    const aliases = (body.reads || []).map((r) => r.alias);
+    const complete = { ...body, then: deriveProjectionScenarioThen(model, body, aliases) };
+    const key = generateId();
+    addDefinition('projection-scenario-definition', id, key, complete);
+    return key;
+  };
+
+  check('a scenario over a global numbering derives what it issues next', () => {
+    const { id, model } = open_(1);
+    const key = store_(id, model(), {
+      given: [
+        { event: 'CourseDefined', data: { courseId: 'c1', capacity: 5 } },
+        { event: 'CourseDefined', data: { courseId: 'c2', capacity: 5 } },
+      ],
+      reads: [{ alias: 'numbering', projection: 'CourseNumbering', arguments: {} }],
+    });
+    const stored = model()['projection-scenario-definitions'][key];
+    eq(stored.then, { numbering: 'c3' }, 'the next id to issue');
+    eq(runProjectionScenario(model(), stored).status, 'current', 'and it runs current');
+  });
+
+  check('a scenario over a parameterised projection is per partition', () => {
+    const { id, model } = open_(2);
+    const given = [
+      { event: 'TenantRegistered', data: { tenantId: 't1' } },
+      { event: 'CourseDefined', data: { tenantId: 't1', courseId: 'c1', capacity: 1, courseNumber: '1' } },
+      { event: 'CourseDefined', data: { tenantId: 't2', courseId: 'c2', capacity: 1, courseNumber: '1' } },
+    ];
+    const key = store_(id, model(), {
+      given,
+      reads: [
+        { alias: 'first', projection: 'TenantCourseNumbering', arguments: { tenantId: 't1' } },
+        { alias: 'second', projection: 'TenantCourseNumbering', arguments: { tenantId: 't2' } },
+        { alias: 'untouched', projection: 'TenantCourseNumbering', arguments: { tenantId: 't3' } },
+      ],
+    });
+    eq(model()['projection-scenario-definitions'][key].then,
+      { first: '2', second: '2', untouched: '1' }, 'each tenant counted on its own');
+  });
+
+  check('one scenario may read an entity property and a standalone projection together', () => {
+    const { id, model } = open_(1);
+    const key = store_(id, model(), {
+      given: [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 9 } }],
+      reads: [
+        { alias: 'capacity', projection: 'CourseCapacity', arguments: { courseId: 'c1' } },
+        { alias: 'numbering', projection: 'CourseNumbering', arguments: {} },
+      ],
+    });
+    eq(model()['projection-scenario-definitions'][key].then, { capacity: 9, numbering: 'c2' },
+      'both folds, one Given');
+  });
+
+  check('changing what a projection does is reported as drift', () => {
+    const { id, model } = open_(1);
+    const key = store_(id, model(), {
+      given: [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 5 } }],
+      reads: [{ alias: 'numbering', projection: 'CourseNumbering', arguments: {} }],
+    });
+    // Stop it advancing at all, so the fold is its initial value again
+    // rather than the successor of what CourseDefined carried.
+    const body = deepClone(model()['projection-definitions'].CourseNumbering);
+    body.handlers = [];
+    updateDefinition('projection-definition', id, 'CourseNumbering', body);
+    const result = runProjectionScenario(model(), model()['projection-scenario-definitions'][key]);
+    eq(result.status, 'drifted', 'status');
+    eq([result.expected.numbering, result.actual.numbering], ['c2', 'c1'], 'what it was, and what it is now');
+  });
+
+  check('a scenario never stops you deleting the projection it reads', () => {
+    const { id, model } = open_(1);
+    const key = store_(id, model(), {
+      given: [],
+      reads: [{ alias: 'numbering', projection: 'CourseNumbering', arguments: {} }],
+    });
+    // Only the scenario and the command read it; drop the command first,
+    // and the scenario must not be what refuses.
+    const define = deepClone(model()['command-definitions'].DefineCourse);
+    define.properties = [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false },
+      { name: 'capacity', propertyType: 'integer', isOptional: false, isList: false }];
+    // Supplying the id instead of minting it — which is what makes the
+    // numbering unreferenced, and the point of the check.
+    define.boundary = [{ alias: 'course', entity: 'Course', id: { parameterName: 'courseId' } }];
+    define.publishes[0].parameters.courseId = { parameterName: 'courseId' };
+    updateDefinition('command-definition', id, 'DefineCourse', define);
+    removeDefinition('projection-definition', id, 'CourseNumbering');
+    eq('CourseNumbering' in model()['projection-definitions'], false, 'gone');
+    eq(runProjectionScenario(model(), model()['projection-scenario-definitions'][key]).status,
+      'broken', 'and the scenario says so rather than passing');
+  });
+
+  check('renaming a projection carries every scenario that reads it', () => {
+    const { id, model } = open_(1);
+    const key = store_(id, model(), {
+      given: [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 5 } }],
+      reads: [{ alias: 'numbering', projection: 'CourseNumbering', arguments: {} }],
+    });
+    renameDefinition('projection-definition', id, 'CourseNumbering', 'CourseIds');
+    const stored = model()['projection-scenario-definitions'][key];
+    eq(stored.reads[0].projection, 'CourseIds', 'the reference followed');
+    eq(runProjectionScenario(model(), stored).status, 'current', 'still current');
+  });
+
+  check('renaming an event moves a projection scenario Given with it', () => {
+    const { id, model } = open_(1);
+    const key = store_(id, model(), {
+      given: [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 5 } }],
+      reads: [{ alias: 'numbering', projection: 'CourseNumbering', arguments: {} }],
+    });
+    renameDefinition('event-definition', id, 'CourseDefined', 'CourseOpened');
+    const stored = model()['projection-scenario-definitions'][key];
+    eq(stored.given[0].event, 'CourseOpened', 'the Given followed');
+    eq(runProjectionScenario(model(), stored).status, 'current', 'still current');
+  });
+
+  check('a read that supplies the wrong arguments is refused', () => {
+    const { id, model } = open_(2);
+    const bad = (reads, pattern) => {
+      try {
+        addDefinition('projection-scenario-definition', id, generateId(),
+          { given: [], reads, then: {} });
+        throw new Error('did not refuse');
+      } catch (error) {
+        if (!pattern.test(error.message)) throw new Error(`wrong message: ${error.message}`);
+      }
+    };
+    bad([{ alias: 'numbering', projection: 'TenantCourseNumbering', arguments: {} }],
+      /supplies no "tenantId"/);
+    bad([{ alias: 'numbering', projection: 'CourseNumbering', arguments: { tenantId: 't1' } }],
+      /does not declare as a parameter/);
+    bad([{ alias: 'numbering', projection: 'NoSuchThing', arguments: {} }],
+      /does not exist in this model/);
+  });
+
+  check('a scenario knows whether running it would execute a script', () => {
+    const { model } = openScripted();
+    eq(projectionScenarioTouchesScript(model(), {
+      reads: [{ alias: 'total', projection: 'CounterTotal', arguments: { counterId: 'x1' } }],
+    }), true, 'reads a scripted one');
+    const plain = build(1);
+    eq(projectionScenarioTouchesScript(plain, {
+      reads: [{ alias: 'numbering', projection: 'CourseNumbering', arguments: {} }],
+    }), false, 'declared only');
+  });
+
+  check('a scenario over a scripted projection folds through its tag filter', () => {
+    const { id, model } = openScripted();
+    const key = store_(id, model(), {
+      given: [
+        { event: 'Ticked', data: { counterId: 'x1' } },
+        { event: 'Ticked', data: { counterId: 'x2' } },
+        { event: 'Ticked', data: { counterId: 'x1' } },
+      ],
+      reads: [
+        { alias: 'first', projection: 'CounterTotal', arguments: { counterId: 'x1' } },
+        { alias: 'second', projection: 'CounterTotal', arguments: { counterId: 'x2' } },
+      ],
+    });
+    eq(model()['projection-scenario-definitions'][key].then, { first: 2, second: 1 },
+      'each counter counted its own');
+  });
+
+  check('a projection scenario round-trips through an export', () => {
+    const { id, model } = open_(1);
+    store_(id, model(), {
+      given: [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 5 } }],
+      reads: [{ alias: 'numbering', projection: 'CourseNumbering', arguments: {} }],
+    });
+    const envelope = buildShareEnvelope(model(), []);
+    // Two ship with this model, and this is the third.
+    eq(envelope.projectionScenarioDefinitions.length, 3, 'exported');
+    const before = definitionsToSchema(model());
+    const importedId = importModelFromEnvelope(envelope);
+    const imported = sandbox.projectState()[importedId];
+    if (!imported) throw new Error('import produced no model for id ' + importedId);
+    eq(definitionsToSchema(imported), before, 'the definitions came back');
+    const stored = Object.values(imported['projection-scenario-definitions'])[0];
+    eq(runProjectionScenario(imported, stored).status, 'current', 'and it still runs current');
   });
 }
 

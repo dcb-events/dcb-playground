@@ -295,43 +295,48 @@ function evCompileTarget(model, target, label) {
 // ============================================================
 // Folding.
 //
-// Both entries replay from the start of the log every time. That is the
-// same choice the playground already makes for its own state, and it
-// stays until something measured says otherwise — an incremental fold
-// only helps scrubbing forwards, and pays for it with a snapshot
-// regime that a replay does not need.
+// There is one fold, `foldProjection`, and one way into it. Reading an
+// entity's property used to be a second entry with a partition of its
+// own — derived from the entity rather than supplied — and the two
+// agreeing was a thing that had to keep being true. Now the property is
+// a binding, so it fills in an argument and calls the same function:
+// nothing left to disagree.
+//
+// It replays from the start of the log every time. That is the same
+// choice the playground already makes for its own state, and it stays
+// until something measured says otherwise — an incremental fold only
+// helps scrubbing forwards, and pays for it with a snapshot regime that
+// a replay does not need.
 // ============================================================
 
-// The tag(s) that identify one entity instance — one per leaf of the
-// entity's own derived identifier, scalar or composite alike, each
-// through that leaf's own `tagSchema`. An event carrying this
-// instance's identifier carries every one of these tags (see
-// `tagsOfEvent`), so matching on all of them together is what "this
-// instance" means — the same union-of-component-tags rule, read
-// backwards.
-function tagsForEntityInstance(model, entityName, instanceId) {
-  const leaves = idLeavesOfType(model, idTypeOf(model, entityName));
-  if (!leaves.length) return [`${entityName}:${instanceId}`];
-  return leaves.map((leaf) => {
-    const value = leaf.field === null ? instanceId : (instanceId || {})[leaf.field];
-    return renderTag(identifierTypeOf(model, leaf.identifierType), String(value));
-  });
-}
-
-// One property of one entity instance. The events are those carrying
-// the instance's tag(s); the compiled steps ignore the rest.
+// One property of one entity instance — which is one projection, read
+// at the partition this instance names. The binding supplies the
+// instance as the projection's identifier-typed parameter (or, for a
+// scripted one, its identifier-typed argument), so this is
+// `foldProjection` with that one argument filled in and nothing else
+// different. There is no second fold path: an entity property and a
+// standalone read reach the same code by the same route.
 function foldEntityProperty(model, events, entityName, propertyName, instanceId, args) {
   const entity = model['entity-definitions'][entityName];
   if (!entity) fail(`This model has no entity "${entityName}".`);
-  const property = (entity.properties || []).find((p) => p.name === propertyName);
-  if (!property) fail(`"${entityName}" has no property "${propertyName}".`);
+  const binding = (entity.properties || []).find((p) => p && p.name === propertyName);
+  if (!binding) fail(`"${entityName}" has no property "${propertyName}".`);
 
-  const compiled = evCompileTarget(model, property, `${entityName}.${propertyName}`);
-  const tags = tagsForEntityInstance(model, entityName, instanceId);
-  return compiled.fold(
-    events.filter((event) => evMatchesTags(model, event, tags)),
-    args
-  );
+  const projection = model['projection-definitions'][binding.projection];
+  if (!projection) {
+    fail(`"${entityName}.${propertyName}" binds projection "${binding.projection}", which this model no longer defines.`);
+  }
+  const slot = entityIdSlotOf(model, entityName, projection);
+  if (!slot) {
+    fail(
+      `"${entityName}.${propertyName}" binds "${binding.projection}", which has no ` +
+      `${idTypeOf(model, entityName)}-typed slot for the instance.`
+    );
+  }
+  return foldProjection(model, events, binding.projection, {
+    ...(args || {}),
+    [slot.name]: instanceId,
+  });
 }
 
 // One standalone projection, at one partition. A declared projection's
@@ -354,8 +359,18 @@ function foldProjection(model, events, projectionName, argumentValues) {
     ? (script.tagFilter || []).map((template) => {
       const match = TAG_FILTER_RE.exec(String(template || ''));
       if (!match) return String(template);
-      const valueText = match[2].replace(TAG_PLACEHOLDER_RE, (whole, name) =>
-        (values[name] === undefined ? whole : String(evNormalize(values[name]))));
+      // A placeholder names an argument, optionally reaching one field
+      // into it — `{courseId.tenant}` for a composite identifier whose
+      // tag comes from one of its leaves.
+      const valueText = match[2].replace(TAG_PLACEHOLDER_RE, (whole, path) => {
+        const [root, ...fields] = path.split('.');
+        if (values[root] === undefined) return whole;
+        const held = fields.reduce(
+          (value, field) => (value === null || value === undefined ? value : value[field]),
+          evNormalize(values[root])
+        );
+        return String(evNormalize(held));
+      });
       const identifierType = identifierTypeOf(model, match[1]);
       return identifierType ? renderTag(identifierType, valueText) : `${match[1]}:${valueText}`;
     })
@@ -461,6 +476,11 @@ function evResolveBinding(model, events, body, binding, scope) {
     scope.bound[binding.alias] = {
       kind: 'projection',
       projection: binding.projection,
+      // Kept beside the value because they are what makes it
+      // reproducible: the value alone says what was read, and the
+      // arguments say at which partition, which is the half a reader
+      // needs to go and look at it themselves.
+      arguments: values,
       value: foldProjection(model, events, binding.projection, values),
     };
     return;
@@ -687,7 +707,12 @@ function evDescribeReads(scope) {
   const out = {};
   for (const [alias, binding] of Object.entries(scope.bound)) {
     if (binding.kind === 'projection') {
-      out[alias] = { kind: 'projection', projection: binding.projection, value: binding.value };
+      out[alias] = {
+        kind: 'projection',
+        projection: binding.projection,
+        arguments: binding.arguments || {},
+        value: binding.value,
+      };
       continue;
     }
     out[alias] = {
@@ -790,10 +815,10 @@ function scenarioTouchesScript(model, scenario) {
       continue;
     }
     const binding = (command.boundary || []).find((b) => b && b.alias === item.alias);
-    const entity = binding && model['entity-definitions'][binding.entity];
-    if (!entity) continue;
-    for (const property of entity.properties || []) {
-      if (item.readProperties.includes(property.name) && scriptOf(property)) return true;
+    if (!binding) continue;
+    for (const propertyName of item.readProperties) {
+      const { projection } = entityPropertyTarget(model, binding.entity, propertyName);
+      if (scriptOf(projection)) return true;
     }
   }
   return false;
@@ -820,16 +845,21 @@ function runScenario(model, scenario) {
   };
 }
 
-// What the current definitions make of this property scenario — the
-// same shape that gets stored as its Then: one value per property a
-// modeler chose to check, folded from the Given for the one instance
-// `forInstance` names. `scenarioLog` reads it unchanged — a property
-// scenario's Given is the same shape a command scenario's is.
-function derivePropertyScenarioThen(model, spec, propertyNames) {
+// What the current definitions make of this projection scenario — the
+// same shape that gets stored as its Then: one value per read, folded
+// from the Given. `scenarioLog` reads the Given unchanged — a
+// projection scenario's is the same shape a command scenario's is.
+//
+// `aliases` says which reads to fold rather than folding all of them,
+// so a scenario is always re-derived over the very set its last
+// accepted Then checked. A read dropped since then surfaces as broken,
+// which is a report; folding whatever happens to be there now would
+// silently change what is being compared, which is not.
+function deriveProjectionScenarioThen(model, spec, aliases) {
   // A Given written against definitions that have since moved is not a
-  // property scenario that fails — it is one that cannot be run. See
-  // deriveThen for why this is checked ahead of the fold rather than
-  // left to fall out of it as a silent, empty match.
+  // scenario that fails — it is one that cannot be run. See deriveThen
+  // for why this is checked ahead of the fold rather than left to fall
+  // out of it as a silent, empty match.
   (spec.given || []).forEach((step, index) => {
     const definition = model['event-definitions'][(step || {}).event];
     if (!definition) {
@@ -839,7 +869,7 @@ function derivePropertyScenarioThen(model, spec, propertyNames) {
       if (!((step.data || {})[property.name] !== undefined)) {
         fail(
           `Given step ${index + 1} ("${step.event}") carries no value for "${property.name}", ` +
-          'which that event has gained since this property scenario was written.'
+          'which that event has gained since this scenario was written.'
         );
       }
     }
@@ -847,34 +877,30 @@ function derivePropertyScenarioThen(model, spec, propertyNames) {
 
   const events = scenarioLog(spec);
   const then = {};
-  for (const propertyName of propertyNames) {
-    then[propertyName] = foldEntityProperty(model, events, spec.entity, propertyName, spec.forInstance, {});
+  for (const alias of aliases) {
+    const read = (spec.reads || []).find((r) => r && r.alias === alias);
+    if (!read) fail(`This scenario no longer reads "${alias}", so there is nothing to check it against.`);
+    then[alias] = foldProjection(model, events, read.projection, read.arguments || {});
   }
   return then;
 }
 
-// Whether anything this property scenario would run is scripted — the
-// entity-property analogue of scenarioTouchesScript, simpler because a
-// property scenario names its entity directly rather than reaching one
-// through a command's boundary.
-function propertyScenarioTouchesScript(model, spec) {
-  const entity = model['entity-definitions'][spec.entity];
-  if (!entity) return false;
-  return Object.keys(spec.then || {}).some((propertyName) => {
-    const property = (entity.properties || []).find((p) => p.name === propertyName);
-    return property && scriptOf(property);
-  });
+// Whether anything this projection scenario would run is scripted —
+// the analogue of scenarioTouchesScript, simpler because a projection
+// scenario names what it folds directly rather than reaching it through
+// a command's boundary.
+function projectionScenarioTouchesScript(model, spec) {
+  return (spec.reads || []).some((read) =>
+    !!scriptOf(model['projection-definitions'][(read || {}).projection]));
 }
 
-// `{ status, expected, actual, reason }` — the entity-property analogue
-// of runScenario. `actual` is derived over the same property set the
-// last accepted Then checked, so a property deleted since surfaces as
-// broken rather than silently changing what is compared.
-function runPropertyScenario(model, spec) {
+// `{ status, expected, actual, reason }` — the projection analogue of
+// runScenario.
+function runProjectionScenario(model, spec) {
   const expected = spec.then || null;
   let actual;
   try {
-    actual = derivePropertyScenarioThen(model, spec, Object.keys(expected || {}));
+    actual = deriveProjectionScenarioThen(model, spec, Object.keys(expected || {}));
   } catch (error) {
     if (error instanceof EvaluationError) {
       return { status: 'broken', expected, actual: null, reason: error.message };
@@ -902,8 +928,8 @@ if (typeof module !== 'undefined' && module.exports) {
     runScenario,
     scenarioLog,
     scenarioTouchesScript,
-    derivePropertyScenarioThen,
-    runPropertyScenario,
-    propertyScenarioTouchesScript,
+    deriveProjectionScenarioThen,
+    runProjectionScenario,
+    projectionScenarioTouchesScript,
   };
 }

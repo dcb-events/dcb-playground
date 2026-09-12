@@ -205,13 +205,23 @@ async function runAsync(fn) {
 // Every entity property that handles this event — i.e. everything the
 // event changes. This is the link the original interface made you go
 // and find for yourself, one entity at a time.
+//
+// A property is a binding, so what handles the event is the projection
+// behind it; `property` carries both halves, since a reader wants the
+// name the entity calls it and the fold that answers for it.
 function effectsOf(model, eventName) {
   const out = [];
   for (const [entityName, entity] of Object.entries(model['entity-definitions'])) {
-    for (const property of entity.properties || []) {
-      for (const handler of property.handlers || []) {
+    for (const binding of entity.properties || []) {
+      const projection = model['projection-definitions'][(binding || {}).projection];
+      for (const handler of (projection && projection.handlers) || []) {
         if (handler && handler.event === eventName) {
-          out.push({ entity: entityName, property, handler });
+          out.push({
+            entity: entityName,
+            property: { ...binding, ...projection },
+            projectionName: binding.projection,
+            handler,
+          });
         }
       }
     }
@@ -232,12 +242,13 @@ function publishersOf(model, eventName) {
   return out;
 }
 
-// Every standalone projection that handles this event — the same
-// relationship `effectsOf` gives for an entity's own properties, one
-// level over.
+// Every projection that handles this event and is *not* bound as some
+// entity's property — the ones `effectsOf` does not already name,
+// listed beside it rather than twice.
 function projectionsHandling(model, eventName) {
   const out = [];
   for (const [name, body] of Object.entries(model['projection-definitions'])) {
+    if (boundAs(model, name).length) continue;
     for (const handler of body.handlers || []) {
       if (handler && handler.event === eventName) out.push({ projection: name, body, handler });
     }
@@ -245,18 +256,34 @@ function projectionsHandling(model, eventName) {
   return out;
 }
 
-// Every scenario — ordinary or property — whose Given or Then names
-// this event.
+// Every entity property binding this projection — `{entity, property}`
+// each. Empty for one no entity binds, which is what everywhere else
+// calls a standalone projection.
+function boundAs(model, projectionName) {
+  const out = [];
+  for (const [entityName, entity] of Object.entries(model['entity-definitions'])) {
+    for (const binding of entity.properties || []) {
+      if (binding && binding.projection === projectionName) {
+        out.push({ entity: entityName, property: binding.name });
+      }
+    }
+  }
+  return out;
+}
+
+// Every scenario — over a command or over projections — whose Given or
+// Then names this event. `overProjections` says which of the two, since
+// they are opened and named differently.
 function scenariosReferencingEvent(model, eventName) {
   const scenarios = Object.entries(model['scenario-definitions'] || {})
     .filter(([, body]) =>
       (body.given || []).some((s) => s && s.event === eventName)
       || ((body.then || {}).events || []).some((e) => e && e.type === eventName))
-    .map(([key, body]) => ({ key, body, property: false }));
-  const propertyScenarios = Object.entries(model['property-scenario-definitions'] || {})
+    .map(([key, body]) => ({ key, body, overProjections: false }));
+  const projectionScenarios = Object.entries(model['projection-scenario-definitions'] || {})
     .filter(([, body]) => (body.given || []).some((s) => s && s.event === eventName))
-    .map(([key, body]) => ({ key, body, property: true }));
-  return [...scenarios, ...propertyScenarios];
+    .map(([key, body]) => ({ key, body, overProjections: true }));
+  return [...scenarios, ...projectionScenarios];
 }
 
 // Everything one feature touches, in the order a reader meets it.
@@ -321,8 +348,8 @@ function couplingRow(model, name, events) {
         continue;
       }
       const sources = (item.readProperties || []).filter((propName) => {
-        const property = entity && (entity.properties || []).find((p) => p.name === propName);
-        return property && (property.handlers || []).some((h) => h && h.event === eventType);
+        const projection = entity && entityPropertyTarget(model, binding.entity, propName).projection;
+        return projection && (projection.handlers || []).some((h) => h && h.event === eventType);
       });
       if (sources.length) sources.forEach((propName) => via[eventType].add(memberWords(item.alias, propName)));
       else via[eventType].add(item.alias);
@@ -540,13 +567,16 @@ function orphans(model) {
 // which features consult it. The inspector needs both halves to answer
 // "is this still earning its place?".
 function propertyUsage(model, entityName, propertyName) {
-  const entity = model['entity-definitions'][entityName];
-  const property = (entity ? entity.properties : []).find((p) => p.name === propertyName);
+  const { binding, projection } = entityPropertyTarget(model, entityName, propertyName);
+  // `property` is what a caller renders: the binding's name over the
+  // bound projection's shape, which between them is everything the old
+  // single definition carried.
+  const property = binding ? { ...binding, ...(projection || {}) } : undefined;
   const changedBy = [];
   const readBy = [];
   for (const [command, body] of Object.entries(model['command-definitions'])) {
     for (const emission of body.publishes || []) {
-      const handler = ((property && property.handlers) || []).find((x) => x.event === emission.name);
+      const handler = ((projection && projection.handlers) || []).find((x) => x.event === emission.name);
       if (handler) changedBy.push({ command, event: emission.name, handler });
     }
     const aliases = (body.boundary || []).filter((b) => b.entity === entityName).map((b) => b.alias);
@@ -557,7 +587,7 @@ function propertyUsage(model, entityName, propertyName) {
     });
     if (reads) readBy.push(command);
   }
-  return { property, changedBy, readBy };
+  return { property, binding, projection, changedBy, readBy };
 }
 
 // ---------- names ----------
@@ -647,6 +677,21 @@ function operandWords(operand) {
     case 'successor': return `the one after ${operandWords(operand.successor)}`;
     default: return typeof operand === 'string' ? `"${operand}"` : String(operand);
   }
+}
+
+// Where a projection starts, as a reader reads it.
+//
+// `null` says *nothing yet* and never renders as a blank: a value that
+// has not arrived is a different answer from the empty string, and a
+// page that showed both as nothing would be lying about one of them.
+// An empty string is quoted for the same reason — so it is visibly a
+// value rather than an absence.
+function initialValueWords(value) {
+  if (value === null || value === undefined) return 'nothing yet';
+  if (Array.isArray(value)) {
+    return value.length ? value.map(operandWords).join(', ') : 'an empty list';
+  }
+  return operandWords(value);
 }
 
 const PREDICATE_WORDS = {
@@ -740,8 +785,13 @@ function readParts(model, body, binding) {
   };
 }
 
-function typeLabel(property) {
-  return `${property.propertyType}${property.isList ? '[]' : ''}${property.isOptional ? '?' : ''}`;
+// The type a member or projection holds, written the way a reader
+// reads it. `propertyType` on anything that declares one (an event
+// field, a command input, a composite's field); `valueType` on a
+// projection — the two never both appear on one object.
+function typeLabel(member) {
+  const type = member.propertyType !== undefined ? member.propertyType : member.valueType;
+  return `${type}${member.isList ? '[]' : ''}${member.isOptional ? '?' : ''}`;
 }
 
 // ---------- what a thing looks like ----------
