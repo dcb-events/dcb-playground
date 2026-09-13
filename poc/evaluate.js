@@ -846,16 +846,16 @@ function runScenario(model, scenario) {
 }
 
 // What the current definitions make of this projection scenario — the
-// same shape that gets stored as its Then: one value per read, folded
-// from the Given. `scenarioLog` reads the Given unchanged — a
+// same shape that gets stored as its Then: the value its one projection
+// folds to, over the Given. `scenarioLog` reads the Given unchanged — a
 // projection scenario's is the same shape a command scenario's is.
 //
-// `aliases` says which reads to fold rather than folding all of them,
-// so a scenario is always re-derived over the very set its last
-// accepted Then checked. A read dropped since then surfaces as broken,
-// which is a report; folding whatever happens to be there now would
-// silently change what is being compared, which is not.
-function deriveProjectionScenarioThen(model, spec, aliases) {
+// There is nothing to say about *which* of several reads to fold any
+// more: a scenario is about one projection, and its Then is that
+// projection's value. What used to be a scenario asserting four
+// properties of a course is four scenarios sharing a Given, each
+// answerable and each drifting on its own.
+function deriveProjectionScenarioThen(model, spec) {
   // A Given written against definitions that have since moved is not a
   // scenario that fails — it is one that cannot be run. See deriveThen
   // for why this is checked ahead of the fold rather than left to fall
@@ -875,14 +875,10 @@ function deriveProjectionScenarioThen(model, spec, aliases) {
     }
   });
 
-  const events = scenarioLog(spec);
-  const then = {};
-  for (const alias of aliases) {
-    const read = (spec.reads || []).find((r) => r && r.alias === alias);
-    if (!read) fail(`This scenario no longer reads "${alias}", so there is nothing to check it against.`);
-    then[alias] = foldProjection(model, events, read.projection, read.arguments || {});
+  if (!model['projection-definitions'][spec.projection]) {
+    fail(`This scenario is about "${spec.projection}", which this model no longer defines.`);
   }
-  return then;
+  return foldProjection(model, scenarioLog(spec), spec.projection, spec.arguments || {});
 }
 
 // Whether anything this projection scenario would run is scripted —
@@ -890,17 +886,18 @@ function deriveProjectionScenarioThen(model, spec, aliases) {
 // scenario names what it folds directly rather than reaching it through
 // a command's boundary.
 function projectionScenarioTouchesScript(model, spec) {
-  return (spec.reads || []).some((read) =>
-    !!scriptOf(model['projection-definitions'][(read || {}).projection]));
+  return !!scriptOf(model['projection-definitions'][(spec || {}).projection]);
 }
 
 // `{ status, expected, actual, reason }` — the projection analogue of
 // runScenario.
 function runProjectionScenario(model, spec) {
-  const expected = spec.then || null;
+  // `null` and `[]` are values a projection really holds, so what the
+  // scenario expects is read with `in` rather than by truthiness.
+  const expected = 'then' in spec ? spec.then : null;
   let actual;
   try {
-    actual = deriveProjectionScenarioThen(model, spec, Object.keys(expected || {}));
+    actual = deriveProjectionScenarioThen(model, spec);
   } catch (error) {
     if (error instanceof EvaluationError) {
       return { status: 'broken', expected, actual: null, reason: error.message };

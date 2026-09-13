@@ -1,9 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://dcb.events/schemas/model/v2.json",
+  "$id": "https://dcb.events/schemas/model/v3.json",
   "title": "DCB Model",
   "description": "A DCB model: every definition a modeller has authored for one\nDCB-based system, in the form the playground exports it. The same\ndocument travels both ways out of the playground, as readable JSON and\nas the gzipped payload of a share link.\n\n**There is one kind of fold.** A `projectionDefinition` is it: a value\nthat starts somewhere and is advanced by the events it handles, over\nthe query `tag IN (its parameters' arguments) AND type IN (handled\nevents)`. Declare no parameters and there is no tag, which is what a\nglobal numbering is. Declare one and the same numbering restarts per\ntenant.\n\nAn **entity property is a binding to one of these**, not a second kind\nof thing. `entityDefinitions[].properties` holds `{name, projection}`\nentries: the projection declares one parameter typed with the entity's\nown identifier, and binding it as a property is what supplies that\nargument. Everything the fold needs — the type held, the value it\nstarts from, the handlers, the script — lives on the projection and\nnowhere else, so there is no second place for a type or an initial\nvalue to disagree with the first. The same projection may be bound by\nseveral properties, or read directly by a command, or both.\n\nA lifecycle is not a distinct concept: a modeller who wants one binds\na property named `status` (by convention only) to a projection holding\nan ordinary enum custom type. There is no standalone constraint kind:\nconditions are inlined into the commands that check them.\n\n**Tags come from value types, not from a separate kind.** Any\n`customTypeDefinition` may set `isTag: true`, which is what makes it\nan identifier. An entity's own derived identifier is such a value\ntype — created automatically when the entity is, and from then on\nedited exactly like any other value type. A composite value type is\nnever itself a tag; its tag-ness is derived by looking through it to\nwhichever of its fields are themselves tag-marked, which is what lets\ntwo unrelated entities share one component (a `TenantId` field) and\nbe scoped together by it.\n\n**Versioning.** `dcbModelVersion` is what an importer dispatches on;\n`$schema` is for editors and is deliberately never read by one. A major\nbump means an older reader cannot correctly read the document and must\nrefuse it; a minor bump means it can, because the addition is one it\nignores. Note that \"additive\" is judged from the reader's side, not the\nschema's: a new member of a closed vocabulary — another condition\noperator, operand shape or handler operation — is a *major* change even\nthough this document merely grows an enum, because a reader that has\nnever heard of it fails on the value rather than passing it through.\n\n2.0 is such a major. An entity property stopped being a definition of\nits own and became a binding; a projection's partition became explicit\nin every case; `isOptional` went away, since `null` is an ordinary\ninitial value of any type and means \"no value yet\"; and an initial\nvalue may now be a non-empty list. A 1.x reader would misread each of\nthose rather than ignore it.\n\nThis schema moves in place for minor changes; a major change is\npublished at a new `/vN.json` and the old URL keeps serving what it\nalways served. `x-dcb-schema-revision` moves with every edit either way.\n\nThe format is young and the playground it describes is a prototype.\nExpect majors.\n",
-  "x-dcb-schema-revision": "2.0.0",
+  "x-dcb-schema-revision": "3.0.0",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -12,11 +12,11 @@
       "type": "string"
     },
     "dcbModelVersion": {
-      "description": "The version of this format, `major.minor`. The only thing an importer\ndispatches on. A reader refuses a major it does not know and warns on\na minor newer than its own, which it may read because minors only\never add what an older reader ignores.\n\nThe pattern admits every 2.x rather than pinning one value, because\nthis schema is edited in place as minors ship and must keep\nvalidating documents written against the earlier ones.\n",
+      "description": "The version of this format, `major.minor`. The only thing an importer\ndispatches on. A reader refuses a major it does not know and warns on\na minor newer than its own, which it may read because minors only\never add what an older reader ignores.\n\nThe pattern admits every 3.x rather than pinning one value, because\nthis schema is edited in place as minors ship and must keep\nvalidating documents written against the earlier ones.\n",
       "type": "string",
-      "pattern": "^2\\.\\d+$",
+      "pattern": "^3\\.\\d+$",
       "examples": [
-        "2.0"
+        "3.0"
       ]
     },
     "name": {
@@ -1034,7 +1034,7 @@
       ]
     },
     "ProjectionScenarioDefinition": {
-      "description": "A scenario over what projections fold to, rather than over what a\ncommand decides: given these events, each projection read here\nshould have folded to exactly this value. Where a\n`ScenarioDefinition` asserts what a command decides, this asserts\nwhat the fold arrives at, which is the thing a command's decision\nreads.\n\n**One kind covers both shapes it used to take.** A scenario over\nan entity instance is several `reads` of that entity's properties,\nall supplying the same identifier as their argument — which is\nexactly what an entity instance *is*, once a property is a binding.\nA scenario over a standalone projection is one read, supplying\nwhatever arguments it declares, or none for a global numbering.\nThere is nothing in this shape that knows which of the two it is,\nwhich is the point: the thing being asserted about is a projection\neither way.\n\nThese are listed separately from the six definition kinds because\nthey are authored against whatever set of projections a modeller\nwanted to check at once, and owned by no single definition.\n",
+      "description": "A scenario over what one projection folds to, rather than over what\na command decides: given these events, this projection should have\nfolded to exactly this value. Where a `ScenarioDefinition` asserts\nwhat a command decides, this asserts what the fold arrives at, which\nis the thing a command's decision reads.\n\n**The subject is not written down twice.** A scenario names the one\nprojection it is about, and `then` is that projection's value — there\nis nothing to alias and nothing to tick, because there is only ever\none thing being checked. Asserting several projections over one\nGiven is several scenarios sharing that Given; an authoring tool can\nwrite them in one gesture, but each is answerable on its own and\ndrifts on its own.\n\nThere is nothing in this shape that knows whether an entity binds\nthe projection, which is the point: the thing being asserted about\nis a projection either way.\n\nThese are listed separately from the six definition kinds because a\nprojection may be checked many times over and owned by no single\ndefinition.\n",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -1044,59 +1044,36 @@
           "minLength": 1
         },
         "name": {
-          "description": "What to call this scenario. Absent means it is read off what it\nfound — \"capacity ends up 5\". An authoring tool freezes the\nderived name once a scenario drifts, so the label does not move\nunder the reader at the moment they are trying to read the\ndifference.\n",
+          "description": "What to call this scenario. Absent means it is read off what it\nfound — \"ends up 5\". An authoring tool freezes the derived name\nonce a scenario drifts, so the label does not move under the\nreader at the moment they are trying to read the difference.\n",
           "type": "string",
           "minLength": 1,
           "maxLength": 200
         },
+        "projection": {
+          "description": "The projection this scenario is about, and the only one it asserts.\n",
+          "$ref": "#/$defs/ProjectionName"
+        },
+        "arguments": {
+          "description": "One entry per parameter the projection declares (or per script\nargument, for a scripted one), keyed by name. A projection with no\nparameters takes none, and reads the whole log.\n\nUnlike a command's `ProjectionBinding`, these are *values* rather\nthan operands: a scenario has no payload and no boundary to draw\none from, so it states the identifier outright, the same way\n`ScenarioGivenEvent.data` states a payload.\n",
+          "type": "object",
+          "default": {}
+        },
         "given": {
-          "description": "The events to fold, in order. An empty array is meaningful and\ncommon: it asserts what these projections read before anything\nhas happened at all.\n",
+          "description": "The events to fold, in order. An empty array is meaningful and\ncommon: it asserts what this projection reads before anything has\nhappened at all.\n",
           "type": "array",
           "items": {
             "$ref": "#/$defs/ScenarioGivenEvent"
           }
         },
-        "reads": {
-          "description": "The projections this scenario asserts about, each under a local\nalias. Several of them sharing one identifier argument is what\nasserting about an entity instance looks like.\n",
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "$ref": "#/$defs/ProjectionScenarioRead"
-          }
-        },
         "then": {
-          "description": "One entry per read, keyed by its alias, naming the value that\nread should have folded to. Values are of whatever type the\nprojection holds, so nothing here can be checked against the\nmodel by this schema alone — an unknown alias or a mistyped\nvalue is caught when the model is loaded, not when the document\nis validated.\n",
-          "type": "object"
+          "description": "The value this projection should have folded to — of whatever type\nit holds, `null` included, and an array when it holds many. Nothing\nhere can be checked against the model by this schema alone: a\nmistyped value is caught when the model is loaded, not when the\ndocument is validated.\n"
         }
       },
       "required": [
         "id",
+        "projection",
         "given",
-        "reads",
         "then"
-      ]
-    },
-    "ProjectionScenarioRead": {
-      "description": "One projection a scenario folds, under a local alias.\n\nUnlike a command's `ProjectionBinding`, the arguments here are\n*values* rather than operands: a scenario has no payload and no\nboundary to draw one from, so it states the identifier outright,\nthe same way `ScenarioGivenEvent.data` states a payload.\n",
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "alias": {
-          "description": "What this scenario calls the read. Conventionally the property\nname when the projection is bound as one, and the projection's\nown name lowercased otherwise — but local either way, and the\nkey its expected value is stored under.\n",
-          "$ref": "#/$defs/AliasName"
-        },
-        "projection": {
-          "$ref": "#/$defs/ProjectionName"
-        },
-        "arguments": {
-          "description": "One entry per parameter the projection declares (or per script\nargument, for a scripted one), keyed by name. A projection with\nno parameters takes none, and reads the whole log.\n",
-          "type": "object",
-          "default": {}
-        }
-      },
-      "required": [
-        "alias",
-        "projection"
       ]
     },
     "Sandbox": {

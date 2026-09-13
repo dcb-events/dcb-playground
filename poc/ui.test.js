@@ -23,15 +23,37 @@ const POC = __dirname;
 
 const store = new Map();
 const noop = () => {};
-const element = () => ({
-  appendChild: noop, removeChild: noop, remove: noop, setAttribute: noop,
+// Inert in every way but two: a node remembers the text it was made
+// with and what has been appended to it, so a test can ask what a row
+// actually says rather than only that building it did not throw.
+const element = (text, tag) => {
+  const node = {
+  tag: tag || '',
+  nodeText: text === undefined ? '' : String(text),
+  appendChild(child) { if (child) node.children.push(child); return child; },
+  insertBefore(child) { if (child) node.children.unshift(child); return child; },
+  get firstChild() { return node.children[0] || null; },
+  removeChild: noop, remove: noop, setAttribute: noop,
   addEventListener: noop, removeAttribute: noop, focus: noop, blur: noop,
   scrollIntoView: noop, contains: () => false, closest: () => null,
   classList: { add: noop, remove: noop, toggle: noop, contains: () => false },
   style: {}, dataset: {}, children: [], childNodes: [],
   querySelector: () => null, querySelectorAll: () => [],
   getBoundingClientRect: () => ({ top: 0, left: 0, width: 0, height: 0 }),
-});
+  };
+  return node;
+};
+
+// Everything a node and its descendants read as, in order.
+const textOf = (node) => (node.nodeText || '')
+  + (node.children || []).map(textOf).join('');
+
+// Every node in a tree that matches, in document order.
+const findAll = (node, pred, out = []) => {
+  if (pred(node)) out.push(node);
+  for (const child of node.children || []) findAll(child, pred, out);
+  return out;
+};
 
 const sandbox = {
   console,
@@ -41,13 +63,13 @@ const sandbox = {
     removeItem: (k) => store.delete(k),
   },
   document: {
-    createElement: element, createTextNode: element, body: element(),
+    createElement: (t) => element(undefined, t), createTextNode: (t) => element(t), body: element(),
     documentElement: element(),
     // Every lookup answers with an inert element rather than null: the
     // page wires a handful of listeners at load, and a stub that said
     // "not there" would only be testing that.
-    getElementById: element,
-    querySelector: element,
+    getElementById: () => element(),
+    querySelector: () => element(),
     querySelectorAll: () => [],
     addEventListener: noop,
   },
@@ -87,9 +109,10 @@ vm.runInContext(source, sandbox, { filename: 'page.js' });
 const {
   loadPredefinedModel, projectState, addDefinition, updateDefinition,
   projectionDraftFrom, cleanProjectionBody, blankProjectionDraft, projectionNameFor,
-  projectionWords, initialValueWords, defaultInitialValue, operationsFor,
+  initialValueWords, defaultInitialValue, operationsFor,
   projectionTypeOptions, handlerValueChoices, boundAs, entityPropertyTarget,
-  propertyUsage, effectsOf, typeLabel, literalOfType, blankSlotValue, createDcbModel,
+  propertyUsage, projectionReaders, effectsOf, typeLabel, literalOfType, blankSlotValue,
+  createDcbModel, partitionCells, projectionScenariosFor,
 } = sandbox;
 
 function build(index) {
@@ -218,9 +241,18 @@ function eq(actual, expected, what) {
     eq(initialValueWords({ enumMember: 'Existent' }), 'Existent', 'an enum member');
   });
 
-  check('a projection that starts at nothing says so', () => {
-    const words = projectionWords(model(), model()['projection-definitions'].ProductCurrentPrice);
-    eq(/starting at nothing yet/.test(words), true, `got: ${words}`);
+  check('a row says what a projection is kept per, as the tag it is', () => {
+    const cells = partitionCells(model(), model()['projection-definitions'].ProductCurrentPrice);
+    eq(cells.length, 1, 'one parameter, one tag');
+    eq(textOf(cells[0]).includes('product id'), true, `got: ${textOf(cells[0])}`);
+    eq(cells[0].className, 'chip tag', 'drawn as a tag');
+  });
+
+  check('a projection kept once says so as an absence, not as a tag', () => {
+    const cells = partitionCells(model(), { valueType: 'string', parameters: [], handlers: [] });
+    eq(cells.length, 1, 'one cell');
+    eq(cells[0].className, 'chip unset', 'dashed and unfilled, like every other nothing here');
+    eq(textOf(cells[0]), 'kept once', 'and says what it is');
   });
 
   check('a type reads the same whether it is a member or a projection', () => {
@@ -398,36 +430,26 @@ function eq(actual, expected, what) {
       }
       for (const spec of envelope.projectionScenarioDefinitions || []) {
         conforms(spec, 'ProjectionScenarioDefinition', `scenario ${spec.id}`, report);
-        for (const read of spec.reads || []) {
-          conforms(read, 'ProjectionScenarioRead', `${spec.id} reading ${read.alias}`, report);
-        }
       }
 
       if (problems.length) throw new Error(problems.join('; '));
     });
 
-    check(`${slug} scenarios read projections that exist, with the arguments they take`, () => {
+    check(`${slug} scenarios name a projection that exists, with the arguments it takes`, () => {
       const projections = new Map(envelope.projectionDefinitions.map((p) => [p.name, p]));
       const problems = [];
       for (const spec of envelope.projectionScenarioDefinitions || []) {
-        for (const read of spec.reads || []) {
-          const projection = projections.get(read.projection);
-          if (!projection) {
-            problems.push(`${spec.id} reads the unknown ${read.projection}`);
-            continue;
-          }
-          const slots = projection.script
-            ? (projection.script.arguments || []) : (projection.parameters || []);
-          const supplied = Object.keys(read.arguments || {}).sort();
-          const expected = slots.map((s) => s.name).sort();
-          if (JSON.stringify(supplied) !== JSON.stringify(expected)) {
-            problems.push(`${spec.id} reads ${read.projection} with [${supplied}], which takes [${expected}]`);
-          }
+        const projection = projections.get(spec.projection);
+        if (!projection) {
+          problems.push(`${spec.id} is about the unknown ${spec.projection}`);
+          continue;
         }
-        for (const alias of Object.keys(spec.then || {})) {
-          if (!(spec.reads || []).some((r) => r.alias === alias)) {
-            problems.push(`${spec.id} checks "${alias}", which it does not read`);
-          }
+        const slots = projection.script
+          ? (projection.script.arguments || []) : (projection.parameters || []);
+        const supplied = Object.keys(spec.arguments || {}).sort();
+        const expected = slots.map((s) => s.name).sort();
+        if (JSON.stringify(supplied) !== JSON.stringify(expected)) {
+          problems.push(`${spec.id} reads ${spec.projection} with [${supplied}], which takes [${expected}]`);
         }
       }
       if (problems.length) throw new Error(problems.join('; '));
@@ -593,22 +615,39 @@ function eq(actual, expected, what) {
 
   check('the shared editor renders on an entity page and on the projections page', () => {
     store.set('dcb-playground:mode', 'advanced');
-    // The same draft, mounted from both sides — which is the whole
-    // claim this change makes, so it is the one worth painting twice.
-    const property = model()['entity-definitions'].Course.properties[1];
-    const open = () => {
+    // The same editor mounted from both sides — the whole claim this
+    // change makes. Which projection each side shows is now decided by
+    // the binding: an entity's page holds the ones it calls something,
+    // Projections holds the rest.
+    const open = (name) => {
       sandbox.state.projDraft = {
-        name: property.projection,
-        body: projectionDraftFrom(model()['projection-definitions'][property.projection]),
+        name, body: projectionDraftFrom(model()['projection-definitions'][name]),
       };
+      sandbox.state.projTab = 'definition';
     };
-    sandbox.state.view = 'entity';
-    sandbox.state.entity = 'Course';
-    open();
-    sandbox.render();
-    sandbox.state.view = 'projections';
-    open();
-    sandbox.render();
+    const painted = (view, name) => {
+      const main = sandbox.document.createElement('div');
+      sandbox.state.view = view;
+      sandbox.state.entity = 'Course';
+      open(name);
+      if (view === 'entity') sandbox.renderEntity(model(), main);
+      else sandbox.renderProjections(model(), main);
+      return textOf(main);
+    };
+    // This model binds every projection it has, so the page for the
+    // unbound ones needs one to show.
+    sandbox.addDefinition('projection-definition', id, 'CourseNumbering', {
+      parameters: [], valueType: 'CourseId', isList: false, initialValue: 'c1',
+      handlers: [{
+        event: 'CourseDefined', operation: 'set',
+        value: { successor: { eventProperty: 'courseId' } },
+      }],
+    });
+    const property = model()['entity-definitions'].Course.properties[1];
+    eq(painted('entity', property.projection).includes('it holds'), true,
+      'the editor, on the entity that binds it');
+    eq(painted('projections', 'CourseNumbering').includes('it holds'), true,
+      'and the same editor, on the page for the ones nothing binds');
     // And a brand-new one, which is the form with no stored definition
     // behind it.
     sandbox.state.projDraft = null;
@@ -638,8 +677,7 @@ function eq(actual, expected, what) {
       body: projectionDraftFrom(model()['projection-definitions'].CourseTouches),
     };
     sandbox.state.view = 'entity';
-    sandbox.render();
-    sandbox.state.view = 'projections';
+    sandbox.state.entity = 'Course';
     sandbox.render();
     // And it survives the round trip the Save button puts it through.
     eq(cleanProjectionBody(sandbox.state.projDraft.body),
@@ -736,82 +774,261 @@ function eq(actual, expected, what) {
   store.set('dcb-playground:model', id);
 
   const add = (body) => {
-    const aliases = (body.reads || []).map((r) => r.alias);
     const key = sandbox.generateId();
     sandbox.addDefinition('projection-scenario-definition', id, key, {
-      ...body, then: sandbox.deriveProjectionScenarioThen(model(), body, aliases),
+      ...body, then: sandbox.deriveProjectionScenarioThen(model(), body),
     });
     return key;
   };
 
-  check('a scenario about one instance is listed on that entity', () => {
+  check('a scenario is listed under the one projection it is about', () => {
+    const given = [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 4 } }];
+    const key = add({ projection: 'CourseCapacity', arguments: { courseId: 'c1' }, given });
+    eq(projectionScenariosFor(model(), 'CourseCapacity').map((e) => e.key).includes(key), true,
+      'under the projection it names');
+    eq(projectionScenariosFor(model(), 'CourseStatus').map((e) => e.key).includes(key), false,
+      'and under no other, however much they share a Given');
+  });
+
+  check('several projections over one Given are several scenarios', () => {
+    const given = [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 4 } }];
+    const capacity = add({ projection: 'CourseCapacity', arguments: { courseId: 'c1' }, given });
+    const status = add({ projection: 'CourseStatus', arguments: { courseId: 'c1' }, given });
+    const stored = (k) => model()['projection-scenario-definitions'][k];
+    eq(stored(capacity).then, 4, 'each holds its own projection\'s value');
+    eq(stored(status).then, 'Existent', 'and nothing else\'s');
+    // Which is what makes them answerable apart: one can drift alone.
+    eq(sandbox.runProjectionScenario(model(), stored(capacity)).status, 'current', 'both current');
+    eq(sandbox.runProjectionScenario(model(), stored(status)).status, 'current', 'to start with');
+  });
+
+  check('a scenario over a standalone projection lands on Projections', () => {
+    const key = add({ projection: 'CourseNumbering', arguments: {}, given: [] });
+    eq(projectionScenariosFor(model(), 'CourseNumbering').map((e) => e.key).includes(key), true,
+      'listed on the projection');
+    sandbox.goToProjectionScenario(model(), key);
+    eq(sandbox.state.view, 'projections', 'which nothing binds, so it opens there');
+    eq(sandbox.state.projTab, 'checks', 'with the row open on its checks');
+    eq(sandbox.state.projDraft.name, 'CourseNumbering', 'and that row is the projection it reads');
+  });
+
+  check('a scenario over a bound projection opens on its entity', () => {
     const key = add({
+      projection: 'CourseCapacity', arguments: { courseId: 'c1' },
       given: [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 4 } }],
-      reads: [{ alias: 'capacity', projection: 'CourseCapacity', arguments: { courseId: 'c1' } }],
     });
-    const about = sandbox.scenarioEntityInstance(model(), model()['projection-scenario-definitions'][key]);
-    eq(about && about.entity, 'Course', 'recognised as being about a Course');
-    eq(sandbox.projectionScenariosOf(model(), 'Course').map((e) => e.key), [key], 'listed there');
-    eq(sandbox.projectionScenariosReading(model(), 'CourseCapacity'), [], 'and not listed twice');
+    sandbox.goToProjectionScenario(model(), key);
+    eq(sandbox.state.view, 'entity', 'a bound projection is edited on its entity');
+    eq(sandbox.state.entity, 'Course', 'the one that binds it');
+    eq(sandbox.state.projTab, 'checks', 'with the row open on its checks');
+    sandbox.render();
   });
 
-  check('a scenario over a global projection is listed on the projection', () => {
-    const key = add({
-      given: [],
-      reads: [{ alias: 'numbering', projection: 'CourseNumbering', arguments: {} }],
+  check('a fresh scenario asks only for the partition it is about', () => {
+    eq(sandbox.blankScenarioArguments(model(), 'CourseCapacity'), { courseId: '' },
+      'one blank per parameter');
+    eq(sandbox.blankScenarioArguments(model(), 'CourseNumbering'), {},
+      'and none at all for one that reads the whole log');
+  });
+
+  check('copying a scenario leaves the row it was copied in open', () => {
+    // `+ copy` is drawn inside an open ledger row. It used to go through
+    // closeForms(), which folded that row away under the cursor — so the
+    // button vanished mid-click and the focus on it went with it.
+    const key = add({ projection: 'CourseNumbering', arguments: {}, given: [] });
+    sandbox.goToProjectionScenario(model(), key);
+    eq(sandbox.state.projDraft && sandbox.state.projDraft.name, 'CourseNumbering', 'the row is open');
+    const before = Object.keys(model()['projection-scenario-definitions']).length;
+
+    sandbox.copyProjectionScenario(model(), key);
+
+    eq(Object.keys(model()['projection-scenario-definitions']).length, before + 1, 'the copy is stored');
+    eq(sandbox.state.projDraft && sandbox.state.projDraft.name, 'CourseNumbering',
+      'and the row it was copied in is still open');
+    eq(sandbox.state.projTab, 'checks', 'still on its checks');
+    const draft = sandbox.state.projectionScenarioDraft;
+    eq(!!draft && draft.key !== key, true, 'with the copy, not the original, open to tweak');
+    sandbox.render();
+    sandbox.state.projectionScenarioDraft = null;
+    sandbox.state.projDraft = null;
+  });
+
+  check('an argument field holds the value, not the object holding it', () => {
+    // `valueEditor` reads and writes exactly where it is pointed. Aimed
+    // at ['arguments'] instead of ['arguments', name] it read the whole
+    // object — rendering "[object Object]" into the field, and writing
+    // a scalar over every argument at once on the way back out.
+    sandbox.startProjectionScenario(model(), { projection: 'CourseCapacity' });
+    sandbox.state.projectionScenarioDraft.body.arguments.courseId = 'c1';
+    const main = sandbox.document.createElement('div');
+    sandbox.state.view = 'entity';
+    sandbox.state.entity = 'Course';
+    sandbox.renderEntity(model(), main);
+
+    const fields = findAll(main, (n) => n.tag === 'input' && n.className === 'vin');
+    eq(fields.length, 1, 'one field, for the one parameter it is partitioned by');
+    eq(fields[0].value, 'c1', 'showing the identifier it was given');
+
+    // And writing back lands on that argument alone.
+    sandbox.setAtPath(sandbox.state.projectionScenarioDraft.body, ['arguments', 'courseId'], 'c2');
+    eq(sandbox.state.projectionScenarioDraft.body.arguments, { courseId: 'c2' },
+      'the arguments object survives the write');
+    sandbox.state.projectionScenarioDraft = null;
+    sandbox.state.projDraft = null;
+  });
+
+  check('a watched projection asks for its arguments the same way', () => {
+    sandbox.state.watchDraft = { projection: 'CourseCapacity', arguments: { courseId: 'c1' } };
+    const card = sandbox.watchProjectionAdder(model(), ['CourseCapacity', 'CourseNumbering']);
+    const fields = findAll(card, (n) => n.tag === 'input' && n.className === 'vin');
+    eq(fields.length, 1, 'one field');
+    eq(fields[0].value, 'c1', 'holding the identifier, not the object around it');
+    sandbox.state.watchDraft = null;
+  });
+
+  check('both pages render the checks tab', () => {
+    store.set('dcb-playground:mode', 'advanced');
+    sandbox.startProjectionScenario(model(), { projection: 'CourseNumbering' });
+    eq(sandbox.state.view, 'projections', 'started where the projection lives');
+    sandbox.render();
+    sandbox.startProjectionScenario(model(), { projection: 'CourseCapacity' });
+    eq(sandbox.state.entity, 'Course', 'and this one on the entity that binds it');
+    sandbox.render();
+    sandbox.state.projectionScenarioDraft = null;
+    sandbox.state.projDraft = null;
+    sandbox.state.projTab = 'definition';
+  });
+}
+
+// ---------------------------------------------------------------
+// The ledger: one component, two pages.
+// ---------------------------------------------------------------
+{
+  const { id, model } = build(1);
+  store.set('dcb-playground:model', id);
+  const page = () => {
+    const main = sandbox.document.createElement('div');
+    return main;
+  };
+
+  check('Projections lists only what no entity binds', () => {
+    const main = page();
+    sandbox.state.projDraft = null;
+    sandbox.renderProjections(model(), main);
+    const text = textOf(main);
+    eq(text.includes('Course numbering'), true, 'the one nothing binds is listed');
+    eq(text.includes('Course capacity'), false,
+      'and the ones an entity calls something are not — they are edited on its page');
+  });
+
+  check('what the entity pages own is still findable, as an index', () => {
+    const main = page();
+    sandbox.renderProjections(model(), main);
+    const text = textOf(main);
+    eq(text.includes('Also defined, on their entities'), true, 'the index is there');
+    eq(text.includes('subscribed student ids'), true,
+      'under the name its entity calls it, not the projection name');
+  });
+
+  check('the two pages differ by exactly one column', () => {
+    const free = sandbox.projectionLedger(model(), {
+      owner: null, nameHead: 'projection', entries: [], add: null,
     });
-    eq(sandbox.scenarioEntityInstance(model(), model()['projection-scenario-definitions'][key]), null,
-      'about no one instance');
-    // The model ships two of its own over this numbering; this is the
-    // third, and what matters is that it joins them rather than landing
-    // on the entity.
-    eq(sandbox.projectionScenariosReading(model(), 'CourseNumbering').map((e) => e.key).includes(key),
-      true, 'listed on the projection');
-    eq(sandbox.projectionScenariosOf(model(), 'Course').some((e) => e.key === key), false,
-      'and not on the entity');
-  });
-
-  check('a scenario mixing an instance and a global projection is listed on the projection', () => {
-    const key = add({
-      given: [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 4 } }],
-      reads: [
-        { alias: 'capacity', projection: 'CourseCapacity', arguments: { courseId: 'c1' } },
-        { alias: 'numbering', projection: 'CourseNumbering', arguments: {} },
-      ],
+    const owned = sandbox.projectionLedger(model(), {
+      owner: 'Course', nameHead: 'property', entries: [], add: null,
     });
-    eq(sandbox.scenarioEntityInstance(model(), model()['projection-scenario-definitions'][key]), null,
-      'it is not about one instance, because it is not only about one');
-    eq(sandbox.projectionScenariosReading(model(), 'CourseNumbering').map((e) => e.key).includes(key),
-      true, 'so the projection lists it');
+    eq(textOf(free.children[0]), 'projectionone perholdsstarts at', 'Projections says what each is kept per');
+    eq(textOf(owned.children[0]), 'propertyholdsstarts at',
+      'an entity does not, because Identity above it already has');
   });
 
-  check('a fresh entity scenario reads every property of that entity', () => {
-    const reads = sandbox.blankScenarioReads(model(), { entity: 'Course' });
-    eq(reads.map((r) => r.alias), ['status', 'capacity', 'subscriptionCount', 'subscribedStudentIds'],
-      'one read per property, under its own name');
-    eq(reads.every((r) => 'courseId' in r.arguments), true, 'each asking for the instance');
+  check('a row says the four things that differ, and nothing else', () => {
+    sandbox.state.projDraft = null;
+    const ledger = sandbox.projectionLedger(model(), {
+      owner: 'Course', nameHead: 'property', add: null,
+      entries: [{ projection: 'CourseCapacity', label: 'capacity',
+                  binding: { name: 'capacity', projection: 'CourseCapacity' } }],
+    });
+    const text = textOf(ledger);
+    eq(text.includes('capacity'), true, 'the property');
+    eq(text.includes('Integer'), true, 'what it holds');
+    eq(text.includes('0'), true, 'and where it starts');
+    eq(/moved by|read by|Course defined/.test(text), false,
+      'who moves it and who reads it wait until the row is opened');
   });
 
-  check('a fresh projection scenario reads just that projection', () => {
-    const reads = sandbox.blankScenarioReads(model(), { projection: 'CourseNumbering' });
-    eq(reads, [{ alias: 'courseNumbering', projection: 'CourseNumbering', arguments: {} }], 'one read');
+  check('opening a row opens its editor against the same definition', () => {
+    sandbox.state.projDraft = null;
+    sandbox.toggleProjectionRow(model(), 'CourseCapacity');
+    eq(sandbox.state.projDraft.name, 'CourseCapacity', 'the row being edited is the row that is open');
+    eq(sandbox.state.projDraft.body.valueType, 'integer', 'holding the projection body');
+    eq(sandbox.state.projTab, 'definition', 'on its definition');
+    sandbox.toggleProjectionRow(model(), 'CourseCapacity');
+    eq(sandbox.state.projDraft, null, 'and clicking it again folds it shut');
   });
 
-  check('both scenario homes render', () => {
+  check('an opened row renders both of its tabs', () => {
+    store.set('dcb-playground:mode', 'advanced');
+    const open = (name) => {
+      const body = model()['projection-definitions'][name];
+      sandbox.state.projDraft = { name, body: projectionDraftFrom(body) };
+    };
+    for (const tab of ['definition', 'checks']) {
+      const main = page();
+      sandbox.state.view = 'entity';
+      sandbox.state.entity = 'Course';
+      open('CourseCapacity');
+      sandbox.state.projTab = tab;
+      sandbox.renderEntity(model(), main);
+      const text = textOf(main);
+      eq(text.includes('Definition') && text.includes('Checks'), true,
+        `the ${tab} tab still offers the other`);
+      eq(text.includes('it holds'), tab === 'definition',
+        'and only one of them is showing at a time');
+    }
+    // The same row, on the page for the ones nothing binds.
+    const main = page();
+    open('CourseNumbering');
+    sandbox.state.projTab = 'checks';
+    sandbox.renderProjections(model(), main);
+    eq(textOf(main).includes('issues c1 before anything has happened'), true,
+      'the checks tab lists what checks it');
+    sandbox.state.projDraft = null;
+    sandbox.state.projTab = 'definition';
+    store.set('dcb-playground:mode', 'simple');
+  });
+
+  check('both names a bound projection has can be changed from its row', () => {
     store.set('dcb-playground:mode', 'advanced');
     sandbox.state.view = 'entity';
     sandbox.state.entity = 'Course';
-    sandbox.state.entityTab = 'projection-scenarios';
-    sandbox.render();
-    sandbox.state.view = 'projections';
-    sandbox.render();
-    // And the editor, from each side.
-    sandbox.startProjectionScenario(model(), { projection: 'CourseNumbering' });
-    sandbox.render();
-    sandbox.startProjectionScenario(model(), { entity: 'Course' });
-    sandbox.render();
-    sandbox.state.projectionScenarioDraft = null;
-    sandbox.state.entityTab = 'definition';
+    sandbox.toggleProjectionRow(model(), 'CourseCapacity');
+    // Starting a rename closes every other form — the row it is drawn
+    // inside must survive that, or the form has nowhere to appear.
+    sandbox.startRenameInRow(() => { sandbox.state.renamingProjection = 'CourseCapacity'; });
+    eq(sandbox.state.projDraft && sandbox.state.projDraft.name, 'CourseCapacity',
+      'the row stays open while what it is about is being renamed');
+    const main = sandbox.document.createElement('div');
+    sandbox.renderEntity(model(), main);
+    eq(textOf(main).includes('Rename the projection'), true, 'and the form is in it');
+    sandbox.state.renamingProjection = null;
+
+    sandbox.startRenameInRow(() => sandbox.openMember('entity:Course', 'capacity'));
+    eq(sandbox.state.projDraft && sandbox.state.projDraft.name, 'CourseCapacity',
+      'the same for the other of its two names');
+    const other = sandbox.document.createElement('div');
+    sandbox.renderEntity(model(), other);
+    eq(textOf(other).includes('what this entity calls'), true, 'which is the binding');
+    sandbox.state.editMember = null;
+    sandbox.state.projDraft = null;
+    store.set('dcb-playground:mode', 'simple');
+  });
+
+  check('a projection knows who reads it, bound or not', () => {
+    eq(projectionReaders(model(), 'CourseNumbering'), ['DefineCourse'],
+      'read directly by name, because nothing binds it');
+    eq(projectionReaders(model(), 'CourseCapacity'), ['SubscribeStudentToCourse'],
+      'and this one through the alias of the entity that does');
   });
 }
 

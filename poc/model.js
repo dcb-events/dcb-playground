@@ -61,7 +61,7 @@
 // projection scenarios: one asserts over a list of `reads` rather than
 // over one entity instance's properties, which is the same
 // generalisation v14 made to the thing being asserted about.
-const EVENT_LOG_KEY = 'dcb-playground:events:v15';
+const EVENT_LOG_KEY = 'dcb-playground:events:v16';
 
 const DEF_KINDS = [
   'entity-definition',
@@ -525,14 +525,12 @@ function computeReferences(model, kind, name, body) {
       }
       break;
     case 'projection-scenario-definition':
-      // A projection scenario names every projection it folds and every
-      // event its Given is written from. Neither may stop one from being
-      // deleted — a scenario exists to report what that broke, not to
-      // prevent it. Its Then holds its own aliases, not references:
-      // nothing else in the model is identified by one.
-      for (const read of body.reads || []) {
-        if (read && read.projection) refs['projection-definition'].push(read.projection);
-      }
+      // A projection scenario names the projection it is about and
+      // every event its Given is written from. Neither may stop one
+      // from being deleted — a scenario exists to report what that
+      // broke, not to prevent it. Its Then is a bare value: nothing in
+      // the model is identified by one.
+      if (body.projection) refs['projection-definition'].push(body.projection);
       for (const step of body.given || []) {
         if (step && step.event) refs['event-definition'].push(step.event);
       }
@@ -642,18 +640,16 @@ function rewriteReferences(kind, body, targetKind, oldName, newName) {
       }
       break;
     case 'projection-scenario-definition':
-      if (targetKind === 'projection-definition') {
-        for (const read of next.reads || []) {
-          if (read && read.projection === oldName) read.projection = newName;
-        }
+      if (targetKind === 'projection-definition' && next.projection === oldName) {
+        next.projection = newName;
       }
       if (targetKind === 'event-definition') {
         for (const step of next.given || []) {
           if (step && step.event === oldName) step.event = newName;
         }
       }
-      // Then is keyed by this scenario's own aliases, which are local to
-      // it — nothing to rewrite there for either target kind.
+      // Then is a bare value and `arguments` are values too — nothing
+      // to rewrite there for either target kind.
       break;
   }
   return next;
@@ -768,12 +764,10 @@ function scenarioName(body, spell = (n) => n) {
 // The same derivation as scenarioName, one level down: a projection
 // scenario has no outcome to name itself after, only the reads a
 // modeler chose to check and what they folded to.
-function projectionScenarioName(body, spell = (n) => n) {
+function projectionScenarioName(body) {
   if (body && typeof body.name === 'string' && body.name.trim()) return body.name.trim();
-  const then = (body || {}).then;
-  if (!then || !Object.keys(then).length) return 'an unrun projection scenario';
-  const parts = Object.entries(then).map(([k, v]) => `${spell(k)} ${JSON.stringify(v)}`);
-  return `ends up with ${parts.join(', ')}`;
+  if (!body || !('then' in body)) return 'an unrun projection scenario';
+  return `ends up ${JSON.stringify(body.then)}`;
 }
 
 function handlerText(handler) {
@@ -2432,58 +2426,42 @@ function validateProjectionScenarioBody(model, body) {
       `${where} ("${step.event}")`);
   });
 
-  if (!Array.isArray(body.reads) || !body.reads.length) {
-    throw new DomainError('A projection scenario has to read at least one projection — that is what it asserts about.');
+  const projection = model['projection-definitions'][body.projection];
+  if (!projection) {
+    throw new DomainError(
+      `This scenario is about projection "${body.projection}", which this model does not define.`
+    );
   }
-  const aliases = new Set();
-  for (const read of body.reads) {
-    if (!read || !CAMEL_RE.test(read.alias || '')) {
-      throw new DomainError(`A read on this projection scenario needs a camelCase alias.`);
-    }
-    if (aliases.has(read.alias)) {
-      throw new DomainError(`This projection scenario reads "${read.alias}" twice.`);
-    }
-    aliases.add(read.alias);
-    const projection = model['projection-definitions'][read.projection];
-    if (!projection) {
+  // The arguments a scenario owes are the projection's own — its
+  // parameters when declared, its script's arguments when scripted. The
+  // same "required here, rejected there" rule a command binding
+  // follows, and for the same reason: an argument that means nothing is
+  // a mistake, not a no-op.
+  const script = scriptOf(projection);
+  const expected = script ? (script.arguments || []) : (projection.parameters || []);
+  const supplied = Object.keys(body.arguments || {});
+  for (const parameter of expected) {
+    if (!supplied.includes(parameter.name)) {
       throw new DomainError(
-        `"${read.alias}" reads projection "${read.projection}", which this model does not define.`
+        `This scenario supplies no "${parameter.name}", which "${body.projection}" ` +
+        `${script ? 'takes as an argument' : 'is partitioned by'}.`
       );
     }
-    // The arguments a read owes are the projection's own — its
-    // parameters when declared, its script's arguments when scripted.
-    // The same "required here, rejected there" rule a command binding
-    // follows, and for the same reason: an argument that means nothing
-    // is a mistake, not a no-op.
-    const script = scriptOf(projection);
-    const expected = script ? (script.arguments || []) : (projection.parameters || []);
-    const supplied = Object.keys(read.arguments || {});
-    for (const parameter of expected) {
-      if (!supplied.includes(parameter.name)) {
-        throw new DomainError(
-          `"${read.alias}" supplies no "${parameter.name}", which "${read.projection}" ` +
-          `${script ? 'takes as an argument' : 'is partitioned by'}.`
-        );
-      }
-    }
-    for (const key of supplied) {
-      if (!expected.some((p) => p.name === key)) {
-        throw new DomainError(
-          `"${read.alias}" supplies "${key}", which "${read.projection}" does not declare as ` +
-          `${script ? 'an argument' : 'a parameter'}.`
-        );
-      }
+  }
+  for (const key of supplied) {
+    if (!expected.some((p) => p.name === key)) {
+      throw new DomainError(
+        `This scenario supplies "${key}", which "${body.projection}" does not declare as ` +
+        `${script ? 'an argument' : 'a parameter'}.`
+      );
     }
   }
 
-  const then = body.then;
-  if (!then || typeof then !== 'object' || Array.isArray(then)) {
-    throw new DomainError('A projection scenario\'s Then holds what each read folded to.');
-  }
-  for (const alias of Object.keys(then)) {
-    if (!aliases.has(alias)) {
-      throw new DomainError(`Then checks "${alias}", which this projection scenario does not read.`);
-    }
+  // `then` is the projection's own value, so every shape one can hold
+  // is legal here — `null` and `[]` included. There is nothing left to
+  // check that the fold itself does not.
+  if (!('then' in body)) {
+    throw new DomainError('A projection scenario\'s Then is what the projection folded to.');
   }
 }
 
@@ -3290,8 +3268,8 @@ function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
 // (possibly non-empty) lists, and property scenarios became projection
 // scenarios asserting over a list of reads — every one of them a change
 // a 1.x reader would misread rather than ignore.
-const MODEL_VERSION = '2.0';
-const MODEL_SCHEMA_URL = 'https://dcb.events/schemas/model/v2.json';
+const MODEL_VERSION = '3.0';
+const MODEL_SCHEMA_URL = 'https://dcb.events/schemas/model/v3.json';
 
 const SCHEMA_FIELD = {
   'custom-type-definition': 'customTypeDefinitions',
@@ -3821,18 +3799,20 @@ function seedAddSequence(modelId) {
 function seedSequenceScenarios(modelId) {
   seedProjectionScenario(modelId, 'a29c2e1f-6b04-4f5a-9d13-5f0a2d7c8e41', {
     name: 'issues c1 before anything has happened',
+    projection: 'CourseNumbering',
+    arguments: {},
     given: [],
-    reads: [{ alias: 'numbering', projection: 'CourseNumbering', arguments: {} }],
-    then: { numbering: 'c1' },
+    then: 'c1',
   });
   seedProjectionScenario(modelId, 'f47b9c30-2a8d-4e16-b5c7-9e3a1d604f28', {
     name: 'issues c3 once two courses exist',
+    projection: 'CourseNumbering',
+    arguments: {},
     given: [
       { event: 'CourseDefined', data: { courseId: 'c1', capacity: 10 } },
       { event: 'CourseDefined', data: { courseId: 'c2', capacity: 10 } },
     ],
-    reads: [{ alias: 'numbering', projection: 'CourseNumbering', arguments: {} }],
-    then: { numbering: 'c3' },
+    then: 'c3',
   });
 }
 

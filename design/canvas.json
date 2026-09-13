@@ -1,0 +1,71 @@
+{
+  "pages": [
+    { "id": "page-1", "name": "Round 3" },
+    { "id": "page-2", "name": "Round 2" },
+    { "id": "page-3", "name": "Round 1" }
+  ],
+  "artboards": [
+    { "file": "Main.dc.html", "x": 0, "y": 0, "w": 920, "h": 900, "title": "Projections", "page": "page-1", "is_interactive": true },
+    { "file": "EntityPage.dc.html", "x": 1040, "y": 0, "w": 920, "h": 1080, "title": "Course", "page": "page-1", "is_interactive": true },
+    { "file": "ChecksPage.dc.html", "x": 2080, "y": 0, "w": 920, "h": 900, "title": "Checks", "page": "page-1", "is_interactive": true },
+
+    { "file": "DirectionD.dc.html", "x": 0, "y": 2400, "w": 920, "h": 1520, "title": "D · Partition groups", "page": "page-2", "is_interactive": true },
+    { "file": "DirectionF.dc.html", "x": 1040, "y": 2400, "w": 920, "h": 1020, "title": "F · Worked examples", "page": "page-2", "is_interactive": true },
+
+    { "file": "DirectionB.dc.html", "x": 0, "y": 5600, "w": 900, "h": 1080, "title": "B · Signature", "page": "page-3", "is_interactive": true },
+    { "file": "DirectionC.dc.html", "x": 1040, "y": 5600, "w": 900, "h": 1080, "title": "C · Fold strip", "page": "page-3", "is_interactive": true }
+  ],
+  "annotations": [
+    {
+      "id": "r3-rules",
+      "x": -470, "y": 40, "w": 400, "page": "page-1",
+      "text": "Round 3 — what came out\n\nGone from every row: the binding badge, the moves count, the checks count. What is left is the four facts that actually differ between one projection and the next.\n\nThe Projections page now lists only what no entity binds. Across the five shipped examples that is 0, 0, 1, 1 and 2 projections — so this page is small by nature, and the index at its foot is what stops it being a dead end. That index is the one thing here you did not ask for: cut it and nothing else changes.\n\nChecks are out of the definition entirely — as a tab per projection on the first two boards, as a page of their own on the third. Those two are not exclusive."
+    },
+    {
+      "id": "note-main",
+      "x": 0, "y": 1150, "w": 420, "page": "page-1",
+      "text": "Projections — standalone only\n\nFour columns, no badge. Course numbering is kept once; Tenant course numbering is kept per tenant — the pair that earns “one per” its column. Drawn with the multi-tenant example because it is the only shipped model with two standalone projections.\n\nChecks sit behind a tab in the detail. This model ships none, so that tab shows its empty state; the board to the right shows it full.\n\nUnder the ledger, the projections the entity pages own: names only, one line per entity, click to go there."
+    },
+    {
+      "id": "note-entity",
+      "x": 1040, "y": 1150, "w": 420, "page": "page-1",
+      "text": "Course — the same rows, one column fewer\n\nIdentical component, identical columns minus “one per”, because Identity above already states the tag. The detail still shows it, fixed rather than editable: that a projection is folded per course id is exactly what makes it a property of Course instead of a standalone projection.\n\nThe Checks tab is open on subscription count. Notice what a scenario actually is — one Given asserting four projections at once. The row this property owns is bold and the other three stay visible, because editing the scenario here edits it on all four."
+    },
+    {
+      "id": "note-checks",
+      "x": 2080, "y": 1150, "w": 420, "page": "page-1",
+      "text": "Checks as a page\n\nThe other reading of “separate it out”: not a tab inside each projection but one page holding every scenario, grouped by the tag it is about.\n\nTwo things it buys. The drift signal that used to need a column is now a badge on the tab, so removing the column costs nothing. And a scenario is shown at its real size — “two subscribe, one leaves” is one Given and four assertions, which a per-projection card has to cut into four cross-referenced pieces.\n\nCost: one more place to look, and a projection’s checks no longer sit beside the thing they check."
+    },
+    {
+      "id": "round2",
+      "x": -470, "y": 2440, "w": 400, "page": "page-2",
+      "text": "Round 2, kept for reference\n\nD is where grouping by tag came from — Round 3 keeps it, in the Checks page. F is the scenarios-beside-definition split; Round 3 drops it in favour of the tab."
+    },
+    {
+      "id": "note-d",
+      "x": 0, "y": 3960, "w": 420, "page": "page-2",
+      "text": "D · Partition groups\n\nGroups the list by the tag, so the partition is a heading over its members instead of a value repeated on every row.\n\nIt also puts scenarios where the model already puts them: a scenario names events and asserts several projections of one partition at once, so it belongs to the group rather than to any single row.\n\nTradeoff: a model with many one- or two-projection partitions is mostly group chrome."
+    },
+    {
+      "id": "note-f",
+      "x": 1040, "y": 3960, "w": 420, "page": "page-2",
+      "text": "F · Worked examples\n\nDefinition on the left, the scenarios that pin it down on the right, at the same size — and picking an example lights up what it actually touched. An example with an empty Given lights “starts at”, because that is where its answer came from.\n\nTradeoff: two columns inside an 800px page is tight."
+    },
+    {
+      "id": "round1",
+      "x": -470, "y": 5640, "w": 400, "page": "page-3",
+      "text": "Round 1, kept for reference\n\nThe tabs on these two are the per-entity tabs you questioned — a prototype device for showing one component in three places, not proposed navigation.\n\nB is where “one per” was legible, which is what sent everything after it looking for a permanent place to put it."
+    },
+    {
+      "id": "note-b",
+      "x": 0, "y": 6730, "w": 420, "page": "page-3",
+      "text": "B · Signature\n\nTerser and more technical: it reads as a file of declarations. The sheet is the structural difference — the list never reflows, and the editor gets 430px of its own instead of sharing the column.\n\nTradeoff: the sheet covers the list it came from."
+    },
+    {
+      "id": "note-c",
+      "x": 1040, "y": 6730, "w": 420, "page": "page-3",
+      "text": "C · Fold strip\n\nA projection is a fold, and this draws it: where it starts, then each event that moves it.\n\nTradeoff: the strip wraps at four or more handlers, and the left-to-right order it implies is not real — handlers apply in log order."
+    }
+  ],
+  "launch": { "view": "canvas", "page": "page-1" }
+}

@@ -1171,8 +1171,8 @@ check('an import missing the definition arrays is refused, not silently accepted
   // from: these two strings are the published contract, and a test that
   // derived them from the source could not notice one of them changing.
   check('an export carries both markers', () => {
-    eq(good.$schema, 'https://dcb.events/schemas/model/v2.json', '$schema');
-    eq(/^2\.\d+$/.test(good.dcbModelVersion), true, 'dcbModelVersion is a 2.x');
+    eq(good.$schema, 'https://dcb.events/schemas/model/v3.json', '$schema');
+    eq(/^3\.\d+$/.test(good.dcbModelVersion), true, 'dcbModelVersion is a 3.x');
   });
 
   check('the definition arrays sit at the top level, under no wrapper', () => {
@@ -1195,10 +1195,11 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('an import from an unknown major is refused', () => {
-    refuses({ ...good, dcbModelVersion: '3.0' }, 'a newer major');
-    // 1.x is where entity properties were definitions rather than
-    // bindings — readable as JSON, and misread as a model.
-    refuses({ ...good, dcbModelVersion: '1.0' }, 'the major before this one');
+    refuses({ ...good, dcbModelVersion: '4.0' }, 'a newer major');
+    // 2.x is where a projection scenario read several projections under
+    // aliases — readable as JSON, and misread as a model.
+    refuses({ ...good, dcbModelVersion: '2.0' }, 'the major before this one');
+    refuses({ ...good, dcbModelVersion: '1.0' }, 'and the one before that');
   });
 
   check('$schema is required but never read, so a repointed one still imports', () => {
@@ -1207,7 +1208,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('a newer minor imports, and says what it is dropping', () => {
-    const newer = { ...good, dcbModelVersion: '2.99' };
+    const newer = { ...good, dcbModelVersion: '3.99' };
     eq(typeof importModelFromEnvelope(newer), 'string', 'imported');
     eq(envelopeVersionWarning(newer).length > 0, true, 'warned');
     eq(envelopeVersionWarning(good), '', 'nothing to warn about at the current version');
@@ -1416,14 +1417,13 @@ check('an import missing the definition arrays is refused, not silently accepted
 // ---------------------------------------------------------------
 // 20. Scenarios over projections.
 //
-// One kind, whichever kind of projection it reads: an entity
-// instance's properties are several reads sharing an identifier, and a
-// standalone projection is one read with whatever arguments it takes.
+// One projection per scenario, and its Then is that projection's value.
+// Asserting four properties of a course over one Given is four
+// scenarios sharing that Given — each answerable, each drifting alone.
 // ---------------------------------------------------------------
 {
   const store_ = (id, model, body) => {
-    const aliases = (body.reads || []).map((r) => r.alias);
-    const complete = { ...body, then: deriveProjectionScenarioThen(model, body, aliases) };
+    const complete = { ...body, then: deriveProjectionScenarioThen(model, body) };
     const key = generateId();
     addDefinition('projection-scenario-definition', id, key, complete);
     return key;
@@ -1432,14 +1432,15 @@ check('an import missing the definition arrays is refused, not silently accepted
   check('a scenario over a global numbering derives what it issues next', () => {
     const { id, model } = open_(1);
     const key = store_(id, model(), {
+      projection: 'CourseNumbering',
+      arguments: {},
       given: [
         { event: 'CourseDefined', data: { courseId: 'c1', capacity: 5 } },
         { event: 'CourseDefined', data: { courseId: 'c2', capacity: 5 } },
       ],
-      reads: [{ alias: 'numbering', projection: 'CourseNumbering', arguments: {} }],
     });
     const stored = model()['projection-scenario-definitions'][key];
-    eq(stored.then, { numbering: 'c3' }, 'the next id to issue');
+    eq(stored.then, 'c3', 'the next id to issue');
     eq(runProjectionScenario(model(), stored).status, 'current', 'and it runs current');
   });
 
@@ -1450,36 +1451,49 @@ check('an import missing the definition arrays is refused, not silently accepted
       { event: 'CourseDefined', data: { tenantId: 't1', courseId: 'c1', capacity: 1, courseNumber: '1' } },
       { event: 'CourseDefined', data: { tenantId: 't2', courseId: 'c2', capacity: 1, courseNumber: '1' } },
     ];
-    const key = store_(id, model(), {
-      given,
-      reads: [
-        { alias: 'first', projection: 'TenantCourseNumbering', arguments: { tenantId: 't1' } },
-        { alias: 'second', projection: 'TenantCourseNumbering', arguments: { tenantId: 't2' } },
-        { alias: 'untouched', projection: 'TenantCourseNumbering', arguments: { tenantId: 't3' } },
-      ],
-    });
-    eq(model()['projection-scenario-definitions'][key].then,
-      { first: '2', second: '2', untouched: '1' }, 'each tenant counted on its own');
+    // Three scenarios rather than three reads: the same Given, asked
+    // three questions, each of which can drift without the others.
+    const at = (tenantId) => {
+      const key = store_(id, model(), { projection: 'TenantCourseNumbering', arguments: { tenantId }, given });
+      // Read the model *after* the write: a member expression evaluates
+      // its object before its key, so indexing model() inline would
+      // look in the snapshot taken before this scenario was added.
+      return model()['projection-scenario-definitions'][key].then;
+    };
+    eq([at('t1'), at('t2'), at('t3')], ['2', '2', '1'], 'each tenant counted on its own');
   });
 
-  check('one scenario may read an entity property and a standalone projection together', () => {
+  check('an entity property and a standalone projection are asserted the same way', () => {
     const { id, model } = open_(1);
-    const key = store_(id, model(), {
-      given: [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 9 } }],
-      reads: [
-        { alias: 'capacity', projection: 'CourseCapacity', arguments: { courseId: 'c1' } },
-        { alias: 'numbering', projection: 'CourseNumbering', arguments: {} },
-      ],
+    const given = [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 9 } }];
+    const capacity = store_(id, model(), {
+      projection: 'CourseCapacity', arguments: { courseId: 'c1' }, given,
     });
-    eq(model()['projection-scenario-definitions'][key].then, { capacity: 9, numbering: 'c2' },
-      'both folds, one Given');
+    const numbering = store_(id, model(), {
+      projection: 'CourseNumbering', arguments: {}, given,
+    });
+    eq(model()['projection-scenario-definitions'][capacity].then, 9, 'the bound one');
+    eq(model()['projection-scenario-definitions'][numbering].then, 'c2',
+      'and the standalone one, in the same shape');
+  });
+
+  check('a value a projection really holds is not mistaken for an absent Then', () => {
+    const { id, model } = open_(1);
+    // `null`, `0` and `[]` are answers. A Then read by truthiness would
+    // call all three "not run yet".
+    const key = store_(id, model(), {
+      projection: 'CourseSubscribedStudentIds', arguments: { courseId: 'c1' }, given: [],
+    });
+    const stored = model()['projection-scenario-definitions'][key];
+    eq(stored.then, [], 'an empty list is what it folds to');
+    eq(runProjectionScenario(model(), stored).status, 'current', 'and it runs current, not broken');
   });
 
   check('changing what a projection does is reported as drift', () => {
     const { id, model } = open_(1);
     const key = store_(id, model(), {
+      projection: 'CourseNumbering', arguments: {},
       given: [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 5 } }],
-      reads: [{ alias: 'numbering', projection: 'CourseNumbering', arguments: {} }],
     });
     // Stop it advancing at all, so the fold is its initial value again
     // rather than the successor of what CourseDefined carried.
@@ -1488,14 +1502,13 @@ check('an import missing the definition arrays is refused, not silently accepted
     updateDefinition('projection-definition', id, 'CourseNumbering', body);
     const result = runProjectionScenario(model(), model()['projection-scenario-definitions'][key]);
     eq(result.status, 'drifted', 'status');
-    eq([result.expected.numbering, result.actual.numbering], ['c2', 'c1'], 'what it was, and what it is now');
+    eq([result.expected, result.actual], ['c2', 'c1'], 'what it was, and what it is now');
   });
 
-  check('a scenario never stops you deleting the projection it reads', () => {
+  check('a scenario never stops you deleting the projection it is about', () => {
     const { id, model } = open_(1);
     const key = store_(id, model(), {
-      given: [],
-      reads: [{ alias: 'numbering', projection: 'CourseNumbering', arguments: {} }],
+      projection: 'CourseNumbering', arguments: {}, given: [],
     });
     // Only the scenario and the command read it; drop the command first,
     // and the scenario must not be what refuses.
@@ -1513,23 +1526,23 @@ check('an import missing the definition arrays is refused, not silently accepted
       'broken', 'and the scenario says so rather than passing');
   });
 
-  check('renaming a projection carries every scenario that reads it', () => {
+  check('renaming a projection carries every scenario about it', () => {
     const { id, model } = open_(1);
     const key = store_(id, model(), {
+      projection: 'CourseNumbering', arguments: {},
       given: [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 5 } }],
-      reads: [{ alias: 'numbering', projection: 'CourseNumbering', arguments: {} }],
     });
     renameDefinition('projection-definition', id, 'CourseNumbering', 'CourseIds');
     const stored = model()['projection-scenario-definitions'][key];
-    eq(stored.reads[0].projection, 'CourseIds', 'the reference followed');
+    eq(stored.projection, 'CourseIds', 'the reference followed');
     eq(runProjectionScenario(model(), stored).status, 'current', 'still current');
   });
 
   check('renaming an event moves a projection scenario Given with it', () => {
     const { id, model } = open_(1);
     const key = store_(id, model(), {
+      projection: 'CourseNumbering', arguments: {},
       given: [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 5 } }],
-      reads: [{ alias: 'numbering', projection: 'CourseNumbering', arguments: {} }],
     });
     renameDefinition('event-definition', id, 'CourseDefined', 'CourseOpened');
     const stored = model()['projection-scenario-definitions'][key];
@@ -1537,58 +1550,50 @@ check('an import missing the definition arrays is refused, not silently accepted
     eq(runProjectionScenario(model(), stored).status, 'current', 'still current');
   });
 
-  check('a read that supplies the wrong arguments is refused', () => {
-    const { id, model } = open_(2);
-    const bad = (reads, pattern) => {
+  check('a scenario that supplies the wrong arguments is refused', () => {
+    const { id } = open_(2);
+    const bad = (body, pattern) => {
       try {
         addDefinition('projection-scenario-definition', id, generateId(),
-          { given: [], reads, then: {} });
+          { given: [], then: null, ...body });
         throw new Error('did not refuse');
       } catch (error) {
         if (!pattern.test(error.message)) throw new Error(`wrong message: ${error.message}`);
       }
     };
-    bad([{ alias: 'numbering', projection: 'TenantCourseNumbering', arguments: {} }],
-      /supplies no "tenantId"/);
-    bad([{ alias: 'numbering', projection: 'CourseNumbering', arguments: { tenantId: 't1' } }],
+    bad({ projection: 'TenantCourseNumbering', arguments: {} }, /supplies no "tenantId"/);
+    bad({ projection: 'CourseNumbering', arguments: { tenantId: 't1' } },
       /does not declare as a parameter/);
-    bad([{ alias: 'numbering', projection: 'NoSuchThing', arguments: {} }],
-      /does not exist in this model/);
+    bad({ projection: 'NoSuchThing', arguments: {} }, /does not exist in this model/);
   });
 
   check('a scenario knows whether running it would execute a script', () => {
     const { model } = openScripted();
-    eq(projectionScenarioTouchesScript(model(), {
-      reads: [{ alias: 'total', projection: 'CounterTotal', arguments: { counterId: 'x1' } }],
-    }), true, 'reads a scripted one');
-    const plain = build(1);
-    eq(projectionScenarioTouchesScript(plain, {
-      reads: [{ alias: 'numbering', projection: 'CourseNumbering', arguments: {} }],
-    }), false, 'declared only');
+    eq(projectionScenarioTouchesScript(model(), { projection: 'CounterTotal' }), true,
+      'is about a scripted one');
+    eq(projectionScenarioTouchesScript(build(1), { projection: 'CourseNumbering' }), false,
+      'declared only');
   });
 
   check('a scenario over a scripted projection folds through its tag filter', () => {
     const { id, model } = openScripted();
-    const key = store_(id, model(), {
-      given: [
-        { event: 'Ticked', data: { counterId: 'x1' } },
-        { event: 'Ticked', data: { counterId: 'x2' } },
-        { event: 'Ticked', data: { counterId: 'x1' } },
-      ],
-      reads: [
-        { alias: 'first', projection: 'CounterTotal', arguments: { counterId: 'x1' } },
-        { alias: 'second', projection: 'CounterTotal', arguments: { counterId: 'x2' } },
-      ],
-    });
-    eq(model()['projection-scenario-definitions'][key].then, { first: 2, second: 1 },
-      'each counter counted its own');
+    const given = [
+      { event: 'Ticked', data: { counterId: 'x1' } },
+      { event: 'Ticked', data: { counterId: 'x2' } },
+      { event: 'Ticked', data: { counterId: 'x1' } },
+    ];
+    const at = (counterId) => {
+      const key = store_(id, model(), { projection: 'CounterTotal', arguments: { counterId }, given });
+      return model()['projection-scenario-definitions'][key].then;
+    };
+    eq([at('x1'), at('x2')], [2, 1], 'each counter counted its own');
   });
 
   check('a projection scenario round-trips through an export', () => {
     const { id, model } = open_(1);
     store_(id, model(), {
+      projection: 'CourseNumbering', arguments: {},
       given: [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 5 } }],
-      reads: [{ alias: 'numbering', projection: 'CourseNumbering', arguments: {} }],
     });
     const envelope = buildShareEnvelope(model(), []);
     // Two ship with this model, and this is the third.

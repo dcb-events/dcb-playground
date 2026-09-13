@@ -1,0 +1,522 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; }
+    .app {
+      --bg:#f8fafc; --surface:#ffffff; --border:#e2e8f0; --border-strong:#cbd5e1;
+      --text:#0f172a; --muted:#64748b;
+      --command:#2563eb; --command-soft:#eff6ff; --command-bd:#bfdbfe; --command-tx:#1e40af;
+      --event:#f97316; --event-soft:#fff7ed; --event-bd:#fed7aa; --event-tx:#9a3412;
+      --entity:#16a34a; --entity-soft:#f0fdf4; --entity-bd:#bbf7d0; --entity-tx:#166534;
+      --type:#6b7280; --type-soft:#f9fafb; --danger:#dc2626;
+      --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+      font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: var(--text); background: var(--bg);
+      position: relative; min-height: 100vh; overflow: hidden;
+    }
+    .app.dark {
+      --bg:#0b1220; --surface:#131c2e; --border:#22304a; --border-strong:#3a4b69;
+      --text:#e2e8f0; --muted:#93a3b8;
+      --command:#60a5fa; --command-soft:#16243d; --command-bd:#1e40af; --command-tx:#bfdbfe;
+      --event:#fb923c; --event-soft:#2d1c0d; --event-bd:#9a3412; --event-tx:#fed7aa;
+      --entity:#4ade80; --entity-soft:#0f2a1c; --entity-bd:#166534; --entity-tx:#bbf7d0;
+      --type:#94a3b8; --type-soft:#172030; --danger:#f87171;
+    }
+    a { color: #2563eb; }
+    a:hover { color: #1d4ed8; }
+
+    .boardhead {
+      display: flex; align-items: baseline; gap: 12px;
+      padding: 18px 30px 14px; border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .boardhead .kicker {
+      font-size: 11px; text-transform: uppercase; letter-spacing: .07em;
+      color: var(--entity); font-weight: 700;
+    }
+    .boardhead .nm { font-size: 17px; font-weight: 600; }
+    .boardhead .ch { font-size: 12px; color: var(--muted); }
+    .boardhead .grow { flex: 1; }
+
+    .slice { padding: 20px 30px 0; max-width: 840px; }
+    .phead { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+    .phead .name { font-size: 20px; font-weight: 600; }
+    .phead .grow { flex: 1; }
+
+    .tabs { display: flex; border-bottom: 1px solid var(--border); margin-bottom: 14px; }
+    .tab {
+      font: inherit; font-size: 13.5px; font-weight: 600; padding: 8px 4px; margin-right: 22px;
+      border: 0; background: none; color: var(--muted); cursor: pointer;
+      border-bottom: 2px solid transparent; margin-bottom: -1px;
+    }
+    .tab:hover { color: var(--text); }
+    .tab.on { color: var(--entity); border-bottom-color: var(--entity); }
+
+    h4 {
+      margin: 0; font-size: 11px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: .07em; color: var(--muted);
+    }
+
+    /* ---------- the signature list ----------
+       No card, no columns: one declaration per line, read top to bottom
+       the way a file of definitions is read. */
+    .list { padding: 2px 0 0; }
+    .line {
+      display: flex; align-items: center; gap: 10px;
+      padding: 7px 10px 7px 6px; cursor: pointer;
+      border-radius: 6px; border: 1px solid transparent;
+    }
+    .line:hover { background: var(--command-soft); }
+    .line.on { background: var(--entity-soft); border-color: var(--entity-bd); }
+    .line.dim { opacity: .62; }
+    .gutter {
+      flex: none; width: 20px; text-align: center; font-style: normal; font-size: 14px;
+      color: var(--muted);
+    }
+    .sig {
+      font-family: var(--mono); font-size: 12.5px; white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0;
+    }
+    .sig .sname { font-weight: 600; color: var(--text); }
+    .sig .spunct { color: var(--border-strong); }
+    .sig .sparam { color: var(--entity); }
+    .sig .stype { color: var(--type); }
+    .sig .sval { color: var(--text); }
+    .sig .sval.unset {
+      color: var(--muted); font-style: italic; font-family: inherit;
+      border-bottom: 1px dashed var(--border-strong);
+    }
+    .moves {
+      flex: none; display: inline-flex; align-items: center; justify-content: center;
+      min-width: 22px; height: 20px; padding: 0 6px; border-radius: 999px;
+      font-family: var(--mono); font-size: 11px;
+      background: var(--event-soft); border: 1px solid var(--event-bd); color: var(--event-tx);
+    }
+    .moves.none { background: transparent; border-style: dashed; border-color: var(--border-strong); color: var(--muted); }
+    .chev { flex: none; width: 10px; height: 10px; color: var(--border-strong); }
+    .line.on .chev { color: var(--entity); }
+
+    .chip {
+      display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px;
+      font-size: 12px; font-family: var(--mono);
+      background: var(--type-soft); border: 1px solid var(--border); color: var(--text);
+    }
+    .chip.event { background: var(--event-soft); border-color: var(--event-bd); color: var(--event-tx); }
+    .chip.entity { background: var(--entity-soft); border-color: var(--entity-bd); color: var(--entity-tx); }
+    .chip.command { background: var(--command-soft); border-color: var(--command-bd); color: var(--command-tx); }
+    .chip.unset {
+      background: transparent; border-style: dashed; border-color: var(--border-strong);
+      color: var(--muted); font-style: italic; font-family: inherit;
+    }
+    .chip.sm { font-size: 11px; padding: 2px 8px; }
+    .ic { font-style: normal; margin-right: 5px; }
+
+    /* ---------- the sheet ----------
+       The list never reflows, so walking down it with the arrow keys
+       leaves every line exactly where your eye left it. */
+    .scrim { position: absolute; inset: 0; background: rgba(15,23,42,.16); }
+    .sheet {
+      position: absolute; top: 0; right: 0; bottom: 0; width: 430px;
+      background: var(--surface); border-left: 1px solid var(--border);
+      box-shadow: -18px 0 46px rgba(15,23,42,.20);
+      display: flex; flex-direction: column;
+    }
+    .sheet > header {
+      display: flex; align-items: center; gap: 9px;
+      padding: 14px 18px 12px; border-bottom: 1px solid var(--border);
+    }
+    .sheet > header .nm { font-size: 15px; font-weight: 600; flex: 1; }
+    .sheet .body { flex: 1; overflow: auto; padding: 4px 18px 14px; }
+    .sheet > footer {
+      display: flex; align-items: center; gap: 9px;
+      padding: 12px 18px; border-top: 1px solid var(--border); background: var(--type-soft);
+    }
+    .sheet > footer .grow { flex: 1; }
+
+    .drow { display: flex; align-items: flex-start; gap: 10px; padding: 10px 0; flex-wrap: wrap; }
+    .drow + .drow { border-top: 1px dashed var(--border); }
+    .drow > h4 { flex: none; width: 78px; padding-top: 5px; }
+    .drow .stack { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
+    .hrow { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+    .verb { color: var(--muted); font-size: 12.5px; }
+
+    select, input[type=text] {
+      font: inherit; font-size: 12.5px; padding: 4px 8px;
+      border: 1px solid var(--border-strong); border-radius: 5px;
+      background: var(--surface); color: var(--text); max-width: 100%;
+    }
+    .check { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--muted); }
+    .check input { margin: 0; }
+    .seg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 6px; overflow: hidden; }
+    .segb {
+      font: inherit; font-size: 12px; padding: 4px 11px; border: 0;
+      background: var(--surface); color: var(--muted); cursor: pointer;
+    }
+    .segb + .segb { border-left: 1px solid var(--border-strong); }
+    .segb.on { background: var(--entity-soft); color: var(--entity-tx); font-weight: 600; }
+
+    .btn {
+      font: inherit; font-size: 12px; padding: 4px 10px; border-radius: 6px;
+      border: 1px solid var(--border-strong); background: var(--surface);
+      color: var(--text); cursor: pointer;
+    }
+    .btn:hover { border-color: var(--command); color: var(--command); }
+    .btn.primary { background: var(--command); border-color: var(--command); color: #fff; font-size: 13px; padding: 7px 14px; }
+    .btn.primary:hover { background: #1d4ed8; color: #fff; }
+    .btn.ghost { border-color: transparent; color: var(--muted); font-size: 13px; padding: 7px 14px; }
+    .btn.ghost:hover { border-color: var(--border-strong); }
+    .btn.x { border-color: transparent; color: var(--muted); padding: 2px 6px; }
+    .btn.x:hover { color: var(--danger); border-color: var(--danger); }
+    .btn.dash { border-style: dashed; color: var(--muted); }
+    .btn.dash:hover { color: var(--command); }
+    .btn.icon { border-color: transparent; color: var(--muted); font-size: 16px; padding: 0 7px; line-height: 1; }
+    .btn.icon:hover { color: var(--text); }
+
+    .sigbig {
+      font-family: var(--mono); font-size: 12px; color: var(--muted);
+      padding: 10px 0 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+  </style>
+</helmet>
+
+<div class="app {{ui.theme}}">
+
+  <div class="boardhead">
+    <span class="kicker">Direction B</span>
+    <span class="nm">Signature</span>
+    <span class="ch">one declaration per line, detail in a sheet</span>
+    <span class="grow"></span>
+    <span class="chip sm">list never reflows</span>
+  </div>
+
+  <div class="slice">
+    <div class="phead">
+      <span class="name">{{ui.pageTitle}}</span>
+      <span class="grow"></span>
+      <span class="chip entity sm">{{ui.pageCount}}</span>
+    </div>
+
+    <div class="tabs">
+      <sc-for list="{{tabs}}" as="tab" hint-placeholder-count="3">
+        <button class="{{tab.cls}}" onClick="{{tab.pick}}">{{tab.label}}</button>
+      </sc-for>
+    </div>
+
+    <div class="list">
+      <sc-for list="{{rows}}" as="row" hint-placeholder-count="7">
+        <div class="{{row.cls}}" onClick="{{row.pick}}">
+          <i class="gutter">{{row.gutter}}</i>
+          <span class="sig">
+            <span class="sname">{{row.name}}</span><span class="spunct">(</span><span class="sparam">{{row.param}}</span><span class="spunct">)</span><span class="spunct"> : </span><span class="stype">{{row.type}}</span><span class="spunct"> = </span><span class="{{row.valCls}}">{{row.starts}}</span>
+          </span>
+          <span class="{{row.movesCls}}">{{row.moveCount}}</span>
+          <svg class="chev" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6">
+            <path d="M3.5 1.5 L7 5 L3.5 8.5"></path>
+          </svg>
+        </div>
+      </sc-for>
+      <div style="padding: 10px 6px 0">
+        <button class="btn dash">{{ui.addLabel}}</button>
+      </div>
+    </div>
+  </div>
+
+  <sc-if value="{{sel.open}}" hint-placeholder-val="{{true}}">
+    <div>
+      <div class="scrim" onClick="{{sel.close}}"></div>
+      <div class="sheet">
+        <header>
+          <span class="nm">{{sel.name}}</span>
+          <button class="btn">Rename</button>
+          <button class="btn icon" onClick="{{sel.close}}">&#215;</button>
+        </header>
+        <div class="body">
+          <div class="sigbig">{{sel.signature}}</div>
+
+          <div class="drow">
+            <h4>holds</h4>
+            <div class="stack">
+              <span class="hrow">
+                <select defaultValue="{{sel.holdsType}}">
+                  <sc-for list="{{sel.typeOptions}}" as="t" hint-placeholder-count="4">
+                    <option value="{{t.label}}">{{t.label}}</option>
+                  </sc-for>
+                </select>
+                <label class="check"><input type="checkbox" defaultChecked="{{sel.isList}}"> many</label>
+              </span>
+            </div>
+          </div>
+
+          <div class="drow">
+            <h4>one per</h4>
+            <div class="stack">
+              <span class="hrow">
+                <sc-for list="{{sel.params}}" as="prm" hint-placeholder-count="1">
+                  <span class="chip">{{prm.label}}<button class="btn x">&#215;</button></span>
+                </sc-for>
+                <sc-if value="{{sel.isGlobal}}" hint-placeholder-val="{{false}}">
+                  <span class="chip unset">kept once, for the whole model</span>
+                </sc-if>
+                <button class="btn dash">+ parameter</button>
+              </span>
+            </div>
+          </div>
+
+          <div class="drow">
+            <h4>starts at</h4>
+            <div class="stack">
+              <span class="hrow">
+                <span class="seg">
+                  <button class="{{sel.startNothingCls}}" onClick="{{sel.setNothing}}">nothing yet</button>
+                  <button class="{{sel.startValueCls}}" onClick="{{sel.setValue}}">{{sel.valueWord}}</button>
+                </span>
+                <sc-if value="{{sel.startsIsValue}}" hint-placeholder-val="{{true}}">
+                  <select defaultValue="{{sel.starts}}">
+                    <sc-for list="{{sel.startOptions}}" as="opt" hint-placeholder-count="3">
+                      <option value="{{opt.label}}">{{opt.label}}</option>
+                    </sc-for>
+                  </select>
+                </sc-if>
+              </span>
+            </div>
+          </div>
+
+          <div class="drow">
+            <h4>moved by</h4>
+            <div class="stack">
+              <sc-for list="{{sel.moves}}" as="mv" hint-placeholder-count="2">
+                <span class="hrow">
+                  <span class="chip event"><i class="ic">{{mv.icon}}</i>{{mv.event}}</span>
+                  <span class="verb">{{mv.verb}}</span>
+                  <span class="chip">{{mv.value}}</span>
+                  <button class="btn x">&#215;</button>
+                </span>
+              </sc-for>
+              <span class="hrow"><button class="btn dash">+ wire an event</button></span>
+            </div>
+          </div>
+
+          <div class="drow">
+            <h4>read by</h4>
+            <div class="stack">
+              <span class="hrow">
+                <sc-for list="{{sel.readBy}}" as="cmd" hint-placeholder-count="2">
+                  <span class="chip command">{{cmd.label}}</span>
+                </sc-for>
+              </span>
+            </div>
+          </div>
+
+          <div class="drow">
+            <h4>bound as</h4>
+            <div class="stack">
+              <span class="hrow">
+                <sc-for list="{{sel.boundAs}}" as="b" hint-placeholder-count="1">
+                  <span class="chip entity"><i class="ic">{{b.icon}}</i>{{b.label}}</span>
+                </sc-for>
+                <sc-if value="{{sel.unbound}}" hint-placeholder-val="{{false}}">
+                  <span class="chip unset">no entity calls it anything</span>
+                </sc-if>
+              </span>
+            </div>
+          </div>
+        </div>
+        <footer>
+          <button class="btn primary" onClick="{{sel.close}}">Save</button>
+          <button class="btn ghost" onClick="{{sel.close}}">Discard changes</button>
+          <span class="grow"></span>
+          <button class="btn">Remove</button>
+        </footer>
+      </div>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{"dark":{"editor":"boolean","default":false,"section":"Theme"}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { ctx: 'all', open: 'CourseNumbering' };
+  }
+
+  renderVals() {
+    const ctx = this.state.ctx;
+    const all = this.projections();
+    const rows = ctx === 'all' ? all : all.filter((p) => p.owner === ctx);
+    const showGutter = ctx === 'all';
+    const current = all.filter((p) => p.id === this.state.open)[0];
+
+    const tabs = [
+      { key: 'Course', label: 'Course' },
+      { key: 'Student', label: 'Student' },
+      { key: 'all', label: 'Projections' },
+    ].map((t) => ({
+      label: t.label,
+      cls: t.key === ctx ? 'tab on' : 'tab',
+      pick: () => this.setState({ ctx: t.key, open: null }),
+    }));
+
+    return {
+      ui: {
+        theme: this.props.dark ? 'dark' : '',
+        pageTitle: ctx === 'all' ? 'Projections' : ctx,
+        pageCount: rows.length + (rows.length === 1 ? ' projection' : ' projections'),
+        addLabel: showGutter ? '+ new projection' : '+ property',
+      },
+      tabs: tabs,
+      rows: rows.map((p) => this.line(p, ctx, showGutter)),
+      sel: this.sheet(current, ctx),
+    };
+  }
+
+  line(p, ctx, showGutter) {
+    const open = this.state.open === p.id;
+    const unset = p.starts === null;
+    let cls = 'line';
+    if (open) cls += ' on';
+    if (!p.readBy.length || !p.moves.length) cls += ' dim';
+    return {
+      gutter: showGutter ? (p.bindings.length ? p.bindings[0].icon : '·') : '',
+      name: showGutter ? this.lower(p.name) : p.prop,
+      param: p.param || '',
+      type: this.lower(p.holds),
+      starts: unset ? 'nothing yet' : p.starts,
+      valCls: unset ? 'sval unset' : 'sval',
+      moveCount: p.moves.length,
+      movesCls: p.moves.length ? 'moves' : 'moves none',
+      cls: cls,
+      pick: () => this.setState({ open: open ? null : p.id }),
+    };
+  }
+
+  sheet(p, ctx) {
+    if (!p) return { open: false };
+    const unset = p.starts === null;
+    const showAll = ctx === 'all';
+    return {
+      open: true,
+      close: () => this.setState({ open: null }),
+      name: showAll ? p.name : p.prop,
+      signature: (showAll ? this.lower(p.name) : p.prop)
+        + '(' + (p.param || '') + ') : ' + this.lower(p.holds)
+        + ' = ' + (unset ? 'nothing yet' : p.starts),
+      holdsType: p.holds.replace('[]', ''),
+      isList: !!p.isList,
+      typeOptions: ['Integer', 'Text', 'Boolean', 'Course id', 'Student id', 'Course status', 'Student status']
+        .map((t) => ({ label: t })),
+      params: p.param ? [{ label: p.param }] : [],
+      isGlobal: !p.param,
+      starts: unset ? '' : p.starts,
+      startsIsValue: !unset,
+      valueWord: p.isList ? 'a list' : 'a value',
+      startNothingCls: unset ? 'segb on' : 'segb',
+      startValueCls: unset ? 'segb' : 'segb on',
+      startOptions: (p.options || []).map((o) => ({ label: String(o) })),
+      setNothing: () => {},
+      setValue: () => {},
+      moves: p.moves,
+      readBy: p.readBy.map((c) => ({ label: c })),
+      boundAs: p.bindings,
+      unbound: p.bindings.length === 0,
+    };
+  }
+
+  lower(name) {
+    return String(name).charAt(0).toLowerCase() + String(name).slice(1);
+  }
+
+  projections() {
+    const COURSE = { icon: '\u{1F4DA}' };
+    const STUDENT = { icon: '\u{1F9D1}\u200D\u{1F393}' };
+    return [
+    {
+      id: 'CourseStatus', owner: 'Course', prop: 'status', name: 'Course status',
+      holds: 'Course status', starts: 'Non existent',
+      options: ['Non existent', 'Existent', 'Archived'],
+      param: 'course id',
+      bindings: [{ icon: COURSE.icon, label: 'Course · status' }],
+      moves: [
+        { icon: COURSE.icon, event: 'Course defined', verb: 'becomes', value: 'Existent' },
+        { icon: COURSE.icon, event: 'Course archived', verb: 'becomes', value: 'Archived' },
+      ],
+      readBy: ['Archive course', 'Change course capacity', 'Subscribe student to course', 'Unsubscribe student from course'],
+    },
+    {
+      id: 'CourseCapacity', owner: 'Course', prop: 'capacity', name: 'Course capacity',
+      holds: 'Integer', starts: '0', options: ['0'],
+      param: 'course id',
+      bindings: [{ icon: COURSE.icon, label: 'Course · capacity' }],
+      moves: [
+        { icon: COURSE.icon, event: 'Course defined', verb: 'becomes', value: 'capacity' },
+        { icon: COURSE.icon, event: 'Course capacity changed', verb: 'becomes', value: 'new capacity' },
+      ],
+      readBy: ['Subscribe student to course'],
+    },
+    {
+      id: 'CourseSubscriptionCount', owner: 'Course', prop: 'subscription count', name: 'Course subscription count',
+      holds: 'Integer', starts: '0', options: ['0'],
+      param: 'course id',
+      bindings: [{ icon: COURSE.icon, label: 'Course · subscription count' }],
+      moves: [
+        { icon: STUDENT.icon, event: 'Student subscribed to course', verb: 'goes up by', value: '1' },
+        { icon: STUDENT.icon, event: 'Student unsubscribed from course', verb: 'goes down by', value: '1' },
+      ],
+      readBy: ['Change course capacity', 'Subscribe student to course'],
+    },
+    {
+      id: 'CourseSubscribedStudentIds', owner: 'Course', prop: 'subscribed student ids', name: 'Course subscribed student ids',
+      holds: 'Student id[]', starts: 'an empty list', isList: true, options: ['an empty list'],
+      param: 'course id',
+      bindings: [{ icon: COURSE.icon, label: 'Course · subscribed student ids' }],
+      moves: [
+        { icon: STUDENT.icon, event: 'Student subscribed to course', verb: 'gains', value: 'student id' },
+        { icon: STUDENT.icon, event: 'Student unsubscribed from course', verb: 'loses', value: 'student id' },
+      ],
+      readBy: ['Subscribe student to course', 'Unsubscribe student from course'],
+    },
+    {
+      id: 'StudentStatus', owner: 'Student', prop: 'status', name: 'Student status',
+      holds: 'Student status', starts: 'Non existent',
+      options: ['Non existent', 'Existent'],
+      param: 'student id',
+      bindings: [{ icon: STUDENT.icon, label: 'Student · status' }],
+      moves: [
+        { icon: STUDENT.icon, event: 'Student registered', verb: 'becomes', value: 'Existent' },
+      ],
+      readBy: ['Register student', 'Subscribe student to course'],
+    },
+    {
+      id: 'StudentSubscriptionCount', owner: 'Student', prop: 'subscription count', name: 'Student subscription count',
+      holds: 'Integer', starts: '0', options: ['0'],
+      param: 'student id',
+      bindings: [{ icon: STUDENT.icon, label: 'Student · subscription count' }],
+      moves: [
+        { icon: STUDENT.icon, event: 'Student subscribed to course', verb: 'goes up by', value: '1' },
+        { icon: STUDENT.icon, event: 'Student unsubscribed from course', verb: 'goes down by', value: '1' },
+      ],
+      readBy: ['Subscribe student to course'],
+    },
+    {
+      id: 'CourseNumbering', owner: null, prop: null, name: 'Course numbering',
+      holds: 'Course id', starts: 'c1', options: ['c1'],
+      param: null,
+      bindings: [],
+      moves: [
+        { icon: COURSE.icon, event: 'Course defined', verb: 'becomes', value: 'the one after course id' },
+      ],
+      readBy: ['Define course'],
+    },
+    ];
+  }
+}
+</script>
+</body>
+</html>

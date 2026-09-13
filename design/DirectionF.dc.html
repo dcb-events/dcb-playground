@@ -1,0 +1,644 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; }
+    .app {
+      --bg:#f8fafc; --surface:#ffffff; --border:#e2e8f0; --border-strong:#cbd5e1;
+      --text:#0f172a; --muted:#64748b;
+      --command:#2563eb; --command-soft:#eff6ff; --command-bd:#bfdbfe; --command-tx:#1e40af;
+      --event:#f97316; --event-soft:#fff7ed; --event-bd:#fed7aa; --event-tx:#9a3412;
+      --entity:#16a34a; --entity-soft:#f0fdf4; --entity-bd:#bbf7d0; --entity-tx:#166534;
+      --warn-soft:#fef3c7; --warn-bd:#fde68a; --warn-tx:#92400e;
+      --type:#6b7280; --type-soft:#f9fafb; --danger:#dc2626;
+      --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+      font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: var(--text); background: var(--bg);
+      min-height: 100vh; padding-bottom: 40px;
+    }
+    .app.dark {
+      --bg:#0b1220; --surface:#131c2e; --border:#22304a; --border-strong:#3a4b69;
+      --text:#e2e8f0; --muted:#93a3b8;
+      --command:#60a5fa; --command-soft:#16243d; --command-bd:#1e40af; --command-tx:#bfdbfe;
+      --event:#fb923c; --event-soft:#2d1c0d; --event-bd:#9a3412; --event-tx:#fed7aa;
+      --entity:#4ade80; --entity-soft:#0f2a1c; --entity-bd:#166534; --entity-tx:#bbf7d0;
+      --warn-soft:#2d2408; --warn-bd:#4a3b0f; --warn-tx:#fcd34d;
+      --type:#94a3b8; --type-soft:#172030; --danger:#f87171;
+    }
+    a { color: #2563eb; }
+    a:hover { color: #1d4ed8; }
+
+    .boardhead {
+      display: flex; align-items: baseline; gap: 12px;
+      padding: 18px 30px 14px; border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .boardhead .kicker {
+      font-size: 11px; text-transform: uppercase; letter-spacing: .07em;
+      color: var(--entity); font-weight: 700;
+    }
+    .boardhead .nm { font-size: 17px; font-weight: 600; }
+    .boardhead .ch { font-size: 12px; color: var(--muted); }
+    .boardhead .grow { flex: 1; }
+
+    .slice { padding: 20px 30px 0; max-width: 880px; }
+    .phead { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+    .phead .name { font-size: 20px; font-weight: 600; }
+    .phead .grow { flex: 1; }
+
+    h4 {
+      margin: 0; font-size: 11px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: .07em; color: var(--muted);
+    }
+
+    /* ---------- the ledger ---------- */
+    .ledger {
+      border: 1px solid var(--border); border-radius: 8px;
+      background: var(--surface); overflow: hidden;
+    }
+    .lhead, .lrow { display: grid; align-items: center; gap: 12px; padding: 0 12px; }
+    .lhead { height: 30px; border-bottom: 1px solid var(--border); background: var(--type-soft); }
+    .lhead span {
+      font-size: 10px; text-transform: uppercase; letter-spacing: .07em;
+      color: var(--muted); font-weight: 600;
+    }
+    .lrow {
+      min-height: 42px; border-bottom: 1px solid var(--border); cursor: pointer;
+      border-left: 3px solid transparent; padding-left: 9px;
+    }
+    .lrow:hover { background: var(--command-soft); }
+    .lrow.on { background: var(--entity-soft); border-left-color: var(--entity); }
+    .lrow .nm { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 7px; min-width: 0; }
+    .lrow .nm .txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cell { font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cell.ty { color: var(--type); }
+    .caret { flex: none; width: 9px; height: 9px; color: var(--muted); }
+
+    .pill {
+      display: inline-flex; align-items: center; justify-content: center; gap: 3px;
+      min-width: 22px; height: 20px; padding: 0 7px; border-radius: 999px;
+      font-family: var(--mono); font-size: 11px; white-space: nowrap;
+    }
+    .pill.ev { background: var(--event-soft); border: 1px solid var(--event-bd); color: var(--event-tx); }
+    .pill.ok { background: var(--entity-soft); border: 1px solid var(--entity-bd); color: var(--entity-tx); }
+    .pill.warn { background: var(--warn-soft); border: 1px solid var(--warn-bd); color: var(--warn-tx); }
+    .pill.none { background: transparent; border: 1px dashed var(--border-strong); color: var(--muted); }
+
+    .chip {
+      display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px;
+      font-size: 12px; font-family: var(--mono);
+      background: var(--type-soft); border: 1px solid var(--border); color: var(--text);
+      white-space: nowrap;
+    }
+    .chip.event { background: var(--event-soft); border-color: var(--event-bd); color: var(--event-tx); }
+    .chip.entity { background: var(--entity-soft); border-color: var(--entity-bd); color: var(--entity-tx); }
+    .chip.command { background: var(--command-soft); border-color: var(--command-bd); color: var(--command-tx); }
+    .chip.tag { background: var(--entity-soft); border-color: var(--entity-bd); color: var(--entity-tx); }
+    .chip.unset {
+      background: transparent; border-style: dashed; border-color: var(--border-strong);
+      color: var(--muted); font-style: italic; font-family: inherit;
+    }
+    .chip.sm { font-size: 11px; padding: 2px 8px; }
+    .ic { font-style: normal; margin-right: 5px; }
+
+    /* ---------- the opened detail ---------- */
+    .detail {
+      border-bottom: 1px solid var(--border); border-left: 3px solid var(--entity);
+      background: var(--surface); padding: 2px 15px 13px;
+    }
+    .drow { display: flex; align-items: flex-start; gap: 10px; padding: 9px 0; flex-wrap: wrap; }
+    .drow + .drow { border-top: 1px dashed var(--border); }
+    .drow > h4 { flex: none; width: 84px; padding-top: 5px; }
+    .drow .stack { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
+    .hrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .verb { color: var(--muted); font-size: 12.5px; }
+
+    /* ---------- scenarios ---------- */
+    .scen {
+      display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap;
+      padding: 6px 9px; border-radius: 6px; border: 1px solid var(--border);
+      background: var(--type-soft); font-size: 12px;
+    }
+    .scen .mark { flex: none; font-family: var(--mono); font-size: 12px; }
+    .scen.ok .mark { color: var(--entity); }
+    .scen.drifted { background: var(--warn-soft); border-color: var(--warn-bd); }
+    .scen.drifted .mark { color: var(--warn-tx); }
+    .scen .snm { font-weight: 600; }
+    .scen .given { color: var(--muted); }
+    .scen .arrow { color: var(--muted); }
+    .scen .also { color: var(--muted); font-size: 11px; }
+    .scen .grow { flex: 1; }
+
+    select, input[type=text] {
+      font: inherit; font-size: 12.5px; padding: 4px 8px;
+      border: 1px solid var(--border-strong); border-radius: 5px;
+      background: var(--surface); color: var(--text);
+    }
+    .check { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--muted); }
+    .check input { margin: 0; }
+    .seg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 6px; overflow: hidden; }
+    .segb {
+      font: inherit; font-size: 12px; padding: 4px 11px; border: 0;
+      background: var(--surface); color: var(--muted); cursor: pointer;
+    }
+    .segb + .segb { border-left: 1px solid var(--border-strong); }
+    .segb.on { background: var(--entity-soft); color: var(--entity-tx); font-weight: 600; }
+
+    .btn {
+      font: inherit; font-size: 12px; padding: 4px 10px; border-radius: 6px;
+      border: 1px solid var(--border-strong); background: var(--surface);
+      color: var(--text); cursor: pointer;
+    }
+    .btn:hover { border-color: var(--command); color: var(--command); }
+    .btn.primary { background: var(--command); border-color: var(--command); color: #fff; font-size: 13px; padding: 7px 14px; }
+    .btn.primary:hover { background: #1d4ed8; color: #fff; }
+    .btn.ghost { border-color: transparent; color: var(--muted); font-size: 13px; padding: 7px 14px; }
+    .btn.ghost:hover { border-color: var(--border-strong); }
+    .btn.x { border-color: transparent; color: var(--muted); padding: 2px 6px; }
+    .btn.x:hover { color: var(--danger); border-color: var(--danger); }
+    .btn.dash { border-style: dashed; color: var(--muted); }
+    .btn.dash:hover { color: var(--command); }
+
+    .dfoot { display: flex; align-items: center; gap: 9px; padding-top: 12px; margin-top: 2px; border-top: 1px dashed var(--border); }
+    .dfoot .grow { flex: 1; }
+    .addrow { padding: 10px 12px; }
+  
+    /* ---------- worked examples ----------
+       The definition and the examples that pin it down are the same
+       size on screen, because they are the same size in the work. */
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; padding: 8px 0 2px; }
+    .col > h4 { margin-bottom: 8px; }
+    .col .lead { font-size: 11.5px; color: var(--command); margin-bottom: 8px; }
+    .dline {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      padding: 6px 8px; border-radius: 6px; border: 1px solid transparent;
+      font-size: 12.5px;
+    }
+    .dline + .dline { margin-top: 2px; }
+    .dline > .k { flex: none; width: 70px; font-size: 11px; text-transform: uppercase;
+                  letter-spacing: .07em; color: var(--muted); font-weight: 600; }
+    .dline.fires { background: var(--command-soft); border-color: var(--command-bd); }
+    .dline.idle { opacity: .45; }
+
+    .ex {
+      border: 1px solid var(--border); border-radius: 7px; background: var(--surface);
+      padding: 7px 9px 8px; cursor: pointer; width: 100%; text-align: left;
+      font: inherit; color: inherit; display: block;
+    }
+    .ex + .ex { margin-top: 6px; }
+    .ex:hover { border-color: var(--border-strong); }
+    .ex.on { border-color: var(--command); box-shadow: 0 0 0 1px var(--command-bd); }
+    .ex.drifted { background: var(--warn-soft); border-color: var(--warn-bd); }
+    .exhead { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-bottom: 5px; }
+    .exhead .mark { flex: none; font-family: var(--mono); color: var(--entity); }
+    .ex.drifted .exhead .mark { color: var(--warn-tx); }
+    .exhead .snm { font-weight: 600; }
+    .exhead .grow { flex: 1; }
+    .exhead .inst { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+    .exrow { display: flex; align-items: flex-start; gap: 7px; font-size: 11.5px; padding: 1px 0; }
+    .exrow > .k { flex: none; width: 38px; color: var(--muted); text-transform: uppercase;
+                  letter-spacing: .07em; font-size: 10px; font-weight: 600; padding-top: 3px; }
+    .exrow .stackv { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; }
+</style>
+</helmet>
+
+<div class="app {{ui.theme}}">
+
+  <div class="boardhead">
+    <span class="kicker">Direction F</span>
+    <span class="nm">Worked examples</span>
+    <span class="ch">scenarios beside the definition, not under it</span>
+    <span class="grow"></span>
+    <span class="chip sm">pick an example, see what it touched</span>
+  </div>
+
+  <div class="slice">
+    <div class="phead">
+      <span class="name">Projections</span>
+      <span class="grow"></span>
+      <span class="chip entity sm">7 projections</span>
+    </div>
+
+    <div class="ledger">
+      <div class="lhead" style="grid-template-columns: {{ui.cols}}">
+        <span>projection</span>
+        <span>one per</span>
+        <span>holds</span>
+        <span>starts at</span>
+        <span>moves</span>
+        <span>checks</span>
+      </div>
+
+      <sc-for list="{{rows}}" as="row" hint-placeholder-count="7">
+        <div>
+          <div class="{{row.cls}}" style="grid-template-columns: {{ui.cols}}" onClick="{{row.pick}}">
+            <span class="nm">
+              <svg class="caret" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" style="{{row.caretStyle}}">
+                <path d="M3.5 1.5 L7 5 L3.5 8.5"></path>
+              </svg>
+              <span class="txt">{{row.name}}</span>
+            </span>
+            <span>
+              <sc-if value="{{row.hasParam}}" hint-placeholder-val="{{true}}">
+                <span class="chip tag sm"><i class="ic">{{row.paramIcon}}</i>{{row.param}}</span>
+              </sc-if>
+              <sc-if value="{{row.isGlobal}}" hint-placeholder-val="{{false}}">
+                <span class="chip unset sm">kept once</span>
+              </sc-if>
+            </span>
+            <span class="cell ty">{{row.holds}}</span>
+            <span>
+              <sc-if value="{{row.startsIsValue}}" hint-placeholder-val="{{true}}">
+                <span class="cell">{{row.starts}}</span>
+              </sc-if>
+              <sc-if value="{{row.startsIsUnset}}" hint-placeholder-val="{{false}}">
+                <span class="chip unset sm">{{row.starts}}</span>
+              </sc-if>
+            </span>
+            <span class="{{row.movesCls}}">{{row.moveCount}}</span>
+            <span class="{{row.checksCls}}">{{row.checkLabel}}</span>
+          </div>
+
+          <sc-if value="{{row.open}}" hint-placeholder-val="{{false}}">
+            <div class="detail">
+              <div class="split">
+                <div class="col">
+                  <h4>what it is</h4>
+                  <sc-if value="{{row.hasLead}}" hint-placeholder-val="{{true}}">
+                    <div class="lead">{{row.lead}}</div>
+                  </sc-if>
+
+                  <div class="{{row.perCls}}">
+                    <span class="k">one per</span>
+                    <sc-for list="{{row.params}}" as="prm" hint-placeholder-count="1">
+                      <span class="chip tag"><i class="ic">{{prm.icon}}</i>{{prm.label}}</span>
+                    </sc-for>
+                    <sc-if value="{{row.isGlobal}}" hint-placeholder-val="{{false}}">
+                      <span class="chip unset">kept once</span>
+                    </sc-if>
+                  </div>
+
+                  <div class="dline">
+                    <span class="k">holds</span>
+                    <select defaultValue="{{row.holdsType}}">
+                      <sc-for list="{{row.typeOptions}}" as="t" hint-placeholder-count="4">
+                        <option value="{{t.label}}">{{t.label}}</option>
+                      </sc-for>
+                    </select>
+                    <label class="check"><input type="checkbox" defaultChecked="{{row.isList}}"> many</label>
+                  </div>
+
+                  <div class="{{row.startCls}}">
+                    <span class="k">starts at</span>
+                    <span class="seg">
+                      <button class="{{row.startNothingCls}}" onClick="{{row.noop}}">nothing yet</button>
+                      <button class="{{row.startValueCls}}" onClick="{{row.noop}}">{{row.valueWord}}</button>
+                    </span>
+                    <sc-if value="{{row.startsIsValue}}" hint-placeholder-val="{{true}}">
+                      <select defaultValue="{{row.starts}}">
+                        <sc-for list="{{row.startOptions}}" as="opt" hint-placeholder-count="3">
+                          <option value="{{opt.label}}">{{opt.label}}</option>
+                        </sc-for>
+                      </select>
+                    </sc-if>
+                  </div>
+
+                  <sc-for list="{{row.moves}}" as="mv" hint-placeholder-count="2">
+                    <div class="{{mv.cls}}">
+                      <span class="k">then</span>
+                      <span class="chip event"><i class="ic">{{mv.icon}}</i>{{mv.event}}</span>
+                      <span class="verb">{{mv.verb}}</span>
+                      <span class="chip">{{mv.value}}</span>
+                    </div>
+                  </sc-for>
+
+                  <div class="dline">
+                    <span class="k"></span>
+                    <button class="btn dash">+ wire an event</button>
+                  </div>
+
+                  <div class="dline">
+                    <span class="k">read by</span>
+                    <sc-for list="{{row.readBy}}" as="cmd" hint-placeholder-count="2">
+                      <span class="chip command">{{cmd.label}}</span>
+                    </sc-for>
+                  </div>
+
+                  <div class="dline">
+                    <span class="k">bound as</span>
+                    <sc-for list="{{row.boundAs}}" as="b" hint-placeholder-count="1">
+                      <span class="chip entity"><i class="ic">{{b.icon}}</i>{{b.label}}</span>
+                    </sc-for>
+                    <sc-if value="{{row.unbound}}" hint-placeholder-val="{{false}}">
+                      <span class="chip unset">no entity calls it anything</span>
+                    </sc-if>
+                  </div>
+                </div>
+
+                <div class="col">
+                  <h4>what pins it down</h4>
+                  <sc-for list="{{row.examples}}" as="ex" hint-placeholder-count="3">
+                    <button class="{{ex.cls}}" onClick="{{ex.pick}}">
+                      <span class="exhead">
+                        <span class="mark">{{ex.mark}}</span>
+                        <span class="snm">{{ex.name}}</span>
+                        <span class="grow"></span>
+                        <span class="inst">{{ex.instance}}</span>
+                      </span>
+                      <span class="exrow">
+                        <span class="k">given</span>
+                        <span class="stackv">
+                          <sc-for list="{{ex.given}}" as="g" hint-placeholder-count="2">
+                            <span class="chip event sm"><i class="ic">{{g.icon}}</i>{{g.label}}</span>
+                          </sc-for>
+                          <sc-if value="{{ex.givenEmpty}}" hint-placeholder-val="{{false}}">
+                            <span class="chip unset sm">nothing has happened</span>
+                          </sc-if>
+                        </span>
+                      </span>
+                      <span class="exrow">
+                        <span class="k">then</span>
+                        <span class="stackv">
+                          <span class="chip sm">{{ex.value}}</span>
+                          <sc-if value="{{ex.hasAlso}}" hint-placeholder-val="{{false}}">
+                            <span class="inst">{{ex.also}}</span>
+                          </sc-if>
+                        </span>
+                      </span>
+                    </button>
+                  </sc-for>
+                  <sc-if value="{{row.noExamples}}" hint-placeholder-val="{{false}}">
+                    <span class="chip unset">nothing checks it</span>
+                  </sc-if>
+                  <div class="dline"><button class="btn dash">+ scenario</button></div>
+                </div>
+              </div>
+
+              <div class="dfoot">
+                <button class="btn primary" onClick="{{row.pick}}">Save</button>
+                <button class="btn ghost" onClick="{{row.pick}}">Discard changes</button>
+                <span class="grow"></span>
+                <button class="btn">Rename</button>
+                <button class="btn">Remove</button>
+              </div>
+            </div>
+          </sc-if>
+        </div>
+      </sc-for>
+
+      <div class="addrow">
+        <button class="btn dash">+ new projection</button>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{"dark":{"editor":"boolean","default":false,"section":"Theme"}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { open: 'CourseStatus', example: 's3' };
+  }
+
+  renderVals() {
+    return {
+      ui: { theme: this.props.dark ? 'dark' : '', cols: '1fr 132px 116px 108px 46px 54px' },
+      rows: MODEL.projections.map((p) => this.row(p)),
+    };
+  }
+
+  row(p) {
+    const open = this.state.open === p.id;
+    const unset = p.starts === null;
+    const scenarios = MODEL.scenarios.filter((s) => s.reads.some((r) => r.projection === p.id));
+    const drifted = scenarios.filter((s) => s.state === 'drifted').length;
+    const picked = open
+      ? scenarios.filter((s) => s.id === this.state.example)[0]
+      : null;
+    // Which handlers this example actually set off — read off its Given
+    // rather than stored, so it can never disagree with the definition
+    // beside it.
+    const fired = picked ? p.moves.map((mv) => this.didFire(picked, mv)) : null;
+    const anyFired = fired ? fired.some(Boolean) : false;
+
+    return {
+      name: p.name,
+      param: p.param, paramIcon: p.paramIcon,
+      hasParam: !!p.param, isGlobal: !p.param,
+      params: p.param ? [{ label: p.param, icon: p.paramIcon }] : [],
+      perCls: 'dline',
+      holds: p.holds, holdsType: p.holds.replace('[]', ''), isList: !!p.isList,
+      typeOptions: MODEL.types.map((t) => ({ label: t })),
+      starts: unset ? 'nothing yet' : p.starts,
+      startsIsValue: !unset, startsIsUnset: unset,
+      valueWord: p.isList ? 'a list' : 'a value',
+      startNothingCls: unset ? 'segb on' : 'segb',
+      startValueCls: unset ? 'segb' : 'segb on',
+      startOptions: (p.options || []).map((o) => ({ label: String(o) })),
+      // Nothing fired means the answer is still the initial value —
+      // which is the point of the highlight, not an absence of one.
+      startCls: picked ? (anyFired ? 'dline idle' : 'dline fires') : 'dline',
+      moveCount: p.moves.length,
+      movesCls: p.moves.length ? 'pill ev' : 'pill none',
+      moves: p.moves.map((mv, i) => ({
+        icon: mv.icon, event: mv.event, verb: mv.verb, value: mv.value,
+        cls: !picked ? 'dline' : (fired[i] ? 'dline fires' : 'dline idle'),
+      })),
+      readBy: p.readBy.map((c) => ({ label: c })),
+      boundAs: p.bindings, unbound: p.bindings.length === 0,
+      hasLead: !!picked,
+      lead: picked ? '\u21b3 lit up by \u201c' + picked.name + '\u201d' : '',
+      checkLabel: scenarios.length ? (drifted ? scenarios.length + ' !' : scenarios.length + ' \u2713') : '\u2014',
+      checksCls: scenarios.length ? (drifted ? 'pill warn' : 'pill ok') : 'pill none',
+      examples: scenarios.map((s) => this.example(s, p)),
+      noExamples: scenarios.length === 0,
+      cls: open ? 'lrow on' : 'lrow',
+      caretStyle: open ? 'transform: rotate(90deg)' : '',
+      open: open,
+      pick: () => this.setState({ open: open ? null : p.id }),
+      noop: () => {},
+    };
+  }
+
+  didFire(scenario, move) {
+    return scenario.given.some((g) => g.label.indexOf(move.event) === 0);
+  }
+
+  example(s, p) {
+    const open = this.state.example === s.id && this.state.open === p.id;
+    const mine = s.reads.filter((r) => r.projection === p.id)[0];
+    const others = s.reads.length - 1;
+    let cls = 'ex';
+    if (s.state === 'drifted') cls += ' drifted';
+    if (open) cls += ' on';
+    return {
+      cls: cls,
+      mark: s.state === 'drifted' ? '!' : '\u2713',
+      name: s.name,
+      instance: s.instance || '',
+      given: s.given,
+      givenEmpty: s.given.length === 0,
+      value: mine ? mine.value : '',
+      hasAlso: others > 0,
+      also: others ? 'and ' + others + ' other projection' + (others === 1 ? '' : 's') : '',
+      pick: (e) => {
+        if (e && e.stopPropagation) e.stopPropagation();
+        this.setState({ open: p.id, example: open ? null : s.id });
+      },
+    };
+  }
+}
+
+const COURSE_ICON = '\u{1F4DA}';
+const STUDENT_ICON = '\u{1F9D1}\u200D\u{1F393}';
+
+const MODEL = {
+  types: ['Integer', 'Text', 'Boolean', 'Course id', 'Student id', 'Course status', 'Student status'],
+  projections: [
+    {
+      id: 'CourseStatus', name: 'Course status', prop: 'status',
+      holds: 'Course status', starts: 'Non existent',
+      options: ['Non existent', 'Existent', 'Archived'],
+      param: 'course id', paramIcon: COURSE_ICON,
+      bindings: [{ icon: COURSE_ICON, label: 'Course · status' }],
+      moves: [
+        { icon: COURSE_ICON, event: 'Course defined', verb: 'becomes', value: 'Existent' },
+        { icon: COURSE_ICON, event: 'Course archived', verb: 'becomes', value: 'Archived' },
+      ],
+      readBy: ['Archive course', 'Change course capacity', 'Subscribe student to course', 'Unsubscribe student from course'],
+    },
+    {
+      id: 'CourseCapacity', name: 'Course capacity', prop: 'capacity',
+      holds: 'Integer', starts: '0', options: ['0'],
+      param: 'course id', paramIcon: COURSE_ICON,
+      bindings: [{ icon: COURSE_ICON, label: 'Course · capacity' }],
+      moves: [
+        { icon: COURSE_ICON, event: 'Course defined', verb: 'becomes', value: 'capacity' },
+        { icon: COURSE_ICON, event: 'Course capacity changed', verb: 'becomes', value: 'new capacity' },
+      ],
+      readBy: ['Subscribe student to course'],
+    },
+    {
+      id: 'CourseSubscriptionCount', name: 'Course subscription count', prop: 'subscription count',
+      holds: 'Integer', starts: '0', options: ['0'],
+      param: 'course id', paramIcon: COURSE_ICON,
+      bindings: [{ icon: COURSE_ICON, label: 'Course · subscription count' }],
+      moves: [
+        { icon: STUDENT_ICON, event: 'Student subscribed to course', verb: 'goes up by', value: '1' },
+        { icon: STUDENT_ICON, event: 'Student unsubscribed from course', verb: 'goes down by', value: '1' },
+      ],
+      readBy: ['Change course capacity', 'Subscribe student to course'],
+    },
+    {
+      id: 'CourseSubscribedStudentIds', name: 'Course subscribed student ids', prop: 'subscribed student ids',
+      holds: 'Student id[]', starts: 'an empty list', isList: true, options: ['an empty list'],
+      param: 'course id', paramIcon: COURSE_ICON,
+      bindings: [{ icon: COURSE_ICON, label: 'Course · subscribed student ids' }],
+      moves: [
+        { icon: STUDENT_ICON, event: 'Student subscribed to course', verb: 'gains', value: 'student id' },
+        { icon: STUDENT_ICON, event: 'Student unsubscribed from course', verb: 'loses', value: 'student id' },
+      ],
+      readBy: ['Subscribe student to course', 'Unsubscribe student from course'],
+    },
+    {
+      id: 'StudentStatus', name: 'Student status', prop: 'status',
+      holds: 'Student status', starts: 'Non existent',
+      options: ['Non existent', 'Existent'],
+      param: 'student id', paramIcon: STUDENT_ICON,
+      bindings: [{ icon: STUDENT_ICON, label: 'Student · status' }],
+      moves: [
+        { icon: STUDENT_ICON, event: 'Student registered', verb: 'becomes', value: 'Existent' },
+      ],
+      readBy: ['Register student', 'Subscribe student to course'],
+    },
+    {
+      id: 'StudentSubscriptionCount', name: 'Student subscription count', prop: 'subscription count',
+      holds: 'Integer', starts: '0', options: ['0'],
+      param: 'student id', paramIcon: STUDENT_ICON,
+      bindings: [{ icon: STUDENT_ICON, label: 'Student · subscription count' }],
+      moves: [
+        { icon: STUDENT_ICON, event: 'Student subscribed to course', verb: 'goes up by', value: '1' },
+        { icon: STUDENT_ICON, event: 'Student unsubscribed from course', verb: 'goes down by', value: '1' },
+      ],
+      readBy: ['Subscribe student to course'],
+    },
+    {
+      id: 'CourseNumbering', name: 'Course numbering', prop: null,
+      holds: 'Course id', starts: 'c1', options: ['c1'],
+      param: null, paramIcon: '',
+      bindings: [],
+      moves: [
+        { icon: COURSE_ICON, event: 'Course defined', verb: 'becomes', value: 'the one after course id' },
+      ],
+      readBy: ['Define course'],
+    },
+  ],
+  scenarios: [
+    {
+      id: 's1', name: 'a course nothing has happened to', state: 'ok',
+      partition: 'course id', instance: 'c1', given: [],
+      reads: [
+        { projection: 'CourseStatus', alias: 'status', value: 'Non existent' },
+        { projection: 'CourseCapacity', alias: 'capacity', value: '0' },
+        { projection: 'CourseSubscriptionCount', alias: 'subscription count', value: '0' },
+        { projection: 'CourseSubscribedStudentIds', alias: 'subscribed student ids', value: 'an empty list' },
+      ],
+    },
+    {
+      id: 's2', name: 'once it is defined', state: 'ok',
+      partition: 'course id', instance: 'c1',
+      given: [{ icon: COURSE_ICON, label: 'Course defined (c1, 123)' }],
+      reads: [
+        { projection: 'CourseStatus', alias: 'status', value: 'Existent' },
+        { projection: 'CourseCapacity', alias: 'capacity', value: '123' },
+        { projection: 'CourseSubscriptionCount', alias: 'subscription count', value: '0' },
+        { projection: 'CourseSubscribedStudentIds', alias: 'subscribed student ids', value: 'an empty list' },
+      ],
+    },
+    {
+      id: 's3', name: 'once it is archived', state: 'ok',
+      partition: 'course id', instance: 'c1',
+      given: [{ icon: COURSE_ICON, label: 'Course archived (c1)' }],
+      reads: [
+        { projection: 'CourseStatus', alias: 'status', value: 'Archived' },
+      ],
+    },
+    {
+      id: 's4', name: 'two subscribe, one leaves', state: 'drifted',
+      partition: 'course id', instance: 'c1',
+      given: [
+        { icon: COURSE_ICON, label: 'Course defined (c1, 123)' },
+        { icon: STUDENT_ICON, label: 'Student subscribed to course (c1, s1)' },
+        { icon: STUDENT_ICON, label: 'Student subscribed to course (c1, s2)' },
+        { icon: STUDENT_ICON, label: 'Student unsubscribed from course (c1, s1)' },
+      ],
+      reads: [
+        { projection: 'CourseStatus', alias: 'status', value: 'Existent' },
+        { projection: 'CourseCapacity', alias: 'capacity', value: '123' },
+        { projection: 'CourseSubscriptionCount', alias: 'subscription count', value: '1' },
+        { projection: 'CourseSubscribedStudentIds', alias: 'subscribed student ids', value: 's2' },
+      ],
+    },
+    {
+      id: 's5', name: 'issues c1 before anything has happened', state: 'ok',
+      partition: null, instance: null, given: [],
+      reads: [{ projection: 'CourseNumbering', alias: 'numbering', value: 'c1' }],
+    },
+    {
+      id: 's6', name: 'issues c3 once two courses exist', state: 'ok',
+      partition: null, instance: null,
+      given: [{ icon: COURSE_ICON, label: 'Course defined (c1, 10)' }, { icon: COURSE_ICON, label: 'Course defined (c2, 10)' }],
+      reads: [{ projection: 'CourseNumbering', alias: 'numbering', value: 'c3' }],
+    },
+  ],
+};
+</script>
+</body>
+</html>

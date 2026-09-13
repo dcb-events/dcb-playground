@@ -1,6 +1,6 @@
 {
-  "$schema": "https://dcb.events/schemas/model/v2.json",
-  "dcbModelVersion": "2.0",
+  "$schema": "https://dcb.events/schemas/model/v3.json",
+  "dcbModelVersion": "3.0",
   "name": "Course Example (with sequence)",
   "customTypeDefinitions": [
     {
@@ -703,21 +703,16 @@
     {
       "id": "a29c2e1f-6b04-4f5a-9d13-5f0a2d7c8e41",
       "name": "issues c1 before anything has happened",
+      "projection": "CourseNumbering",
+      "arguments": {},
       "given": [],
-      "reads": [
-        {
-          "alias": "numbering",
-          "projection": "CourseNumbering",
-          "arguments": {}
-        }
-      ],
-      "then": {
-        "numbering": "c1"
-      }
+      "then": "c1"
     },
     {
       "id": "f47b9c30-2a8d-4e16-b5c7-9e3a1d604f28",
       "name": "issues c3 once two courses exist",
+      "projection": "CourseNumbering",
+      "arguments": {},
       "given": [
         {
           "event": "CourseDefined",
@@ -734,16 +729,7 @@
           }
         }
       ],
-      "reads": [
-        {
-          "alias": "numbering",
-          "projection": "CourseNumbering",
-          "arguments": {}
-        }
-      ],
-      "then": {
-        "numbering": "c3"
-      }
+      "then": "c3"
     }
   ]
 }

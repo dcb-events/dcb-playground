@@ -249,23 +249,86 @@
   .chip.linkable { cursor: pointer; }
   .chip.linkable:hover { outline: 1px solid currentColor; }
 
-  /* ---------- one thing, on its own page ----------
-     A property row, wherever it is shown: the name and what it holds on
-     the first line, who moves it and who reads it on the second. The
-     two questions are different questions, so they do not share a line
-     and fight for the space. */
-  .prop {
-    border: 1px solid var(--border); border-radius: 6px;
-    background: var(--surface); padding: 8px 11px; margin-bottom: 7px;
+  /* ---------- the ledger ----------
+     Every projection is shown this way, on the Projections page and on
+     an entity's own. Four facts wide, because those are the four that
+     differ between one projection and the next; everything else waits
+     until a row is opened. The columns are set per page rather than
+     here — an entity's page already states what its rows are kept per,
+     so it drops that one and passes a narrower template. */
+  .ledger {
+    border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--surface); overflow: hidden;
   }
-  .prop .top { display: flex; align-items: baseline; gap: 7px; }
-  .prop .top .grow { flex: 1; }
-  .prop .nm { font-size: 12.5px; font-weight: 600; }
-  .prop .use { font-size: 11px; color: var(--muted); margin-top: 4px; line-height: 1.6; }
-  .prop .use b { font-weight: 600; color: var(--text); cursor: pointer; }
-  .prop .use b:hover { color: var(--command); }
-  .prop.dead { opacity: .6; }
-  .prop.dead .nm::after { content: " · unused"; color: var(--danger); font-size: 10px; font-weight: 400; }
+  .lhead, .lrow { display: grid; align-items: center; gap: 12px; padding: 0 12px; }
+  .lhead { height: 30px; border-bottom: 1px solid var(--border); background: var(--type-soft); }
+  .lhead > span {
+    font-size: 10px; text-transform: uppercase; letter-spacing: .07em;
+    color: var(--muted); font-weight: 600;
+  }
+  .lrow {
+    min-height: 42px; border-bottom: 1px solid var(--border); cursor: pointer;
+    border-left: 3px solid transparent; padding-left: 9px;
+  }
+  .lrow:hover { background: var(--command-soft); }
+  .lrow.on { background: var(--entity-soft); border-left-color: var(--entity); }
+  .lrow.dead { opacity: .6; }
+  .lrow .nm {
+    font-size: 13px; font-weight: 600; min-width: 0;
+    display: flex; align-items: center; gap: 7px;
+  }
+  .lrow .nm .txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lcell {
+    font-family: var(--mono); font-size: 12px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .lcell.ty { color: var(--type); }
+  .lcaret { flex: none; width: 10px; font-size: 10px; color: var(--muted); }
+  .ledger .addrow { padding: 9px 12px; }
+
+  /* A tag, wherever a projection says what it is kept per. The entity
+     green, because a tag is what an entity *is* — the identifier every
+     event about one carries. */
+  .chip.tag { background: var(--entity-soft); border-color: #bbf7d0; color: #166534; }
+  body.f-dark .chip.tag { border-color: #166534; color: #bbf7d0; }
+
+  /* The opened row. Two sides of one projection — what it is, and what
+     pins it down — behind tabs scoped to the thing in front of you,
+     which is a different gesture from navigating between things. */
+  .pdetail {
+    border-bottom: 1px solid var(--border); border-left: 3px solid var(--entity);
+    background: var(--surface); padding: 2px 15px 13px;
+  }
+  .pdetail > .tabs { margin: 4px 0 8px; gap: 0; }
+  .pdetail > .tabs .tab { padding: 6px 2px; margin-right: 20px; font-size: 12px; font-weight: 600; }
+  .pdetail > .tabs .tab.on { color: var(--entity); border-bottom-color: var(--entity); }
+  .pfoot {
+    display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
+    padding-top: 12px; margin-top: 10px; border-top: 1px dashed var(--border);
+  }
+  .pfoot .grow { flex: 1; }
+
+  /* ---------- the index ----------
+     Projections lists only what no entity binds, so this is the one
+     place left that says what else exists and where it lives. It is
+     deliberately not a second ledger: names, and a way to each. */
+  .index { margin-top: 22px; }
+  .index > .why { font-size: 11.5px; color: var(--muted); margin: 3px 0 8px; }
+  .index-row {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 7px 2px; border-top: 1px dashed var(--border); font-size: 12px;
+  }
+  .index-row .ent {
+    font-weight: 600; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px; min-width: 130px;
+  }
+  .index-row .ent:hover { color: var(--command); }
+  .index-row .props { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .lnk {
+    font: inherit; font-family: var(--mono); font-size: 12px;
+    border: 0; background: none; padding: 0; color: var(--muted); cursor: pointer;
+  }
+  .lnk:hover { color: var(--command); }
 
   /* Identity. Set apart from the properties below it because it is a
      different kind of statement: what makes one of these one of these,
@@ -285,7 +348,6 @@
   }
   .ident .irow + .irow { border-top: 1px dashed var(--border); }
   .ident .irow > .nm { min-width: 110px; color: var(--muted); font-size: 11px; }
-  .ident .prop { margin: 8px 0 0; }
   .esection { margin-bottom: 18px; }
   .esection > h4 { margin-bottom: 8px; }
 
@@ -876,9 +938,7 @@ const state = {
   // `key` is set, since an edit never moves what it edits.
   scenarioDraft: null,
   sandboxDraft: null,       // { command, arguments } — a command about to be driven
-  entityTab: 'definition',  // 'definition' | 'projection-scenarios' on an entity page
-  editHandler: null,        // { entity, property, event } — the handler row open for editing
-  entityHandlerDraft: null, // in-progress edits to that handler, from the entity page
+  projTab: 'definition',    // 'definition' | 'checks' inside the opened ledger row
   entityPropertyDraft: null, // in-progress "+ property" row on the entity page
   openProjectionScenarios: new Set(), // keys of every projection scenario whose detail is unfolded
   projectionScenarioDraft: null, // { key, insertAfter, body } — see `scenarioDraft`
@@ -1743,7 +1803,10 @@ function paletteEntries(model) {
       from ? 'recorded by ' + readable(from) : 'recorded by nothing', () => goToEvent(name));
   }
   for (const name of Object.keys(model['projection-definitions'])) {
-    add('projection', readable(name), 'projections', () => goToProjection(name));
+    const owner = boundAs(model, name)[0];
+    add('projection', readable(name),
+      owner ? 'on ' + readable(owner.entity) : 'projections',
+      () => goToProjection(name));
   }
   if (advanced()) {
     for (const name of Object.keys(model['custom-type-definitions'])) {
@@ -2341,7 +2404,6 @@ function openEntity(name) {
   state.entitiesCollapsed = false;
   state.view = 'entity';
   state.entity = name;
-  state.entityTab = 'definition';
   render();
 }
 
@@ -2398,9 +2460,7 @@ function commandRef(model, name, { cls = 'chip command linkable', text } = {}) {
 }
 
 function goToProjection(name) {
-  closeForms();
-  state.view = 'projections';
-  state.land = `[data-key="${CSS.escape('projection:' + name)}"]`;
+  openProjection(activeModel(), name);
   render();
 }
 function projectionRef(model, name, { cls = 'chip projection linkable', text } = {}) {
@@ -2422,22 +2482,41 @@ function goToScenario(model, key) {
   state.openScenarios.add(key);
   render();
 }
-// A scenario is opened where it is listed: on an entity's page when it
-// is about one of its instances, and on the Projections page otherwise.
-// Derived rather than stored, so a scenario moves on its own when a
-// rebinding changes which of the two it is.
-function goToProjectionScenario(model, key) {
-  const body = model['projection-scenario-definitions'][key];
-  if (!body) return;
+// A projection, opened wherever it is listed: on its entity's page when
+// something binds it, on Projections when nothing does. Derived rather
+// than stored, so a projection moves between the two on its own when a
+// binding is added or dropped.
+// Does not repaint: every caller sets more state after it, and two
+// repaints for one gesture is how focus gets dropped — the second one
+// measures where focus went during the first rather than where it was.
+function openProjection(model, projection, { tab = 'definition' } = {}) {
+  const body = model['projection-definitions'][projection];
+  if (!body) return false;
+  // A row already open on this projection keeps whatever is half
+  // written in it: arriving at one of its scenarios is not a reason to
+  // discard an edit to the definition above them.
+  const open = state.projDraft && state.projDraft.name === projection ? state.projDraft : null;
   closeForms();
-  const about = scenarioEntityInstance(model, body);
-  if (about) {
+  const bound = boundAs(model, projection)[0];
+  if (bound) {
     state.view = 'entity';
-    state.entity = about.entity;
-    state.entityTab = 'projection-scenarios';
+    state.entity = bound.entity;
   } else {
     state.view = 'projections';
   }
+  state.projDraft = open || { name: projection, body: projectionDraftFrom(body) };
+  state.projTab = tab;
+  return true;
+}
+
+// A scenario is opened in the Checks tab of the first projection it
+// reads. Every projection it reads lists it — one Given asserting four
+// values is one scenario, shown under all four — so any of them would
+// do; the first is simply the one this picks.
+function goToProjectionScenario(model, key) {
+  const body = model['projection-scenario-definitions'][key];
+  if (!body) return;
+  if (!openProjection(model, body.projection, { tab: 'checks' })) return;
   state.openProjectionScenarios.add(key);
   render();
 }
@@ -2556,7 +2635,7 @@ const FORM_KEYS = [
   'newProjection', 'renamingProjection', 'projDraft', 'newEvent', 'renamingEvent',
   'renamingCommand', 'editMember', 'editRule', 'editBinding',
   'scenarioDraft', 'sandboxDraft',
-  'editHandler', 'projectionScenarioDraft',
+  'projectionScenarioDraft',
   'pendingImport',
 ];
 
@@ -2564,7 +2643,7 @@ const FORM_KEYS = [
 // that filled them — a folded-away adder leaves its half-written row
 // behind — so they are cleared with the forms but never taken as
 // evidence that one is open.
-const DRAFT_KEYS = ['bindingDraft', 'ruleDraft', 'changeDraft', 'readDraft', 'entityHandlerDraft', 'entityPropertyDraft', 'watchDraft'];
+const DRAFT_KEYS = ['bindingDraft', 'ruleDraft', 'changeDraft', 'readDraft', 'entityPropertyDraft', 'watchDraft'];
 
 const formOpen = () => FORM_KEYS.some((key) => state[key]);
 
@@ -3025,7 +3104,6 @@ function paintPage() {
   if (state.view === 'entity' && !model['entity-definitions'][state.entity]) {
     const rest = Object.keys(model['entity-definitions']).sort();
     state.entity = rest[0] || null;
-    state.entityTab = 'definition';
     if (!state.entity) state.view = 'slice';
   }
   renderRail();
@@ -4161,76 +4239,6 @@ function changeAdder(model, eventName) {
   return h('div', {}, rows);
 }
 
-// The entity-page mirror of changeAdder's "+ change" form: the target
-// property is already known — this is opened from its own card — so
-// only the event, operation and operand are asked. Passing `existing`
-// opens it pre-filled to edit that handler in place rather than add a
-// new one; the event is fixed then, since changing it would leave the
-// original handler behind rather than move it.
-function entityHandlerAdder(model, entityName, property, existing) {
-  const key = entityName + '.' + property.name;
-  const { binding, projection } = entityPropertyTarget(model, entityName, property.name);
-  const projectionName = binding.projection;
-  const draft = state.entityHandlerDraft && state.entityHandlerDraft.key === key
-    ? state.entityHandlerDraft
-    : (state.entityHandlerDraft = existing
-        ? draftFromOperand({ key, event: existing.event, operation: existing.operation }, 'value', existing.value)
-        : { key, event: '', operation: 'set', value: '' });
-
-  // Only events that actually carry a tag for this entity — anything
-  // else could never identify one of its instances.
-  const eventNames = Object.keys(model['event-definitions'])
-    .filter((n) => (model['event-definitions'][n].properties || [])
-      .some((p) => idLeavesOfType(model, p.propertyType)
-        .some((leaf) => entityOfIdType(model, leaf.identifierType) === entityName)))
-    .filter((n) => existing || !(projection.handlers || []).some((h) => h.event === n))
-    .sort();
-
-  const chosenEventName = existing ? existing.event : draft.event;
-  const chosenEvent = model['event-definitions'][chosenEventName];
-  const values = [
-    ...(chosenEvent ? chosenEvent.properties : []).flatMap((p) => [
-      [JSON.stringify({ eventProperty: p.name }), "the event's " + propertyWords(p.name)],
-      [JSON.stringify({ successor: { eventProperty: p.name } }),
-        "the one after the event's " + propertyWords(p.name)],
-    ]),
-    [JSON.stringify({ currentValue: true }), 'its current value'],
-    ...(enumMembersFor(model, projection.valueType) || [])
-      .map((m) => [JSON.stringify({ enumMember: m }), propertyWords(property.name) + ' · ' + readable(m)]),
-  ];
-  const propEnumMembers = enumMembersFor(model, projection.valueType);
-  const operations = operationsFor(model, projection);
-
-  const close = () => { state.editHandler = null; state.entityHandlerDraft = null; render(); };
-
-  return h('div', { class: 'adder' },
-    existing
-      ? h('span', { class: 'chip event' }, h('i', { class: 'ic' }, eventIcon(model, existing.event)), readable(existing.event))
-      : pick(eventNames.map((n) => [n, eventIcon(model, n) + ' ' + readable(n)]), draft.event,
-          (v) => { draft.event = v; render(); },
-          eventNames.length ? '— which event? —' : '— nothing fits this yet —'),
-    pick(operations.map((op) => [op, OPERATION_WORDS[op] || op]), draft.operation,
-      (v) => { draft.operation = v; }),
-    ...operandPicker(values, draft, 'value', { allowLiteral: !propEnumMembers }),
-    h('button', {
-      class: 'btn', onclick: () => {
-        const eventName = existing ? existing.event : draft.event;
-        if (!eventName) return toast('Pick which event.', true);
-        const value = draftOperand(draft, 'value');
-        if (value === undefined) return toast('Say what it changes to.', true);
-        const operation = draft.operation;
-        state.editHandler = null;
-        state.entityHandlerDraft = null;
-        // The handler belongs to the projection, which is the only
-        // place a fold's machinery lives — the entity just names it.
-        patch('projection-definition', projectionName, (b) => {
-          b.handlers = (b.handlers || []).filter((x) => x.event !== eventName);
-          b.handlers.push({ event: eventName, operation, value });
-        });
-      },
-    }, existing ? 'Save' : '+ Wire this event'),
-    existing ? h('button', { class: 'btn ghost tiny', onclick: close }, 'Cancel') : null);
-}
 
 // ---------- creating things ----------
 
@@ -4536,27 +4544,22 @@ function renderEntity(model, main) {
 
   if (state.iconPicker === name) main.appendChild(iconPicker(model, name, entity));
 
-  main.appendChild(entityTabs(model, name));
-  if (state.entityTab === 'projection-scenarios') {
-    main.appendChild(projectionScenarioPanel(model, name));
-    return;
-  }
-
   main.appendChild(identityBlock(model, name, entity));
 
+  // The same ledger the Projections page renders, one column narrower:
+  // Identity above has already said what every row here is kept per.
   const section = h('section', { class: 'esection' },
-    h('h4', {}, 'What we know about each one'),
-    h('div', { class: 'muted tiny', style: 'margin:-4px 0 9px' },
-      'Each of these is folded from the events tagged with one of these things — so a '
-      + 'property nothing moves is a property nothing knows.'));
+    h('h4', {}, 'What we know about each one'));
 
-  if (!properties.length) {
-    section.appendChild(h('div', { class: 'empty' }, 'Nothing yet.'));
-  }
-  for (const property of properties) section.appendChild(propertyCard(model, name, entity, property));
-
-  section.appendChild(adderSlot('prop:' + name, null, '+ property',
-    () => entityPropertyAdder(model, name)));
+  section.appendChild(projectionLedger(model, {
+    owner: name,
+    nameHead: 'property',
+    entries: properties.map((binding) => ({
+      projection: binding.projection, label: propertyWords(binding.name), binding,
+    })),
+    add: adderSlot('prop:' + name, null, '+ property',
+      () => entityPropertyAdder(model, name)),
+  }));
   main.appendChild(section);
 }
 
@@ -4584,56 +4587,280 @@ function identityBlock(model, name, entity) {
       class: 'chip editable', title: 'Open ' + readable(idType) + ' in Custom Types',
       onclick: () => goToCustomType(idType),
     }, readable(idType), advanced() ? h('span', { class: 'tech' }, idType) : null),
-    h('span', { class: 'tiny muted' }, 'one per thing — and the tag every event about it carries')));
+    h('span', { class: 'tiny muted' }, 'the tag every event about one of these carries — and what everything below is folded per')));
 
   return box;
 }
 
-// Every handler that moves this property, in one place — the entity's
-// own record of it, rather than something only visible by visiting
-// each command that happens to touch it. `usage.changedBy` carries one
-// entry per command that publishes a handled event, so several
-// entries can share the same handler; this collapses that back down to
-// one row per event, which is what can actually be edited or removed.
-function handlerList(model, entityName, property, usage) {
-  const byEvent = new Map();
-  for (const u of usage.changedBy) byEvent.set(u.event, u);
-  const projectionName = usage.binding.projection;
-
-  const rows = [...byEvent.values()].map((u) => {
-    const editing = state.editHandler
-      && state.editHandler.entity === entityName
-      && state.editHandler.property === property.name
-      && state.editHandler.event === u.event;
-    if (editing) return entityHandlerAdder(model, entityName, property, u.handler);
-    const p = effectParts({ entity: entityName, property, handler: u.handler });
-    return h('div', { class: 'row' },
-      h('span', { class: 'sentence' },
-        h('span', { class: 'chip event' }, h('i', { class: 'ic' }, eventIcon(model, u.event)), readable(u.event)), ' ',
-        h('span', { class: 'verb' }, p.verb), ' ', opRef(u.handler.value, u.event, p.object)),
-      h('span', { class: 'grow' }),
-      reveal(
-        h('button', {
-          class: 'btn tiny',
-          onclick: () => {
-            closeForms();
-            state.editHandler = { entity: entityName, property: property.name, event: u.event };
-            render();
-          },
-        }, 'Edit'),
-        h('button', {
-          class: 'btn tiny danger',
-          onclick: () => patch('projection-definition', projectionName, (b) => {
-            b.handlers = (b.handlers || []).filter((x) => x.event !== u.event);
-          }),
-        }, '×')));
-  });
-
-  return h('div', { class: 'handlers' },
-    rows.length ? rows : h('div', {}, 'nothing moves it'),
-    adderSlot('wire:' + entityName + '.' + property.name, null, '+ wire an event',
-      () => entityHandlerAdder(model, entityName, property)));
+// ---------- the ledger ----------
+//
+// One component, two pages. A row is a projection: what it is called,
+// what it is kept per, what it holds and where it starts — and nothing
+// else, because everything else is either the same for every row or
+// belongs to the row once it is opened.
+//
+// `owner` is the entity whose page this is, or null on Projections. It
+// does exactly one thing: drop the "one per" column, since an entity's
+// page has already said what all of its rows are kept per — that is
+// what the Identity block above them is. The opened row still shows it,
+// fixed rather than offered, because being folded per that entity's
+// identifier is the whole of what makes a projection its property.
+function projectionLedger(model, { owner, entries, nameHead, add }) {
+  const cols = owner ? '1fr 150px 150px' : '1fr 156px 140px 132px';
+  return h('div', { class: 'ledger' },
+    h('div', { class: 'lhead', style: 'grid-template-columns:' + cols },
+      h('span', {}, nameHead),
+      owner ? null : h('span', {}, 'one per'),
+      h('span', {}, 'holds'),
+      h('span', {}, 'starts at')),
+    entries.length
+      ? entries.map((entry) => projectionLedgerRow(model, entry, { owner, cols }))
+      : h('div', { class: 'empty', style: 'padding:11px 12px' }, 'Nothing yet.'),
+    add ? h('div', { class: 'addrow' }, add) : null);
 }
+
+// What a projection is kept per, as the tags it really queries by. A
+// parameter typed with an entity's identifier carries that entity's
+// mark, because that is what the tag is.
+function partitionCells(model, body) {
+  const script = scriptOf(body);
+  const slots = (script ? script.arguments : body.parameters) || [];
+  if (!slots.length) {
+    return [h('span', {
+      class: 'chip unset', title: 'One value for the whole model — a query with no tag',
+    }, 'kept once')];
+  }
+  return slots.map((slot) => {
+    const entity = entityOfIdType(model, slot.propertyType);
+    return h('span', { class: 'chip tag', title: readable(slot.propertyType) },
+      entity ? h('i', { class: 'ic' }, entityIcon(model, entity)) : null,
+      propertyWords(slot.name));
+  });
+}
+
+// A row, and — when it is the one being edited — everything under it.
+// The two are siblings rather than nested so that a click inside the
+// detail never reaches the row's own handler and folds it shut.
+function projectionLedgerRow(model, entry, { owner, cols }) {
+  const { projection, label } = entry;
+  const body = model['projection-definitions'][projection];
+
+  if (!body) {
+    return h('div', { class: 'lrow dead', style: 'grid-template-columns:' + cols },
+      h('span', { class: 'nm' }, h('span', { class: 'txt' }, label)),
+      h('span', { class: 'muted tiny' },
+        `binds “${projection}”, which this model does not define`),
+      h('span', {}),
+      h('span', {}, h('button', {
+        class: 'btn tiny danger', title: 'Drop this binding',
+        onclick: () => patch('entity-definition', owner, (b) => {
+          b.properties = b.properties.filter((p) => p.name !== entry.binding.name);
+        }),
+      }, '×')));
+  }
+
+  const open = !!state.projDraft && state.projDraft.name === projection;
+  const readers = projectionReaders(model, projection);
+  const dead = !readers.length && !(body.handlers || []).length;
+  // A projection holding another thing's identifier is a reference to
+  // that thing, so it carries that thing's mark.
+  const referenced = entityOfIdType(model, body.valueType);
+
+  const row = h('div', {
+    class: 'lrow' + (open ? ' on' : '') + (dead ? ' dead' : ''),
+    style: 'grid-template-columns:' + cols,
+    title: dead ? 'Nothing moves it and nothing reads it' : null,
+    onclick: () => toggleProjectionRow(model, projection),
+  },
+    h('span', { class: 'nm' },
+      h('span', { class: 'lcaret' }, open ? '▾' : '▸'),
+      h('span', { class: 'txt' }, label)),
+    owner ? null : h('span', {}, ...partitionCells(model, body)),
+    h('span', { class: 'lcell ty', title: typeLabel(body) },
+      referenced ? h('i', { class: 'ic' }, entityIcon(model, referenced)) : null,
+      readable(typeLabel(body)),
+      scriptLabel(body) ? ' · scripted' : null),
+    h('span', {}, initialValueChip(body)));
+
+  return h('div', {}, row, open ? projectionDetail(model, entry, { owner }) : null);
+}
+
+// Opening a row is opening its editor: there is no separate "Edit", so
+// the draft a row is opened with *is* the row being open.
+function toggleProjectionRow(model, projection) {
+  const open = !!state.projDraft && state.projDraft.name === projection;
+  closeForms();
+  if (!open) {
+    const body = model['projection-definitions'][projection];
+    if (body) state.projDraft = { name: projection, body: projectionDraftFrom(body) };
+    state.projTab = 'definition';
+  }
+  render();
+}
+
+// The two sides of one projection. Tabs, because checks are a different
+// question from what the thing is — and scoped to the row in front of
+// you rather than to moving between rows, which is the distinction that
+// makes them tabs rather than navigation.
+function projectionDetail(model, entry, { owner }) {
+  const { projection, binding } = entry;
+  const draft = state.projDraft.body;
+  const tab = state.projTab === 'checks' ? 'checks' : 'definition';
+  const entries = projectionScenariosFor(model, projection);
+  const trouble = entries.filter((e) => {
+    const status = projectionScenarioResult(model, e.key, e.body).status;
+    return status === 'drifted' || status === 'broken';
+  }).length;
+
+  const tabButton = (key, label, extra) => h('button', {
+    class: 'tab' + (tab === key ? ' on' : ''),
+    'aria-pressed': tab === key ? 'true' : 'false',
+    onclick: () => { state.projTab = key; state.projectionScenarioDraft = null; render(); },
+  }, label, extra);
+
+  const readers = projectionReaders(model, projection);
+  const bound = boundAs(model, projection);
+
+  // Two names can be changed here, and they are genuinely two: what an
+  // entity calls the projection (the binding, which every command
+  // reading it names too) and what the projection itself is called.
+  // Renaming the second is Advanced — the name is derived from the
+  // first when the property is created, and nothing outside the stored
+  // model shows it.
+  const renamingBinding = owner && editingMember('entity:' + owner, binding.name);
+  const renamingProjection = state.renamingProjection === projection;
+  const renameForm = renamingBinding
+    ? h('div', { class: 'adder' },
+        renamePropertyField(model, owner, binding, 'entity:' + owner),
+        h('button', {
+          class: 'btn ghost tiny',
+          onclick: () => { state.editMember = null; render(); },
+        }, 'Done'))
+    : (renamingProjection
+        ? inlineForm({
+            question: 'Rename the projection — every reference is rewritten with it',
+            submitLabel: 'Rename', value: readable(projection), showsIdentifier: true,
+            onSubmit: (v) => {
+              const next = toPascal(v);
+              state.renamingProjection = null;
+              if (next && next !== projection) {
+                run(() => {
+                  renameDefinition('projection-definition', model.id, projection, next);
+                  // The open row is keyed by the name that just changed.
+                  if (state.projDraft) state.projDraft.name = next;
+                });
+              } else render();
+            },
+            onCancel: () => { state.renamingProjection = null; render(); },
+          })
+        : null);
+
+  const definition = h('div', {},
+    ...projectionFields(model, draft, owner ? { entityName: owner } : {}),
+    h('div', { class: 'row', style: 'margin-top:10px' },
+      h('span', { class: 'muted tiny', style: 'min-width:90px' }, 'read by'),
+      readers.length
+        ? readers.map((command) => h('span', {
+            class: 'chip command linkable', title: 'Open ' + readable(command),
+            onclick: () => { closeForms(); state.slice = command; state.view = 'slice'; render(); },
+          }, readable(command)))
+        : h('span', { class: 'empty' }, 'Nothing reads it.')),
+    h('div', { class: 'row' },
+      h('span', { class: 'muted tiny', style: 'min-width:90px' }, 'bound as'),
+      bound.length
+        ? bound.map((b) => h('span', {
+            class: 'chip entity linkable', title: 'Open ' + readable(b.entity),
+            onclick: () => openEntity(b.entity),
+          }, h('i', { class: 'ic' }, entityIcon(model, b.entity)),
+            memberWords(readable(b.entity), b.property)))
+        : h('span', { class: 'chip unset' }, 'no entity calls it anything')));
+
+  return h('div', { class: 'pdetail' },
+    h('div', { class: 'tabs' },
+      tabButton('definition', 'Definition'),
+      tabButton('checks', 'Checks', entries.length
+        ? h('span', { class: 'badge' + (trouble ? '' : ' clear') }, trouble || entries.length)
+        : null)),
+    renameForm,
+    tab === 'checks' ? projectionChecks(model, projection) : definition,
+    tab === 'definition' ? projectionDetailFoot(model, entry, { owner }) : null);
+}
+
+// Opening a form closes every other one — including, ordinarily, the
+// open ledger row the new form is drawn inside. The row is put back so
+// that it is not: what is being edited has to stay on screen while it
+// is being edited, and the control that was clicked has to survive the
+// repaint or the focus on it is lost.
+function keepingRowOpen(open) {
+  const draft = state.projDraft;
+  const tab = state.projTab;
+  closeForms();
+  open();
+  state.projDraft = draft;
+  state.projTab = tab;
+}
+
+function startRenameInRow(open) {
+  keepingRowOpen(open);
+  render();
+}
+
+function projectionDetailFoot(model, entry, { owner }) {
+  const { projection, binding } = entry;
+  return h('div', { class: 'pfoot' },
+    h('button', {
+      class: 'btn primary',
+      onclick: () => run(() => {
+        updateDefinition('projection-definition', model.id, projection,
+          cleanProjectionBody(state.projDraft.body));
+        state.projDraft = null;
+      }),
+    }, 'Save'),
+    h('button', {
+      class: 'btn ghost',
+      onclick: () => { state.projDraft = null; render(); },
+    }, 'Discard changes'),
+    h('span', { class: 'grow' }),
+    advanced() ? h('span', { class: 'tech' }, projection) : null,
+    h('button', {
+      class: 'btn tiny',
+      title: owner ? 'Rename what this entity calls it' : 'Rename the projection',
+      onclick: () => (owner
+        ? startRenameInRow(() => openMember('entity:' + owner, binding.name))
+        : startRenameInRow(() => { state.renamingProjection = projection; })),
+    }, 'Rename'),
+    // The projection's own name, on the page that does not own it.
+    // Reachable, because a projection an entity binds is listed nowhere
+    // else — and Advanced, because nothing outside the stored model
+    // shows that name in the first place.
+    owner && advanced() ? h('button', {
+      class: 'btn tiny', title: 'Rename the projection itself, not what this entity calls it',
+      onclick: () => startRenameInRow(() => { state.renamingProjection = projection; }),
+    }, 'Rename projection') : null,
+    owner
+      ? removeButton('prop:' + owner + '.' + binding.name, {
+          label: 'Stop tracking', title: 'Unbind it from this entity',
+          onRemove: () => removeEntityProperty(model, owner, binding),
+        })
+      : removeButton('projection:' + projection, {
+          label: 'Remove', title: 'Remove this projection',
+          onRemove: () => run(() => removeDefinition('projection-definition', model.id, projection)),
+        }));
+}
+
+// Every scenario that reads this projection. A scenario naming four of
+// an entity's properties is listed under all four — one Given asserting
+// four values is one scenario, and editing it anywhere edits it
+// everywhere, which is exactly what the reader needs to know.
+function projectionChecks(model, projection) {
+  return projectionScenarioList(model, {
+    entries: projectionScenariosFor(model, projection),
+    start: { projection },
+    blank: 'Nothing checks this yet. A scenario is what had already happened and what this folds '
+      + 'to as a result — the only thing that notices when an edit somewhere else changes it.',
+  });
+}
+
 
 // Unbinding a property: the entity stops calling it anything, and the
 // projection behind it goes too — unless something else still reads
@@ -4655,140 +4882,6 @@ function removeEntityProperty(model, entityName, property) {
   });
 }
 
-// One property: what it is called and what it holds on the first line,
-// who moves it and who reads it on the second. Two different questions,
-// so they do not share a line and fight for the room.
-//
-// A property is a binding, so everything on this card past its own
-// name is the bound projection's — and "Edit" opens the very editor
-// the Projections page mounts, against the very same definition.
-function propertyCard(model, entityName, entity, property) {
-  const where = 'entity:' + entityName;
-  const usage = propertyUsage(model, entityName, property.name);
-  const projectionName = property.projection;
-  const projection = usage.projection;
-
-  if (!projection) {
-    return h('div', { class: 'prop dead' },
-      h('div', { class: 'top' },
-        h('span', { class: 'nm' }, propertyWords(property.name)),
-        h('span', { class: 'muted tiny' },
-          `binds “${projectionName}”, which this model does not define`),
-        h('span', { class: 'grow' }),
-        h('button', {
-          class: 'btn tiny danger', title: 'Drop this binding',
-          onclick: () => patch('entity-definition', entityName, (b) => {
-            b.properties = b.properties.filter((p) => p.name !== property.name);
-          }),
-        }, '×')));
-  }
-
-  if (editingMember(where, property.name)) {
-    return h('div', { class: 'member-editor' },
-      h('div', { class: 'adder' },
-        renamePropertyField(model, entityName, property, where),
-        h('button', {
-          class: 'btn ghost tiny',
-          onclick: () => { state.editMember = null; render(); },
-        }, 'Done')));
-  }
-
-  const editing = state.projDraft && state.projDraft.name === projectionName;
-  const dead = !usage.changedBy.length && !usage.readBy.length;
-  const jump = (command) => h('b', {
-    title: 'Open ' + readable(command),
-    onclick: () => { closeForms(); state.slice = command; state.view = 'slice'; render(); },
-  }, readable(command));
-  const listed = (commands) => commands.flatMap((c, i) => (i ? [', ', jump(c)] : [jump(c)]));
-
-  // A property typed with another thing's identifier is a reference to
-  // that thing, so it carries that thing's mark — the same one the rail
-  // and every command show it under.
-  const referenced = entityOfIdType(model, projection.valueType);
-  // A string-only enum gets its members editable right here, wherever a
-  // property of that type is shown — the same convenience a lifecycle
-  // status used to get for free, now available to any enum property.
-  const enumType = isStringEnumType(model, projection.valueType) ? projection.valueType : null;
-  // Shared with another property, or read directly by a command: worth
-  // saying, because editing it here edits it there too.
-  const alsoBound = boundAs(model, projectionName)
-    .filter((b) => !(b.entity === entityName && b.property === property.name));
-
-  return h('div', { class: 'prop' + (dead ? ' dead' : '') },
-    qrow('div', { cls: 'top', key: 'prop:' + entityName + '.' + property.name },
-      h('span', {
-        class: 'nm editable', title: 'Rename this property',
-        onclick: () => openMember(where, property.name),
-      }, propertyWords(property.name)),
-      // A row's type is what the row is about, so it stays on screen.
-      // Only the machinery around it — the stored name, where it starts,
-      // the button that removes it — waits to be asked for.
-      h('span', { class: 'chip' },
-        referenced ? h('i', { class: 'ic' }, entityIcon(model, referenced)) : null,
-        readable(typeLabel(projection))),
-      // A scripted projection stays marked on screen: a value arrived
-      // at by code is a different kind of claim from one arrived at by
-      // a declaration, and a rule reading it should say so.
-      scriptLabel(projection) ? h('span', { class: 'chip' }, scriptLabel(projection)) : null,
-      h('span', { class: 'muted tiny' }, 'starting at '), initialValueChip(projection),
-      ...alsoBound.map((b) => h('span', {
-        class: 'chip entity linkable', title: 'The same projection, read as ' + b.property,
-        onclick: () => openEntity(b.entity),
-      }, 'also ' + memberWords(readable(b.entity), b.property))),
-      h('span', { class: 'grow' }),
-      reveal(
-        advanced() ? h('span', { class: 'tech' }, property.name) : null,
-        advanced() ? h('span', {
-          class: 'chip projection linkable', title: 'Open it in Projections',
-          onclick: () => { closeForms(); state.view = 'projections'; render(); },
-        }, readable(projectionName)) : null,
-        h('button', {
-          class: 'btn tiny',
-          title: 'Change what it holds, where it starts and what moves it',
-          onclick: () => {
-            const open = editing;
-            closeForms();
-            state.projDraft = open ? null : { name: projectionName, body: projectionDraftFrom(projection) };
-            render();
-          },
-        }, editing ? 'Close' : 'Edit'),
-        removeButton('prop:' + entityName + '.' + property.name, {
-          label: '×', title: 'Stop tracking this',
-          onRemove: () => removeEntityProperty(model, entityName, property),
-        }))),
-    enumType ? h('div', { class: 'use' },
-      h('span', { class: 'muted' }, 'can be '), ...enumMemberChips(model, enumType)) : null,
-    h('div', { class: 'use' },
-      // A scripted projection's handlers are code, edited in the
-      // editor below — this list is for the declared ones, where an
-      // event/operation/value row can actually be edited in place.
-      projection.script
-        ? h('div', {}, usage.changedBy.length
-            ? ['moved by ', ...listed(uniq(usage.changedBy.map((u) => u.command)))]
-            : 'nothing moves it')
-        : handlerList(model, entityName, property, usage),
-      h('div', {}, usage.readBy.length
-        ? ['read by ', ...listed(usage.readBy)]
-        : 'nothing reads it')),
-    // The same editor the Projections page mounts, against the same
-    // definition. Two forms writing one thing is the drift this
-    // unification exists to remove, so there is one form.
-    editing ? h('div', { class: 'card projection' },
-      ...projectionFields(model, state.projDraft.body, { entityName }),
-      h('div', { class: 'adder', style: 'margin-top:10px' },
-        h('button', {
-          class: 'btn primary',
-          onclick: () => run(() => {
-            updateDefinition('projection-definition', model.id, projectionName,
-              cleanProjectionBody(state.projDraft.body));
-            state.projDraft = null;
-          }),
-        }, 'Save'),
-        h('button', {
-          class: 'btn ghost',
-          onclick: () => { state.projDraft = null; render(); },
-        }, 'Discard changes'))) : null);
-}
 
 // Renaming a property renames what this entity calls the projection —
 // the binding's name, which every command reading it names too, so it
@@ -5249,24 +5342,6 @@ function underlyingSchema(model, typeName) {
   return null;
 }
 
-// A projection in one sentence, for the card that is not being edited.
-function projectionWords(model, body) {
-  const moves = (body.handlers || []).map((handler) => readable(handler.event)).join(', ');
-  const held = `holds ${readable(body.valueType)}${body.isList ? ' (a list)' : ''}`;
-  // A scripted projection has no parameters to partition by and states
-  // its own tags, so the sentence reads them off the tag filter.
-  if (body.script) {
-    const tags = (body.script.tagFilter || []).join(', ');
-    return `${held}, scripted, starting at ${JSON.stringify(body.script.initialState)}`
-      + (tags ? `, over ${tags}` : ', over the whole log')
-      + (moves ? ` — moved by ${moves}` : ' — nothing moves it yet');
-  }
-  const partition = (body.parameters || []).length
-    ? `, one per ${(body.parameters || []).map((p) => propertyWords(p.name)).join(' and ')}`
-    : ', global';
-  return `${held}, starting at ${initialValueWords(body.initialValue)}${partition}`
-    + (moves ? ` — moved by ${moves}` : ' — nothing moves it yet');
-}
 
 // Where a projection starts, as a chip rather than a bare word — so
 // `nothing yet` is visibly not a value someone typed, and `""` is
@@ -5873,123 +5948,35 @@ function projectionDcbPreview(model, draft, entityName) {
 
 function renderProjections(model, main) {
   main.appendChild(h('header', {},
-    h('div', { class: 'name' }, 'Projections'),
-    h('div', { class: 'muted small' },
-      'A projection folds events into a value. Every one of them is on this page, and every one '
-      + 'of them is the same kind of thing: a value, where it starts, what partitions it, and '
-      + 'which events move it. What everywhere else calls a ', h('b', {}, 'property'),
-      ' is one of these bound to an entity — bound, not a different kind, which is why a '
-      + 'property can be edited here or on its entity’s page and mean the same thing either way. '
-      + 'A projection kept for nothing at all is a global numbering; one kept per tenant is the '
-      + 'same numbering with one parameter.')));
-
-  const names = Object.keys(model['projection-definitions']).sort();
-  if (!names.length && !state.newProjection) {
-    main.appendChild(h('div', { class: 'empty' }, 'No projections yet.'));
-  }
-
-  for (const name of names) {
-    const body = model['projection-definitions'][name];
-    const card = h('div', { class: 'ecard' });
-    const editing = state.projDraft && state.projDraft.name === name;
-    const bindings = boundAs(model, name);
-
-    if (state.renamingProjection === name) {
-      card.appendChild(inlineForm({
-        question: 'Rename — every reference is rewritten with it', submitLabel: 'Rename',
-        value: readable(name), showsIdentifier: true,
-        onSubmit: (v) => {
-          const next = toPascal(v);
-          state.renamingProjection = null;
-          if (next && next !== name) run(() => renameDefinition('projection-definition', model.id, name, next));
-          else render();
+    h('div', { class: 'row' },
+      h('div', { class: 'name' }, 'Projections'),
+      h('span', { class: 'grow' }),
+      state.newProjection ? null : h('button', {
+        class: 'btn tiny',
+        onclick: () => {
+          closeForms();
+          state.newProjection = { name: '', body: blankProjectionDraft(model) };
+          render();
         },
-        onCancel: () => { state.renamingProjection = null; render(); },
-      }));
-    } else {
-      card.appendChild(qrow('div', { cls: 'ehead', key: 'projection:' + name },
-        h('span', { class: 'chip projection' }, readable(name)),
-        // Which entities read this one as a property. A projection no
-        // entity binds is not a lesser kind — it is one nothing has
-        // claimed a name for yet.
-        ...bindings.map((b) => h('span', {
-          class: 'chip entity linkable',
-          title: 'Open ' + readable(b.entity),
-          onclick: () => openEntity(b.entity),
-        }, h('i', { class: 'ic' }, entityIcon(model, b.entity)),
-          memberWords(readable(b.entity), b.property))),
-        h('span', { class: 'muted tiny' }, projectionWords(model, body)),
-        h('span', { style: 'flex:1' }),
-        reveal(
-          advanced() ? h('span', { class: 'tech' }, name) : null,
-          h('button', {
-            class: 'btn tiny',
-            onclick: () => {
-              state.newProjection = null; state.renamingProjection = null;
-              state.projDraft = editing ? null : { name, body: projectionDraftFrom(body) };
-              render();
-            },
-          }, editing ? 'Close' : 'Edit'),
-          h('button', {
-            class: 'btn tiny',
-            onclick: () => { closeForms(); state.renamingProjection = name; render(); },
-          }, 'Rename'),
-          removeButton('projection:' + name, {
-            label: 'Remove', title: 'Remove this projection',
-            onRemove: () => run(() => removeDefinition('projection-definition', model.id, name)),
-          }))));
-    }
+      }, '+ new projection'))));
 
-    if (editing) {
-      const draft = state.projDraft.body;
-      // A bound projection is edited here under the same constraint it
-      // is edited under on its entity's page: the partition is the
-      // binding's, not a choice. Two entities binding one projection
-      // is possible, and then the first is whose page this borrows —
-      // they necessarily share an identifier type, or neither binding
-      // would have been allowed.
-      card.appendChild(h('div', { class: 'card projection' },
-        ...projectionFields(model, draft,
-          bindings.length ? { entityName: bindings[0].entity } : {}),
-        h('div', { class: 'adder', style: 'margin-top:10px' },
-          h('button', {
-            class: 'btn primary',
-            onclick: () => run(() => {
-              updateDefinition('projection-definition', model.id, name, cleanProjectionBody(draft));
-              state.projDraft = null;
-            }),
-          }, 'Save'),
-          h('button', {
-            class: 'btn ghost',
-            onclick: () => { state.projDraft = null; render(); },
-          }, 'Discard changes'))));
-    }
+  // Only the ones no entity binds. A projection an entity calls
+  // something is that entity's property and is edited on its page, in
+  // this very component — listing it twice would be the one thing this
+  // page exists to stop being: two renderings of one thing.
+  const names = Object.keys(model['projection-definitions']).sort();
+  const free = names.filter((name) => !boundAs(model, name).length);
 
-    // The scenarios exercising this projection, unless they are about
-    // one entity instance — those are listed on that entity's page,
-    // where someone reading about the entity will find them.
-    const scenarios = projectionScenariosReading(model, name);
-    const draftingHere = state.projectionScenarioDraft
-      && draftStartedAt(model, state.projectionScenarioDraft, { projection: name });
-    if (scenarios.length || draftingHere || state.openProjectionScenarios.has('open:' + name)) {
-      card.appendChild(h('div', { style: 'margin-top:10px' },
-        h('div', { class: 'muted tiny', style: 'margin-bottom:4px' }, 'Scenarios'),
-        projectionScenarioCard(model, name)));
-    } else {
-      card.appendChild(h('div', { class: 'adder', style: 'margin-top:8px' },
-        h('button', {
-          class: 'btn tiny ghost',
-          title: 'Assert what this folds to, given events you write by hand',
-          onclick: () => startProjectionScenario(model, { projection: name }),
-        }, '+ scenario')));
-    }
-
-    main.appendChild(card);
-  }
+  main.appendChild(projectionLedger(model, {
+    owner: null,
+    nameHead: 'projection',
+    entries: free.map((name) => ({ projection: name, label: readable(name) })),
+    add: null,
+  }));
 
   if (state.newProjection) {
     const draft = state.newProjection;
-    const card = h('div', { class: 'ecard' });
+    const card = h('div', { class: 'ecard', style: 'margin-top:10px' });
     card.appendChild(h('div', { class: 'q', style: 'font-size:11px;color:var(--muted);margin-bottom:6px' },
       'What is this projection of?'));
     card.appendChild(h('div', { class: 'row' },
@@ -6014,16 +6001,31 @@ function renderProjections(model, main) {
       }, 'Create'),
       h('button', { class: 'btn ghost', onclick: () => { state.newProjection = null; render(); } }, 'Cancel')));
     main.appendChild(card);
-  } else {
-    main.appendChild(h('div', { class: 'adder', style: 'margin-top:14px' },
-      h('button', {
-        class: 'btn primary',
-        onclick: () => {
-          closeForms();
-          state.newProjection = { name: '', body: blankProjectionDraft(model) };
-          render();
-        },
-      }, '+ New projection')));
+  }
+
+  // Everything the entity pages own. Not a second ledger — names, and a
+  // way to each: with the list above holding only what nothing binds,
+  // this is the only place left that says what else there is.
+  const owned = Object.keys(model['entity-definitions']).sort()
+    .map((entity) => ({ entity, properties: model['entity-definitions'][entity].properties || [] }))
+    .filter((e) => e.properties.length);
+  if (owned.length) {
+    const index = h('section', { class: 'index' },
+      h('h4', {}, 'Also defined, on their entities'),
+      h('div', { class: 'why' },
+        'Bound to an entity, so edited on its page — the same rows, one column fewer.'));
+    for (const { entity, properties } of owned) {
+      index.appendChild(h('div', { class: 'index-row' },
+        h('span', {
+          class: 'ent', title: 'Open ' + readable(entity),
+          onclick: () => openEntity(entity),
+        }, h('i', { class: 'ic' }, entityIcon(model, entity)), readable(entity)),
+        h('span', { class: 'props' }, ...properties.map((binding) => h('button', {
+          class: 'lnk', title: 'Open it on ' + readable(entity),
+          onclick: () => openProjection(model, binding.projection),
+        }, propertyWords(binding.name))))));
+    }
+    main.appendChild(index);
   }
 }
 
@@ -6176,7 +6178,7 @@ function eventCard(model, name) {
           scenarios.map((s) => h('span', {
             class: 'chip linkable', title: 'Open this scenario',
             onclick: () => (s.overProjections ? goToProjectionScenario(model, s.key) : goToScenario(model, s.key)),
-          }, s.overProjections ? projectionScenarioName(s.body, readable) : scenarioName(s.body, readable))))) : null));
+          }, s.overProjections ? projectionScenarioName(s.body) : scenarioName(s.body, readable))))) : null));
   }
 
   return card;
@@ -7157,18 +7159,19 @@ function scenarioTabs(model, slice) {
 // from the projections' own handlers and frozen beside the Given, so
 // the next run either agrees with it or reports that something
 // changed. There is no When: nothing is called, a value is simply
-// folded from what happened. And there is no full Then either — only
-// the reads a modeler ticked, so "ends up existent" does not require
-// restating every value nothing here cares about.
+// folded from what happened.
 //
-// **One kind, for both things worth asserting.** A scenario about an
-// entity instance is several reads of that entity's properties all
-// naming the same identifier — which is what an entity instance *is*,
-// now that a property is a binding. A scenario about a standalone
-// projection is one read with whatever arguments it takes, or none.
-// Which of the two a scenario is, is *derived* (`scenarioEntityInstance`)
-// rather than stored, so it is also which page lists it — and a
-// rebinding moves it without anything being migrated.
+// **The subject is not written down twice.** A scenario names the one
+// projection it is about, and its Then is that projection's value —
+// there is nothing to alias and nothing to tick, because there is only
+// ever one thing being checked. Asserting four properties of a course
+// over one Given is four scenarios sharing that Given, each answerable
+// on its own and each drifting on its own.
+//
+// Nothing here knows whether an entity binds the projection. That is
+// what decides which page lists the scenario, and it is read off the
+// bindings at the moment of asking — so a rebinding moves it without
+// anything being migrated.
 //
 // Everything else — the four statuses, the held/run gesture for a
 // scripted projection, the drift diff, "Accept this" — is the same
@@ -7193,58 +7196,16 @@ function runHeldProjectionScenario(model, key, body) {
 }
 
 const PROJECTION_SCENARIO_STATUS_WORDS = {
-  current: ['✓', 'Current', 'What these projections fold to is what this scenario says they do'],
-  drifted: ['≠', 'Drifted', 'These fold differently now than when this was accepted'],
+  current: ['✓', 'Current', 'What this projection folds to is what this scenario says it does'],
+  drifted: ['≠', 'Drifted', 'It folds differently now than when this was accepted'],
   broken: ['!', 'Broken', 'This could not be run at all — something it names is gone'],
   held: ['·', 'Not run', 'Reads a script, so it runs only when asked'],
 };
 
-// Which projections a scenario is about, deduplicated and in the order
-// it reads them.
-function scenarioProjections(body) {
-  return uniq((body.reads || []).map((read) => read && read.projection).filter(Boolean));
-}
-
-// Whether a scenario is *about* one entity instance: every read is a
-// property of that entity, and they all name the same instance. That
-// is what an entity scenario was before it was a list of reads, and
-// deriving it rather than storing it is what keeps it true through a
-// rebinding — nothing has to be migrated when a property moves.
-function scenarioEntityInstance(model, body) {
-  const reads = body.reads || [];
-  if (!reads.length) return null;
-  let found = null;
-  for (const read of reads) {
-    const owners = boundAs(model, read.projection);
-    const values = Object.values(read.arguments || {});
-    if (owners.length !== 1 || values.length !== 1) return null;
-    const here = { entity: owners[0].entity, id: values[0], property: owners[0].property };
-    if (!found) found = here;
-    else if (found.entity !== here.entity || !evSameValue(found.id, here.id)) return null;
-  }
-  return found;
-}
-
-function evSameValue(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
-
-// The scenarios shown on an entity's page: the ones about one of its
-// instances.
-function projectionScenariosOf(model, entityName) {
+// Every scenario about a projection.
+function projectionScenariosFor(model, projectionName) {
   return Object.entries(model['projection-scenario-definitions'] || {})
-    .filter(([, body]) => {
-      const about = scenarioEntityInstance(model, body);
-      return about && about.entity === entityName;
-    })
-    .map(([key, body]) => ({ key, body }));
-}
-
-// The scenarios shown on a projection's card: every one that reads it
-// and is not already shown on some entity's page, so nothing is listed
-// twice and nothing is listed nowhere.
-function projectionScenariosReading(model, projectionName) {
-  return Object.entries(model['projection-scenario-definitions'] || {})
-    .filter(([, body]) => scenarioProjections(body).includes(projectionName)
-      && !scenarioEntityInstance(model, body))
+    .filter(([, body]) => body.projection === projectionName)
     .map(([key, body]) => ({ key, body }));
 }
 
@@ -7271,16 +7232,13 @@ function specWhere(model) {
 // A projection scenario's Then, one read per line — the analogue of
 // outcomeCard, shaped around `{alias: value}` rather than
 // `{outcome, events}`.
-function entityOutcomeCard(then, title) {
-  if (!then) return h('div', { class: 'card' }, h('div', { class: 'empty' }, 'nothing'));
-  const entries = Object.entries(then);
+// What a projection folded to. One value — `null` and `[]` included,
+// which is why it is rendered through the same words the initial value
+// is: "nothing yet" and "an empty list" are answers, not blanks.
+function projectionOutcomeCard(value, title) {
   return h('div', { class: 'card' },
     title ? h('div', { class: 'muted tiny' }, title) : null,
-    entries.length
-      ? entries.map(([name, value]) => h('div', {},
-          h('span', { class: 't' }, propertyWords(name)),
-          h('span', { class: 'k' }, '  ' + initialValueWords(value))))
-      : h('div', { class: 'empty' }, 'nothing checked'));
+    h('div', { class: 'k' }, initialValueWords(value)));
 }
 
 function projectionScenarioRow(model, entry) {
@@ -7297,7 +7255,7 @@ function projectionScenarioRow(model, entry) {
         if (open) state.openProjectionScenarios.delete(key); else state.openProjectionScenarios.add(key);
         render();
       },
-    }, projectionScenarioName(body, propertyWords)),
+    }, projectionScenarioName(body)),
     h('span', { class: 'grow' }),
     result.status !== 'current' ? h('span', { class: 'muted tiny' }, word) : null,
     reveal(
@@ -7337,23 +7295,22 @@ function projectionScenarioRow(model, entry) {
           h('span', { class: 'k' }, '  ' + payloadText(step.data))))
       : h('div', { class: 'empty' }, 'nothing had happened yet'),
     h('div', { class: 'muted tiny', style: 'margin-top:8px' }, 'Reading'),
-    (body.reads || []).map((read) => h('div', { class: 'sc-line' },
-      h('span', { class: 'k' }, propertyWords(read.alias) + ' — '),
-      h('span', { class: 't' }, readable(read.projection)),
-      Object.keys(read.arguments || {}).length
-        ? h('span', { class: 'k' }, '  for ' + payloadText(read.arguments))
-        : h('span', { class: 'k' }, '  the whole log'))),
+    h('div', { class: 'sc-line' },
+      h('span', { class: 't' }, readable(body.projection)),
+      Object.keys(body.arguments || {}).length
+        ? h('span', { class: 'k' }, '  for ' + payloadText(body.arguments))
+        : h('span', { class: 'k' }, '  the whole log')),
     h('div', { class: 'muted tiny', style: 'margin-top:8px' }, 'Then'),
     result.status === 'broken'
       ? h('div', { class: 'card', style: 'border-color:var(--danger)' },
           h('div', { class: 'small' }, result.reason),
           h('div', { class: 'muted tiny', style: 'margin-top:6px' },
             'What it used to expect is kept below, so nothing is lost while you repair it.'),
-          entityOutcomeCard(result.expected, 'was'))
+          projectionOutcomeCard(result.expected, 'was'))
       : result.status === 'drifted'
         ? h('div', { class: 'drift' },
-            entityOutcomeCard(result.expected, 'this scenario says'),
-            entityOutcomeCard(result.actual, 'the model now does'),
+            projectionOutcomeCard(result.expected, 'this scenario says'),
+            projectionOutcomeCard(result.actual, 'the model now does'),
             h('div', { class: 'adder' },
               h('button', {
                 class: 'btn primary',
@@ -7365,7 +7322,7 @@ function projectionScenarioRow(model, entry) {
               }, 'Accept this'),
               h('span', { class: 'muted tiny' },
                 'Nothing changes in the model — only what this scenario expects of it.')))
-        : entityOutcomeCard(result.status === 'held' ? body.then : result.expected,
+        : projectionOutcomeCard(result.status === 'held' ? body.then : result.expected,
             result.status === 'held' ? 'last accepted' : null)));
   return card;
 }
@@ -7382,78 +7339,53 @@ function projectionScenarioFooter(model, start, afterKey) {
     h('button', {
       class: 'btn tiny ghost',
       title: 'Add a copy of this scenario, placed right after it, open to tweak',
-      onclick: () => run(() => {
-        const copyKey = generateId();
-        const copyBody = deepClone(model['projection-scenario-definitions'][afterKey]);
-        addDefinition('projection-scenario-definition', model.id, copyKey, copyBody);
-        insertAfterSibling('projection-scenario-definition', model.id, copyKey, afterKey);
-        closeForms();
-        state.projectionScenarioDraft = { key: copyKey, insertAfter: null, body: copyBody };
-      }),
+      onclick: () => copyProjectionScenario(model, afterKey),
     }, '+ copy'));
 }
 
+// A copy of this scenario, stored right after it and opened to tweak.
+//
+// These are drawn inside an open ledger row, so the copy must not go
+// through `closeForms` — that would fold away the very row this button
+// sits in, taking the button, and the focus on it, with it.
+function copyProjectionScenario(model, afterKey) {
+  run(() => {
+    const copyKey = generateId();
+    const copyBody = deepClone(model['projection-scenario-definitions'][afterKey]);
+    addDefinition('projection-scenario-definition', model.id, copyKey, copyBody);
+    insertAfterSibling('projection-scenario-definition', model.id, copyKey, afterKey);
+    keepingRowOpen(() => {
+      state.projectionScenarioDraft = { key: copyKey, insertAfter: null, body: copyBody };
+      state.openProjectionScenarios.add(copyKey);
+    });
+  });
+}
+
 function editProjectionScenario(model, key, body) {
-  closeForms();
-  // A scenario about one entity instance is edited on that entity's
-  // page, where it is listed; anything else on the Projections page.
-  const about = scenarioEntityInstance(model, body);
-  if (about) {
-    state.view = 'entity';
-    state.entity = about.entity;
-    state.entityTab = 'projection-scenarios';
-  } else {
-    state.view = 'projections';
-  }
+  if (!openProjection(model, body.projection, { tab: 'checks' })) closeForms();
   state.projectionScenarioDraft = { key, insertAfter: null, body: deepClone(body) };
   render();
 }
 
-// A fresh scenario's reads. An entity page starts one reading every
-// property of the instance in question, because that is the thing
-// someone on that page is asking about; a projection's card starts one
-// reading that projection alone.
-function blankScenarioReads(model, start) {
-  if (start.projection) {
-    const projection = model['projection-definitions'][start.projection] || {};
-    const script = scriptOf(projection);
-    const slots = script ? (script.arguments || []) : (projection.parameters || []);
-    const args = {};
-    for (const slot of slots) args[slot.name] = '';
-    return [{
-      alias: defaultAlias(start.projection),
-      projection: start.projection,
-      arguments: args,
-    }];
-  }
-  const entity = model['entity-definitions'][start.entity] || {};
-  return (entity.properties || []).map((binding) => {
-    const projection = model['projection-definitions'][binding.projection];
-    const slot = entityIdSlotOf(model, start.entity, projection);
-    return {
-      alias: binding.name,
-      projection: binding.projection,
-      arguments: slot ? { [slot.name]: '' } : {},
-    };
-  });
+// A fresh scenario's arguments: one blank per slot the projection
+// declares, and none at all for one that reads the whole log.
+function blankScenarioArguments(model, projectionName) {
+  const projection = model['projection-definitions'][projectionName] || {};
+  const script = scriptOf(projection);
+  const slots = script ? (script.arguments || []) : (projection.parameters || []);
+  const args = {};
+  for (const slot of slots) args[slot.name] = '';
+  return args;
 }
 
 function startProjectionScenario(model, start, insertAfter) {
-  closeForms();
-  if (start.entity) {
-    state.view = 'entity';
-    state.entity = start.entity;
-    state.entityTab = 'projection-scenarios';
-  } else {
-    state.view = 'projections';
-  }
-  state.projectionScenarioDraft = {
-    key: null,
-    insertAfter: insertAfter || null,
-    // `assert` is the draft's alone: it is which reads a modeler ticked,
-    // and what gets stored is the values those folded to.
-    body: { given: [], reads: blankScenarioReads(model, start), assert: [] },
+  const body = {
+    projection: start.projection,
+    arguments: blankScenarioArguments(model, start.projection),
+    given: [],
   };
+  openProjection(model, start.projection, { tab: 'checks' });
+  state.projectionScenarioDraft = { key: null, insertAfter: insertAfter || null, body };
   render();
 }
 
@@ -7464,70 +7396,25 @@ function patchProjectionScenarioDraft(mutate) {
   render();
 }
 
-// One read of a scenario: which projection, under what alias, and the
-// argument values it is folded at. An argument here is a *value*, not
-// an operand — a scenario has no payload to draw one from, so it is
-// typed in the same way a Given's payload is.
-function scenarioReadRow(model, draft, read, index) {
-  const body = draft.body;
-  const projection = model['projection-definitions'][read.projection];
+// What the projection under test is handed. Not a list of reads any
+// more, and nothing to tick: a scenario is about one projection, and
+// its Then is that projection's value, so the only thing left to state
+// is which partition of it — and a projection with no parameters does
+// not even have that.
+function scenarioArgumentRows(model, body) {
+  const projection = model['projection-definitions'][body.projection];
   const script = projection && scriptOf(projection);
   const slots = projection ? (script ? (script.arguments || []) : (projection.parameters || [])) : [];
-  const checked = (body.assert || []).includes(read.alias);
-
-  const rename = (next) => patchProjectionScenarioDraft((b) => {
-    const was = b.reads[index].alias;
-    b.reads[index].alias = next;
-    b.assert = (b.assert || []).map((a) => (a === was ? next : a));
-  });
-
-  return h('div', { class: 'card sc-step' },
-    h('div', { class: 'row' },
-      h('label', { class: 'tiny muted' }, h('input', {
-        type: 'checkbox', checked,
-        title: 'Check what this one folds to',
-        onchange: (e) => patchProjectionScenarioDraft((b) => {
-          b.assert = e.target.checked
-            ? [...(b.assert || []), read.alias]
-            : (b.assert || []).filter((a) => a !== read.alias);
-        }),
-      }), ' check'),
-      pick(Object.keys(model['projection-definitions']).sort().map((n) => [n, readable(n)]),
-        read.projection, (v) => patchProjectionScenarioDraft((b) => {
-          const next = model['projection-definitions'][v];
-          const nextScript = scriptOf(next);
-          const nextSlots = nextScript ? (nextScript.arguments || []) : ((next && next.parameters) || []);
-          const args = {};
-          for (const slot of nextSlots) args[slot.name] = (read.arguments || {})[slot.name] || '';
-          b.reads[index] = { alias: b.reads[index].alias, projection: v, arguments: args };
-        })),
-      h('span', { class: 'muted tiny' }, 'called'),
-      h('input', {
-        type: 'text', style: 'width:130px', value: read.alias,
-        title: 'What this scenario calls it — the key its expected value is stored under',
-        onblur: (e) => {
-          const next = toCamel(e.target.value);
-          if (!next || next === read.alias) return;
-          rename(next);
-        },
-        onkeydown: (e) => { if (e.key === 'Enter') e.target.blur(); },
-      }),
-      h('span', { class: 'grow' }),
-      (body.reads || []).length > 1 ? h('button', {
-        class: 'btn tiny danger',
-        onclick: () => patchProjectionScenarioDraft((b) => {
-          const was = b.reads[index].alias;
-          b.reads.splice(index, 1);
-          b.assert = (b.assert || []).filter((a) => a !== was);
-        }),
-      }, '×') : null),
-    slots.length
-      ? slots.map((slot) => h('div', { class: 'row' },
-          h('span', { class: 'muted tiny', style: 'min-width:90px' }, propertyWords(slot.name)),
-          valueEditor(model, { name: slot.name, propertyType: slot.propertyType, isList: false },
-            ['reads', index, 'arguments'], specWhere(model))))
-      : h('div', { class: 'muted tiny' },
-          'takes no arguments — it reads the whole log'));
+  if (!slots.length) {
+    return [h('div', { class: 'muted tiny' }, 'takes no arguments — it reads the whole log')];
+  }
+  return slots.map((slot) => h('div', { class: 'row' },
+    h('span', { class: 'muted tiny', style: 'min-width:90px' }, propertyWords(slot.name)),
+    // The full path to the value, not to the object holding it:
+    // `valueEditor` reads and writes exactly where it is pointed, the
+    // way `payloadEditor` points it at `[...path, property.name]`.
+    valueEditor(model, { name: slot.name, propertyType: slot.propertyType, isList: false },
+      ['arguments', slot.name], specWhere(model))));
 }
 
 function projectionScenarioEditor(model) {
@@ -7550,14 +7437,12 @@ function projectionScenarioEditor(model) {
       payloadEditor(model, definition.properties, ['given', index, 'data'], specWhere(model)));
   });
 
-  const readRows = (body.reads || []).map((read, index) => scenarioReadRow(model, draft, read, index));
-  const projectionNames = Object.keys(model['projection-definitions']).sort();
-
   return h('div', { class: 'card sc-editor' },
-    h('h4', {}, draft.key ? 'Edit this scenario' : 'A new projection scenario'),
+    h('h4', {}, draft.key ? 'Edit this scenario' : 'A new scenario'),
     h('div', { class: 'muted small' },
-      'Write what had already happened, then say what to read and which of those to check. What '
-      + 'they end up being is worked out here — you are never asked to predict it.'),
+      'Write what had already happened. What ', h('b', {}, readable(body.projection)),
+      ' ends up being is worked out here — you are never asked to predict it, and there is '
+      + 'nothing to choose: this scenario is about that projection, and nothing else.'),
 
     h('div', { class: 'muted tiny', style: 'margin-top:12px' }, 'Given'),
     givenRows.length ? givenRows : h('div', { class: 'empty' }, 'nothing has happened yet'),
@@ -7570,23 +7455,11 @@ function projectionScenarioEditor(model) {
       }, '+ an event that had happened')),
 
     h('div', { class: 'muted tiny', style: 'margin-top:12px' }, 'Reading'),
-    readRows.length ? readRows : h('div', { class: 'empty' }, 'nothing to read yet'),
-    projectionNames.length ? h('div', { class: 'adder' },
-      h('button', {
-        class: 'btn tiny',
-        onclick: () => patchProjectionScenarioDraft((b) => {
-          const name = projectionNames[0];
-          const projection = model['projection-definitions'][name];
-          const script = scriptOf(projection);
-          const slots = script ? (script.arguments || []) : (projection.parameters || []);
-          const args = {};
-          for (const slot of slots) args[slot.name] = '';
-          const taken = (b.reads || []).map((r) => r.alias);
-          b.reads = [...(b.reads || []), {
-            alias: uniqueAlias(defaultAlias(name), taken), projection: name, arguments: args,
-          }];
-        }),
-      }, '+ another projection to read')) : null,
+    h('div', { class: 'card sc-step' },
+      h('div', { class: 'row' },
+        h('span', { class: 'chip projection' }, readable(body.projection)),
+        h('span', { class: 'muted tiny' }, 'what this scenario is about')),
+      ...scenarioArgumentRows(model, body)),
 
     h('div', { class: 'adder', style: 'margin-top:14px' },
       h('button', { class: 'btn primary', onclick: () => saveProjectionScenario(model) },
@@ -7615,12 +7488,9 @@ function projectionScenarioEditor(model) {
 function saveProjectionScenario(model) {
   const draft = state.projectionScenarioDraft;
   const body = deepClone(draft.body);
-  const aliases = body.assert || [];
-  delete body.assert;
-  if (!aliases.length) return toast('Tick at least one of these to check.', true);
   let then;
   try {
-    then = deriveProjectionScenarioThen(model, body, aliases);
+    then = deriveProjectionScenarioThen(model, body);
   } catch (error) {
     return toast(error instanceof EvaluationError
       ? error.message
@@ -7663,77 +7533,29 @@ function projectionScenarioList(model, { entries, start, blank }) {
       rows.push(projectionScenarioEditor(model));
     }
   }
+  // A draft with no key and no position goes at the end. It used to be
+  // rendered only when the list was empty, which meant a draft started
+  // any other way simply vanished — reachable from code before it was
+  // reachable from the page, but wrong either way.
   const standaloneDraft = draftHere && !draft.key && !draft.insertAfter;
 
   return h('div', { class: 'scenarios' },
     rows.length ? rows : null,
-    !entries.length && !standaloneDraft ? h('div', { class: 'blank small' },
-      h('p', { class: 'muted small' }, blank)) : null,
-    !entries.length
-      ? (standaloneDraft
-          ? projectionScenarioEditor(model)
-          : h('div', { class: 'adder' },
-              h('button', { class: 'btn primary', onclick: () => startProjectionScenario(model, start) },
-                '+ New scenario')))
+    standaloneDraft ? projectionScenarioEditor(model) : null,
+    !entries.length && !standaloneDraft
+      ? h('div', { class: 'blank small' }, h('p', { class: 'muted small' }, blank))
+      : null,
+    !entries.length && !standaloneDraft
+      ? h('div', { class: 'adder' },
+          h('button', { class: 'btn primary', onclick: () => startProjectionScenario(model, start) },
+            '+ New scenario'))
       : null);
 }
 
-// Whether an unsaved draft was started in this place. Read off what it
-// reads rather than stored, the same way a saved one's home is.
+// Whether an unsaved draft belongs in this list — which is simply
+// whether it is about this projection.
 function draftStartedAt(model, draft, start) {
-  if (start.projection) {
-    return !scenarioEntityInstance(model, draft.body)
-      && scenarioProjections(draft.body).includes(start.projection);
-  }
-  const about = scenarioEntityInstance(model, draft.body);
-  if (about) return about.entity === start.entity;
-  // A half-written entity scenario has no instance filled in yet, so it
-  // cannot be recognised by one — but every read is still a property of
-  // the entity whose page it was opened on.
-  return (draft.body.reads || []).length > 0 && (draft.body.reads || []).every((read) =>
-    boundAs(model, read.projection).some((b) => b.entity === start.entity));
-}
-
-function projectionScenarioPanel(model, entityName) {
-  return projectionScenarioList(model, {
-    entries: projectionScenariosOf(model, entityName),
-    start: { entity: entityName },
-    blank: 'Nothing exercises this entity yet. A scenario is what had already happened and which '
-      + 'of what it projects to to check — and it is the only thing here that notices when an '
-      + 'edit somewhere else changes what this entity ends up being.',
-  });
-}
-
-// The same list, on a projection's own card — for the ones no entity
-// page claims, which is every scenario about a projection read for
-// something other than one entity instance.
-function projectionScenarioCard(model, projectionName) {
-  return projectionScenarioList(model, {
-    entries: projectionScenariosReading(model, projectionName),
-    start: { projection: projectionName },
-    blank: 'Nothing exercises this projection yet. A scenario is what had already happened and '
-      + 'what this folds to as a result — the only thing that notices when an edit somewhere '
-      + 'else changes it.',
-  });
-}
-
-function entityTabs(model, entityName) {
-  const entries = projectionScenariosOf(model, entityName);
-  const trouble = entries.filter((e) => {
-    const status = projectionScenarioResult(model, e.key, e.body).status;
-    return status === 'drifted' || status === 'broken';
-  }).length;
-  const tab = (key, label, extra) => h('button', {
-    class: 'tab' + (state.entityTab === key ? ' on' : ''),
-    'aria-pressed': state.entityTab === key ? 'true' : 'false',
-    onclick: () => { state.entityTab = key; state.projectionScenarioDraft = null; render(); },
-  }, label, extra);
-  return h('div', { class: 'tabs' },
-    tab('definition', 'Definition'),
-    tab('projection-scenarios', 'Scenarios',
-      entries.length
-        ? h('span', { class: 'badge' + (trouble ? '' : ' clear') }, trouble || entries.length)
-        : null));
+  return draft.body.projection === start.projection;
 }
 
 
@@ -8205,7 +8027,7 @@ function watchProjectionAdder(model, names) {
       ? slots.map((slot) => h('div', { class: 'row' },
           h('span', { class: 'muted tiny', style: 'min-width:90px' }, propertyWords(slot.name)),
           valueEditor(model, { name: slot.name, propertyType: slot.propertyType, isList: false },
-            ['arguments'], where)))
+            ['arguments', slot.name], where)))
       : h('div', { class: 'muted tiny' }, 'takes no arguments — it reads the whole log'),
     h('div', { class: 'adder', style: 'margin-top:8px' },
       h('button', {

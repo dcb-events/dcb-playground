@@ -1,6 +1,6 @@
 {
-  "$schema": "https://dcb.events/schemas/model/v2.json",
-  "dcbModelVersion": "2.0",
+  "$schema": "https://dcb.events/schemas/model/v3.json",
+  "dcbModelVersion": "3.0",
   "name": "Dynamic Product Price (simple)",
   "customTypeDefinitions": [
     {

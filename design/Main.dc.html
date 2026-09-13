@@ -1,0 +1,522 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>    body { margin: 0; }
+    .app {
+      --bg:#f8fafc; --surface:#ffffff; --border:#e2e8f0; --border-strong:#cbd5e1;
+      --text:#0f172a; --muted:#64748b;
+      --command:#2563eb; --command-soft:#eff6ff; --command-bd:#bfdbfe; --command-tx:#1e40af;
+      --event:#f97316; --event-soft:#fff7ed; --event-bd:#fed7aa; --event-tx:#9a3412;
+      --entity:#16a34a; --entity-soft:#f0fdf4; --entity-bd:#bbf7d0; --entity-tx:#166534;
+      --warn-soft:#fef3c7; --warn-bd:#fde68a; --warn-tx:#92400e;
+      --type:#6b7280; --type-soft:#f9fafb; --danger:#dc2626;
+      --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+      font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: var(--text); background: var(--bg);
+      min-height: 100vh; padding-bottom: 40px;
+    }
+    .app.dark {
+      --bg:#0b1220; --surface:#131c2e; --border:#22304a; --border-strong:#3a4b69;
+      --text:#e2e8f0; --muted:#93a3b8;
+      --command:#60a5fa; --command-soft:#16243d; --command-bd:#1e40af; --command-tx:#bfdbfe;
+      --event:#fb923c; --event-soft:#2d1c0d; --event-bd:#9a3412; --event-tx:#fed7aa;
+      --entity:#4ade80; --entity-soft:#0f2a1c; --entity-bd:#166534; --entity-tx:#bbf7d0;
+      --warn-soft:#2d2408; --warn-bd:#4a3b0f; --warn-tx:#fcd34d;
+      --type:#94a3b8; --type-soft:#172030; --danger:#f87171;
+    }
+    a { color: #2563eb; }
+    a:hover { color: #1d4ed8; }
+
+    .boardhead {
+      display: flex; align-items: baseline; gap: 12px;
+      padding: 18px 30px 14px; border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .boardhead .kicker {
+      font-size: 11px; text-transform: uppercase; letter-spacing: .07em;
+      color: var(--entity); font-weight: 700;
+    }
+    .boardhead .nm { font-size: 17px; font-weight: 600; }
+    .boardhead .ch { font-size: 12px; color: var(--muted); }
+    .boardhead .grow { flex: 1; }
+
+    .slice { padding: 20px 30px 0; max-width: 880px; }
+    .phead { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+    .phead .name { font-size: 20px; font-weight: 600; }
+    .phead .grow { flex: 1; }
+
+    h4 {
+      margin: 0; font-size: 11px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: .07em; color: var(--muted);
+    }
+
+    /* page-level facets — two sides of one page, not navigation */
+    .tabs { display: flex; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+    .tab {
+      font: inherit; font-size: 13.5px; font-weight: 600; padding: 8px 4px; margin-right: 22px;
+      border: 0; background: none; color: var(--muted); cursor: pointer;
+      border-bottom: 2px solid transparent; margin-bottom: -1px;
+      display: inline-flex; align-items: center; gap: 7px;
+    }
+    .tab:hover { color: var(--text); }
+    .tab.on { color: var(--entity); border-bottom-color: var(--entity); }
+
+    /* ---------- the ledger ---------- */
+    .ledger {
+      border: 1px solid var(--border); border-radius: 8px;
+      background: var(--surface); overflow: hidden;
+    }
+    .lhead, .lrow { display: grid; align-items: center; gap: 12px; padding: 0 12px; }
+    .lhead { height: 30px; border-bottom: 1px solid var(--border); background: var(--type-soft); }
+    .lhead span {
+      font-size: 10px; text-transform: uppercase; letter-spacing: .07em;
+      color: var(--muted); font-weight: 600;
+    }
+    .lrow {
+      min-height: 42px; border-bottom: 1px solid var(--border); cursor: pointer;
+      border-left: 3px solid transparent; padding-left: 9px;
+    }
+    .lrow:hover { background: var(--command-soft); }
+    .lrow.on { background: var(--entity-soft); border-left-color: var(--entity); }
+    .lrow .nm { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 7px; min-width: 0; }
+    .lrow .nm .txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cell { font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cell.ty { color: var(--type); }
+    .caret { flex: none; width: 9px; height: 9px; color: var(--muted); }
+
+    .pill {
+      display: inline-flex; align-items: center; justify-content: center; gap: 3px;
+      min-width: 22px; height: 20px; padding: 0 7px; border-radius: 999px;
+      font-family: var(--mono); font-size: 11px; white-space: nowrap;
+    }
+    .pill.warn { background: var(--warn-soft); border: 1px solid var(--warn-bd); color: var(--warn-tx); }
+    .pill.ok { background: var(--entity-soft); border: 1px solid var(--entity-bd); color: var(--entity-tx); }
+
+    .chip {
+      display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px;
+      font-size: 12px; font-family: var(--mono);
+      background: var(--type-soft); border: 1px solid var(--border); color: var(--text);
+      white-space: nowrap;
+    }
+    .chip.event { background: var(--event-soft); border-color: var(--event-bd); color: var(--event-tx); }
+    .chip.entity { background: var(--entity-soft); border-color: var(--entity-bd); color: var(--entity-tx); }
+    .chip.command { background: var(--command-soft); border-color: var(--command-bd); color: var(--command-tx); }
+    .chip.tag { background: var(--entity-soft); border-color: var(--entity-bd); color: var(--entity-tx); }
+    .chip.unset {
+      background: transparent; border-style: dashed; border-color: var(--border-strong);
+      color: var(--muted); font-style: italic; font-family: inherit;
+    }
+    .chip.sm { font-size: 11px; padding: 2px 8px; }
+    .ic { font-style: normal; margin-right: 5px; }
+
+    /* ---------- the opened detail ---------- */
+    .detail {
+      border-bottom: 1px solid var(--border); border-left: 3px solid var(--entity);
+      background: var(--surface); padding: 2px 15px 13px;
+    }
+    /* Two sides of one projection: what it is, and what pins it down.
+       Scoped to the thing in front of you — not navigation between
+       things, which is what the per-entity tabs were. */
+    .dtabs { display: flex; border-bottom: 1px solid var(--border); margin: 4px 0 2px; }
+    .dtab {
+      font: inherit; font-size: 12px; font-weight: 600; padding: 6px 2px; margin-right: 20px;
+      border: 0; background: none; color: var(--muted); cursor: pointer;
+      border-bottom: 2px solid transparent; margin-bottom: -1px;
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+    .dtab:hover { color: var(--text); }
+    .dtab.on { color: var(--entity); border-bottom-color: var(--entity); }
+    .dtab .cnt { font-weight: 400; color: var(--muted); font-family: var(--mono); font-size: 11px; }
+    .dtab .cnt.bad { color: var(--warn-tx); }
+
+    .drow { display: flex; align-items: flex-start; gap: 10px; padding: 9px 0; flex-wrap: wrap; }
+    .drow + .drow { border-top: 1px dashed var(--border); }
+    .drow > h4 { flex: none; width: 84px; padding-top: 5px; }
+    .drow .stack { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
+    .hrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .verb { color: var(--muted); font-size: 12.5px; }
+    .lock { font-size: 11px; color: var(--muted); font-style: italic; }
+
+    /* ---------- scenarios ---------- */
+    .gstack { display: flex; flex-direction: column; gap: 5px; }
+    .sline {
+      display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
+      font: inherit; font-size: 12px; cursor: pointer;
+      padding: 6px 9px; border-radius: 6px;
+      border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    }
+    .sline:hover { border-color: var(--border-strong); }
+    .sline.on { border-color: var(--command); background: var(--command-soft); }
+    .sline.drifted { background: var(--warn-soft); border-color: var(--warn-bd); }
+    .sline .mark { flex: none; font-family: var(--mono); color: var(--entity); }
+    .sline.drifted .mark { color: var(--warn-tx); }
+    .sline .snm { font-weight: 600; }
+    .sline .grow { flex: 1; }
+    .sline .inst { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+
+    .sbody {
+      border: 1px solid var(--command-bd); border-top: 0;
+      border-radius: 0 0 6px 6px; background: var(--surface);
+      margin: -5px 0 2px; padding: 9px 11px 10px;
+    }
+    .sbody .srow { display: flex; align-items: flex-start; gap: 10px; padding: 3px 0; }
+    .sbody .srow > h4 { flex: none; width: 46px; padding-top: 4px; }
+    .sbody .stack { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 0; }
+    .thenrow { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+    .thenrow .alias { min-width: 172px; color: var(--muted); }
+
+    /* ---------- the quiet index ----------
+       The Projections page stops listing what the entity pages own, so
+       this is the one place that still says what exists and where it
+       lives. Deliberately not a second ledger. */
+    .index { margin-top: 20px; }
+    .index > h4 { margin-bottom: 6px; }
+    .index .why { font-size: 11.5px; color: var(--muted); margin-bottom: 8px; }
+    .irow2 {
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      padding: 7px 2px; border-top: 1px dashed var(--border); font-size: 12px;
+    }
+    .irow2 .ent {
+      font-weight: 600; display: inline-flex; align-items: center; gap: 6px;
+      min-width: 130px; cursor: pointer;
+    }
+    .irow2 .ent:hover { color: var(--command); }
+    .irow2 .props { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .lnk {
+      font: inherit; font-size: 12px; border: 0; background: none; padding: 0;
+      color: var(--muted); cursor: pointer; font-family: var(--mono);
+    }
+    .lnk:hover { color: var(--command); }
+
+    /* ---------- an entity's own page ---------- */
+    .ehead { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+    .ehead .mark {
+      flex: none; width: 34px; height: 34px; font-size: 20px; line-height: 1;
+      display: inline-flex; align-items: center; justify-content: center;
+      border: 1px solid var(--border); border-radius: 9px; background: var(--surface);
+    }
+    .ehead .name { font-size: 20px; font-weight: 600; }
+    .ehead .grow { flex: 1; }
+    .esum { font-size: 12px; color: var(--muted); margin: 0 0 16px 44px; }
+    .ident {
+      border: 1px solid var(--entity); border-left-width: 3px;
+      border-radius: 8px; background: var(--entity-soft);
+      padding: 11px 14px 12px; margin-bottom: 18px;
+    }
+    .ident > h4 { color: var(--entity); margin-bottom: 8px; }
+    .ident .irow { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 12px; }
+    .ident .irow > .nm { min-width: 96px; color: var(--muted); font-size: 11px; }
+    .ident .irow .verb { color: var(--entity-tx); }
+
+    select, input[type=text] {
+      font: inherit; font-size: 12.5px; padding: 4px 8px;
+      border: 1px solid var(--border-strong); border-radius: 5px;
+      background: var(--surface); color: var(--text);
+    }
+    .check { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--muted); }
+    .check input { margin: 0; }
+    .seg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 6px; overflow: hidden; }
+    .segb {
+      font: inherit; font-size: 12px; padding: 4px 11px; border: 0;
+      background: var(--surface); color: var(--muted); cursor: pointer;
+    }
+    .segb + .segb { border-left: 1px solid var(--border-strong); }
+    .segb.on { background: var(--entity-soft); color: var(--entity-tx); font-weight: 600; }
+
+    .btn {
+      font: inherit; font-size: 12px; padding: 4px 10px; border-radius: 6px;
+      border: 1px solid var(--border-strong); background: var(--surface);
+      color: var(--text); cursor: pointer;
+    }
+    .btn:hover { border-color: var(--command); color: var(--command); }
+    .btn.primary { background: var(--command); border-color: var(--command); color: #fff; font-size: 13px; padding: 7px 14px; }
+    .btn.primary:hover { background: #1d4ed8; color: #fff; }
+    .btn.ghost { border-color: transparent; color: var(--muted); font-size: 13px; padding: 7px 14px; }
+    .btn.ghost:hover { border-color: var(--border-strong); }
+    .btn.x { border-color: transparent; color: var(--muted); padding: 2px 6px; }
+    .btn.x:hover { color: var(--danger); border-color: var(--danger); }
+    .btn.dash { border-style: dashed; color: var(--muted); }
+    .btn.dash:hover { color: var(--command); }
+
+    .dfoot { display: flex; align-items: center; gap: 9px; padding-top: 12px; margin-top: 2px; border-top: 1px dashed var(--border); }
+    .dfoot .grow { flex: 1; }
+    .addrow { padding: 10px 12px; }
+</style>
+</helmet>
+
+<div class="app {{ui.theme}}">
+  <div class="boardhead">
+    <span class="kicker">Round 3</span>
+    <span class="nm">Projections</span>
+    <span class="ch">standalone only &#183; four columns &#183; checks in a tab</span>
+    <span class="grow"></span>
+    <span class="chip sm">Course Example (multi-tenant)</span>
+  </div>
+
+  <div class="slice">
+    <div class="phead">
+      <span class="name">Projections</span>
+      <span class="grow"></span>
+      <button class="btn dash">+ new projection</button>
+    </div>
+
+    <div class="ledger">
+      <div class="lhead" style="grid-template-columns: {{ui.cols}}">
+        <span>projection</span>
+        <span>one per</span>
+        <span>holds</span>
+        <span>starts at</span>
+      </div>
+
+      <sc-for list="{{rows}}" as="row" hint-placeholder-count="2">
+        <div>
+          <div class="{{row.cls}}" style="grid-template-columns: {{ui.cols}}" onClick="{{row.pick}}">
+            <span class="nm">
+              <svg class="caret" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" style="{{row.caretStyle}}">
+                <path d="M3.5 1.5 L7 5 L3.5 8.5"></path>
+              </svg>
+              <span class="txt">{{row.name}}</span>
+            </span>
+            <span>
+              <sc-if value="{{row.hasParam}}" hint-placeholder-val="{{true}}">
+                <span class="chip tag sm"><i class="ic">{{row.paramIcon}}</i>{{row.param}}</span>
+              </sc-if>
+              <sc-if value="{{row.isGlobal}}" hint-placeholder-val="{{false}}">
+                <span class="chip unset sm">kept once</span>
+              </sc-if>
+            </span>
+            <span class="cell ty">{{row.holds}}</span>
+            <span class="cell">{{row.starts}}</span>
+          </div>
+
+          <sc-if value="{{row.open}}" hint-placeholder-val="{{false}}">
+            <div class="detail">
+              <div class="dtabs">
+                <button class="{{row.defTabCls}}" onClick="{{row.showDef}}">Definition</button>
+                <button class="{{row.chkTabCls}}" onClick="{{row.showChecks}}">Checks <span class="{{row.chkCntCls}}">{{row.chkCount}}</span></button>
+              </div>
+
+              <sc-if value="{{row.onDef}}" hint-placeholder-val="{{true}}">
+                <div>
+                  <div class="drow">
+                    <h4>one per</h4>
+                    <div class="stack">
+                      <span class="hrow">
+                        <sc-for list="{{row.params}}" as="prm" hint-placeholder-count="1">
+                          <span class="chip tag"><i class="ic">{{prm.icon}}</i>{{prm.label}}<button class="btn x">&#215;</button></span>
+                        </sc-for>
+                        <sc-if value="{{row.isGlobal}}" hint-placeholder-val="{{false}}">
+                          <span class="chip unset">kept once, for the whole model</span>
+                        </sc-if>
+                        <button class="btn dash">+ parameter</button>
+                        <span class="lock">{{row.paramHint}}</span>
+                      </span>
+                    </div>
+                  </div>
+                  <div class="drow">
+                    <h4>holds</h4>
+                    <div class="stack">
+                      <span class="hrow">
+                        <select defaultValue="{{row.holdsType}}">
+                          <sc-for list="{{row.typeOptions}}" as="t" hint-placeholder-count="4">
+                            <option value="{{t.label}}">{{t.label}}</option>
+                          </sc-for>
+                        </select>
+                        <label class="check"><input type="checkbox" defaultChecked="{{row.isList}}"> many</label>
+                      </span>
+                    </div>
+                  </div>
+                  <div class="drow">
+                    <h4>starts at</h4>
+                    <div class="stack">
+                      <span class="hrow">
+                        <span class="seg">
+                          <button class="{{row.startNothingCls}}" onClick="{{row.noop}}">nothing yet</button>
+                          <button class="{{row.startValueCls}}" onClick="{{row.noop}}">{{row.valueWord}}</button>
+                        </span>
+                        <sc-if value="{{row.startsIsValue}}" hint-placeholder-val="{{true}}">
+                          <select defaultValue="{{row.starts}}">
+                            <sc-for list="{{row.startOptions}}" as="opt" hint-placeholder-count="2">
+                              <option value="{{opt.label}}">{{opt.label}}</option>
+                            </sc-for>
+                          </select>
+                        </sc-if>
+                      </span>
+                    </div>
+                  </div>
+                  <div class="drow">
+                    <h4>moved by</h4>
+                    <div class="stack">
+                      <sc-for list="{{row.moves}}" as="mv" hint-placeholder-count="1">
+                        <span class="hrow">
+                          <span class="chip event"><i class="ic">{{mv.icon}}</i>{{mv.event}}</span>
+                          <span class="verb">{{mv.verb}}</span>
+                          <span class="chip">{{mv.value}}</span>
+                          <button class="btn x">&#215;</button>
+                        </span>
+                      </sc-for>
+                      <span class="hrow"><button class="btn dash">+ wire an event</button></span>
+                    </div>
+                  </div>
+                  <div class="drow">
+                    <h4>read by</h4>
+                    <div class="stack">
+                      <span class="hrow">
+                        <sc-for list="{{row.readBy}}" as="cmd" hint-placeholder-count="1">
+                          <span class="chip command">{{cmd.label}}</span>
+                        </sc-for>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{row.onChecks}}" hint-placeholder-val="{{false}}">
+                <div class="drow">
+                  <div class="stack">
+                    <sc-if value="{{row.noScenarios}}" hint-placeholder-val="{{true}}">
+                      <span class="hrow"><span class="chip unset">nothing checks it yet</span></span>
+                    </sc-if>
+                    <span class="hrow"><button class="btn dash">+ scenario</button></span>
+                  </div>
+                </div>
+              </sc-if>
+
+              <div class="dfoot">
+                <button class="btn primary" onClick="{{row.pick}}">Save</button>
+                <button class="btn ghost" onClick="{{row.pick}}">Discard changes</button>
+                <span class="grow"></span>
+                <button class="btn">Rename</button>
+                <button class="btn">Remove</button>
+              </div>
+            </div>
+          </sc-if>
+        </div>
+      </sc-for>
+    </div>
+
+    <div class="index">
+      <h4>Also defined, on their entities</h4>
+      <div class="why">The one place that still says what exists, now that this page lists only what no entity claims.</div>
+      <sc-for list="{{index}}" as="e" hint-placeholder-count="3">
+        <div class="irow2">
+          <span class="ent"><i class="ic">{{e.icon}}</i>{{e.entity}}</span>
+          <span class="props">
+            <sc-for list="{{e.props}}" as="p" hint-placeholder-count="3">
+              <button class="lnk">{{p.label}}</button>
+            </sc-for>
+          </span>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+</div>
+
+</x-dc>
+
+<script data-dc-script data-props='{"dark":{"editor":"boolean","default":false,"section":"Theme"}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { open: 'TenantCourseNumbering', tab: 'definition' };
+  }
+
+  renderVals() {
+    return {
+      ui: { theme: this.props.dark ? 'dark' : '', cols: '1fr 152px 140px 132px' },
+      rows: MODEL.standalone.map((p) => this.row(p)),
+      index: MODEL.index.map((e) => ({
+        icon: e.icon, entity: e.entity,
+        props: e.props.map((n) => ({ label: n })),
+      })),
+    };
+  }
+
+  row(p) {
+    const open = this.state.open === p.id;
+    const unset = p.starts === null;
+    const tab = open ? this.state.tab : 'definition';
+    return {
+      name: p.name,
+      param: p.param, paramIcon: p.paramIcon,
+      hasParam: !!p.param, isGlobal: !p.param,
+      params: p.param ? [{ label: p.param, icon: p.paramIcon }] : [],
+      paramHint: p.param
+        ? 'the tag every event it folds must carry'
+        : 'no tag \u2014 it folds the whole log',
+      holds: p.holds, holdsType: p.holds.replace('[]', ''), isList: !!p.isList,
+      typeOptions: MODEL.types.map((t) => ({ label: t })),
+      starts: unset ? 'nothing yet' : p.starts,
+      startsIsValue: !unset,
+      valueWord: p.isList ? 'a list' : 'a value',
+      startNothingCls: unset ? 'segb on' : 'segb',
+      startValueCls: unset ? 'segb' : 'segb on',
+      startOptions: (p.options || []).map((o) => ({ label: String(o) })),
+      moves: p.moves,
+      readBy: p.readBy.map((c) => ({ label: c })),
+      chkCount: p.scenarios.length,
+      chkCntCls: 'cnt',
+      noScenarios: p.scenarios.length === 0,
+      defTabCls: tab === 'definition' ? 'dtab on' : 'dtab',
+      chkTabCls: tab === 'checks' ? 'dtab on' : 'dtab',
+      onDef: tab === 'definition',
+      onChecks: tab === 'checks',
+      showDef: (e) => { if (e && e.stopPropagation) e.stopPropagation(); this.setState({ open: p.id, tab: 'definition' }); },
+      showChecks: (e) => { if (e && e.stopPropagation) e.stopPropagation(); this.setState({ open: p.id, tab: 'checks' }); },
+      cls: open ? 'lrow on' : 'lrow',
+      caretStyle: open ? 'transform: rotate(90deg)' : '',
+      open: open,
+      pick: () => this.setState({ open: open ? null : p.id, tab: 'definition' }),
+      noop: () => {},
+    };
+  }
+}
+
+const COURSE_ICON = '\u{1F4DA}';
+const STUDENT_ICON = '\u{1F9D1}‍\u{1F393}';
+const TENANT_ICON = '\u{1F3E2}';
+
+// Course Example (multi-tenant), as shipped. Two projections no entity
+// binds: one kept once for the whole model, one kept per tenant — which
+// is the pair that makes "one per" worth a column of its own.
+const MODEL = {
+  types: ['Course id', 'Course number', 'Integer', 'Text', 'Boolean', 'Student id', 'Tenant id'],
+  standalone: [
+    {
+      id: 'CourseNumbering', name: 'Course numbering',
+      holds: 'Course id', starts: 'c1', options: ['c1'],
+      param: null, paramIcon: '',
+      moves: [
+        { icon: COURSE_ICON, event: 'Course defined', verb: 'becomes', value: 'the one after course id' },
+      ],
+      readBy: ['Define course'],
+      scenarios: [],
+    },
+    {
+      id: 'TenantCourseNumbering', name: 'Tenant course numbering',
+      holds: 'Course number', starts: '"1"', options: ['"1"'],
+      param: 'tenant id', paramIcon: TENANT_ICON,
+      moves: [
+        { icon: COURSE_ICON, event: 'Course defined', verb: 'becomes', value: 'the one after course number' },
+      ],
+      readBy: ['Define course'],
+      scenarios: [],
+    },
+  ],
+  // What the entity pages own. Not a second ledger — a way back.
+  index: [
+    { icon: STUDENT_ICON, entity: 'Student', props: ['status', 'subscription count'] },
+    { icon: COURSE_ICON, entity: 'Course', props: ['status', 'capacity', 'subscription count', 'subscribed student ids'] },
+    { icon: TENANT_ICON, entity: 'Tenant', props: ['status'] },
+  ],
+};
+
+</script>
+</body>
+</html>

@@ -590,6 +590,37 @@ function propertyUsage(model, entityName, propertyName) {
   return { property, binding, projection, changedBy, readBy };
 }
 
+// Which commands read a projection, however they reach it: directly by
+// name when nothing binds it, and through an entity alias when
+// something does. One question rather than two, because a projection
+// does not know which of the two it is — that is the whole point of a
+// property being a binding.
+function projectionReaders(model, projectionName) {
+  const owners = boundAs(model, projectionName);
+  const readers = [];
+  for (const [command, body] of Object.entries(model['command-definitions'])) {
+    let reads = (body.boundary || []).some((b) => b.projection === projectionName);
+    if (!reads) {
+      // Every (alias, property) pair that lands on this projection: an
+      // alias bound to an entity that calls it something, under the
+      // name that entity calls it.
+      const pairs = new Set();
+      for (const binding of body.boundary || []) {
+        if (!binding.entity) continue;
+        for (const owner of owners) {
+          if (owner.entity === binding.entity) pairs.add(binding.alias + ' ' + owner.property);
+        }
+      }
+      forEachCommandOperand(body, (operand) => {
+        if (operandSource(operand) === 'alias-property'
+            && pairs.has(operand.alias + ' ' + operand.property)) reads = true;
+      });
+    }
+    if (reads) readers.push(command);
+  }
+  return readers;
+}
+
 // ---------- names ----------
 //
 // A modeler types "define course"; the model stores `DefineCourse`. The
