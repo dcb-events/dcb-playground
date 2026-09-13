@@ -102,7 +102,8 @@ const pageScript = (() => {
 const source = ['model.js', 'evaluate.js', 'shared.js']
   .map((file) => fs.readFileSync(path.join(POC, file), 'utf8'))
   .concat(pageScript)
-  .concat('globalThis.state = state; globalThis.render = render; globalThis.session = session;')
+  .concat('globalThis.state = state; globalThis.render = render; globalThis.session = session;'
+    + ' globalThis.closeForms = closeForms;')
   .join('\n;\n');
 vm.runInContext(source, sandbox, { filename: 'page.js' });
 
@@ -679,7 +680,7 @@ function eq(actual, expected, what) {
     sandbox.state.view = 'entity';
     sandbox.state.entity = 'Course';
     sandbox.render();
-    // And it survives the round trip the Save button puts it through.
+    // And it survives the round trip a save puts it through.
     eq(cleanProjectionBody(sandbox.state.projDraft.body),
       model()['projection-definitions'].CourseTouches, 'unchanged through the editor');
     sandbox.state.projDraft = null;
@@ -1030,6 +1031,414 @@ function eq(actual, expected, what) {
     eq(projectionReaders(model(), 'CourseCapacity'), ['SubscribeStudentToCourse'],
       'and this one through the alias of the entity that does');
   });
+}
+
+// ---------------------------------------------------------------
+// A named field commits when the row is left. The button stays, but it
+// is a convenience now, not the gate — `closeForms` rides every
+// gesture that moves on, and a name is what makes a field real.
+// ---------------------------------------------------------------
+{
+  const { id, model } = build(0);
+  store.set('dcb-playground:model', id);
+
+  const type = (adder, text) => {
+    const input = findAll(adder, (n) => n.tag === 'input')[0];
+    input.oninput({ target: { value: text } });
+    return input;
+  };
+
+  check('a named field survives leaving the row without the button', () => {
+    sandbox.state.slice = 'DefineCourse';
+    const before = model()['command-definitions'].DefineCourse.properties.length;
+    const adder = sandbox.propertyAdder(model(), {
+      draftKey: 'in:DefineCourse',
+      onAdd: (property) => sandbox.updateDefinition('command-definition', id, 'DefineCourse', {
+        ...model()['command-definitions'].DefineCourse,
+        properties: [...model()['command-definitions'].DefineCourse.properties, property],
+      }),
+    });
+    type(adder, 'starting week');
+    sandbox.closeForms();
+    const properties = model()['command-definitions'].DefineCourse.properties;
+    eq(properties.length, before + 1, 'the field was added by leaving, not by a button');
+    eq(properties[properties.length - 1].name, 'startingWeek', 'under the name that was typed');
+  });
+
+  check('an empty row is abandoned, not committed and not complained about', () => {
+    const before = model()['command-definitions'].DefineCourse.properties.length;
+    const adder = sandbox.propertyAdder(model(), {
+      draftKey: 'in:DefineCourse', onAdd: () => { throw new Error('nothing to add'); },
+    });
+    type(adder, '   ');
+    sandbox.closeForms();
+    eq(model()['command-definitions'].DefineCourse.properties.length, before,
+      'an unnamed row is "never mind"');
+  });
+
+  check('the button commits once, and leaving afterwards does not double it', () => {
+    let added = 0;
+    const adder = sandbox.propertyAdder(model(), {
+      draftKey: 'x', onAdd: () => { added += 1; },
+    });
+    type(adder, 'seat count');
+    const button = findAll(adder, (n) => n.tag === 'button')[0];
+    button.onclick();
+    sandbox.closeForms();
+    eq(added, 1, 'one field, however many ways out were taken');
+  });
+
+  check('Escape discards the half-typed name so leaving cannot commit it', () => {
+    let added = 0;
+    const adder = sandbox.propertyAdder(model(), {
+      draftKey: 'x', onAdd: () => { added += 1; },
+    });
+    const input = type(adder, 'oops');
+    input.onkeydown({ key: 'Escape', preventDefault() {}, target: { value: 'oops', blur() {} } });
+    sandbox.closeForms();
+    eq(added, 0, 'Escape means never mind');
+  });
+
+  check('Escape from any control in the row discards, not just from the name field', () => {
+    let added = 0;
+    const adder = sandbox.propertyAdder(model(), {
+      draftKey: 'x', onAdd: () => { added += 1; },
+    });
+    type(adder, 'oops');
+    // The row-level handler — what fires when Escape lands on the type
+    // select or a checkbox rather than the name input.
+    adder.onkeydown({ key: 'Escape', target: { tagName: 'SELECT' } });
+    sandbox.closeForms();
+    eq(added, 0, 'backing out through the select commits nothing');
+  });
+
+  check('the draft lives in state, so an unrelated repaint keeps the typed text', () => {
+    const first = sandbox.propertyAdder(model(), { draftKey: 'x', onAdd: () => {} });
+    type(first, 'half a nam');
+    const second = sandbox.propertyAdder(model(), { draftKey: 'x', onAdd: () => {} });
+    const input = findAll(second, (n) => n.tag === 'input')[0];
+    eq(input.value, 'half a nam', 'remounting the row does not eat the name');
+    sandbox.state.fieldDraft = null;
+  });
+
+  check('an entity property adder follows the same rule', () => {
+    const before = (model()['entity-definitions'].Course.properties || []).length;
+    const adder = sandbox.entityPropertyAdder(model(), 'Course');
+    type(adder, 'starting week');
+    sandbox.closeForms();
+    const properties = model()['entity-definitions'].Course.properties;
+    eq(properties.length, before + 1, 'the property landed on leaving');
+    eq(properties[properties.length - 1].name, 'startingWeek', 'named as typed');
+    eq(!!model()['projection-definitions'].CourseStartingWeek, true,
+      'and brought its projection with it, same as the button always did');
+  });
+
+  store.delete('dcb-playground:model');
+}
+
+// ---------------------------------------------------------------
+// A brand-new command reveals its steps as they are answered. The
+// wizard is session state: nothing of it is written to the model, and
+// every step it holds back is one click from being shown.
+// ---------------------------------------------------------------
+{
+  const { id, model } = build(0);
+  store.set('dcb-playground:model', id);
+
+  const slice = () => sandbox.sliceOf(model(), 'CertifyCourse');
+
+  check('creating a command starts its wizard at the first step', () => {
+    sandbox.state.slice = null;
+    sandbox.createCommand(model(), 'certify course');
+    eq(!!model()['command-definitions'].CertifyCourse, true, 'the command exists');
+    eq(sandbox.state.wizard, { slice: 'CertifyCourse', upto: 0 }, 'and its page starts at step one');
+    eq((model()['command-definitions'].CertifyCourse.publishes || []).map((p) => p.name),
+      ['CourseCertified'], 'the success event exists from the start — the model requires one');
+    eq(model()['event-definitions'].CourseCertified.properties, [],
+      'but it is bare: its fields wait for the step that shows it');
+  });
+
+  check('the event takes the command properties when its step is revealed', () => {
+    // Give it a payload and a read first, the way the wizard would.
+    sandbox.updateDefinition('command-definition', id, 'CertifyCourse', {
+      ...model()['command-definitions'].CertifyCourse,
+      properties: [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false }],
+      boundary: [{ alias: 'course', entity: 'Course', id: { parameterName: 'courseId' } }],
+    });
+    sandbox.advanceWizard(model(), slice());   // reads revealed
+    sandbox.advanceWizard(model(), slice());   // rules revealed
+    eq(model()['event-definitions'].CourseCertified.properties, [],
+      'nothing is copied while the event is still unrevealed');
+    sandbox.advanceWizard(model(), slice());   // emits revealed — the default fires
+    const event = model()['event-definitions'].CourseCertified;
+    eq(event.properties.map((p) => p.name), ['courseId'],
+      'the event now records what the command was given');
+    const emission = model()['command-definitions'].CertifyCourse.publishes[0];
+    eq(emission.parameters, { courseId: { parameterName: 'courseId' } },
+      'wired through unchanged, not merely declared');
+    eq(sandbox.state.openEvent, 'CourseCertified', 'and its fields are on screen');
+  });
+
+  check('revealing the changes step ends the wizard with a proposal, not a write', () => {
+    const handlersBefore = model()['projection-definitions'].CourseStatus.handlers.length;
+    sandbox.advanceWizard(model(), slice());   // changes revealed — wizard over
+    eq(sandbox.state.wizard, null, 'everything is on screen, so the page is just the page');
+    eq(sandbox.state.adder, 'chg:CourseCertified', 'the change adder is open');
+    eq(sandbox.state.changeDraft.target, JSON.stringify(['Course', 'status']),
+      'proposing the read entity\'s status');
+    eq(sandbox.state.changeDraft.value, JSON.stringify({ enumMember: 'Existent' }),
+      'set to the first member that is not where it starts');
+    eq(model()['projection-definitions'].CourseStatus.handlers.length, handlersBefore,
+      'and nothing was written — a proposal waits to be submitted');
+    sandbox.state.adder = null;
+    sandbox.state.changeDraft = null;
+  });
+
+  check('Enter on an empty input row is the wizard\'s Continue', () => {
+    sandbox.createCommand(model(), 'retire course');
+    sandbox.state.adder = 'in';
+    const step = sandbox.stepTrigger(model(), sandbox.sliceOf(model(), 'RetireCourse'));
+    const row = findAll(step, (n) => /\badder\b/.test(n.className || '') && n.onkeydown)[0];
+    row.onkeydown({ key: 'Enter', preventDefault() {}, target: { tagName: 'INPUT' } });
+    eq(sandbox.state.wizard, { slice: 'RetireCourse', upto: 1 },
+      '"done with these" reveals the next step instead of jumping into a hidden one');
+    sandbox.state.wizard = null;
+    sandbox.closeForms();
+  });
+
+  check('an opened existing command shows every step at once', () => {
+    // The gate is the wizard's slice matching; any other command — or
+    // this one, once the wizard ended — renders whole.
+    eq(sandbox.state.wizard, null, 'no wizard is running');
+  });
+
+  store.delete('dcb-playground:model');
+}
+
+// ---------------------------------------------------------------
+// Inline creation continues the gesture it interrupted: the thing just
+// made is the thing selected, and the command never leaves the screen.
+// ---------------------------------------------------------------
+{
+  const { id, model } = build(0);
+  store.set('dcb-playground:model', id);
+
+  const drive = (form, text, buttonLabel) => {
+    const input = findAll(form, (n) => n.tag === 'input')[0];
+    input.oninput({ target: { value: text } });
+    const button = findAll(form, (n) => n.tag === 'button' && textOf(n) === buttonLabel)[0];
+    if (!button) throw new Error(`no "${buttonLabel}" button in the form`);
+    button.onclick();
+  };
+
+  check('an entity created from the reads step is the next read, already picked', () => {
+    sandbox.state.slice = 'DefineCourse';
+    sandbox.state.view = 'slice';
+    sandbox.state.newEntityAt = 'reads';
+    const step = sandbox.stepReads(model(), sandbox.sliceOf(model(), 'DefineCourse'));
+    drive(step, 'room', 'Add');
+    eq(!!model()['entity-definitions'].Room, true, 'the entity exists');
+    eq(sandbox.state.adder, 'read', 'the read adder came back');
+    eq(sandbox.state.readDraft && sandbox.state.readDraft.entity, 'Room',
+      'holding the thing that was just made');
+    sandbox.closeForms();
+  });
+
+  check('a property created from inside a rule becomes the rule\'s subject', () => {
+    sandbox.state.slice = 'DefineCourse';
+    sandbox.state.addingProp = { at: 'rule' };
+    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' };
+    const editor = sandbox.ruleEditor(model(), sandbox.sliceOf(model(), 'DefineCourse'), null);
+    const form = findAll(editor, (n) => /inline-form/.test(n.className || ''))[0];
+    if (!form) throw new Error('the property form is not under the rule row');
+    drive(form, 'starting week', 'Add');
+    eq(!!model()['projection-definitions'].CourseStartingWeek, true, 'the property exists');
+    eq(sandbox.state.ruleDraft.left,
+      JSON.stringify({ alias: 'course', property: 'startingWeek' }),
+      'and the rule is already about it, through the alias the command reads');
+    eq(sandbox.state.addingProp, null, 'the form is gone');
+    sandbox.closeForms();
+  });
+
+  check('a new event is born recording what the command was given', () => {
+    sandbox.state.slice = 'SubscribeStudentToCourse';
+    sandbox.state.newEntityAt = 'event';
+    const step = sandbox.stepEmits(model(), sandbox.sliceOf(model(), 'SubscribeStudentToCourse'));
+    drive(step, 'course waitlisted', 'Add');
+    const event = model()['event-definitions'].CourseWaitlisted;
+    eq(event.properties.map((p) => p.name), ['courseId', 'studentId'],
+      'field for field from the payload');
+    const emission = model()['command-definitions'].SubscribeStudentToCourse.publishes
+      .find((e) => e.name === 'CourseWaitlisted');
+    eq(emission.parameters, {
+      courseId: { parameterName: 'courseId' },
+      studentId: { parameterName: 'studentId' },
+    }, 'each wired through unchanged');
+    sandbox.closeForms();
+  });
+
+  store.delete('dcb-playground:model');
+}
+
+// ---------------------------------------------------------------
+// The leave-the-row rule for picker rows: touched and complete
+// commits, untouched defaults are a proposal that leaving declines,
+// and Escape discards whatever state the row was in.
+// ---------------------------------------------------------------
+{
+  const { id, model } = build(0);
+  store.set('dcb-playground:model', id);
+  const LITERAL = ' literal';
+
+  check('a touched, complete change row is recorded by leaving it', () => {
+    sandbox.state.slice = 'DefineCourse';
+    sandbox.state.adder = 'chg:CourseDefined';
+    sandbox.state.changeDraft = {
+      eventName: 'CourseDefined',
+      target: JSON.stringify(['Course', 'subscriptionCount']),
+      operation: 'set', value: LITERAL, valueText: '5',
+      touched: true,
+    };
+    sandbox.stepChanges(model(), sandbox.sliceOf(model(), 'DefineCourse'));
+    sandbox.closeForms();
+    const handler = model()['projection-definitions'].CourseSubscriptionCount.handlers
+      .find((x) => x.event === 'CourseDefined');
+    eq(handler, { event: 'CourseDefined', operation: 'set', value: 5 },
+      'the change landed without its button');
+  });
+
+  check('an untouched change row is a proposal, and leaving declines it', () => {
+    sandbox.state.slice = 'DefineCourse';
+    sandbox.state.adder = 'chg:CourseDefined';
+    sandbox.state.changeDraft = null;
+    // Painting the step plants the default draft — which is exactly
+    // the shape the wizard proposes, and must not commit on its own.
+    sandbox.stepChanges(model(), sandbox.sliceOf(model(), 'DefineCourse'));
+    const before = JSON.stringify(model()['projection-definitions']);
+    sandbox.closeForms();
+    eq(JSON.stringify(model()['projection-definitions']), before,
+      'walking away from untouched defaults writes nothing');
+  });
+
+  check('a touched, complete rule is added by leaving it', () => {
+    sandbox.state.slice = 'DefineCourse';
+    sandbox.state.adder = 'rule';
+    const count = model()['command-definitions'].DefineCourse.conditions.length;
+    sandbox.state.ruleDraft = {
+      predicate: 'equals', negate: true,
+      left: JSON.stringify({ alias: 'course', property: 'status' }),
+      right: JSON.stringify({ enumMember: 'Archived' }),
+      touched: true,
+    };
+    sandbox.ruleEditor(model(), sandbox.sliceOf(model(), 'DefineCourse'), null);
+    sandbox.closeForms();
+    const conditions = model()['command-definitions'].DefineCourse.conditions;
+    eq(conditions.length, count + 1, 'the rule landed without its button');
+    eq(conditions[conditions.length - 1], {
+      leftHandSide: { alias: 'course', property: 'status' },
+      predicate: 'equals',
+      rightHandSide: { enumMember: 'Archived' },
+      negate: true,
+    }, 'exactly as picked');
+  });
+
+  check('a touched, complete read is bound by leaving it', () => {
+    sandbox.state.slice = 'ChangeCourseCapacity';
+    sandbox.state.adder = 'read';
+    const before = model()['command-definitions'].ChangeCourseCapacity.boundary.length;
+    sandbox.state.readDraft = {
+      slice: 'ChangeCourseCapacity', entity: 'Course',
+      source: JSON.stringify({ parameterName: 'courseId' }),
+      touched: true,
+    };
+    sandbox.stepReads(model(), sandbox.sliceOf(model(), 'ChangeCourseCapacity'));
+    sandbox.closeForms();
+    const boundary = model()['command-definitions'].ChangeCourseCapacity.boundary;
+    eq(boundary.length, before + 1, 'the read landed without its button');
+    eq(boundary[boundary.length - 1].alias, 'course2',
+      'aliased apart from the course already bound');
+  });
+
+  check('Escape discards a touched row instead of committing it', () => {
+    sandbox.state.slice = 'DefineCourse';
+    sandbox.state.adder = 'chg:CourseDefined';
+    sandbox.state.changeDraft = {
+      eventName: 'CourseDefined',
+      target: JSON.stringify(['Course', 'subscribedStudentIds']),
+      operation: 'set', value: LITERAL, valueText: 'oops',
+      touched: true,
+    };
+    sandbox.stepChanges(model(), sandbox.sliceOf(model(), 'DefineCourse'));
+    const before = JSON.stringify(model()['projection-definitions']);
+    // What the global Escape handler does, in order.
+    sandbox.discardPendingEdits();
+    sandbox.closeForms();
+    eq(JSON.stringify(model()['projection-definitions']), before,
+      '"never mind" is never the gesture that writes');
+  });
+
+  store.delete('dcb-playground:model');
+}
+
+// ---------------------------------------------------------------
+// An open projection row saves itself, and stays open. The Checks
+// badge reads the stored definition, so storing on change is what
+// keeps it honest — and undo, not a Discard button, is the way back.
+// ---------------------------------------------------------------
+{
+  const { id, model } = build(0);
+  store.set('dcb-playground:model', id);
+
+  check('an edited definition is stored without a Save press, row still open', () => {
+    sandbox.toggleProjectionRow(model(), 'CourseCapacity');
+    sandbox.state.projDraft.body.initialValue = 7;
+    sandbox.autoSaveProjectionDraft();
+    eq(model()['projection-definitions'].CourseCapacity.initialValue, 7, 'stored');
+    eq(sandbox.state.projDraft && sandbox.state.projDraft.name, 'CourseCapacity',
+      'and the row did not fold away');
+  });
+
+  check('leaving the row flushes whatever the typing pause had not', () => {
+    sandbox.state.projDraft.body.initialValue = 9;
+    sandbox.closeForms();
+    eq(model()['projection-definitions'].CourseCapacity.initialValue, 9,
+      'the last edit went with the gesture that left');
+    eq(sandbox.state.projDraft, null, 'closing is the separate gesture it always was');
+  });
+
+  check('a body the model refuses is not retried on every repaint', () => {
+    sandbox.toggleProjectionRow(model(), 'CourseStatus');
+    // An enum-valued projection whose initial value names no member.
+    sandbox.state.projDraft.body.initialValue = { enumMember: 'NoSuchMember' };
+    const before = JSON.stringify(model()['projection-definitions'].CourseStatus);
+    sandbox.autoSaveProjectionDraft();
+    eq(JSON.stringify(model()['projection-definitions'].CourseStatus), before,
+      'the refusal left the stored definition alone');
+    sandbox.autoSaveProjectionDraft();   // the repaint's retry — memoed away
+    // Repairing the draft earns a fresh attempt.
+    sandbox.state.projDraft.body.initialValue = { enumMember: 'Existent' };
+    sandbox.autoSaveProjectionDraft();
+    eq(model()['projection-definitions'].CourseStatus.initialValue,
+      { enumMember: 'Existent' }, 'a changed body is tried again');
+    sandbox.state.projDraft = null;
+  });
+
+  check('the foot offers no Save or Discard — saving is not a gesture any more', () => {
+    sandbox.state.projDraft = null;
+    sandbox.toggleProjectionRow(model(), 'CourseCapacity');
+    sandbox.state.view = 'entity';
+    sandbox.state.entity = 'Course';
+    const main = sandbox.document.createElement('div');
+    sandbox.renderEntity(model(), main);
+    eq(findAll(main, (n) => n.tag === 'button' && textOf(n) === 'Save').length, 0, 'no Save');
+    eq(findAll(main, (n) => n.tag === 'button' && textOf(n) === 'Discard changes').length, 0,
+      'no Discard');
+    eq(textOf(main).includes('Saves as you edit'), true, 'the foot says how it works instead');
+    sandbox.state.projDraft = null;
+    sandbox.state.view = 'slice';
+  });
+
+  store.delete('dcb-playground:model');
 }
 
 console.log(`${passed} passed, ${failures.length} failed`);
