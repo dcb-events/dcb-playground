@@ -1543,6 +1543,15 @@ function validateHandlers(model, label, target, handlers) {
       throw new DomainError(`${label} handles "${handler.event}", which this model does not define.`);
     }
     const where = `The handler for "${handler.event}" on ${label}`;
+    // `undefined` is not a value an operand can have — JSON cannot even
+    // carry it — but `operandSource` reads it as a static literal, so
+    // without this a handler that says what it does without saying
+    // what *from* slips through and renders as "undefined" everywhere
+    // the effect is spoken. `null` stays legal: "no value yet" is a
+    // value.
+    if (handler.value === undefined) {
+      throw new DomainError(`${where} says what it does but not what value it takes.`);
+    }
     const leaf = checkOperand(handler.value, where);
     if (operandSource(leaf) === 'event-property') {
       const known = (event.properties || []).some((p) => p.name === leaf.eventProperty);

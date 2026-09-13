@@ -344,7 +344,11 @@ function foldEntityProperty(model, events, entityName, propertyName, instanceId,
 // them select the events; a scripted one states its tags itself, with
 // those same arguments interpolated. Declare no parameters and there is
 // no tag, which is what a global numbering is.
-function foldProjection(model, events, projectionName, argumentValues) {
+// The tags a projection's query carries for one concrete set of
+// argument values. Extracted from `foldProjection` so the interface
+// can *say* what a fold will read — a watched projection's query, with
+// the actual values in it — without running the fold to find out.
+function projectionQueryTags(model, projectionName, argumentValues) {
   const projection = model['projection-definitions'][projectionName];
   if (!projection) fail(`This model has no projection "${projectionName}".`);
 
@@ -355,7 +359,7 @@ function foldProjection(model, events, projectionName, argumentValues) {
   // identifier type's own `tagSchema` and may differ. So the value half
   // is interpolated first, then rendered through `renderTag`, the same
   // path a declared parameter's tag takes below.
-  const tags = script
+  return script
     ? (script.tagFilter || []).map((template) => {
       const match = TAG_FILTER_RE.exec(String(template || ''));
       if (!match) return String(template);
@@ -390,6 +394,14 @@ function foldProjection(model, events, projectionName, argumentValues) {
         return renderTag(identifierTypeOf(model, leaf.identifierType), String(leafValue));
       });
     });
+}
+
+function foldProjection(model, events, projectionName, argumentValues) {
+  const projection = model['projection-definitions'][projectionName];
+  if (!projection) fail(`This model has no projection "${projectionName}".`);
+
+  const values = argumentValues || {};
+  const tags = projectionQueryTags(model, projectionName, values);
 
   const compiled = evCompileTarget(model, projection, `projection "${projectionName}"`);
   return compiled.fold(

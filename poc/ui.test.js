@@ -1441,6 +1441,154 @@ function eq(actual, expected, what) {
   store.delete('dcb-playground:model');
 }
 
+// ---------------------------------------------------------------
+// Advanced mode states every DCB query where the thing that runs it
+// lives: on each read card, attributed in the union, and — with the
+// watched values in it — on a sandbox watch.
+// ---------------------------------------------------------------
+{
+  const { id, model } = build(0);
+  store.set('dcb-playground:model', id);
+  store.set('dcb-playground:mode', 'advanced');
+
+  check('each read card carries a query popover, not a query line', () => {
+    sandbox.state.slice = 'SubscribeStudentToCourse';
+    const step = sandbox.stepReads(model(), sandbox.sliceOf(model(), 'SubscribeStudentToCourse'));
+    const panels = findAll(step, (n) => /\bqpanel\b/.test(n.className || '')).map(textOf);
+    eq(panels.length, 2, 'one per read');
+    eq(panels[0].includes('CourseId:courseId') && panels[0].includes('CourseDefined'),
+      true, 'the course read: its tag and the events its read properties fold');
+    eq(panels[1].includes('StudentId:studentId') && panels[1].includes('StudentRegistered'),
+      true, 'the student read likewise');
+  });
+
+  check('clicking the glyph pins the popover; Escape state clears it', () => {
+    sandbox.state.slice = 'SubscribeStudentToCourse';
+    const step = sandbox.stepReads(model(), sandbox.sliceOf(model(), 'SubscribeStudentToCourse'));
+    const button = findAll(step, (n) => /\bqbtn\b/.test(n.className || ''))[0];
+    button.onclick({ stopPropagation() {} });
+    eq(sandbox.state.queryPop, 'read:course', 'pinned under its own key');
+    const again = sandbox.stepReads(model(), sandbox.sliceOf(model(), 'SubscribeStudentToCourse'));
+    eq(findAll(again, (n) => /\bqpop on\b/.test(n.className || '')).length, 1,
+      'and the pin survives the repaint');
+    sandbox.state.queryPop = null;
+  });
+
+  check('the consistency step offers the combined query behind one glyph', () => {
+    const step = sandbox.stepConsistency(model(), sandbox.sliceOf(model(), 'SubscribeStudentToCourse'));
+    const panel = findAll(step, (n) => /\bqpanel\b/.test(n.className || ''))[0];
+    const text = textOf(panel);
+    eq(text.includes('course · '), true, 'each line names the read it came from');
+    eq(text.includes('student · '), true, 'both of them');
+    eq(text.includes('or '), true, 'ORed between items');
+    eq(text.includes('trip'), false, 'no trips — this boundary is one query');
+    eq(textOf(step).includes('2 items, one query'), true, 'the card itself only summarises');
+  });
+
+  check('a watched projection shows the query it actually runs', () => {
+    const card = sandbox.projectionWatchCard(model(),
+      { kind: 'projection', projection: 'CourseCapacity', arguments: { courseId: 'c1' } });
+    const text = textOf(card);
+    eq(text.includes('CourseId:c1'), true, 'the concrete tag, not a placeholder');
+    eq(text.includes('CourseDefined'), true, 'and the events the fold handles');
+  });
+
+  check('in Simple mode none of these lines appear', () => {
+    store.set('dcb-playground:mode', 'simple');
+    sandbox.state.slice = 'SubscribeStudentToCourse';
+    const step = sandbox.stepReads(model(), sandbox.sliceOf(model(), 'SubscribeStudentToCourse'));
+    eq(findAll(step, (n) => /\bqpop\b/.test(n.className || '')).length, 0,
+      'the reads step stays plain');
+    const card = sandbox.projectionWatchCard(model(),
+      { kind: 'projection', projection: 'CourseCapacity', arguments: { courseId: 'c1' } });
+    eq(textOf(card).includes('CourseId:c1'), false, 'and so does the watch');
+    store.set('dcb-playground:mode', 'advanced');
+  });
+
+  store.set('dcb-playground:mode', 'simple');
+  store.delete('dcb-playground:model');
+}
+
+// ---------------------------------------------------------------
+// A handler mid-edit — event picked, value not yet — is a row still
+// being filled in, not a handler. Autosave stores every intermediate
+// state, so the intermediate states have to be well-formed: the one
+// between the two picks used to be stored valueless and the command
+// page read its effect as "undefined".
+// ---------------------------------------------------------------
+{
+  const { id, model } = build(0);
+  store.set('dcb-playground:model', id);
+
+  check('a half-picked handler is not stored, and the finished one is', () => {
+    // Created the way the user does: as a property of Course, so the
+    // command page has a reason to speak about it below.
+    sandbox.addEntityProperty(model(), 'Course',
+      { name: 'starting week', valueType: 'integer', isList: false });
+    sandbox.toggleProjectionRow(model(), 'CourseStartingWeek');
+    const draft = sandbox.state.projDraft.body;
+    // The editor's order of events: the event is picked first, the
+    // value after — and the autosave between the two picks.
+    draft.handlers.push({ event: 'CourseDefined', operation: 'set', value: '', valueText: '' });
+    sandbox.autoSaveProjectionDraft();
+    eq(model()['projection-definitions'].CourseStartingWeek.handlers, [],
+      'nothing stored while the row is half-way');
+    eq(draft.handlers.length, 1, 'but the row is still on screen being edited');
+    draft.handlers[0].value = JSON.stringify({ eventProperty: 'capacity' });
+    sandbox.autoSaveProjectionDraft();
+    eq(model()['projection-definitions'].CourseStartingWeek.handlers,
+      [{ event: 'CourseDefined', operation: 'set', value: { eventProperty: 'capacity' } }],
+      'and the whole handler lands the moment it is whole');
+    sandbox.state.projDraft = null;
+  });
+
+  check('the command page speaks the effect, never "undefined"', () => {
+    sandbox.state.slice = 'DefineCourse';
+    const step = sandbox.stepChanges(model(), sandbox.sliceOf(model(), 'DefineCourse'));
+    const text = textOf(step);
+    eq(text.includes('undefined'), false, 'no effect reads as undefined');
+    eq(text.includes('Starting week') || text.includes('starting week'), true,
+      'the fresh property is among what Course defined changes');
+  });
+
+  check('the model itself refuses a valueless handler', () => {
+    let refused = '';
+    try {
+      updateDefinition('projection-definition', id, 'CourseStartingWeek', {
+        parameters: [{ name: 'courseId', propertyType: 'CourseId' }],
+        valueType: 'integer', isList: false, initialValue: 0,
+        handlers: [{ event: 'CourseDefined', operation: 'set' }],
+      });
+    } catch (error) { refused = error.message; }
+    eq(/says what it does but not what value it takes/.test(refused), true,
+      'undefined is not a literal, whatever operandSource thinks');
+  });
+
+  store.delete('dcb-playground:model');
+}
+
+// A chained boundary cannot be one query — a later trip's tags are
+// answers from an earlier one — so the combined view is one query per
+// trip. Its own block, because `build` starts a fresh store.
+{
+  const { id, model } = build(3);
+  store.set('dcb-playground:model', id);
+  store.set('dcb-playground:mode', 'advanced');
+
+  check('a chained boundary shows one combined query per trip', () => {
+    sandbox.state.slice = 'RescheduleCourse';
+    const step = sandbox.stepConsistency(model(), sandbox.sliceOf(model(), 'RescheduleCourse'));
+    const panel = findAll(step, (n) => /\bqpanel\b/.test(n.className || ''))[0];
+    const text = textOf(panel);
+    eq(text.includes('trip 1') && text.includes('trip 2') && text.includes('trip 3'), true,
+      'three trips, because each round\'s tags are answers from the one before');
+    eq(textOf(step).includes('in 3 trips'), true, 'and the summary says so');
+  });
+
+  store.set('dcb-playground:mode', 'simple');
+  store.delete('dcb-playground:model');
+}
+
 console.log(`${passed} passed, ${failures.length} failed`);
 if (failures.length) {
   console.log('\n' + failures.map((f) => '  ✗ ' + f).join('\n'));

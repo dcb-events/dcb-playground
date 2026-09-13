@@ -241,6 +241,24 @@
   .dcb .k { color: var(--muted); }
   .dcb .t { color: var(--entity); }
   .dcb .y { color: var(--event); }
+  .dcb .al { color: var(--command); }
+  /* The query glyph and its popover: a mark where a line used to be.
+     Hover and focus peek; `.on` is the pinned state. */
+  .qpop { position: relative; display: inline-flex; vertical-align: middle; }
+  .qbtn { background: none; border: none; padding: 0 3px; cursor: pointer;
+          color: var(--muted); display: inline-flex; align-items: center; }
+  .qbtn:hover, .qbtn:focus-visible, .qpop.on .qbtn { color: var(--command); }
+  .qbtn .qico { display: inline-flex; }
+  .qbtn .qico svg { width: 13px; height: 13px; }
+  .qpop .qpanel { display: none; position: absolute; top: calc(100% + 5px); left: -10px;
+                  z-index: 60; background: var(--surface);
+                  border: 1px solid var(--border-strong); border-radius: 8px;
+                  padding: 8px 12px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+                  min-width: 320px; max-width: 560px; }
+  .qpop:hover .qpanel, .qpop:focus-within .qpanel, .qpop.on .qpanel { display: block; }
+  .qpanel .qtitle { margin-bottom: 2px; text-transform: uppercase; font-size: 9.5px;
+                    letter-spacing: 0.06em; }
+  .qpanel .trip + .trip { margin-top: 6px; }
 
   /* An entity chip is a way in: click it anywhere and the thing itself
      slides in beside what you were reading, rather than replacing it. */
@@ -898,6 +916,7 @@ const state = {
   changeDraft: null,        // in-progress "what this event changes" row
   readDraft: null,          // in-progress "read something" row
   fieldDraft: null,         // the one half-typed field row — see commitPendingField
+  queryPop: null,           // key of the pinned DCB-query popover, if any
   wizard: null,             // { slice, upto } — a brand-new command revealing its steps.
                             // Session-only on purpose: how far someone got is authoring
                             // state, not a fact about the model, so it is never stored.
@@ -2772,7 +2791,7 @@ const closeForms = () => {
   // is not a form, and closing forms must not un-reveal the page.
   commitPendingField();
   for (const key of [...FORM_KEYS, ...DRAFT_KEYS]) state[key] = null;
-  state.sel = null; state.adder = null; state.lit = null;
+  state.sel = null; state.adder = null; state.lit = null; state.queryPop = null;
 };
 
 // ---------- rail ----------
@@ -3595,11 +3614,56 @@ function stepTrigger(model, slice) {
       }))));
 }
 
+// A query is one hover away rather than one more line on the page:
+// the glyph marks everything that goes to the log, and the popover
+// states what it asks. Hover or focus peeks, a click pins it across
+// repaints, Escape or a second click lets go. The panel is in the
+// document either way — CSS hides it — so it costs a mark, not a row.
+function queryPopover(key, title, ...lines) {
+  const on = state.queryPop === key;
+  return h('span', { class: 'qpop' + (on ? ' on' : '') },
+    h('button', {
+      class: 'qbtn', title: 'The DCB query behind this',
+      'aria-expanded': on ? 'true' : 'false',
+      onclick: (e) => {
+        e.stopPropagation();
+        state.queryPop = on ? null : key;
+        render();
+      },
+    }, h('span', { class: 'qico', html: SEARCH_ICON_SVG })),
+    h('span', { class: 'qpanel dcb', onclick: (e) => e.stopPropagation() },
+      title ? h('div', { class: 'k qtitle' }, title) : null,
+      ...lines));
+}
+
+// One DCB query, spelled the same everywhere one appears: the tags
+// ANDed, then the event types — "any type" when the query is tag-only,
+// and a plain word about reading the whole log when it is type-only.
+// Every place that shows a query goes through here, so a reader who
+// has learned the spelling once has learned all of them.
+function dcbQueryWords(item) {
+  const tags = item.tags || [];
+  const types = item.types || [];
+  return h('span', {},
+    tags.length
+      ? h('span', {}, h('span', { class: 'k' }, 'tag '),
+          ...tags.flatMap((tag, j) => [
+            j ? h('span', { class: 'k' }, ' and ') : null,
+            h('span', { class: 't' }, tag),
+          ]),
+          h('span', { class: 'k' }, ' and '))
+      : null,
+    h('span', { class: 'y' }, types.join(', ') || 'any type'),
+    tags.length ? null : h('span', { class: 'k' }, '  (no tag — the whole log)'),
+    item.fannedOut ? h('span', { class: 'k' }, '  — one per element') : null);
+}
+
 // One binding, as a card. `index` is its position in the authored
 // boundary, which is what removal needs — the rounds regroup the cards
 // but never renumber the list underneath them.
 function readCard(model, slice, binding, index, waitsFor) {
   const r = readParts(model, slice.body, binding);
+  const queryItem = (slice.dcb.items || []).find((item) => item.alias === binding.alias);
   const sentence = r.projection
     ? h('span', { class: 'sentence' },
         h('span', { class: 'chip projection', title: 'Open ' + readable(r.projection),
@@ -3637,6 +3701,14 @@ function readCard(model, slice, binding, index, waitsFor) {
       'data-src': 'alias:' + binding.alias },
     qrow('div', { cls: 'row', key: 'read:' + binding.alias },
       sentence,
+      // The query this read contributes, one hover away — stated on
+      // the read itself in Advanced, so "what does binding this cost?"
+      // is answered where the binding is, not only in the union at the
+      // foot of the page.
+      advanced() && queryItem
+        ? queryPopover('read:' + binding.alias, 'what this read queries',
+            h('div', {}, dcbQueryWords(queryItem)))
+        : null,
       h('span', { class: 'grow' }),
       reveal(
         h('button', {
@@ -6044,11 +6116,20 @@ function cleanProjectionBody(draft) {
     valueType: draft.valueType,
     isList: !!draft.isList,
     initialValue: draft.initialValue === undefined ? null : draft.initialValue,
-    handlers: handlers.map((handler) => ({
-      event: handler.event,
-      operation: handler.operation,
-      value: draftOperand(handler, 'value'),
-    })),
+    // A handler that has an event but no value yet is a row still
+    // being filled in, not a handler — the same reading an unnamed
+    // field row gets. It stays in the draft, on screen, and reaches
+    // the stored definition when its value does. This matters since
+    // definitions save themselves: every intermediate state passes
+    // through here, including the one between picking the event and
+    // picking the value.
+    handlers: handlers
+      .filter((handler) => draftOperand(handler, 'value') !== undefined)
+      .map((handler) => ({
+        event: handler.event,
+        operation: handler.operation,
+        value: draftOperand(handler, 'value'),
+      })),
   };
 }
 
@@ -6427,16 +6508,19 @@ function projectionDcbPreview(model, draft, entityName) {
           return identifierType ? renderTag(identifierType, placeholder)
             : `${leaf.identifierType}:${placeholder}`;
         }));
-  return h('div', { class: 'card dcb', style: 'margin-top:8px' },
-    h('div', {}, h('span', { class: 'k' }, 'query  '),
-      h('span', { class: 't' }, tags.join(' and ')),
-      tags.length ? h('span', { class: 'k' }, ' and ') : null,
-      h('span', { class: 'y' },
-        (draft.handlers || []).map((handler) => handler.event).filter(Boolean).join(', ') || '(nothing)')),
-    h('div', {}, h('span', { class: 'k' }, 'guard  '),
-      h('span', { class: 'k' }, tags.length
-        ? 'readers of the same partition are serialised against each other'
-        : 'no tag — every reader is serialised against every other')));
+  return h('div', { class: 'row dcb', style: 'margin-top:8px' },
+    h('span', { class: 'k' }, 'query'),
+    queryPopover('projdraft',
+      'what this projection queries',
+      h('div', {}, h('span', { class: 'k' }, 'query  '),
+        h('span', { class: 't' }, tags.join(' and ')),
+        tags.length ? h('span', { class: 'k' }, ' and ') : null,
+        h('span', { class: 'y' },
+          (draft.handlers || []).map((handler) => handler.event).filter(Boolean).join(', ') || '(nothing)')),
+      h('div', {}, h('span', { class: 'k' }, 'guard  '),
+        h('span', { class: 'k' }, tags.length
+          ? 'readers of the same partition are serialised against each other'
+          : 'no tag — every reader is serialised against every other'))));
 }
 
 function renderProjections(model, main) {
@@ -6924,22 +7008,43 @@ function stepConsistency(model, slice) {
   // tags are ANDed with each other and with its types; the items are
   // ORed. No tags at all is a type-only query, which is what a
   // projection with no parameters reads.
-  const lines = slice.dcb.items.map((item, i) => h('div', {},
+  // Each line names the read it came from, so the union is legible as
+  // "which binding contributed what" and not only as one long OR.
+  const itemLine = (item, i) => h('div', {},
     i === 0 ? '  ' : h('span', { class: 'k' }, 'or '),
-    item.tags.length
-      ? h('span', {}, h('span', { class: 'k' }, 'tag '),
-          ...item.tags.flatMap((tag, j) => [
-            j ? h('span', { class: 'k' }, ' and ') : null,
-            h('span', { class: 't' }, tag),
-          ]),
-          h('span', { class: 'k' }, ' and '))
+    item.alias
+      ? h('span', {}, h('span', { class: 'al' }, item.alias), h('span', { class: 'k' }, ' · '))
       : null,
-    h('span', { class: 'y' }, item.types.join(', ') || 'any type'),
-    item.tags.length ? null : h('span', { class: 'k' }, '  (no tag — the whole log)'),
-    item.fannedOut ? h('span', { class: 'k' }, '  — one per element') : null));
+    dcbQueryWords(item));
+
+  // The combined query — the one the append condition actually is. A
+  // chained boundary cannot be one query: a later trip's tags are
+  // answers from an earlier one, so what really reaches the log is one
+  // combined query per trip, and that is what is shown.
+  const items = slice.dcb.items;
+  const rounds = slice.rounds || [];
+  const byAlias = new Map(items.map((item) => [item.alias, item]));
+  const combined = rounds.length > 1
+    ? rounds.map((round, r) => h('div', { class: 'trip' },
+        h('div', { class: 'k' },
+          `trip ${r + 1}${r ? ' — its tags are answers from the trip above' : ''}`),
+        round
+          .map((entry) => byAlias.get(entry.binding.alias))
+          .filter(Boolean)
+          .map((item, i) => itemLine(item, i))))
+    : items.map((item, i) => itemLine(item, i));
+
+  const tripWords = rounds.length > 1 ? `, in ${rounds.length} trips` : ', one query';
   return step('consistency', 'Which nothing else may have changed',
     h('div', { class: 'card dcb' },
-      lines.length ? lines : h('div', { class: 'empty' }, 'Unguarded.'),
+      items.length
+        ? h('div', { class: 'row' },
+            h('span', { class: 'k' },
+              items.length + (items.length === 1 ? ' item' : ' items') + tripWords),
+            queryPopover('dcb:' + slice.name,
+              rounds.length > 1 ? 'the combined queries, one per trip' : 'the combined query',
+              ...combined))
+        : h('div', { class: 'empty' }, 'Unguarded.'),
       h('div', { style: 'margin-top:6px' },
         h('span', { class: 'k' }, 'appends '),
         h('span', { class: 't' }, slice.dcb.writes.join(', ') || 'no tags'))),
@@ -8406,13 +8511,26 @@ function projectionWatch(projection, args) {
 // position moves out from under it.
 function projectionWatchCard(model, watch) {
   const projection = model['projection-definitions'][watch.projection];
+  // The query this watch actually runs, with the watched values in it —
+  // not `<courseId>` but `course:c1`. The sandbox is the one place the
+  // arguments are concrete, so it is the one place the query can be
+  // shown the way the store would receive it.
+  const queryIcon = advanced() && projection ? (() => {
+    let tags;
+    try { tags = projectionQueryTags(model, watch.projection, watch.arguments || {}); }
+    catch (error) { return null; }
+    const types = uniq((projection.handlers || []).map((x) => x && x.event).filter(Boolean)).sort();
+    return queryPopover('watch:' + watchKey(watch), 'what this watch queries',
+      h('div', {}, dcbQueryWords({ tags, types })));
+  })() : null;
   const head = (...rest) => h('div', { class: 'card' },
     h('div', { class: 'sc-line' },
       pinButton(watch),
       h('span', { class: 't' }, readable(watch.projection)),
       Object.keys(watch.arguments || {}).length
         ? h('span', { class: 'k' }, '  for ' + payloadText(watch.arguments))
-        : h('span', { class: 'k' }, '  the whole log')),
+        : h('span', { class: 'k' }, '  the whole log'),
+      queryIcon),
     ...rest);
 
   if (!projection) return head(h('div', { class: 'sc-line' }, h('span', { class: 'k' }, '  gone from this model')));
@@ -8676,6 +8794,7 @@ window.addEventListener('keydown', (e) => {
   // Quick open handles its own Escape and stops it there, so reaching
   // this while it is up means it is already gone.
   if (state.palette) { closePalette(); return render(); }
+  if (state.queryPop) { state.queryPop = null; return render(); }
   if (state.pendingImport) { state.pendingImport = null; return render(); }
   if (state.problems) { state.problems = false; return render(); }
   if (state.settings) { state.settings = false; return render(); }
