@@ -13,13 +13,13 @@
 // runs at load: the app boots on `DOMContentLoaded`, and the stub never
 // fires one.
 //
-// Run with `node poc/ui.test.js`.
+// Run with `node app/ui.test.js`.
 // ============================================================
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const POC = __dirname;
+const APP = __dirname;
 
 const store = new Map();
 const noop = () => {};
@@ -87,7 +87,7 @@ sandbox.window.addEventListener = noop;
 vm.createContext(sandbox);
 
 const pageScript = (() => {
-  const html = fs.readFileSync(path.join(POC, 'index.html'), 'utf8');
+  const html = fs.readFileSync(path.join(APP, 'index.html'), 'utf8');
   const blocks = [...html.matchAll(/<script(?![^>]*\ssrc=)[^>]*>([\s\S]*?)<\/script>/g)]
     .map((m) => m[1]);
   // The page's own code is the long one; the others are the tiny
@@ -100,7 +100,7 @@ const pageScript = (() => {
 // would on `window` in a browser. The trailer hands out the few this
 // drives, the way `generate-examples.js` reaches `PREDEFINED_MODELS`.
 const source = ['model.js', 'evaluate.js', 'shared.js']
-  .map((file) => fs.readFileSync(path.join(POC, file), 'utf8'))
+  .map((file) => fs.readFileSync(path.join(APP, file), 'utf8'))
   .concat(pageScript)
   .concat('globalThis.state = state; globalThis.render = render; globalThis.session = session;'
     + ' globalThis.closeForms = closeForms;')
@@ -365,7 +365,7 @@ function eq(actual, expected, what) {
 // have caught it in the file rather than in someone's importer.
 // ---------------------------------------------------------------
 {
-  const schema = JSON.parse(fs.readFileSync(path.join(POC, '..', 'dcb-model.schema.json'), 'utf8'));
+  const schema = JSON.parse(fs.readFileSync(path.join(APP, '..', 'dcb-model.schema.json'), 'utf8'));
   const defs = schema.$defs;
 
   const allowed = (defName) => Object.keys(defs[defName].properties || {});
@@ -380,7 +380,7 @@ function eq(actual, expected, what) {
   };
 
   for (const slug of ['course-simple', 'course-sequence', 'course-tenant', 'course-schedules', 'pricing-simple']) {
-    const file = path.join(POC, 'examples', slug + '.json');
+    const file = path.join(APP, 'examples', slug + '.json');
     const envelope = JSON.parse(fs.readFileSync(file, 'utf8'));
 
     check(`${slug} conforms to the schema's closed objects`, () => {
@@ -474,7 +474,7 @@ function eq(actual, expected, what) {
       local.globalThis = local;
       vm.createContext(local);
       vm.runInContext(['model.js', 'evaluate.js']
-        .map((f) => fs.readFileSync(path.join(POC, f), 'utf8')).join('\n;\n'), local, { filename: 'p.js' });
+        .map((f) => fs.readFileSync(path.join(APP, f), 'utf8')).join('\n;\n'), local, { filename: 'p.js' });
 
       const envelope = JSON.parse(fs.readFileSync(file, 'utf8'));
       // Two statements, not one: a member expression evaluates its

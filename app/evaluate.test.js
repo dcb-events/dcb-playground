@@ -7,7 +7,7 @@
 // in the interface, and a rule that fails here is the rule they would
 // see fail.
 //
-// Run with `node poc/evaluate.test.js`. No dependencies and no runner —
+// Run with `node app/evaluate.test.js`. No dependencies and no runner —
 // the playground has neither, and a test suite that needed a build step
 // would be the first thing in this project to need one.
 //
@@ -20,7 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const POC = __dirname;
+const APP = __dirname;
 
 const store = new Map();
 const sandbox = {
@@ -35,9 +35,9 @@ sandbox.globalThis = sandbox;
 vm.createContext(sandbox);
 
 const source = ['model.js', 'evaluate.js']
-  .map((file) => fs.readFileSync(path.join(POC, file), 'utf8'))
+  .map((file) => fs.readFileSync(path.join(APP, file), 'utf8'))
   .join('\n;\n');
-vm.runInContext(source, sandbox, { filename: 'poc.js' });
+vm.runInContext(source, sandbox, { filename: 'app.js' });
 
 function build(index) {
   store.clear();

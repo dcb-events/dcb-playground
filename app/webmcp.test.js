@@ -14,13 +14,13 @@
 // `ui.test.js`, and nothing runs at load because no `DOMContentLoaded`
 // is ever fired.
 //
-// Run with `node poc/webmcp.test.js`.
+// Run with `node app/webmcp.test.js`.
 // ============================================================
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const POC = __dirname;
+const APP = __dirname;
 
 const store = new Map();
 const noop = () => {};
@@ -77,16 +77,16 @@ sandbox.window.addEventListener = noop;
 vm.createContext(sandbox);
 
 const pageScript = (() => {
-  const html = fs.readFileSync(path.join(POC, 'index.html'), 'utf8');
+  const html = fs.readFileSync(path.join(APP, 'index.html'), 'utf8');
   const blocks = [...html.matchAll(/<script(?![^>]*\ssrc=)[^>]*>([\s\S]*?)<\/script>/g)]
     .map((m) => m[1]);
   return blocks.sort((a, b) => b.length - a.length)[0];
 })();
 
 const source = ['model.js', 'evaluate.js', 'shared.js', 'webmcp-schemas.js']
-  .map((file) => fs.readFileSync(path.join(POC, file), 'utf8'))
+  .map((file) => fs.readFileSync(path.join(APP, file), 'utf8'))
   .concat(pageScript)
-  .concat(fs.readFileSync(path.join(POC, 'webmcp.js'), 'utf8'))
+  .concat(fs.readFileSync(path.join(APP, 'webmcp.js'), 'utf8'))
   .join('\n;\n');
 vm.runInContext(source, sandbox, { filename: 'page.js' });
 

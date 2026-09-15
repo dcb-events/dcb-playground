@@ -5,7 +5,7 @@
 // load an example the same way it loads any other shared model: a
 // relative fetch, no special case.
 //
-// Run with `node poc/generate-examples.js` after changing a `seed*`
+// Run with `node app/generate-examples.js` after changing a `seed*`
 // builder or adding a predefined model. Nothing here runs in the
 // browser; it is a one-time (well, one-time-per-change) build step.
 // ============================================================
@@ -13,7 +13,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const POC = __dirname;
+const APP = __dirname;
 
 const store = new Map();
 const sandbox = {
@@ -30,11 +30,11 @@ vm.createContext(sandbox);
 // not as a property of the context object — same as it would on
 // `window` in a browser. The trailer pulls it out so this driver can
 // see it too.
-const source = fs.readFileSync(path.join(POC, 'model.js'), 'utf8')
+const source = fs.readFileSync(path.join(APP, 'model.js'), 'utf8')
   + '\n;\nglobalThis.PREDEFINED_MODELS = PREDEFINED_MODELS;';
 vm.runInContext(source, sandbox, { filename: 'model.js' });
 
-const outDir = path.join(POC, 'examples');
+const outDir = path.join(APP, 'examples');
 fs.mkdirSync(outDir, { recursive: true });
 
 // What a builder cannot produce and this must not destroy.
@@ -79,7 +79,7 @@ sandbox.PREDEFINED_MODELS.forEach((entry, index) => {
     );
     const authored = KEPT.filter((key) => existing[key] !== undefined);
     if (diverged.length && authored.length) {
-      console.log('skipped', path.relative(POC, file),
+      console.log('skipped', path.relative(APP, file),
         `— hand-edited (${diverged.join(', ')}) and carrying authored scenarios.`,
         'Refresh it by deleting the file, or leave it as the variant it now is.');
       skipped++;
@@ -92,7 +92,7 @@ sandbox.PREDEFINED_MODELS.forEach((entry, index) => {
   }
 
   fs.writeFileSync(file, JSON.stringify(envelope, null, 2) + '\n');
-  console.log('wrote', path.relative(POC, file), carried ? `(kept ${carried} authored)` : '');
+  console.log('wrote', path.relative(APP, file), carried ? `(kept ${carried} authored)` : '');
 });
 
 if (skipped) console.log(`\n${skipped} file(s) left alone. See above.`);

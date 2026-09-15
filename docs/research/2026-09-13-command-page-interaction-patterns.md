@@ -1,8 +1,8 @@
 # Primary-source grounding for the "define a command" redesign
 
 Date: 2026-09-13
-Scope: three proposed changes to the command-definition page in `poc/index.html`
-(see `stepTrigger` / `propertyAdder` around `poc/index.html:3283`).
+Scope: three proposed changes to the command-definition page in `app/index.html`
+(see `stepTrigger` / `propertyAdder` around `app/index.html:3283`).
 
 1. **Progressive disclosure** — reveal the six steps (trigger, reads, rules, emits,
    changes, consistency) one at a time rather than all at once.
@@ -556,7 +556,7 @@ collected. The ones I could source:
 
 This is the single most expensive line item for proposal 1 in a client-rendered SPA. "Do
 not break the browser back button" and "in the state they last saw it" means a wizard
-needs real history entries and restorable step state. `poc/index.html` currently drives
+needs real history entries and restorable step state. `app/index.html` currently drives
 views from a `state` object and a `render()` call; a step sequence that does not push
 history will violate the guidance the moment a user reaches for Back.
 
@@ -679,8 +679,8 @@ Standard, `close the dialog` steps —
 
 Which is to say: **if inline creation is implemented with a native `<dialog>` opened via
 `showModal()`, "return the user to exactly where they were" is free and guaranteed by the
-browser.** The `poc` codebase currently builds inline creation with an `inlineForm()` and
-a `state.newFeature` flag (`poc/index.html:3253`), re-rendering in place — which achieves
+browser.** The `app` codebase currently builds inline creation with an `inlineForm()` and
+a `state.newFeature` flag (`app/index.html:3253`), re-rendering in place — which achieves
 "never navigate away" but gets no focus restoration from the platform and must implement
 it by hand.
 
