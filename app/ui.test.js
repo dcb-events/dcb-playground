@@ -1589,6 +1589,30 @@ function eq(actual, expected, what) {
   store.delete('dcb-playground:model');
 }
 
+// ---------------------------------------------------------------
+// Undo batching: however many appends one gesture makes — nested
+// `run` calls included — the gesture is one undo step.
+// ---------------------------------------------------------------
+{
+  const id = sandbox.createDcbModel('Undo Batch Probe');
+  store.set('dcb-playground:model', id);
+
+  check('one gesture with several appends is one undo step', () => {
+    const before = sandbox.loadEvents().length;
+    sandbox.run(() => {
+      sandbox.addDefinition('event-definition', id, 'AHappened', { properties: [] });
+      sandbox.run(() => sandbox.addDefinition('event-definition', id, 'BHappened', { properties: [] }));
+    });
+    eq(sandbox.loadEvents().length, before + 2, 'two appends');
+    sandbox.undo();
+    eq(sandbox.loadEvents().length, before, 'one undo drops the whole gesture');
+    const model = sandbox.projectState()[id];
+    eq(Object.keys(model['event-definitions']), [], 'both definitions gone');
+  });
+
+  store.delete('dcb-playground:model');
+}
+
 console.log(`${passed} passed, ${failures.length} failed`);
 if (failures.length) {
   console.log('\n' + failures.map((f) => '  ✗ ' + f).join('\n'));

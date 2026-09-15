@@ -183,6 +183,15 @@ function loadEvents() {
   return [];
 }
 
+// Told after every append, with where it began and what landed. This
+// is the one seam every write funnels through — command functions
+// behind buttons and agent tools alike — which is what lets the
+// interface take undo marks here rather than wrapping each of the
+// hundred call sites. Undo and redo restore the log by writing the
+// storage key directly, so they never renotify.
+const appendListeners = [];
+function onAppend(listener) { appendListeners.push(listener); }
+
 function appendEvents(newEvents) {
   const log = loadEvents();
   const startSeq = log.length;
@@ -193,6 +202,7 @@ function appendEvents(newEvents) {
     data: e.data,
   }));
   localStorage.setItem(EVENT_LOG_KEY, JSON.stringify([...log, ...stamped]));
+  for (const listener of appendListeners) listener(startSeq, stamped);
 }
 
 function generateId() {

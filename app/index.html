@@ -1672,24 +1672,50 @@ function changeLabel(appended) {
     + (appended.length > 1 ? ` (+${appended.length - 1} more)` : '');
 }
 
-// Every model change in the app goes through `run`, so the mark that
-// says where a change began is taken here rather than at each of the
-// hundred call sites.
-const runOnce = run;
-run = function (fn) {
-  const before = loadEvents().length;
-  const out = runOnce(fn);
-  const appended = loadEvents().slice(before);
-  if (!appended.length) return out;
+// Marks are taken at the append seam itself (`onAppend`, model.js):
+// every edit path funnels through `appendEvents` — command functions
+// behind buttons and agent tools alike — so nothing can change the
+// log without becoming undoable. `run` only *batches*: however many
+// appends one gesture makes, the gesture is one undo step, and a
+// nested `run` belongs to the gesture that opened it.
+let undoBatch = null;
+
+function takeUndoMark(at, appended) {
   const log = undoLog();
-  log.done.push({ at: before, label: changeLabel(appended) });
+  log.done.push({ at, label: changeLabel(appended) });
   // Redoing after a new change would mean re-appending entries that no
-  // longer sit at the end of the log, so the branch is dropped.
+  // longer sit at the end of the log, so the branch is dropped — on an
+  // agent's append exactly as on a button's.
   log.undone = [];
   if (log.done.length > 60) log.done.shift();
   saveUndoLog(log);
-  render();
-  return out;
+}
+
+onAppend((at, appended) => {
+  if (undoBatch) {
+    if (undoBatch.at === null) undoBatch.at = at;
+    undoBatch.events.push(...appended);
+    return;
+  }
+  // An append outside any gesture — an agent's tool call — is its own
+  // undo step; the tool repaints for itself afterwards.
+  takeUndoMark(at, appended);
+});
+
+const runOnce = run;
+run = function (fn) {
+  if (undoBatch) return runOnce(fn);
+  undoBatch = { at: null, events: [] };
+  try {
+    const out = runOnce(fn);
+    if (undoBatch.events.length) {
+      takeUndoMark(undoBatch.at, undoBatch.events);
+      render();
+    }
+    return out;
+  } finally {
+    undoBatch = null;
+  }
 };
 
 function undo() {

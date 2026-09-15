@@ -337,6 +337,22 @@ async function call(name, args) {
     eq(text.includes('must not be empty'), true, 'with the domain\'s words');
   });
 
+  await check('an agent edit is one undo step of its own', async () => {
+    await call('start_model', { name: 'Undo Probe' });
+    const before = sandbox.loadEvents().length;
+    await call('add_event_definition', {
+      name: 'ProbeHappened',
+      properties: [{ name: 'probeId', propertyType: 'string', isOptional: false, isList: false }],
+    });
+    eq(sandbox.loadEvents().length, before + 1, 'the edit appended');
+    sandbox.undo();
+    eq(sandbox.loadEvents().length, before, 'one undo removes exactly the agent\'s edit');
+    const modelId = store.get('dcb-playground:model');
+    eq('ProbeHappened' in sandbox.projectState()[modelId]['event-definitions'], false, 'gone again');
+    sandbox.redo();
+    eq('ProbeHappened' in sandbox.projectState()[modelId]['event-definitions'], true, 'redo puts it back');
+  });
+
   console.log(`${passed} passed, ${failures.length} failed`);
   if (failures.length) {
     console.log('\n' + failures.map((f) => '  ✗ ' + f).join('\n'));
