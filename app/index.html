@@ -2591,6 +2591,30 @@ function patch(kind, name, mutate) {
 }
 const patchSlice = (mutate) => patch('command-definition', state.slice, mutate);
 
+// One form for renaming any definition kind: PascalCases the input,
+// clears its own state flag, routes through `renameDefinition` (which
+// rewrites every reference in the same append) and repoints whatever
+// view state was keyed by the old name via `after`. `warn` runs first
+// for the kinds that owe one — an event read by scripted handlers.
+function renameDefinitionForm(model, kind, name, { stateKey, warn, after } = {}) {
+  return inlineForm({
+    question: 'Rename — every reference is rewritten with it', submitLabel: 'Rename',
+    value: readable(name), showsIdentifier: true,
+    onSubmit: (v) => {
+      const next = toPascal(v);
+      state[stateKey] = null;
+      if (next && next !== name) {
+        run(() => {
+          if (warn) warn(next);
+          renameDefinition(kind, model.id, name, next);
+          if (after) after(next);
+        });
+      } else render();
+    },
+    onCancel: () => { state[stateKey] = null; render(); },
+  });
+}
+
 // A name as a modeler reads it, with the stored identifier alongside
 // once they have asked to see that sort of thing.
 function named(name, cls) {
@@ -3506,23 +3530,10 @@ function paintPage() {
   const slice = sliceOf(model, state.slice);
   main.appendChild(h('header', {},
     state.renamingCommand === slice.name
-      ? inlineForm({
-          // Commands are leaves on the reference graph — nothing names
-          // one — so this rewrites nothing but itself.
-          question: 'Rename this command', submitLabel: 'Rename',
-          value: readable(slice.name), showsIdentifier: true,
-          onSubmit: (v) => {
-            const next = toPascal(v);
-            const from = state.renamingCommand;
-            state.renamingCommand = null;
-            if (next && next !== from) {
-              run(() => {
-                renameDefinition('command-definition', model.id, from, next);
-                state.slice = next;
-              });
-            } else render();
-          },
-          onCancel: () => { state.renamingCommand = null; render(); },
+      // A command is nearly a leaf on the reference graph — only its
+      // scenarios name one — so "every reference" is a short list here.
+      ? renameDefinitionForm(model, 'command-definition', slice.name, {
+          stateKey: 'renamingCommand', after: (next) => { state.slice = next; },
         })
       : qrow('div', { cls: 'row', key: 'cmd:' + slice.name },
           h('button', {
@@ -5076,20 +5087,8 @@ function renderEntity(model, main) {
   }
 
   if (state.renamingEntity === name) {
-    main.appendChild(h('header', {}, inlineForm({
-      question: 'Rename — every reference is rewritten with it', submitLabel: 'Rename',
-      value: readable(name), showsIdentifier: true,
-      onSubmit: (v) => {
-        const next = toPascal(v);
-        state.renamingEntity = null;
-        if (next && next !== name) {
-          run(() => {
-            renameDefinition('entity-definition', model.id, name, next);
-            state.entity = next;
-          });
-        } else render();
-      },
-      onCancel: () => { state.renamingEntity = null; render(); },
+    main.appendChild(h('header', {}, renameDefinitionForm(model, 'entity-definition', name, {
+      stateKey: 'renamingEntity', after: (next) => { state.entity = next; },
     })));
   } else {
     main.appendChild(h('header', {},
@@ -5322,21 +5321,10 @@ function projectionDetail(model, entry, { owner }) {
           onclick: () => { state.editMember = null; render(); },
         }, 'Done'))
     : (renamingProjection
-        ? inlineForm({
-            question: 'Rename the projection — every reference is rewritten with it',
-            submitLabel: 'Rename', value: readable(projection), showsIdentifier: true,
-            onSubmit: (v) => {
-              const next = toPascal(v);
-              state.renamingProjection = null;
-              if (next && next !== projection) {
-                run(() => {
-                  renameDefinition('projection-definition', model.id, projection, next);
-                  // The open row is keyed by the name that just changed.
-                  if (state.projDraft) state.projDraft.name = next;
-                });
-              } else render();
-            },
-            onCancel: () => { state.renamingProjection = null; render(); },
+        ? renameDefinitionForm(model, 'projection-definition', projection, {
+            stateKey: 'renamingProjection',
+            // The open row is keyed by the name that just changed.
+            after: (next) => { if (state.projDraft) state.projDraft.name = next; },
           })
         : null);
 
@@ -5659,16 +5647,8 @@ function renderCustomTypes(model, main) {
     const card = h('div', { class: 'ecard' });
 
     if (state.renamingType === name) {
-      card.appendChild(inlineForm({
-        question: 'Rename — every reference is rewritten with it', submitLabel: 'Rename',
-        value: readable(name), showsIdentifier: true,
-        onSubmit: (v) => {
-          const next = toPascal(v);
-          state.renamingType = null;
-          if (next && next !== name) run(() => renameDefinition('custom-type-definition', model.id, name, next));
-          else render();
-        },
-        onCancel: () => { state.renamingType = null; render(); },
+      card.appendChild(renameDefinitionForm(model, 'custom-type-definition', name, {
+        stateKey: 'renamingType',
       }));
     } else {
       const tags = composite
@@ -6695,21 +6675,10 @@ function eventCard(model, name) {
   // every command's `publishes` and every scenario that names it, all
   // in the same append.
   if (state.renamingEvent === name) {
-    card.appendChild(inlineForm({
-      question: 'Rename — every reference is rewritten with it', submitLabel: 'Rename',
-      value: readable(name), showsIdentifier: true,
-      onSubmit: (v) => {
-        const next = toPascal(v);
-        state.renamingEvent = null;
-        if (next && next !== name) {
-          run(() => {
-            warnScripted(model, name);
-            renameDefinition('event-definition', model.id, name, next);
-            if (state.openEvent === name) state.openEvent = next;
-          });
-        } else render();
-      },
-      onCancel: () => { state.renamingEvent = null; render(); },
+    card.appendChild(renameDefinitionForm(model, 'event-definition', name, {
+      stateKey: 'renamingEvent',
+      warn: () => warnScripted(model, name),
+      after: (next) => { if (state.openEvent === name) state.openEvent = next; },
     }));
     return card;
   }

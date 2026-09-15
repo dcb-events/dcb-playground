@@ -924,7 +924,7 @@ function build(index) {
       'the row stays open while what it is about is being renamed');
     const main = sandbox.document.createElement('div');
     sandbox.renderEntity(model(), main);
-    eq(textOf(main).includes('Rename the projection'), true, 'and the form is in it');
+    eq(textOf(main).includes('Rename — every reference is rewritten with it'), true, 'and the form is in it');
     sandbox.state.renamingProjection = null;
 
     sandbox.startRenameInRow(() => sandbox.openMember('entity:Course', 'capacity'));
