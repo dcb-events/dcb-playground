@@ -516,18 +516,24 @@ function evResolveBinding(model, events, body, binding, scope) {
   // list parameter is read at the same index as that parameter, and
   // collapsing it would silently pair a line of the cart with the wrong
   // one's price.
-  let ids = fanned ? evAsList(held) : [held];
+  const ids = fanned ? evAsList(held) : [held];
 
+  // Each instance remembers the index it was fanned out from, because
+  // a zipped parameter is read at *that* index — `excluding` compacts
+  // the instance list, but it must not shift the pairing against the
+  // list the fan came from.
+  let entries = ids.map((id, sourceIndex) => ({ id, sourceIndex }));
   if (binding.excluding !== undefined) {
     const excluded = evAsList(evReadOperand(binding.excluding, scope));
-    ids = ids.filter((id) => !excluded.some((other) => evDeepEqual(id, other)));
+    entries = entries.filter(({ id }) => !excluded.some((other) => evDeepEqual(id, other)));
   }
 
   scope.bound[binding.alias] = {
     kind: 'entity',
     entity: binding.entity,
     fanned,
-    instances: ids.map((id) => evEntityInstance(model, events, binding.entity, evNormalize(id), values)),
+    sourceIndexes: entries.map((entry) => entry.sourceIndex),
+    instances: entries.map(({ id }) => evEntityInstance(model, events, binding.entity, evNormalize(id), values)),
   };
 }
 
@@ -596,6 +602,14 @@ function evFannedAliasesOf(condition, scope) {
 function evCheckCondition(model, body, condition, scope) {
   const fannedAliases = evFannedAliasesOf(condition, scope);
 
+  // The instance list may be compacted by `excluding`, so a zipped
+  // parameter is read at the instance's original fan-out index, never
+  // at its position in the compacted list.
+  const sourceIndexAt = (index) => {
+    const indexes = scope.bound[fannedAliases[0]].sourceIndexes;
+    return indexes && indexes[index] !== undefined ? indexes[index] : index;
+  };
+
   const readAt = (operand, index) => {
     if (index === null) return evReadOperand(operand, scope);
     const source = operandSource(operand);
@@ -603,7 +617,7 @@ function evCheckCondition(model, body, condition, scope) {
       return scope.bound[operand.alias].instances[index].read(operand.property);
     }
     if (source === 'parameter' && isZipped(model, body, condition, operand)) {
-      return evAsList(evReadOperand(operand, scope))[index];
+      return evAsList(evReadOperand(operand, scope))[sourceIndexAt(index)];
     }
     return evReadOperand(operand, scope);
   };

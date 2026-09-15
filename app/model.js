@@ -161,11 +161,26 @@ const OPERATIONS = ['set', 'increment', 'decrement', 'append', 'remove'];
 // ============================================================
 
 function loadEvents() {
+  const raw = localStorage.getItem(EVENT_LOG_KEY);
+  if (raw === null) return [];
+  let parsed = null;
   try {
-    return JSON.parse(localStorage.getItem(EVENT_LOG_KEY) || '[]');
-  } catch {
-    return [];
+    parsed = JSON.parse(raw);
+  } catch { /* handled below: unparseable is corrupt */ }
+  if (Array.isArray(parsed)) return parsed;
+  // The log is the whole state, so an unreadable one — bad JSON or the
+  // wrong shape — is never left where the next append would overwrite
+  // the only copy. It is moved aside, where a hand or a future build
+  // can still reach it, and the app starts over honestly empty.
+  localStorage.setItem(EVENT_LOG_KEY + ':corrupt', raw);
+  localStorage.removeItem(EVENT_LOG_KEY);
+  if (typeof toast === 'function') {
+    toast(
+      'The stored event log could not be read. The raw value was kept under '
+      + `"${EVENT_LOG_KEY}:corrupt" and the playground started over.`, true
+    );
   }
+  return [];
 }
 
 function appendEvents(newEvents) {

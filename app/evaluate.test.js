@@ -1609,6 +1609,65 @@ check('an import missing the definition arrays is refused, not silently accepted
 }
 
 // ---------------------------------------------------------------
+// `excluding` on a fanned binding compacts the instance list, but a
+// zipped parameter is still read at each instance's original fan-out
+// index — the pairing must not shift.
+// ---------------------------------------------------------------
+{
+  const model = build(4);
+
+  check('an excluded line does not shift the price pairing of the rest', () => {
+    const log = [];
+    drive(model, log, 'DefineProduct', { productId: 'p1', price: 100 });
+    drive(model, log, 'DefineProduct', { productId: 'p2', price: 250 });
+    drive(model, log, 'DefineProduct', { productId: 'p3', price: 400 });
+    const modified = deepClone(model);
+    const command = modified['command-definitions'].OrderProducts;
+    command.properties.push({ name: 'skipProductId', propertyType: 'ProductId', isOptional: false, isList: false });
+    command.boundary.find((b) => b.alias === 'product').excluding = { parameterName: 'skipProductId' };
+    // The middle line is excluded and priced wrong on purpose: with the
+    // pairing kept by source index, p1 and p3 are each checked against
+    // their own submitted price and the order goes through. Read at the
+    // compacted index instead, and p3 would be checked against p2's 999.
+    const result = evaluateCommand(modified, log, 'OrderProducts', {
+      orderId: 'o1',
+      skipProductId: 'p2',
+      items: [
+        { productId: 'p1', price: 100 },
+        { productId: 'p2', price: 999 },
+        { productId: 'p3', price: 400 },
+      ],
+    });
+    eq(result.outcome, 'published', 'outcome');
+  });
+}
+
+// ---------------------------------------------------------------
+// The event store: an unreadable log is moved aside, never sat on
+// where the next append would overwrite the only copy.
+// ---------------------------------------------------------------
+{
+  open_(0);
+  const logKey = [...store.keys()].find((k) => /:events:v\d+$/.test(k));
+
+  check('a corrupt log is moved aside rather than erased on the next append', () => {
+    store.set(logKey, '{not json');
+    eq(sandbox.projectState(), {}, 'projects empty');
+    eq(store.get(logKey + ':corrupt'), '{not json', 'raw value preserved');
+    eq(store.has(logKey), false, 'live key cleared');
+    const id = sandbox.createDcbModel('Fresh');
+    eq(Object.keys(sandbox.projectState()), [id], 'append starts a fresh log');
+    eq(store.get(logKey + ':corrupt'), '{not json', 'backup untouched');
+  });
+
+  check('a stored value that is not an array is treated the same', () => {
+    store.set(logKey, '{}');
+    eq(sandbox.projectState(), {}, 'projects empty');
+    eq(store.get(logKey + ':corrupt'), '{}', 'raw value preserved');
+  });
+}
+
+// ---------------------------------------------------------------
 // Validation: identifier operands are judged by structure, not by
 // their rendered text — a literal may contain '?' and still be a
 // value, while an operand missing its name is a gap however it prints.
