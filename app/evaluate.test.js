@@ -1645,6 +1645,63 @@ check('an import missing the definition arrays is refused, not silently accepted
 }
 
 // ---------------------------------------------------------------
+// Reference symmetry: whatever computeReferences sees, a rename must
+// move. Walked over every reference in every shipped model — a
+// reference site visible to one direction and not the other leaves a
+// dangling name here.
+// ---------------------------------------------------------------
+{
+  const KINDS = [
+    'entity-definition', 'event-definition', 'projection-definition', 'command-definition',
+    'custom-type-definition', 'scenario-definition', 'projection-scenario-definition',
+  ];
+  const collOf = (kind) => kind + 's';
+
+  const dangling = (m) => {
+    const out = [];
+    for (const kind of KINDS) {
+      for (const [n, b] of Object.entries(m[collOf(kind)])) {
+        const refs = sandbox.computeReferences(m, kind, n, b);
+        for (const targetKind of KINDS) {
+          for (const r of refs[targetKind]) {
+            if (!(r in m[collOf(targetKind)])) out.push(`${kind} ${n} -> ${targetKind} ${r}`);
+          }
+        }
+      }
+    }
+    return out;
+  };
+
+  for (let i = 0; i < 5; i++) {
+    check(`shipped model ${i}: every computed reference survives renaming its target`, () => {
+      const { id, model } = open_(i);
+      eq(dangling(model()), [], 'baseline has no dangling references');
+      // Every (kind, name) anything references — renamed one by one.
+      const targets = [];
+      const seen = new Set();
+      for (const kind of KINDS) {
+        for (const [n, b] of Object.entries(model()[collOf(kind)])) {
+          const refs = sandbox.computeReferences(model(), kind, n, b);
+          for (const targetKind of KINDS) {
+            for (const r of refs[targetKind]) {
+              const tag = targetKind + ':' + r;
+              if (!seen.has(tag)) { seen.add(tag); targets.push({ kind: targetKind, name: r }); }
+            }
+          }
+        }
+      }
+      for (const target of targets) {
+        // A cascade from an earlier rename (an entity moving its
+        // derived identifier) may have renamed this one already.
+        if (!(target.name in model()[collOf(target.kind)])) continue;
+        renameDefinition(target.kind, id, target.name, target.name + 'X');
+      }
+      eq(dangling(model()), [], 'no reference was left behind');
+    });
+  }
+}
+
+// ---------------------------------------------------------------
 // Validation: identifier operands are judged by structure, not by
 // their rendered text — a literal may contain '?' and still be a
 // value, while an operand missing its name is a gap however it prints.

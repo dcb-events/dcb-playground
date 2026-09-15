@@ -494,93 +494,131 @@ function pushTypeRef(model, refs, typeName) {
   if (cls.kind === 'value') refs['custom-type-definition'].push(typeName);
 }
 
-function computeReferences(model, kind, name, body) {
-  const refs = emptyRefs();
-  if (!body || typeof body !== 'object') return refs;
+// Every place a body names another definition, enumerated exactly
+// once for both directions: `computeReferences` reads through these
+// slots and `rewriteReferences` writes through them, so a reference
+// site added to one is a reference site added to the other — the
+// drift that used to be possible (compute sees it, rename leaves it
+// dangling, or the reverse) has nowhere left to live.
+//
+// `slot(targetKind, {flavor, get, set})` is called per site:
+//   - flavor 'type': a property-type name. Counted as a reference
+//     only when it classifies as a value type; rewritten on equality
+//     (the rename target being a custom type guarantees the class).
+//   - flavor 'name': a definition named outright.
+// A slot whose reference is derived rather than stored guards its own
+// `set` — see the entity identifier below.
+function forEachReferenceSlot(kind, name, body, slot) {
+  const at = (holder, key, targetKind, flavor) => {
+    if (!holder) return;
+    slot(targetKind, {
+      flavor,
+      get: () => holder[key],
+      set: (v) => { holder[key] = v; },
+    });
+  };
+  const typeSlots = (properties) => {
+    for (const p of properties || []) {
+      if (!p) continue;
+      at(p, 'propertyType', 'custom-type-definition', 'type');
+      typeSlots((p.script || {}).arguments);
+    }
+  };
+  // A tag filter carries a value type by bare name — the one place a
+  // type is referenced outside a property type. The placeholder inside
+  // is an argument name and stays untouched.
+  const tagFilterSlots = (script) => {
+    if (!script || !script.tagFilter) return;
+    script.tagFilter.forEach((template, i) => {
+      const match = TAG_FILTER_RE.exec(String(template || ''));
+      if (!match) return;
+      slot('custom-type-definition', {
+        flavor: 'type',
+        get: () => match[1],
+        set: (v) => { script.tagFilter[i] = `${v}:${match[2]}`; },
+      });
+    });
+  };
+  const givenSlots = (given) => {
+    for (const step of given || []) at(step, 'event', 'event-definition', 'name');
+  };
 
   switch (kind) {
     case 'custom-type-definition':
       // A scalar type's schema is opaque and references nothing. A
       // composite's fields are typed against the shared universe, so
       // they reference exactly like any other property list does.
-      for (const f of body.properties || []) pushTypeRef(model, refs, f.propertyType);
+      typeSlots(body.properties);
       break;
     case 'event-definition':
-      for (const p of body.properties || []) pushTypeRef(model, refs, p.propertyType);
+      typeSlots(body.properties);
       break;
     case 'entity-definition':
       // A property is a binding `{name, projection}`: everything the
-      // fold needs — type, initial value, handlers, script — lives on
-      // the projection it names, so the binding references exactly one
-      // thing.
-      for (const p of body.properties || []) {
-        if (p && p.projection) refs['projection-definition'].push(p.projection);
-      }
+      // fold needs lives on the projection it names, so the binding
+      // references exactly one thing.
+      for (const p of body.properties || []) at(p, 'projection', 'projection-definition', 'name');
       // An entity references its own derived identifier by name —
-      // whatever it currently resolves to, tracking or overridden. This
-      // is what lets renaming or removing that value type go through
-      // the ordinary generic machinery: the entity turns up as a
-      // referencer exactly like any property typed with it would.
-      // Mirrors `idTypeOf`, but read off `body`/`name` directly rather
-      // than through `model`, since a body being validated may not be
-      // committed there yet.
-      if (name) refs['custom-type-definition'].push(body.identifierType || (name + 'Id'));
+      // whatever it currently resolves to, tracking or overridden —
+      // which is what lets renaming or removing that value type go
+      // through the same generic machinery as any property type.
+      // Writing moves only an *explicit* `identifierType`: while it is
+      // absent (still tracking `<name>Id`), recomputing the default
+      // off the entity's own name is what `idTypeOf` already does.
+      slot('custom-type-definition', {
+        flavor: 'name',
+        get: () => body.identifierType || (name ? name + 'Id' : undefined),
+        set: (v) => { if (body.identifierType !== undefined) body.identifierType = v; },
+      });
       break;
     case 'projection-definition':
-      pushTypeRef(model, refs, body.valueType);
+      at(body, 'valueType', 'custom-type-definition', 'type');
       // A parameter is always a tag-bearing value type, so it
       // references it the same way a property type does.
-      for (const p of body.parameters || []) pushTypeRef(model, refs, p.propertyType);
-      for (const a of (scriptOf(body) || {}).arguments || []) pushTypeRef(model, refs, a.propertyType);
-      // A tag filter names a value type outright — the one place in
-      // this model a type is referenced by bare name rather than
-      // through a property type.
-      for (const t of (scriptOf(body) || {}).tagFilter || []) {
-        const match = TAG_FILTER_RE.exec(String(t || ''));
-        const cls = match && classifyType(model, match[1]);
-        if (cls && cls.kind === 'value') refs['custom-type-definition'].push(match[1]);
-      }
-      for (const handler of body.handlers || []) {
-        if (handler && handler.event) refs['event-definition'].push(handler.event);
-      }
+      typeSlots(body.parameters);
+      typeSlots((scriptOf(body) || {}).arguments);
+      tagFilterSlots(scriptOf(body));
+      for (const handler of body.handlers || []) at(handler, 'event', 'event-definition', 'name');
       break;
     case 'command-definition':
-      for (const p of body.properties || []) pushTypeRef(model, refs, p.propertyType);
+      typeSlots(body.properties);
+      // Only `entity` and `projection` are references. An alias is
+      // local to its command and was the modeler's to choose.
       for (const binding of body.boundary || []) {
-        if (!binding) continue;
-        if (binding.entity) refs['entity-definition'].push(binding.entity);
-        if (binding.projection) refs['projection-definition'].push(binding.projection);
+        at(binding, 'entity', 'entity-definition', 'name');
+        at(binding, 'projection', 'projection-definition', 'name');
       }
-      for (const emission of body.publishes || []) {
-        if (emission && emission.name) refs['event-definition'].push(emission.name);
-      }
+      for (const emission of body.publishes || []) at(emission, 'name', 'event-definition', 'name');
       break;
     case 'scenario-definition':
       // A scenario names the command it exercises, every event its
       // Given is written from, and every event its expected outcome
       // holds. All three have to move when one of them is renamed —
-      // and none of them may stop one from being deleted.
-      if (body.command) refs['command-definition'].push(body.command);
-      for (const step of body.given || []) {
-        if (step && step.event) refs['event-definition'].push(step.event);
-      }
-      for (const event of (body.then || {}).events || []) {
-        if (event && event.type) refs['event-definition'].push(event.type);
-      }
+      // and none of them may stop one from being deleted; a scenario
+      // exists to report what a change broke, not to prevent it.
+      at(body, 'command', 'command-definition', 'name');
+      givenSlots(body.given);
+      for (const event of (body.then || {}).events || []) at(event, 'type', 'event-definition', 'name');
       break;
     case 'projection-scenario-definition':
-      // A projection scenario names the projection it is about and
-      // every event its Given is written from. Neither may stop one
-      // from being deleted — a scenario exists to report what that
-      // broke, not to prevent it. Its Then is a bare value: nothing in
-      // the model is identified by one.
-      if (body.projection) refs['projection-definition'].push(body.projection);
-      for (const step of body.given || []) {
-        if (step && step.event) refs['event-definition'].push(step.event);
-      }
+      // Names the projection it is about and every event its Given is
+      // written from. Its Then is a bare value and its `arguments` are
+      // values too — nothing in the model is identified by either.
+      at(body, 'projection', 'projection-definition', 'name');
+      givenSlots(body.given);
       break;
   }
+}
 
+function computeReferences(model, kind, name, body) {
+  const refs = emptyRefs();
+  if (!body || typeof body !== 'object') return refs;
+  forEachReferenceSlot(kind, name, body, (targetKind, site) => {
+    const value = site.get();
+    if (!value) return;
+    if (site.flavor === 'type') pushTypeRef(model, refs, value);
+    else refs[targetKind].push(value);
+  });
   for (const k of DEF_KINDS) refs[k] = uniq(refs[k]);
   return refs;
 }
@@ -588,114 +626,10 @@ function computeReferences(model, kind, name, body) {
 // Rewrites every reference to `oldName` of `targetKind` into `newName`.
 function rewriteReferences(kind, body, targetKind, oldName, newName) {
   const next = deepClone(body);
-
-  const rewriteType = (typeName) =>
-    (targetKind === 'custom-type-definition' && typeName === oldName) ? newName : typeName;
-
-  const rewriteProperties = (properties) => {
-    for (const p of properties || []) {
-      p.propertyType = rewriteType(p.propertyType);
-      rewriteProperties((p.script || {}).arguments);
-    }
-  };
-
-  // A tag filter carries a value type by bare name, so renaming one has
-  // to move it. The placeholder inside is an argument name and is
-  // untouched by anything happening outside the script.
-  const rewriteTagFilter = (script) => {
-    if (!script || !script.tagFilter || targetKind !== 'custom-type-definition') return;
-    script.tagFilter = script.tagFilter.map((template) => {
-      const match = TAG_FILTER_RE.exec(String(template || ''));
-      return match && match[1] === oldName ? `${newName}:${match[2]}` : template;
-    });
-  };
-
-  switch (kind) {
-    case 'custom-type-definition':
-      // Composite fields only; a scalar type has no `properties` and
-      // its opaque schema names nothing this model can rewrite.
-      rewriteProperties(next.properties);
-      break;
-    case 'event-definition':
-      rewriteProperties(next.properties);
-      break;
-    case 'entity-definition':
-      // The entity's own derived identifier moves with it — but only
-      // when an explicit `identifierType` names the old value. While
-      // it is absent (still tracking `<name>Id`), nothing here needs
-      // rewriting: recomputing the default off the entity's own
-      // (possibly just-renamed) name is what `idTypeOf` already does.
-      if (targetKind === 'custom-type-definition' && next.identifierType === oldName) {
-        next.identifierType = newName;
-      }
-      // A property binding names its projection outright, so renaming
-      // the projection moves every binding pointing at it.
-      if (targetKind === 'projection-definition') {
-        for (const p of next.properties || []) {
-          if (p && p.projection === oldName) p.projection = newName;
-        }
-      }
-      break;
-    case 'projection-definition':
-      next.valueType = rewriteType(next.valueType);
-      rewriteProperties(next.parameters);
-      rewriteProperties((next.script || {}).arguments);
-      rewriteTagFilter(next.script);
-      if (targetKind === 'event-definition') {
-        for (const handler of next.handlers || []) {
-          if (handler && handler.event === oldName) handler.event = newName;
-        }
-      }
-      break;
-    case 'command-definition':
-      rewriteProperties(next.properties);
-      if (targetKind === 'entity-definition') {
-        for (const binding of next.boundary || []) {
-          if (binding && binding.entity === oldName) binding.entity = newName;
-        }
-      }
-      if (targetKind === 'event-definition') {
-        next.publishes = (next.publishes || []).map((e) =>
-          e && e.name === oldName ? { ...e, name: newName } : e
-        );
-      }
-      if (targetKind === 'projection-definition') {
-        // Only the `projection` reference moves. An alias is local to
-        // its command and was the modeler's to choose after binding.
-        for (const binding of next.boundary || []) {
-          if (binding && binding.projection === oldName) binding.projection = newName;
-        }
-      }
-      break;
-    case 'scenario-definition':
-      if (targetKind === 'command-definition' && next.command === oldName) {
-        next.command = newName;
-      }
-      if (targetKind === 'event-definition') {
-        for (const step of next.given || []) {
-          if (step && step.event === oldName) step.event = newName;
-        }
-        // The expected outcome moves with it. Leaving it behind would
-        // report the rename as drift, which is exactly the signal a
-        // rename must not produce.
-        for (const event of (next.then || {}).events || []) {
-          if (event && event.type === oldName) event.type = newName;
-        }
-      }
-      break;
-    case 'projection-scenario-definition':
-      if (targetKind === 'projection-definition' && next.projection === oldName) {
-        next.projection = newName;
-      }
-      if (targetKind === 'event-definition') {
-        for (const step of next.given || []) {
-          if (step && step.event === oldName) step.event = newName;
-        }
-      }
-      // Then is a bare value and `arguments` are values too — nothing
-      // to rewrite there for either target kind.
-      break;
-  }
+  forEachReferenceSlot(kind, undefined, next, (slotKind, site) => {
+    if (slotKind !== targetKind) return;
+    if (site.get() === oldName) site.set(newName);
+  });
   return next;
 }
 
