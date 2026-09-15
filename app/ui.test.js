@@ -393,7 +393,7 @@ function build(index) {
       // Two statements, not one: a member expression evaluates its
       // object before its key, so importing *inside* the brackets would
       // index a snapshot taken before the import ran.
-      const loadedId = local.importModelFromEnvelope(envelope);
+      const loadedId = local.importModelFromEnvelope(envelope).modelId;
       const loaded = local.projectState()[loadedId];
       const problems = [];
       for (const [key, body] of Object.entries(loaded['scenario-definitions'] || {})) {
@@ -1319,20 +1319,24 @@ function build(index) {
     eq(sandbox.state.projDraft, null, 'closing is the separate gesture it always was');
   });
 
-  check('a body the model refuses is not retried on every repaint', () => {
+  check('a body the model once refused stores now, advisory-flagged until repaired', () => {
     sandbox.toggleProjectionRow(model(), 'CourseStatus');
-    // An enum-valued projection whose initial value names no member.
+    // An enum-valued projection whose initial value names no member —
+    // stored as typed, reported rather than refused.
     sandbox.state.projDraft.body.initialValue = { enumMember: 'NoSuchMember' };
-    const before = JSON.stringify(model()['projection-definitions'].CourseStatus);
     sandbox.autoSaveProjectionDraft();
-    eq(JSON.stringify(model()['projection-definitions'].CourseStatus), before,
-      'the refusal left the stored definition alone');
-    sandbox.autoSaveProjectionDraft();   // the repaint's retry — memoed away
-    // Repairing the draft earns a fresh attempt.
+    eq(model()['projection-definitions'].CourseStatus.initialValue,
+      { enumMember: 'NoSuchMember' }, 'stored as typed');
+    eq(sandbox.modelAdvisories(model()).some(
+      (a) => a.name === 'CourseStatus' && /NoSuchMember/.test(a.message)
+    ), true, 'and reported as an advisory');
+    // Repairing the draft clears the advisory.
     sandbox.state.projDraft.body.initialValue = { enumMember: 'Existent' };
     sandbox.autoSaveProjectionDraft();
     eq(model()['projection-definitions'].CourseStatus.initialValue,
-      { enumMember: 'Existent' }, 'a changed body is tried again');
+      { enumMember: 'Existent' }, 'repaired');
+    eq(sandbox.modelAdvisories(model()).some((a) => a.name === 'CourseStatus'), false,
+      'nothing left to report');
     sandbox.state.projDraft = null;
   });
 
@@ -1464,17 +1468,16 @@ function build(index) {
       'the fresh property is among what Course defined changes');
   });
 
-  check('the model itself refuses a valueless handler', () => {
-    let refused = '';
-    try {
-      updateDefinition('projection-definition', id, 'CourseStartingWeek', {
-        parameters: [{ name: 'courseId', propertyType: 'CourseId' }],
-        valueType: 'integer', isList: false, initialValue: 0,
-        handlers: [{ event: 'CourseDefined', operation: 'set' }],
-      });
-    } catch (error) { refused = error.message; }
-    eq(/says what it does but not what value it takes/.test(refused), true,
-      'undefined is not a literal, whatever operandSource thinks');
+  check('a valueless handler stores, and the advisory says what is missing', () => {
+    updateDefinition('projection-definition', id, 'CourseStartingWeek', {
+      parameters: [{ name: 'courseId', propertyType: 'CourseId' }],
+      valueType: 'integer', isList: false, initialValue: 0,
+      handlers: [{ event: 'CourseDefined', operation: 'set' }],
+    });
+    eq(sandbox.modelAdvisories(model()).some(
+      (a) => a.name === 'CourseStartingWeek'
+        && /says what it does but not what value it takes/.test(a.message)
+    ), true, 'undefined is not a literal, whatever operandSource thinks');
   });
 
   store.delete('dcb-playground:model');
@@ -1499,6 +1502,70 @@ function build(index) {
   });
 
   store.set('dcb-playground:mode', 'simple');
+  store.delete('dcb-playground:model');
+}
+
+// ---------------------------------------------------------------
+// The lenient regime's other half: a model full of what validation
+// used to refuse — dangling references of every kind, unidiomatic
+// names — must still *render*, on every page, and still say what is
+// wrong through `problems`. This is the stress test that keeps the
+// interface honest about what the write path now lets in.
+// ---------------------------------------------------------------
+{
+  const { id, model } = build(0);
+  store.set('dcb-playground:model', id);
+
+  check('a model full of dangling references still renders every page', () => {
+    // Every class of representable defect, injected through the same
+    // command functions any editor or agent would use.
+    sandbox.removeDefinition('projection-definition', id, 'CourseCapacity');
+    sandbox.removeDefinition('event-definition', id, 'CourseDefined');
+    sandbox.removeDefinition('entity-definition', id, 'Student');
+    sandbox.addDefinition('event-definition', id, 'weird_thing', { properties: [] });
+    sandbox.updateDefinition('command-definition', id, 'DefineCourse', {
+      properties: [{ name: 'courseId', propertyType: 'NoSuchType', isOptional: false, isList: false }],
+      boundary: [{ alias: 'ghost', entity: 'NoSuchEntity', id: { parameterName: 'courseId' } }],
+      conditions: [{ leftHandSide: { alias: 'ghost', property: 'gone' }, predicate: 'equals',
+        rightHandSide: { enumMember: 'Never' } }],
+      publishes: [{ name: 'NoSuchEvent', parameters: {} }],
+    });
+
+    const current = model();
+    eq(sandbox.modelAdvisories(current).length > 0, true, 'the defects are all reported');
+
+    // Every view, the way `render` reaches them.
+    const paint = (fn) => {
+      const main = sandbox.document.createElement('div');
+      fn(current, main);
+      return textOf(main);
+    };
+    paint(sandbox.renderEvents);
+    paint(sandbox.renderProjections);
+    paint(sandbox.renderCustomTypes);
+    sandbox.state.entity = 'Course';
+    paint(sandbox.renderEntity);
+
+    // The slice view of the broken command, step by step — in simple
+    // mode and in advanced mode, which additionally derives and prints
+    // each binding's DCB query.
+    sandbox.state.slice = 'DefineCourse';
+    for (const mode of ['simple', 'advanced']) {
+      store.set('dcb-playground:mode', mode);
+      const slice = sandbox.sliceOf(current, 'DefineCourse');
+      textOf(sandbox.stepTrigger(current, slice));
+      textOf(sandbox.stepReads(current, slice));
+      textOf(sandbox.stepChanges(current, slice));
+      textOf(sandbox.stepConsistency(current, slice));
+    }
+    paint(sandbox.renderCoupling);
+    paint(sandbox.renderRuleMap);
+    store.set('dcb-playground:mode', 'simple');
+
+    // And the problems list still stands behind all of it.
+    eq(sandbox.problems(current).length > 0, true, 'problems lists the fallout');
+  });
+
   store.delete('dcb-playground:model');
 }
 

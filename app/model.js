@@ -6,6 +6,16 @@
 // tracking, validation, DCB derivation, the editing commands and the
 // predefined models.
 //
+// **Validation is split in two.** The write path refuses only what
+// could not be stored as a definition at all — a missing key, a name
+// collision, a body whose containers are not the lists they claim
+// (`assertStorableBody`). Everything semantic — dangling references,
+// write coverage, enum membership, name idiom — is an *advisory*:
+// computed from the stored state by `modelAdvisories`, surfaced by the
+// interface and the agent tools, never thrown at a writer. A defective
+// model loads, renders and evaluates; whatever its defects break
+// surfaces where it breaks, as the ordinary error outcome.
+//
 // Loaded as a classic script (not a module) so the playground opens
 // straight from the filesystem without a server.
 //
@@ -1380,12 +1390,13 @@ class DomainError extends Error {
   }
 }
 
+// Only structure is refused here — empty or unbounded, a key cannot
+// address a definition. Idiom (PascalCase) is an advisory computed by
+// `modelAdvisories`, never a refusal: an unidiomatic name still keys,
+// renders and evaluates, and the Problems panel says so.
 function validateName(value, label = 'Name') {
   const trimmed = (value || '').trim();
   if (!trimmed) throw new DomainError(`${label} must not be empty.`);
-  if (!PASCAL_RE.test(trimmed)) {
-    throw new DomainError(`${label} must be PascalCase (e.g. "CourseDefined") — got "${trimmed}".`);
-  }
   if (trimmed.length > 100) throw new DomainError(`${label} must be 100 characters or fewer.`);
   return trimmed;
 }
@@ -1429,6 +1440,13 @@ function getCtxOrThrow(modelId) {
   return model;
 }
 
+// The semantic checker — dangling references, unresolved types, write
+// coverage, enum membership, everything a definition can get *wrong*
+// while still being a definition. It throws the way it always has, but
+// nothing on the write path calls it any more: `modelAdvisories` below
+// runs it against the stored state and reports what it finds, so a
+// defective definition loads, renders and evaluates (to the ordinary
+// *error* outcome where it must) instead of being refused at the door.
 function validateReferences(model, kind, name, body) {
   const resolved = withPending(model, kind, name, body);
   const refs = computeReferences(resolved, kind, name, body);
@@ -1466,6 +1484,59 @@ function validateReferences(model, kind, name, body) {
   if (kind === 'command-definition') validateCommandBody(resolved, body);
   if (kind === 'scenario-definition') validateScenarioBody(resolved, body);
   if (kind === 'projection-scenario-definition') validateProjectionScenarioBody(resolved, body);
+}
+
+// ============================================================
+// Advisories.
+//
+// The demoted validations. A definition that names what does not
+// exist, writes a tag its boundary never consults, compares against a
+// member its enum does not hold — all of it is representable state
+// now, and this is where it gets said. One advisory per finding,
+// recomputed from the stored model and cached per log revision like
+// every other derived view; a writer never sees these as a refusal.
+//
+// Scenarios are deliberately absent: a scenario's trouble already
+// surfaces through its own run/status channel (`scenarioTrouble`),
+// and reporting the same breakage twice would say less, not more.
+// ============================================================
+
+const ADVISORY_KINDS = DEF_KINDS.filter((kind) => !isIdKeyed(kind));
+
+// Everything advisory about one definition, first semantic failure
+// only — `validateReferences` throws at the first thing it finds, and
+// fixing that one re-runs the rest. Anything unexpected a defective
+// body makes the checker itself throw is reported the same way: to a
+// reader an advisory is an advisory, whichever guard tripped.
+function definitionAdvisories(model, kind, name, body) {
+  const messages = [];
+  if (!isIdKeyed(kind) && !PASCAL_RE.test(name)) {
+    messages.push(`${humanize(kind)} name "${name}" is not PascalCase (e.g. "CourseDefined").`);
+  }
+  try {
+    validateReferences(model, kind, name, body);
+  } catch (error) {
+    messages.push(error && error.message ? error.message : String(error));
+  }
+  return messages;
+}
+
+let advisoriesCache = null;
+
+function modelAdvisories(model) {
+  if (advisoriesCache && advisoriesCache.revision === logRevisionNow() && advisoriesCache.model === model) {
+    return advisoriesCache.found;
+  }
+  const found = [];
+  for (const kind of ADVISORY_KINDS) {
+    for (const [name, body] of Object.entries(model[DEF_COLLECTIONS[kind]] || {})) {
+      for (const message of definitionAdvisories(model, kind, name, body)) {
+        found.push({ kind, name, message });
+      }
+    }
+  }
+  advisoriesCache = { revision: logRevisionNow(), model, found };
+  return found;
 }
 
 // Handler validation. `target` is a projection body: `valueType`,
@@ -2442,9 +2513,39 @@ function validateProjectionScenarioBody(model, body) {
   }
 }
 
+// The structural gate — the one refusal left on the write path. A
+// body that is not an object, or whose container fields are not the
+// lists they claim to be, is not a defective definition but no
+// definition at all: storing it would crash the projection and the
+// renderer rather than merely mislead them. Everything semantic —
+// what the containers *say* — is an advisory now, never a refusal.
+const STORABLE_LIST_FIELDS = [
+  'properties', 'handlers', 'boundary', 'conditions', 'publishes', 'parameters', 'given',
+];
+
+function assertStorableBody(kind, body) {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+    throw new DomainError(`A ${humanize(kind)} body must be an object.`);
+  }
+  for (const field of STORABLE_LIST_FIELDS) {
+    if (body[field] === undefined) continue;
+    if (!Array.isArray(body[field])) {
+      throw new DomainError(`A ${humanize(kind)}'s "${field}" must be a list.`);
+    }
+    for (const element of body[field]) {
+      if (element !== null && typeof element !== 'object') {
+        throw new DomainError(
+          `A ${humanize(kind)}'s "${field}" must hold objects — got ${JSON.stringify(element)}.`
+        );
+      }
+    }
+  }
+}
+
 function addDefinition(kind, modelId, name, body) {
   const model = getCtxOrThrow(modelId);
   const trimmed = validateDefinitionKey(kind, name, `${humanize(kind)} name`);
+  assertStorableBody(kind, body);
   const coll = model[DEF_COLLECTIONS[kind]];
   if (trimmed in coll) {
     throw new DomainError(`A ${humanize(kind)} named "${trimmed}" already exists in this model.`);
@@ -2464,37 +2565,28 @@ function addDefinition(kind, modelId, name, body) {
       );
     }
     const idTypeBody = { schema: { type: 'string' }, isTag: true };
-    validateReferences(withPending(model, 'custom-type-definition', idTypeName, idTypeBody), kind, trimmed, body);
     appendEvents([
       { type: 'custom-type-definition-added', data: { 'dcb-model-id': modelId, name: idTypeName, body: idTypeBody } },
       { type: 'entity-definition-added', data: { 'dcb-model-id': modelId, name: trimmed, body } },
     ]);
     return;
   }
-  validateReferences(model, kind, trimmed, body);
   appendEvents([{ type: `${kind}-added`, data: { 'dcb-model-id': modelId, name: trimmed, body } }]);
 }
 
+// An update may leave *other* definitions broken — a dropped property
+// a command still reads, a reshaped partition under a bound property,
+// an `identifierType` pointing at a type nothing created. All of it
+// used to be refused here; all of it is representable now, and the
+// resulting breakage surfaces as advisories on whichever definitions
+// it lands on. The rename functions below remain the way to move a
+// name *and* its references in one append.
 function validateDefinitionUpdate(model, kind, name, body) {
   const coll = model[DEF_COLLECTIONS[kind]];
   if (!(name in coll)) {
     throw new DomainError(`No ${humanize(kind)} named "${name}" exists in this model.`);
   }
-  if (kind === 'entity-definition' && (coll[name].identifierType || null) !== (body.identifierType || null)) {
-    // Changing `identifierType` moves which value type the entity
-    // derives — every reference to the old one has to move with it,
-    // the same as any other rename. An ordinary update cannot carry
-    // that cascade: renaming the entity's derived identifier happens
-    // by renaming the value type itself, in Custom Types.
-    throw new DomainError(
-      `Cannot change "${name}"'s identifierType through an ordinary update — rename the value type ` +
-      'itself instead, which moves this reference along with every other.'
-    );
-  }
-  validateReferences(model, kind, name, body);
-  if (kind === 'entity-definition') assertEntityUpdateKeepsInboundReferences(model, name, body);
-  if (kind === 'custom-type-definition') assertCustomTypeUpdateKeepsInboundReferences(model, name, body);
-  if (kind === 'projection-definition') assertProjectionUpdateKeepsBindingsFitting(model, name, body);
+  assertStorableBody(kind, body);
 }
 
 function updateDefinition(kind, modelId, name, body) {
@@ -2512,112 +2604,6 @@ function updateDefinitions(modelId, changes) {
   appendEvents(changes.map(({ kind, name, body }) => (
     { type: `${kind}-updated`, data: { 'dcb-model-id': modelId, name, body } }
   )));
-}
-
-// A projection's parameters are supplied by *key*, so changing them
-// under a command that binds it would leave that command holding
-// arguments for a partition that no longer exists. Renaming one is a
-// `renameMember` — which moves the keys in the same append — and this
-// is what stops it happening any other way.
-function assertProjectionUpdateKeepsBindingsFitting(model, projectionName, body) {
-  // An entity property binding fits while the projection keeps the one
-  // slot the binding fills — reshaping the partition under a bound
-  // property is refused the same way reshaping it under a command is.
-  for (const [entityName, entity] of Object.entries(model['entity-definitions'])) {
-    for (const property of entity.properties || []) {
-      if (!property || property.projection !== projectionName) continue;
-      const idType = idTypeOf(model, entityName);
-      const script = scriptOf(body);
-      const fits = script
-        ? (script.arguments || []).some((a) => a && a.propertyType === idType)
-        : ((body.parameters || []).length === 1 && body.parameters[0].propertyType === idType);
-      if (!fits) {
-        throw new DomainError(
-          `"${entityName}.${property.name}" binds "${projectionName}", and this change would leave ` +
-          `it without the ${idType}-typed slot that binding fills. Unbind the property first.`
-        );
-      }
-    }
-  }
-  const parameters = (body.parameters || []).map((p) => p && p.name);
-  for (const [commandName, command] of Object.entries(model['command-definitions'])) {
-    for (const binding of command.boundary || []) {
-      if (!binding || binding.projection !== projectionName) continue;
-      const supplied = Object.keys(binding.arguments || {});
-      const missing = parameters.filter((p) => !supplied.includes(p));
-      const extra = supplied.filter((s) => !parameters.includes(s));
-      if (!missing.length && !extra.length) continue;
-      throw new DomainError(
-        `Command "${commandName}" binds "${projectionName}" as "${binding.alias}" and would be left `
-        + (missing.length ? `without ${missing.map((m) => `"${m}"`).join(', ')}` : '')
-        + (missing.length && extra.length ? ', and ' : '')
-        + (extra.length ? `supplying ${extra.map((e) => `"${e}"`).join(', ')}, which it no longer declares` : '')
-        + '. Rename the parameter instead, which moves the binding with it.'
-      );
-    }
-  }
-}
-
-// Dropping a property that a command still reads is refused rather
-// than silently breaking the command.
-function assertEntityUpdateKeepsInboundReferences(model, entityName, body) {
-  const propertyNames = new Set((body.properties || []).map((p) => p.name));
-  for (const [commandName, command] of Object.entries(model['command-definitions'])) {
-    const aliases = (command.boundary || [])
-      .filter((b) => b && b.entity === entityName)
-      .map((b) => b.alias);
-    if (aliases.length === 0) continue;
-
-    let failure = null;
-    forEachCommandOperand(command, (operand) => {
-      if (failure) return;
-      if (operandSource(operand) === 'alias-property'
-          && aliases.includes(operand.alias)
-          && !propertyNames.has(operand.property)) {
-        failure = `property "${operand.property}"`;
-      }
-    });
-    if (failure) {
-      throw new DomainError(
-        `Cannot drop ${failure} from "${entityName}" — command "${commandName}" still reads it.`
-      );
-    }
-  }
-}
-
-// Dropping a member of an enum value type that a command still
-// compares against is refused rather than silently breaking the
-// command. Scoped to the type itself rather than to one entity, since
-// any number of properties across any number of entities may now
-// reference it. Mirrors `assertEntityUpdateKeepsInboundReferences`
-// exactly, checking conditions only — the same narrower guarantee the
-// reserved status property carried before it.
-function assertCustomTypeUpdateKeepsInboundReferences(model, typeName, body) {
-  const previousMembers = enumMembersFor(model, typeName);
-  if (!previousMembers) return;
-  const nextMembers = new Set(
-    Array.isArray(body.schema && body.schema.enum) ? body.schema.enum : []
-  );
-  for (const [commandName, command] of Object.entries(model['command-definitions'])) {
-    for (const condition of command.conditions || []) {
-      if (!condition) continue;
-      for (const side of [condition.leftHandSide, condition.rightHandSide]) {
-        if (operandSource(side) !== 'enum-member') continue;
-        if (nextMembers.has(side.enumMember) || !previousMembers.includes(side.enumMember)) continue;
-        const other = side === condition.leftHandSide ? condition.rightHandSide : condition.leftHandSide;
-        const resolved = resolveOperandType(other, {
-          boundary: command.boundary || [],
-          commandProperties: command.properties || [],
-          model,
-        });
-        if (resolved && resolved.propertyType === typeName) {
-          throw new DomainError(
-            `Cannot drop member "${side.enumMember}" from "${typeName}" — command "${commandName}" still compares against it.`
-          );
-        }
-      }
-    }
-  }
 }
 
 // Everything scripted that handles this event, named the way a person
@@ -2744,9 +2730,9 @@ function renameDefinition(kind, modelId, previousName, newName) {
 // event's properties, a command's payload, a composite's fields, a
 // projection's parameters — are referenced by name just as definitions
 // are, so renaming one has to rewrite those references in the same
-// append. Doing it as a plain update would be refused on the way past
-// `assertEntityUpdateKeepsInboundReferences`, and rightly: mid-rename
-// the old name is gone while something still reads it.
+// append. Doing it as a plain update would leave every reader of the
+// old name dangling — representable now, and reported as advisories,
+// but a rename is a rename: the references are the point.
 //
 // Unlike a definition rename there is no `-renamed` event to emit. A
 // member lives inside a body, so the whole thing is a set of
@@ -3058,17 +3044,14 @@ function rewriteCommands(model, mutate) {
   return out;
 }
 
-// Where a member of each kind lives inside its body, and what its name
-// has to look like. `list` is a dotted path — flat for most kinds, but
-// an enum's members sit at `schema.enum`, one level into the custom
-// type's JSON Schema. A JSON Schema `enum` may legally hold any value;
-// this entry — and the chip editor it drives — only ever runs against
-// a string-only enum, so the pattern only has strings to say no to.
+// Where a member of each kind lives inside its body. `list` is a
+// dotted path — flat for most kinds, but an enum's members sit at
+// `schema.enum`, one level into the custom type's JSON Schema.
 const MEMBER_SHAPE = {
-  property: { list: 'properties', named: true, label: 'Property', pattern: CAMEL_RE, style: 'camelCase' },
-  member: { list: 'schema.enum', named: false, label: 'Member', pattern: /^.+$/, style: 'a non-empty string' },
-  field: { list: 'properties', named: true, label: 'Field', pattern: CAMEL_RE, style: 'camelCase' },
-  parameter: { list: 'parameters', named: true, label: 'Parameter', pattern: CAMEL_RE, style: 'camelCase' },
+  property: { list: 'properties', named: true, label: 'Property' },
+  member: { list: 'schema.enum', named: false, label: 'Member' },
+  field: { list: 'properties', named: true, label: 'Field' },
+  parameter: { list: 'parameters', named: true, label: 'Parameter' },
 };
 
 function renameMember(kind, modelId, definitionName, memberKind, previousName, newName) {
@@ -3083,9 +3066,12 @@ function renameMember(kind, modelId, definitionName, memberKind, previousName, n
     throw new DomainError(`A ${humanize(kind)} has no ${memberKind} to rename.`);
   }
 
+  // Only emptiness refuses — an unidiomatic member name renames fine,
+  // and the idiom is the advisories' to point out, not this gesture's
+  // to refuse.
   const trimmed = (newName || '').trim();
-  if (!shape.pattern.test(trimmed)) {
-    throw new DomainError(`${shape.label} name "${trimmed}" must be ${shape.style}.`);
+  if (!trimmed) {
+    throw new DomainError(`${shape.label} name must not be empty.`);
   }
   if (trimmed === previousName) return;
 
@@ -3134,28 +3120,17 @@ function removeDefinition(kind, modelId, name) {
   if (!(name in coll)) {
     throw new DomainError(`No ${humanize(kind)} named "${name}" exists in this model.`);
   }
-  const referencers = findReferencers(model, kind, name)
-    .filter((r) => !(r.kind === kind && r.name === name))
-    // A scenario or projection scenario names what it tests, but it may
-    // never refuse the change: a test exists to report what a change
-    // broke, not to prevent it. Deleting what one reads leaves it
-    // broken and says so, which is the whole point of keeping it.
-    .filter((r) => r.kind !== 'scenario-definition' && r.kind !== 'projection-scenario-definition');
-  if (referencers.length > 0) {
-    const list = referencers.map((r) => `${humanize(r.kind)} "${r.name}"`).join(', ');
-    throw new DomainError(`Cannot remove ${humanize(kind)} "${name}" — still referenced by: ${list}.`);
-  }
-
+  // Whatever still references this definition is left dangling and
+  // says so — the rule scenarios always lived by ("a test exists to
+  // report what a change broke, not to prevent it") now applied to
+  // every kind: the dangling reference surfaces as an advisory on the
+  // definition holding it, not as a refusal here.
   if (kind === 'entity-definition') {
     // The entity's own derived custom type is removed alongside it —
-    // auto-created together, they go together, bypassing that type's
-    // own referencer check (a direct removal of *it* would still be
-    // blocked — see the collision this creates in `findReferencers`
-    // above, which is what makes that block work). Anything else still
-    // naming it is left broken, reported the same way this system
+    // auto-created together, they go together. Anything else still
+    // naming either is left broken, reported the same way this system
     // already reports every other broken reference: a scenario left
-    // saying what it used to check, a projection scenario left reporting
-    // what it found.
+    // saying what it used to check, a definition carrying an advisory.
     const idType = idTypeOf(model, name);
     appendEvents([
       { type: 'entity-definition-removed', data: { 'dcb-model-id': modelId, name } },
@@ -3343,16 +3318,17 @@ function bareEntityBody(body) {
 }
 
 // Adds a mixed batch of custom types and bare entities, retrying
-// whatever fails until a full pass makes no progress. The two kinds can
-// reference each other in either direction — a composite value type
-// naming an entity's derived identifier, or an entity's `identifierType`
-// naming a standalone value type — so neither can be finished first in
-// general; nothing downstream of this (events, full entities,
-// projections, commands, scenarios) has that problem, so it is the only
-// phase that needs retrying rather than a single ordered pass.
+// whatever fails until a full pass makes no progress. The two kinds
+// collide over an entity's derived identifier type — a standalone
+// value type and the auto-created one contending for a name — so
+// neither can be finished first in general; nothing downstream of this
+// (events, full entities, projections, commands, scenarios) has that
+// problem, so it is the only phase that needs retrying rather than a
+// single ordered pass. Whatever a stalled pass leaves is returned as
+// skips, one per item with its own refusal, never thrown.
 function addManyWithRetry(modelId, items) {
+  const skipped = [];
   let remaining = items;
-  let lastError = null;
   while (remaining.length) {
     const next = [];
     let progressed = false;
@@ -3361,21 +3337,28 @@ function addManyWithRetry(modelId, items) {
         addDefinition(item.kind, modelId, item.name, item.body);
         progressed = true;
       } catch (error) {
-        next.push(item);
-        lastError = error;
+        next.push({ item, error });
       }
     }
-    if (!progressed) throw lastError;
-    remaining = next;
+    if (!progressed) {
+      for (const { item, error } of next) {
+        skipped.push({ kind: item.kind, name: item.name, reason: error.message });
+      }
+      break;
+    }
+    remaining = next.map(({ item }) => item);
   }
+  return skipped;
 }
 
 // The synthesizer: rebuilds a shared model into a brand-new one by
-// replaying it through the same validating commands manual editing
-// uses, so an untrusted export can never land in a state those commands
-// would have refused. A failure partway leaves a partial-but-valid
-// model in place, exactly like a manual edit interrupted midway —
-// `deleteDcbModel` is the way out, not a rollback this adds.
+// replaying it through the same commands manual editing uses, so an
+// untrusted export can never land in a state those commands would have
+// refused. The commands refuse little now — structure, collisions —
+// and what one does refuse is *skipped* rather than aborting the
+// import: the rest of the model loads, and the skips come back to the
+// caller to report. Semantic defects in what did load are the
+// advisories' to surface, the same as for any other edit.
 // The wire format's two markers, checked. Only `dcbModelVersion` is
 // read: `$schema` has to be *present*, because a document without one
 // was not written by anything that knows this format and its shape is
@@ -3467,6 +3450,18 @@ function importModelFromEnvelope(envelope) {
 
   const modelId = createDcbModel(envelope.name);
 
+  const skipped = [];
+  const skippedNames = (kind) => new Set(
+    skipped.filter((s) => s.kind === kind).map((s) => s.name)
+  );
+  const attempt = (kind, name, write) => {
+    try {
+      write();
+    } catch (error) {
+      skipped.push({ kind, name, reason: error && error.message ? error.message : String(error) });
+    }
+  };
+
   // Created automatically by `addDefinition('entity-definition', ...)`
   // — never added again here as a standalone value type, only enriched
   // once its exported body is known to carry more than the bare default.
@@ -3474,42 +3469,65 @@ function importModelFromEnvelope(envelope) {
     Object.entries(entities).map(([name, body]) => body.identifierType || (name + 'Id'))
   );
 
-  addManyWithRetry(modelId, [
+  skipped.push(...addManyWithRetry(modelId, [
     ...Object.entries(customTypes)
       .filter(([name]) => !derivedIdTypeNames.has(name))
       .map(([name, body]) => ({ kind: 'custom-type-definition', name, body })),
     ...Object.entries(entities)
       .map(([name, body]) => ({ kind: 'entity-definition', name, body: bareEntityBody(body) })),
-  ]);
+  ]));
 
   for (const [name, body] of Object.entries(events)) {
-    addDefinition('event-definition', modelId, name, body);
+    attempt('event-definition', name, () => addDefinition('event-definition', modelId, name, body));
   }
   for (const [name, body] of Object.entries(customTypes)) {
-    if (derivedIdTypeNames.has(name)) updateDefinition('custom-type-definition', modelId, name, body);
+    if (derivedIdTypeNames.has(name)) {
+      attempt('custom-type-definition', name,
+        () => updateDefinition('custom-type-definition', modelId, name, body));
+    }
   }
   // Projections before the full entities: a property binding names a
-  // projection, so every projection has to exist before the bindings do.
+  // projection, so every projection exists before the bindings render
+  // against it. Ordering is a courtesy now, not a requirement — a
+  // binding to a projection that never loads is an advisory.
   for (const [name, body] of Object.entries(projections)) {
-    addDefinition('projection-definition', modelId, name, body);
+    attempt('projection-definition', name, () => addDefinition('projection-definition', modelId, name, body));
   }
+  // An entity whose bare form was skipped has nothing to enrich — the
+  // one skip already tells the story, so no second entry for the
+  // enrichment failing too.
+  const skippedEntities = skippedNames('entity-definition');
   for (const [name, body] of Object.entries(entities)) {
-    updateDefinition('entity-definition', modelId, name, body);
+    if (skippedEntities.has(name)) continue;
+    attempt('entity-definition', name, () => updateDefinition('entity-definition', modelId, name, body));
   }
   for (const [name, body] of Object.entries(commands)) {
-    addDefinition('command-definition', modelId, name, body);
+    attempt('command-definition', name, () => addDefinition('command-definition', modelId, name, body));
   }
   // Scenario ids come across as they were exported rather than being
   // reissued here, so that a model survives a round trip unchanged and
   // a re-import can be diffed against what was sent. `generateId` is the
   // fallback for a hand-written file that reached this point without one.
   for (const [id, body] of Object.entries(scenarios)) {
-    addDefinition('scenario-definition', modelId, id || generateId(), body);
+    attempt('scenario-definition', id, () => addDefinition('scenario-definition', modelId, id || generateId(), body));
   }
   for (const [id, body] of Object.entries(propertyScenarios)) {
-    addDefinition('projection-scenario-definition', modelId, id || generateId(), body);
+    attempt('projection-scenario-definition', id,
+      () => addDefinition('projection-scenario-definition', modelId, id || generateId(), body));
   }
-  return modelId;
+
+  // Custom types land out of exported order: a standalone one is added
+  // in the first pool pass now that nothing checks its references,
+  // while an entity-derived one appears only when its entity does.
+  // Every other kind imports in envelope order already; this puts the
+  // one kind that cannot back into it, so a round trip diffs clean.
+  const currentTypes = Object.keys(projectState()[modelId]['custom-type-definitions']);
+  const exportedOrder = Object.keys(customTypes).filter((name) => currentTypes.includes(name));
+  const desired = [...exportedOrder, ...currentTypes.filter((name) => !exportedOrder.includes(name))];
+  if (desired.join('\n') !== currentTypes.join('\n')) {
+    reorderDefinitions('custom-type-definition', modelId, desired);
+  }
+  return { modelId, skipped };
 }
 
 // ============================================================
@@ -3520,8 +3538,8 @@ function importModelFromEnvelope(envelope) {
 // thing, then generated identifiers, then schedules; and a product
 // pricing model as the plain thing, then a grace period on repricing.
 // Each layer is applied through the ordinary commands, so loading one
-// exercises exactly the same validation an author would hit typing it
-// in.
+// exercises exactly the write path an author would hit typing it in —
+// and ships advisory-clean, which the tests hold it to.
 //
 // Every layer keeps references resolvable at each step — entities
 // first without handlers (nothing to reference yet), then the events,

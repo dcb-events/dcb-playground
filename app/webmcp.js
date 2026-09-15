@@ -28,10 +28,29 @@
   });
   const refusal = (message) => ({ content: [{ type: 'text', text: message }], isError: true });
 
+  // What a mutation left the model saying about itself: the advisories
+  // this edit introduced, spelled out so the agent can fix them in the
+  // same session, plus the standing count so twenty of them cannot
+  // pile up unnoticed. Empty when the model is as clean as before.
+  const advisoryNote = (before, after) => {
+    const keyOf = (a) => `${a.kind}:${a.name}:${a.message}`;
+    const seen = new Set(before.map(keyOf));
+    const fresh = after.filter((a) => !seen.has(keyOf(a)));
+    if (!fresh.length && !after.length) return '';
+    const lines = fresh.map((a) => `- ${humanize(a.kind)} "${a.name}": ${a.message}`);
+    const standing = `${after.length} advisor${after.length === 1 ? 'y' : 'ies'} standing on the model`;
+    return fresh.length
+      ? `\n\nAdvisories introduced by this change:\n${lines.join('\n')}\n(${standing}.)`
+      : `\n\n(${standing}; none introduced by this change.)`;
+  };
+
   // The shared wrapper: resolve the open model, run the tool, announce
   // what happened. A domain refusal or an evaluation error is a normal
   // answer for an agent — it comes back as an `isError` result with the
-  // message the interface would have shown, not as a broken call.
+  // message the interface would have shown, not as a broken call. A
+  // mutation that *succeeded* may still have left the model with
+  // something to say — the demoted validations — and that rides along
+  // in the result rather than blocking it.
   const register = ({ name, description, inputSchema, mutates, needsModel = true, run }) => {
     context.registerTool({
       name,
@@ -44,10 +63,20 @@
           if (needsModel && !model) {
             return refusal('No model is open in the playground — open or create one first.');
           }
+          const before = mutates && model ? modelAdvisories(model) : [];
           const { summary, payload } = run(model, args || {});
           if (mutates && typeof render === 'function') render();
           toast('Agent · ' + summary);
-          return asText(payload === undefined ? summary : payload);
+          const value = payload === undefined ? summary : payload;
+          if (mutates) {
+            const current = activeModel();
+            const note = advisoryNote(before, current ? modelAdvisories(current) : []);
+            if (note) {
+              const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+              return asText(text + note);
+            }
+          }
+          return asText(value);
         } catch (err) {
           toast('Agent · ' + name + ': ' + err.message, true);
           return refusal(err.message);
@@ -155,7 +184,9 @@
     name: 'list_problems',
     description: 'Everything findably wrong with the open model, without judging it: '
       + 'loose ends (events nothing records, entities nothing reads, commands that '
-      + 'record nothing) and scenarios the model no longer agrees with.',
+      + 'record nothing), advisories (what a definition got wrong without being '
+      + 'refused — dangling references, boundary gaps, mistyped values) and '
+      + 'scenarios the model no longer agrees with.',
     inputSchema: { type: 'object', properties: {} },
     run: (model) => {
       const found = problems(model).map(({ what, why }) => ({ what, why }));
@@ -221,8 +252,10 @@
         + (kind === 'entity-definition'
           ? ' Adding an entity also creates its derived identifier type.' : '')
         + (idKeyed ? ' The id is generated when omitted.' : '')
-        + ' Refused if the name is already taken or the definition references '
-        + 'something the model does not define.',
+        + ' Refused only when the name is taken or the body is structurally not a '
+        + 'definition; anything semantically wrong — a dangling reference, a boundary '
+        + 'gap — is accepted and comes back as an advisory in the result. Fix what it '
+        + 'reports before moving on.',
       inputSchema: definitionSchema(kind, !idKeyed),
       mutates: true,
       run: (model, args) => {
@@ -235,9 +268,10 @@
     register({
       name: 'update_' + suffix,
       description: `Replace the ${label.toLowerCase()} the ${idKeyed ? 'id' : 'name'} `
-        + 'points at, wholesale. Refused when the new body would strand a reference '
-        + 'elsewhere in the model — renames go through rename_definition and '
-        + 'rename_member instead, which move the references along.',
+        + 'points at, wholesale. A body that strands a reference elsewhere is accepted '
+        + 'and the stranding comes back as an advisory in the result — renames still '
+        + 'belong in rename_definition and rename_member, which move the references '
+        + 'along instead of stranding them.',
       inputSchema: definitionSchema(kind, true),
       mutates: true,
       run: (model, args) => {
@@ -249,9 +283,9 @@
 
   register({
     name: 'remove_definition',
-    description: 'Remove a definition of any kind from the open model. Refused while '
-      + 'anything still references it; the refusal names the referencers. For the '
-      + 'id-keyed scenario kinds, `name` is the id.',
+    description: 'Remove a definition of any kind from the open model. Whatever still '
+      + 'references it is left dangling, and each dangling reference comes back as an '
+      + 'advisory in the result. For the id-keyed scenario kinds, `name` is the id.',
     inputSchema: {
       type: 'object',
       properties: { kind: kindSchema(DEF_KINDS), name: { type: 'string' } },

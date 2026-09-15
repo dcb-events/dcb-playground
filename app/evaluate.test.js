@@ -625,17 +625,18 @@ function drive(model, log, command, args) {
     eq(scenarioName(model()['scenario-definitions'][key]), 'the happy path', 'renamed by update');
   });
 
-  check('a payload with a property the event does not have is refused', () => {
+  check('a payload with a property the event does not have is stored, not refused', () => {
+    // The lenient regime: an invented payload property is inert — the
+    // folds never read it — so storing it beats refusing the scenario.
     const { id, model } = open_(0);
     const body = scenarioBody();
     body.then = deriveThen(model(), body);
     body.given[0].data.colour = 'blue';
-    try {
-      addDefinition('scenario-definition', id, generateId(), body);
-      throw new Error('did not refuse');
-    } catch (error) {
-      if (!/not one of its properties/.test(error.message)) throw error;
-    }
+    const key = generateId();
+    addDefinition('scenario-definition', id, key, body);
+    const stored = model()['scenario-definitions'][key];
+    eq(stored.given[0].data.colour, 'blue', 'kept as written');
+    eq(runScenario(model(), stored).status, 'current', 'and ignored by the run');
   });
 
   check('a scenario knows whether running it would execute a script', () => {
@@ -829,19 +830,18 @@ function drive(model, log, command, args) {
     eq(invoiceTags, ['TenantTag:t1', 'InvoiceSeriesId:i1'], 'invoice tags, entity-derived component included');
   });
 
-  check('a projection may not hold a composite, so no successor over one can be declared', () => {
-    try {
-      addDefinition('projection-definition', id, 'LastCourseId', {
-        parameters: [],
-        valueType: 'CourseId',
-        isList: false,
-        initialValue: null,
-        handlers: [{ event: 'CourseDefined', operation: 'set', value: { successor: { eventProperty: 'courseId' } } }],
-      });
-      throw new Error('did not refuse');
-    } catch (error) {
-      if (!/which is a composite/.test(error.message)) throw error;
-    }
+  check('a successor over a composite saves, and the advisory says why it cannot work', () => {
+    addDefinition('projection-definition', id, 'LastCourseId', {
+      parameters: [],
+      valueType: 'CourseId',
+      isList: false,
+      initialValue: null,
+      handlers: [{ event: 'CourseDefined', operation: 'set', value: { successor: { eventProperty: 'courseId' } } }],
+    });
+    const flagged = sandbox.modelAdvisories(model())
+      .filter((a) => a.name === 'LastCourseId');
+    eq(flagged.length, 1, 'one advisory on the projection');
+    eq(/which is a composite/.test(flagged[0].message), true, 'the old refusal, now advice');
   });
 }
 
@@ -942,32 +942,30 @@ function drive(model, log, command, args) {
     eq(tagsOfEvent(model(), 'CourseNumberIssued', { number: 'c1' }), ['CourseRef:c1'], 'tag follows too');
   });
 
-  check('an ordinary update cannot change identifierType', () => {
+  check('an ordinary update may change identifierType, and the dangling type is an advisory', () => {
     const { id, model } = openBlank();
     addDefinition('entity-definition', id, 'Anvil', { properties: [] });
-    try {
-      updateDefinition('entity-definition', id, 'Anvil', {
-        identifierType: 'AnvilRef', properties: [],
-      });
-      throw new Error('did not refuse');
-    } catch (error) {
-      if (!/ordinary update/.test(error.message)) throw error;
-    }
-    eq('identifierType' in model()['entity-definitions'].Anvil, false, 'unchanged');
+    updateDefinition('entity-definition', id, 'Anvil', {
+      identifierType: 'AnvilRef', properties: [],
+    });
+    eq(model()['entity-definitions'].Anvil.identifierType, 'AnvilRef', 'the update went through');
+    // Nothing created "AnvilRef", and that is now the entity's problem
+    // to report rather than the update's to refuse.
+    eq(sandbox.modelAdvisories(model()).some(
+      (a) => a.name === 'Anvil' && /AnvilRef/.test(a.message)
+    ), true, 'the unresolved identifier type is reported');
   });
 
-  check('an entity-owned value type cannot be removed directly, only by removing its entity', () => {
+  check('removing an entity-owned value type directly leaves the entity advisory-flagged', () => {
     const { id, model } = openBlank();
     addDefinition('entity-definition', id, 'Bolt', { properties: [] });
-    try {
-      removeDefinition('custom-type-definition', id, 'BoltId');
-      throw new Error('did not refuse');
-    } catch (error) {
-      if (!/still referenced by/.test(error.message)) throw error;
-    }
+    removeDefinition('custom-type-definition', id, 'BoltId');
+    eq('BoltId' in model()['custom-type-definitions'], false, 'removed, not refused');
+    eq(sandbox.modelAdvisories(model()).some(
+      (a) => a.name === 'Bolt' && /BoltId/.test(a.message)
+    ), true, 'the entity reports its missing identifier type');
     removeDefinition('entity-definition', id, 'Bolt');
     eq('Bolt' in model()['entity-definitions'], false, 'entity removed');
-    eq('BoltId' in model()['custom-type-definitions'], false, 'its derived type cascaded with it');
   });
 }
 
@@ -1027,7 +1025,7 @@ function drive(model, log, command, args) {
   // type before any entity would refuse this model.
   const original = build(4);
   const envelope = buildShareEnvelope(original, []);
-  const importedId = importModelFromEnvelope(envelope);
+  const { modelId: importedId } = importModelFromEnvelope(envelope);
   const imported = sandbox.projectState()[importedId];
 
   check('a model with a standalone type naming an entity-derived id round-trips', () => {
@@ -1047,7 +1045,7 @@ function drive(model, log, command, args) {
   // requires at least one), so it has to be left out of the bare
   // entity entirely and added whole once events exist.
   const original = openScripted().model();
-  const importedId = importModelFromEnvelope(buildShareEnvelope(original, []));
+  const { modelId: importedId } = importModelFromEnvelope(buildShareEnvelope(original, []));
   const imported = sandbox.projectState()[importedId];
 
   check('a model with a scripted entity property round-trips', () => {
@@ -1109,7 +1107,7 @@ function drive(model, log, command, args) {
   addDefinition('scenario-definition', id, originalScenarioId, body);
 
   const envelope = buildShareEnvelope(model(), []);
-  const importedId = importModelFromEnvelope(envelope);
+  const { modelId: importedId } = importModelFromEnvelope(envelope);
   const imported = sandbox.projectState()[importedId];
   const importedScenarioIds = Object.keys(imported['scenario-definitions']);
 
@@ -1117,6 +1115,51 @@ function drive(model, log, command, args) {
     eq(importedScenarioIds.length, 1, 'exactly one scenario carried over');
     eq(importedScenarioIds[0], originalScenarioId, 'the exported id, not a fresh one');
     eq(imported['scenario-definitions'][importedScenarioIds[0]].command, 'DoThing', 'the scenario body itself');
+  });
+}
+
+{
+  // The case this regime exists for: a file whose command writes a tag
+  // its boundary never consults — valid JSON, defective model. It must
+  // load whole, the defect must come back as an advisory, and the
+  // command must still evaluate: an unguarded write is legal DCB.
+  const { id, model } = openBlank('Lenient');
+  addDefinition('entity-definition', id, 'Festlegung', { properties: [] });
+  addDefinition('event-definition', id, 'FestlegungErzeugt', {
+    properties: [{ name: 'festlegungId', propertyType: 'FestlegungId', isOptional: false, isList: false }],
+  });
+  const envelope = buildShareEnvelope(model(), []);
+  envelope.commandDefinitions.push({
+    name: 'ErzeugeFestlegung',
+    properties: [{ name: 'festlegungId', propertyType: 'FestlegungId', isOptional: false, isList: false }],
+    boundary: [],
+    conditions: [],
+    publishes: [{ name: 'FestlegungErzeugt', parameters: { festlegungId: { parameterName: 'festlegungId' } } }],
+  });
+
+  check('an import with a write-coverage gap loads whole, advisory-flagged', () => {
+    const { modelId, skipped } = importModelFromEnvelope(envelope);
+    eq(skipped, [], 'nothing skipped');
+    const imported = sandbox.projectState()[modelId];
+    eq('ErzeugeFestlegung' in imported['command-definitions'], true, 'the command loaded');
+    eq(sandbox.modelAdvisories(imported).some(
+      (a) => a.name === 'ErzeugeFestlegung' && /Write coverage/.test(a.message)
+    ), true, 'and carries the coverage advisory');
+    const outcome = evaluateCommand(imported, [], 'ErzeugeFestlegung', { festlegungId: 'f1' });
+    eq(outcome.outcome, 'published', 'the unguarded write still evaluates');
+  });
+
+  check('a structurally-broken definition is skipped; the rest of the file loads', () => {
+    const bad = deepClone(envelope);
+    bad.eventDefinitions.push({ name: 'Broken', properties: 42 });
+    const { modelId, skipped } = importModelFromEnvelope(bad);
+    eq(skipped.length, 1, 'exactly the one that is not a definition at all');
+    eq(skipped[0].kind, 'event-definition', 'named by kind');
+    eq(skipped[0].name, 'Broken', 'and by name');
+    eq(/must be a list/.test(skipped[0].reason), true, 'with the structural reason');
+    const imported = sandbox.projectState()[modelId];
+    eq('FestlegungErzeugt' in imported['event-definitions'], true, 'the sound one loaded');
+    eq('Broken' in imported['event-definitions'], false, 'the broken one did not');
   });
 }
 
@@ -1176,12 +1219,12 @@ check('an import missing the definition arrays is refused, not silently accepted
 
   check('$schema is required but never read, so a repointed one still imports', () => {
     const local = { ...good, $schema: './dcb-model.schema.json' };
-    eq(typeof importModelFromEnvelope(local), 'string', 'imported anyway');
+    eq(typeof importModelFromEnvelope(local).modelId, 'string', 'imported anyway');
   });
 
   check('a newer minor imports, and says what it is dropping', () => {
     const newer = { ...good, dcbModelVersion: '3.99' };
-    eq(typeof importModelFromEnvelope(newer), 'string', 'imported');
+    eq(typeof importModelFromEnvelope(newer).modelId, 'string', 'imported');
     eq(envelopeVersionWarning(newer).length > 0, true, 'warned');
     eq(envelopeVersionWarning(good), '', 'nothing to warn about at the current version');
   });
@@ -1200,14 +1243,17 @@ check('an import missing the definition arrays is refused, not silently accepted
 // both — and the things that told them apart are gone.
 // ---------------------------------------------------------------
 {
-  const refuses = (pattern, what, fn) => check(what, () => {
-    try {
-      fn();
-    } catch (error) {
-      if (!pattern.test(error.message)) throw new Error(`wrong message: ${error.message}`);
-      return;
+  // The write goes through and the defect is reported instead: `fn`
+  // performs the edit and returns the model accessor, and the check is
+  // that `name` now carries an advisory saying `pattern`.
+  const advises = (name, pattern, what, fn) => check(what, () => {
+    const model = fn();
+    const flagged = sandbox.modelAdvisories(model())
+      .filter((a) => a.name === name && pattern.test(a.message));
+    if (!flagged.length) {
+      const all = sandbox.modelAdvisories(model()).map((a) => `${a.name}: ${a.message}`);
+      throw new Error(`no advisory ${pattern} on ${name}; got ${JSON.stringify(all)}`);
     }
-    throw new Error('did not refuse');
   });
 
   check('a property and a direct read of the same projection agree', () => {
@@ -1244,14 +1290,13 @@ check('an import missing the definition arrays is refused, not silently accepted
     eq(foldEntityProperty(model(), log, 'Course', 'isDefined', 'c1'), true, 'under the other');
   });
 
-  check('a bound projection cannot be deleted out from under its property', () => {
-    const { id } = open_(0);
-    try {
-      removeDefinition('projection-definition', id, 'CourseCapacity');
-      throw new Error('did not refuse');
-    } catch (error) {
-      if (!/still referenced by/.test(error.message)) throw error;
-    }
+  check('deleting a bound projection leaves the binding advisory-flagged, not refused', () => {
+    const { id, model } = open_(0);
+    removeDefinition('projection-definition', id, 'CourseCapacity');
+    eq('CourseCapacity' in model()['projection-definitions'], false, 'removed');
+    eq(sandbox.modelAdvisories(model()).some(
+      (a) => a.name === 'Course' && /CourseCapacity/.test(a.message)
+    ), true, 'the entity reports its dangling binding');
   });
 
   check('renaming a projection moves every property that binds it', () => {
@@ -1264,21 +1309,24 @@ check('an import missing the definition arrays is refused, not silently accepted
     eq(foldEntityProperty(model(), log, 'Course', 'capacity', 'c1'), 4, 'still folds');
   });
 
-  refuses(/exactly one parameter typed CourseId/,
-    'a projection partitioned by nothing cannot be an entity property', () => {
-      const { id } = open_(1);
+  advises('Course', /exactly one parameter typed CourseId/,
+    'a projection partitioned by nothing binds as a property, with an advisory', () => {
+      const { id, model } = open_(1);
       // CourseNumbering is global — there is no instance for a
-      // property binding to name.
+      // property binding to name, and the entity now says so instead
+      // of the update refusing.
       updateDefinition('entity-definition', id, 'Course', {
         icon: '📚', properties: [{ name: 'numbering', projection: 'CourseNumbering' }],
       });
+      return model;
     });
 
-  refuses(/would leave it without the CourseId-typed slot/,
-    'a bound projection cannot have its partition reshaped', () => {
+  advises('Course', /exactly one parameter typed CourseId/,
+    'reshaping a partition under a bound property saves, and the entity says what broke', () => {
       const { id, model } = open_(0);
       const body = { ...deepClone(model()['projection-definitions'].CourseCapacity), parameters: [] };
       updateDefinition('projection-definition', id, 'CourseCapacity', body);
+      return model;
     });
 
   check('a scripted projection bound as a property is scoped by the instance', () => {
@@ -1292,9 +1340,9 @@ check('an import missing the definition arrays is refused, not silently accepted
     eq(foldEntityProperty(model(), log, 'Counter', 'total', 'x2'), 1, 'x2 counted its own');
   });
 
-  refuses(/never interpolates "\{counterId\}"/,
-    'a scripted projection that ignores the instance cannot be bound as a property', () => {
-      const { id } = openScripted();
+  advises('Counter', /never interpolates "\{counterId\}"/,
+    'a scripted projection that ignores the instance binds, with an advisory', () => {
+      const { id, model } = openScripted();
       const body = {
         valueType: 'integer', isList: false,
         script: {
@@ -1307,6 +1355,7 @@ check('an import missing the definition arrays is refused, not silently accepted
       updateDefinition('entity-definition', id, 'Counter', {
         properties: [{ name: 'ticks', projection: 'GlobalTicks' }],
       });
+      return model;
     });
 }
 
@@ -1324,13 +1373,14 @@ check('an import missing the definition arrays is refused, not silently accepted
   const add = (name, body) => addDefinition('projection-definition', id, name, {
     parameters: [], isList: false, handlers: [], ...body,
   });
-  const refused = (body) => {
-    try {
-      add('Attempt' + Math.random().toString(36).slice(2, 8).replace(/[0-9]/g, 'x'), body);
-    } catch (error) {
-      return error.message;
-    }
-    return null;
+  // A mistyped initial value saves and comes back as an advisory on
+  // the projection — this returns that advisory's message, or null
+  // when the add produced a clean definition.
+  const advisoryOf = (body) => {
+    const name = 'Attempt' + Math.random().toString(36).slice(2, 8).replace(/[0-9]/g, 'x');
+    add(name, body);
+    const found = sandbox.modelAdvisories(model()).find((a) => a.name === name);
+    return found ? found.message : null;
   };
 
   check('null is a legal initial value of every type', () => {
@@ -1355,17 +1405,17 @@ check('an import missing the definition arrays is refused, not silently accepted
     eq(foldProjection(model(), [], 'Reserved', {}), ['a', 'b'], 'and folds to it');
   });
 
-  check('an initial value is checked against the declared type', () => {
-    eq(/is not a integer/.test(refused({ valueType: 'integer', initialValue: 'lots' })), true, 'text for an integer');
-    eq(/is not a boolean/.test(refused({ valueType: 'boolean', initialValue: 1 })), true, 'a number for a boolean');
-    eq(/not a literal/.test(refused({ valueType: 'Slot', isList: true, initialValue: ['a', null] })), true,
+  check('a mistyped initial value saves, and the advisory names the mismatch', () => {
+    eq(/is not a integer/.test(advisoryOf({ valueType: 'integer', initialValue: 'lots' })), true, 'text for an integer');
+    eq(/is not a boolean/.test(advisoryOf({ valueType: 'boolean', initialValue: 1 })), true, 'a number for a boolean');
+    eq(/not a literal/.test(advisoryOf({ valueType: 'Slot', isList: true, initialValue: ['a', null] })), true,
       'null inside a list');
-    eq(/is a list/.test(refused({ valueType: 'Slot', initialValue: ['a'] })), true, 'a list for a single value');
-    eq(/its initial value is one/.test(refused({ valueType: 'Slot', isList: true, initialValue: 'a' })), true,
+    eq(/is a list/.test(advisoryOf({ valueType: 'Slot', initialValue: ['a'] })), true, 'a list for a single value');
+    eq(/its initial value is one/.test(advisoryOf({ valueType: 'Slot', isList: true, initialValue: 'a' })), true,
       'a single value for a list');
-    eq(/not a member of Colour/.test(refused({ valueType: 'Colour', initialValue: { enumMember: 'Blue' } })), true,
+    eq(/not a member of Colour/.test(advisoryOf({ valueType: 'Colour', initialValue: { enumMember: 'Blue' } })), true,
       'an enum member that does not exist');
-    eq(/is an enum/.test(refused({ valueType: 'Colour', initialValue: 'Red' })), true,
+    eq(/is an enum/.test(advisoryOf({ valueType: 'Colour', initialValue: 'Red' })), true,
       'a bare literal where a member reference belongs');
   });
 
@@ -1522,21 +1572,20 @@ check('an import missing the definition arrays is refused, not silently accepted
     eq(runProjectionScenario(model(), stored).status, 'current', 'still current');
   });
 
-  check('a scenario that supplies the wrong arguments is refused', () => {
-    const { id } = open_(2);
-    const bad = (body, pattern) => {
-      try {
-        addDefinition('projection-scenario-definition', id, generateId(),
-          { given: [], then: null, ...body });
-        throw new Error('did not refuse');
-      } catch (error) {
-        if (!pattern.test(error.message)) throw new Error(`wrong message: ${error.message}`);
-      }
+  check('a scenario with wrong arguments saves, and the break is its run\'s to report', () => {
+    const { id, model } = open_(2);
+    const stored = (body) => {
+      const key = generateId();
+      addDefinition('projection-scenario-definition', id, key, { given: [], then: null, ...body });
+      return model()['projection-scenario-definitions'][key];
     };
-    bad({ projection: 'TenantCourseNumbering', arguments: {} }, /supplies no "tenantId"/);
-    bad({ projection: 'CourseNumbering', arguments: { tenantId: 't1' } },
-      /does not declare as a parameter/);
-    bad({ projection: 'NoSuchThing', arguments: {} }, /does not exist in this model/);
+    eq(runProjectionScenario(model(), stored({ projection: 'TenantCourseNumbering', arguments: {} })).status,
+      'broken', 'read without a parameter it declares');
+    eq(runProjectionScenario(model(), stored({ projection: 'NoSuchThing', arguments: {} })).status,
+      'broken', 'a projection this model does not define');
+    // An extra argument is inert — the fold never reads it — so that
+    // scenario stores as written and is judged only on its Then.
+    stored({ projection: 'CourseNumbering', arguments: { tenantId: 't1' } });
   });
 
   check('a scenario knows whether running it would execute a script', () => {
@@ -1571,7 +1620,7 @@ check('an import missing the definition arrays is refused, not silently accepted
     // Two ship with this model, and this is the third.
     eq(envelope.projectionScenarioDefinitions.length, 3, 'exported');
     const before = definitionsToSchema(model());
-    const importedId = importModelFromEnvelope(envelope);
+    const importedId = importModelFromEnvelope(envelope).modelId;
     const imported = sandbox.projectState()[importedId];
     if (!imported) throw new Error('import produced no model for id ' + importedId);
     eq(definitionsToSchema(imported), before, 'the definitions came back');
@@ -1719,17 +1768,34 @@ check('an import missing the definition arrays is refused, not silently accepted
     eq(model()['command-definitions'].ChangeCourseCapacity.boundary[0].id, 'what?', 'stored');
   });
 
-  check('an identifier operand missing its name is still refused', () => {
+  check('an identifier operand missing its name saves, and the advisory names the gap', () => {
     const body = deepClone(model()['command-definitions'].ChangeCourseCapacity);
     body.boundary[0].id = { parameterName: '' };
-    try {
-      updateDefinition('command-definition', id, 'ChangeCourseCapacity', body);
-    } catch (error) {
-      if (error.name !== 'DomainError') throw new Error(`threw ${error.name}: ${error.message}`);
-      return;
-    }
-    throw new Error('did not refuse');
+    updateDefinition('command-definition', id, 'ChangeCourseCapacity', body);
+    eq(sandbox.modelAdvisories(model()).some(
+      (a) => a.name === 'ChangeCourseCapacity' && /no identifier operand/.test(a.message)
+    ), true, 'the incomplete operand is reported');
   });
 }
+
+// ---------------------------------------------------------------
+// The demoted validations still hold the shipped models to the old
+// standard: every predefined model loads without a single advisory.
+// ---------------------------------------------------------------
+check('every predefined model ships advisory-clean', () => {
+  // `PREDEFINED_MODELS` is a top-level const, invisible on the vm's
+  // global — walked by index until the loader runs out instead.
+  let count = 0;
+  for (let i = 0; ; i++) {
+    let model;
+    try { model = build(i); } catch { break; }
+    count += 1;
+    const found = sandbox.modelAdvisories(model);
+    if (found.length) {
+      throw new Error(`model ${i}: ${found.map((a) => `${a.name}: ${a.message}`).join('; ')}`);
+    }
+  }
+  eq(count >= 5, true, 'all shipped models were actually checked');
+});
 
 finish();

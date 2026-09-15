@@ -183,6 +183,19 @@ async function call(name, args) {
     eq(text.includes('already exists'), true, 'with the domain\'s words');
   });
 
+  await check('an accepted edit that strands a reference echoes the advisory', async () => {
+    const { isError, text } = await call('add_command_definition', {
+      name: 'ProbeCommand',
+      properties: [], boundary: [], conditions: [],
+      publishes: [{ name: 'NoSuchEvent', parameters: {} }],
+    });
+    eq(isError, false, 'accepted, not refused — the demoted validations');
+    eq(text.includes('Advisories introduced by this change'), true, 'the result says so');
+    eq(text.includes('NoSuchEvent'), true, 'naming the dangling reference');
+    const removed = await call('remove_definition', { kind: 'command-definition', name: 'ProbeCommand' });
+    eq(removed.isError, false, 'and the probe cleans up after itself');
+  });
+
   await check('rename_member renames the property in place', async () => {
     const { isError } = await call('rename_member', {
       kind: 'event-definition', definitionName: 'AgentProbeRecorded',

@@ -85,6 +85,17 @@ it never works from `file:`.
   conditions do not hold is *rejected* (an ordinary outcome); a scenario that
   cannot run at all (missing event, missing argument, throwing script) is an
   *error*.
+- **The write path refuses only structure** — a missing key, a name
+  collision, a body whose containers are not lists (`assertStorableBody`).
+  Everything semantic (dangling references, write coverage, name idiom,
+  mistyped values) is an *advisory*: computed per revision by
+  `modelAdvisories` (model.js), folded into the Problems panel, shown as a
+  banner on the affected page, and echoed in mutating WebMCP tool results.
+  Never promote an advisory back into a write-path throw — a defective model
+  must load, render and evaluate. Import is best-effort: what fails the
+  structural gate is skipped and reported once, in a toast. Scenario kinds
+  are excluded from advisories; their run/status channel already reports.
+  The predefined models are held advisory-clean by a test.
 - **Every edit goes through a command function** in `model.js`, and every
   command funnels into `appendEvents` — the seam where undo marks are taken
   (`onAppend`), so buttons and agent tools are undoable alike. New editing

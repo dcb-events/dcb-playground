@@ -532,6 +532,17 @@
   }
   .badge.clear { background: var(--entity); }
 
+  /* ---------- advisories ----------
+     The demoted validations, shown on the page of the definition that
+     carries them — the same records the Problems panel lists. */
+  .advisory {
+    border: 1px solid var(--border); border-left: 3px solid var(--danger);
+    border-radius: 7px; background: var(--surface);
+    padding: 8px 11px; margin: 0 0 10px; font-size: 12px;
+  }
+  .advisory .what { font-weight: 600; margin-right: 6px; }
+  .advisory div + div { margin-top: 4px; }
+
   /* ---------- first-run splash ----------
      The full page shown in #main while nothing is loaded — see
      `renderSplash`. Its own max-width and centering, independent of
@@ -977,8 +988,9 @@ const state = {
 // A decoded share envelope, on its way in — from the URL fragment on
 // page load, or from any of the Models modal's ways to load one.
 // Scripted content is the one thing worth pausing for: everything else
-// an untrusted import might get wrong is caught by the same validating
-// commands manual editing goes through.
+// an untrusted import might get wrong either fails the structural gate
+// (skipped, and said so) or loads and surfaces as advisories — the
+// same regime every other edit lives under.
 function beginImport(envelope) {
   if (envelopeHasScript(envelope)) { state.pendingImport = envelope; render(); return; }
   finishImport(envelope);
@@ -1000,7 +1012,7 @@ function switchToModel(id) {
 
 function finishImport(envelope) {
   run(() => {
-    const modelId = importModelFromEnvelope(envelope);
+    const { modelId, skipped } = importModelFromEnvelope(envelope);
     switchToModel(modelId);
     // A model is now loaded, so whatever asked the Models modal or the
     // splash to open — a menu click, the brand mark, or nothing having
@@ -1010,6 +1022,15 @@ function finishImport(envelope) {
     if (steps.length) {
       const model = projectState()[modelId];
       for (const step of steps) sessionRun(model, step.command, step.args);
+    }
+    // An import is best-effort: whatever a definition got wrong
+    // semantically loaded anyway and sits in the Problems panel, but a
+    // definition too malformed to store at all was skipped — and this
+    // toast is the only trace of it, because the Problems panel can
+    // only speak about what exists. Said once, in full, right now.
+    if (skipped.length) {
+      const lines = skipped.map((s) => `${humanize(s.kind)} "${s.name}": ${s.reason}`);
+      toast(`Skipped on import — the rest of the model loaded. ${lines.join(' · ')}`, true);
     }
     // A newer minor loaded fine — that is what a minor promises — but
     // whatever it added is being ignored, and saying so beats letting
@@ -1775,9 +1796,9 @@ function looseEnds(model) {
     });
     if (!slice.emits.length) open('records nothing — nothing it decides is kept');
     if (!slice.payload.length) open('takes no input');
-    for (const gap of slice.coverage) {
-      open('writes ' + readable(gap.entity) + ' without reading it first');
-    }
+    // Coverage gaps are advisories now — `modelAdvisories` reports
+    // them with the property and the remedy, so a second, vaguer
+    // entry here would say the same thing worse.
   }
   for (const [entity, body] of Object.entries(model['entity-definitions'])) {
     for (const property of body.properties || []) {
@@ -1808,6 +1829,23 @@ function problems(model) {
     return problemsCache.found;
   }
   const found = looseEnds(model).map((end) => ({ what: end.what, why: end.why, go: end.go }));
+  // The demoted validations: what a save used to refuse loads now and
+  // is reported here instead, each one a way back to the definition
+  // that carries it.
+  const ADVISORY_GO = {
+    'entity-definition': (name) => { state.view = 'entity'; state.entity = name; },
+    'event-definition': (name) => goToEvent(name),
+    'projection-definition': (name) => goToProjection(name),
+    'command-definition': (name) => goToCommand(name),
+    'custom-type-definition': (name) => goToCustomType(name),
+  };
+  for (const advisory of modelAdvisories(model)) {
+    found.push({
+      what: readable(advisory.name),
+      why: advisory.message,
+      go: () => (ADVISORY_GO[advisory.kind] || (() => {}))(advisory.name),
+    });
+  }
   for (const { key, body, result } of scenarioTrouble(model)) {
     found.push({
       what: scenarioName(body, readable),
@@ -1820,6 +1858,20 @@ function problems(model) {
   }
   problemsCache = { revision: logRevisionNow(), model, found };
   return found;
+}
+
+// The marker shown where a flagged definition lives — the same
+// records the Problems panel folds in, filtered to one definition (or
+// to one kind, for the pages that list a whole kind). Null when there
+// is nothing to say, so a clean card stays a clean card.
+function advisoryBanner(model, kind, name) {
+  const found = modelAdvisories(model)
+    .filter((a) => a.kind === kind && (name === undefined || a.name === name));
+  if (!found.length) return null;
+  return h('div', { class: 'advisory' },
+    found.map((a) => h('div', {},
+      name === undefined ? h('span', { class: 'what' }, readable(a.name)) : null,
+      a.message)));
 }
 
 // Shown only when there is something to show — a clean model gets no
@@ -1843,8 +1895,9 @@ function problemsPanel() {
       h('span', { class: 'grow' }),
       h('button', { class: 'btn ghost', onclick: close, title: 'Close' }, '×')),
     h('div', { class: 'muted small', style: 'margin-bottom:14px' },
-      'Loose ends this model has not tied yet, and scenarios it no longer agrees with. '
-      + 'Not mistakes — just ways back to what still needs attention.'),
+      'Loose ends this model has not tied yet, definitions that do not hold together yet, '
+      + 'and scenarios it no longer agrees with. Nothing here blocked a save — '
+      + 'these are ways back to what still needs attention.'),
     found.map((p) => h('button', {
       class: 'issue',
       onclick: () => { close(); p.go(); render(); },
@@ -3578,6 +3631,9 @@ function paintPage() {
     main.appendChild(commandIconPicker(model, slice.name, model['command-definitions'][slice.name]));
   }
 
+  const commandAdvisories = advisoryBanner(model, 'command-definition', slice.name);
+  if (commandAdvisories) main.appendChild(commandAdvisories);
+
   main.appendChild(scenarioTabs(model, slice));
 
   if (state.tab === 'scenarios') {
@@ -5128,6 +5184,9 @@ function renderEntity(model, main) {
 
   if (state.iconPicker === name) main.appendChild(iconPicker(model, name, entity));
 
+  const entityAdvisories = advisoryBanner(model, 'entity-definition', name);
+  if (entityAdvisories) main.appendChild(entityAdvisories);
+
   main.appendChild(identityBlock(model, name, entity));
 
   // The same ledger the Projections page renders, one column narrower:
@@ -5499,10 +5558,17 @@ function removeEntityProperty(model, entityName, property) {
     const entity = deepClone(model['entity-definitions'][entityName]);
     entity.properties = (entity.properties || []).filter((p) => p.name !== property.name);
     updateDefinition('entity-definition', model.id, entityName, entity);
-    try {
-      removeDefinition('projection-definition', model.id, projectionName);
-    } catch {
+    // `removeDefinition` no longer refuses over dangling references,
+    // so the still-read decision is this gesture's own: scenarios never
+    // hold a projection in place (they report breakage, not prevent
+    // it), anything else still reading it does.
+    const after = projectState()[model.id];
+    const stillRead = findReferencers(after, 'projection-definition', projectionName)
+      .some((r) => r.kind !== 'scenario-definition' && r.kind !== 'projection-scenario-definition');
+    if (stillRead) {
       toast(`Unbound — ${readable(projectionName)} is still read elsewhere, so it stays in Projections.`);
+    } else {
+      removeDefinition('projection-definition', model.id, projectionName);
     }
   });
 }
@@ -5634,6 +5700,9 @@ function renderCustomTypes(model, main) {
       + 'scalar type marked "represented as a tag" is what every event carrying it is tagged '
       + 'with. An entity’s own derived identifier lives here too, created automatically '
       + 'alongside it, and stays pinned as a tag for as long as the entity owns it.')));
+
+  const typeAdvisories = advisoryBanner(model, 'custom-type-definition');
+  if (typeAdvisories) main.appendChild(typeAdvisories);
 
   const names = Object.keys(model['custom-type-definitions']).sort();
   if (!names.length) {
@@ -6533,6 +6602,9 @@ function renderProjections(model, main) {
         },
       }, '+ new projection'))));
 
+  const projectionAdvisories = advisoryBanner(model, 'projection-definition');
+  if (projectionAdvisories) main.appendChild(projectionAdvisories);
+
   // Only the ones no entity binds. A projection an entity calls
   // something is that entity's property and is edited on its page, in
   // this very component — listing it twice would be the one thing this
@@ -6618,6 +6690,9 @@ function renderEvents(model, main) {
       'Everything that has ever happened, named and shaped. An event may be recorded by no '
       + 'command, one, or several — and read by no projection, one, or several — which is why it '
       + 'has a page of its own rather than living on any one of theirs.')));
+
+  const eventAdvisories = advisoryBanner(model, 'event-definition');
+  if (eventAdvisories) main.appendChild(eventAdvisories);
 
   const names = Object.keys(model['event-definitions']).sort();
   if (!names.length && !state.newEvent) {
