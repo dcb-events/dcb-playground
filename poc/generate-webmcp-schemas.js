@@ -1,0 +1,136 @@
+// ============================================================
+// Writes webmcp-schemas.js — the per-kind definition schemas the
+// WebMCP tools hand to an agent — out of dcb-model.schema.json, the
+// canonical schema one directory up. Each kind gets its own schema:
+// the definition's object shape (`{name, …body}`, exactly what a
+// share envelope stores per definition) with every `$ref` inlined,
+// because the consumers on the other side of WebMCP (Gemini's
+// function calling, for one) do not resolve references — a schema
+// has to say everything where it stands.
+//
+// Two references cannot be inlined and are cut deliberately:
+//   - the external draft-2020-12 ref behind a custom type's opaque
+//     `schema` becomes a permissive object, described in words;
+//   - the one cycle (a successor operand nests another handler
+//     operand) is broken with a described permissive object at the
+//     point of recursion.
+//
+// Run with `node poc/generate-webmcp-schemas.js` after changing
+// dcb-model.schema.json. Nothing here runs in the browser; it is a
+// one-time-per-change build step, same as generate-examples.js.
+// ============================================================
+const fs = require('fs');
+const path = require('path');
+
+const POC = __dirname;
+const schema = JSON.parse(fs.readFileSync(path.join(POC, '..', 'dcb-model.schema.json'), 'utf8'));
+const defs = schema.$defs;
+
+// The seven kinds the playground stores, each rooted at its $def.
+const ROOTS = {
+  'entity-definition': 'EntityDefinition',
+  'event-definition': 'EventDefinition',
+  'projection-definition': 'ProjectionDefinition',
+  'command-definition': 'CommandDefinition',
+  'custom-type-definition': 'CustomTypeDefinition',
+  'scenario-definition': 'ScenarioDefinition',
+  'projection-scenario-definition': 'ProjectionScenarioDefinition',
+};
+
+// A value with every reference inlined. A `$ref`'s siblings (usually a
+// site-specific description) win over what the referenced definition
+// says for the same key — the words closest to the use are the ones
+// written for it.
+function inline(value, stack) {
+  if (Array.isArray(value)) return value.map((item) => inline(item, stack));
+  if (!value || typeof value !== 'object') return value;
+
+  const { $ref, ...siblings } = value;
+  if ($ref === undefined) {
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) =>
+        // `const` and a one-member `enum` say the same thing, and the
+        // consumers that choke on references tend to choke on `const`
+        // too — say it the widely understood way.
+        (k === 'const' ? ['enum', [v]] : [k, inline(v, stack)]))
+    );
+  }
+  if (!$ref.startsWith('#/$defs/')) {
+    // The one external ref — a custom type's `schema` is any JSON
+    // Schema. Nothing downstream of WebMCP could fetch it anyway.
+    return {
+      type: 'object',
+      description: ((siblings.description || '') + ' A JSON Schema object '
+        + '(draft 2020-12) describing one value, e.g. {"type": "string"}.').trim(),
+    };
+  }
+  const name = $ref.slice('#/$defs/'.length);
+  if (!defs[name]) throw new Error(`dcb-model.schema.json has no $def "${name}"`);
+  if (stack.includes(name)) {
+    return {
+      type: 'object',
+      description: ((siblings.description || '') + ` Recursive: a nested ${name}, `
+        + 'the same shape as the one this appears inside.').trim(),
+    };
+  }
+  return { ...inline(defs[name], [...stack, name]), ...inline(siblings, stack) };
+}
+
+// The Anthropic API refuses oneOf/anyOf/allOf at the *top level* of a
+// tool's input schema (nested is fine). The one place the model schema
+// has one — a custom type is scalar (`schema`) xor composite
+// (`properties`) — alternates only the `required` list, so it flattens
+// losslessly: keep what every branch requires, say the alternation in
+// words. Anything more elaborate arriving here should stop the build
+// rather than be silently mistranslated.
+function flattenTopLevelChoice(schema, kind) {
+  for (const key of ['oneOf', 'anyOf', 'allOf']) {
+    const branches = schema[key];
+    if (!branches) continue;
+    if (key === 'allOf'
+        || !branches.every((b) => Object.keys(b).every((k) => k === 'required'))) {
+      throw new Error(`${kind}: top-level ${key} is more than a required-alternation — `
+        + 'decide how to flatten it before regenerating');
+    }
+    const common = branches.map((b) => b.required)
+      .reduce((a, b) => a.filter((r) => b.includes(r)));
+    const alternates = branches
+      .map((b) => b.required.filter((r) => !common.includes(r)))
+      .map((extra) => extra.map((r) => '`' + r + '`').join(' + '));
+    const { [key]: _, ...rest } = schema;
+    return {
+      ...rest,
+      required: common,
+      description: ((rest.description || '') + '\n'
+        + `${key === 'oneOf' ? 'Exactly' : 'At least'} one of ${alternates.join(' or ')} `
+        + 'is required as well.').trim(),
+    };
+  }
+  return schema;
+}
+
+const out = {};
+for (const [kind, rootName] of Object.entries(ROOTS)) {
+  const root = defs[rootName];
+  if (!root) throw new Error(`dcb-model.schema.json has no $def "${rootName}"`);
+  out[kind] = flattenTopLevelChoice(inline(root, [rootName]), kind);
+}
+
+// What this exists to guarantee: nothing referencing anything.
+const flat = JSON.stringify(out);
+if (flat.includes('"$ref"') || flat.includes('"$defs"')) {
+  throw new Error('a $ref or $defs survived inlining — the consumers cannot resolve them');
+}
+
+const file = path.join(POC, 'webmcp-schemas.js');
+const banner = [
+  '// Generated by generate-webmcp-schemas.js from ../dcb-model.schema.json',
+  '// — do not edit by hand; change the schema and regenerate.',
+  '// Each entry is one definition kind\'s object shape ({name, …body} —',
+  '// or {id, …body} for the id-keyed scenario kinds), every reference',
+  '// inlined, ready to serve as a WebMCP tool\'s inputSchema.',
+].join('\n');
+fs.writeFileSync(file,
+  banner + '\nconst WEBMCP_DEFINITION_SCHEMAS = ' + JSON.stringify(out, null, 2) + ';\n');
+console.log('wrote', path.relative(POC, file),
+  `(${Object.keys(out).length} kinds, ${(fs.statSync(file).size / 1024).toFixed(0)} KB)`);
