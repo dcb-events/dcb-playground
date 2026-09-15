@@ -709,6 +709,21 @@ function operandText(operand) {
   }
 }
 
+// An operand is unresolved when the name its kind requires is absent —
+// the gap `operandText` papers over with a '?' placeholder. Checked
+// structurally, because a literal that merely *contains* a question
+// mark is a value, not a gap.
+function operandIncomplete(operand) {
+  switch (operandSource(operand)) {
+    case 'parameter': return !operand.parameterName;
+    case 'alias-property': return !operand.alias;
+    case 'enum-member': return !operand.enumMember;
+    case 'event-property': return !operand.eventProperty;
+    case 'successor': return operandIncomplete(operand.successor);
+    default: return false;
+  }
+}
+
 function sameOperand(a, b) {
   return JSON.stringify(a === undefined ? null : a) === JSON.stringify(b === undefined ? null : b);
 }
@@ -2048,7 +2063,7 @@ function validateCommandBody(model, body) {
     if (!model['entity-definitions'][binding.entity]) {
       throw new DomainError(`Boundary binding "${binding.alias}" names unknown entity "${binding.entity}".`);
     }
-    if (binding.id === undefined || binding.id === null || operandText(binding.id).includes('?')) {
+    if (binding.id === undefined || binding.id === null || operandIncomplete(binding.id)) {
       throw new DomainError(`Boundary binding "${binding.alias}" has no identifier operand.`);
     }
     if (operandSource(binding.id) === 'alias-property') {

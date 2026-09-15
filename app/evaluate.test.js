@@ -1608,6 +1608,37 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 }
 
+// ---------------------------------------------------------------
+// Validation: identifier operands are judged by structure, not by
+// their rendered text — a literal may contain '?' and still be a
+// value, while an operand missing its name is a gap however it prints.
+// ---------------------------------------------------------------
+{
+  const { id, model } = open_(0);
+
+  check('a literal identifier containing "?" is a value, not a gap', () => {
+    const body = deepClone(model()['command-definitions'].ChangeCourseCapacity);
+    // The emission writes the same literal, so write coverage still
+    // sees the tag the boundary consults — only the '?' is under test.
+    body.boundary[0].id = 'what?';
+    body.publishes[0].parameters.courseId = 'what?';
+    updateDefinition('command-definition', id, 'ChangeCourseCapacity', body);
+    eq(model()['command-definitions'].ChangeCourseCapacity.boundary[0].id, 'what?', 'stored');
+  });
+
+  check('an identifier operand missing its name is still refused', () => {
+    const body = deepClone(model()['command-definitions'].ChangeCourseCapacity);
+    body.boundary[0].id = { parameterName: '' };
+    try {
+      updateDefinition('command-definition', id, 'ChangeCourseCapacity', body);
+    } catch (error) {
+      if (error.name !== 'DomainError') throw new Error(`threw ${error.name}: ${error.message}`);
+      return;
+    }
+    throw new Error('did not refuse');
+  });
+}
+
 console.log(`${passed} passed, ${failures.length} failed`);
 if (failures.length) {
   console.log('\n' + failures.map((f) => '  ✗ ' + f).join('\n'));

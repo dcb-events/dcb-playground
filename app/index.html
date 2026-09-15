@@ -1369,13 +1369,20 @@ async function computeExportLink(envelope) {
   return location.origin + location.pathname + '#model=' + encoded;
 }
 
+// Each refresh takes a fresh token and only the holder of the current
+// one may land its result — toggling Include options mid-compute must
+// not let a superseded envelope win the link and the address bar.
+let exportLinkToken = 0;
+
 function refreshExportLink() {
   const model = activeModel();
+  const token = ++exportLinkToken;
   runAsync(async () => {
     const envelope = exportEnvelope(model, {
       includeScenarios: state.ieIncludeScenarios, includeSandbox: state.ieIncludeSandbox,
     });
     const link = await computeExportLink(envelope);
+    if (token !== exportLinkToken) return;
     history.replaceState(null, '', link);
     state.ieLink = link;
   });
