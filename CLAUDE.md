@@ -56,6 +56,9 @@ node app/ui.test.js         # the pure layer under the interface
 node app/webmcp.test.js     # WebMCP tool seam
 ```
 
+The DOM stub, sandbox, script loader and assertions live once in
+`app/test-harness.js`, `require`d by all three suites.
+
 Generated files — regenerate, never hand-edit:
 
 ```
@@ -82,9 +85,21 @@ it never works from `file:`.
   conditions do not hold is *rejected* (an ordinary outcome); a scenario that
   cannot run at all (missing event, missing argument, throwing script) is an
   *error*.
-- **Every edit goes through a command function** in `model.js`, landing in the
-  playground's own event log — that is what makes edits undoable. New editing
+- **Every edit goes through a command function** in `model.js`, and every
+  command funnels into `appendEvents` — the seam where undo marks are taken
+  (`onAppend`), so buttons and agent tools are undoable alike. New editing
   features follow the same path; WebMCP tools already do.
+- **Every writer of `EVENT_LOG_KEY` must call `bumpLogRevision()`** —
+  `appendEvents` does, undo/redo do. The projected state, held scenario runs
+  and the problems list are all cached per revision; a writer that skips its
+  bump is the one way those caches go stale.
+- **`projectState()` returns one shared object per revision** — never mutate
+  it. Editors work on a `deepClone` and route changes through a command
+  function (`patch` in index.html is the pattern).
+- **Scenario-kind machinery lives in `SCENARIO_KINDS`** (index.html): command
+  scenarios and projection scenarios share one held/run, staleness, save and
+  status mechanism, parameterized by that table. A behavior change belongs in
+  the generic functions, not in a per-kind copy.
 - **Comment style**: file headers and block comments carry design rationale,
   not line-by-line narration. Match that register; keep headers truthful when
   behaviour changes.

@@ -7074,11 +7074,50 @@ function stepConsistency(model, slice) {
 // near the top of this file. Everything below is what it chooses
 // between.
 
-const heldRuns = new Map();
+// The two scenario kinds — command scenarios and projection scenarios
+// — run through one mechanism. What differs is data: which definition
+// kind, which evaluator and script-detector, which body field groups
+// them under a subject, which state slot holds the draft and which
+// set holds the open rows, and how "current" and "drifted" read. That
+// lives here, so the held/run gesture, the staleness rule, the save
+// path and the status ladder exist once and cannot drift apart.
+const SCENARIO_KINDS = {
+  'scenario-definition': {
+    subjectField: 'command',
+    run: (model, body) => runScenario(model, body),
+    touchesScript: (model, body) => scenarioTouchesScript(model, body),
+    deriveThen: (model, body) => deriveThen(model, body),
+    heldRuns: new Map(),
+    draftKey: 'scenarioDraft',
+    openSet: () => state.openScenarios,
+    words: {
+      current: ['✓', 'Current', 'What this command does is what this scenario says it does'],
+      drifted: ['≠', 'Drifted', 'This command behaves differently now than when this was accepted'],
+      broken: ['!', 'Broken', 'This could not be run at all — something it names is gone'],
+      held: ['·', 'Not run', 'Reads a script, so it runs only when asked'],
+    },
+  },
+  'projection-scenario-definition': {
+    subjectField: 'projection',
+    run: (model, body) => runProjectionScenario(model, body),
+    touchesScript: (model, body) => projectionScenarioTouchesScript(model, body),
+    deriveThen: (model, body) => deriveProjectionScenarioThen(model, body),
+    heldRuns: new Map(),
+    draftKey: 'projectionScenarioDraft',
+    openSet: () => state.openProjectionScenarios,
+    words: {
+      current: ['✓', 'Current', 'What this projection folds to is what this scenario says it does'],
+      drifted: ['≠', 'Drifted', 'It folds differently now than when this was accepted'],
+      broken: ['!', 'Broken', 'This could not be run at all — something it names is gone'],
+      held: ['·', 'Not run', 'Reads a script, so it runs only when asked'],
+    },
+  },
+};
 
-function scenarioResult(model, key, body) {
-  if (!scenarioTouchesScript(model, body)) return runScenario(model, body);
-  const cached = heldRuns.get(key);
+function scenarioResultOf(kind, model, key, body) {
+  const k = SCENARIO_KINDS[kind];
+  if (!k.touchesScript(model, body)) return k.run(model, body);
+  const cached = k.heldRuns.get(key);
   // The log revision stands in for "nothing has changed since": every
   // edit bumps it, so a run made before one is a run made against
   // different definitions.
@@ -7089,22 +7128,81 @@ function scenarioResult(model, key, body) {
   };
 }
 
-function runHeldScenario(model, key, body) {
-  heldRuns.set(key, { at: logRevisionNow(), result: runScenario(model, body) });
+function runHeldScenarioOf(kind, model, key, body) {
+  const k = SCENARIO_KINDS[kind];
+  k.heldRuns.set(key, { at: logRevisionNow(), result: k.run(model, body) });
   render();
 }
 
-const STATUS_WORDS = {
-  current: ['✓', 'Current', 'What this command does is what this scenario says it does'],
-  drifted: ['≠', 'Drifted', 'This command behaves differently now than when this was accepted'],
-  broken: ['!', 'Broken', 'This could not be run at all — something it names is gone'],
-  held: ['·', 'Not run', 'Reads a script, so it runs only when asked'],
-};
+// Every scenario of one kind about one subject — a command's, or a
+// projection's.
+function scenariosAbout(kind, model, subject) {
+  const k = SCENARIO_KINDS[kind];
+  return Object.entries(model[DEF_COLLECTIONS[kind]] || {})
+    .filter(([, body]) => body[k.subjectField] === subject)
+    .map(([key, body]) => ({ key, body }));
+}
+
+// Derives the Then off today's definitions, stores the scenario, and
+// opens its row — the one save path both kinds go through.
+function saveScenarioOf(kind, model) {
+  const k = SCENARIO_KINDS[kind];
+  const draft = state[k.draftKey];
+  const body = deepClone(draft.body);
+  let then;
+  try {
+    then = k.deriveThen(model, body);
+  } catch (error) {
+    return toast(error instanceof EvaluationError
+      ? error.message
+      : 'That could not be worked out: ' + error.message, true);
+  }
+  body.then = then;
+  run(() => {
+    const key = draft.key || generateId();
+    if (draft.key) {
+      updateDefinition(kind, model.id, key, body);
+    } else {
+      addDefinition(kind, model.id, key, body);
+      if (draft.insertAfter) insertAfterSibling(kind, model.id, key, draft.insertAfter);
+    }
+    state[k.draftKey] = null;
+    k.openSet().add(key);
+  });
+}
+
+function patchScenarioDraftOf(kind, mutate) {
+  const draft = state[SCENARIO_KINDS[kind].draftKey];
+  if (!draft) return;
+  mutate(draft.body);
+  render();
+}
+
+// A copy of a scenario, stored right after the original. What happens
+// to the view afterwards differs per place — a panel closes forms, a
+// ledger row must stay open — so the caller passes it in.
+function copyScenarioOf(kind, model, afterKey, thenOpen) {
+  run(() => {
+    const copyKey = generateId();
+    const copyBody = deepClone(model[DEF_COLLECTIONS[kind]][afterKey]);
+    addDefinition(kind, model.id, copyKey, copyBody);
+    insertAfterSibling(kind, model.id, copyKey, afterKey);
+    thenOpen(copyKey, copyBody);
+  });
+}
+
+const STATUS_WORDS = SCENARIO_KINDS['scenario-definition'].words;
+
+function scenarioResult(model, key, body) {
+  return scenarioResultOf('scenario-definition', model, key, body);
+}
+
+function runHeldScenario(model, key, body) {
+  runHeldScenarioOf('scenario-definition', model, key, body);
+}
 
 function scenariosOf(model, commandName) {
-  return Object.entries(model['scenario-definitions'] || {})
-    .filter(([, body]) => body.command === commandName)
-    .map(([key, body]) => ({ key, body }));
+  return scenariosAbout('scenario-definition', model, commandName);
 }
 
 // Splices an already-added member right after another one — what a
@@ -7527,11 +7625,7 @@ function scenarioFooter(model, commandName, afterKey) {
     }, '+ new'),
     h('button', {
       class: 'btn tiny ghost', title: 'Add a copy of this scenario, placed right after it, open to tweak',
-      onclick: () => run(() => {
-        const copyKey = generateId();
-        const copyBody = deepClone(model['scenario-definitions'][afterKey]);
-        addDefinition('scenario-definition', model.id, copyKey, copyBody);
-        insertAfterSibling('scenario-definition', model.id, copyKey, afterKey);
+      onclick: () => copyScenarioOf('scenario-definition', model, afterKey, (copyKey, copyBody) => {
         closeForms();
         state.scenarioDraft = { key: copyKey, insertAfter: null, body: copyBody };
       }),
@@ -7559,10 +7653,7 @@ function startScenario(model, commandName, insertAfter) {
 }
 
 function patchScenarioDraft(mutate) {
-  const draft = state.scenarioDraft;
-  if (!draft) return;
-  mutate(draft.body);
-  render();
+  patchScenarioDraftOf('scenario-definition', mutate);
 }
 
 function scenarioEditor(model) {
@@ -7630,28 +7721,7 @@ function scenarioEditor(model) {
 // cannot be created either — there would be nothing to freeze — and the
 // message says which part of it did not resolve.
 function saveScenario(model) {
-  const draft = state.scenarioDraft;
-  const body = deepClone(draft.body);
-  let then;
-  try {
-    then = deriveThen(model, body);
-  } catch (error) {
-    return toast(error instanceof EvaluationError
-      ? error.message
-      : 'That could not be worked out: ' + error.message, true);
-  }
-  body.then = then;
-  run(() => {
-    const key = draft.key || generateId();
-    if (draft.key) {
-      updateDefinition('scenario-definition', model.id, key, body);
-    } else {
-      addDefinition('scenario-definition', model.id, key, body);
-      if (draft.insertAfter) insertAfterSibling('scenario-definition', model.id, key, draft.insertAfter);
-    }
-    state.scenarioDraft = null;
-    state.openScenarios.add(key);
-  });
+  saveScenarioOf('scenario-definition', model);
 }
 
 // ---------- where they are shown ----------
@@ -7766,35 +7836,21 @@ function scenarioTabs(model, slice) {
 // mechanism Scenarios already has, reused rather than reinvented.
 // ============================================================
 
-const heldProjectionScenarioRuns = new Map();
+// The mechanism lives in SCENARIO_KINDS with the command-scenario
+// machinery; these are its projection-scenario faces.
+const PROJECTION_SCENARIO_STATUS_WORDS = SCENARIO_KINDS['projection-scenario-definition'].words;
 
 function projectionScenarioResult(model, key, body) {
-  if (!projectionScenarioTouchesScript(model, body)) return runProjectionScenario(model, body);
-  const cached = heldProjectionScenarioRuns.get(key);
-  if (cached && cached.at === logRevisionNow()) return cached.result;
-  return {
-    status: 'held',
-    reason: 'This scenario reads a scripted projection, so it runs when you ask and not before.',
-  };
+  return scenarioResultOf('projection-scenario-definition', model, key, body);
 }
 
 function runHeldProjectionScenario(model, key, body) {
-  heldProjectionScenarioRuns.set(key, { at: logRevisionNow(), result: runProjectionScenario(model, body) });
-  render();
+  runHeldScenarioOf('projection-scenario-definition', model, key, body);
 }
-
-const PROJECTION_SCENARIO_STATUS_WORDS = {
-  current: ['✓', 'Current', 'What this projection folds to is what this scenario says it does'],
-  drifted: ['≠', 'Drifted', 'It folds differently now than when this was accepted'],
-  broken: ['!', 'Broken', 'This could not be run at all — something it names is gone'],
-  held: ['·', 'Not run', 'Reads a script, so it runs only when asked'],
-};
 
 // Every scenario about a projection.
 function projectionScenariosFor(model, projectionName) {
-  return Object.entries(model['projection-scenario-definitions'] || {})
-    .filter(([, body]) => body.projection === projectionName)
-    .map(([key, body]) => ({ key, body }));
+  return scenariosAbout('projection-scenario-definition', model, projectionName);
 }
 
 // Where a projection scenario's Given lives, and what it can be helped
@@ -7929,11 +7985,7 @@ function projectionScenarioFooter(model, start, afterKey) {
 // through `closeForms` — that would fold away the very row this button
 // sits in, taking the button, and the focus on it, with it.
 function copyProjectionScenario(model, afterKey) {
-  run(() => {
-    const copyKey = generateId();
-    const copyBody = deepClone(model['projection-scenario-definitions'][afterKey]);
-    addDefinition('projection-scenario-definition', model.id, copyKey, copyBody);
-    insertAfterSibling('projection-scenario-definition', model.id, copyKey, afterKey);
+  copyScenarioOf('projection-scenario-definition', model, afterKey, (copyKey, copyBody) => {
     keepingRowOpen(() => {
       state.projectionScenarioDraft = { key: copyKey, insertAfter: null, body: copyBody };
       state.openProjectionScenarios.add(copyKey);
@@ -7970,10 +8022,7 @@ function startProjectionScenario(model, start, insertAfter) {
 }
 
 function patchProjectionScenarioDraft(mutate) {
-  const draft = state.projectionScenarioDraft;
-  if (!draft) return;
-  mutate(draft.body);
-  render();
+  patchScenarioDraftOf('projection-scenario-definition', mutate);
 }
 
 // What the projection under test is handed. Not a list of reads any
@@ -8066,28 +8115,7 @@ function projectionScenarioEditor(model) {
 // `then`, which is also what re-opening this for editing reads the
 // ticked set back from.
 function saveProjectionScenario(model) {
-  const draft = state.projectionScenarioDraft;
-  const body = deepClone(draft.body);
-  let then;
-  try {
-    then = deriveProjectionScenarioThen(model, body);
-  } catch (error) {
-    return toast(error instanceof EvaluationError
-      ? error.message
-      : 'That could not be worked out: ' + error.message, true);
-  }
-  body.then = then;
-  run(() => {
-    const key = draft.key || generateId();
-    if (draft.key) {
-      updateDefinition('projection-scenario-definition', model.id, key, body);
-    } else {
-      addDefinition('projection-scenario-definition', model.id, key, body);
-      if (draft.insertAfter) insertAfterSibling('projection-scenario-definition', model.id, key, draft.insertAfter);
-    }
-    state.projectionScenarioDraft = null;
-    state.openProjectionScenarios.add(key);
-  });
+  saveScenarioOf('projection-scenario-definition', model);
 }
 
 // The list of scenarios shown in one place, with its editor folded in
