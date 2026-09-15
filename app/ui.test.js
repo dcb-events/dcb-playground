@@ -18,94 +18,22 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
+const { createSandbox, loadApp, makeChecker, textOf, findAll } = require('./test-harness.js');
 
 const APP = __dirname;
 
-const store = new Map();
-const noop = () => {};
-// Inert in every way but two: a node remembers the text it was made
-// with and what has been appended to it, so a test can ask what a row
-// actually says rather than only that building it did not throw.
-const element = (text, tag) => {
-  const node = {
-  tag: tag || '',
-  nodeText: text === undefined ? '' : String(text),
-  appendChild(child) { if (child) node.children.push(child); return child; },
-  insertBefore(child) { if (child) node.children.unshift(child); return child; },
-  get firstChild() { return node.children[0] || null; },
-  removeChild: noop, remove: noop, setAttribute: noop,
-  addEventListener: noop, removeAttribute: noop, focus: noop, blur: noop,
-  scrollIntoView: noop, contains: () => false, closest: () => null,
-  classList: { add: noop, remove: noop, toggle: noop, contains: () => false },
-  style: {}, dataset: {}, children: [], childNodes: [],
-  querySelector: () => null, querySelectorAll: () => [],
-  getBoundingClientRect: () => ({ top: 0, left: 0, width: 0, height: 0 }),
-  };
-  return node;
-};
-
-// Everything a node and its descendants read as, in order.
-const textOf = (node) => (node.nodeText || '')
-  + (node.children || []).map(textOf).join('');
-
-// Every node in a tree that matches, in document order.
-const findAll = (node, pred, out = []) => {
-  if (pred(node)) out.push(node);
-  for (const child of node.children || []) findAll(child, pred, out);
-  return out;
-};
-
-const sandbox = {
-  console,
-  localStorage: {
-    getItem: (k) => (store.has(k) ? store.get(k) : null),
-    setItem: (k, v) => store.set(k, String(v)),
-    removeItem: (k) => store.delete(k),
-  },
-  document: {
-    createElement: (t) => element(undefined, t), createTextNode: (t) => element(t), body: element(),
-    documentElement: element(),
-    // Every lookup answers with an inert element rather than null: the
-    // page wires a handful of listeners at load, and a stub that said
-    // "not there" would only be testing that.
-    getElementById: () => element(),
-    querySelector: () => element(),
-    querySelectorAll: () => [],
-    addEventListener: noop,
-  },
-  location: { hash: '', pathname: '/', search: '' },
-  history: { replaceState: noop },
-  navigator: { clipboard: {} },
-  matchMedia: () => ({ matches: false, addEventListener: noop }),
-  setTimeout, clearTimeout, setInterval, clearInterval,
-  requestAnimationFrame: noop,
-  TextEncoder, TextDecoder, URL, Blob: class {},
-};
-sandbox.window = sandbox;
-sandbox.globalThis = sandbox;
-sandbox.window.addEventListener = noop;
-vm.createContext(sandbox);
-
-const pageScript = (() => {
-  const html = fs.readFileSync(path.join(APP, 'index.html'), 'utf8');
-  const blocks = [...html.matchAll(/<script(?![^>]*\ssrc=)[^>]*>([\s\S]*?)<\/script>/g)]
-    .map((m) => m[1]);
-  // The page's own code is the long one; the others are the tiny
-  // loaders that pull in the files already concatenated below.
-  return blocks.sort((a, b) => b.length - a.length)[0];
-})();
+const { sandbox, store } = createSandbox();
 
 // `state` and the page's own functions live in the script's lexical
 // scope, not as properties of the context object — the same as they
 // would on `window` in a browser. The trailer hands out the few this
 // drives, the way `generate-examples.js` reaches `PREDEFINED_MODELS`.
-const source = ['model.js', 'evaluate.js', 'shared.js']
-  .map((file) => fs.readFileSync(path.join(APP, file), 'utf8'))
-  .concat(pageScript)
-  .concat('globalThis.state = state; globalThis.render = render; globalThis.session = session;'
-    + ' globalThis.closeForms = closeForms;')
-  .join('\n;\n');
-vm.runInContext(source, sandbox, { filename: 'page.js' });
+loadApp(sandbox, ['model.js', 'evaluate.js', 'shared.js'], {
+  withPage: true,
+  trailer: 'globalThis.state = state; globalThis.render = render; globalThis.session = session;'
+    + ' globalThis.closeForms = closeForms;',
+});
+const { check, eq, finish } = makeChecker();
 
 const {
   loadPredefinedModel, projectState, addDefinition, updateDefinition,
@@ -117,27 +45,12 @@ const {
 } = sandbox;
 
 function build(index) {
+  // Clearing the store is a write `appendEvents` never sees, so the
+  // projection cache is told the world moved underneath it.
   store.clear();
+  sandbox.bumpLogRevision();
   const id = loadPredefinedModel(index);
   return { id, model: () => projectState()[id] };
-}
-
-let passed = 0;
-const failures = [];
-
-function check(name, fn) {
-  try {
-    fn();
-    passed++;
-  } catch (error) {
-    failures.push(`${name}\n    ${error.message}`);
-  }
-}
-
-function eq(actual, expected, what) {
-  const a = JSON.stringify(actual);
-  const b = JSON.stringify(expected);
-  if (a !== b) throw new Error(`${what || 'value'}: expected ${b}, got ${a}`);
 }
 
 // ---------------------------------------------------------------
@@ -1613,8 +1526,4 @@ function eq(actual, expected, what) {
   store.delete('dcb-playground:model');
 }
 
-console.log(`${passed} passed, ${failures.length} failed`);
-if (failures.length) {
-  console.log('\n' + failures.map((f) => '  ✗ ' + f).join('\n'));
-  process.exit(1);
-}
+finish();

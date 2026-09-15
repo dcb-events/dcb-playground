@@ -16,101 +16,25 @@
 //
 // Run with `node app/webmcp.test.js`.
 // ============================================================
-const fs = require('fs');
-const path = require('path');
-const vm = require('vm');
+const { createSandbox, loadApp, makeChecker } = require('./test-harness.js');
 
-const APP = __dirname;
-
-const store = new Map();
-const noop = () => {};
-const element = (text, tag) => {
-  const node = {
-  tag: tag || '',
-  nodeText: text === undefined ? '' : String(text),
-  appendChild(child) { if (child) node.children.push(child); return child; },
-  insertBefore(child) { if (child) node.children.unshift(child); return child; },
-  get firstChild() { return node.children[0] || null; },
-  removeChild: noop, remove: noop, setAttribute: noop,
-  addEventListener: noop, removeAttribute: noop, focus: noop, blur: noop,
-  scrollIntoView: noop, contains: () => false, closest: () => null,
-  classList: { add: noop, remove: noop, toggle: noop, contains: () => false },
-  style: {}, dataset: {}, children: [], childNodes: [],
-  querySelector: () => null, querySelectorAll: () => [],
-  getBoundingClientRect: () => ({ top: 0, left: 0, width: 0, height: 0 }),
-  };
-  return node;
-};
+const { sandbox, store } = createSandbox();
 
 // What `webmcp.js` registered, by name — the surface under test.
 const registered = new Map();
-
-const sandbox = {
-  console,
-  localStorage: {
-    getItem: (k) => (store.has(k) ? store.get(k) : null),
-    setItem: (k, v) => store.set(k, String(v)),
-    removeItem: (k) => store.delete(k),
-  },
-  document: {
-    createElement: (t) => element(undefined, t), createTextNode: (t) => element(t), body: element(),
-    documentElement: element(),
-    getElementById: () => element(),
-    querySelector: () => element(),
-    querySelectorAll: () => [],
-    addEventListener: noop,
-    modelContext: {
-      registerTool: (tool) => { registered.set(tool.name, tool); },
-    },
-  },
-  location: { hash: '', pathname: '/', search: '' },
-  history: { replaceState: noop },
-  navigator: { clipboard: {} },
-  matchMedia: () => ({ matches: false, addEventListener: noop }),
-  setTimeout, clearTimeout, setInterval, clearInterval,
-  requestAnimationFrame: noop,
-  TextEncoder, TextDecoder, URL, Blob: class {},
+sandbox.document.modelContext = {
+  registerTool: (tool) => { registered.set(tool.name, tool); },
 };
-sandbox.window = sandbox;
-sandbox.globalThis = sandbox;
-sandbox.window.addEventListener = noop;
-vm.createContext(sandbox);
-
-const pageScript = (() => {
-  const html = fs.readFileSync(path.join(APP, 'index.html'), 'utf8');
-  const blocks = [...html.matchAll(/<script(?![^>]*\ssrc=)[^>]*>([\s\S]*?)<\/script>/g)]
-    .map((m) => m[1]);
-  return blocks.sort((a, b) => b.length - a.length)[0];
-})();
 
 // Same order as the <script> tags in index.html — webmcp.js *before*
 // the page script — so a load-time dependency that would break in the
 // browser breaks here too.
-const source = ['model.js', 'evaluate.js', 'shared.js', 'webmcp-schemas.js', 'webmcp.js']
-  .map((file) => fs.readFileSync(path.join(APP, file), 'utf8'))
-  .concat(pageScript)
-  .join('\n;\n');
-vm.runInContext(source, sandbox, { filename: 'page.js' });
+loadApp(sandbox, ['model.js', 'evaluate.js', 'shared.js', 'webmcp-schemas.js', 'webmcp.js'], {
+  withPage: true,
+});
 
 const { loadPredefinedModel, projectState } = sandbox;
-
-let passed = 0;
-const failures = [];
-
-async function check(name, fn) {
-  try {
-    await fn();
-    passed++;
-  } catch (error) {
-    failures.push(`${name}\n    ${error.message}`);
-  }
-}
-
-function eq(actual, expected, what) {
-  const a = JSON.stringify(actual);
-  const b = JSON.stringify(expected);
-  if (a !== b) throw new Error(`${what || 'value'}: expected ${b}, got ${a}`);
-}
+const { check, eq, finish } = makeChecker();
 
 // A tool's answer, unwrapped: asserts the WebMCP result shape on the
 // way through, and hands back the text (parsed when it is JSON).
@@ -353,10 +277,8 @@ async function call(name, args) {
     eq('ProbeHappened' in sandbox.projectState()[modelId]['event-definitions'], true, 'redo puts it back');
   });
 
-  console.log(`${passed} passed, ${failures.length} failed`);
-  if (failures.length) {
-    console.log('\n' + failures.map((f) => '  ✗ ' + f).join('\n'));
-    process.exit(1);
-  }
+  finish();
+  // Toast timers set by the tools keep the event loop alive; the tally
+  // is printed, so leaving is honest.
   process.exit(0);
 })();

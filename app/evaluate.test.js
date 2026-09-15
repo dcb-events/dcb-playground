@@ -13,34 +13,24 @@
 //
 // `model.js` and `evaluate.js` are classic scripts, so they are loaded
 // into one `vm` context with a stubbed `localStorage` rather than
-// required — and concatenated first, so that the second can see the
-// constants the first declares.
+// required — the sandbox, the loader and the assertions live in
+// `test-harness.js`, shared with the other two suites.
 // ============================================================
-const fs = require('fs');
-const path = require('path');
-const vm = require('vm');
+const { createSandbox, loadApp, makeChecker } = require('./test-harness.js');
 
-const APP = __dirname;
+const { sandbox, store } = createSandbox();
+loadApp(sandbox, ['model.js', 'evaluate.js']);
+const { check, eq, finish } = makeChecker();
 
-const store = new Map();
-const sandbox = {
-  console,
-  localStorage: {
-    getItem: (k) => (store.has(k) ? store.get(k) : null),
-    setItem: (k, v) => store.set(k, String(v)),
-    removeItem: (k) => store.delete(k),
-  },
-};
-sandbox.globalThis = sandbox;
-vm.createContext(sandbox);
-
-const source = ['model.js', 'evaluate.js']
-  .map((file) => fs.readFileSync(path.join(APP, file), 'utf8'))
-  .join('\n;\n');
-vm.runInContext(source, sandbox, { filename: 'app.js' });
+// Clearing the store is a write `appendEvents` never sees, so the
+// projection cache is told the world moved underneath it.
+function resetStore() {
+  store.clear();
+  sandbox.bumpLogRevision();
+}
 
 function build(index) {
-  store.clear();
+  resetStore();
   const id = sandbox.loadPredefinedModel(index);
   return sandbox.projectState()[id];
 }
@@ -48,7 +38,7 @@ function build(index) {
 // The same, but keeping the id, so a test can drive the editing
 // commands and read the model back after each one.
 function open_(index) {
-  store.clear();
+  resetStore();
   const id = sandbox.loadPredefinedModel(index);
   return { id, model: () => sandbox.projectState()[id] };
 }
@@ -68,7 +58,7 @@ const {
 // below, which want a minimal model rather than one of the five shipped
 // models.
 function openBlank(name) {
-  store.clear();
+  resetStore();
   const id = createDcbModel(name || 'Ad-hoc');
   return { id, model: () => sandbox.projectState()[id] };
 }
@@ -115,24 +105,6 @@ function openScripted() {
     publishes: [{ name: 'Ticked', parameters: { counterId: { parameterName: 'counterId' } } }],
   });
   return { id, model };
-}
-
-let passed = 0;
-const failures = [];
-
-function check(name, fn) {
-  try {
-    fn();
-    passed++;
-  } catch (error) {
-    failures.push(`${name}\n    ${error.message}`);
-  }
-}
-
-function eq(actual, expected, what) {
-  const a = JSON.stringify(actual);
-  const b = JSON.stringify(expected);
-  if (a !== b) throw new Error(`${what || 'value'}: expected ${b}, got ${a}`);
 }
 
 // Drives a command and appends what it published, so a fixture is built
@@ -1703,8 +1675,4 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 }
 
-console.log(`${passed} passed, ${failures.length} failed`);
-if (failures.length) {
-  console.log('\n' + failures.map((f) => '  ✗ ' + f).join('\n'));
-  process.exit(1);
-}
+finish();
