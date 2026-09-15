@@ -83,7 +83,10 @@ function evDeepEqual(a, b) {
   const y = evNormalize(b);
   if (x === y) return true;
   if (x === null || y === null || typeof x !== 'object' || typeof y !== 'object') return false;
-  return JSON.stringify(x) === JSON.stringify(y);
+  // Canonicalised first: two records carrying the same fields are the
+  // same value no matter what order they were authored in — the rule
+  // evSameOutcome already applies to scenario comparison.
+  return JSON.stringify(evCanonical(x)) === JSON.stringify(evCanonical(y));
 }
 
 // The successor of a value, for the operand that mints identifiers.
@@ -797,6 +800,9 @@ function deriveThen(model, scenario) {
       fail(`Given step ${index + 1} records "${(step || {}).event}", which this model no longer defines.`);
     }
     for (const property of definition.properties || []) {
+      // An optional property legitimately absent is not an event the
+      // scenario has fallen behind — the fold reads it as undefined.
+      if (property.isOptional) continue;
       if (!((step.data || {})[property.name] !== undefined)) {
         fail(
           `Given step ${index + 1} ("${step.event}") carries no value for "${property.name}", ` +
@@ -878,6 +884,9 @@ function deriveProjectionScenarioThen(model, spec) {
       fail(`Given step ${index + 1} records "${(step || {}).event}", which this model no longer defines.`);
     }
     for (const property of definition.properties || []) {
+      // An optional property legitimately absent is not an event the
+      // scenario has fallen behind — the fold reads it as undefined.
+      if (property.isOptional) continue;
       if (!((step.data || {})[property.name] !== undefined)) {
         fail(
           `Given step ${index + 1} ("${step.event}") carries no value for "${property.name}", ` +

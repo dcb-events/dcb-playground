@@ -1,7 +1,7 @@
 // ============================================================
 // Everything the interface needs that is not the model: DOM helpers,
 // the simple / advanced mode, and the *slice* view — everything one
-// feature touches, gathered here so the page never has to walk the
+// command touches, gathered here so the page never has to walk the
 // definition graph itself.
 //
 // The slice is the idea the page is built around: a command, what it
@@ -116,14 +116,21 @@ function activeModel() {
 //
 // The name is collected by the page (there are no browser dialogs in
 // here); this only does the creating.
+//
+// `openNewModel` is the unwrapped core — one definition of what
+// opening a fresh model means — shared with the WebMCP `start_model`
+// tool, which needs the refusal to reach the agent rather than only
+// the toast `run` turns it into.
+function openNewModel(name) {
+  const id = createDcbModel(name);
+  localStorage.setItem(MODEL_KEY, id);
+  setPendingFeatures([]);
+  return id;
+}
+
 function createNamedModel(name) {
   if (!name || !name.trim()) return null;
-  return run(() => {
-    const id = createDcbModel(name.trim());
-    localStorage.setItem(MODEL_KEY, id);
-    setPendingFeatures([]);
-    return id;
-  });
+  return run(() => openNewModel(name));
 }
 
 // ---------- sharing a model ----------
@@ -608,12 +615,12 @@ function projectionReaders(model, projectionName) {
       for (const binding of body.boundary || []) {
         if (!binding.entity) continue;
         for (const owner of owners) {
-          if (owner.entity === binding.entity) pairs.add(binding.alias + ' ' + owner.property);
+          if (owner.entity === binding.entity) pairs.add(binding.alias + '\0' + owner.property);
         }
       }
       forEachCommandOperand(body, (operand) => {
         if (operandSource(operand) === 'alias-property'
-            && pairs.has(operand.alias + ' ' + operand.property)) reads = true;
+            && pairs.has(operand.alias + '\0' + operand.property)) reads = true;
       });
     }
     if (reads) readers.push(command);
@@ -838,16 +845,29 @@ function typeLabel(member) {
 // straight away, but never claiming a meaning nobody gave it.
 const ENTITY_MARKS = ['◆', '●', '■', '▲', '★', '◇', '○', '□', '△', '✦'];
 
-function defaultEntityIcon(name) {
+// One hash for all three families: the mark is the identity of every
+// unmarked glyph on the page, so entities, events and commands must
+// shuffle the same way — a distribution fix applied to one kind and
+// not the others would be a bug wearing a different mask per page.
+function defaultMark(name, marks) {
   let sum = 0;
   for (const ch of String(name || '')) sum = (sum * 31 + ch.charCodeAt(0)) >>> 0;
-  return ENTITY_MARKS[sum % ENTITY_MARKS.length];
+  return marks[sum % marks.length];
+}
+
+// The icon a body actually carries, or '' when it carries none worth
+// showing — the one place the trim-or-fall-back rule lives.
+function chosenIcon(model, collection, name) {
+  const body = model && model[collection] ? model[collection][name] : null;
+  return body && typeof body.icon === 'string' ? body.icon.trim() : '';
+}
+
+function defaultEntityIcon(name) {
+  return defaultMark(name, ENTITY_MARKS);
 }
 
 function entityIcon(model, name) {
-  const body = model && model['entity-definitions'] ? model['entity-definitions'][name] : null;
-  const chosen = body && typeof body.icon === 'string' ? body.icon.trim() : '';
-  return chosen || defaultEntityIcon(name);
+  return chosenIcon(model, 'entity-definitions', name) || defaultEntityIcon(name);
 }
 
 // An event earns the same legibility once it appears as more than a
@@ -859,9 +879,7 @@ function entityIcon(model, name) {
 const EVENT_MARKS = ['✱', '✲', '✳', '✴', '✵', '✶', '✷', '✸', '✹', '✺'];
 
 function defaultEventIcon(name) {
-  let sum = 0;
-  for (const ch of String(name || '')) sum = (sum * 31 + ch.charCodeAt(0)) >>> 0;
-  return EVENT_MARKS[sum % EVENT_MARKS.length];
+  return defaultMark(name, EVENT_MARKS);
 }
 
 // A command earns the same legibility, from a third family again — a
@@ -870,15 +888,11 @@ function defaultEventIcon(name) {
 const COMMAND_MARKS = ['▶', '▷', '◈', '◉', '◐', '◑', '◒', '◓', '⬖', '⬗'];
 
 function defaultCommandIcon(name) {
-  let sum = 0;
-  for (const ch of String(name || '')) sum = (sum * 31 + ch.charCodeAt(0)) >>> 0;
-  return COMMAND_MARKS[sum % COMMAND_MARKS.length];
+  return defaultMark(name, COMMAND_MARKS);
 }
 
 function commandIcon(model, name) {
-  const body = model && model['command-definitions'] ? model['command-definitions'][name] : null;
-  const chosen = body && typeof body.icon === 'string' ? body.icon.trim() : '';
-  return chosen || defaultCommandIcon(name);
+  return chosenIcon(model, 'command-definitions', name) || defaultCommandIcon(name);
 }
 
 // Every command that publishes this event — usually none or one, since
@@ -891,8 +905,7 @@ function commandsPublishing(model, eventName) {
 }
 
 function eventIcon(model, name) {
-  const body = model && model['event-definitions'] ? model['event-definitions'][name] : null;
-  const chosen = body && typeof body.icon === 'string' ? body.icon.trim() : '';
+  const chosen = chosenIcon(model, 'event-definitions', name);
   if (chosen) return chosen;
   // Unmarked, and the outcome of exactly one command: read as that
   // command's doing by default, the same mark and all — a modeler who

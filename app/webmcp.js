@@ -188,11 +188,10 @@
     mutates: true,
     needsModel: false,
     run: (_, { name }) => {
-      // What `createNamedModel` does, minus its `run` wrapper — the
-      // refusal has to reach the agent, not only the toast.
-      const id = createDcbModel(name);
-      localStorage.setItem(MODEL_KEY, id);
-      setPendingFeatures([]);
+      // `openNewModel` is `createNamedModel` unwrapped from its `run`
+      // wrapper — the refusal has to reach the agent, not only the
+      // toast — so both paths open a model the same one way.
+      const id = openNewModel(name);
       if (typeof state === 'object' && state) state.splash = false;
       return {
         summary: `started model "${name.trim()}"`,

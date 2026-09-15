@@ -60,7 +60,10 @@
 // including a non-empty list. v15 generalised property scenarios into
 // projection scenarios: one asserts over a list of `reads` rather than
 // over one entity instance's properties, which is the same
-// generalisation v14 made to the thing being asserted about.
+// generalisation v14 made to the thing being asserted about. v16
+// narrowed a projection scenario back to a single subject: the list of
+// aliased `reads` became one `projection` plus its `arguments`, and the
+// Then asserts that one fold's value rather than a keyed set.
 const EVENT_LOG_KEY = 'dcb-playground:events:v16';
 
 const DEF_KINDS = [
@@ -210,6 +213,8 @@ function apply(models, event) {
     models[modelId] = emptyModel(modelId, data.name);
     return;
   }
+  // Nothing appends this any more — the command that did was removed
+  // unused — but a stored log may still carry one, so it stays foldable.
   if (type === 'dcb-model-renamed') {
     if (models[modelId]) models[modelId].name = data.name;
     return;
@@ -406,15 +411,6 @@ function withPending(model, kind, name, body) {
 
 function defaultAlias(entityName) {
   return entityName.charAt(0).toLowerCase() + entityName.slice(1);
-}
-
-// `courseId` -> `course`, `sourceCourseId` -> `sourceCourse`, `idFrom` ->
-// `idFrom`. Falls back to the property name whenever stripping would leave
-// something that is not a usable alias.
-function aliasFromProperty(propertyName) {
-  const name = propertyName || '';
-  const stripped = name.length > 2 && name.endsWith('Id') ? name.slice(0, -2) : name;
-  return CAMEL_RE.test(stripped) ? stripped : name;
 }
 
 function uniqueAlias(base, taken) {
@@ -770,12 +766,6 @@ function projectionScenarioName(body) {
   return `ends up ${JSON.stringify(body.then)}`;
 }
 
-function handlerText(handler) {
-  if (!handler) return '';
-  if (handler.code !== undefined) return `${handler.event || '?'} → script`;
-  return `${handler.event || '?'} → ${handler.operation || '?'} ${operandText(handler.value)}`;
-}
-
 // The script a projection is advanced by, or null when its handlers
 // are declared the ordinary way.
 function scriptOf(target) {
@@ -948,7 +938,6 @@ function forEachCommandOperand(body, visit) {
 // declare several parameters. Tags within an item are ANDed; the items
 // themselves are ORed, which is the ordinary DCB query shape.
 // ============================================================
-
 
 // The type an operand resolves to, or null when it cannot be worked out
 // (a literal, or a reference that does not resolve).
@@ -1428,12 +1417,6 @@ function createDcbModel(name) {
   const id = generateId();
   appendEvents([{ type: 'dcb-model-created', data: { 'dcb-model-id': id, name: trimmed } }]);
   return id;
-}
-
-function renameDcbModel(id, newName) {
-  const trimmed = validateModelName(newName);
-  if (!projectState()[id]) throw new DomainError('Model does not exist.');
-  appendEvents([{ type: 'dcb-model-renamed', data: { 'dcb-model-id': id, name: trimmed } }]);
 }
 
 function deleteDcbModel(id) {
@@ -2274,7 +2257,10 @@ function validateCommandBody(model, body) {
       if (operandSource(other) !== 'alias-property') continue;
       const binding = boundary.find((b) => b.alias === other.alias);
       if (!binding) continue;
-      const entity = model['entity-definitions'][binding.entity];
+      // A projection binding has no entity and so no properties to
+      // check the member against — its value type is not examined here.
+      const entity = binding.entity && model['entity-definitions'][binding.entity];
+      if (!entity) continue;
       const property = (entity.properties || []).find((p) => p.name === other.property);
       if (!property) continue;
       const members = enumMembersFor(model, property.propertyType);
@@ -2336,6 +2322,32 @@ function validateCommandBody(model, body) {
 // the rest is the evaluator's to discover.
 // ============================================================
 
+// Checks a stored payload against the properties it is written from.
+// Both directions matter: a missing one cannot be evaluated, and an
+// invented one is a reference nothing would ever rewrite. An optional
+// property may simply not be there — that is what optional means, in a
+// Given as much as in a When. Shared by both scenario kinds, so the
+// two never disagree about what a payload owes.
+function checkScenarioPayload(values, properties, label) {
+  const held = values || {};
+  const declared = new Set();
+  for (const property of properties || []) {
+    declared.add(property.name);
+    if (!(property.name in held)) {
+      if (property.isOptional) continue;
+      throw new DomainError(`${label} carries no value for "${property.name}".`);
+    }
+    if (property.isList && !Array.isArray(held[property.name])) {
+      throw new DomainError(`${label} declares "${property.name}" as a list, so its value must be one.`);
+    }
+  }
+  for (const name of Object.keys(held)) {
+    if (!declared.has(name)) {
+      throw new DomainError(`${label} carries "${name}", which is not one of its properties.`);
+    }
+  }
+}
+
 function validateScenarioBody(model, body) {
   if (body.name !== undefined && typeof body.name !== 'string') {
     throw new DomainError('A scenario name is text, or absent when the derived one will do.');
@@ -2343,40 +2355,18 @@ function validateScenarioBody(model, body) {
   if (!body.command) throw new DomainError('A scenario has to name the command it exercises.');
   const command = model['command-definitions'][body.command];
 
-  // Checks a stored payload against the properties it is written from.
-  // Both directions matter: a missing one cannot be evaluated, and an
-  // invented one is a reference nothing would ever rewrite.
-  const checkPayload = (values, properties, label) => {
-    const held = values || {};
-    const declared = new Set();
-    for (const property of properties || []) {
-      declared.add(property.name);
-      if (!(property.name in held)) {
-        throw new DomainError(`${label} carries no value for "${property.name}".`);
-      }
-      if (property.isList && !Array.isArray(held[property.name])) {
-        throw new DomainError(`${label} declares "${property.name}" as a list, so its value must be one.`);
-      }
-    }
-    for (const name of Object.keys(held)) {
-      if (!declared.has(name)) {
-        throw new DomainError(`${label} carries "${name}", which is not one of its properties.`);
-      }
-    }
-  };
-
   if (!Array.isArray(body.given)) {
     throw new DomainError('A scenario\'s Given is a list of events, empty when nothing has happened yet.');
   }
   body.given.forEach((step, index) => {
     const where = `Given step ${index + 1}`;
     if (!step || !step.event) throw new DomainError(`${where} names no event.`);
-    checkPayload(step.data, (model['event-definitions'][step.event] || {}).properties,
+    checkScenarioPayload(step.data, (model['event-definitions'][step.event] || {}).properties,
       `${where} ("${step.event}")`);
   });
 
   const when = body.when || {};
-  checkPayload(when.arguments, (command || {}).properties, `The When ("${body.command}")`);
+  checkScenarioPayload(when.arguments, (command || {}).properties, `The When ("${body.command}")`);
 
   const then = body.then;
   if (!then || (then.outcome !== 'published' && then.outcome !== 'rejected')) {
@@ -2387,7 +2377,7 @@ function validateScenarioBody(model, body) {
   }
   then.events.forEach((event, index) => {
     if (!event || !event.type) throw new DomainError(`Expected event ${index + 1} names no type.`);
-    checkPayload(event.data, (model['event-definitions'][event.type] || {}).properties,
+    checkScenarioPayload(event.data, (model['event-definitions'][event.type] || {}).properties,
       `Expected event ${index + 1} ("${event.type}")`);
   });
   if (then.outcome === 'rejected' && !then.failedRule) {
@@ -2406,32 +2396,13 @@ function validateProjectionScenarioBody(model, body) {
     throw new DomainError('A projection scenario name is text, or absent when the derived one will do.');
   }
 
-  const checkPayload = (values, properties, label) => {
-    const held = values || {};
-    const declared = new Set();
-    for (const property of properties || []) {
-      declared.add(property.name);
-      if (!(property.name in held)) {
-        throw new DomainError(`${label} carries no value for "${property.name}".`);
-      }
-      if (property.isList && !Array.isArray(held[property.name])) {
-        throw new DomainError(`${label} declares "${property.name}" as a list, so its value must be one.`);
-      }
-    }
-    for (const name of Object.keys(held)) {
-      if (!declared.has(name)) {
-        throw new DomainError(`${label} carries "${name}", which is not one of its properties.`);
-      }
-    }
-  };
-
   if (!Array.isArray(body.given)) {
     throw new DomainError('A projection scenario\'s Given is a list of events, empty when nothing has happened yet.');
   }
   body.given.forEach((step, index) => {
     const where = `Given step ${index + 1}`;
     if (!step || !step.event) throw new DomainError(`${where} names no event.`);
-    checkPayload(step.data, (model['event-definitions'][step.event] || {}).properties,
+    checkScenarioPayload(step.data, (model['event-definitions'][step.event] || {}).properties,
       `${where} ("${step.event}")`);
   });
 
@@ -3198,7 +3169,6 @@ function reorderDefinitions(kind, modelId, order) {
   }
   appendEvents([{ type: `${kind}-reordered`, data: { 'dcb-model-id': modelId, order } }]);
 }
-
 
 // ============================================================
 // Utilities the model layer leans on.
@@ -4216,4 +4186,3 @@ function loadPredefinedModel(index) {
   entry.build(modelId);
   return modelId;
 }
-

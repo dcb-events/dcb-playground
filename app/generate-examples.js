@@ -44,7 +44,7 @@ fs.mkdirSync(outDir, { recursive: true });
 // authored in the playground and exported, and one of these files
 // carries nineteen of them plus a walkthrough. They are carried across
 // rather than regenerated, because nothing here could regenerate them.
-const KEPT = ['scenarioDefinitions', 'propertyScenarioDefinitions', 'sandbox'];
+const KEPT = ['scenarioDefinitions', 'projectionScenarioDefinitions', 'sandbox'];
 
 // The parts a builder *does* own. If a file's copy of these no longer
 // matches what its builder produces, the file has been edited by hand

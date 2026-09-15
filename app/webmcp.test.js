@@ -83,10 +83,12 @@ const pageScript = (() => {
   return blocks.sort((a, b) => b.length - a.length)[0];
 })();
 
-const source = ['model.js', 'evaluate.js', 'shared.js', 'webmcp-schemas.js']
+// Same order as the <script> tags in index.html — webmcp.js *before*
+// the page script — so a load-time dependency that would break in the
+// browser breaks here too.
+const source = ['model.js', 'evaluate.js', 'shared.js', 'webmcp-schemas.js', 'webmcp.js']
   .map((file) => fs.readFileSync(path.join(APP, file), 'utf8'))
   .concat(pageScript)
-  .concat(fs.readFileSync(path.join(APP, 'webmcp.js'), 'utf8'))
   .join('\n;\n');
 vm.runInContext(source, sandbox, { filename: 'page.js' });
 

@@ -984,19 +984,30 @@ function beginImport(envelope) {
   finishImport(envelope);
 }
 
+// What opening a different stored model means, wherever it happens —
+// the Models modal, an import, the fallback after a delete. The
+// sandbox session and the pending feature groups are browser-global,
+// not part of any model, so neither may survive the crossing: a
+// session scrubbed against model A must not render against model B.
+function switchToModel(id) {
+  localStorage.setItem(MODEL_KEY, id);
+  sessionReset();
+  setPendingFeatures([]);
+  state.slice = null;
+  state.view = 'slice';
+  state.splash = false;
+}
+
 function finishImport(envelope) {
   run(() => {
     const modelId = importModelFromEnvelope(envelope);
-    localStorage.setItem(MODEL_KEY, modelId);
-    state.slice = null; state.view = 'slice';
+    switchToModel(modelId);
     // A model is now loaded, so whatever asked the Models modal or the
     // splash to open — a menu click, the brand mark, or nothing having
     // been loaded yet — is answered.
     state.models = false;
-    state.splash = false;
     const steps = (envelope.sandbox && envelope.sandbox.steps) || [];
     if (steps.length) {
-      sessionReset();
       const model = projectState()[modelId];
       for (const step of steps) sessionRun(model, step.command, step.args);
     }
@@ -1095,7 +1106,7 @@ function modelsModal() {
         h('button', {
           class: 'btn' + (other.id === activeId ? ' primary' : ''),
           style: 'flex:1; text-align:left',
-          onclick: () => { localStorage.setItem(MODEL_KEY, other.id); state.splash = false; close(); },
+          onclick: () => { switchToModel(other.id); close(); },
         }, other.name),
         removeButton('model:' + other.id, {
           title: 'Remove this model and everything defined in it',
@@ -1105,9 +1116,14 @@ function modelsModal() {
             deleteDcbModel(other.id);
             if (wasActive) {
               const rest = Object.keys(projectState());
-              if (rest.length) localStorage.setItem(MODEL_KEY, rest[0]);
-              else localStorage.removeItem(MODEL_KEY);
-              state.slice = null; state.view = 'slice';
+              if (rest.length) {
+                switchToModel(rest[0]);
+              } else {
+                localStorage.removeItem(MODEL_KEY);
+                sessionReset();
+                setPendingFeatures([]);
+                state.slice = null; state.view = 'slice';
+              }
             }
           }),
         })))) : null,
@@ -1622,7 +1638,11 @@ function renderImportExportModal() {
 // off are held so redo can put them back exactly as they were, sequence
 // numbers included, which is only sound because they came off the end.
 
-const UNDO_KEY = 'dcb-playground:undo';
+// Versioned in lockstep with the event log: the stack holds raw
+// events and absolute offsets into that log, so marks taken against
+// one log version must never replay against another. Deriving the
+// suffix keeps the two keys impossible to bump apart.
+const UNDO_KEY = 'dcb-playground:undo:' + EVENT_LOG_KEY.split(':').pop();
 
 function undoLog() {
   try {
@@ -2545,13 +2565,19 @@ function openEntity(name) {
 }
 
 // Every mention of a thing, anywhere: its mark, its name, and the way
-// in. One shape, so the mark is worth learning.
-function entityRef(model, name, { cls = 'chip entity', text } = {}) {
+// in. One shape across all four kinds, so the mark is worth learning
+// and a chip fix — a title, a keyboard affordance — lands everywhere
+// at once. What varies per kind is the mark and the way in.
+function refChip(name, { cls, icon, onOpen, text }) {
   return h('span', {
     class: cls, title: 'Open ' + readable(name),
-    onclick: () => openEntity(name),
-  }, h('i', { class: 'ic' }, entityIcon(model, name)),
+    onclick: onOpen,
+  }, icon ? h('i', { class: 'ic' }, icon) : null,
     text === undefined ? readable(name) : text);
+}
+
+function entityRef(model, name, { cls = 'chip entity', text } = {}) {
+  return refChip(name, { cls, icon: entityIcon(model, name), onOpen: () => openEntity(name), text });
 }
 
 // An event has its own page too, for the same reason an entity does:
@@ -2566,10 +2592,7 @@ function goToEvent(name) {
   render();
 }
 function eventRef(model, name, { cls = 'chip event linkable', text } = {}) {
-  return h('span', {
-    class: cls, title: 'Open ' + readable(name),
-    onclick: () => goToEvent(name),
-  }, h('i', { class: 'ic' }, eventIcon(model, name)), text === undefined ? readable(name) : text);
+  return refChip(name, { cls, icon: eventIcon(model, name), onOpen: () => goToEvent(name), text });
 }
 
 // A custom type has no page of its own — it lives as a card in Custom
@@ -2590,21 +2613,16 @@ function goToCommand(name) {
   render();
 }
 function commandRef(model, name, { cls = 'chip command linkable', text } = {}) {
-  return h('span', {
-    class: cls, title: 'Open ' + readable(name),
-    onclick: () => goToCommand(name),
-  }, h('i', { class: 'ic' }, commandIcon(model, name)), text === undefined ? readable(name) : text);
+  return refChip(name, { cls, icon: commandIcon(model, name), onOpen: () => goToCommand(name), text });
 }
 
 function goToProjection(name) {
   openProjection(activeModel(), name);
   render();
 }
+// A projection has no mark of its own — nothing passes an icon.
 function projectionRef(model, name, { cls = 'chip projection linkable', text } = {}) {
-  return h('span', {
-    class: cls, title: 'Open ' + readable(name),
-    onclick: () => goToProjection(name),
-  }, text === undefined ? readable(name) : text);
+  return refChip(name, { cls, onOpen: () => goToProjection(name), text });
 }
 
 // A specific scenario, wherever it is shown, is always reached the
@@ -3668,9 +3686,7 @@ function readCard(model, slice, binding, index, waitsFor) {
   const queryItem = (slice.dcb.items || []).find((item) => item.alias === binding.alias);
   const sentence = r.projection
     ? h('span', { class: 'sentence' },
-        h('span', { class: 'chip projection', title: 'Open ' + readable(r.projection),
-          onclick: () => { closeForms(); state.view = 'projections'; render(); } },
-          readable(r.projection)),
+        projectionRef(model, r.projection, { cls: 'chip projection' }),
         ' as ', h('span', { class: 'op' }, r.alias),
         // No arguments means no tag: the query is scoped by event type
         // alone, which is what a global numbering is.
@@ -4450,7 +4466,9 @@ function eventFields(model, emission, event) {
         (v) => patchSlice((b) => {
           const e = b.publishes.find((x) => x.name === emission.name);
           e.parameters = e.parameters || {};
-          e.parameters[p.name] = JSON.parse(v);
+          // The placeholder's value is '' — unset, not an operand.
+          if (v === '') delete e.parameters[p.name];
+          else e.parameters[p.name] = JSON.parse(v);
         }), '— unset —'));
   });
 
@@ -5490,127 +5508,71 @@ const ICON_CHOICES = [
   '💡', '🎯', '🧪', '🩺', '📈', '📊', '🎵', '🎬', '⚽', '♟️',
 ];
 
+// One form for all three marked kinds. What varies is data — which
+// state slot holds it open, which collection the patch lands in, what
+// the prose promises — so it is passed in, and a fix to the grid, the
+// typed input or the trim-or-delete rule lands on all three at once.
+function iconForm(name, body, { stateKey, kind, current, prose, cls = '' }) {
+  let typed = body.icon || '';
+  const set = (icon) => {
+    state[stateKey] = null;
+    patch(kind, name, (b) => {
+      const next = String(icon || '').trim();
+      if (next) b.icon = next;
+      else delete b.icon;
+    });
+  };
+  const close = () => { state[stateKey] = null; render(); };
+  return h('div', { class: 'inline-form icons' + cls },
+    h('div', { class: 'q' }, prose),
+    h('div', { class: 'grid' }, ICON_CHOICES.map((icon) => h('button', {
+      class: 'ic-opt' + (icon === current ? ' on' : ''), title: 'Use this',
+      onclick: () => set(icon),
+    }, icon))),
+    h('div', { class: 'adder' },
+      h('input', {
+        type: 'text', value: typed, placeholder: 'or type one', style: 'width:110px',
+        oninput: (e) => { typed = e.target.value; },
+        onkeydown: (e) => {
+          if (e.key === 'Enter') { e.preventDefault(); set(typed); }
+          if (e.key === 'Escape') { e.preventDefault(); close(); }
+        },
+      }),
+      h('button', { class: 'btn', onclick: () => set(typed) }, 'Use'),
+      body.icon ? h('button', {
+        class: 'btn ghost', title: 'Back to the neutral mark',
+        onclick: () => set(''),
+      }, 'Clear') : null,
+      h('button', { class: 'btn ghost', onclick: close }, 'Done')));
+}
+
 function iconPicker(model, name, entity) {
-  const current = entityIcon(model, name);
-  let typed = entity.icon || '';
-  const set = (icon) => {
-    state.iconPicker = null;
-    patch('entity-definition', name, (b) => {
-      const next = String(icon || '').trim();
-      if (next) b.icon = next;
-      else delete b.icon;
-    });
-  };
-  return h('div', { class: 'inline-form icons' },
-    h('div', { class: 'q' },
-      `The mark ${readable(name)} is shown with — in the rail, in every command that reads it, `
-      + 'and in every change it takes.'),
-    h('div', { class: 'grid' }, ICON_CHOICES.map((icon) => h('button', {
-      class: 'ic-opt' + (icon === current ? ' on' : ''), title: 'Use this',
-      onclick: () => set(icon),
-    }, icon))),
-    h('div', { class: 'adder' },
-      h('input', {
-        type: 'text', value: typed, placeholder: 'or type one', style: 'width:110px',
-        oninput: (e) => { typed = e.target.value; },
-        onkeydown: (e) => {
-          if (e.key === 'Enter') { e.preventDefault(); set(typed); }
-          if (e.key === 'Escape') { e.preventDefault(); state.iconPicker = null; render(); }
-        },
-      }),
-      h('button', { class: 'btn', onclick: () => set(typed) }, 'Use'),
-      entity.icon ? h('button', {
-        class: 'btn ghost', title: 'Back to the neutral mark',
-        onclick: () => set(''),
-      }, 'Clear') : null,
-      h('button', {
-        class: 'btn ghost', onclick: () => { state.iconPicker = null; render(); },
-      }, 'Done')));
+  return iconForm(name, entity, {
+    stateKey: 'iconPicker', kind: 'entity-definition', current: entityIcon(model, name),
+    prose: `The mark ${readable(name)} is shown with — in the rail, in every command that reads it, `
+      + 'and in every change it takes.',
+  });
 }
 
-// The event analogue of iconPicker. Kept as its own function rather
-// than a parameterised one — a rename or a patch call reads plainly
-// this way, and the two forms are alike by coincidence of shape, not
-// by being the same form on two collections.
 function eventIconPicker(model, name, event) {
-  const current = eventIcon(model, name);
-  let typed = event.icon || '';
-  const set = (icon) => {
-    state.eventIconPicker = null;
-    patch('event-definition', name, (b) => {
-      const next = String(icon || '').trim();
-      if (next) b.icon = next;
-      else delete b.icon;
-    });
-  };
-  return h('div', { class: 'inline-form icons event' },
-    h('div', { class: 'q' },
-      `The mark ${readable(name)} is shown with — in the sandbox timeline, in every Given that `
-      + 'records it, and everywhere it is recorded.'),
-    h('div', { class: 'grid' }, ICON_CHOICES.map((icon) => h('button', {
-      class: 'ic-opt' + (icon === current ? ' on' : ''), title: 'Use this',
-      onclick: () => set(icon),
-    }, icon))),
-    h('div', { class: 'adder' },
-      h('input', {
-        type: 'text', value: typed, placeholder: 'or type one', style: 'width:110px',
-        oninput: (e) => { typed = e.target.value; },
-        onkeydown: (e) => {
-          if (e.key === 'Enter') { e.preventDefault(); set(typed); }
-          if (e.key === 'Escape') { e.preventDefault(); state.eventIconPicker = null; render(); }
-        },
-      }),
-      h('button', { class: 'btn', onclick: () => set(typed) }, 'Use'),
-      event.icon ? h('button', {
-        class: 'btn ghost', title: 'Back to the neutral mark',
-        onclick: () => set(''),
-      }, 'Clear') : null,
-      h('button', {
-        class: 'btn ghost', onclick: () => { state.eventIconPicker = null; render(); },
-      }, 'Done')));
+  return iconForm(name, event, {
+    stateKey: 'eventIconPicker', kind: 'event-definition', current: eventIcon(model, name),
+    cls: ' event',
+    prose: `The mark ${readable(name)} is shown with — in the sandbox timeline, in every Given that `
+      + 'records it, and everywhere it is recorded.',
+  });
 }
 
-// The command analogue of iconPicker and eventIconPicker. A command's
-// icon is also the default mark for whichever single event it
-// publishes (see `eventIcon`), so clearing it back to the neutral mark
-// changes that event's default too, unless the event has a mark of its
-// own already.
+// A command's icon is also the default mark for whichever single event
+// it publishes (see `eventIcon`), so clearing it back to the neutral
+// mark changes that event's default too, unless the event has a mark
+// of its own already.
 function commandIconPicker(model, name, command) {
-  const current = commandIcon(model, name);
-  let typed = command.icon || '';
-  const set = (icon) => {
-    state.commandIconPicker = null;
-    patch('command-definition', name, (b) => {
-      const next = String(icon || '').trim();
-      if (next) b.icon = next;
-      else delete b.icon;
-    });
-  };
-  return h('div', { class: 'inline-form icons' },
-    h('div', { class: 'q' },
-      `The mark ${readable(name)} is shown with — and, by default, the event it records on `
-      + 'success, unless that event has a mark of its own.'),
-    h('div', { class: 'grid' }, ICON_CHOICES.map((icon) => h('button', {
-      class: 'ic-opt' + (icon === current ? ' on' : ''), title: 'Use this',
-      onclick: () => set(icon),
-    }, icon))),
-    h('div', { class: 'adder' },
-      h('input', {
-        type: 'text', value: typed, placeholder: 'or type one', style: 'width:110px',
-        oninput: (e) => { typed = e.target.value; },
-        onkeydown: (e) => {
-          if (e.key === 'Enter') { e.preventDefault(); set(typed); }
-          if (e.key === 'Escape') { e.preventDefault(); state.commandIconPicker = null; render(); }
-        },
-      }),
-      h('button', { class: 'btn', onclick: () => set(typed) }, 'Use'),
-      command.icon ? h('button', {
-        class: 'btn ghost', title: 'Back to the neutral mark',
-        onclick: () => set(''),
-      }, 'Clear') : null,
-      h('button', {
-        class: 'btn ghost', onclick: () => { state.commandIconPicker = null; render(); },
-      }, 'Done')));
+  return iconForm(name, command, {
+    stateKey: 'commandIconPicker', kind: 'command-definition', current: commandIcon(model, name),
+    prose: `The mark ${readable(name)} is shown with — and, by default, the event it records on `
+      + 'success, unless that event has a mark of its own.',
+  });
 }
 
 // ---------- value types ----------
@@ -6601,7 +6563,7 @@ function renderProjections(model, main) {
         }, h('i', { class: 'ic' }, entityIcon(model, entity)), readable(entity)),
         h('span', { class: 'props' }, ...properties.map((binding) => h('button', {
           class: 'lnk', title: 'Open it on ' + readable(entity),
-          onclick: () => openProjection(model, binding.projection),
+          onclick: () => goToProjection(binding.projection),
         }, propertyWords(binding.name))))));
     }
     main.appendChild(index);
@@ -7139,12 +7101,14 @@ function insertAfterSibling(kind, modelId, key, afterKey) {
 // Drops `fromKey` right against `toKey`'s edge — the drag gesture's
 // equivalent of the old up/down swap, against any edge rather than just
 // one neighbor at a time. Everything outside the two keys involved keeps
-// its place, the same as every other reorder here.
-function reorderScenarioByDrag(model, fromKey, toKey, before) {
+// its place, the same as every other reorder here. Shared by both
+// scenario kinds, the same way `insertAfterSibling` above is: the
+// collection comes from the kind, never from a second copy.
+function reorderByDrag(kind, model, fromKey, toKey, before) {
   if (fromKey === toKey) return;
-  const order = Object.keys(model['scenario-definitions']).filter((k) => k !== fromKey);
+  const order = Object.keys(model[DEF_COLLECTIONS[kind]]).filter((k) => k !== fromKey);
   order.splice(order.indexOf(toKey) + (before ? 0 : 1), 0, fromKey);
-  reorderDefinitions('scenario-definition', model.id, order);
+  reorderDefinitions(kind, model.id, order);
 }
 
 // What each of this command's scenarios currently derives — judged
@@ -7487,7 +7451,7 @@ function scenarioRow(model, entry) {
 
   const card = h('div', {
     class: 'scenario' + (open ? ' open' : ''),
-    ...scenarioDropTarget((from, before) => run(() => reorderScenarioByDrag(model, from, key, before))),
+    ...scenarioDropTarget((from, before) => run(() => reorderByDrag('scenario-definition', model, from, key, before))),
   }, head);
 
   if (!open) return card;
@@ -7711,11 +7675,16 @@ function scenarioPanel(model, commandName) {
       rows.push(scenarioEditor(model));
     }
   }
+  // A draft with no key and no position goes at the end — rendered
+  // whether or not the list is empty, so a draft started while the
+  // list changed underneath it never silently vanishes. Same rule as
+  // projectionScenarioList, which learned it the hard way.
   const standaloneDraft = draftHere && !draft.key && !draft.insertAfter;
 
   return h('div', { class: 'scenarios' },
     coverageGapsCard(model, commandName),
     rows.length ? rows : null,
+    standaloneDraft ? scenarioEditor(model) : null,
     !entries.length && !standaloneDraft
       ? h('div', { class: 'blank small' },
           h('p', { class: 'muted small' },
@@ -7723,12 +7692,10 @@ function scenarioPanel(model, commandName) {
             + 'call, and what the model makes of the two — and it is the only thing here that '
             + 'notices when an edit somewhere else changes what this command does.'))
       : null,
-    !entries.length
-      ? (standaloneDraft
-          ? scenarioEditor(model)
-          : h('div', { class: 'adder' },
-              h('button', { class: 'btn primary', onclick: () => startScenario(model, commandName) },
-                '+ New scenario')))
+    !entries.length && !standaloneDraft
+      ? h('div', { class: 'adder' },
+          h('button', { class: 'btn primary', onclick: () => startScenario(model, commandName) },
+            '+ New scenario'))
       : null);
 }
 
@@ -7809,14 +7776,6 @@ function projectionScenariosFor(model, projectionName) {
     .map(([key, body]) => ({ key, body }));
 }
 
-// The projection-scenario analogue of `reorderScenarioByDrag`.
-function reorderProjectionScenarioByDrag(model, fromKey, toKey, before) {
-  if (fromKey === toKey) return;
-  const order = Object.keys(model['projection-scenario-definitions']).filter((k) => k !== fromKey);
-  order.splice(order.indexOf(toKey) + (before ? 0 : 1), 0, fromKey);
-  reorderDefinitions('projection-scenario-definition', model.id, order);
-}
-
 // Where a projection scenario's Given lives, and what it can be helped
 // with — the same identifiers-already-written suggestion Scenarios'
 // Given gets. `identifiersInUse` reads `body.given`/`body.when`
@@ -7882,7 +7841,7 @@ function projectionScenarioRow(model, entry) {
 
   const card = h('div', {
     class: 'scenario' + (open ? ' open' : ''),
-    ...scenarioDropTarget((from, before) => run(() => reorderProjectionScenarioByDrag(model, from, key, before))),
+    ...scenarioDropTarget((from, before) => run(() => reorderByDrag('projection-scenario-definition', model, from, key, before))),
   }, head);
 
   if (!open) return card;
