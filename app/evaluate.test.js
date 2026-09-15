@@ -1652,6 +1652,10 @@ check('an import missing the definition arrays is refused, not silently accepted
 
   check('a corrupt log is moved aside rather than erased on the next append', () => {
     store.set(logKey, '{not json');
+    // A write from outside `appendEvents` — another tab, a hand in
+    // devtools — is only seen once the revision moves, which is what
+    // this simulates.
+    sandbox.bumpLogRevision();
     eq(sandbox.projectState(), {}, 'projects empty');
     eq(store.get(logKey + ':corrupt'), '{not json', 'raw value preserved');
     eq(store.has(logKey), false, 'live key cleared');
@@ -1662,6 +1666,7 @@ check('an import missing the definition arrays is refused, not silently accepted
 
   check('a stored value that is not an array is treated the same', () => {
     store.set(logKey, '{}');
+    sandbox.bumpLogRevision();
     eq(sandbox.projectState(), {}, 'projects empty');
     eq(store.get(logKey + ':corrupt'), '{}', 'raw value preserved');
   });

@@ -174,6 +174,7 @@ function loadEvents() {
   // can still reach it, and the app starts over honestly empty.
   localStorage.setItem(EVENT_LOG_KEY + ':corrupt', raw);
   localStorage.removeItem(EVENT_LOG_KEY);
+  bumpLogRevision();
   if (typeof toast === 'function') {
     toast(
       'The stored event log could not be read. The raw value was kept under '
@@ -182,6 +183,17 @@ function loadEvents() {
   }
   return [];
 }
+
+// Bumped by every writer of the log — `appendEvents` here, undo and
+// redo in the page, the corrupt-log move-aside below — so a cache can
+// ask "has anything changed?" without parsing the log to find out.
+// A writer that skips its bump is the one way the caches below go
+// stale; nothing re-reads storage to double-check, which also means a
+// second tab's writes are unseen until this one writes (the two were
+// never coordinated before either — each replayed its own reads).
+let logRevision = 0;
+function bumpLogRevision() { logRevision += 1; }
+function logRevisionNow() { return logRevision; }
 
 // Told after every append, with where it began and what landed. This
 // is the one seam every write funnels through — command functions
@@ -202,6 +214,7 @@ function appendEvents(newEvents) {
     data: e.data,
   }));
   localStorage.setItem(EVENT_LOG_KEY, JSON.stringify([...log, ...stamped]));
+  bumpLogRevision();
   for (const listener of appendListeners) listener(startSeq, stamped);
 }
 
@@ -224,9 +237,19 @@ function emptyModel(id, name) {
   return model;
 }
 
+// Folded once per log revision, not once per call — `activeModel` and
+// the render path ask many times per paint. Callers get one shared
+// object and must not mutate it: every editor already works on a
+// `deepClone` and every change goes through a command function.
+let projectionCache = null;
+
 function projectState() {
+  if (projectionCache && projectionCache.revision === logRevision) return projectionCache.models;
   const models = {};
   for (const event of loadEvents()) apply(models, event);
+  // Read *after* the fold: a corrupt log discovered by `loadEvents`
+  // bumps the revision while we are standing here.
+  projectionCache = { revision: logRevision, models };
   return models;
 }
 
@@ -2518,8 +2541,7 @@ function addDefinition(kind, modelId, name, body) {
   appendEvents([{ type: `${kind}-added`, data: { 'dcb-model-id': modelId, name: trimmed, body } }]);
 }
 
-function updateDefinition(kind, modelId, name, body) {
-  const model = getCtxOrThrow(modelId);
+function validateDefinitionUpdate(model, kind, name, body) {
   const coll = model[DEF_COLLECTIONS[kind]];
   if (!(name in coll)) {
     throw new DomainError(`No ${humanize(kind)} named "${name}" exists in this model.`);
@@ -2539,7 +2561,23 @@ function updateDefinition(kind, modelId, name, body) {
   if (kind === 'entity-definition') assertEntityUpdateKeepsInboundReferences(model, name, body);
   if (kind === 'custom-type-definition') assertCustomTypeUpdateKeepsInboundReferences(model, name, body);
   if (kind === 'projection-definition') assertProjectionUpdateKeepsBindingsFitting(model, name, body);
-  appendEvents([{ type: `${kind}-updated`, data: { 'dcb-model-id': modelId, name, body } }]);
+}
+
+function updateDefinition(kind, modelId, name, body) {
+  updateDefinitions(modelId, [{ kind, name, body }]);
+}
+
+// Several updates as one append: a gesture that touches every command
+// in a feature grows the log by one step and writes storage once.
+// Each change is validated against the model as it stood before the
+// gesture — sound because the callers touch a different definition
+// each, so no change needs to see another one applied.
+function updateDefinitions(modelId, changes) {
+  const model = getCtxOrThrow(modelId);
+  for (const { kind, name, body } of changes) validateDefinitionUpdate(model, kind, name, body);
+  appendEvents(changes.map(({ kind, name, body }) => (
+    { type: `${kind}-updated`, data: { 'dcb-model-id': modelId, name, body } }
+  )));
 }
 
 // A projection's parameters are supplied by *key*, so changing them

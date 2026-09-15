@@ -1724,6 +1724,7 @@ function undo() {
   if (!mark) return toast('Nothing to undo.');
   const events = loadEvents();
   localStorage.setItem(EVENT_LOG_KEY, JSON.stringify(events.slice(0, mark.at)));
+  bumpLogRevision();
   log.undone.push({ events: events.slice(mark.at), label: mark.label });
   saveUndoLog(log);
   closeForms();
@@ -1737,6 +1738,7 @@ function redo() {
   if (!step) return toast('Nothing to redo.');
   const events = loadEvents();
   localStorage.setItem(EVENT_LOG_KEY, JSON.stringify([...events, ...step.events]));
+  bumpLogRevision();
   log.done.push({ at: events.length, label: step.label });
   saveUndoLog(log);
   closeForms();
@@ -1794,7 +1796,17 @@ function looseEnds(model) {
 // Loose ends and scenarios the model no longer agrees with, gathered
 // into one list — everything wrong with this model that nobody had to
 // go looking for, each one a way back to it.
+//
+// Memoized per log revision: the button in the bar and the open panel
+// both ask during one paint, and each ask runs every scenario in the
+// model. The model identity check rides on `projectState` returning
+// one shared object per revision.
+let problemsCache = null;
+
 function problems(model) {
+  if (problemsCache && problemsCache.revision === logRevisionNow() && problemsCache.model === model) {
+    return problemsCache.found;
+  }
   const found = looseEnds(model).map((end) => ({ what: end.what, why: end.why, go: end.go }));
   for (const { key, body, result } of scenarioTrouble(model)) {
     found.push({
@@ -1806,6 +1818,7 @@ function problems(model) {
       },
     });
   }
+  problemsCache = { revision: logRevisionNow(), model, found };
   return found;
 }
 
@@ -3088,12 +3101,14 @@ function renderEntityRail(model) {
 // commands themselves are untouched.
 function removeFeature(model, name) {
   run(() => {
+    const changes = [];
     for (const [command, body] of Object.entries(activeModel()['command-definitions'])) {
       if (featureOf(body) !== name) continue;
       const next = deepClone(body);
       delete next.feature;
-      updateDefinition('command-definition', model.id, command, next);
+      changes.push({ kind: 'command-definition', name: command, body: next });
     }
+    if (changes.length) updateDefinitions(model.id, changes);
     setPendingFeatures(pendingFeatures().filter((p) => p !== name));
   });
 }
@@ -3101,12 +3116,14 @@ function removeFeature(model, name) {
 function renameFeature(model, from, to) {
   if (from === UNGROUPED || to === from) { state.renamingFeature = null; return render(); }
   run(() => {
+    const changes = [];
     for (const [cmd, body] of Object.entries(activeModel()['command-definitions'])) {
       if (featureOf(body) !== from) continue;
       const next = deepClone(body);
       next.feature = to;
-      updateDefinition('command-definition', model.id, cmd, next);
+      changes.push({ kind: 'command-definition', name: cmd, body: next });
     }
+    if (changes.length) updateDefinitions(model.id, changes);
     setPendingFeatures(pendingFeatures().filter((p) => p !== from).concat(to));
     state.renamingFeature = null;
   });
@@ -4431,6 +4448,7 @@ function removeEventField(model, eventName, index, propertyName) {
     eventBody.properties.splice(index, 1);
     updateDefinition('event-definition', model.id, eventName, eventBody);
 
+    const changes = [];
     for (const [name, body] of Object.entries(activeModel()['command-definitions'])) {
       const bound = (body.publishes || [])
         .some((e) => e.name === eventName && e.parameters && propertyName in e.parameters);
@@ -4439,8 +4457,9 @@ function removeEventField(model, eventName, index, propertyName) {
       for (const e of next.publishes || []) {
         if (e.name === eventName && e.parameters) delete e.parameters[propertyName];
       }
-      updateDefinition('command-definition', model.id, name, next);
+      changes.push({ kind: 'command-definition', name, body: next });
     }
+    if (changes.length) updateDefinitions(model.id, changes);
   });
 }
 
@@ -7091,10 +7110,10 @@ const heldRuns = new Map();
 function scenarioResult(model, key, body) {
   if (!scenarioTouchesScript(model, body)) return runScenario(model, body);
   const cached = heldRuns.get(key);
-  // The log length stands in for "nothing has changed since": every
-  // edit to this model is an append, so a run made before one is a run
-  // made against different definitions.
-  if (cached && cached.at === loadEvents().length) return cached.result;
+  // The log revision stands in for "nothing has changed since": every
+  // edit bumps it, so a run made before one is a run made against
+  // different definitions.
+  if (cached && cached.at === logRevisionNow()) return cached.result;
   return {
     status: 'held',
     reason: 'This scenario reads a scripted projection, so it runs when you ask and not before.',
@@ -7102,7 +7121,7 @@ function scenarioResult(model, key, body) {
 }
 
 function runHeldScenario(model, key, body) {
-  heldRuns.set(key, { at: loadEvents().length, result: runScenario(model, body) });
+  heldRuns.set(key, { at: logRevisionNow(), result: runScenario(model, body) });
   render();
 }
 
@@ -7783,7 +7802,7 @@ const heldProjectionScenarioRuns = new Map();
 function projectionScenarioResult(model, key, body) {
   if (!projectionScenarioTouchesScript(model, body)) return runProjectionScenario(model, body);
   const cached = heldProjectionScenarioRuns.get(key);
-  if (cached && cached.at === loadEvents().length) return cached.result;
+  if (cached && cached.at === logRevisionNow()) return cached.result;
   return {
     status: 'held',
     reason: 'This scenario reads a scripted projection, so it runs when you ask and not before.',
@@ -7791,7 +7810,7 @@ function projectionScenarioResult(model, key, body) {
 }
 
 function runHeldProjectionScenario(model, key, body) {
-  heldProjectionScenarioRuns.set(key, { at: loadEvents().length, result: runProjectionScenario(model, body) });
+  heldProjectionScenarioRuns.set(key, { at: logRevisionNow(), result: runProjectionScenario(model, body) });
   render();
 }
 
