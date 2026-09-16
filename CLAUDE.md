@@ -111,6 +111,15 @@ it never works from `file:`.
   scenarios and projection scenarios share one held/run, staleness, save and
   status mechanism, parameterized by that table. A behavior change belongs in
   the generic functions, not in a per-kind copy.
+- **`null` is the one spelling of "no value"** on optional properties, and
+  it is never the empty string. Writers spell it out (the payload editors
+  and the scenario save path store the explicit null; an unmapped optional
+  event property publishes it); readers are lenient (an absent key on an
+  optional property reads as null). Downstream it is an ordinary value —
+  equality and emptiness work — except where it would become a tag or an
+  ordering: a null boundary identifier, exclusion or projection parameter
+  is an evaluation *error*, and the optional-parameter advisories say so
+  ahead of time.
 - **Comment style**: file headers and block comments carry design rationale,
   not line-by-line narration. Match that register; keep headers truthful when
   behaviour changes.

@@ -1779,6 +1779,174 @@ check('an import missing the definition arrays is refused, not silently accepted
 }
 
 // ---------------------------------------------------------------
+// Optional properties. `null` is the one spelling of "no value": an
+// unset optional command property reaches everything as null, an
+// unmapped optional event property publishes the explicit null, and
+// the empty string stays a value of its own. Where a null would
+// become a tag — a binding's identifier, an exclusion, a partition —
+// evaluation errors instead, and an advisory says so ahead of time.
+// ---------------------------------------------------------------
+{
+  const { id, model } = openBlank('Optional');
+  const broken = (what, fn) => check(what, () => {
+    try {
+      fn();
+    } catch (error) {
+      if (error.name !== 'EvaluationError') throw new Error(`threw ${error.name}: ${error.message}`);
+      return;
+    }
+    throw new Error('did not fail');
+  });
+
+  addDefinition('entity-definition', id, 'Anordnung', { properties: [] });
+  addDefinition('event-definition', id, 'AnordnungErzeugt', {
+    properties: [
+      { name: 'anordnungId', propertyType: 'AnordnungId', isOptional: false, isList: false },
+      { name: 'notiz', propertyType: 'string', isOptional: true, isList: false },
+    ],
+  });
+  addDefinition('command-definition', id, 'ErzeugeAnordnung', {
+    properties: [
+      { name: 'anordnungId', propertyType: 'AnordnungId', isOptional: false, isList: false },
+      { name: 'notiz', propertyType: 'string', isOptional: true, isList: false },
+    ],
+    boundary: [{ alias: 'anordnung', entity: 'Anordnung', id: { parameterName: 'anordnungId' } }],
+    conditions: [],
+    publishes: [{
+      name: 'AnordnungErzeugt',
+      parameters: { anordnungId: { parameterName: 'anordnungId' }, notiz: { parameterName: 'notiz' } },
+    }],
+  });
+  // The same event without the optional mapping: the null is published
+  // without anything having to say so.
+  addDefinition('command-definition', id, 'ErzeugeOhneNotiz', {
+    properties: [{ name: 'anordnungId', propertyType: 'AnordnungId', isOptional: false, isList: false }],
+    boundary: [{ alias: 'anordnung', entity: 'Anordnung', id: { parameterName: 'anordnungId' } }],
+    conditions: [],
+    publishes: [{ name: 'AnordnungErzeugt', parameters: { anordnungId: { parameterName: 'anordnungId' } } }],
+  });
+
+  check('an unset optional property publishes the explicit null', () => {
+    const outcome = evaluateCommand(model(), [], 'ErzeugeAnordnung', { anordnungId: 'a1' });
+    eq(outcome.outcome, 'published', 'runs, not broken');
+    eq(outcome.events[0].data, { anordnungId: 'a1', notiz: null }, 'the key is there, holding null');
+  });
+
+  check('an explicit null and an absent key are the same call', () => {
+    const absent = evaluateCommand(model(), [], 'ErzeugeAnordnung', { anordnungId: 'a1' });
+    const explicit = evaluateCommand(model(), [], 'ErzeugeAnordnung', { anordnungId: 'a1', notiz: null });
+    eq(absent.events, explicit.events, 'same publication');
+  });
+
+  check('the empty string is a value, not the null', () => {
+    const outcome = evaluateCommand(model(), [], 'ErzeugeAnordnung', { anordnungId: 'a1', notiz: '' });
+    eq(outcome.events[0].data.notiz, '', 'kept as typed');
+  });
+
+  broken('a required property is still required',
+    () => evaluateCommand(model(), [], 'ErzeugeAnordnung', { notiz: 'n' }));
+
+  check('an unmapped optional event property publishes null, advisory-free', () => {
+    const outcome = evaluateCommand(model(), [], 'ErzeugeOhneNotiz', { anordnungId: 'a1' });
+    eq(outcome.events[0].data, { anordnungId: 'a1', notiz: null }, 'the omission is the null');
+    eq(sandbox.modelAdvisories(model()).length, 0, 'nothing here is a hazard');
+  });
+
+  check('a condition reads the null; isEmpty holds, ordering breaks', () => {
+    const body = deepClone(model()['command-definitions'].ErzeugeAnordnung);
+    body.conditions = [{ leftHandSide: { parameterName: 'notiz' }, predicate: 'isNotEmpty' }];
+    updateDefinition('command-definition', id, 'ErzeugeAnordnung', body);
+    const outcome = evaluateCommand(model(), [], 'ErzeugeAnordnung', { anordnungId: 'a1' });
+    eq(outcome.outcome, 'rejected', 'an ordinary rejection, not an error');
+    body.conditions = [{ leftHandSide: { parameterName: 'notiz' }, predicate: 'lessThan', rightHandSide: 3 }];
+    updateDefinition('command-definition', id, 'ErzeugeAnordnung', body);
+    let name = null;
+    try { evaluateCommand(model(), [], 'ErzeugeAnordnung', { anordnungId: 'a1' }); } catch (error) { name = error.name; }
+    eq(name, 'EvaluationError', 'null has no place in an ordering');
+    body.conditions = [];
+    updateDefinition('command-definition', id, 'ErzeugeAnordnung', body);
+  });
+
+  // A projection reading the optional property, bound as an entity
+  // property — the fold sees the same null whether the Given spelled
+  // it out or left the key off.
+  addDefinition('projection-definition', id, 'AnordnungNotiz', {
+    valueType: 'string', isList: false,
+    parameters: [{ name: 'anordnungId', propertyType: 'AnordnungId' }],
+    initialValue: null,
+    handlers: [{ event: 'AnordnungErzeugt', operation: 'set', value: { eventProperty: 'notiz' } }],
+  });
+  updateDefinition('entity-definition', id, 'Anordnung', {
+    properties: [{ name: 'notiz', projection: 'AnordnungNotiz' }],
+  });
+
+  check('the fold reads an omitted optional event property as null', () => {
+    const log = [{ type: 'AnordnungErzeugt', data: { anordnungId: 'a1' } }];
+    eq(foldEntityProperty(model(), log, 'Anordnung', 'notiz', 'a1'), null, 'null, not undefined');
+    eq(foldEntityProperty(model(), [
+      { type: 'AnordnungErzeugt', data: { anordnungId: 'a1', notiz: 'da' } },
+    ], 'Anordnung', 'notiz', 'a1'), 'da', 'and a value when one is there');
+  });
+
+  check('a Given step may leave an optional property out', () => {
+    const scenario = {
+      command: 'ErzeugeOhneNotiz',
+      given: [{ event: 'AnordnungErzeugt', data: { anordnungId: 'a0' } }],
+      when: { arguments: { anordnungId: 'a1' } },
+    };
+    eq(deriveThen(model(), scenario).outcome, 'published', 'the scenario runs');
+  });
+
+  check('an unset optional tag-marked property writes no tag', () => {
+    addDefinition('entity-definition', id, 'Festlegung', { properties: [] });
+    addDefinition('event-definition', id, 'FestlegungGeprueft', {
+      properties: [{ name: 'festlegungId', propertyType: 'FestlegungId', isOptional: true, isList: false }],
+    });
+    eq(tagsOfEvent(model(), 'FestlegungGeprueft', { festlegungId: null }), [], 'no phantom instance');
+    eq(tagsOfEvent(model(), 'FestlegungGeprueft', { festlegungId: 'f1' }),
+      ['FestlegungId:f1'], 'the tag is back the moment the value is');
+  });
+
+  check('a boundary identifier from an unset optional errors, and the advisory said so', () => {
+    addDefinition('command-definition', id, 'PruefeFestlegung', {
+      properties: [{ name: 'festlegungId', propertyType: 'FestlegungId', isOptional: true, isList: false }],
+      boundary: [{ alias: 'festlegung', entity: 'Festlegung', id: { parameterName: 'festlegungId' } }],
+      conditions: [],
+      publishes: [{ name: 'FestlegungGeprueft', parameters: { festlegungId: { parameterName: 'festlegungId' } } }],
+    });
+    eq(sandbox.modelAdvisories(model()).some(
+      (a) => a.name === 'PruefeFestlegung' && /optional parameter "festlegungId"/.test(a.message)
+    ), true, 'the hazard is advised before any value is unset');
+    let name = null;
+    try { evaluateCommand(model(), [], 'PruefeFestlegung', {}); } catch (error) { name = error.name; }
+    eq(name, 'EvaluationError', 'unset at the boundary is the promised error');
+    eq(evaluateCommand(model(), [], 'PruefeFestlegung', { festlegungId: 'f1' }).outcome,
+      'published', 'and with a value it runs as ever');
+    removeDefinition('command-definition', id, 'PruefeFestlegung');
+  });
+
+  check('a required event property fed from an optional parameter is advised', () => {
+    const body = deepClone(model()['command-definitions'].ErzeugeAnordnung);
+    body.properties = body.properties.map((p) => p.name === 'anordnungId' ? { ...p, isOptional: true } : p);
+    addDefinition('command-definition', id, 'WackligErzeugen', body);
+    eq(sandbox.modelAdvisories(model()).some(
+      (a) => a.name === 'WackligErzeugen' && /publishes null into/.test(a.message)
+    ), true, 'null into a required property is a hazard worth a line');
+    removeDefinition('command-definition', id, 'WackligErzeugen');
+  });
+
+  check('optional and list together is advised, and evaluates as a plain list', () => {
+    addDefinition('event-definition', id, 'Doppelt', {
+      properties: [{ name: 'notizen', propertyType: 'string', isOptional: true, isList: true }],
+    });
+    eq(sandbox.modelAdvisories(model()).some(
+      (a) => a.name === 'Doppelt' && /both optional and a list/.test(a.message)
+    ), true, 'two spellings of none');
+    removeDefinition('event-definition', id, 'Doppelt');
+  });
+}
+
+// ---------------------------------------------------------------
 // The demoted validations still hold the shipped models to the old
 // standard: every predefined model loads without a single advisory.
 // ---------------------------------------------------------------

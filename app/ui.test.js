@@ -1272,6 +1272,52 @@ function build(index) {
       'aliased apart from the course already bound');
   });
 
+  check('the identifier picker offers the id type only, first match pre-picked', () => {
+    sandbox.state.slice = 'SubscribeStudentToCourse';
+    sandbox.state.adder = 'read';
+    sandbox.state.readDraft = { slice: 'SubscribeStudentToCourse', entity: 'Course', source: '' };
+    const step = sandbox.stepReads(model(), sandbox.sliceOf(model(), 'SubscribeStudentToCourse'));
+    const select = findAll(step, (n) => n.tag === 'select')[1];
+    const values = findAll(select, (n) => n.tag === 'option').map((n) => n.value);
+    eq(values.includes(JSON.stringify({ parameterName: 'courseId' })), true,
+      'the course id the payload carries is offered');
+    eq(values.includes(JSON.stringify({ parameterName: 'studentId' })), false,
+      'the student id beside it is not — wrong type');
+    eq(sandbox.state.readDraft.source, JSON.stringify({ parameterName: 'courseId' }),
+      'and the matching source is already picked');
+    sandbox.closeForms();
+  });
+
+  check('a list of the right type stays offered — that is the fan-out', () => {
+    sandbox.state.slice = 'SubscribeStudentToCourse';
+    sandbox.state.adder = 'read';
+    sandbox.state.readDraft = { slice: 'SubscribeStudentToCourse', entity: 'Student', source: '' };
+    const step = sandbox.stepReads(model(), sandbox.sliceOf(model(), 'SubscribeStudentToCourse'));
+    const select = findAll(step, (n) => n.tag === 'select')[1];
+    const values = findAll(select, (n) => n.tag === 'option').map((n) => n.value);
+    eq(values.includes(JSON.stringify({ alias: 'course', property: 'subscribedStudentIds' })), true,
+      'a StudentId list identifies many students at once');
+    eq(values.includes(JSON.stringify({ parameterName: 'courseId' })), false,
+      'the course id is still the wrong type');
+    sandbox.closeForms();
+  });
+
+  check('a projection parameter narrows to its own type the same way', () => {
+    sandbox.state.slice = 'SubscribeStudentToCourse';
+    sandbox.state.adder = 'read';
+    sandbox.state.readDraft = {
+      slice: 'SubscribeStudentToCourse', entity: 'projection:CourseCapacity', source: '',
+    };
+    const step = sandbox.stepReads(model(), sandbox.sliceOf(model(), 'SubscribeStudentToCourse'));
+    const select = findAll(step, (n) => n.tag === 'select')[1];
+    const values = findAll(select, (n) => n.tag === 'option').map((n) => n.value);
+    eq(values.includes(JSON.stringify({ parameterName: 'courseId' })), true, 'a CourseId is offered');
+    eq(values.includes(JSON.stringify({ parameterName: 'studentId' })), false, 'a StudentId is not');
+    eq(values.includes(JSON.stringify({ alias: 'course', property: 'subscribedStudentIds' })), false,
+      'nor a list of anything — a projection binding reads one partition');
+    sandbox.closeForms();
+  });
+
   check('Escape discards a touched row instead of committing it', () => {
     sandbox.state.slice = 'DefineCourse';
     sandbox.state.adder = 'chg:CourseDefined';
@@ -1338,6 +1384,33 @@ function build(index) {
     eq(sandbox.modelAdvisories(model()).some((a) => a.name === 'CourseStatus'), false,
       'nothing left to report');
     sandbox.state.projDraft = null;
+  });
+
+  check('"+ member" inside an open row keeps the row open, form shown', () => {
+    sandbox.state.projDraft = null;
+    sandbox.toggleProjectionRow(model(), 'CourseStatus');
+    const chips = sandbox.enumMemberChips(model(), 'CourseStatus');
+    const root = { children: chips };
+    findAll(root, (n) => n.tag === 'button' && textOf(n) === '+ member')[0].onclick();
+    eq(sandbox.state.projDraft && sandbox.state.projDraft.name, 'CourseStatus',
+      'the hosting row survived the click');
+    eq(sandbox.state.addingMember, { type: 'CourseStatus' }, 'and the member form is on');
+    const after = { children: sandbox.enumMemberChips(model(), 'CourseStatus') };
+    eq(findAll(after, (n) => /inline-form/.test(n.className || '')).length, 1,
+      'so the form actually renders where the chips are');
+    sandbox.closeForms();
+  });
+
+  check('renaming a member from inside the row keeps it open the same way', () => {
+    sandbox.state.projDraft = null;
+    sandbox.toggleProjectionRow(model(), 'CourseStatus');
+    const chips = { children: sandbox.enumMemberChips(model(), 'CourseStatus') };
+    findAll(chips, (n) => n.className === 'editable' && textOf(n) === 'Existent')[0].onclick();
+    eq(sandbox.state.projDraft && sandbox.state.projDraft.name, 'CourseStatus',
+      'the hosting row survived the click');
+    eq(sandbox.state.editMember, { where: 'member:CourseStatus', name: 'Existent' },
+      'and the rename form is on');
+    sandbox.closeForms();
   });
 
   check('the foot offers no Save or Discard — saving is not a gesture any more', () => {
@@ -1591,6 +1664,107 @@ function build(index) {
   });
 
   store.delete('dcb-playground:model');
+}
+
+// ---------------------------------------------------------------
+// Optional properties in the payload editors. "No value" is a state
+// the interface shows — the explicit null — and never the empty
+// string; the save path spells the null out into everything a draft
+// left unset.
+// ---------------------------------------------------------------
+{
+  const id = sandbox.createDcbModel('Optional Probe');
+  const model = () => sandbox.projectState()[id];
+  const property = { name: 'notiz', propertyType: 'string', isOptional: true, isList: false };
+
+  // The stub's `setAttribute` is inert, so the checkbox is findable
+  // only as the input `h` gave no class — which the one real text
+  // input always has.
+  const toggleOf = (card) => findAll(card, (n) => n.tag === 'input' && !n.className)[0];
+
+  check('an unset optional field is a "no value" chip, not an input', () => {
+    const draft = { notiz: null };
+    const where = { root: () => draft, suggest: () => [] };
+    const card = sandbox.valueEditor(model(), property, ['notiz'], where);
+    eq(findAll(card, (n) => n.tag === 'input' && n.className === 'vin').length, 0, 'nothing to type into');
+    eq(textOf(card).includes('no value'), true, 'and it says so');
+    eq(!!toggleOf(card), true, 'with the toggle there to change that');
+  });
+
+  check('ticking it opens the editor; unticking writes the null back', () => {
+    const draft = { notiz: null };
+    const where = { root: () => draft, suggest: () => [] };
+    let card = sandbox.valueEditor(model(), property, ['notiz'], where);
+    toggleOf(card).onchange({ target: { checked: true } });
+    eq(draft.notiz, '', 'set, as the blank it starts from — a value now, not the null');
+    card = sandbox.valueEditor(model(), property, ['notiz'], where);
+    eq(findAll(card, (n) => n.tag === 'input' && n.className === 'vin').length, 1, 'the ordinary editor is back');
+    toggleOf(card).onchange({ target: { checked: false } });
+    eq(draft.notiz, null, 'null, distinct from the empty string it just held');
+  });
+
+  check('saving spells the null into whatever a draft left unset', () => {
+    sandbox.addDefinition('event-definition', id, 'NotizErfasst', {
+      properties: [
+        { name: 'anordnungId', propertyType: 'string', isOptional: false, isList: false },
+        property,
+      ],
+    });
+    const values = { anordnungId: 'a1' };
+    sandbox.fillUnsetOptionals(values, model()['event-definitions'].NotizErfasst.properties);
+    eq(values, { anordnungId: 'a1', notiz: null }, 'the unset optional is now the explicit null');
+
+    const body = { given: [{ event: 'NotizErfasst', data: { anordnungId: 'a2' } }] };
+    sandbox.fillGivenOptionals(model(), body);
+    eq(body.given[0].data, { anordnungId: 'a2', notiz: null }, 'a Given step gets the same spelling');
+
+    const set = { anordnungId: 'a1', notiz: '' };
+    sandbox.fillUnsetOptionals(set, model()['event-definitions'].NotizErfasst.properties);
+    eq(set.notiz, '', 'the empty string is a value and stays one');
+  });
+}
+
+// ---------------------------------------------------------------
+// An option is the text the caller built, whole: the mark leads, in
+// every browser, and nothing decides where a mark ends. The splitting
+// this replaces tore modifier sequences ("👮🏻‍♀️") into parts and let
+// a non-emoji mark ("﹟") slip past detection to sit in front alone.
+// ---------------------------------------------------------------
+{
+  const optionsOf = (sel) => findAll(sel, (n) => n.tag === 'option').map(textOf);
+
+  check('the mark leads the option text, untouched', () => {
+    const sel = sandbox.pick(
+      [['A', '👮🏻‍♀️ Anordnung'], ['K', '﹟ Course Capacity Changed'], ['C', 'Course']], 'A', () => {});
+    eq(optionsOf(sel), ['👮🏻‍♀️ Anordnung', '﹟ Course Capacity Changed', 'Course'],
+      'exactly as built — emoji cluster, non-emoji mark and bare name alike');
+    eq(findAll(sel, (n) => n.className === 'icon' || n.className === 'label').length, 0,
+      'and no spans left to reorder it');
+  });
+}
+
+// ---------------------------------------------------------------
+// A command's place within a feature is never chosen — the groups list
+// their commands alphabetically, by the name they are shown under.
+// Dropping a command anywhere in a group relies on this: it can only
+// mean "into this group", never "at this position".
+// ---------------------------------------------------------------
+{
+  const { id, model } = build(0);
+
+  check('commands within a feature sit alphabetically, wherever they were added', () => {
+    const feature = sandbox.featureOf(Object.values(model()['command-definitions'])[0]);
+    addDefinition('command-definition', id, 'AaaFirstByName', {
+      feature, properties: [], boundary: [], conditions: [], publishes: [],
+    });
+    for (const group of sandbox.featureGroups(model())) {
+      const shown = group.commands.map(sandbox.readable);
+      eq(shown, [...shown].sort((a, b) => a.localeCompare(b)),
+        'group "' + group.name + '" reads in display order');
+    }
+    const home = sandbox.featureGroups(model()).find((g) => g.name === feature);
+    eq(home.commands[0], 'AaaFirstByName', 'the latecomer sorts to the front, not the end');
+  });
 }
 
 finish();

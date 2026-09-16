@@ -3,7 +3,7 @@
   "$id": "https://dcb.events/schemas/model/v3.json",
   "title": "DCB Model",
   "description": "A DCB model: every definition a modeller has authored for one\nDCB-based system, in the form the playground exports it. The same\ndocument travels both ways out of the playground, as readable JSON and\nas the gzipped payload of a share link.\n\n**There is one kind of fold.** A `projectionDefinition` is it: a value\nthat starts somewhere and is advanced by the events it handles, over\nthe query `tag IN (its parameters' arguments) AND type IN (handled\nevents)`. Declare no parameters and there is no tag, which is what a\nglobal numbering is. Declare one and the same numbering restarts per\ntenant.\n\nAn **entity property is a binding to one of these**, not a second kind\nof thing. `entityDefinitions[].properties` holds `{name, projection}`\nentries: the projection declares one parameter typed with the entity's\nown identifier, and binding it as a property is what supplies that\nargument. Everything the fold needs — the type held, the value it\nstarts from, the handlers, the script — lives on the projection and\nnowhere else, so there is no second place for a type or an initial\nvalue to disagree with the first. The same projection may be bound by\nseveral properties, or read directly by a command, or both.\n\nA lifecycle is not a distinct concept: a modeller who wants one binds\na property named `status` (by convention only) to a projection holding\nan ordinary enum custom type. There is no standalone constraint kind:\nconditions are inlined into the commands that check them.\n\n**Tags come from value types, not from a separate kind.** Any\n`customTypeDefinition` may set `isTag: true`, which is what makes it\nan identifier. An entity's own derived identifier is such a value\ntype — created automatically when the entity is, and from then on\nedited exactly like any other value type. A composite value type is\nnever itself a tag; its tag-ness is derived by looking through it to\nwhichever of its fields are themselves tag-marked, which is what lets\ntwo unrelated entities share one component (a `TenantId` field) and\nbe scoped together by it.\n\n**Versioning.** `dcbModelVersion` is what an importer dispatches on;\n`$schema` is for editors and is deliberately never read by one. A major\nbump means an older reader cannot correctly read the document and must\nrefuse it; a minor bump means it can, because the addition is one it\nignores. Note that \"additive\" is judged from the reader's side, not the\nschema's: a new member of a closed vocabulary — another condition\noperator, operand shape or handler operation — is a *major* change even\nthough this document merely grows an enum, because a reader that has\nnever heard of it fails on the value rather than passing it through.\n\n2.0 is such a major. An entity property stopped being a definition of\nits own and became a binding; a projection's partition became explicit\nin every case; `isOptional` went away, since `null` is an ordinary\ninitial value of any type and means \"no value yet\"; and an initial\nvalue may now be a non-empty list. A 1.x reader would misread each of\nthose rather than ignore it.\n\nThis schema moves in place for minor changes; a major change is\npublished at a new `/vN.json` and the old URL keeps serving what it\nalways served. `x-dcb-schema-revision` moves with every edit either way.\n\nThe format is young and the playground it describes is a prototype.\nExpect majors.\n",
-  "x-dcb-schema-revision": "3.0.0",
+  "x-dcb-schema-revision": "3.0.1",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -556,7 +556,7 @@
           "$ref": "#/$defs/EventName"
         },
         "parameters": {
-          "description": "Keys are the event's property names; each value is a\n`CommandOperand` describing where the value comes from at\nexecution time.\n",
+          "description": "Keys are the event's property names; each value is a\n`CommandOperand` describing where the value comes from at\nexecution time. An *optional* event property's entry may be\nomitted; the published event then carries the explicit `null`\nthere — and writes no tag for it, when the property is\ntag-marked.\n",
           "type": "object",
           "additionalProperties": {
             "$ref": "#/$defs/CommandOperand"
@@ -761,7 +761,7 @@
           "$ref": "#/$defs/EventName"
         },
         "data": {
-          "description": "One entry per property the event declares — all of them, and\nnothing else. An event that later gains a property leaves\nevery scenario written before it *broken*, which is the honest\nreport: there is no value here to have evaluated with.\n",
+          "description": "One entry per property the event declares — all of them, and\nnothing else. An optional property's entry holds `null` when it is\nunset, and an absent entry on an optional property reads the same\nway. An event that later gains a *required* property leaves every\nscenario written before it *broken*, which is the honest report:\nthere is no value here to have evaluated with.\n",
           "type": "object"
         }
       },
@@ -776,7 +776,7 @@
       "additionalProperties": false,
       "properties": {
         "arguments": {
-          "description": "One entry per property the command declares — all of them, and\nnothing else.\n",
+          "description": "One entry per property the command declares — all of them, and\nnothing else. An optional property's entry holds `null` when it is\nunset — the explicit spelling of \"no value\"; an absent entry on an\noptional property is read the same way.\n",
           "type": "object"
         }
       },
@@ -988,7 +988,8 @@
         },
         "isOptional": {
           "type": "boolean",
-          "default": false
+          "default": false,
+          "description": "The property may hold no value. `null` is the explicit spelling of\n\"no value\" in every payload — a scenario's Given and When, and a\npublished event's data alike — and it is never the empty string,\nwhich is an ordinary value. A reader may treat an absent entry on an\noptional property as the same null; writers spell the null out.\nCombining this with `isList` is a modelling slip the playground\nadvises against: the empty list already says none.\n"
         },
         "isList": {
           "type": "boolean",

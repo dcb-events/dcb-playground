@@ -1346,6 +1346,10 @@ function coverageIssues(model, body) {
     if (!event) continue;
     for (const property of event.properties || []) {
       const operand = (emission.parameters || {})[property.name];
+      // An optional property with no mapping publishes the explicit
+      // null and writes no tag — there is no instance to have
+      // consulted, so there is nothing for the boundary to cover.
+      if (operand === undefined && property.isOptional && !property.isList) continue;
       if (mintsFromProjection(model, body, operand, emission.name)) continue;
       // Checked against the identifier *leaves* of the property's
       // type, not its surface: a property typed `Item[]` writes one
@@ -1471,6 +1475,12 @@ function validateReferences(model, kind, name, body) {
       seen.add(p.name);
       if (classifyType(resolved, p.propertyType).kind === 'unresolved') {
         throw new DomainError(`Type "${p.propertyType}" (property "${p.name}") does not resolve in this model.`);
+      }
+      if (p.isOptional && p.isList) {
+        throw new DomainError(
+          `${label} property "${p.name}" is both optional and a list — two spellings of "none". ` +
+          'The empty list already says nothing is there; this evaluates as a plain list.'
+        );
       }
     }
   };
@@ -2338,6 +2348,59 @@ function validateCommandBody(model, body) {
           `(condition "${conditionText(condition)}").`
         );
       }
+    }
+  }
+
+  // Optional-parameter hazards. Neither is a structural fault — the
+  // model loads and evaluates — but each is a surprise waiting on the
+  // first unset value, and this (an advisory, like every semantic
+  // finding) is where it gets said before that value arrives.
+  const readsOptionalParameter = (operand) =>
+    operandSource(operand) === 'parameter'
+    && (body.properties || []).some(
+      (p) => p.name === operand.parameterName && p.isOptional && !p.isList
+    );
+  for (const emission of body.publishes || []) {
+    if (!emission) continue;
+    const event = model['event-definitions'][emission.name];
+    if (!event) continue;
+    for (const property of event.properties || []) {
+      if (property.isOptional) continue;
+      const operand = (emission.parameters || {})[property.name];
+      if (operand !== undefined && readsOptionalParameter(operand)) {
+        throw new DomainError(
+          `"${emission.name}.${property.name}" is required, but takes its value from optional ` +
+          `parameter "${operand.parameterName}" — when that is unset, this publishes null into ` +
+          `a property every reader may assume present. Mark the event property optional too, ` +
+          `or make the parameter required.`
+        );
+      }
+    }
+  }
+  // Entity-binding arguments are deliberately exempt: they reach a
+  // script as ordinary values, and null is one. An identifier, an
+  // exclusion or a partition argument becomes a tag, and null has no
+  // tag — evaluation errors when it is unset, and this says so first.
+  for (const binding of boundary) {
+    const feeds = [];
+    if (binding.id !== undefined && readsOptionalParameter(binding.id)) {
+      feeds.push(['its identifier', binding.id]);
+    }
+    if (binding.excluding !== undefined && readsOptionalParameter(binding.excluding)) {
+      feeds.push(['its exclusion', binding.excluding]);
+    }
+    if (binding.projection !== undefined) {
+      for (const [key, operand] of Object.entries(binding.arguments || {})) {
+        if (readsOptionalParameter(operand)) feeds.push([`its argument "${key}"`, operand]);
+      }
+    }
+    if (feeds.length) {
+      const [what, operand] = feeds[0];
+      throw new DomainError(
+        `Boundary binding "${binding.alias}" takes ${what} from optional parameter ` +
+        `"${operand.parameterName}" — evaluation errors when it is unset. ` +
+        `Make the parameter required, or take the boundary off it.`
+      );
     }
   }
 

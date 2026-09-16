@@ -159,6 +159,24 @@ async function call(name, args) {
     eq(isError, true, 'a missing argument cannot be evaluated');
   });
 
+  await check('an unset optional property evaluates through the seam as the explicit null', async () => {
+    await call('add_event_definition', {
+      name: 'ProbeNoted',
+      properties: [{ name: 'note', propertyType: 'string', isOptional: true, isList: false }],
+    });
+    await call('add_command_definition', {
+      name: 'NoteProbe',
+      properties: [{ name: 'note', propertyType: 'string', isOptional: true, isList: false }],
+      boundary: [], conditions: [],
+      publishes: [{ name: 'ProbeNoted', parameters: { note: { parameterName: 'note' } } }],
+    });
+    const { value, isError } = await call('evaluate_command', { commandName: 'NoteProbe', arguments: {} });
+    eq(isError, false, 'unset is a call, not a broken one');
+    eq(value.events[0].data, { note: null }, 'published with the null spelled out');
+    await call('remove_definition', { kind: 'command-definition', name: 'NoteProbe' });
+    await call('remove_definition', { kind: 'event-definition', name: 'ProbeNoted' });
+  });
+
   await check('list_problems answers with plain findings', async () => {
     const { value, isError } = await call('list_problems');
     eq(isError, false, 'not an error');

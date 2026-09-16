@@ -144,7 +144,8 @@ const WEBMCP_DEFINITION_SCHEMAS = {
             },
             "isOptional": {
               "type": "boolean",
-              "default": false
+              "default": false,
+              "description": "The property may hold no value. `null` is the explicit spelling of\n\"no value\" in every payload — a scenario's Given and When, and a\npublished event's data alike — and it is never the empty string,\nwhich is an ordinary value. A reader may treat an absent entry on an\noptional property as the same null; writers spell the null out.\nCombining this with `isList` is a modelling slip the playground\nadvises against: the empty list already says none.\n"
             },
             "isList": {
               "type": "boolean",
@@ -593,7 +594,8 @@ const WEBMCP_DEFINITION_SCHEMAS = {
             },
             "isOptional": {
               "type": "boolean",
-              "default": false
+              "default": false,
+              "description": "The property may hold no value. `null` is the explicit spelling of\n\"no value\" in every payload — a scenario's Given and When, and a\npublished event's data alike — and it is never the empty string,\nwhich is an ordinary value. A reader may treat an absent entry on an\noptional property as the same null; writers spell the null out.\nCombining this with `isList` is a modelling slip the playground\nadvises against: the empty list already says none.\n"
             },
             "isList": {
               "type": "boolean",
@@ -1387,7 +1389,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
               ]
             },
             "parameters": {
-              "description": "Keys are the event's property names; each value is a\n`CommandOperand` describing where the value comes from at\nexecution time.\n",
+              "description": "Keys are the event's property names; each value is a\n`CommandOperand` describing where the value comes from at\nexecution time. An *optional* event property's entry may be\nomitted; the published event then carries the explicit `null`\nthere — and writes no tag for it, when the property is\ntag-marked.\n",
               "type": "object",
               "additionalProperties": {
                 "description": "Where a value comes from inside a command — its boundary, its\nconditions and its event emissions.\n",
@@ -1618,7 +1620,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
               ]
             },
             "data": {
-              "description": "One entry per property the event declares — all of them, and\nnothing else. An event that later gains a property leaves\nevery scenario written before it *broken*, which is the honest\nreport: there is no value here to have evaluated with.\n",
+              "description": "One entry per property the event declares — all of them, and\nnothing else. An optional property's entry holds `null` when it is\nunset, and an absent entry on an optional property reads the same\nway. An event that later gains a *required* property leaves every\nscenario written before it *broken*, which is the honest report:\nthere is no value here to have evaluated with.\n",
               "type": "object"
             }
           },
@@ -1635,7 +1637,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         "additionalProperties": false,
         "properties": {
           "arguments": {
-            "description": "One entry per property the command declares — all of them, and\nnothing else.\n",
+            "description": "One entry per property the command declares — all of them, and\nnothing else. An optional property's entry holds `null` when it is\nunset — the explicit spelling of \"no value\"; an absent entry on an\noptional property is read the same way.\n",
             "type": "object"
           }
         },
@@ -1783,7 +1785,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
               ]
             },
             "data": {
-              "description": "One entry per property the event declares — all of them, and\nnothing else. An event that later gains a property leaves\nevery scenario written before it *broken*, which is the honest\nreport: there is no value here to have evaluated with.\n",
+              "description": "One entry per property the event declares — all of them, and\nnothing else. An optional property's entry holds `null` when it is\nunset, and an absent entry on an optional property reads the same\nway. An event that later gains a *required* property leaves every\nscenario written before it *broken*, which is the honest report:\nthere is no value here to have evaluated with.\n",
               "type": "object"
             }
           },

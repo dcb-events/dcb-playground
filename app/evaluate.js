@@ -387,6 +387,11 @@ function projectionQueryTags(model, projectionName, argumentValues) {
         fail(`Projection "${projectionName}" was read without its parameter "${parameter.name}".`);
       }
       const normalized = evNormalize(value);
+      // A parameter is a tag, and null has no tag — "Type:null" would
+      // be one phantom partition every unset value shares.
+      if (normalized === null) {
+        fail(`Projection "${projectionName}" was read with no value (null) for its parameter "${parameter.name}".`);
+      }
       const leaves = idLeavesOfType(model, parameter.propertyType);
       if (!leaves.length) return [`${parameter.propertyType}:${normalized}`];
       // A composite parameter contributes the union of its components'
@@ -399,6 +404,23 @@ function projectionQueryTags(model, projectionName, argumentValues) {
     });
 }
 
+// Events reach a fold carrying an explicit key for every optional
+// property their definition declares — null when unset. One spelling
+// of "no value" downstream: a Given step may omit the key, an emission
+// writes the null out, and a handler or script reads the same thing
+// either way. Optional lists are exempt (they evaluate as plain
+// lists; the advisories point the combination out).
+function evWithExplicitOptionals(model, event) {
+  const definition = model['event-definitions'][event.type];
+  let data = event.data;
+  for (const property of (definition || {}).properties || []) {
+    if (!property.isOptional || property.isList) continue;
+    if ((data || {})[property.name] !== undefined) continue;
+    data = { ...(data || {}), [property.name]: null };
+  }
+  return data === event.data ? event : { ...event, data };
+}
+
 function foldProjection(model, events, projectionName, argumentValues) {
   const projection = model['projection-definitions'][projectionName];
   if (!projection) fail(`This model has no projection "${projectionName}".`);
@@ -408,7 +430,8 @@ function foldProjection(model, events, projectionName, argumentValues) {
 
   const compiled = evCompileTarget(model, projection, `projection "${projectionName}"`);
   return compiled.fold(
-    events.filter((event) => evMatchesTags(model, event, tags)),
+    events.filter((event) => evMatchesTags(model, event, tags))
+      .map((event) => evWithExplicitOptionals(model, event)),
     values
   );
 }
@@ -512,6 +535,14 @@ function evResolveBinding(model, events, body, binding, scope) {
 
   const fanned = isFannedOut(model, body, binding);
   const held = evReadOperand(binding.id, scope);
+  // A null identifier binds nothing. Folding at "Entity:null" would
+  // invent one phantom instance every unset value shares, so this is
+  // the error the optional-parameter advisory promises — real
+  // "boundary shrinks when unset" semantics stay deliberately unbuilt
+  // until a model needs them.
+  if (!fanned && evNormalize(held) === null) {
+    fail(`Binding "${binding.alias}" has no instance to read: ${operandText(binding.id)} is unset (null).`);
+  }
   // Order is preserved and duplicates are kept: a binding fanned from a
   // list parameter is read at the same index as that parameter, and
   // collapsing it would silently pair a line of the cart with the wrong
@@ -524,7 +555,13 @@ function evResolveBinding(model, events, body, binding, scope) {
   // list the fan came from.
   let entries = ids.map((id, sourceIndex) => ({ id, sourceIndex }));
   if (binding.excluding !== undefined) {
-    const excluded = evAsList(evReadOperand(binding.excluding, scope));
+    const excludedHeld = evReadOperand(binding.excluding, scope);
+    // Same rule as the identifier above: null is not "exclude
+    // nothing", it is a value that never got supplied.
+    if (evNormalize(excludedHeld) === null) {
+      fail(`Binding "${binding.alias}" excludes ${operandText(binding.excluding)}, which is unset (null).`);
+    }
+    const excluded = evAsList(excludedHeld);
     entries = entries.filter(({ id }) => !excluded.some((other) => evDeepEqual(id, other)));
   }
 
@@ -571,10 +608,21 @@ function evApplyPredicate(condition, left, right) {
       held = evAsList(l).some((element) => right_.some((other) => evDeepEqual(element, other)));
       break;
     }
-    case 'lessThan': held = l < r; break;
-    case 'lessThanOrEquals': held = l <= r; break;
-    case 'greaterThan': held = l > r; break;
-    case 'greaterThanOrEquals': held = l >= r; break;
+    case 'lessThan':
+    case 'lessThanOrEquals':
+    case 'greaterThan':
+    case 'greaterThanOrEquals':
+      // `null < 3` would coerce to `0 < 3` and quietly hold — an unset
+      // optional has no place in an ordering, and saying so beats
+      // ranking it as zero.
+      if (l === null || l === undefined || r === null || r === undefined) {
+        return fail(`"${conditionText(condition)}" orders against no value (null) — an ordering needs both sides.`);
+      }
+      if (condition.predicate === 'lessThan') held = l < r;
+      else if (condition.predicate === 'lessThanOrEquals') held = l <= r;
+      else if (condition.predicate === 'greaterThan') held = l > r;
+      else held = l >= r;
+      break;
     case 'startsWith': held = String(l).startsWith(String(r)); break;
     case 'endsWith': held = String(l).endsWith(String(r)); break;
     default:
@@ -674,6 +722,15 @@ function evaluateCommand(model, events, commandName, args) {
   const scope = { args: {}, bound: {} };
   for (const property of body.properties || []) {
     if (supplied[property.name] === undefined) {
+      // An optional property may be unset. `null` is the one spelling
+      // of "no value" downstream, so the lenient read normalizes here:
+      // an absent key and an explicit null reach every condition and
+      // emission identically. An optional *list* is a modelling slip
+      // the advisories point out; it evaluates as a plain list.
+      if (property.isOptional && !property.isList) {
+        scope.args[property.name] = null;
+        continue;
+      }
       fail(`"${commandName}" needs a value for "${property.name}".`);
     }
     scope.args[property.name] = evNormalize(supplied[property.name]);
@@ -719,6 +776,14 @@ function evaluateCommand(model, events, commandName, args) {
     for (const property of definition.properties || []) {
       const operand = (emission.parameters || {})[property.name];
       if (operand === undefined) {
+        // An optional event property needs no mapping. The published
+        // payload still carries the key, holding the explicit null —
+        // canonical form, so a stored event always spells out every
+        // property its definition declares.
+        if (property.isOptional && !property.isList) {
+          data[property.name] = null;
+          continue;
+        }
         fail(`"${commandName}" publishes "${emission.name}" without a value for "${property.name}".`);
       }
       data[property.name] = evReadOperand(operand, scope);

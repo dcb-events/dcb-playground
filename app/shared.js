@@ -534,7 +534,11 @@ function featureOf(body) {
 
 // Features in the order their first command appears, then the ones still
 // waiting for one, then the catch-all — so the rail never reshuffles
-// under you as you edit.
+// under you as you edit. *Within* a feature the commands sit
+// alphabetically, by the name they are shown under: a command's place
+// in a group carries no meaning, so a fixed order beats an accidental
+// one — and it is what lets dropping a command anywhere in a group
+// mean only "into this group".
 function featureGroups(model) {
   const order = [];
   const byFeature = {};
@@ -548,11 +552,10 @@ function featureGroups(model) {
     if (!live.has(name) && name !== UNGROUPED) { order.push(name); byFeature[name] = []; }
   }
   if (byFeature[UNGROUPED]) order.push(UNGROUPED);
-  return order.map((name) => ({ name, commands: byFeature[name] || [] }));
-}
-
-function featureNames(model) {
-  return featureGroups(model).map((g) => g.name).filter((n) => n !== UNGROUPED);
+  return order.map((name) => ({
+    name,
+    commands: (byFeature[name] || []).sort((a, b) => readable(a).localeCompare(readable(b))),
+  }));
 }
 
 // Events no feature emits, and entities nothing reads — the loose ends

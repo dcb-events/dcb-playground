@@ -60,7 +60,20 @@
     font-weight: 400; font-size: 10px; color: var(--muted);
     background: var(--bg); border-radius: 999px; padding: 0 6px;
   }
-  .rail a.cmd { padding-left: 32px; }
+  /* The drop target while a command is dragged over a feature — its
+     heading or any command row in it. Filled, not an edge line like the
+     scenario cards': the command lands *in* the group, never against a
+     neighbour (within a group the order is alphabetical, not chosen). */
+  .group.drop-into { background: var(--command-soft); border-radius: 6px; }
+  .rail a.cmd.drop-into { background: var(--command-soft); }
+  /* The way out of a feature, shown only while a command is in the air
+     and no real Ungrouped group is on screen to receive it. */
+  .rail .drop-stub { display: none; color: var(--muted); font-style: italic; font-weight: 400; }
+  .rail .drop-stub .gname { cursor: default; }
+  .rail .drop-stub .gname:hover { color: var(--muted); }
+  .rail.dragging-cmd .drop-stub { display: flex; }
+  .rail a.cmd { padding-left: 32px; cursor: grab; }
+  .rail a.cmd.dragging { opacity: .4; }
   /* The count used to sit hard against the label — "Sandbox14" — because
      an <a> lays its children out as text, not as a row. This one alone
      needs a row: the label on the left, the count held to the right. */
@@ -719,6 +732,8 @@
   .vin.tiny-in { min-width: 70px; width: 70px; }
   .vlist { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
   .vrow { display: flex; gap: 5px; align-items: flex-start; }
+  .vopt { display: inline-flex; gap: 5px; align-items: center; min-height: 25px; }
+  .vopt > label { display: inline-flex; gap: 3px; align-items: center; white-space: nowrap; }
   .vgroup {
     border: 1px dashed var(--border); border-radius: 5px; padding: 5px 8px;
   }
@@ -765,22 +780,6 @@
   }
   .pin:hover { color: var(--event); }
   .pin.on { color: var(--event); }
-
-  /* A picker whose options start with an icon (an entity, a type)
-     builds its <option> text label-first so arrow-key type-ahead
-     matches the name a person actually types — native <option> has no
-     way to search on anything else. Where the browser supports
-     customizable <select> (`::picker(select)`, `<selectedcontent>`),
-     this puts the icon back in front visually without touching that
-     word order; everywhere else it just falls back to "Name 🔖", which
-     is still readable and still keyboard-searchable. */
-  @supports (appearance: base-select) {
-    select.icon-select { appearance: base-select; }
-    select.icon-select option { display: flex; align-items: center; gap: 4px; }
-    select.icon-select option .icon,
-    select.icon-select selectedcontent .icon { order: -1; }
-    select.icon-select selectedcontent { display: flex; align-items: center; gap: 4px; }
-  }
 
   /* The two overview pages read across every command at once rather
      than down one of them, so they earn more width than an ordinary
@@ -2634,6 +2633,22 @@ function operandChoicesAbove(model, slice, index) {
   return out;
 }
 
+// Narrows operand choices to one type, for the slots that know exactly
+// what they need — an entity's identifier, a projection's parameter, a
+// scripted argument. The same rule the emission fields and the rule
+// editor's right side already apply: a course is never identified by a
+// student id, so the picker does not offer it. `list: true` admits
+// list-typed operands alongside singular ones — on an id slot a list
+// of the right type is the fan-out, not a mismatch.
+function choicesOfType(model, slice, choices, propertyType, { list } = {}) {
+  return choices.filter(([v]) => {
+    const resolved = resolveOperandType(JSON.parse(v),
+      { boundary: slice.reads, commandProperties: slice.payload, model });
+    return resolved && resolved.propertyType === propertyType
+      && (list || !resolved.isList);
+  });
+}
+
 // ---------- small helpers ----------
 
 function patch(kind, name, mutate) {
@@ -2807,14 +2822,16 @@ function typeOptions(model) {
   return typeChoices(model).map((t) => [t, readable(t)]);
 }
 
-// An option built as "🔖 Name" reads fine, but a native <option> has
-// no separate accessible label — arrow-key type-ahead searches the
-// same text a screen reader gets, so it can only ever match the first
-// character actually typed, which here is the icon. Splitting the icon
-// into its own trailing span puts the name first in that text without
-// giving up the icon (see the `.icon-select` CSS, which puts it back
-// in front visually on browsers that support customizable <select>).
-const ICON_PREFIX = /^(?:\p{Extended_Pictographic}(?:️|‍\p{Extended_Pictographic})*)+\s*/u;
+// An option is exactly the text the caller built — "🔖 Name", mark
+// first, in every browser. An earlier design split a detected emoji
+// prefix into a trailing span so arrow-key type-ahead would search
+// the name, re-fronting the icon with customizable-<select> CSS; that
+// order only ever held where `appearance: base-select` is supported,
+// the emoji detection tore modifier sequences ("👮🏻‍♀️") into parts,
+// and a mark that is not an emoji at all ("﹟" is one) slipped past
+// it and sat in front anyway. A mark is whatever was typed, so no
+// pattern can say where it ends — the text is left whole instead, and
+// the icon leads uniformly.
 
 // The same "alias · property" text that makes a flat list readable —
 // "given · course id", "course · capacity", "status · Existent" —
@@ -2841,17 +2858,8 @@ function pick(options, value, onchange, placeholder) {
     buckets.get(prefix).push({ v, suffix: text.slice(at + GROUP_SEP.length) });
   }
 
-  let hasIcon = false;
   const appendOption = (parent, v, text) => {
-    const match = text.match(ICON_PREFIX);
-    if (match) {
-      hasIcon = true;
-      parent.appendChild(h('option', { value: v, selected: v === value },
-        h('span', { class: 'label' }, text.slice(match[0].length)),
-        h('span', { class: 'icon' }, match[0].trimEnd())));
-    } else {
-      parent.appendChild(h('option', { value: v, selected: v === value }, text));
-    }
+    parent.appendChild(h('option', { value: v, selected: v === value }, text));
   };
 
   for (const entry of sequence) {
@@ -2866,10 +2874,6 @@ function pick(options, value, onchange, placeholder) {
     sel.appendChild(group);
   }
 
-  if (hasIcon) {
-    sel.classList.add('icon-select');
-    sel.insertBefore(h('button', {}, h('selectedcontent', {})), sel.firstChild);
-  }
   return sel;
 }
 
@@ -2939,6 +2943,37 @@ const closeForms = () => {
 
 // ---------- rail ----------
 
+// The command being dragged out of the rail list, module-level for the
+// same reason `dragScenarioKey` is: dragover fires continuously while
+// the pointer moves, and routing that through `render()` would repaint
+// the whole app many times a second. Only `drop` goes through `run()`.
+let dragCommandName = null;
+
+// The drop-target handlers on every feature heading *and* every command
+// row under one — the whole group is the target, since within a group
+// commands sit alphabetically and a drop can only mean "into this
+// group". Hover fills the element the pointer is over, drop moves the
+// dragged command. The group it already sits in is not a target: a
+// drop there would do nothing, so nothing lights up.
+function featureDropTarget(model, featureName) {
+  return {
+    ondragover: (e) => {
+      if (!dragCommandName) return;
+      if (featureOf(model['command-definitions'][dragCommandName]) === featureName) return;
+      e.preventDefault();
+      e.currentTarget.classList.add('drop-into');
+    },
+    ondragleave: (e) => e.currentTarget.classList.remove('drop-into'),
+    ondrop: (e) => {
+      e.preventDefault();
+      e.currentTarget.classList.remove('drop-into');
+      const from = dragCommandName;
+      dragCommandName = null;
+      if (from) moveToFeature(model, from, featureName);
+    },
+  };
+}
+
 function renderRail() {
   const model = activeModel();
   const rail = document.getElementById('rail');
@@ -2958,7 +2993,7 @@ function renderRail() {
       }));
     } else {
       const collapsed = !!state.collapsed[group.name];
-      rail.appendChild(h('div', { class: 'group' },
+      rail.appendChild(h('div', { class: 'group', ...featureDropTarget(model, group.name) },
         h('span', {
           class: 'caret', onclick: () => { state.collapsed[group.name] = !collapsed; render(); },
         }, collapsed ? '▸' : '▾'),
@@ -2991,6 +3026,26 @@ function renderRail() {
         // opens, where it can be changed; the stored identifier waits
         // for the pointer rather than sitting under every row.
         title: name,
+        // Dragging a row onto a feature — its heading or any command
+        // in it — is how a command changes feature; the page it opens
+        // only states which one. Every row is both ends of the
+        // gesture: a drag source, and a target for its group.
+        ...featureDropTarget(model, group.name),
+        draggable: 'true',
+        ondragstart: (e) => {
+          dragCommandName = name;
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', name);
+          e.currentTarget.classList.add('dragging');
+          // Direct DOM, not state: nothing may repaint mid-drag, and
+          // the stand-in Ungrouped target has to appear right now.
+          e.currentTarget.closest('.rail').classList.add('dragging-cmd');
+        },
+        ondragend: (e) => {
+          dragCommandName = null;
+          e.currentTarget.classList.remove('dragging');
+          e.currentTarget.closest('.rail').classList.remove('dragging-cmd');
+        },
         onclick: (e) => {
           e.preventDefault(); closeForms();
           state.slice = name; state.openEvent = null; state.view = 'slice'; render();
@@ -2998,6 +3053,15 @@ function renderRail() {
       }, h('i', { class: 'ic' }, commandIcon(model, name)), readable(name)));
     }
     if (!group.commands.length) rail.appendChild(h('div', { class: 'gempty' }, 'nothing in it yet'));
+  }
+
+  // With the picker gone, dropping is the only way out of a feature —
+  // so when nothing is ungrouped (the catch-all group not rendered), a
+  // stand-in target appears, but only while a command is in the air.
+  if (!featureGroups(model).some((g) => g.name === UNGROUPED)) {
+    rail.appendChild(h('div', { class: 'group drop-stub', ...featureDropTarget(model, UNGROUPED) },
+      h('span', { class: 'caret' }),
+      h('span', { class: 'gname' }, UNGROUPED)));
   }
 
   rail.appendChild(h('div', { class: 'add' },
@@ -3172,6 +3236,19 @@ function renderEntityRail(model) {
     }, '+ Entity')));
   }
   return box;
+}
+
+// A command dropped on a feature heading in the rail. Landing on a
+// still-pending (empty) feature makes it live — a command now names
+// it — so the pending entry has served its purpose.
+function moveToFeature(model, commandName, featureName) {
+  const body = deepClone(model['command-definitions'][commandName]);
+  if (!body || featureOf(body) === featureName) return;
+  if (featureName === UNGROUPED) delete body.feature; else body.feature = featureName;
+  run(() => {
+    updateDefinition('command-definition', model.id, commandName, body);
+    setPendingFeatures(pendingFeatures().filter((p) => p !== featureName));
+  });
 }
 
 // The feature name comes off every command that carries it; the
@@ -3625,7 +3702,7 @@ function paintPage() {
       + ' · '
       + slice.rules.length + ' rule' + (slice.rules.length === 1 ? '' : 's') + ' · records '
       + (slice.emits.map((e) => readable(e.emission.name)).join(', ') || 'nothing')),
-    featurePicker(model, slice)));
+    featureLine(slice)));
 
   if (state.commandIconPicker === slice.name) {
     main.appendChild(commandIconPicker(model, slice.name, model['command-definitions'][slice.name]));
@@ -3669,22 +3746,14 @@ function paintPage() {
   paintLit();
 }
 
-function featurePicker(model, slice) {
+// Where this command sits. Moving it happens in the rail — drag the
+// command onto a feature heading there — so the page only states it.
+function featureLine(slice) {
   const current = featureOf(slice.body);
-  if (state.newFeature === 'slice') {
-    return inlineForm({
-      question: 'What should the new feature be called?', placeholder: 'Course management',
-      onSubmit: (v) => { state.newFeature = false; patchSlice((b) => { b.feature = v; }); },
-      onCancel: () => { state.newFeature = false; render(); },
-    });
-  }
   return h('div', { class: 'feature-of' },
-    h('span', { class: 'muted tiny' }, 'part of'),
-    pick([...featureNames(model).map((n) => [n, n]), [UNGROUPED, '— ungrouped —'], [NEW, '+ New feature…']],
-      current, (v) => {
-        if (v === NEW) { state.newFeature = 'slice'; return render(); }
-        patchSlice((b) => { if (v === UNGROUPED) delete b.feature; else b.feature = v; });
-      }));
+    h('span', { class: 'muted tiny' }, current === UNGROUPED
+      ? 'ungrouped — drag it onto a feature in the list to place it'
+      : 'part of ' + current));
 }
 
 function step(kind, title, ...body) {
@@ -3898,6 +3967,15 @@ function bindingEditor(model, slice, binding, index) {
 
   const above = operandChoicesAbove(model, slice, index);
   const fanned = isFannedOut(model, slice.body, binding);
+  // Each slot knows the type it takes, so each offers only that: the
+  // identifier slot the entity's own id type — lists included, a list
+  // is how a binding fans out — the exclusion one of them, an argument
+  // whatever the script declared.
+  const idType = binding.projection ? null : idTypeOf(model, binding.entity);
+  const idChoices = binding.projection
+    ? [] : choicesOfType(model, slice, above, idType, { list: true });
+  const excludingChoices = binding.projection
+    ? [] : choicesOfType(model, slice, above, idType);
 
   const apply = (mutate) => patchSlice((b) => mutate(b.boundary[index]));
 
@@ -3936,7 +4014,7 @@ function bindingEditor(model, slice, binding, index) {
 
     binding.projection ? null : h('div', { class: 'adder' },
       h('span', { class: 'muted tiny' }, 'identified by'),
-      ...operandPicker(above, draft, 'id', { allowLiteral: false }),
+      ...operandPicker(idChoices, draft, 'id', { allowLiteral: false }),
       h('button', {
         class: 'btn tiny', onclick: () => {
           const operand = draftOperand(draft, 'id');
@@ -3947,7 +4025,7 @@ function bindingEditor(model, slice, binding, index) {
 
     binding.projection || !fanned ? null : h('div', { class: 'adder' },
       h('span', { class: 'muted tiny' }, 'except'),
-      ...operandPicker(above, draft, 'excluding', { placeholder: '— nothing —', allowLiteral: false }),
+      ...operandPicker(excludingChoices, draft, 'excluding', { placeholder: '— nothing —', allowLiteral: false }),
       h('button', {
         class: 'btn tiny', onclick: () => {
           const operand = draftOperand(draft, 'excluding');
@@ -3961,7 +4039,8 @@ function bindingEditor(model, slice, binding, index) {
 
     ...expected.map((argument) => h('div', { class: 'adder' },
       h('span', { class: 'muted tiny' }, 'with ', h('code', {}, argument.name)),
-      ...operandPicker(above, draft, 'arg:' + argument.name, { allowLiteral: false }),
+      ...operandPicker(choicesOfType(model, slice, above, argument.propertyType),
+        draft, 'arg:' + argument.name, { allowLiteral: false }),
       h('button', {
         class: 'btn tiny', onclick: () => {
           const operand = draftOperand(draft, 'arg:' + argument.name);
@@ -4050,14 +4129,39 @@ function stepReads(model, slice) {
     : (state.readDraft = {
         slice: slice.name,
         entity: readables.length ? readables[0][0] : '',
-        source: sources.length ? sources[0][0] : '',
+        source: '',
       });
   if (!readables.some(([v]) => v === draft.entity)) {
     draft.entity = readables.length ? readables[0][0] : '';
   }
-  if (draft.source && !sources.some(([v]) => v === draft.source)) {
-    draft.source = sources.length ? sources[0][0] : '';
+
+  // A projection asks for one operand per parameter — none at all
+  // when it has none, which is what a global numbering looks like.
+  const chosenProjection = draft.entity.startsWith('projection:')
+    ? model['projection-definitions'][draft.entity.slice('projection:'.length)]
+    : null;
+  const parameters = chosenProjection ? (chosenProjection.parameters || []) : [];
+  // What identifies the chosen thing is a type, so only sources of
+  // that type are offered — with the first one already picked, which
+  // is the whole answer when the payload carries exactly one such id.
+  // A parameter narrows the same way, minus lists: a projection
+  // binding reads one partition, so there is no fan-out there.
+  const idSources = !chosenProjection && draft.entity
+    ? choicesOfType(model, slice, sources, idTypeOf(model, draft.entity), { list: true })
+    : [];
+  const parameterSources = new Map(parameters.map((p) =>
+    [p.name, choicesOfType(model, slice, sources, p.propertyType)]));
+  if (!idSources.some(([v]) => v === draft.source)) {
+    draft.source = idSources.length ? idSources[0][0] : '';
   }
+  for (const p of parameters) {
+    const key = 'arg:' + p.name;
+    if (draft[key] && !parameterSources.get(p.name).some(([v]) => v === draft[key])) {
+      delete draft[key];
+    }
+  }
+  const argChoice = (p) => draft['arg:' + p.name]
+    || ((parameterSources.get(p.name)[0] || [])[0]);
 
   const body = [h('div', {}, cards)];
   if (state.newEntityAt === 'reads') {
@@ -4073,10 +4177,10 @@ function stepReads(model, slice) {
         // interrupted resumes exactly one choice further along.
         if (created) {
           state.adder = 'read';
-          state.readDraft = {
-            slice: slice.name, entity: created,
-            source: sources.length ? sources[0][0] : '',
-          };
+          // The source stays open: the next paint narrows the choices
+          // to the fresh entity's own identifier type and picks the
+          // first of them, when the command already carries one.
+          state.readDraft = { slice: slice.name, entity: created, source: '' };
           render();
         }
       },
@@ -4092,13 +4196,6 @@ function stepReads(model, slice) {
         onclick: () => { closeForms(); state.newEntityAt = 'reads'; render(); },
       }, '+ New entity'))));
   } else {
-    // A projection asks for one operand per parameter — none at all
-    // when it has none, which is what a global numbering looks like.
-    const chosenProjection = draft.entity.startsWith('projection:')
-      ? model['projection-definitions'][draft.entity.slice('projection:'.length)]
-      : null;
-    const parameters = chosenProjection ? (chosenProjection.parameters || []) : [];
-
     // The push itself, shared by Enter, the button, and the
     // leave-the-row commit — which passes `quiet` because a commit
     // that fired on the way to another control must not then steal
@@ -4108,8 +4205,7 @@ function stepReads(model, slice) {
         const name = draft.entity.slice('projection:'.length);
         const args = {};
         for (const p of parameters) {
-          const chosen = draft['arg:' + p.name] || (sources[0] && sources[0][0]);
-          args[p.name] = JSON.parse(chosen);
+          args[p.name] = JSON.parse(argChoice(p));
         }
         patchSlice((b) => b.boundary.push({
           alias: uniqueAlias(defaultAlias(name), b.boundary.map((x) => x.alias)),
@@ -4129,7 +4225,7 @@ function stepReads(model, slice) {
     draft.ready = () => {
       if (!draft.touched || !draft.entity) return false;
       if (chosenProjection) {
-        return parameters.every((p) => draft['arg:' + p.name] || (sources[0] && sources[0][0]));
+        return parameters.every((p) => argChoice(p));
       }
       return !!draft.source;
     };
@@ -4142,7 +4238,7 @@ function stepReads(model, slice) {
       if (!draft.entity) return toast('Pick something to read.', true);
       if (chosenProjection) {
         for (const p of parameters) {
-          if (!(draft['arg:' + p.name] || (sources[0] && sources[0][0]))) {
+          if (!argChoice(p)) {
             return toast(`Say what ${readable(draft.entity.slice('projection:'.length))} `
               + 'is kept separately for.', true);
           }
@@ -4159,10 +4255,8 @@ function stepReads(model, slice) {
     // reaches the next step directly, and Shift+Tab still reaches the
     // reset picker for anyone who does want another read.
     function focusReadAdderButton() {
-      // Direct child, not just any button under the adder: an
-      // icon-select's own customizable-select markup nests a button of
-      // its own ahead of this one in the document, and a plain
-      // descendant selector would land on that instead.
+      // Direct child on purpose: only the adder's own button is meant,
+      // never one a picker might nest inside the same card.
       const btn = document.querySelector('.step.reads .card .adder > button');
       if (btn) btn.focus();
     }
@@ -4182,15 +4276,17 @@ function stepReads(model, slice) {
           ? (parameters.length
               ? parameters.flatMap((p) => [
                   h('span', { class: 'muted tiny' }, 'for its ' + propertyWords(p.name)),
-                  pick(sources, draft['arg:' + p.name] || (sources[0] && sources[0][0]),
+                  pick(parameterSources.get(p.name), argChoice(p),
                     (v) => { draft['arg:' + p.name] = v; draft.touched = true; },
-                    sources.length ? null : '— nothing in scope yet —'),
+                    parameterSources.get(p.name).length
+                      ? null : `— no ${propertyWords(p.propertyType)} in scope yet —`),
                 ])
               : h('span', { class: 'muted tiny' }, '— the whole log, no tag'))
           : [
               h('span', { class: 'muted tiny' }, 'identified by'),
-              pick(sources, draft.source, (v) => { draft.source = v; draft.touched = true; },
-                sources.length ? null : '— nothing in scope yet —'),
+              pick(idSources, draft.source, (v) => { draft.source = v; draft.touched = true; },
+                idSources.length
+                  ? null : `— no ${propertyWords(idTypeOf(model, draft.entity))} in scope yet —`),
             ],
         h('button', { class: 'btn', onclick: submit }, '+ Read something')))));
   }
@@ -4751,24 +4847,46 @@ function changeAdder(model, eventName) {
   // property already holds, a member of whichever enum the currently
   // targeted property is typed with — not any other enum, which
   // nothing here could ever hold — the one *after* something, or a
-  // typed literal.
+  // typed literal. Event properties are held to the same rule the
+  // emission fields and the rule editor's right side apply: only the
+  // ones typed like the targeted property are offered — a status is
+  // never set from a title. And a successor is only offered where the
+  // target has one (`validateHandlers` says the same after the fact):
+  // integers and strings count up; an enum has no "next member".
   const [targetEntity, targetPropertyName] =
     draft.target && draft.target !== NEW ? JSON.parse(draft.target) : [null, null];
   const targetProjection = targetEntity
     ? entityPropertyTarget(model, targetEntity, targetPropertyName).projection
     : null;
   const targetEnumMembers = targetProjection ? enumMembersFor(model, targetProjection.valueType) : null;
+  const targetType = targetProjection ? targetProjection.valueType : null;
+  const offerProperty = (p) => !targetType || p.propertyType === targetType;
+  const offerSuccessor = (() => {
+    if (!targetType) return true;
+    if (targetEnumMembers) return false;
+    const cls = classifyType(model, targetType);
+    return cls.kind !== 'simple' || ['integer', 'string'].includes(targetType);
+  })();
   const values = [
-    ...(event ? event.properties : []).flatMap((p) => [
+    ...(event ? event.properties : []).filter(offerProperty).flatMap((p) => [
       [JSON.stringify({ eventProperty: p.name }), "the event's " + propertyWords(p.name)],
-      [JSON.stringify({ successor: { eventProperty: p.name } }),
-        "the one after the event's " + propertyWords(p.name)],
+      ...(offerSuccessor ? [[JSON.stringify({ successor: { eventProperty: p.name } }),
+        "the one after the event's " + propertyWords(p.name)]] : []),
     ]),
     [JSON.stringify({ currentValue: true }), 'its current value'],
     ...(targetEnumMembers || []).map((m) =>
       [JSON.stringify({ enumMember: m }), propertyWords(targetPropertyName) + ' · ' + readable(m)]),
     ...(targetEnumMembers ? [[NEW, '+ New member…']] : []),
   ];
+  // Retargeting can strip the row the draft was holding — a value the
+  // new target cannot take, or the literal row an enum never offers.
+  // The stale choice would silently diverge from what the picker
+  // shows, so it resets to the first offer instead.
+  const offered = new Set(values.map(([v]) => v));
+  if (draft.value === LITERAL ? targetEnumMembers
+    : draft.value && draft.value !== NEW && !offered.has(draft.value)) {
+    draft.value = '';
+  }
   if (!draft.value) draft.value = values.length ? values[0][0] : '';
 
   const targetSel = pick(targets, draft.target, (v) => {
@@ -4999,6 +5117,19 @@ function enumMemberChips(model, typeName) {
   const body = model['custom-type-definitions'][typeName];
   const members = (body && body.schema && body.schema.enum) || [];
   const where = 'member:' + typeName;
+  // These chips also live inside an open projection row — an entity
+  // property whose value is this enum — and that row is where the
+  // member form is about to render. `closeForms` still runs for its
+  // other half (committing pending edits, folding rival forms), but
+  // the hosting row is put back: closing it would collapse the very
+  // place the form appears, which read as the click doing nothing.
+  const openHere = (mutate) => {
+    const hostRow = state.projDraft;
+    closeForms();
+    state.projDraft = hostRow;
+    mutate();
+    render();
+  };
   const chips = members.map((member) => {
     if (editingMember(where, member)) {
       return inlineForm({
@@ -5016,7 +5147,7 @@ function enumMemberChips(model, typeName) {
     }
     return h('span', { class: 'chip', style: 'margin-right:3px' }, h('span', {
       class: 'editable', title: 'Rename this member',
-      onclick: () => openMember(where, member),
+      onclick: () => openHere(() => { state.editMember = { where, name: member }; }),
     }, readable(member)), h('button', {
       class: 'x', title: 'Remove this member',
       onclick: () => {
@@ -5028,7 +5159,7 @@ function enumMemberChips(model, typeName) {
   });
   chips.push(h('button', {
     class: 'btn tiny ghost',
-    onclick: () => { closeForms(); state.addingMember = { type: typeName }; render(); },
+    onclick: () => openHere(() => { state.addingMember = { type: typeName }; }),
   }, '+ member'));
   if (state.addingMember && state.addingMember.type === typeName && !state.addingMember.eventName) {
     chips.push(addEnumMemberForm(model, typeName));
@@ -7156,12 +7287,36 @@ function stepConsistency(model, slice) {
 // set holds the open rows, and how "current" and "drifted" read. That
 // lives here, so the held/run gesture, the staleness rule, the save
 // path and the status ladder exist once and cannot drift apart.
+// Writes the explicit null into every unset optional property of one
+// payload — the canonical stored spelling, so "one entry per property,
+// all of them" stays true on disk while the evaluator reads an absent
+// key the same way. The empty string is untouched: it is a value.
+function fillUnsetOptionals(values, properties) {
+  for (const property of properties || []) {
+    if (!property.isOptional || property.isList) continue;
+    if (values[property.name] === undefined) values[property.name] = null;
+  }
+}
+
+function fillGivenOptionals(model, body) {
+  for (const step of body.given || []) {
+    step.data = step.data || {};
+    fillUnsetOptionals(step.data, (model['event-definitions'][step.event] || {}).properties);
+  }
+}
+
 const SCENARIO_KINDS = {
   'scenario-definition': {
     subjectField: 'command',
     run: (model, body) => runScenario(model, body),
     touchesScript: (model, body) => scenarioTouchesScript(model, body),
     deriveThen: (model, body) => deriveThen(model, body),
+    canonicalize: (model, body) => {
+      fillGivenOptionals(model, body);
+      body.when = body.when || {};
+      body.when.arguments = body.when.arguments || {};
+      fillUnsetOptionals(body.when.arguments, (model['command-definitions'][body.command] || {}).properties);
+    },
     heldRuns: new Map(),
     draftKey: 'scenarioDraft',
     openSet: () => state.openScenarios,
@@ -7177,6 +7332,7 @@ const SCENARIO_KINDS = {
     run: (model, body) => runProjectionScenario(model, body),
     touchesScript: (model, body) => projectionScenarioTouchesScript(model, body),
     deriveThen: (model, body) => deriveProjectionScenarioThen(model, body),
+    canonicalize: (model, body) => fillGivenOptionals(model, body),
     heldRuns: new Map(),
     draftKey: 'projectionScenarioDraft',
     openSet: () => state.openProjectionScenarios,
@@ -7224,6 +7380,7 @@ function saveScenarioOf(kind, model) {
   const k = SCENARIO_KINDS[kind];
   const draft = state[k.draftKey];
   const body = deepClone(draft.body);
+  k.canonicalize(model, body);
   let then;
   try {
     then = k.deriveThen(model, body);
@@ -7475,6 +7632,27 @@ function valueEditor(model, property, path, where) {
       valueEditor(model, { ...field, isList: false }, [...at, field.name], where))));
 
   const one = fields ? composite : scalar;
+
+  // An optional property makes "no value" a state of its own, distinct
+  // from the empty string. Unticked holds the explicit null and shows
+  // no input at all — nothing to conflate; ticking it opens the
+  // ordinary editor on a blank. Optional *lists* stay plain lists (the
+  // advisories point that combination out): empty already means none.
+  if (property.isOptional && !property.isList) {
+    const held = atPath(draft(), path);
+    const isSet = held !== undefined && held !== null;
+    return h('span', { class: 'vopt' },
+      h('label', { class: 'tiny muted', title: 'Optional — unticked means no value (null), which is not the empty string' },
+        h('input', {
+          type: 'checkbox', checked: isSet,
+          onchange: (e) => {
+            setAtPath(draft(), path, e.target.checked ? (fields ? {} : '') : null);
+            render();
+          },
+        }),
+        isSet ? null : ' no value'),
+      isSet ? one(path) : null);
+  }
 
   if (!property.isList) return one(path);
 
