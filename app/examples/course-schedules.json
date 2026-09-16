@@ -1,6 +1,6 @@
 {
-  "$schema": "https://dcb.events/schemas/model/v3.json",
-  "dcbModelVersion": "3.0",
+  "$schema": "https://dcb.events/schemas/model/v4.json",
+  "dcbModelVersion": "4.0",
   "name": "Course Example (with schedules)",
   "customTypeDefinitions": [
     {

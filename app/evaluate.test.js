@@ -1186,8 +1186,8 @@ check('an import missing the definition arrays is refused, not silently accepted
   // from: these two strings are the published contract, and a test that
   // derived them from the source could not notice one of them changing.
   check('an export carries both markers', () => {
-    eq(good.$schema, 'https://dcb.events/schemas/model/v3.json', '$schema');
-    eq(/^3\.\d+$/.test(good.dcbModelVersion), true, 'dcbModelVersion is a 3.x');
+    eq(good.$schema, 'https://dcb.events/schemas/model/v4.json', '$schema');
+    eq(/^4\.\d+$/.test(good.dcbModelVersion), true, 'dcbModelVersion is a 4.x');
   });
 
   check('the definition arrays sit at the top level, under no wrapper', () => {
@@ -1210,11 +1210,17 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('an import from an unknown major is refused', () => {
-    refuses({ ...good, dcbModelVersion: '4.0' }, 'a newer major');
+    refuses({ ...good, dcbModelVersion: '5.0' }, 'a newer major');
     // 2.x is where a projection scenario read several projections under
     // aliases — readable as JSON, and misread as a model.
-    refuses({ ...good, dcbModelVersion: '2.0' }, 'the major before this one');
+    refuses({ ...good, dcbModelVersion: '2.0' }, 'the last unreadable major');
     refuses({ ...good, dcbModelVersion: '1.0' }, 'and the one before that');
+  });
+
+  check('a 3.x document still imports whole — 4.0 only added what it never says', () => {
+    const older = { ...good, dcbModelVersion: '3.0' };
+    eq(typeof importModelFromEnvelope(older).modelId, 'string', 'imported');
+    eq(envelopeVersionWarning(older), '', 'nothing dropped, so nothing to warn about');
   });
 
   check('$schema is required but never read, so a repointed one still imports', () => {
@@ -1223,7 +1229,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('a newer minor imports, and says what it is dropping', () => {
-    const newer = { ...good, dcbModelVersion: '3.99' };
+    const newer = { ...good, dcbModelVersion: '4.99' };
     eq(typeof importModelFromEnvelope(newer).modelId, 'string', 'imported');
     eq(envelopeVersionWarning(newer).length > 0, true, 'warned');
     eq(envelopeVersionWarning(good), '', 'nothing to warn about at the current version');
@@ -1965,5 +1971,176 @@ check('every predefined model ships advisory-clean', () => {
   }
   eq(count >= 5, true, 'all shipped models were actually checked');
 });
+
+// ---------------------------------------------------------------
+// Discriminated handlers (`via`) and optional bindings.
+//
+// One event carrying two same-typed identifier properties reaches both
+// partitions — an assignment names the new holder and the one being
+// replaced — so a handler must be able to say which of the two it
+// means, and a binding derived from a value nothing has set yet must
+// be able to bind nothing instead of erroring.
+// ---------------------------------------------------------------
+{
+  // The instructor-reassignment shape: a Course holds who instructs
+  // it, an Instructor holds which courses they instruct, and one
+  // Assigned event moves both — appending for the new instructor,
+  // removing for the previous one.
+  function openAssignment() {
+    const { id, model } = openBlank('Assignment');
+    addDefinition('entity-definition', id, 'Course', { properties: [] });
+    addDefinition('entity-definition', id, 'Instructor', { properties: [] });
+    addDefinition('event-definition', id, 'Assigned', {
+      properties: [
+        { name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false },
+        { name: 'instructorId', propertyType: 'InstructorId', isOptional: false, isList: false },
+        { name: 'previousInstructorId', propertyType: 'InstructorId', isOptional: true, isList: false },
+      ],
+    });
+    addDefinition('projection-definition', id, 'CourseInstructorId', {
+      parameters: [{ name: 'courseId', propertyType: 'CourseId' }],
+      valueType: 'InstructorId', isList: false, initialValue: null,
+      handlers: [{ event: 'Assigned', operation: 'set', value: { eventProperty: 'instructorId' } }],
+    });
+    addDefinition('projection-definition', id, 'InstructedCourses', {
+      parameters: [{ name: 'instructorId', propertyType: 'InstructorId' }],
+      valueType: 'CourseId', isList: true, initialValue: [],
+      handlers: [
+        { event: 'Assigned', via: 'instructorId', operation: 'append', value: { eventProperty: 'courseId' } },
+        { event: 'Assigned', via: 'previousInstructorId', operation: 'remove', value: { eventProperty: 'courseId' } },
+      ],
+    });
+    updateDefinition('entity-definition', id, 'Course', {
+      properties: [{ name: 'instructorId', projection: 'CourseInstructorId' }],
+    });
+    updateDefinition('entity-definition', id, 'Instructor', {
+      properties: [{ name: 'instructedCourses', projection: 'InstructedCourses' }],
+    });
+    addDefinition('command-definition', id, 'Assign', {
+      properties: [
+        { name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false },
+        { name: 'instructorId', propertyType: 'InstructorId', isOptional: false, isList: false },
+      ],
+      boundary: [
+        { alias: 'course', entity: 'Course', id: { parameterName: 'courseId' } },
+        { alias: 'instructor', entity: 'Instructor', id: { parameterName: 'instructorId' } },
+        { alias: 'previousInstructor', entity: 'Instructor',
+          id: { alias: 'course', property: 'instructorId' }, isOptional: true },
+      ],
+      conditions: [
+        { leftHandSide: { alias: 'previousInstructor', property: 'instructedCourses' },
+          predicate: 'contains', rightHandSide: { parameterName: 'courseId' } },
+      ],
+      publishes: [{
+        name: 'Assigned',
+        parameters: {
+          courseId: { parameterName: 'courseId' },
+          instructorId: { parameterName: 'instructorId' },
+          previousInstructorId: { alias: 'course', property: 'instructorId' },
+        },
+      }],
+    });
+    return { id, model };
+  }
+
+  const assigned = (courseId, instructorId, previousInstructorId) =>
+    ({ type: 'Assigned', data: { courseId, instructorId, previousInstructorId } });
+
+  check('a via handler applies only where its property names the partition', () => {
+    const { model } = openAssignment();
+    const log = [assigned('c1', 'i1', null), assigned('c1', 'i2', 'i1')];
+    eq(foldEntityProperty(model(), log, 'Instructor', 'instructedCourses', 'i2'), ['c1'],
+      'the new instructor gains the course');
+    eq(foldEntityProperty(model(), log, 'Instructor', 'instructedCourses', 'i1'), [],
+      'the previous instructor loses it — and does not re-gain it off the same event');
+  });
+
+  check('a null via property matches no partition, so the handler skips', () => {
+    const { model } = openAssignment();
+    const log = [assigned('c1', 'i1', null)];
+    eq(foldEntityProperty(model(), log, 'Instructor', 'instructedCourses', 'i1'), ['c1'],
+      'a first assignment appends and removes nothing');
+  });
+
+  check('both via handlers fire, in declaration order, when both match', () => {
+    const { model } = openAssignment();
+    // A self-reassignment: append then remove leaves the one copy.
+    const log = [assigned('c1', 'i1', null), assigned('c1', 'i1', 'i1')];
+    eq(foldEntityProperty(model(), log, 'Instructor', 'instructedCourses', 'i1'), ['c1'],
+      'net one copy');
+  });
+
+  check('an optional binding with an unset identifier binds nothing', () => {
+    const { model } = openAssignment();
+    const result = evaluateCommand(model(), [], 'Assign', { courseId: 'c1', instructorId: 'i1' });
+    eq(result.outcome, 'published', 'no error, and the condition over the absent alias held vacuously');
+    eq(result.events[0].data.previousInstructorId, null, 'the unset value publishes as the explicit null');
+    eq(result.reads.previousInstructor.absent, true, 'the reads say the alias bound nothing');
+    eq(result.reads.previousInstructor.instances, [], 'zero instances, not a phantom');
+  });
+
+  check('the condition over the bound previous instructor still decides', () => {
+    const { model } = openAssignment();
+    const log = [assigned('c1', 'i1', null)];
+    const result = evaluateCommand(model(), log, 'Assign', { courseId: 'c1', instructorId: 'i2' });
+    eq(result.outcome, 'published', 'i1 instructs c1, so the contains condition holds');
+    eq(result.events[0].data.previousInstructorId, 'i1', 'and the event names the predecessor');
+  });
+
+  check('without the flag, an unset identifier stays the loud error', () => {
+    const { id, model } = openAssignment();
+    const body = deepClone(model()['command-definitions'].Assign);
+    delete body.boundary[2].isOptional;
+    updateDefinition('command-definition', id, 'Assign', body);
+    let message = '';
+    try { evaluateCommand(model(), [], 'Assign', { courseId: 'c1', instructorId: 'i1' }); }
+    catch (error) { message = error.message; }
+    eq(/unset \(null\)/.test(message), true, 'errored: ' + message);
+  });
+
+  check('reading a property of an absent alias yields null', () => {
+    const { id, model } = openAssignment();
+    const body = deepClone(model()['command-definitions'].Assign);
+    body.conditions = [];
+    body.publishes[0].parameters.previousInstructorId = {
+      alias: 'previousInstructor', property: 'instructedCourses',
+    };
+    updateDefinition('command-definition', id, 'Assign', body);
+    // The read now goes through the absent alias itself rather than
+    // through `course` — a list-typed property read off nothing is
+    // null, not an empty list, because nothing was read at all.
+    const result = evaluateCommand(model(), [], 'Assign', { courseId: 'c1', instructorId: 'i1' });
+    eq(result.outcome, 'published', 'published');
+    eq(result.events[0].data.previousInstructorId, null, 'null, the one spelling of no value');
+  });
+
+  check('a bare handler on a two-tag event is an advisory, and via is checked', () => {
+    const { id, model } = openAssignment();
+    const advisoriesAfter = (mutate) => {
+      const body = deepClone(model()['projection-definitions'].InstructedCourses);
+      mutate(body);
+      updateDefinition('projection-definition', id, 'InstructedCourses', body);
+      return sandbox.modelAdvisories(model()).map((a) => a.message).join('; ');
+    };
+    eq(advisoriesAfter(() => {}), '', 'the discriminated pair is clean');
+    eq(/apply it via/.test(advisoriesAfter((b) => { delete b.handlers[0].via; })),
+      true, 'a bare handler where two properties carry the type is pointed out');
+    eq(/does not carry/.test(advisoriesAfter((b) => { b.handlers[0].via = 'nope'; })),
+      true, 'a via naming no property of the event is pointed out');
+    eq(/via "instructorId" twice/.test(advisoriesAfter((b) => {
+      b.handlers[0].via = 'instructorId';
+      b.handlers[1].via = 'instructorId';
+    })), true, 'two handlers nothing could tell apart are pointed out');
+  });
+
+  check('an unflagged binding off a null-starting projection is advised ahead of time', () => {
+    const { id, model } = openAssignment();
+    const body = deepClone(model()['command-definitions'].Assign);
+    delete body.boundary[2].isOptional;
+    updateDefinition('command-definition', id, 'Assign', body);
+    const found = sandbox.modelAdvisories(model()).map((a) => a.message).join('; ');
+    eq(/may be absent/.test(found), true, 'the advisory names the fix: ' + found);
+  });
+}
 
 finish();

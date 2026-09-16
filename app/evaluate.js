@@ -261,13 +261,53 @@ function evCompileHandler(handler, label) {
   }
 }
 
+// A handler's `via` names the event property that must be the one
+// carrying this partition's identifier for the handler to apply.
+// Tag matching is by value, whichever property carries it — so an
+// event with two same-typed identifier properties (an assignment
+// naming both the new holder and the one replaced) reaches both
+// partitions, and only `via` can say which handler meant which. A
+// null (unset) `via` property names no partition, so the handler
+// skips itself — exactly what an optional predecessor asks for.
+function evCompileVia(model, target, handler, label) {
+  if (handler.via === undefined) return null;
+  const where = `The handler for "${handler.event}" on ${label}`;
+  const event = model['event-definitions'][handler.event];
+  const property = (((event || {}).properties) || []).find((p) => p && p.name === handler.via);
+  if (!property) {
+    fail(`${where} applies via "${handler.via}", which "${handler.event}" does not carry.`);
+  }
+  const parameters = (target.parameters || []).filter((p) => p && p.propertyType === property.propertyType);
+  if (parameters.length !== 1) {
+    fail(
+      `${where} applies via "${handler.via}" (${property.propertyType}), but ${label} declares ` +
+      `${parameters.length ? 'more than one' : 'no'} ${property.propertyType}-typed parameter to match it against.`
+    );
+  }
+  const parameterName = parameters[0].name;
+  return (event_, args) => {
+    const held = evNormalize((event_.data || {})[handler.via]);
+    if (held === null || held === undefined) return false;
+    const expected = evNormalize((args || {})[parameterName]);
+    return property.isList
+      ? evAsList(held).some((element) => evDeepEqual(element, expected))
+      : evDeepEqual(held, expected);
+  };
+}
+
 // A projection or entity property, compiled once and folded many times.
 function evCompileTarget(model, target, label) {
   const script = scriptOf(target);
+  // One event type may carry several handlers, told apart by `via`;
+  // every one whose guard passes applies, in declaration order.
   const steps = new Map();
   for (const handler of target.handlers || []) {
     if (!handler || !handler.event) continue;
-    steps.set(handler.event, evCompileHandler(handler, label));
+    if (!steps.has(handler.event)) steps.set(handler.event, []);
+    steps.get(handler.event).push({
+      applies: evCompileVia(model, target, handler, label),
+      step: evCompileHandler(handler, label),
+    });
   }
 
   const initial = script
@@ -287,8 +327,10 @@ function evCompileTarget(model, target, label) {
     fold(events, args) {
       let state = initial;
       for (const event of events) {
-        const step = steps.get(event.type);
-        if (step) state = step(state, event, args || {});
+        for (const { applies, step } of steps.get(event.type) || []) {
+          if (applies && !applies(event, args || {})) continue;
+          state = step(state, event, args || {});
+        }
       }
       return evNormalize(expose(state));
     },
@@ -490,7 +532,12 @@ function evReadOperand(operand, scope) {
       if (!operand.property) {
         fail(`"${operand.alias}" is an entity, so reading it needs a property.`);
       }
-      if (!binding.fanned) return binding.instances[0].read(operand.property);
+      if (!binding.fanned) {
+        // An absent optional binding bound nothing; reading it yields
+        // null — the one spelling of "no value" — rather than erroring.
+        if (!binding.instances.length) return null;
+        return binding.instances[0].read(operand.property);
+      }
       const each = binding.instances.map((instance) => instance.read(operand.property));
       return each.some(Array.isArray) ? each.flat() : each;
     }
@@ -536,11 +583,24 @@ function evResolveBinding(model, events, body, binding, scope) {
   const fanned = isFannedOut(model, body, binding);
   const held = evReadOperand(binding.id, scope);
   // A null identifier binds nothing. Folding at "Entity:null" would
-  // invent one phantom instance every unset value shares, so this is
-  // the error the optional-parameter advisory promises — real
-  // "boundary shrinks when unset" semantics stay deliberately unbuilt
-  // until a model needs them.
+  // invent one phantom instance every unset value shares. A binding
+  // flagged `isOptional` declares the absence expected and binds zero
+  // instances instead: conditions over it hold vacuously and reading a
+  // property of it yields null. Without the flag the error stays — an
+  // unset identifier nobody declared possible is an accident, and this
+  // is the error the optional-parameter advisory promises.
   if (!fanned && evNormalize(held) === null) {
+    if (binding.isOptional) {
+      scope.bound[binding.alias] = {
+        kind: 'entity',
+        entity: binding.entity,
+        fanned: false,
+        absent: true,
+        sourceIndexes: [],
+        instances: [],
+      };
+      return;
+    }
     fail(`Binding "${binding.alias}" has no instance to read: ${operandText(binding.id)} is unset (null).`);
   }
   // Order is preserved and duplicates are kept: a binding fanned from a
@@ -648,6 +708,18 @@ function evFannedAliasesOf(condition, scope) {
 }
 
 function evCheckCondition(model, body, condition, scope) {
+  // A condition reading an alias the boundary flagged optional and
+  // could not bind holds vacuously — the same reading a fanned alias
+  // with zero instances already gets. `skippedFor` names the alias, so
+  // an interface can say the rule stepped aside rather than passed.
+  for (const operand of conditionOperands(condition)) {
+    if (operandSource(operand) !== 'alias-property') continue;
+    const binding = scope.bound[operand.alias];
+    if (binding && binding.kind === 'entity' && binding.absent) {
+      return { held: true, index: null, skippedFor: operand.alias };
+    }
+  }
+
   const fannedAliases = evFannedAliasesOf(condition, scope);
 
   // The instance list may be compacted by `excluding`, so a zipped
@@ -813,6 +885,10 @@ function evDescribeReads(scope) {
       kind: 'entity',
       entity: binding.entity,
       fanned: binding.fanned,
+      // An optional binding whose identifier was unset — it bound
+      // nothing, and the reader deserves to see that said, not an
+      // empty list that looks like a fan-out over nothing.
+      ...(binding.absent ? { absent: true } : {}),
       instances: binding.instances.map((instance) => {
         const properties = {};
         // `read` memoises, so re-reading here costs nothing and reports

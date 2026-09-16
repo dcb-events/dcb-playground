@@ -403,10 +403,10 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         ]
       },
       "handlers": {
-        "description": "At most one handler per event type; the handled types are the\nprojection's query. Declared handlers carry an operation and\nan operand; a scripted projection's carry one `code` body\neach.\n\nAn empty list is legal and means nothing moves this yet — a\nprojection mid-authoring reads as its initial value, which is\na more useful thing to show than a refusal to store it.\n",
+        "description": "The handled event types are the projection's query. One event\ntype may appear on several handlers provided they are told\napart by `via` — see `PropertyHandler` — and every handler\nwhose guard passes applies, in declaration order; without\n`via` an event type appears at most once. Declared handlers\ncarry an operation and an operand; a scripted projection's\ncarry one `code` body each.\n\nAn empty list is legal and means nothing moves this yet — a\nprojection mid-authoring reads as its initial value, which is\na more useful thing to show than a refusal to store it.\n",
         "type": "array",
         "items": {
-          "description": "How one event type advances one projection. Either declared —\n`operation` and `value`, with the vocabulary constrained by the\nprojection's type: `set` for any type, `increment`/`decrement`\nfor integers, `append`/`remove` for lists — or scripted, carrying\n`code` and neither of the other two.\n",
+          "description": "How one event type advances one projection. Either declared —\n`operation` and `value`, with the vocabulary constrained by the\nprojection's type: `set` for any type, `increment`/`decrement`\nfor integers, `append`/`remove` for lists — or scripted, carrying\n`code` and neither of the other two.\n\n`via` is the discriminator that lets one event type carry several\nhandlers. Tag matching is by value, whichever property carries\nit, so an event with two properties of one identifier type — an\nassignment naming both the new holder and the one replaced —\nreaches both partitions, and an undiscriminated handler fires\nfor both. A handler with `via` applies only where that event\nproperty equals the partition's own identifier; where it is\nnull (unset), the handler skips. Declared handlers only — a\nscripted handler's code already sees the whole event.\n",
           "type": "object",
           "additionalProperties": false,
           "properties": {
@@ -419,6 +419,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                 "CourseDefined",
                 "StudentSubscribedToCourse"
               ]
+            },
+            "via": {
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 100,
+              "pattern": "^[a-z][A-Za-z0-9]+$",
+              "examples": [
+                "someProperty"
+              ],
+              "description": "The event property that must be the one naming this\npartition for the handler to apply. Must name a property of\n`event` whose type matches exactly one of the projection's\nparameters. Absent means the handler applies to every event\nof its type the query returns — the only legal form before\n4.0, and still the ordinary one.\n"
             },
             "operation": {
               "enum": [
@@ -814,6 +824,11 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                       ]
                     }
                   ]
+                },
+                "isOptional": {
+                  "description": "The binding may be absent: when its `id` resolves to null —\na derived identifier nothing has set yet, an optional\nparameter left unset — it binds zero instances instead of\nbeing an evaluation error. Conditions reading the alias then\nhold vacuously (the rule steps aside rather than deciding on\na phantom), and reading a property of it yields null.\n\nDeliberately opt-in: an unset identifier nobody declared\npossible stays the loud error it always was, because it is\nusually an accident. Only meaningful on a singular binding —\na fanned-out one already binds nothing over an empty list.\n",
+                  "type": "boolean",
+                  "default": false
                 },
                 "arguments": {
                   "description": "Values handed to the scripted projections this binding reads\nthrough the entity's properties, keyed by argument name.\nRequired exactly when one of them declares an argument, and\nrejected otherwise — the same rule `excluding` follows, and\nfor the same reason: a field that means nothing here is a\nmistake, not a no-op. Two scripted projections asking for the\nsame name are answered once: they are read through one\nbinding, at one instant.\n\nThe entity's own identifier is never supplied here. It is what\nthe binding already names, and it reaches the projection as\nthe identifier-typed argument the property binding fills.\n\nThey are supplied, not ambient. A command that consults\ntime-sensitive state takes the instant as a payload property\nand passes it here, so the decision stays a pure function of\nits events and its parameters — the same events and the same\narguments always reach the same verdict. An implicit clock\nwould make replay disagree with the original decision.\n\nThey do not touch the append condition. The query still\ncovers the same tags and the same event types; an argument\ndecides how the events already read are projected, never\nwhich ones are read.\n",

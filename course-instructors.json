@@ -1,0 +1,1936 @@
+{
+  "$schema": "https://dcb.events/schemas/model/v4.json",
+  "dcbModelVersion": "4.0",
+  "name": "Course Example",
+  "customTypeDefinitions": [
+    {
+      "name": "CourseStatus",
+      "schema": {
+        "type": "string",
+        "enum": [
+          "NonExistent",
+          "Upcoming",
+          "Conducted"
+        ]
+      }
+    },
+    {
+      "name": "CourseId",
+      "schema": {
+        "type": "string"
+      },
+      "isTag": true
+    },
+    {
+      "name": "StudentId",
+      "schema": {
+        "type": "string"
+      },
+      "isTag": true
+    },
+    {
+      "name": "InstructorStatus",
+      "schema": {
+        "type": "string",
+        "enum": [
+          "Unknown",
+          "Registered",
+          "Archived"
+        ]
+      }
+    },
+    {
+      "name": "InstructorId",
+      "schema": {
+        "type": "string"
+      },
+      "isTag": true
+    }
+  ],
+  "eventDefinitions": [
+    {
+      "name": "CourseCreated",
+      "properties": [
+        {
+          "name": "courseId",
+          "propertyType": "CourseId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "seatCount",
+          "propertyType": "integer",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "title",
+          "propertyType": "string",
+          "isOptional": false,
+          "isList": false
+        }
+      ]
+    },
+    {
+      "name": "CourseRenamed",
+      "properties": [
+        {
+          "name": "courseId",
+          "propertyType": "CourseId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "newTitle",
+          "propertyType": "string",
+          "isOptional": false,
+          "isList": false
+        }
+      ]
+    },
+    {
+      "name": "StudentEnrolled",
+      "properties": [
+        {
+          "name": "studentId",
+          "propertyType": "StudentId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "courseId",
+          "propertyType": "CourseId",
+          "isOptional": false,
+          "isList": false
+        }
+      ]
+    },
+    {
+      "name": "InstructorRegistered",
+      "properties": [
+        {
+          "name": "instructorId",
+          "propertyType": "InstructorId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "name",
+          "propertyType": "string",
+          "isOptional": false,
+          "isList": false
+        }
+      ]
+    },
+    {
+      "name": "CourseMarkedConducted",
+      "properties": [
+        {
+          "name": "courseId",
+          "propertyType": "CourseId",
+          "isOptional": false,
+          "isList": false
+        }
+      ]
+    },
+    {
+      "name": "InstructorAssigned",
+      "properties": [
+        {
+          "name": "courseId",
+          "propertyType": "CourseId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "instructorId",
+          "propertyType": "InstructorId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "previousInstructorId",
+          "propertyType": "InstructorId",
+          "isOptional": true,
+          "isList": false
+        }
+      ]
+    },
+    {
+      "name": "InstructorArchived",
+      "properties": [
+        {
+          "name": "instructorId",
+          "propertyType": "InstructorId",
+          "isOptional": false,
+          "isList": false
+        }
+      ]
+    },
+    {
+      "name": "StudentDroppedOut",
+      "properties": [
+        {
+          "name": "studentId",
+          "propertyType": "StudentId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "courseId",
+          "propertyType": "CourseId",
+          "isOptional": false,
+          "isList": false
+        }
+      ]
+    }
+  ],
+  "entityDefinitions": [
+    {
+      "name": "Course",
+      "properties": [
+        {
+          "name": "status",
+          "projection": "CourseStatus"
+        },
+        {
+          "name": "seatCount",
+          "projection": "CourseSeatCount"
+        },
+        {
+          "name": "title",
+          "projection": "CourseTitle"
+        },
+        {
+          "name": "enrolledStudents",
+          "projection": "CourseEnrolledStudents"
+        },
+        {
+          "name": "instructorId",
+          "projection": "CourseInstructorId"
+        }
+      ],
+      "icon": "📚"
+    },
+    {
+      "name": "Student",
+      "properties": [
+        {
+          "name": "numberOfEnrollments",
+          "projection": "StudentNumberOfEnrollments"
+        }
+      ],
+      "icon": "🧑‍🎓"
+    },
+    {
+      "name": "Instructor",
+      "properties": [
+        {
+          "name": "status",
+          "projection": "InstructorStatus"
+        },
+        {
+          "name": "instructedCourses",
+          "projection": "InstructorInstructedCourses"
+        }
+      ],
+      "icon": "👩‍🏫"
+    }
+  ],
+  "projectionDefinitions": [
+    {
+      "name": "CourseStatus",
+      "parameters": [
+        {
+          "name": "courseId",
+          "propertyType": "CourseId"
+        }
+      ],
+      "valueType": "CourseStatus",
+      "isList": false,
+      "initialValue": {
+        "enumMember": "NonExistent"
+      },
+      "handlers": [
+        {
+          "event": "CourseCreated",
+          "operation": "set",
+          "value": {
+            "enumMember": "Upcoming"
+          }
+        },
+        {
+          "event": "CourseMarkedConducted",
+          "operation": "set",
+          "value": {
+            "enumMember": "Conducted"
+          }
+        }
+      ]
+    },
+    {
+      "name": "CourseSeatCount",
+      "parameters": [
+        {
+          "name": "courseId",
+          "propertyType": "CourseId"
+        }
+      ],
+      "valueType": "integer",
+      "isList": false,
+      "initialValue": 0,
+      "handlers": [
+        {
+          "event": "CourseCreated",
+          "operation": "set",
+          "value": {
+            "eventProperty": "seatCount"
+          }
+        }
+      ]
+    },
+    {
+      "name": "CourseTitle",
+      "parameters": [
+        {
+          "name": "courseId",
+          "propertyType": "CourseId"
+        }
+      ],
+      "valueType": "string",
+      "isList": false,
+      "initialValue": null,
+      "handlers": [
+        {
+          "event": "CourseCreated",
+          "operation": "set",
+          "value": {
+            "eventProperty": "title"
+          }
+        },
+        {
+          "event": "CourseRenamed",
+          "operation": "set",
+          "value": {
+            "eventProperty": "newTitle"
+          }
+        }
+      ]
+    },
+    {
+      "name": "StudentNumberOfEnrollments",
+      "parameters": [
+        {
+          "name": "studentId",
+          "propertyType": "StudentId"
+        }
+      ],
+      "valueType": "integer",
+      "isList": false,
+      "initialValue": 0,
+      "handlers": [
+        {
+          "event": "StudentEnrolled",
+          "operation": "increment",
+          "value": 1
+        },
+        {
+          "event": "StudentDroppedOut",
+          "operation": "decrement",
+          "value": 1
+        }
+      ]
+    },
+    {
+      "name": "CourseEnrolledStudents",
+      "parameters": [
+        {
+          "name": "courseId",
+          "propertyType": "CourseId"
+        }
+      ],
+      "valueType": "StudentId",
+      "isList": true,
+      "initialValue": [],
+      "handlers": [
+        {
+          "event": "StudentEnrolled",
+          "operation": "append",
+          "value": {
+            "eventProperty": "studentId"
+          }
+        },
+        {
+          "event": "StudentDroppedOut",
+          "operation": "remove",
+          "value": {
+            "eventProperty": "studentId"
+          }
+        }
+      ]
+    },
+    {
+      "name": "InstructorStatus",
+      "parameters": [
+        {
+          "name": "instructorId",
+          "propertyType": "InstructorId"
+        }
+      ],
+      "valueType": "InstructorStatus",
+      "isList": false,
+      "initialValue": {
+        "enumMember": "Unknown"
+      },
+      "handlers": [
+        {
+          "event": "InstructorRegistered",
+          "operation": "set",
+          "value": {
+            "enumMember": "Registered"
+          }
+        },
+        {
+          "event": "InstructorArchived",
+          "operation": "set",
+          "value": {
+            "enumMember": "Archived"
+          }
+        }
+      ]
+    },
+    {
+      "name": "CourseInstructorId",
+      "parameters": [
+        {
+          "name": "courseId",
+          "propertyType": "CourseId"
+        }
+      ],
+      "valueType": "InstructorId",
+      "isList": false,
+      "initialValue": null,
+      "handlers": [
+        {
+          "event": "InstructorAssigned",
+          "operation": "set",
+          "value": {
+            "eventProperty": "instructorId"
+          }
+        }
+      ]
+    },
+    {
+      "name": "InstructorInstructedCourses",
+      "parameters": [
+        {
+          "name": "instructorId",
+          "propertyType": "InstructorId"
+        }
+      ],
+      "valueType": "CourseId",
+      "isList": true,
+      "initialValue": [],
+      "handlers": [
+        {
+          "event": "InstructorAssigned",
+          "via": "instructorId",
+          "operation": "append",
+          "value": {
+            "eventProperty": "courseId"
+          }
+        },
+        {
+          "event": "InstructorAssigned",
+          "via": "previousInstructorId",
+          "operation": "remove",
+          "value": {
+            "eventProperty": "courseId"
+          }
+        }
+      ]
+    }
+  ],
+  "commandDefinitions": [
+    {
+      "name": "CreateCourse",
+      "properties": [
+        {
+          "name": "courseId",
+          "propertyType": "CourseId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "seatCount",
+          "propertyType": "integer",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "title",
+          "propertyType": "string",
+          "isOptional": false,
+          "isList": false
+        }
+      ],
+      "boundary": [
+        {
+          "alias": "course",
+          "entity": "Course",
+          "id": {
+            "parameterName": "courseId"
+          }
+        }
+      ],
+      "conditions": [
+        {
+          "leftHandSide": {
+            "alias": "course",
+            "property": "status"
+          },
+          "predicate": "equals",
+          "rightHandSide": {
+            "enumMember": "NonExistent"
+          }
+        }
+      ],
+      "publishes": [
+        {
+          "name": "CourseCreated",
+          "parameters": {
+            "courseId": {
+              "parameterName": "courseId"
+            },
+            "seatCount": {
+              "parameterName": "seatCount"
+            },
+            "title": {
+              "parameterName": "title"
+            }
+          }
+        }
+      ],
+      "icon": "📚",
+      "feature": "Course management"
+    },
+    {
+      "name": "RenameCourse",
+      "properties": [
+        {
+          "name": "courseId",
+          "propertyType": "CourseId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "newTitle",
+          "propertyType": "string",
+          "isOptional": false,
+          "isList": false
+        }
+      ],
+      "boundary": [
+        {
+          "alias": "course",
+          "entity": "Course",
+          "id": {
+            "parameterName": "courseId"
+          }
+        }
+      ],
+      "conditions": [
+        {
+          "leftHandSide": {
+            "alias": "course",
+            "property": "status"
+          },
+          "predicate": "equals",
+          "rightHandSide": {
+            "enumMember": "NonExistent"
+          },
+          "negate": true
+        },
+        {
+          "leftHandSide": {
+            "alias": "course",
+            "property": "title"
+          },
+          "predicate": "equals",
+          "rightHandSide": {
+            "parameterName": "newTitle"
+          },
+          "negate": true
+        }
+      ],
+      "publishes": [
+        {
+          "name": "CourseRenamed",
+          "parameters": {
+            "courseId": {
+              "parameterName": "courseId"
+            },
+            "newTitle": {
+              "parameterName": "newTitle"
+            }
+          }
+        }
+      ],
+      "icon": "✏️",
+      "feature": "Course management"
+    },
+    {
+      "name": "EnrollStudent",
+      "properties": [
+        {
+          "name": "studentId",
+          "propertyType": "StudentId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "courseId",
+          "propertyType": "CourseId",
+          "isOptional": false,
+          "isList": false
+        }
+      ],
+      "boundary": [
+        {
+          "alias": "course",
+          "entity": "Course",
+          "id": {
+            "parameterName": "courseId"
+          }
+        },
+        {
+          "alias": "student",
+          "entity": "Student",
+          "id": {
+            "parameterName": "studentId"
+          }
+        }
+      ],
+      "conditions": [
+        {
+          "leftHandSide": {
+            "alias": "course",
+            "property": "status"
+          },
+          "predicate": "equals",
+          "rightHandSide": {
+            "enumMember": "Upcoming"
+          }
+        },
+        {
+          "leftHandSide": {
+            "alias": "course",
+            "property": "enrolledStudents"
+          },
+          "predicate": "countLessThan",
+          "rightHandSide": {
+            "alias": "course",
+            "property": "seatCount"
+          }
+        },
+        {
+          "leftHandSide": {
+            "alias": "course",
+            "property": "enrolledStudents"
+          },
+          "predicate": "contains",
+          "rightHandSide": {
+            "parameterName": "studentId"
+          },
+          "negate": true
+        },
+        {
+          "leftHandSide": {
+            "alias": "student",
+            "property": "numberOfEnrollments"
+          },
+          "predicate": "lessThan",
+          "rightHandSide": 10
+        }
+      ],
+      "publishes": [
+        {
+          "name": "StudentEnrolled",
+          "parameters": {
+            "studentId": {
+              "parameterName": "studentId"
+            },
+            "courseId": {
+              "parameterName": "courseId"
+            }
+          }
+        }
+      ],
+      "icon": "🙋🏼‍♂️",
+      "feature": "Enrollment"
+    },
+    {
+      "name": "RegisterInstructor",
+      "properties": [
+        {
+          "name": "instructorId",
+          "propertyType": "InstructorId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "name",
+          "propertyType": "string",
+          "isOptional": false,
+          "isList": false
+        }
+      ],
+      "boundary": [
+        {
+          "alias": "instructor",
+          "entity": "Instructor",
+          "id": {
+            "parameterName": "instructorId"
+          }
+        }
+      ],
+      "conditions": [
+        {
+          "leftHandSide": {
+            "alias": "instructor",
+            "property": "status"
+          },
+          "predicate": "equals",
+          "rightHandSide": {
+            "enumMember": "Unknown"
+          }
+        }
+      ],
+      "publishes": [
+        {
+          "name": "InstructorRegistered",
+          "parameters": {
+            "instructorId": {
+              "parameterName": "instructorId"
+            },
+            "name": {
+              "parameterName": "name"
+            }
+          }
+        }
+      ],
+      "icon": "👩‍🏫",
+      "feature": "Instructor management"
+    },
+    {
+      "name": "MarkCourseConducted",
+      "properties": [
+        {
+          "name": "courseId",
+          "propertyType": "CourseId",
+          "isOptional": false,
+          "isList": false
+        }
+      ],
+      "boundary": [
+        {
+          "alias": "course",
+          "entity": "Course",
+          "id": {
+            "parameterName": "courseId"
+          }
+        }
+      ],
+      "conditions": [
+        {
+          "leftHandSide": {
+            "alias": "course",
+            "property": "status"
+          },
+          "predicate": "equals",
+          "rightHandSide": {
+            "enumMember": "Upcoming"
+          }
+        }
+      ],
+      "publishes": [
+        {
+          "name": "CourseMarkedConducted",
+          "parameters": {
+            "courseId": {
+              "parameterName": "courseId"
+            }
+          }
+        }
+      ],
+      "icon": "✔",
+      "feature": "Course management"
+    },
+    {
+      "name": "AssignInstructor",
+      "properties": [
+        {
+          "name": "courseId",
+          "propertyType": "CourseId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "instructorId",
+          "propertyType": "InstructorId",
+          "isOptional": false,
+          "isList": false
+        }
+      ],
+      "boundary": [
+        {
+          "alias": "course",
+          "entity": "Course",
+          "id": {
+            "parameterName": "courseId"
+          }
+        },
+        {
+          "alias": "instructor",
+          "entity": "Instructor",
+          "id": {
+            "parameterName": "instructorId"
+          }
+        },
+        {
+          "alias": "previousInstructor",
+          "entity": "Instructor",
+          "id": {
+            "alias": "course",
+            "property": "instructorId"
+          },
+          "isOptional": true
+        }
+      ],
+      "conditions": [
+        {
+          "leftHandSide": {
+            "alias": "course",
+            "property": "status"
+          },
+          "predicate": "equals",
+          "rightHandSide": {
+            "enumMember": "Upcoming"
+          }
+        },
+        {
+          "leftHandSide": {
+            "alias": "instructor",
+            "property": "status"
+          },
+          "predicate": "equals",
+          "rightHandSide": {
+            "enumMember": "Registered"
+          }
+        },
+        {
+          "leftHandSide": {
+            "alias": "course",
+            "property": "instructorId"
+          },
+          "predicate": "equals",
+          "rightHandSide": {
+            "parameterName": "instructorId"
+          },
+          "negate": true
+        }
+      ],
+      "publishes": [
+        {
+          "name": "InstructorAssigned",
+          "parameters": {
+            "courseId": {
+              "parameterName": "courseId"
+            },
+            "instructorId": {
+              "parameterName": "instructorId"
+            },
+            "previousInstructorId": {
+              "alias": "course",
+              "property": "instructorId"
+            }
+          }
+        }
+      ],
+      "feature": "Course management",
+      "icon": "👩‍🏫"
+    },
+    {
+      "name": "ArchiveInstructor",
+      "properties": [
+        {
+          "name": "instructorId",
+          "propertyType": "InstructorId",
+          "isOptional": false,
+          "isList": false
+        }
+      ],
+      "boundary": [
+        {
+          "alias": "instructor",
+          "entity": "Instructor",
+          "id": {
+            "parameterName": "instructorId"
+          }
+        },
+        {
+          "alias": "course",
+          "entity": "Course",
+          "id": {
+            "alias": "instructor",
+            "property": "instructedCourses"
+          }
+        }
+      ],
+      "conditions": [
+        {
+          "leftHandSide": {
+            "alias": "instructor",
+            "property": "status"
+          },
+          "predicate": "equals",
+          "rightHandSide": {
+            "enumMember": "Registered"
+          }
+        },
+        {
+          "leftHandSide": {
+            "alias": "course",
+            "property": "status"
+          },
+          "predicate": "equals",
+          "rightHandSide": {
+            "enumMember": "Upcoming"
+          },
+          "negate": true
+        }
+      ],
+      "publishes": [
+        {
+          "name": "InstructorArchived",
+          "parameters": {
+            "instructorId": {
+              "parameterName": "instructorId"
+            }
+          }
+        }
+      ],
+      "feature": "Instructor management",
+      "icon": "❌"
+    },
+    {
+      "name": "DropOutStudent",
+      "properties": [
+        {
+          "name": "studentId",
+          "propertyType": "StudentId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "courseId",
+          "propertyType": "CourseId",
+          "isOptional": false,
+          "isList": false
+        }
+      ],
+      "boundary": [
+        {
+          "alias": "student",
+          "entity": "Student",
+          "id": {
+            "parameterName": "studentId"
+          }
+        },
+        {
+          "alias": "course",
+          "entity": "Course",
+          "id": {
+            "parameterName": "courseId"
+          }
+        }
+      ],
+      "conditions": [
+        {
+          "leftHandSide": {
+            "alias": "course",
+            "property": "status"
+          },
+          "predicate": "equals",
+          "rightHandSide": {
+            "enumMember": "Upcoming"
+          }
+        },
+        {
+          "leftHandSide": {
+            "alias": "course",
+            "property": "enrolledStudents"
+          },
+          "predicate": "contains",
+          "rightHandSide": {
+            "parameterName": "studentId"
+          }
+        }
+      ],
+      "publishes": [
+        {
+          "name": "StudentDroppedOut",
+          "parameters": {
+            "studentId": {
+              "parameterName": "studentId"
+            },
+            "courseId": {
+              "parameterName": "courseId"
+            }
+          }
+        }
+      ],
+      "feature": "Enrollment",
+      "icon": "🙅‍♂️"
+    }
+  ],
+  "scenarioDefinitions": [
+    {
+      "id": "bc21f5bf-7e2f-4979-8b2f-e0afd39e3286",
+      "command": "RenameCourse",
+      "given": [],
+      "when": {
+        "arguments": {
+          "courseId": "c1",
+          "newTitle": "test"
+        }
+      },
+      "then": {
+        "outcome": "rejected",
+        "events": [],
+        "failedRule": {
+          "index": 0,
+          "text": "not(course.status == NonExistent)",
+          "leftValue": "NonExistent",
+          "rightValue": "NonExistent",
+          "atInstance": null
+        }
+      }
+    },
+    {
+      "id": "3e626835-3724-435e-9585-3ecfb729e79f",
+      "command": "RenameCourse",
+      "given": [
+        {
+          "event": "CourseCreated",
+          "data": {
+            "courseId": "c1",
+            "seatCount": 123,
+            "title": "course 01"
+          }
+        }
+      ],
+      "when": {
+        "arguments": {
+          "courseId": "c1",
+          "newTitle": "course 01"
+        }
+      },
+      "then": {
+        "outcome": "rejected",
+        "events": [],
+        "failedRule": {
+          "index": 1,
+          "text": "not(course.title == newTitle)",
+          "leftValue": "course 01",
+          "rightValue": "course 01",
+          "atInstance": null
+        }
+      }
+    },
+    {
+      "id": "49b30cdc-7cc5-4015-8e49-bfdb0b330e25",
+      "command": "RenameCourse",
+      "given": [
+        {
+          "event": "CourseCreated",
+          "data": {
+            "courseId": "c1",
+            "seatCount": 123,
+            "title": "course 01"
+          }
+        }
+      ],
+      "when": {
+        "arguments": {
+          "courseId": "c1",
+          "newTitle": "course 01 changed"
+        }
+      },
+      "then": {
+        "outcome": "published",
+        "events": [
+          {
+            "type": "CourseRenamed",
+            "data": {
+              "courseId": "c1",
+              "newTitle": "course 01 changed"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "3e72c017-bd0d-479e-8d63-0e7e8b875cfd",
+      "command": "EnrollStudent",
+      "given": [],
+      "when": {
+        "arguments": {
+          "studentId": "s1",
+          "courseId": "c1"
+        }
+      },
+      "then": {
+        "outcome": "rejected",
+        "events": [],
+        "failedRule": {
+          "index": 0,
+          "text": "course.status == Upcoming",
+          "leftValue": "NonExistent",
+          "rightValue": "Upcoming",
+          "atInstance": null
+        }
+      }
+    },
+    {
+      "id": "0d2f9af0-19d1-49a2-bf29-96e864046fd8",
+      "command": "EnrollStudent",
+      "given": [
+        {
+          "event": "CourseCreated",
+          "data": {
+            "courseId": "c1",
+            "seatCount": 2,
+            "title": "test"
+          }
+        },
+        {
+          "event": "StudentEnrolled",
+          "data": {
+            "studentId": "s1",
+            "courseId": "c1"
+          }
+        },
+        {
+          "event": "StudentEnrolled",
+          "data": {
+            "studentId": "s2",
+            "courseId": "c1"
+          }
+        }
+      ],
+      "when": {
+        "arguments": {
+          "studentId": "s3",
+          "courseId": "c1"
+        }
+      },
+      "then": {
+        "outcome": "rejected",
+        "events": [],
+        "failedRule": {
+          "index": 1,
+          "text": "course.enrolledStudents countLessThan course.seatCount",
+          "leftValue": [
+            "s1",
+            "s2"
+          ],
+          "rightValue": 2,
+          "atInstance": null
+        }
+      }
+    },
+    {
+      "id": "3608a936-aa24-41eb-86e8-f974476c597a",
+      "command": "EnrollStudent",
+      "given": [
+        {
+          "event": "CourseCreated",
+          "data": {
+            "courseId": "c1",
+            "seatCount": 123,
+            "title": "test"
+          }
+        },
+        {
+          "event": "CourseMarkedConducted",
+          "data": {
+            "courseId": "c1"
+          }
+        }
+      ],
+      "when": {
+        "arguments": {
+          "studentId": "s1",
+          "courseId": "c1"
+        }
+      },
+      "then": {
+        "outcome": "rejected",
+        "events": [],
+        "failedRule": {
+          "index": 0,
+          "text": "course.status == Upcoming",
+          "leftValue": "Conducted",
+          "rightValue": "Upcoming",
+          "atInstance": null
+        }
+      }
+    },
+    {
+      "id": "94f03da3-26cf-4ad1-b045-30bbbe43c756",
+      "command": "EnrollStudent",
+      "given": [
+        {
+          "event": "CourseCreated",
+          "data": {
+            "courseId": "c1",
+            "seatCount": 2,
+            "title": "test"
+          }
+        },
+        {
+          "event": "StudentEnrolled",
+          "data": {
+            "studentId": "s1",
+            "courseId": "c1"
+          }
+        }
+      ],
+      "when": {
+        "arguments": {
+          "studentId": "s1",
+          "courseId": "c1"
+        }
+      },
+      "then": {
+        "outcome": "rejected",
+        "events": [],
+        "failedRule": {
+          "index": 2,
+          "text": "not(course.enrolledStudents contains studentId)",
+          "leftValue": [
+            "s1"
+          ],
+          "rightValue": "s1",
+          "atInstance": null
+        }
+      }
+    },
+    {
+      "id": "dfe8a91d-b219-4dd9-b769-0d6739f199e8",
+      "command": "EnrollStudent",
+      "given": [
+        {
+          "event": "StudentEnrolled",
+          "data": {
+            "studentId": "s1",
+            "courseId": "c1"
+          }
+        },
+        {
+          "event": "StudentEnrolled",
+          "data": {
+            "studentId": "s1",
+            "courseId": "c2"
+          }
+        },
+        {
+          "event": "StudentEnrolled",
+          "data": {
+            "studentId": "s1",
+            "courseId": "c3"
+          }
+        },
+        {
+          "event": "StudentEnrolled",
+          "data": {
+            "studentId": "s1",
+            "courseId": "c4"
+          }
+        },
+        {
+          "event": "StudentEnrolled",
+          "data": {
+            "studentId": "s1",
+            "courseId": "c5"
+          }
+        },
+        {
+          "event": "StudentEnrolled",
+          "data": {
+            "studentId": "s1",
+            "courseId": "c6"
+          }
+        },
+        {
+          "event": "StudentEnrolled",
+          "data": {
+            "studentId": "s1",
+            "courseId": "c7"
+          }
+        },
+        {
+          "event": "StudentEnrolled",
+          "data": {
+            "studentId": "s1",
+            "courseId": "c8"
+          }
+        },
+        {
+          "event": "StudentEnrolled",
+          "data": {
+            "studentId": "s1",
+            "courseId": "c9"
+          }
+        },
+        {
+          "event": "CourseCreated",
+          "data": {
+            "courseId": "c11",
+            "seatCount": 123,
+            "title": "test"
+          }
+        },
+        {
+          "event": "StudentEnrolled",
+          "data": {
+            "studentId": "s1",
+            "courseId": "c10"
+          }
+        }
+      ],
+      "when": {
+        "arguments": {
+          "studentId": "s1",
+          "courseId": "c11"
+        }
+      },
+      "then": {
+        "outcome": "rejected",
+        "events": [],
+        "failedRule": {
+          "index": 3,
+          "text": "student.numberOfEnrollments < 10",
+          "leftValue": 10,
+          "rightValue": 10,
+          "atInstance": null
+        }
+      }
+    },
+    {
+      "id": "b1196ab3-ba4e-4993-bf3c-2b82fe0bbcd0",
+      "command": "MarkCourseConducted",
+      "given": [],
+      "when": {
+        "arguments": {
+          "courseId": "c1"
+        }
+      },
+      "then": {
+        "outcome": "rejected",
+        "events": [],
+        "failedRule": {
+          "index": 0,
+          "text": "course.status == Upcoming",
+          "leftValue": "NonExistent",
+          "rightValue": "Upcoming",
+          "atInstance": null
+        }
+      }
+    },
+    {
+      "id": "989d7d81-1d33-424d-b700-c88127d9859b",
+      "command": "MarkCourseConducted",
+      "given": [
+        {
+          "event": "CourseCreated",
+          "data": {
+            "courseId": "c1",
+            "seatCount": 123,
+            "title": "test"
+          }
+        },
+        {
+          "event": "CourseMarkedConducted",
+          "data": {
+            "courseId": "c1"
+          }
+        }
+      ],
+      "when": {
+        "arguments": {
+          "courseId": "c1"
+        }
+      },
+      "then": {
+        "outcome": "rejected",
+        "events": [],
+        "failedRule": {
+          "index": 0,
+          "text": "course.status == Upcoming",
+          "leftValue": "Conducted",
+          "rightValue": "Upcoming",
+          "atInstance": null
+        }
+      }
+    },
+    {
+      "id": "5780c783-cb28-499b-8fd3-25f4387590f6",
+      "command": "MarkCourseConducted",
+      "given": [
+        {
+          "event": "CourseCreated",
+          "data": {
+            "courseId": "c1",
+            "seatCount": 123,
+            "title": "test"
+          }
+        }
+      ],
+      "when": {
+        "arguments": {
+          "courseId": "c1"
+        }
+      },
+      "then": {
+        "outcome": "published",
+        "events": [
+          {
+            "type": "CourseMarkedConducted",
+            "data": {
+              "courseId": "c1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "f55e1a9a-cdd4-437d-b797-5a4344530cc1",
+      "command": "AssignInstructor",
+      "given": [],
+      "when": {
+        "arguments": {
+          "courseId": "c1",
+          "instructorId": "i1"
+        }
+      },
+      "then": {
+        "outcome": "rejected",
+        "events": [],
+        "failedRule": {
+          "index": 0,
+          "text": "course.status == Upcoming",
+          "leftValue": "NonExistent",
+          "rightValue": "Upcoming",
+          "atInstance": null
+        }
+      }
+    },
+    {
+      "id": "0b0ba01b-4088-438e-8fd6-e4f71d65b147",
+      "command": "AssignInstructor",
+      "given": [
+        {
+          "event": "CourseCreated",
+          "data": {
+            "courseId": "c1",
+            "seatCount": 123,
+            "title": "test"
+          }
+        }
+      ],
+      "when": {
+        "arguments": {
+          "courseId": "c1",
+          "instructorId": "i1"
+        }
+      },
+      "then": {
+        "outcome": "rejected",
+        "events": [],
+        "failedRule": {
+          "index": 1,
+          "text": "instructor.status == Registered",
+          "leftValue": "Unknown",
+          "rightValue": "Registered",
+          "atInstance": null
+        }
+      }
+    },
+    {
+      "id": "ac92a651-db81-482f-930e-97df5b31edf2",
+      "command": "AssignInstructor",
+      "given": [
+        {
+          "event": "CourseCreated",
+          "data": {
+            "courseId": "c1",
+            "seatCount": 123,
+            "title": "test"
+          }
+        },
+        {
+          "event": "InstructorRegistered",
+          "data": {
+            "instructorId": "i1",
+            "name": "Some instructor"
+          }
+        }
+      ],
+      "when": {
+        "arguments": {
+          "courseId": "c1",
+          "instructorId": "i1"
+        }
+      },
+      "then": {
+        "outcome": "published",
+        "events": [
+          {
+            "type": "InstructorAssigned",
+            "data": {
+              "courseId": "c1",
+              "instructorId": "i1",
+              "previousInstructorId": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "7f75f0c8-5000-4918-9c8e-322fa7c2516d",
+      "command": "AssignInstructor",
+      "given": [
+        {
+          "event": "CourseCreated",
+          "data": {
+            "courseId": "c1",
+            "seatCount": 123,
+            "title": "test"
+          }
+        },
+        {
+          "event": "InstructorRegistered",
+          "data": {
+            "instructorId": "i2",
+            "name": "Some instructor"
+          }
+        },
+        {
+          "event": "InstructorAssigned",
+          "data": {
+            "courseId": "c1",
+            "instructorId": "i1",
+            "previousInstructorId": null
+          }
+        }
+      ],
+      "when": {
+        "arguments": {
+          "courseId": "c1",
+          "instructorId": "i2"
+        }
+      },
+      "then": {
+        "outcome": "published",
+        "events": [
+          {
+            "type": "InstructorAssigned",
+            "data": {
+              "courseId": "c1",
+              "instructorId": "i2",
+              "previousInstructorId": "i1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "4529e2de-7eec-4630-ad21-fee54baf51e1",
+      "command": "DropOutStudent",
+      "given": [],
+      "when": {
+        "arguments": {
+          "studentId": "s1",
+          "courseId": "c1"
+        }
+      },
+      "then": {
+        "outcome": "rejected",
+        "events": [],
+        "failedRule": {
+          "index": 0,
+          "text": "course.status == Upcoming",
+          "leftValue": "NonExistent",
+          "rightValue": "Upcoming",
+          "atInstance": null
+        }
+      }
+    },
+    {
+      "id": "85b6b4d1-6751-486e-87ca-019210a50700",
+      "command": "DropOutStudent",
+      "given": [
+        {
+          "event": "CourseCreated",
+          "data": {
+            "courseId": "c1",
+            "seatCount": 123,
+            "title": "test"
+          }
+        }
+      ],
+      "when": {
+        "arguments": {
+          "studentId": "s1",
+          "courseId": "c1"
+        }
+      },
+      "then": {
+        "outcome": "rejected",
+        "events": [],
+        "failedRule": {
+          "index": 1,
+          "text": "course.enrolledStudents contains studentId",
+          "leftValue": [],
+          "rightValue": "s1",
+          "atInstance": null
+        }
+      }
+    },
+    {
+      "id": "d27c4626-8b9b-4d50-a9d1-b5a866779bd7",
+      "command": "DropOutStudent",
+      "given": [
+        {
+          "event": "CourseCreated",
+          "data": {
+            "courseId": "c1",
+            "seatCount": 123,
+            "title": "test"
+          }
+        },
+        {
+          "event": "StudentEnrolled",
+          "data": {
+            "studentId": "s1",
+            "courseId": "c1"
+          }
+        }
+      ],
+      "when": {
+        "arguments": {
+          "studentId": "s1",
+          "courseId": "c1"
+        }
+      },
+      "then": {
+        "outcome": "published",
+        "events": [
+          {
+            "type": "StudentDroppedOut",
+            "data": {
+              "studentId": "s1",
+              "courseId": "c1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "08f68d14-be04-4763-b3de-b63ff9338fd9",
+      "command": "ArchiveInstructor",
+      "given": [],
+      "when": {
+        "arguments": {
+          "instructorId": "i1"
+        }
+      },
+      "then": {
+        "outcome": "rejected",
+        "events": [],
+        "failedRule": {
+          "index": 0,
+          "text": "instructor.status == Registered",
+          "leftValue": "Unknown",
+          "rightValue": "Registered",
+          "atInstance": null
+        }
+      }
+    },
+    {
+      "id": "c86b9223-698c-48ba-89cc-b8d56e0a7558",
+      "command": "ArchiveInstructor",
+      "given": [
+        {
+          "event": "InstructorRegistered",
+          "data": {
+            "instructorId": "i1",
+            "name": "Instructor"
+          }
+        }
+      ],
+      "when": {
+        "arguments": {
+          "instructorId": "i1"
+        }
+      },
+      "then": {
+        "outcome": "published",
+        "events": [
+          {
+            "type": "InstructorArchived",
+            "data": {
+              "instructorId": "i1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "490095f9-6038-474d-8462-cff5b7c233da",
+      "command": "ArchiveInstructor",
+      "given": [
+        {
+          "event": "InstructorRegistered",
+          "data": {
+            "instructorId": "i1",
+            "name": "Instructor"
+          }
+        },
+        {
+          "event": "CourseCreated",
+          "data": {
+            "courseId": "c1",
+            "seatCount": 123,
+            "title": "test"
+          }
+        },
+        {
+          "event": "InstructorAssigned",
+          "data": {
+            "courseId": "c1",
+            "instructorId": "i1",
+            "previousInstructorId": null
+          }
+        }
+      ],
+      "when": {
+        "arguments": {
+          "instructorId": "i1"
+        }
+      },
+      "then": {
+        "outcome": "rejected",
+        "events": [],
+        "failedRule": {
+          "index": 1,
+          "text": "not(course.status == Upcoming)",
+          "leftValue": "Upcoming",
+          "rightValue": "Upcoming",
+          "atInstance": 0
+        }
+      }
+    },
+    {
+      "id": "4e44e568-84cf-47de-993f-c6a2bb487d70",
+      "command": "ArchiveInstructor",
+      "given": [
+        {
+          "event": "InstructorRegistered",
+          "data": {
+            "instructorId": "i1",
+            "name": "Instructor"
+          }
+        },
+        {
+          "event": "CourseCreated",
+          "data": {
+            "courseId": "c1",
+            "seatCount": 123,
+            "title": "test"
+          }
+        },
+        {
+          "event": "InstructorAssigned",
+          "data": {
+            "courseId": "c1",
+            "instructorId": "i1",
+            "previousInstructorId": null
+          }
+        },
+        {
+          "event": "CourseMarkedConducted",
+          "data": {
+            "courseId": "c1"
+          }
+        }
+      ],
+      "when": {
+        "arguments": {
+          "instructorId": "i1"
+        }
+      },
+      "then": {
+        "outcome": "published",
+        "events": [
+          {
+            "type": "InstructorArchived",
+            "data": {
+              "instructorId": "i1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a1e6f0d2-4b7c-4d1e-9f3a-2c8b5e7a9c01",
+      "command": "AssignInstructor",
+      "given": [
+        {
+          "event": "CourseCreated",
+          "data": {
+            "courseId": "c1",
+            "seatCount": 123,
+            "title": "test"
+          }
+        },
+        {
+          "event": "InstructorRegistered",
+          "data": {
+            "instructorId": "i1",
+            "name": "Some instructor"
+          }
+        },
+        {
+          "event": "InstructorAssigned",
+          "data": {
+            "courseId": "c1",
+            "instructorId": "i1",
+            "previousInstructorId": null
+          }
+        }
+      ],
+      "when": {
+        "arguments": {
+          "courseId": "c1",
+          "instructorId": "i1"
+        }
+      },
+      "then": {
+        "outcome": "rejected",
+        "events": [],
+        "failedRule": {
+          "index": 2,
+          "text": "not(course.instructorId == instructorId)",
+          "leftValue": "i1",
+          "rightValue": "i1",
+          "atInstance": null
+        }
+      }
+    }
+  ],
+  "projectionScenarioDefinitions": [
+    {
+      "id": "c277b8c1-9174-4ee7-8d2f-77a3c055be8e",
+      "projection": "CourseTitle",
+      "arguments": {
+        "courseId": "c1"
+      },
+      "given": [],
+      "then": null
+    },
+    {
+      "id": "c931ce55-263a-4103-ba74-6ce3a7a07b52",
+      "projection": "CourseTitle",
+      "arguments": {
+        "courseId": "c1"
+      },
+      "given": [
+        {
+          "event": "CourseCreated",
+          "data": {
+            "courseId": "c1",
+            "seatCount": 123,
+            "title": "Test"
+          }
+        }
+      ],
+      "then": "Test"
+    },
+    {
+      "id": "d3b5090c-a2ed-4bbb-93fd-ddb74b34fb03",
+      "projection": "CourseInstructorId",
+      "arguments": {
+        "courseId": "c1"
+      },
+      "given": [],
+      "then": null
+    },
+    {
+      "id": "b2f7a1e3-5c8d-4e2f-8a4b-3d9c6f8b0d12",
+      "projection": "InstructorInstructedCourses",
+      "arguments": {
+        "instructorId": "i1"
+      },
+      "given": [
+        {
+          "event": "InstructorAssigned",
+          "data": {
+            "courseId": "c1",
+            "instructorId": "i1",
+            "previousInstructorId": null
+          }
+        },
+        {
+          "event": "InstructorAssigned",
+          "data": {
+            "courseId": "c1",
+            "instructorId": "i2",
+            "previousInstructorId": "i1"
+          }
+        }
+      ],
+      "then": []
+    },
+    {
+      "id": "c3a8b2f4-6d9e-4f30-9b5c-4e0d7a9c1e23",
+      "projection": "InstructorInstructedCourses",
+      "arguments": {
+        "instructorId": "i2"
+      },
+      "given": [
+        {
+          "event": "InstructorAssigned",
+          "data": {
+            "courseId": "c1",
+            "instructorId": "i1",
+            "previousInstructorId": null
+          }
+        },
+        {
+          "event": "InstructorAssigned",
+          "data": {
+            "courseId": "c1",
+            "instructorId": "i2",
+            "previousInstructorId": "i1"
+          }
+        }
+      ],
+      "then": [
+        "c1"
+      ]
+    }
+  ]
+}

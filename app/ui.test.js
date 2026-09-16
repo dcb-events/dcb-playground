@@ -1097,8 +1097,8 @@ function build(index) {
     sandbox.advanceWizard(model(), slice());   // changes revealed — wizard over
     eq(sandbox.state.wizard, null, 'everything is on screen, so the page is just the page');
     eq(sandbox.state.adder, 'chg:CourseCertified', 'the change adder is open');
-    eq(sandbox.state.changeDraft.target, JSON.stringify(['Course', 'status']),
-      'proposing the read entity\'s status');
+    eq(sandbox.state.changeDraft.target, JSON.stringify(['Course', 'status', null]),
+      'proposing the read entity\'s status, discriminated by nothing');
     eq(sandbox.state.changeDraft.value, JSON.stringify({ enumMember: 'Existent' }),
       'set to the first member that is not where it starts');
     eq(model()['projection-definitions'].CourseStatus.handlers.length, handlersBefore,
@@ -1764,6 +1764,62 @@ function build(index) {
     }
     const home = sandbox.featureGroups(model()).find((g) => g.name === feature);
     eq(home.commands[0], 'AaaFirstByName', 'the latecomer sorts to the front, not the end');
+  });
+}
+
+// ---------------------------------------------------------------
+// Discriminated handlers in the interface. `via` survives the round
+// trip through the projection editor's draft, and the slice's changes
+// step names an effect by the read instance it touches — the alias
+// whose identifier the emission writes into the handler's property.
+// ---------------------------------------------------------------
+{
+  check('via survives the projection editor round trip', () => {
+    const stored = {
+      parameters: [{ name: 'instructorId', propertyType: 'InstructorId' }],
+      valueType: 'CourseId', isList: true, initialValue: [],
+      handlers: [
+        { event: 'Assigned', via: 'instructorId', operation: 'append', value: { eventProperty: 'courseId' } },
+        { event: 'Assigned', via: 'previousInstructorId', operation: 'remove', value: { eventProperty: 'courseId' } },
+      ],
+    };
+    eq(sandbox.cleanProjectionBody(sandbox.projectionDraftFrom(stored)), stored,
+      'through the editor and back, both handlers and both discriminators');
+  });
+
+  check('an effect is named by the read instance its via points at', () => {
+    const body = {
+      boundary: [
+        { alias: 'course', entity: 'Course', id: { parameterName: 'courseId' } },
+        { alias: 'instructor', entity: 'Instructor', id: { parameterName: 'instructorId' } },
+        { alias: 'previousInstructor', entity: 'Instructor',
+          id: { alias: 'course', property: 'instructorId' }, isOptional: true },
+      ],
+    };
+    const emission = {
+      name: 'Assigned',
+      parameters: {
+        courseId: { parameterName: 'courseId' },
+        instructorId: { parameterName: 'instructorId' },
+        previousInstructorId: { alias: 'course', property: 'instructorId' },
+      },
+    };
+    const effect = (via) => ({
+      entity: 'Instructor',
+      property: { name: 'instructedCourses' },
+      handler: via === undefined
+        ? { event: 'Assigned', operation: 'append', value: { eventProperty: 'courseId' } }
+        : { event: 'Assigned', via, operation: 'append', value: { eventProperty: 'courseId' } },
+    });
+    eq(sandbox.effectAlias({}, body, emission, effect('instructorId')), 'instructor',
+      'the new instructor, matched through the emission');
+    eq(sandbox.effectAlias({}, body, emission, effect('previousInstructorId')), 'previousInstructor',
+      'the previous one, matched through the derived operand');
+    eq(sandbox.effectAlias({}, body, emission, effect(undefined)), null,
+      'a bare handler between two aliases names neither — the ambiguity stays visible');
+    eq(sandbox.effectAlias({}, body, emission,
+      { ...effect('courseId'), entity: 'Course', property: { name: 'instructorId' } }), 'course',
+      'a lone alias needs no discriminator to be named');
   });
 }
 

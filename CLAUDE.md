@@ -117,9 +117,25 @@ it never works from `file:`.
   event property publishes it); readers are lenient (an absent key on an
   optional property reads as null). Downstream it is an ordinary value —
   equality and emptiness work — except where it would become a tag or an
-  ordering: a null boundary identifier, exclusion or projection parameter
-  is an evaluation *error*, and the optional-parameter advisories say so
+  ordering: a null exclusion or projection parameter is an evaluation
+  *error*, and so is a null boundary identifier *unless the binding is
+  marked `isOptional`* — then it binds zero instances, conditions over
+  the alias hold vacuously, and reading a property of it yields null.
+  The optional-parameter and derived-null advisories say all of this
   ahead of time.
+- **One event type may carry several handlers on one projection**, told
+  apart by `via` — the event property that must name the partition for
+  the handler to apply (a null via property matches nothing). Every
+  matching handler fires, in declaration order. This exists because tag
+  matching is by *value*: an event carrying one identifier type in two
+  properties reaches both partitions, and a bare handler there fires
+  for both — an advisory points at that ambiguity. Renaming an event
+  property rewrites `via` like any operand.
+- **Wire format 4.0 vs 3.x**: `via` and binding `isOptional` are additive
+  in shape but a 3.x reader would silently misfold them, so they are a
+  *major* (see the versioning notes in `dcb-model.schema.json` and
+  `model.js`). The importer reads 3.x and 4.x (`READABLE_MAJORS`) and
+  always writes 4.0.
 - **Comment style**: file headers and block comments carry design rationale,
   not line-by-line narration. Match that register; keep headers truthful when
   behaviour changes.
