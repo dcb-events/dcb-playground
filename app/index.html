@@ -47,6 +47,8 @@
   .group .rm { display: inline-flex; }
   .group .rm .btn { visibility: hidden; padding: 0 5px; }
   .group:hover .rm .btn, .group .rm.on .btn, .group .rm .btn:focus { visibility: visible; }
+  .group .gadd { visibility: hidden; padding: 0 5px; }
+  .group:hover .gadd, .group .gadd:focus { visibility: visible; }
 
   /* Two levels: a feature, and the commands that make it up. */
   .group {
@@ -936,7 +938,7 @@ const state = {
   collapsed: {},            // feature name -> collapsed in the rail
   entitiesCollapsed: false, // the entity list in the rail
   entity: null,             // the thing whose own page is open
-  namingCommand: false,     // inline form open, naming a brand-new command
+  namingCommand: false,     // naming a brand-new command: true, or the feature it lands in
   newFeature: false,        // inline form open in the rail
   renamingFeature: null,
   newEntityAt: null,        // 'reads' | 'changes:<Event>' | 'rail'
@@ -3005,7 +3007,15 @@ function renderRail() {
             closeForms(); state.renamingFeature = group.name; render();
           },
         }, group.name),
-        h('span', { class: 'gcount' }, group.commands.length),
+        // Not a count: the way in. A command belongs to a feature, so
+        // the feature heading is where one gets added to it.
+        h('button', {
+          class: 'btn tiny gadd', title: 'Add a command to this feature',
+          onclick: () => {
+            state.collapsed[group.name] = false;
+            beginNewCommand(model, group.name);
+          },
+        }, '+'),
         // A feature is not a definition — it exists because commands
         // name it — so removing one leaves its commands where they are,
         // ungrouped.
@@ -3053,6 +3063,9 @@ function renderRail() {
       }, h('i', { class: 'ic' }, commandIcon(model, name)), readable(name)));
     }
     if (!group.commands.length) rail.appendChild(h('div', { class: 'gempty' }, 'nothing in it yet'));
+    // Naming a command headed for this feature happens right under it —
+    // the answer lands where the question was asked.
+    if (state.namingCommand === group.name) rail.appendChild(newCommandForm(model));
   }
 
   // With the picker gone, dropping is the only way out of a feature —
@@ -3070,13 +3083,7 @@ function renderRail() {
       class: 'btn ghost', onclick: () => { closeForms(); state.newFeature = true; render(); },
     }, '+ Feature')));
 
-  if (state.namingCommand) {
-    rail.appendChild(inlineForm({
-      question: 'What can someone do?', placeholder: 'define course', showsIdentifier: true,
-      onSubmit: (v) => createCommand(model, v),
-      onCancel: () => { state.namingCommand = false; render(); },
-    }));
-  }
+  if (state.namingCommand === true) rail.appendChild(newCommandForm(model));
 
   if (state.newFeature) {
     rail.appendChild(inlineForm({
@@ -3290,17 +3297,32 @@ function renameFeature(model, from, to) {
 // own. Everything else (what it takes, what it reads, what it decides,
 // what it records) is added afterwards, on the command's own page,
 // the same way it would be for a command that already existed.
-function beginNewCommand(model) {
+//
+// `namingCommand` holds where the answer will land: a feature name when
+// the + on a heading asked the question (the form opens under it), or
+// `true` from the plain "+ Command" button, where the feature is
+// guessed from whichever command's page is open.
+function beginNewCommand(model, feature) {
   closeForms();
-  state.namingCommand = true;
+  state.namingCommand = feature || true;
   render();
+}
+
+function newCommandForm(model) {
+  return inlineForm({
+    question: 'What can someone do?', placeholder: 'define course', showsIdentifier: true,
+    onSubmit: (v) => createCommand(model, v),
+    onCancel: () => { state.namingCommand = false; render(); },
+  });
 }
 
 function createCommand(model, label) {
   const name = toPascal(label);
   if (!name) return toast('Give it a name.', true);
-  const current = state.slice && model['command-definitions'][state.slice]
-    ? featureOf(model['command-definitions'][state.slice]) : UNGROUPED;
+  const current = typeof state.namingCommand === 'string'
+    ? state.namingCommand
+    : state.slice && model['command-definitions'][state.slice]
+      ? featureOf(model['command-definitions'][state.slice]) : UNGROUPED;
   // A command with nothing it records is not one the model can hold —
   // so a starting event comes along with it, guessed from the command's
   // own name the same way the event field always was. It is an ordinary
@@ -3317,6 +3339,9 @@ function createCommand(model, label) {
     };
     if (current !== UNGROUPED) body.feature = current;
     addDefinition('command-definition', model.id, name, body);
+    // A pending feature is one still waiting for a command; this one
+    // just arrived (the drop path does the same).
+    setPendingFeatures(pendingFeatures().filter((p) => p !== current));
     state.namingCommand = false;
     state.view = 'slice'; state.slice = name;
     // A brand-new command is the one moment its page reads best one
