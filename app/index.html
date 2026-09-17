@@ -783,6 +783,23 @@
   .pin:hover { color: var(--event); }
   .pin.on { color: var(--event); }
 
+  /* A picker whose options carry a mark (an entity, an event, a
+     command) builds its <option> text label-first so arrow-key
+     type-ahead matches the name a person actually types — native
+     <option> has no way to search on anything else. Where the browser
+     supports customizable <select> (`::picker(select)`,
+     `<selectedcontent>`), this puts the mark back in front visually
+     without touching that word order; everywhere else it just falls
+     back to "Name 🔖", which is still readable and still
+     keyboard-searchable. */
+  @supports (appearance: base-select) {
+    select.icon-select { appearance: base-select; }
+    select.icon-select option { display: flex; align-items: center; gap: 4px; }
+    select.icon-select option .icon,
+    select.icon-select selectedcontent .icon { order: -1; }
+    select.icon-select selectedcontent { display: flex; align-items: center; gap: 4px; }
+  }
+
   /* The two overview pages read across every command at once rather
      than down one of them, so they earn more width than an ordinary
      slice — capped, not unbounded, so a model with many events still
@@ -2630,7 +2647,7 @@ function operandChoicesAbove(model, slice, index) {
     const entity = model['entity-definitions'][b.entity];
     (entity ? entity.properties : []).forEach((p) =>
       out.push([JSON.stringify({ alias: b.alias, property: p.name }),
-        entityIcon(model, b.entity) + ' ' + memberWords(b.alias, p.name)]));
+        memberWords(b.alias, p.name), entityIcon(model, b.entity)]));
   });
   return out;
 }
@@ -2824,16 +2841,18 @@ function typeOptions(model) {
   return typeChoices(model).map((t) => [t, readable(t)]);
 }
 
-// An option is exactly the text the caller built — "🔖 Name", mark
-// first, in every browser. An earlier design split a detected emoji
-// prefix into a trailing span so arrow-key type-ahead would search
-// the name, re-fronting the icon with customizable-<select> CSS; that
-// order only ever held where `appearance: base-select` is supported,
-// the emoji detection tore modifier sequences ("👮🏻‍♀️") into parts,
-// and a mark that is not an emoji at all ("﹟" is one) slipped past
-// it and sat in front anyway. A mark is whatever was typed, so no
-// pattern can say where it ends — the text is left whole instead, and
-// the icon leads uniformly.
+// An option built as "🔖 Name" reads fine, but a native <option> has
+// no separate accessible label — arrow-key type-ahead searches the
+// same text a screen reader gets, so it can only ever match the first
+// character actually typed, which there is the icon. So a caller with
+// a mark passes it as the option's third element, and `pick` puts the
+// name first in the text with the mark in its own trailing span (see
+// the `.icon-select` CSS, which puts it back in front visually on
+// browsers that support customizable <select>). Passed, never
+// detected: an earlier design regex-matched an emoji prefix out of
+// the text, which tore modifier sequences ("👮🏻‍♀️") into parts and
+// let a mark that is not an emoji at all ("﹟" is one) slip past — a
+// mark is whatever was typed, so only the caller knows where it ends.
 
 // The same "alias · property" text that makes a flat list readable —
 // "given · course id", "course · capacity", "status · Existent" —
@@ -2849,33 +2868,50 @@ function pick(options, value, onchange, placeholder) {
   const sel = h('select', { onchange: (e) => onchange(e.target.value) });
   if (placeholder) sel.appendChild(h('option', { value: '' }, placeholder));
 
-  const buckets = new Map(); // prefix -> [{v, suffix}]
+  const buckets = new Map(); // prefix -> [{v, suffix, icon}]
   const sequence = []; // {text} | {prefix}, in first-seen order
   for (const o of options) {
-    const [v, text] = Array.isArray(o) ? o : [o, o];
+    const [v, text, icon] = Array.isArray(o) ? o : [o, o];
     const at = text.indexOf(GROUP_SEP);
-    if (at === -1) { sequence.push({ v, text }); continue; }
+    if (at === -1) { sequence.push({ v, text, icon }); continue; }
     const prefix = text.slice(0, at);
     if (!buckets.has(prefix)) { buckets.set(prefix, []); sequence.push({ prefix }); }
-    buckets.get(prefix).push({ v, suffix: text.slice(at + GROUP_SEP.length) });
+    buckets.get(prefix).push({ v, suffix: text.slice(at + GROUP_SEP.length), icon });
   }
 
-  const appendOption = (parent, v, text) => {
-    parent.appendChild(h('option', { value: v, selected: v === value }, text));
+  let hasIcon = false;
+  const appendOption = (parent, v, text, icon) => {
+    if (icon) {
+      hasIcon = true;
+      parent.appendChild(h('option', { value: v, selected: v === value },
+        h('span', { class: 'label' }, text),
+        h('span', { class: 'icon' }, icon)));
+    } else {
+      parent.appendChild(h('option', { value: v, selected: v === value }, text));
+    }
   };
 
   for (const entry of sequence) {
-    if ('text' in entry) { appendOption(sel, entry.v, entry.text); continue; }
+    if ('text' in entry) { appendOption(sel, entry.v, entry.text, entry.icon); continue; }
     const rows = buckets.get(entry.prefix);
     if (rows.length === 1) {
-      appendOption(sel, rows[0].v, entry.prefix + GROUP_SEP + rows[0].suffix);
+      appendOption(sel, rows[0].v, entry.prefix + GROUP_SEP + rows[0].suffix, rows[0].icon);
       continue;
     }
-    const group = h('optgroup', { label: entry.prefix });
+    // The rows under one alias all carry that entity's mark, so it
+    // moves up into the group label — a label is not an option, so it
+    // sits outside type-ahead's reach and is free to lead with the mark.
+    const group = h('optgroup', {
+      label: (rows[0].icon ? rows[0].icon + ' ' : '') + entry.prefix,
+    });
     for (const { v, suffix } of rows) appendOption(group, v, suffix);
     sel.appendChild(group);
   }
 
+  if (hasIcon) {
+    sel.classList.add('icon-select');
+    sel.insertBefore(h('button', {}, h('selectedcontent', {})), sel.firstChild);
+  }
   return sel;
 }
 
@@ -4157,7 +4193,7 @@ function stepReads(model, slice) {
       const entity = model['entity-definitions'][b.entity];
       return (entity ? entity.properties : []).map((p) =>
         [JSON.stringify({ alias: b.alias, property: p.name }),
-          entityIcon(model, b.entity) + ' ' + memberWords(b.alias, p.name)]);
+          memberWords(b.alias, p.name), entityIcon(model, b.entity)]);
     }),
   ];
   const entityNames = Object.keys(model['entity-definitions']).sort();
@@ -4165,7 +4201,7 @@ function stepReads(model, slice) {
   // Projections are offered in the same picker as entities, prefixed
   // so the two never look like the same kind of thing.
   const readables = [
-    ...entityNames.map((n) => [n, entityIcon(model, n) + ' ' + readable(n)]),
+    ...entityNames.map((n) => [n, readable(n), entityIcon(model, n)]),
     ...projectionNames.map((n) => ['projection:' + n, readable(n) + ' (projection)']),
   ];
   // Held in `state` rather than in a local: picking a projection has to
@@ -4707,9 +4743,9 @@ function eventFields(model, emission, event) {
         return [[JSON.stringify({ alias: b.alias }), propertyWords(b.alias)]];
       }
       const entity = model['entity-definitions'][b.entity];
-      const icon = entityIcon(model, b.entity) + ' ';
+      const icon = entityIcon(model, b.entity);
       const props = (entity ? entity.properties : []).map((q) =>
-        [JSON.stringify({ alias: b.alias, property: q.name }), icon + memberWords(b.alias, q.name)]);
+        [JSON.stringify({ alias: b.alias, property: q.name }), memberWords(b.alias, q.name), icon]);
       // An alias identified straight off a payload parameter already
       // has that same value in scope under "given · …", so naming it
       // again here would just be a second label on the one thing. One
@@ -4717,7 +4753,7 @@ function eventFields(model, emission, event) {
       // shortcut — that path is not what an event wants to say — so its
       // own identity is worth offering directly.
       const ownId = b.id !== undefined && operandSource(b.id) !== 'parameter'
-        ? [[JSON.stringify(b.id), icon + memberWords(b.alias, 'id')]]
+        ? [[JSON.stringify(b.id), memberWords(b.alias, 'id'), icon]]
         : [];
       return [...props, ...ownId];
     }),
@@ -5140,7 +5176,7 @@ function newPropertyForm(model, { entities, onCreated } = {}) {
   return h('div', { class: 'inline-form' },
     h('div', { class: 'q' }, 'What else should we know, and about what?'),
     h('div', { class: 'adder' },
-      pick(names.map((n) => [n, entityIcon(model, n) + ' ' + readable(n)]),
+      pick(names.map((n) => [n, readable(n), entityIcon(model, n)]),
         draft.entity, (v) => { draft.entity = v; }),
       h('input', {
         type: 'text', placeholder: 'seat count', value: draft.name,
@@ -6540,7 +6576,7 @@ function projectionFields(model, draft, { entityName } = {}) {
   // picker could not show its current choice.
   const eventChoicesFor = (handler) =>
     unhandledEventChoices(eventNames, draft.handlers, handler)
-      .map((n) => [n, eventIcon(model, n) + ' ' + readable(n)]);
+      .map((n) => [n, readable(n), eventIcon(model, n)]);
 
   const declaredHandlerRows = (draft.handlers || []).map((handler, i) => {
     const event = model['event-definitions'][handler.event];
@@ -8584,12 +8620,26 @@ function sessionStepAt(position) {
   return null;
 }
 
-// Drives a command against everything recorded so far. A refusal
-// changes nothing — not the log, not the position.
+// Drives a command against everything recorded so far — the one seam
+// the driver button, an import's recorded steps and the agent tools
+// all go through. A refusal changes nothing — not the log, not the
+// position — and comes back as the ordinary outcome it is; only a
+// run that cannot be evaluated at all throws.
+function sessionDrive(model, commandName, args) {
+  const result = evaluateCommand(model, session.log, commandName, args);
+  if (result.outcome === 'published') {
+    const from = session.log.length;
+    session.log.push(...result.events);
+    session.steps.push({ command: commandName, args, from, to: session.log.length });
+    session.at = null;
+  }
+  return result;
+}
+
 function sessionRun(model, commandName, args) {
   let result;
   try {
-    result = evaluateCommand(model, session.log, commandName, args);
+    result = sessionDrive(model, commandName, args);
   } catch (error) {
     if (error instanceof EvaluationError) return toast(error.message, true);
     throw error;
@@ -8598,10 +8648,6 @@ function sessionRun(model, commandName, args) {
     const rule = result.failedRule;
     return toast(`${readable(commandName)} was refused: ${rule.text}`, true);
   }
-  const from = session.log.length;
-  session.log.push(...result.events);
-  session.steps.push({ command: commandName, args, from, to: session.log.length });
-  session.at = null;
   state.sandboxDraft = null;
   render();
 }
@@ -8668,7 +8714,7 @@ function sandboxDriver(model) {
   const command = model['command-definitions'][draft.command];
   return h('div', { class: 'card sc-editor' },
     h('div', { class: 'row' },
-      pick(names.map((n) => [n, commandIcon(model, n) + ' ' + readable(n)]), draft.command, (v) => {
+      pick(names.map((n) => [n, readable(n), commandIcon(model, n)]), draft.command, (v) => {
         state.sandboxDraft = { command: v, arguments: {} };
         render();
       }),

@@ -51,12 +51,16 @@
   // mutation that *succeeded* may still have left the model with
   // something to say — the demoted validations — and that rides along
   // in the result rather than blocking it.
-  const register = ({ name, description, inputSchema, mutates, needsModel = true, run }) => {
+  // `mutates` marks a tool that edits the model — it repaints and
+  // echoes advisories. `mutatesSandbox` marks one that only moves the
+  // page's sandbox session: it repaints too, but the model is exactly
+  // as it was, so there is nothing advisory to say about it.
+  const register = ({ name, description, inputSchema, mutates, mutatesSandbox, needsModel = true, run }) => {
     context.registerTool({
       name,
       description,
       inputSchema,
-      annotations: mutates ? undefined : { readOnlyHint: true },
+      annotations: mutates || mutatesSandbox ? undefined : { readOnlyHint: true },
       async execute(args) {
         try {
           const model = activeModel();
@@ -65,7 +69,7 @@
           }
           const before = mutates && model ? modelAdvisories(model) : [];
           const { summary, payload } = run(model, args || {});
-          if (mutates && typeof render === 'function') render();
+          if ((mutates || mutatesSandbox) && typeof render === 'function') render();
           toast('Agent · ' + summary);
           const value = payload === undefined ? summary : payload;
           if (mutates) {
@@ -146,7 +150,8 @@
     name: 'evaluate_command',
     description: 'Run a command of the open model against a hypothetical event log and '
       + 'report the outcome: `published` with the events it would record, or `rejected` '
-      + 'with the rule that refused it. Pure — nothing in the playground changes. '
+      + 'with the rule that refused it. Pure — nothing in the playground changes; to '
+      + 'stage a run the person can see and scrub through, use drive_command instead. '
       + '`reads` shows what the boundary resolved to when it decided.',
     inputSchema: {
       type: 'object',
@@ -352,6 +357,73 @@
         summary: `renamed ${memberKind} "${previousName}" of ${humanize(kind)} `
           + `"${definitionName}" to "${newName}"`,
       };
+    },
+  });
+
+  // ---------- the sandbox ----------
+  //
+  // The page's other way to try a model: commands driven against each
+  // other, events piling up on a timeline the person can scrub (see
+  // section D of the page script). These tools drive that same
+  // session, so an agent can stage a worked example to look at
+  // together — the model and its stored log are untouched throughout,
+  // and a reload clears it, like anything else in the sandbox.
+
+  register({
+    name: 'drive_command',
+    description: 'Drive a command in the sandbox: evaluate it against the events already '
+      + 'recorded there and, when it publishes, append its events to the sandbox timeline '
+      + 'the person sees (the Sandbox page in the playground). A rejection is an ordinary '
+      + 'outcome — reported, nothing recorded. The model itself never changes. Drive '
+      + 'commands in sequence to stage a worked example; for a what-if that should leave '
+      + 'no trace, use evaluate_command instead.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        commandName: { type: 'string', description: 'A command defined in the open model.' },
+        arguments: {
+          type: 'object',
+          description: 'A value for each of the command\'s properties, keyed by name.',
+        },
+      },
+      required: ['commandName'],
+    },
+    mutatesSandbox: true,
+    run: (model, { commandName, arguments: args }) => {
+      const outcome = sessionDrive(model, commandName, args || {});
+      return {
+        summary: `drove ${commandName} in the sandbox — ${outcome.outcome === 'published'
+          ? 'published ' + outcome.events.map((e) => e.type).join(', ')
+          : 'rejected: ' + outcome.failedRule.text}`,
+        payload: outcome,
+      };
+    },
+  });
+
+  register({
+    name: 'get_sandbox',
+    description: 'The sandbox as it stands: every command driven so far — with its '
+      + 'arguments and the range of events it appended — and the full event log those '
+      + 'runs have built up, oldest first. Empty when nothing has been driven.',
+    inputSchema: { type: 'object', properties: {} },
+    run: () => ({
+      summary: `read the sandbox — ${session.steps.length} step${session.steps.length === 1 ? '' : 's'}, `
+        + `${session.log.length} event${session.log.length === 1 ? '' : 's'}`,
+      payload: { steps: session.steps, events: session.log },
+    }),
+  });
+
+  register({
+    name: 'reset_sandbox',
+    description: 'Clear the sandbox: every driven command, its events and whatever was '
+      + 'being watched. The model is untouched — this only empties the timeline, ready '
+      + 'for a fresh example.',
+    inputSchema: { type: 'object', properties: {} },
+    mutatesSandbox: true,
+    run: () => {
+      sessionReset();
+      if (typeof state === 'object' && state) state.sandboxDraft = null;
+      return { summary: 'reset the sandbox' };
     },
   });
 })();

@@ -59,6 +59,7 @@ async function call(name, args) {
     const names = [
       'get_model', 'derive_boundary', 'evaluate_command', 'list_problems',
       'start_model', 'remove_definition', 'rename_definition', 'rename_member',
+      'drive_command', 'get_sandbox', 'reset_sandbox',
       ...kinds.map((k) => 'add_' + k), ...kinds.map((k) => 'update_' + k),
     ];
     eq([...registered.keys()].sort(), names.slice().sort(), 'tool names');
@@ -157,6 +158,43 @@ async function call(name, args) {
       commandName: 'DefineCourse', arguments: {},
     });
     eq(isError, true, 'a missing argument cannot be evaluated');
+  });
+
+  await check('drive_command records a published run in the sandbox', async () => {
+    const { value, isError } = await call('drive_command', {
+      commandName: 'DefineCourse', arguments: { courseId: 'sandbox1', capacity: 12 },
+    });
+    eq(isError, false, 'not an error');
+    eq(value.outcome, 'published', 'published');
+    const { value: staged } = await call('get_sandbox');
+    eq(staged.steps.map((s) => s.command), ['DefineCourse'], 'one step recorded');
+    eq(staged.events.map((e) => e.type), ['CourseDefined'], 'and its event in the log');
+  });
+
+  await check('a rejected drive is an answer, and records nothing', async () => {
+    const { value, isError } = await call('drive_command', {
+      commandName: 'DefineCourse', arguments: { courseId: 'sandbox1', capacity: 12 },
+    });
+    eq(isError, false, 'a rejection is an answer, not an error');
+    eq(value.outcome, 'rejected', 'the course already exists in the sandbox');
+    const { value: staged } = await call('get_sandbox');
+    eq(staged.steps.length, 1, 'still the one step');
+  });
+
+  await check('a drive that cannot run maps to an error answer, recording nothing', async () => {
+    const { isError } = await call('drive_command', {
+      commandName: 'DefineCourse', arguments: {},
+    });
+    eq(isError, true, 'a missing argument cannot be evaluated');
+    const { value: staged } = await call('get_sandbox');
+    eq(staged.steps.length, 1, 'still the one step');
+  });
+
+  await check('reset_sandbox empties the timeline, leaving the model alone', async () => {
+    await call('reset_sandbox');
+    const { value: staged } = await call('get_sandbox');
+    eq(staged, { steps: [], events: [] }, 'empty again');
+    eq('DefineCourse' in model()['command-definitions'], true, 'the model is untouched');
   });
 
   await check('an unset optional property evaluates through the seam as the explicit null', async () => {

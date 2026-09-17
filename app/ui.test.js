@@ -1725,21 +1725,45 @@ function build(index) {
 }
 
 // ---------------------------------------------------------------
-// An option is the text the caller built, whole: the mark leads, in
-// every browser, and nothing decides where a mark ends. The splitting
-// this replaces tore modifier sequences ("👮🏻‍♀️") into parts and let
-// a non-emoji mark ("﹟") slip past detection to sit in front alone.
+// A mark reaches `pick` as an option's own third element, never
+// detected out of the text: only the caller knows where a mark ends,
+// so a modifier sequence ("👮🏻‍♀️") stays whole and a non-emoji mark
+// ("﹟") is carried the same way. In the option itself the name leads
+// the text — native type-ahead searches option text and nothing else,
+// so this is what keeps a select keyboard-searchable — and the mark
+// trails in its own span for the `.icon-select` CSS to re-front.
 // ---------------------------------------------------------------
 {
-  const optionsOf = (sel) => findAll(sel, (n) => n.tag === 'option').map(textOf);
+  const spansOf = (option) => (option.children || []).map((s) => [s.className, textOf(s)]);
 
-  check('the mark leads the option text, untouched', () => {
+  check('a passed mark trails the name in its own span, whole', () => {
     const sel = sandbox.pick(
-      [['A', '👮🏻‍♀️ Anordnung'], ['K', '﹟ Course Capacity Changed'], ['C', 'Course']], 'A', () => {});
-    eq(optionsOf(sel), ['👮🏻‍♀️ Anordnung', '﹟ Course Capacity Changed', 'Course'],
-      'exactly as built — emoji cluster, non-emoji mark and bare name alike');
-    eq(findAll(sel, (n) => n.className === 'icon' || n.className === 'label').length, 0,
-      'and no spans left to reorder it');
+      [['A', 'Anordnung', '👮🏻‍♀️'], ['K', 'Course Capacity Changed', '﹟'], ['C', 'Course']],
+      'A', () => {});
+    const options = findAll(sel, (n) => n.tag === 'option');
+    eq(spansOf(options[0]), [['label', 'Anordnung'], ['icon', '👮🏻‍♀️']],
+      'name first for type-ahead, the emoji cluster untouched in the icon span');
+    eq(spansOf(options[1]), [['label', 'Course Capacity Changed'], ['icon', '﹟']],
+      'a non-emoji mark is a mark like any other');
+    eq(textOf(options[2]), 'Course', 'an option without a mark stays plain text');
+    eq(sel.children[0].tag, 'button',
+      'and the customizable-select face is in place for browsers that render it');
+  });
+
+  check('grouped rows lift their shared mark into the group label', () => {
+    const sel = sandbox.pick([
+      ['a', 'course · capacity', '📚'],
+      ['b', 'course · seats', '📚'],
+      ['c', 'student · name', '🧑‍🎓'],
+    ], 'a', () => {});
+    const groups = findAll(sel, (n) => n.tag === 'optgroup');
+    eq(groups.map((g) => g.label), ['📚 course'],
+      'the two-row alias groups under a mark-led label, outside type-ahead');
+    eq(findAll(groups[0], (n) => n.tag === 'option').map(textOf), ['capacity', 'seats'],
+      'its rows stay plain suffixes');
+    const single = findAll(sel, (n) => n.tag === 'option' && textOf(n).includes('student'));
+    eq(spansOf(single[0]), [['label', 'student · name'], ['icon', '🧑‍🎓']],
+      'a group of one stays a full-text option, mark trailing');
   });
 }
 

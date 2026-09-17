@@ -24,7 +24,12 @@ const element = (text, tag) => {
     appendChild(child) { if (child) node.children.push(child); return child; },
     insertBefore(child) { if (child) node.children.unshift(child); return child; },
     get firstChild() { return node.children[0] || null; },
-    removeChild: noop, remove: noop, setAttribute: noop,
+    removeChild: noop, remove: noop,
+    // Recorded, not rendered — so a test can ask what an attribute
+    // (an optgroup's label, a title) was set to. `label` doubles as a
+    // property the way it does on a real element.
+    setAttribute(k, v) { node.attributes[k] = v; if (k === 'label') node.label = v; },
+    attributes: {},
     addEventListener: noop, removeAttribute: noop, focus: noop, blur: noop,
     scrollIntoView: noop, contains: () => false, closest: () => null,
     classList: { add: noop, remove: noop, toggle: noop, contains: () => false },
