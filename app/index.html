@@ -679,7 +679,6 @@
   .sc-mark.s-current { color: var(--entity); border-color: var(--entity); background: var(--entity-soft); }
   .sc-mark.s-drifted { color: var(--event); border-color: var(--event); background: var(--event-soft); }
   .sc-mark.s-broken { color: var(--danger); border-color: var(--danger); background: var(--surface); }
-  .sc-mark.s-held { color: var(--muted); border-color: var(--border-strong); background: var(--surface); }
 
   /* Whether the Then a card shows is a record or a refusal — orange for
      the one, red for the other, the same two colours everything else
@@ -1511,8 +1510,8 @@ function renderImportGate() {
     h('div', { class: 'setting' },
       h('h4', {}, envelope.name || 'Untitled model'),
       h('div', { class: 'why' },
-        'This model includes custom code that will run in your browser as soon as anything '
-        + 'exercises it — an entity property or a projection with a script. Only import it if '
+        'This model includes custom code that will run in your browser as soon as it is '
+        + 'imported — its projections and scenarios evaluate automatically. Only import it if '
         + 'you trust where this came from.')),
     h('div', { class: 'adder', style: 'margin-top:18px' },
       h('button', {
@@ -5576,7 +5575,7 @@ function projectionDetail(model, entry, { owner }) {
   const tab = state.projTab === 'checks' ? 'checks' : 'definition';
   const entries = projectionScenariosFor(model, projection);
   const trouble = entries.filter((e) => {
-    const status = projectionScenarioResult(model, e.key, e.body).status;
+    const status = runProjectionScenario(model, e.body).status;
     return status === 'drifted' || status === 'broken';
   }).length;
 
@@ -7382,23 +7381,23 @@ function stepConsistency(model, slice) {
 
 // ---------- running them ----------
 //
-// A scenario that reads a scripted projection is never run unprompted.
-// The code is authored JavaScript with nothing between it and the page,
-// so a body that loops forever takes the tab with it — and a hang while
-// the page is painting itself leaves no way back in to fix the script
-// that caused it. Everything else runs on every repaint, the way the
-// whole model is already reprojected on every repaint.
+// Every scenario runs on every repaint, the way the whole model is
+// already reprojected on every repaint — scripted reads included.
+// What keeps a script that loops forever from hanging the page on
+// every reload is not a gate here but safe mode: `?safe` on the URL
+// compiles script handlers to throwers (see `setScriptsDisabled` in
+// evaluate.js), so the model loads and the script can be fixed.
 // The placement switch itself sits with the other interface switches
 // near the top of this file. Everything below is what it chooses
 // between.
 
 // The two scenario kinds — command scenarios and projection scenarios
 // — run through one mechanism. What differs is data: which definition
-// kind, which evaluator and script-detector, which body field groups
-// them under a subject, which state slot holds the draft and which
-// set holds the open rows, and how "current" and "drifted" read. That
-// lives here, so the held/run gesture, the staleness rule, the save
-// path and the status ladder exist once and cannot drift apart.
+// kind, which evaluator, which body field groups them under a
+// subject, which state slot holds the draft and which set holds the
+// open rows, and how "current" and "drifted" read. That lives here,
+// so the staleness rule, the save path and the status ladder exist
+// once and cannot drift apart.
 // Writes the explicit null into every unset optional property of one
 // payload — the canonical stored spelling, so "one entry per property,
 // all of them" stays true on disk while the evaluator reads an absent
@@ -7421,7 +7420,6 @@ const SCENARIO_KINDS = {
   'scenario-definition': {
     subjectField: 'command',
     run: (model, body) => runScenario(model, body),
-    touchesScript: (model, body) => scenarioTouchesScript(model, body),
     deriveThen: (model, body) => deriveThen(model, body),
     canonicalize: (model, body) => {
       fillGivenOptionals(model, body);
@@ -7429,53 +7427,28 @@ const SCENARIO_KINDS = {
       body.when.arguments = body.when.arguments || {};
       fillUnsetOptionals(body.when.arguments, (model['command-definitions'][body.command] || {}).properties);
     },
-    heldRuns: new Map(),
     draftKey: 'scenarioDraft',
     openSet: () => state.openScenarios,
     words: {
       current: ['✓', 'Current', 'What this command does is what this scenario says it does'],
       drifted: ['≠', 'Drifted', 'This command behaves differently now than when this was accepted'],
       broken: ['!', 'Broken', 'This could not be run at all — something it names is gone'],
-      held: ['·', 'Not run', 'Reads a script, so it runs only when asked'],
     },
   },
   'projection-scenario-definition': {
     subjectField: 'projection',
     run: (model, body) => runProjectionScenario(model, body),
-    touchesScript: (model, body) => projectionScenarioTouchesScript(model, body),
     deriveThen: (model, body) => deriveProjectionScenarioThen(model, body),
     canonicalize: (model, body) => fillGivenOptionals(model, body),
-    heldRuns: new Map(),
     draftKey: 'projectionScenarioDraft',
     openSet: () => state.openProjectionScenarios,
     words: {
       current: ['✓', 'Current', 'What this projection folds to is what this scenario says it does'],
       drifted: ['≠', 'Drifted', 'It folds differently now than when this was accepted'],
       broken: ['!', 'Broken', 'This could not be run at all — something it names is gone'],
-      held: ['·', 'Not run', 'Reads a script, so it runs only when asked'],
     },
   },
 };
-
-function scenarioResultOf(kind, model, key, body) {
-  const k = SCENARIO_KINDS[kind];
-  if (!k.touchesScript(model, body)) return k.run(model, body);
-  const cached = k.heldRuns.get(key);
-  // The log revision stands in for "nothing has changed since": every
-  // edit bumps it, so a run made before one is a run made against
-  // different definitions.
-  if (cached && cached.at === logRevisionNow()) return cached.result;
-  return {
-    status: 'held',
-    reason: 'This scenario reads a scripted projection, so it runs when you ask and not before.',
-  };
-}
-
-function runHeldScenarioOf(kind, model, key, body) {
-  const k = SCENARIO_KINDS[kind];
-  k.heldRuns.set(key, { at: logRevisionNow(), result: k.run(model, body) });
-  render();
-}
 
 // Every scenario of one kind about one subject — a command's, or a
 // projection's.
@@ -7537,14 +7510,6 @@ function copyScenarioOf(kind, model, afterKey, thenOpen) {
 
 const STATUS_WORDS = SCENARIO_KINDS['scenario-definition'].words;
 
-function scenarioResult(model, key, body) {
-  return scenarioResultOf('scenario-definition', model, key, body);
-}
-
-function runHeldScenario(model, key, body) {
-  runHeldScenarioOf('scenario-definition', model, key, body);
-}
-
 function scenariosOf(model, commandName) {
   return scenariosAbout('scenario-definition', model, commandName);
 }
@@ -7577,14 +7542,11 @@ function reorderByDrag(kind, model, fromKey, toKey, before) {
 // What each of this command's scenarios currently derives — judged
 // against the live definitions, not what a scenario was last saved as: a
 // scenario that used to refuse by one rule can stop covering it the
-// moment something upstream drifts. A held scenario (unrun since its last
-// edit — see `scenarioResult`) has no current derivation to read, so it
-// is judged by what it last recorded instead.
+// moment something upstream drifts.
 function currentScenarioThens(model, commandName) {
-  return scenariosOf(model, commandName).map(({ key, body: scenario }) => {
-    const result = scenarioResult(model, key, scenario);
-    return result.status === 'held' ? scenario.then : result.actual;
-  }).filter(Boolean);
+  return scenariosOf(model, commandName)
+    .map(({ body: scenario }) => runScenario(model, scenario).actual)
+    .filter(Boolean);
 }
 
 // A rule this command declares that no scenario currently demonstrates
@@ -7617,8 +7579,8 @@ function happyPathUntested(model, commandName) {
 function scenarioTrouble(model) {
   const out = [];
   for (const [key, body] of Object.entries(model['scenario-definitions'] || {})) {
-    const result = scenarioResult(model, key, body);
-    if (result.status === 'current' || result.status === 'held') continue;
+    const result = runScenario(model, body);
+    if (result.status === 'current') continue;
     out.push({ key, body, result });
   }
   return out;
@@ -7896,7 +7858,7 @@ function scenarioDropTarget(onDrop) {
 
 function scenarioRow(model, entry) {
   const { key, body } = entry;
-  const result = scenarioResult(model, key, body);
+  const result = runScenario(model, body);
   const [mark, word, why] = STATUS_WORDS[result.status];
   const open = state.openScenarios.has(key);
 
@@ -7912,12 +7874,6 @@ function scenarioRow(model, entry) {
     h('span', { class: 'grow' }),
     result.status !== 'current' ? h('span', { class: 'muted tiny' }, word) : null,
     reveal(
-      result.status === 'held'
-        ? h('button', {
-            class: 'btn tiny', title: 'Run this one now',
-            onclick: () => runHeldScenario(model, key, body),
-          }, 'Run')
-        : null,
       h('span', {
         class: 'sc-grip', title: 'Drag to reorder among this command\'s scenarios',
         draggable: 'true',
@@ -7973,8 +7929,7 @@ function scenarioRow(model, entry) {
               }, 'Accept this'),
               h('span', { class: 'muted tiny' },
                 'Nothing changes in the model — only what this scenario expects of it.')))
-        : outcomeCard(model, result.status === 'held' ? body.then : result.expected,
-            result.status === 'held' ? 'last accepted' : null)));
+        : outcomeCard(model, result.expected, null)));
   return card;
 }
 
@@ -8158,7 +8113,7 @@ function scenarioPanel(model, commandName) {
 function scenarioTabs(model, slice) {
   const entries = scenariosOf(model, slice.name);
   const trouble = entries.filter((e) => {
-    const status = scenarioResult(model, e.key, e.body).status;
+    const status = runScenario(model, e.body).status;
     return status === 'drifted' || status === 'broken';
   }).length;
   const tab = (key, label, extra) => h('button', {
@@ -8196,22 +8151,14 @@ function scenarioTabs(model, slice) {
 // bindings at the moment of asking — so a rebinding moves it without
 // anything being migrated.
 //
-// Everything else — the four statuses, the held/run gesture for a
-// scripted projection, the drift diff, "Accept this" — is the same
-// mechanism Scenarios already has, reused rather than reinvented.
+// Everything else — the statuses, the drift diff, "Accept this" — is
+// the same mechanism Scenarios already has, reused rather than
+// reinvented.
 // ============================================================
 
 // The mechanism lives in SCENARIO_KINDS with the command-scenario
 // machinery; these are its projection-scenario faces.
 const PROJECTION_SCENARIO_STATUS_WORDS = SCENARIO_KINDS['projection-scenario-definition'].words;
-
-function projectionScenarioResult(model, key, body) {
-  return scenarioResultOf('projection-scenario-definition', model, key, body);
-}
-
-function runHeldProjectionScenario(model, key, body) {
-  runHeldScenarioOf('projection-scenario-definition', model, key, body);
-}
 
 // Every scenario about a projection.
 function projectionScenariosFor(model, projectionName) {
@@ -8244,7 +8191,7 @@ function projectionOutcomeCard(value, title) {
 
 function projectionScenarioRow(model, entry) {
   const { key, body } = entry;
-  const result = projectionScenarioResult(model, key, body);
+  const result = runProjectionScenario(model, body);
   const [mark, word, why] = PROJECTION_SCENARIO_STATUS_WORDS[result.status];
   const open = state.openProjectionScenarios.has(key);
 
@@ -8260,12 +8207,6 @@ function projectionScenarioRow(model, entry) {
     h('span', { class: 'grow' }),
     result.status !== 'current' ? h('span', { class: 'muted tiny' }, word) : null,
     reveal(
-      result.status === 'held'
-        ? h('button', {
-            class: 'btn tiny', title: 'Run this one now',
-            onclick: () => runHeldProjectionScenario(model, key, body),
-          }, 'Run')
-        : null,
       h('span', {
         class: 'sc-grip', title: 'Drag to reorder among the scenarios listed here',
         draggable: 'true',
@@ -8323,8 +8264,7 @@ function projectionScenarioRow(model, entry) {
               }, 'Accept this'),
               h('span', { class: 'muted tiny' },
                 'Nothing changes in the model — only what this scenario expects of it.')))
-        : projectionOutcomeCard(result.status === 'held' ? body.then : result.expected,
-            result.status === 'held' ? 'last accepted' : null)));
+        : projectionOutcomeCard(result.expected, null)));
   return card;
 }
 
@@ -8567,10 +8507,6 @@ const session = {
   // arguments}` for one fold — a numbering, a running total, anything
   // no command in view happens to have read.
   pinned: [],
-  // A scripted projection is never folded unprompted, here least of
-  // all: this repaints on every scrub. Keyed by watch and position, so
-  // a run stays answered until one of the two moves.
-  ran: new Map(),
 };
 
 function sessionReset() {
@@ -8578,11 +8514,9 @@ function sessionReset() {
   session.steps = [];
   session.at = null;
   session.pinned = [];
-  session.ran.clear();
 }
 
-// A watch, as a string — its identity for pinning, unpinning and
-// caching a scripted run.
+// A watch, as a string — its identity for pinning and unpinning.
 function watchKey(watch) {
   return watch.kind === 'entity'
     ? 'entity:' + watch.tag
@@ -8663,9 +8597,10 @@ function sessionInstances(model) {
   return [...found].sort();
 }
 
-// One instance, projected over what is visible. A scripted property is
-// read through a binding that supplies its arguments, and there is no
-// binding here — so it says so rather than guessing at them.
+// One instance, projected over what is visible. A scripted property
+// folds the same way a declared one does: the binding's one
+// identifier-typed argument is the instance itself, which is all this
+// card has to give it.
 function sessionInstanceState(model, tag) {
   const [entityName, id] = [tag.slice(0, tag.indexOf(':')), tag.slice(tag.indexOf(':') + 1)];
   const entity = model['entity-definitions'][entityName];
@@ -8675,11 +8610,6 @@ function sessionInstanceState(model, tag) {
     entity: entityName,
     id,
     properties: (entity.properties || []).map((property) => {
-      // A scripted projection is never run unprompted: a body that
-      // loops forever hangs the tab, and this repaints on its own.
-      if (scriptOf(entityPropertyTarget(model, entityName, property.name).projection)) {
-        return { name: property.name, scripted: true };
-      }
       try {
         return {
           name: property.name,
@@ -8818,13 +8748,6 @@ function sandboxTimeline(model) {
 // point of having both open at once — and if the edit means the
 // command would no longer go through, that is worth being told rather
 // than being shown a boundary that no longer applies.
-//
-// This does re-run a scripted projection on every repaint, which is the
-// thing scenarios go out of their way not to do. The difference is what
-// a hang costs. A session is held in memory and nothing else, so a
-// script that loops forever is undone by reloading the page — where a
-// stored scenario running on load would hang again on the way back in,
-// and there would be no way to reach the script to fix it.
 function sandboxDecision(model) {
   const position = sessionPosition();
   const step = sessionStepAt(position);
@@ -8895,11 +8818,6 @@ function projectionWatch(projection, args) {
 }
 
 // One watched projection, folded at the position being looked at.
-//
-// A scripted one is not folded on sight: its body runs unsandboxed on
-// this thread, and this repaints on every scrub. So it says what it is
-// and offers to run, and the answer is kept until the log or the
-// position moves out from under it.
 function projectionWatchCard(model, watch) {
   const projection = model['projection-definitions'][watch.projection];
   // The query this watch actually runs, with the watched values in it —
@@ -8926,21 +8844,7 @@ function projectionWatchCard(model, watch) {
 
   if (!projection) return head(h('div', { class: 'sc-line' }, h('span', { class: 'k' }, '  gone from this model')));
 
-  const key = watchKey(watch) + '@' + sessionPosition();
-  if (scriptOf(projection) && !session.ran.has(key)) {
-    return head(h('div', { class: 'sc-line' },
-      h('span', { class: 'k' }, '  scripted — '),
-      h('button', {
-        class: 'btn tiny',
-        title: 'Run its code against what is visible here',
-        onclick: () => {
-          session.ran.set(key, foldWatch(model, watch));
-          render();
-        },
-      }, 'Run')));
-  }
-
-  const held = session.ran.has(key) ? session.ran.get(key) : foldWatch(model, watch);
+  const held = foldWatch(model, watch);
   return head(h('div', { class: 'sc-line' },
     held.error
       ? h('span', { class: 'k' }, '  — ' + held.error)
@@ -8978,11 +8882,9 @@ function instanceStateCard(model, tag) {
       h('span', { class: 't' }, readable(held.entity) + ' ' + held.id)),
     held.properties.map((property) => h('div', { class: 'sc-line' },
       h('span', { class: 'k' }, '  ' + propertyWords(property.name) + ' '),
-      property.scripted
-        ? h('span', { class: 'k' }, '— scripted, read through a command')
-        : property.error
-          ? h('span', { class: 'k' }, '— ' + property.error)
-          : h('span', {}, JSON.stringify(property.value)))));
+      property.error
+        ? h('span', { class: 'k' }, '— ' + property.error)
+        : h('span', {}, JSON.stringify(property.value)))));
 }
 
 function sandboxWatched(model) {
@@ -9322,6 +9224,15 @@ document.getElementById('rail').addEventListener('click', (e) => {
 // successfully or not — a bad or already-consumed link should not keep
 // re-triggering on every reload.
 async function boot() {
+  // Safe mode — the way back into a model whose script hangs the page
+  // on load, now that scripts run unprompted like everything else.
+  // Nothing in the interface sets it; typing `?safe` into the address
+  // is the gesture, and every script handler then compiles to a
+  // thrower instead of running (see evaluate.js).
+  if (new URLSearchParams(location.search).has('safe')) {
+    setScriptsDisabled(true);
+    toast('Safe mode — scripts are off. Remove "?safe" from the address to run them.', true);
+  }
   render();
   syncTopbarHeight();
   setFooterYear();

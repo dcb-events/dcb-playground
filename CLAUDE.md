@@ -78,9 +78,14 @@ it never works from `file:`.
   must be bumped whenever a stored definition changes shape. The log is the
   whole state; there are no migrations — a fresh key is the honest move. Keep
   the changelog comment above the constant current.
-- **Scripted projections are unsandboxed** and run on the main thread. Never
-  evaluate one unprompted (e.g. automatically at startup) — a hanging script
-  must leave a way back into the app to fix it.
+- **Scripted projections are unsandboxed**, run on the main thread, and run
+  unprompted — everywhere a declared projection would, repaints included.
+  What stands between an untrusted model and that is the import gate (every
+  external load pauses on `envelopeHasScript`; cancelling loads nothing), and
+  the way back into a page a hanging script would otherwise brick on every
+  reload is `?safe` on the URL: `setScriptsDisabled` (evaluate.js) compiles
+  every script handler to a thrower, so the model loads and the script can be
+  fixed. Keep both intact — together they are why unprompted is safe.
 - **Two failure kinds** in evaluation, never conflated: a command whose
   conditions do not hold is *rejected* (an ordinary outcome); a scenario that
   cannot run at all (missing event, missing argument, throwing script) is an
@@ -101,9 +106,9 @@ it never works from `file:`.
   (`onAppend`), so buttons and agent tools are undoable alike. New editing
   features follow the same path; WebMCP tools already do.
 - **Every writer of `EVENT_LOG_KEY` must call `bumpLogRevision()`** —
-  `appendEvents` does, undo/redo do. The projected state, held scenario runs
-  and the problems list are all cached per revision; a writer that skips its
-  bump is the one way those caches go stale.
+  `appendEvents` does, undo/redo do. The projected state and the problems
+  list are cached per revision; a writer that skips its bump is the one way
+  those caches go stale.
 - **`projectState()` returns one shared object per revision** — never mutate
   it. Editors work on a `deepClone` and route changes through a command
   function (`patch` in index.html is the pattern).

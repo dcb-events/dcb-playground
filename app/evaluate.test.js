@@ -45,8 +45,8 @@ function open_(index) {
 
 const {
   evaluateCommand, foldEntityProperty, foldProjection, tagsOfEvent,
-  deriveThen, runScenario, scenarioTouchesScript,
-  deriveProjectionScenarioThen, runProjectionScenario, projectionScenarioTouchesScript,
+  deriveThen, runScenario, setScriptsDisabled,
+  deriveProjectionScenarioThen, runProjectionScenario,
   addDefinition, updateDefinition, removeDefinition, renameDefinition, renameMember, reorderDefinitions,
   createDcbModel,
   generateId, scenarioName, deepClone, evSuccessor,
@@ -65,10 +65,9 @@ function openBlank(name) {
 
 // A fresh model with a scripted projection bound as an entity property
 // — for scripted-content tests (script round-tripping,
-// `envelopeHasScript`, `scenarioTouchesScript`) that need a fixture no
-// PREDEFINED_MODELS example carries. `Tick` reads the script through its
-// boundary; `Ping` publishes the same event without reading it, so both
-// sides of "does this command touch a script" exist.
+// `envelopeHasScript`, safe mode) that need a fixture no
+// PREDEFINED_MODELS example carries. `Tick` reads the script through
+// its boundary.
 //
 // The script scopes itself the way every scripted projection does: an
 // identifier-typed argument interpolated into its tag filter. Binding it
@@ -96,12 +95,6 @@ function openScripted() {
     properties: [{ name: 'counterId', propertyType: 'CounterId', isOptional: false, isList: false }],
     boundary: [{ alias: 'counter', entity: 'Counter', id: { parameterName: 'counterId' } }],
     conditions: [{ leftHandSide: { alias: 'counter', property: 'total' }, predicate: 'lessThan', rightHandSide: 3 }],
-    publishes: [{ name: 'Ticked', parameters: { counterId: { parameterName: 'counterId' } } }],
-  });
-  addDefinition('command-definition', id, 'Ping', {
-    properties: [{ name: 'counterId', propertyType: 'CounterId', isOptional: false, isList: false }],
-    boundary: [{ alias: 'counter', entity: 'Counter', id: { parameterName: 'counterId' } }],
-    conditions: [],
     publishes: [{ name: 'Ticked', parameters: { counterId: { parameterName: 'counterId' } } }],
   });
   return { id, model };
@@ -637,14 +630,6 @@ function drive(model, log, command, args) {
     const stored = model()['scenario-definitions'][key];
     eq(stored.given[0].data.colour, 'blue', 'kept as written');
     eq(runScenario(model(), stored).status, 'current', 'and ignored by the run');
-  });
-
-  check('a scenario knows whether running it would execute a script', () => {
-    const plain = build(0);
-    eq(scenarioTouchesScript(plain, { command: 'SubscribeStudentToCourse' }), false, 'declared only');
-    const scripted = openScripted().model();
-    eq(scenarioTouchesScript(scripted, { command: 'Tick' }), true, 'reads a scripted property');
-    eq(scenarioTouchesScript(scripted, { command: 'Ping' }), false, 'does not');
   });
 
   check('duplicating a scenario is a plain copy under a new id', () => {
@@ -1594,12 +1579,27 @@ check('an import missing the definition arrays is refused, not silently accepted
     stored({ projection: 'CourseNumbering', arguments: { tenantId: 't1' } });
   });
 
-  check('a scenario knows whether running it would execute a script', () => {
-    const { model } = openScripted();
-    eq(projectionScenarioTouchesScript(model(), { projection: 'CounterTotal' }), true,
-      'is about a scripted one');
-    eq(projectionScenarioTouchesScript(build(1), { projection: 'CourseNumbering' }), false,
-      'declared only');
+  check('safe mode compiles a script to a thrower and leaves declared folds alone', () => {
+    // The model as a plain object: `build(1)` below resets the store,
+    // but the fold only ever reads the object it is handed.
+    const scripted = openScripted().model();
+    const log = [{ type: 'Ticked', data: { counterId: 'x1' } }];
+    eq(foldEntityProperty(scripted, log, 'Counter', 'total', 'x1'), 1, 'runs when scripts are on');
+    setScriptsDisabled(true);
+    try {
+      let failure = null;
+      try {
+        foldEntityProperty(scripted, log, 'Counter', 'total', 'x1');
+      } catch (error) {
+        failure = error;
+      }
+      eq((failure || {}).name, 'EvaluationError', 'an evaluation error, not a crash');
+      eq(/safe mode/.test((failure || {}).message), true, 'which says why');
+      eq(foldProjection(build(1), [], 'CourseNumbering', {}), 'c1', 'a declared fold is untouched');
+    } finally {
+      setScriptsDisabled(false);
+    }
+    eq(foldEntityProperty(scripted, log, 'Counter', 'total', 'x1'), 1, 'and back on afterwards');
   });
 
   check('a scenario over a scripted projection folds through its tag filter', () => {

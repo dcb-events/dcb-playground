@@ -24,15 +24,17 @@
 // that `deriveDcb` and validation already hold, and the only copy of
 // the three you could not read, grep or breakpoint.
 //
-// **Scripts run on the main thread, unsandboxed.** The contract is the
-// one the schema states: each body is an expression over `state`,
-// `event` and `args` returning the next state. A body that loops
-// forever hangs the tab, and nothing here can stop it — the whole
-// model lives in `localStorage`, so the cost of that is a reload
-// rather than lost work. What follows from it is a rule the *callers*
-// have to keep: never evaluate a scripted projection unprompted. An
-// automatic run at startup that hangs leaves no way back in to fix the
-// script that hung it.
+// **Scripts run on the main thread, unsandboxed — and unprompted.**
+// The contract is the one the schema states: each body is an
+// expression over `state`, `event` and `args` returning the next
+// state. A scripted projection folds wherever and whenever a declared
+// one would, repaints included. What stands between an untrusted
+// model and that is the import gate (nothing external loads without a
+// confirmation — index.html), and what stands between a hanging
+// script and a page that hangs again on every reload is safe mode:
+// `setScriptsDisabled(true)` — flipped by the interface for a `?safe`
+// URL — compiles every script handler to a thrower instead, so the
+// model still loads and the script can be reached and fixed.
 //
 // **Failure has two kinds and they are not the same.** A command whose
 // conditions do not hold is *rejected* — an ordinary, expected outcome
@@ -204,9 +206,23 @@ function evCompileHandlerOperand(operand) {
   }
 }
 
+// Safe mode. Flipped by the interface for a `?safe` URL (and by tests
+// directly): every script handler compiles to a thrower, so a model
+// whose script hangs the tab on load can still be opened, edited and
+// repaired. Declared handlers are untouched — this is a way back in,
+// not a mode the app runs in.
+let evScriptsDisabled = false;
+function setScriptsDisabled(disabled) { evScriptsDisabled = !!disabled; }
+
 // One handler, as `(state, event, args) => nextState`.
 function evCompileHandler(handler, label) {
   if (handler.code !== undefined) {
+    if (evScriptsDisabled) {
+      return () => fail(
+        `The script for "${handler.event}" on ${label} did not run: scripts are off in safe mode. ` +
+        'Remove "?safe" from the address to run them.'
+      );
+    }
     // The contract the schema states, and the only place in this file
     // where authored JavaScript runs.
     let body;
@@ -933,28 +949,6 @@ function deriveThen(model, scenario) {
     : { outcome: 'rejected', events: [], failedRule: result.failedRule };
 }
 
-// Whether anything this scenario would run is scripted. Callers use it
-// to decide what may run unprompted: a script that loops forever hangs
-// the tab, and a hang while running scenarios on load leaves no way
-// back in to fix the script that caused it.
-function scenarioTouchesScript(model, scenario) {
-  const command = model['command-definitions'][scenario.command];
-  if (!command) return false;
-  for (const item of deriveDcb(model, command).items) {
-    if (item.projection) {
-      if (scriptOf(model['projection-definitions'][item.projection])) return true;
-      continue;
-    }
-    const binding = (command.boundary || []).find((b) => b && b.alias === item.alias);
-    if (!binding) continue;
-    for (const propertyName of item.readProperties) {
-      const { projection } = entityPropertyTarget(model, binding.entity, propertyName);
-      if (scriptOf(projection)) return true;
-    }
-  }
-  return false;
-}
-
 // `{ status, expected, actual, reason }`. `reason` is set only when the
 // scenario is broken, and is the sentence to show instead of a
 // difference.
@@ -1013,14 +1007,6 @@ function deriveProjectionScenarioThen(model, spec) {
     fail(`This scenario is about "${spec.projection}", which this model no longer defines.`);
   }
   return foldProjection(model, scenarioLog(spec), spec.projection, spec.arguments || {});
-}
-
-// Whether anything this projection scenario would run is scripted —
-// the analogue of scenarioTouchesScript, simpler because a projection
-// scenario names what it folds directly rather than reaching it through
-// a command's boundary.
-function projectionScenarioTouchesScript(model, spec) {
-  return !!scriptOf(model['projection-definitions'][(spec || {}).projection]);
 }
 
 // `{ status, expected, actual, reason }` — the projection analogue of
