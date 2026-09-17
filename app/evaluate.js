@@ -261,53 +261,13 @@ function evCompileHandler(handler, label) {
   }
 }
 
-// A handler's `via` names the event property that must be the one
-// carrying this partition's identifier for the handler to apply.
-// Tag matching is by value, whichever property carries it — so an
-// event with two same-typed identifier properties (an assignment
-// naming both the new holder and the one replaced) reaches both
-// partitions, and only `via` can say which handler meant which. A
-// null (unset) `via` property names no partition, so the handler
-// skips itself — exactly what an optional predecessor asks for.
-function evCompileVia(model, target, handler, label) {
-  if (handler.via === undefined) return null;
-  const where = `The handler for "${handler.event}" on ${label}`;
-  const event = model['event-definitions'][handler.event];
-  const property = (((event || {}).properties) || []).find((p) => p && p.name === handler.via);
-  if (!property) {
-    fail(`${where} applies via "${handler.via}", which "${handler.event}" does not carry.`);
-  }
-  const parameters = (target.parameters || []).filter((p) => p && p.propertyType === property.propertyType);
-  if (parameters.length !== 1) {
-    fail(
-      `${where} applies via "${handler.via}" (${property.propertyType}), but ${label} declares ` +
-      `${parameters.length ? 'more than one' : 'no'} ${property.propertyType}-typed parameter to match it against.`
-    );
-  }
-  const parameterName = parameters[0].name;
-  return (event_, args) => {
-    const held = evNormalize((event_.data || {})[handler.via]);
-    if (held === null || held === undefined) return false;
-    const expected = evNormalize((args || {})[parameterName]);
-    return property.isList
-      ? evAsList(held).some((element) => evDeepEqual(element, expected))
-      : evDeepEqual(held, expected);
-  };
-}
-
 // A projection or entity property, compiled once and folded many times.
 function evCompileTarget(model, target, label) {
   const script = scriptOf(target);
-  // One event type may carry several handlers, told apart by `via`;
-  // every one whose guard passes applies, in declaration order.
   const steps = new Map();
   for (const handler of target.handlers || []) {
     if (!handler || !handler.event) continue;
-    if (!steps.has(handler.event)) steps.set(handler.event, []);
-    steps.get(handler.event).push({
-      applies: evCompileVia(model, target, handler, label),
-      step: evCompileHandler(handler, label),
-    });
+    steps.set(handler.event, evCompileHandler(handler, label));
   }
 
   const initial = script
@@ -327,10 +287,8 @@ function evCompileTarget(model, target, label) {
     fold(events, args) {
       let state = initial;
       for (const event of events) {
-        for (const { applies, step } of steps.get(event.type) || []) {
-          if (applies && !applies(event, args || {})) continue;
-          state = step(state, event, args || {});
-        }
+        const step = steps.get(event.type);
+        if (step) state = step(state, event, args || {});
       }
       return evNormalize(expose(state));
     },

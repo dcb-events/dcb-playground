@@ -586,13 +586,8 @@ function propertyUsage(model, entityName, propertyName) {
   const readBy = [];
   for (const [command, body] of Object.entries(model['command-definitions'])) {
     for (const emission of body.publishes || []) {
-      // One event may move this projection through several handlers
-      // told apart by `via` — each is its own answer to "what changes
-      // this", so each is reported.
-      for (const handler of ((projection && projection.handlers) || [])
-        .filter((x) => x && x.event === emission.name)) {
-        changedBy.push({ command, event: emission.name, handler });
-      }
+      const handler = ((projection && projection.handlers) || []).find((x) => x.event === emission.name);
+      if (handler) changedBy.push({ command, event: emission.name, handler });
     }
     const aliases = (body.boundary || []).filter((b) => b.entity === entityName).map((b) => b.alias);
     let reads = false;

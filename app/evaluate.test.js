@@ -1973,19 +1973,17 @@ check('every predefined model ships advisory-clean', () => {
 });
 
 // ---------------------------------------------------------------
-// Discriminated handlers (`via`) and optional bindings.
+// Optional bindings, and one fact per event.
 //
-// One event carrying two same-typed identifier properties reaches both
-// partitions — an assignment names the new holder and the one being
-// replaced — so a handler must be able to say which of the two it
-// means, and a binding derived from a value nothing has set yet must
-// be able to bind nothing instead of erroring.
+// A binding derived from a value nothing has set yet may declare the
+// absence expected and bind nothing instead of erroring. And the
+// reassignment shape — one command moving two instructors' partitions
+// in opposite directions — is expressed by *splitting the event*: an
+// Assigned and an Unassigned each carry one instructor tag, so one
+// plain handler per event type is enough; an event that names two
+// instances of one type is the ambiguity the advisory points out.
 // ---------------------------------------------------------------
 {
-  // The instructor-reassignment shape: a Course holds who instructs
-  // it, an Instructor holds which courses they instruct, and one
-  // Assigned event moves both — appending for the new instructor,
-  // removing for the previous one.
   function openAssignment() {
     const { id, model } = openBlank('Assignment');
     addDefinition('entity-definition', id, 'Course', { properties: [] });
@@ -1994,7 +1992,15 @@ check('every predefined model ships advisory-clean', () => {
       properties: [
         { name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false },
         { name: 'instructorId', propertyType: 'InstructorId', isOptional: false, isList: false },
-        { name: 'previousInstructorId', propertyType: 'InstructorId', isOptional: true, isList: false },
+      ],
+    });
+    // The predecessor's own fact. Its identifier is optional: a first
+    // assignment replaces nobody, and a null identifier carries no tag,
+    // so that event reaches no partition at all — a recorded no-op.
+    addDefinition('event-definition', id, 'Unassigned', {
+      properties: [
+        { name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false },
+        { name: 'instructorId', propertyType: 'InstructorId', isOptional: true, isList: false },
       ],
     });
     addDefinition('projection-definition', id, 'CourseInstructorId', {
@@ -2006,8 +2012,8 @@ check('every predefined model ships advisory-clean', () => {
       parameters: [{ name: 'instructorId', propertyType: 'InstructorId' }],
       valueType: 'CourseId', isList: true, initialValue: [],
       handlers: [
-        { event: 'Assigned', via: 'instructorId', operation: 'append', value: { eventProperty: 'courseId' } },
-        { event: 'Assigned', via: 'previousInstructorId', operation: 'remove', value: { eventProperty: 'courseId' } },
+        { event: 'Assigned', operation: 'append', value: { eventProperty: 'courseId' } },
+        { event: 'Unassigned', operation: 'remove', value: { eventProperty: 'courseId' } },
       ],
     });
     updateDefinition('entity-definition', id, 'Course', {
@@ -2031,60 +2037,57 @@ check('every predefined model ships advisory-clean', () => {
         { leftHandSide: { alias: 'previousInstructor', property: 'instructedCourses' },
           predicate: 'contains', rightHandSide: { parameterName: 'courseId' } },
       ],
-      publishes: [{
-        name: 'Assigned',
-        parameters: {
+      publishes: [
+        { name: 'Assigned', parameters: {
           courseId: { parameterName: 'courseId' },
           instructorId: { parameterName: 'instructorId' },
-          previousInstructorId: { alias: 'course', property: 'instructorId' },
-        },
-      }],
+        } },
+        { name: 'Unassigned', parameters: {
+          courseId: { parameterName: 'courseId' },
+          instructorId: { alias: 'course', property: 'instructorId' },
+        } },
+      ],
     });
     return { id, model };
   }
 
-  const assigned = (courseId, instructorId, previousInstructorId) =>
-    ({ type: 'Assigned', data: { courseId, instructorId, previousInstructorId } });
+  const assigned = (courseId, instructorId) =>
+    ({ type: 'Assigned', data: { courseId, instructorId } });
+  const unassigned = (courseId, instructorId) =>
+    ({ type: 'Unassigned', data: { courseId, instructorId } });
 
-  check('a via handler applies only where its property names the partition', () => {
+  check('the split events move the two partitions in opposite directions', () => {
     const { model } = openAssignment();
-    const log = [assigned('c1', 'i1', null), assigned('c1', 'i2', 'i1')];
+    const log = [assigned('c1', 'i1'), assigned('c1', 'i2'), unassigned('c1', 'i1')];
     eq(foldEntityProperty(model(), log, 'Instructor', 'instructedCourses', 'i2'), ['c1'],
       'the new instructor gains the course');
     eq(foldEntityProperty(model(), log, 'Instructor', 'instructedCourses', 'i1'), [],
-      'the previous instructor loses it — and does not re-gain it off the same event');
+      'the previous instructor loses it');
   });
 
-  check('a null via property matches no partition, so the handler skips', () => {
+  check('an Unassigned with a null identifier carries no tag and reaches nobody', () => {
     const { model } = openAssignment();
-    const log = [assigned('c1', 'i1', null)];
+    const log = [assigned('c1', 'i1'), unassigned('c1', null)];
     eq(foldEntityProperty(model(), log, 'Instructor', 'instructedCourses', 'i1'), ['c1'],
-      'a first assignment appends and removes nothing');
-  });
-
-  check('both via handlers fire, in declaration order, when both match', () => {
-    const { model } = openAssignment();
-    // A self-reassignment: append then remove leaves the one copy.
-    const log = [assigned('c1', 'i1', null), assigned('c1', 'i1', 'i1')];
-    eq(foldEntityProperty(model(), log, 'Instructor', 'instructedCourses', 'i1'), ['c1'],
-      'net one copy');
+      'a first assignment removes nothing from anyone');
   });
 
   check('an optional binding with an unset identifier binds nothing', () => {
     const { model } = openAssignment();
     const result = evaluateCommand(model(), [], 'Assign', { courseId: 'c1', instructorId: 'i1' });
     eq(result.outcome, 'published', 'no error, and the condition over the absent alias held vacuously');
-    eq(result.events[0].data.previousInstructorId, null, 'the unset value publishes as the explicit null');
+    eq(result.events.map((e) => e.type), ['Assigned', 'Unassigned'], 'both facts recorded');
+    eq(result.events[1].data.instructorId, null, 'the no-predecessor case publishes the explicit null');
     eq(result.reads.previousInstructor.absent, true, 'the reads say the alias bound nothing');
     eq(result.reads.previousInstructor.instances, [], 'zero instances, not a phantom');
   });
 
   check('the condition over the bound previous instructor still decides', () => {
     const { model } = openAssignment();
-    const log = [assigned('c1', 'i1', null)];
+    const log = [assigned('c1', 'i1')];
     const result = evaluateCommand(model(), log, 'Assign', { courseId: 'c1', instructorId: 'i2' });
     eq(result.outcome, 'published', 'i1 instructs c1, so the contains condition holds');
-    eq(result.events[0].data.previousInstructorId, 'i1', 'and the event names the predecessor');
+    eq(result.events[1].data.instructorId, 'i1', 'and the Unassigned names the predecessor');
   });
 
   check('without the flag, an unset identifier stays the loud error', () => {
@@ -2102,35 +2105,35 @@ check('every predefined model ships advisory-clean', () => {
     const { id, model } = openAssignment();
     const body = deepClone(model()['command-definitions'].Assign);
     body.conditions = [];
-    body.publishes[0].parameters.previousInstructorId = {
+    // Route the read through the absent alias itself rather than
+    // through `course` — nothing was read at all, so the value is
+    // null, the one spelling of no value.
+    body.publishes[1].parameters.instructorId = {
       alias: 'previousInstructor', property: 'instructedCourses',
     };
     updateDefinition('command-definition', id, 'Assign', body);
-    // The read now goes through the absent alias itself rather than
-    // through `course` — a list-typed property read off nothing is
-    // null, not an empty list, because nothing was read at all.
     const result = evaluateCommand(model(), [], 'Assign', { courseId: 'c1', instructorId: 'i1' });
     eq(result.outcome, 'published', 'published');
-    eq(result.events[0].data.previousInstructorId, null, 'null, the one spelling of no value');
+    eq(result.events[1].data.instructorId, null, 'null, not an empty list and not an error');
   });
 
-  check('a bare handler on a two-tag event is an advisory, and via is checked', () => {
+  check('an event naming two instances of one type is flagged as ambiguous', () => {
     const { id, model } = openAssignment();
-    const advisoriesAfter = (mutate) => {
-      const body = deepClone(model()['projection-definitions'].InstructedCourses);
-      mutate(body);
-      updateDefinition('projection-definition', id, 'InstructedCourses', body);
-      return sandbox.modelAdvisories(model()).map((a) => a.message).join('; ');
-    };
-    eq(advisoriesAfter(() => {}), '', 'the discriminated pair is clean');
-    eq(/apply it via/.test(advisoriesAfter((b) => { delete b.handlers[0].via; })),
-      true, 'a bare handler where two properties carry the type is pointed out');
-    eq(/does not carry/.test(advisoriesAfter((b) => { b.handlers[0].via = 'nope'; })),
-      true, 'a via naming no property of the event is pointed out');
-    eq(/via "instructorId" twice/.test(advisoriesAfter((b) => {
-      b.handlers[0].via = 'instructorId';
-      b.handlers[1].via = 'instructorId';
-    })), true, 'two handlers nothing could tell apart are pointed out');
+    eq(sandbox.modelAdvisories(model()).length, 0, 'the split-event shape is clean');
+    // The unsplit shape: one event carrying both the new holder and
+    // the one replaced — a handler on it fires for both partitions.
+    addDefinition('event-definition', id, 'Reassigned', {
+      properties: [
+        { name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false },
+        { name: 'instructorId', propertyType: 'InstructorId', isOptional: false, isList: false },
+        { name: 'previousInstructorId', propertyType: 'InstructorId', isOptional: true, isList: false },
+      ],
+    });
+    const body = deepClone(model()['projection-definitions'].InstructedCourses);
+    body.handlers.push({ event: 'Reassigned', operation: 'append', value: { eventProperty: 'courseId' } });
+    updateDefinition('projection-definition', id, 'InstructedCourses', body);
+    const found = sandbox.modelAdvisories(model()).map((a) => a.message).join('; ');
+    eq(/Split the event/.test(found), true, 'the advisory names the fix: ' + found);
   });
 
   check('an unflagged binding off a null-starting projection is advised ahead of time', () => {

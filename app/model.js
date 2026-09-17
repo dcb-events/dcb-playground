@@ -74,11 +74,9 @@
 // narrowed a projection scenario back to a single subject: the list of
 // aliased `reads` became one `projection` plus its `arguments`, and the
 // Then asserts that one fold's value rather than a keyed set. v17 let
-// one event type carry several handlers on one projection, told apart
-// by `via` (which event property names the partition), and let a
-// boundary binding declare `isOptional` (an unset identifier binds
-// nothing instead of erroring) — both additive in shape, but a v16
-// reader would silently misfold the handlers, so the key moves.
+// a boundary binding declare `isOptional`: an unset identifier binds
+// nothing instead of erroring. Additive in shape, but a v16 reader
+// errors on the case the flag declares expected, so the key moves.
 const EVENT_LOG_KEY = 'dcb-playground:events:v17';
 
 const DEF_KINDS = [
@@ -1561,10 +1559,7 @@ function validateHandlers(model, label, target, handlers) {
   if (scriptOf(target)) return validateScriptedHandlers(model, label, handlers);
   const allowedOperations = operationsFor(model, target);
   const members = enumMembersFor(model, target.valueType);
-  // One event type may carry several handlers, told apart by `via` —
-  // what is refused is the true duplicate, two handlers nothing could
-  // ever tell apart.
-  const handled = new Set();
+  const handledEvents = new Set();
 
   // `successor` wraps another operand, so recognising an operand means
   // walking into it. It is where numbering lives: a value set to the
@@ -1597,15 +1592,10 @@ function validateHandlers(model, label, target, handlers) {
     if (!handler || !handler.event) {
       throw new DomainError(`A handler on ${label} has no event.`);
     }
-    const key = handler.event + (handler.via === undefined ? '' : ' ' + handler.via);
-    if (handled.has(key)) {
-      throw new DomainError(
-        handler.via === undefined
-          ? `${label} handles "${handler.event}" twice.`
-          : `${label} handles "${handler.event}" via "${handler.via}" twice.`
-      );
+    if (handledEvents.has(handler.event)) {
+      throw new DomainError(`${label} handles "${handler.event}" twice.`);
     }
-    handled.add(key);
+    handledEvents.add(handler.event);
     if (!allowedOperations.includes(handler.operation)) {
       throw new DomainError(
         `Operation "${handler.operation}" is not available for ${label} ` +
@@ -1617,38 +1607,22 @@ function validateHandlers(model, label, target, handlers) {
       throw new DomainError(`${label} handles "${handler.event}", which this model does not define.`);
     }
     const where = `The handler for "${handler.event}" on ${label}`;
-    // `via` narrows the handler to the events where that property is
-    // the one carrying this partition's identifier. It has to name a
-    // property the event carries, and its type has to match exactly one
-    // parameter — with none there is nothing to match against, with two
-    // the match would be a guess.
-    if (handler.via !== undefined) {
-      const property = (event.properties || []).find((p) => p && p.name === handler.via);
-      if (!property) {
-        throw new DomainError(`${where} applies via "${handler.via}", which "${handler.event}" does not carry.`);
-      }
-      const matching = (target.parameters || []).filter((p) => p && p.propertyType === property.propertyType);
-      if (matching.length !== 1) {
+    // Tag matching is by value, whichever property carries it — so an
+    // event holding the partition's identifier type in two properties
+    // (an assignment naming both the new holder and the one replaced)
+    // reaches both partitions, and a handler fires for both: the
+    // instructor being replaced would "gain" the course their
+    // successor was just assigned. A declarative handler cannot tell
+    // the two apart, so the honest fixes live elsewhere.
+    for (const parameter of target.parameters || []) {
+      const carriers = (event.properties || []).filter((p) => p && p.propertyType === parameter.propertyType);
+      if (carriers.length > 1) {
         throw new DomainError(
-          `${where} applies via "${handler.via}" (${property.propertyType}), but ${label} declares ` +
-          `${matching.length ? 'more than one' : 'no'} ${property.propertyType}-typed parameter to match it against.`
+          `${where} fires for every partition "${handler.event}" names: the event carries ` +
+          `${parameter.propertyType} in ${carriers.map((p) => `"${p.name}"`).join(' and ')}, and a ` +
+          `handler cannot tell them apart. Split the event so each records one fact, or script ` +
+          `the projection.`
         );
-      }
-    } else {
-      // The trap `via` exists for: an event carrying the partition's
-      // identifier type in two properties reaches a partition through
-      // either of them, and an undiscriminated handler fires for both —
-      // the instructor being replaced would "gain" the course their
-      // successor was just assigned.
-      for (const parameter of target.parameters || []) {
-        const carriers = (event.properties || []).filter((p) => p && p.propertyType === parameter.propertyType);
-        if (carriers.length > 1) {
-          throw new DomainError(
-            `${where} fires for every partition "${handler.event}" names: the event carries ` +
-            `${parameter.propertyType} in ${carriers.map((p) => `"${p.name}"`).join(' and ')}, and the ` +
-            `handler cannot tell them apart. Say which one it means — apply it via one of those properties.`
-          );
-        }
       }
     }
     // `undefined` is not a value an operand can have — JSON cannot even
@@ -1704,12 +1678,6 @@ function validateScriptedHandlers(model, label, handlers) {
       throw new DomainError(
         `The handler for "${handler.event}" on ${label} is scripted and also declares an ` +
         'operation. A handler is one or the other: the code is the operation.'
-      );
-    }
-    if (handler.via !== undefined) {
-      throw new DomainError(
-        `The handler for "${handler.event}" on ${label} is scripted and also declares "via". ` +
-        'The code already sees the whole event, so which property applies is its own decision.'
       );
     }
   }
@@ -3039,9 +3007,6 @@ const MEMBER_REWRITES = {
       let touched = false;
       for (const handler of body.handlers || []) {
         if (!handler || handler.event !== eventName) continue;
-        // `via` names an event property too, so the rename moves it
-        // with the same gesture that moves every operand reading it.
-        if (handler.via === previous) { handler.via = next; touched = true; }
         rewriteHandlerOperand(handler.value, (operand) => {
           if (operand.eventProperty === previous) { operand.eventProperty = next; touched = true; }
         });
@@ -3401,14 +3366,13 @@ function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
 // (possibly non-empty) lists, and property scenarios became projection
 // scenarios asserting over a list of reads — every one of them a change
 // a 1.x reader would misread rather than ignore.
-// 4.0 added `via` on projection handlers (several handlers per event
-// type, told apart by which event property names the partition) and
-// `isOptional` on boundary bindings (an unset identifier binds nothing
-// instead of erroring). Additive in shape — which is exactly the trap
-// the reader-side rule exists for: a 3.x reader would keep only one of
-// the handlers and fold the wrong value without a word, a misread and
-// not an ignore, so this is a major. The other direction is safe: a
-// 3.x document never says either thing, so this build reads 3.x whole
+// 4.0 added `isOptional` on boundary bindings: an unset identifier
+// binds nothing instead of erroring, conditions over the alias hold
+// vacuously, and reading a property of it yields null. Additive in
+// shape — which is exactly the trap the reader-side rule exists for: a
+// 3.x reader ignores the flag and errors on the very case the author
+// declared expected, so this is a major. The other direction is safe:
+// a 3.x document never says it, so this build reads 3.x whole
 // (`READABLE_MAJORS`) and always writes 4.0.
 const MODEL_VERSION = '4.0';
 const MODEL_SCHEMA_URL = 'https://dcb.events/schemas/model/v4.json';

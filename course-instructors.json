@@ -147,12 +147,6 @@
           "propertyType": "InstructorId",
           "isOptional": false,
           "isList": false
-        },
-        {
-          "name": "previousInstructorId",
-          "propertyType": "InstructorId",
-          "isOptional": true,
-          "isList": false
         }
       ]
     },
@@ -180,6 +174,23 @@
           "name": "courseId",
           "propertyType": "CourseId",
           "isOptional": false,
+          "isList": false
+        }
+      ]
+    },
+    {
+      "name": "InstructorUnassigned",
+      "properties": [
+        {
+          "name": "courseId",
+          "propertyType": "CourseId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "instructorId",
+          "propertyType": "InstructorId",
+          "isOptional": true,
           "isList": false
         }
       ]
@@ -434,15 +445,13 @@
       "handlers": [
         {
           "event": "InstructorAssigned",
-          "via": "instructorId",
           "operation": "append",
           "value": {
             "eventProperty": "courseId"
           }
         },
         {
-          "event": "InstructorAssigned",
-          "via": "previousInstructorId",
+          "event": "InstructorUnassigned",
           "operation": "remove",
           "value": {
             "eventProperty": "courseId"
@@ -849,8 +858,16 @@
             },
             "instructorId": {
               "parameterName": "instructorId"
+            }
+          }
+        },
+        {
+          "name": "InstructorUnassigned",
+          "parameters": {
+            "courseId": {
+              "parameterName": "courseId"
             },
-            "previousInstructorId": {
+            "instructorId": {
               "alias": "course",
               "property": "instructorId"
             }
@@ -1501,8 +1518,14 @@
             "type": "InstructorAssigned",
             "data": {
               "courseId": "c1",
-              "instructorId": "i1",
-              "previousInstructorId": null
+              "instructorId": "i1"
+            }
+          },
+          {
+            "type": "InstructorUnassigned",
+            "data": {
+              "courseId": "c1",
+              "instructorId": null
             }
           }
         ]
@@ -1531,8 +1554,7 @@
           "event": "InstructorAssigned",
           "data": {
             "courseId": "c1",
-            "instructorId": "i1",
-            "previousInstructorId": null
+            "instructorId": "i1"
           }
         }
       ],
@@ -1549,8 +1571,14 @@
             "type": "InstructorAssigned",
             "data": {
               "courseId": "c1",
-              "instructorId": "i2",
-              "previousInstructorId": "i1"
+              "instructorId": "i2"
+            }
+          },
+          {
+            "type": "InstructorUnassigned",
+            "data": {
+              "courseId": "c1",
+              "instructorId": "i1"
             }
           }
         ]
@@ -1721,8 +1749,7 @@
           "event": "InstructorAssigned",
           "data": {
             "courseId": "c1",
-            "instructorId": "i1",
-            "previousInstructorId": null
+            "instructorId": "i1"
           }
         }
       ],
@@ -1766,8 +1793,7 @@
           "event": "InstructorAssigned",
           "data": {
             "courseId": "c1",
-            "instructorId": "i1",
-            "previousInstructorId": null
+            "instructorId": "i1"
           }
         },
         {
@@ -1817,8 +1843,7 @@
           "event": "InstructorAssigned",
           "data": {
             "courseId": "c1",
-            "instructorId": "i1",
-            "previousInstructorId": null
+            "instructorId": "i1"
           }
         }
       ],
@@ -1889,16 +1914,21 @@
           "event": "InstructorAssigned",
           "data": {
             "courseId": "c1",
-            "instructorId": "i1",
-            "previousInstructorId": null
+            "instructorId": "i1"
           }
         },
         {
           "event": "InstructorAssigned",
           "data": {
             "courseId": "c1",
-            "instructorId": "i2",
-            "previousInstructorId": "i1"
+            "instructorId": "i2"
+          }
+        },
+        {
+          "event": "InstructorUnassigned",
+          "data": {
+            "courseId": "c1",
+            "instructorId": "i1"
           }
         }
       ],
@@ -1915,16 +1945,21 @@
           "event": "InstructorAssigned",
           "data": {
             "courseId": "c1",
-            "instructorId": "i1",
-            "previousInstructorId": null
+            "instructorId": "i1"
           }
         },
         {
           "event": "InstructorAssigned",
           "data": {
             "courseId": "c1",
-            "instructorId": "i2",
-            "previousInstructorId": "i1"
+            "instructorId": "i2"
+          }
+        },
+        {
+          "event": "InstructorUnassigned",
+          "data": {
+            "courseId": "c1",
+            "instructorId": "i1"
           }
         }
       ],

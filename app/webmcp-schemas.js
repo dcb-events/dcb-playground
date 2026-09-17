@@ -403,10 +403,10 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         ]
       },
       "handlers": {
-        "description": "The handled event types are the projection's query. One event\ntype may appear on several handlers provided they are told\napart by `via` — see `PropertyHandler` — and every handler\nwhose guard passes applies, in declaration order; without\n`via` an event type appears at most once. Declared handlers\ncarry an operation and an operand; a scripted projection's\ncarry one `code` body each.\n\nAn empty list is legal and means nothing moves this yet — a\nprojection mid-authoring reads as its initial value, which is\na more useful thing to show than a refusal to store it.\n",
+        "description": "At most one handler per event type; the handled types are the\nprojection's query. Declared handlers carry an operation and\nan operand; a scripted projection's carry one `code` body\neach.\n\nOne per type is a real constraint, not a convenience: tag\nmatching is by value, whichever property carries it, so an\nevent holding this projection's identifier type in *two*\nproperties (an assignment naming both the new holder and the\none replaced) reaches both partitions and the handler fires\nfor both. A declarative handler cannot tell the two apart —\nsplit the event so each records one fact, or script the\nprojection; an advisory points at the ambiguity.\n\nAn empty list is legal and means nothing moves this yet — a\nprojection mid-authoring reads as its initial value, which is\na more useful thing to show than a refusal to store it.\n",
         "type": "array",
         "items": {
-          "description": "How one event type advances one projection. Either declared —\n`operation` and `value`, with the vocabulary constrained by the\nprojection's type: `set` for any type, `increment`/`decrement`\nfor integers, `append`/`remove` for lists — or scripted, carrying\n`code` and neither of the other two.\n\n`via` is the discriminator that lets one event type carry several\nhandlers. Tag matching is by value, whichever property carries\nit, so an event with two properties of one identifier type — an\nassignment naming both the new holder and the one replaced —\nreaches both partitions, and an undiscriminated handler fires\nfor both. A handler with `via` applies only where that event\nproperty equals the partition's own identifier; where it is\nnull (unset), the handler skips. Declared handlers only — a\nscripted handler's code already sees the whole event.\n",
+          "description": "How one event type advances one projection. Either declared —\n`operation` and `value`, with the vocabulary constrained by the\nprojection's type: `set` for any type, `increment`/`decrement`\nfor integers, `append`/`remove` for lists — or scripted, carrying\n`code` and neither of the other two.\n",
           "type": "object",
           "additionalProperties": false,
           "properties": {
@@ -419,16 +419,6 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                 "CourseDefined",
                 "StudentSubscribedToCourse"
               ]
-            },
-            "via": {
-              "type": "string",
-              "minLength": 2,
-              "maxLength": 100,
-              "pattern": "^[a-z][A-Za-z0-9]+$",
-              "examples": [
-                "someProperty"
-              ],
-              "description": "The event property that must be the one naming this\npartition for the handler to apply. Must name a property of\n`event` whose type matches exactly one of the projection's\nparameters. Absent means the handler applies to every event\nof its type the query returns — the only legal form before\n4.0, and still the ordinary one.\n"
             },
             "operation": {
               "enum": [

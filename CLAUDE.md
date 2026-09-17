@@ -123,19 +123,18 @@ it never works from `file:`.
   the alias hold vacuously, and reading a property of it yields null.
   The optional-parameter and derived-null advisories say all of this
   ahead of time.
-- **One event type may carry several handlers on one projection**, told
-  apart by `via` — the event property that must name the partition for
-  the handler to apply (a null via property matches nothing). Every
-  matching handler fires, in declaration order. This exists because tag
-  matching is by *value*: an event carrying one identifier type in two
-  properties reaches both partitions, and a bare handler there fires
-  for both — an advisory points at that ambiguity. Renaming an event
-  property rewrites `via` like any operand.
-- **Wire format 4.0 vs 3.x**: `via` and binding `isOptional` are additive
-  in shape but a 3.x reader would silently misfold them, so they are a
-  *major* (see the versioning notes in `dcb-model.schema.json` and
-  `model.js`). The importer reads 3.x and 4.x (`READABLE_MAJORS`) and
-  always writes 4.0.
+- **One handler per event type, per projection** — and it is a real
+  constraint, not a convenience: tag matching is by *value*, whichever
+  property carries it, so an event holding one identifier type in two
+  properties reaches both partitions and a handler fires for both. A
+  declarative handler cannot tell them apart; the fix is to split the
+  event (one fact each) or script the projection, and an advisory
+  points at the ambiguity. The editors offer only unhandled events.
+- **Wire format 4.0 vs 3.x**: binding `isOptional` is additive in shape
+  but a 3.x reader errors where the flag declares the absence expected,
+  so it is a *major* (see the versioning notes in
+  `dcb-model.schema.json` and `model.js`). The importer reads 3.x and
+  4.x (`READABLE_MAJORS`) and always writes 4.0.
 - **Comment style**: file headers and block comments carry design rationale,
   not line-by-line narration. Match that register; keep headers truthful when
   behaviour changes.
