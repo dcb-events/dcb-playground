@@ -52,6 +52,474 @@ function run(fn) {
   }
 }
 
+// ---------- the scripted-handler editor ----------
+//
+// The one part of a model the tooling neither runs nor checks is the
+// scripted handler — but what its code can *see* is still knowable
+// from the definitions. This turns that knowledge into TypeScript: a
+// synthesized preamble typing `state`, `event` and `args` for one
+// handler, fed to Monaco (the app's one vendored dependency, pinned
+// by generate-vendor-monaco.js) so typing gets completion, hover and
+// squiggles that actually understand the model.
+//
+// The synthesis is the tested part, and it is pure. The choices it
+// bakes in:
+//   - every named scalar custom type is *branded* (`string & { __type:
+//     'CourseId' }`), so comparing a CourseId to a StudentId — or to a
+//     bare string literal — draws the no-overlap squiggle;
+//   - enums become literal unions, so `===` completes the legal values;
+//   - `state` is inferred from the initial state but stays *loose*
+//     (`& { [key: string]: any }` at every level), because a script
+//     may legitimately grow keys the initial state never had;
+//   - a dangling type or event reference types as `any` — a defective
+//     model must still load and edit, the same rule as everywhere.
+//
+// Each handler's preamble is its own file-scope (`export {};` makes
+// the model a module), which is what lets several editors with
+// different `event` types coexist in one TypeScript project. The
+// preamble ends by opening a `__check(` call whose parameter is what
+// a handler must return — the projection's value type (through
+// `exposes` when the state is bookkeeping around one exposed field),
+// allowing the initial state's type too when it differs, a null start
+// being how "nullable" is spelled. Brands are widened to their bases
+// there: code *produces* values, and no expression can produce a
+// brand. The call also makes a bare object literal read as an
+// expression, exactly as evaluate.js compiles it. All of it is
+// prepended to the author's code in the editor model and hidden from
+// view; only the code between the wrapper lines is ever written back.
+//
+// Monaco itself loads lazily, the first time a scripted handler row
+// is actually on screen: models without scripts never pay for it, and
+// if the assets are missing the row falls back to the plain textarea
+// it always was. Editor instances are cached across repaints (the
+// page rebuilds its whole DOM per render) and disposed once their row
+// is gone.
+
+// --- the synthesis: model + script + handler → TypeScript preamble ---
+
+function scriptTsKey(name) {
+  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name) ? name : JSON.stringify(name);
+}
+
+// A value's own JSON, safe inside the /** … */ it is hinted in.
+function scriptTsHint(value) {
+  const text = String(JSON.stringify(value)).replace(/\*\//g, '*\\/');
+  return text.length > 32 ? text.slice(0, 31) + '…' : text;
+}
+
+// The TypeScript shape of a JSON value — how `state` is typed from
+// the initial state. Objects stay walkable but loose; arrays type
+// their elements when the elements are uniform primitives and give up
+// honestly (`any[]`) when they are not.
+function scriptTsOfValue(value, indent) {
+  if (value === null || value === undefined) return 'any';
+  if (typeof value === 'string') return 'string';
+  if (typeof value === 'number') return 'number';
+  if (typeof value === 'boolean') return 'boolean';
+  if (Array.isArray(value)) {
+    if (!value.length) return 'any[]';
+    const parts = [...new Set(value.map((element) =>
+      (element !== null && typeof element === 'object') ? 'any' : scriptTsOfValue(element)))];
+    if (parts.includes('any')) return 'any[]';
+    return (parts.length === 1 ? parts[0] : '(' + parts.join(' | ') + ')') + '[]';
+  }
+  const pad = ' '.repeat((indent || 0) + 2);
+  const fields = Object.entries(value).map(([key, inner]) =>
+    pad + '/** starts at ' + scriptTsHint(inner) + ' */\n'
+    + pad + scriptTsKey(key) + ': ' + scriptTsOfValue(inner, (indent || 0) + 2) + ';');
+  if (!fields.length) return '{ [key: string]: any }';
+  return '{\n' + fields.join('\n') + '\n' + ' '.repeat(indent || 0) + '} & { [key: string]: any }';
+}
+
+// What a handler must return, as an inline TypeScript type. This is
+// return position, so brands widen to their bases — an expression can
+// compare branded values it was given, but never mint one — while
+// enums stay literal unions and composites stay structural.
+function scriptReturnType(model, body) {
+  const inline = (typeName, depth) => {
+    if (typeName === 'boolean') return 'boolean';
+    if (typeName === 'integer') return 'number';
+    if (typeName === 'string') return 'string';
+    const definition = (model['custom-type-definitions'] || {})[typeName];
+    if (!definition || depth > 2) return 'any';
+    if (Array.isArray(definition.properties)) {
+      return '{ ' + definition.properties
+        .map((field) => scriptTsKey(field.name) + ': ' + inline(field.propertyType, depth + 1))
+        .join('; ') + ' }';
+    }
+    const members = definition.schema && Array.isArray(definition.schema.enum)
+      && definition.schema.enum.length ? definition.schema.enum : null;
+    if (members) return members.map((member) => JSON.stringify(member)).join(' | ');
+    return ({ string: 'string', integer: 'number', number: 'number', boolean: 'boolean' })[
+      definition.schema && definition.schema.type] || 'string';
+  };
+
+  let value = inline(body.valueType, 0);
+  if (value === 'any') return 'any';
+  if (body.isList) value = (/[|&]/.test(value) ? '(' + value + ')' : value) + '[]';
+  // With `exposes`, the state is bookkeeping around one exposed field:
+  // the value type constrains that field, the rest is the script's own.
+  const script = body.script || {};
+  if (script.exposes) {
+    value = '{ ' + scriptTsKey(script.exposes) + ': ' + value + ' } & { [key: string]: any }';
+  }
+  // Where the projection starts is also a legal thing to hand back — a
+  // null start is how "nullable" is spelled.
+  const initial = script.initialState;
+  const initialTs = initial === null || initial === undefined ? 'null' : scriptTsOfValue(initial);
+  return initialTs === value || initialTs === 'any' ? value : value + ' | ' + initialTs;
+}
+
+// What one scripted handler can see, as the TypeScript preamble its
+// editor model is prefixed with. Ends opening the `__check(` call
+// that both types the returned state and makes the code parse as the
+// expression evaluate.js runs; the widget hides everything up to and
+// including that line.
+function scriptHandlerPreamble(model, body, handler) {
+  const script = body.script || {};
+  const lines = ['export {};'];
+  const aliased = new Map(); // typeName → true once its alias line is out
+
+  const resolveType = (typeName) => {
+    if (typeName === 'boolean') return 'boolean';
+    if (typeName === 'integer') return 'number';
+    if (typeName === 'string') return 'string';
+    const body = (model['custom-type-definitions'] || {})[typeName];
+    if (body === undefined || !/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(typeName)) return 'any';
+    if (aliased.has(typeName)) return aliased.get(typeName) ? typeName : 'any';
+    aliased.set(typeName, false);
+    let rhs;
+    if (Array.isArray(body.properties)) {
+      rhs = '{ ' + body.properties
+        .map((field) => scriptTsKey(field.name) + ': ' + resolveType(field.propertyType))
+        .join('; ') + ' }';
+    } else {
+      const members = body.schema && Array.isArray(body.schema.enum) && body.schema.enum.length
+        ? body.schema.enum : null;
+      if (members) {
+        rhs = members.map((member) => JSON.stringify(member)).join(' | ');
+      } else {
+        const base = ({ string: 'string', integer: 'number', number: 'number', boolean: 'boolean' })[
+          body.schema && body.schema.type] || 'string';
+        rhs = base + ' & { readonly __type: ' + JSON.stringify(typeName) + ' }';
+      }
+    }
+    aliased.set(typeName, true);
+    lines.push('type ' + typeName + ' = ' + rhs + ';');
+    return typeName;
+  };
+
+  const propertyType = (property) => {
+    let type = resolveType(property.propertyType);
+    if (property.isList) type += '[]';
+    if (property.isOptional) type += ' | null';
+    return type;
+  };
+
+  const event = (model['event-definitions'] || {})[handler.event];
+  const eventLines = [];
+  if (event) {
+    eventLines.push('declare const event: {');
+    eventLines.push('  type: ' + JSON.stringify(handler.event) + ';');
+    eventLines.push('  data: {');
+    for (const property of event.properties || []) {
+      if (property.isOptional) {
+        eventLines.push('    /** optional — null when the event carries no value */');
+      } else if (property.propertyType === 'integer') {
+        eventLines.push('    /** integer */');
+      }
+      eventLines.push('    ' + scriptTsKey(property.name) + ': ' + propertyType(property) + ';');
+    }
+    eventLines.push('  };');
+    eventLines.push('};');
+  } else {
+    eventLines.push('declare const event: { type: string; data: { [key: string]: any } };');
+  }
+
+  const argFields = (script.arguments || []).filter((argument) => argument && argument.name);
+  const argsType = argFields.length
+    ? '{ ' + argFields
+        .map((argument) => scriptTsKey(argument.name) + ': ' + resolveType(argument.propertyType))
+        .join('; ') + ' }'
+    : '{}';
+
+  // Alias lines were pushed by the resolve calls above; the declares
+  // come after them, whatever order the resolving happened in.
+  lines.push(...eventLines);
+  lines.push('declare const state: ' + scriptTsOfValue(script.initialState, 0) + ';');
+  lines.push('declare const args: ' + argsType + ';');
+  lines.push('declare function __check(nextState: ' + scriptReturnType(model, body) + '): void;');
+  lines.push('__check(');
+  return lines.join('\n');
+}
+
+// --- the widget: a cached Monaco editor per handler row ---
+
+// Rows are keyed by the draft object being edited (stable across
+// repaints — the page state holds it) plus the handler's index.
+const scriptEditorDraftIds = new WeakMap();
+let scriptEditorDraftSeq = 0;
+function scriptEditorKey(draft, index) {
+  if (!scriptEditorDraftIds.has(draft)) scriptEditorDraftIds.set(draft, ++scriptEditorDraftSeq);
+  return scriptEditorDraftIds.get(draft) + ':' + index;
+}
+
+const SCRIPT_EDITOR_LINE = 17;
+const SCRIPT_EDITOR_MAX_LINES = 16;
+let scriptEditorPhase = 'unloaded'; // → 'loading' → 'ready' | 'failed'
+const scriptEditors = new Map();
+
+function ensureScriptEditorLoaded() {
+  if (scriptEditorPhase !== 'unloaded') return;
+  // No real head to load into (the test stub) — the textarea is it.
+  if (typeof document === 'undefined' || !document.head || !document.head.appendChild) {
+    scriptEditorPhase = 'failed';
+    return;
+  }
+  scriptEditorPhase = 'loading';
+  // The stock worker bootstrap resolves its `vs` root from its own
+  // URL, so everything stays under vendor/monaco.
+  window.MonacoEnvironment = {
+    getWorkerUrl: () => 'vendor/monaco/vs/base/worker/workerMain.js',
+  };
+  const fail = () => {
+    scriptEditorPhase = 'failed';
+    if (typeof render === 'function') render();
+  };
+  document.head.appendChild(h('link', { rel: 'stylesheet', href: 'vendor/monaco/vs/editor/editor.main.css' }));
+  const loader = h('script', { src: 'vendor/monaco/vs/loader.js' });
+  loader.onload = () => {
+    window.require.config({ paths: { vs: 'vendor/monaco/vs' } });
+    window.require(['vs/editor/editor.main'], () => {
+      const ts = monaco.languages.typescript;
+      ts.typescriptDefaults.setCompilerOptions({
+        target: ts.ScriptTarget.ES2020,
+        lib: ['es2020'],
+        allowNonTsExtensions: true,
+        noEmit: true,
+        // Null is a value here (the model's one spelling of "no
+        // value"), so it must be visible to the checker: without this
+        // it is assignable to everything and every `| null` in the
+        // synthesized types would be decoration.
+        strictNullChecks: true,
+      });
+      ts.typescriptDefaults.setDiagnosticsOptions({
+        noSemanticValidation: false,
+        noSyntaxValidation: false,
+        // No unused-variable hints: the preamble declares all three
+        // roots whether or not this handler reads them.
+        noSuggestionDiagnostics: true,
+      });
+      scriptEditorPhase = 'ready';
+      if (typeof render === 'function') render();
+    }, fail);
+  };
+  loader.onerror = fail;
+  document.head.appendChild(loader);
+}
+
+// The element for one handler's code. Before Monaco is up (or if it
+// never comes up) this is the plain textarea it always was; after,
+// the cached editor, its content resynced when the draft changed
+// underneath it (undo, a switched event) but left alone mid-typing.
+function scriptCodeEditor(key, spec) {
+  if (scriptEditorPhase !== 'ready') {
+    ensureScriptEditorLoaded();
+    return h('textarea', {
+      class: 'mono', rows: Math.min(16, String(spec.code || '').split('\n').length + 1),
+      value: spec.code || '',
+      oninput: (e) => spec.onCode(e.target.value),
+    });
+  }
+  let entry = scriptEditors.get(key);
+  if (!entry) {
+    entry = createScriptEditorEntry(key);
+    scriptEditors.set(key, entry);
+  }
+  entry.spec = spec;
+  if (entry.preamble !== spec.preamble
+      || (!entry.editor.hasTextFocus() && entry.currentCode() !== (spec.code || ''))) {
+    entry.load(spec.preamble, spec.code || '');
+  }
+  monaco.editor.setTheme(isDark() ? 'vs-dark' : 'vs');
+  return entry.root;
+}
+
+// Editors whose row a repaint dropped. Called after every paint; an
+// entry whose root did not make it back into the document is done.
+function sweepScriptEditors() {
+  if (scriptEditorPhase !== 'ready') return;
+  for (const [key, entry] of scriptEditors) {
+    if (entry.root.isConnected) continue;
+    entry.editor.dispose();
+    entry.model.dispose();
+    scriptEditors.delete(key);
+  }
+}
+
+function scriptEditorFont() {
+  const declared = getComputedStyle(document.documentElement).getPropertyValue('--mono');
+  return (declared && declared.trim()) || 'ui-monospace, Menlo, Consolas, monospace';
+}
+
+function createScriptEditorEntry(key) {
+  const root = h('div', { class: 'script-editor' });
+  const uri = monaco.Uri.parse('inmemory://scripted/' + encodeURIComponent(key) + '.ts');
+  const model = monaco.editor.getModel(uri) || monaco.editor.createModel('', 'typescript', uri);
+  const editor = monaco.editor.create(root, {
+    model,
+    automaticLayout: true,
+    minimap: { enabled: false },
+    lineNumbers: 'off',
+    glyphMargin: false,
+    folding: false,
+    lineDecorationsWidth: 6,
+    scrollBeyondLastLine: false,
+    overviewRulerLanes: 0,
+    hideCursorInOverviewRuler: true,
+    renderLineHighlight: 'none',
+    wordWrap: 'on',
+    wordBasedSuggestions: 'off',
+    // The suggest widget must escape this small, clipped container.
+    fixedOverflowWidgets: true,
+    contextmenu: false,
+    links: false,
+    fontSize: 11,
+    lineHeight: SCRIPT_EDITOR_LINE,
+    fontFamily: scriptEditorFont(),
+    tabSize: 2,
+    padding: { top: 6, bottom: 6 },
+    scrollbar: { alwaysConsumeMouseWheel: false },
+  });
+  const entry = { root, editor, model, spec: null, preamble: '', headerLines: 0, loading: false };
+
+  // `setHiddenAreas` is internal API, stable here because the vendored
+  // version is pinned. Without it the wrapper lines stay visible —
+  // degraded, not broken.
+  const hideWrapper = (force) => {
+    if (typeof editor.setHiddenAreas !== 'function') return;
+    // setValue drops the view's hidden areas while the widget keeps
+    // its cached ranges, so re-applying identical ranges is swallowed
+    // as a no-op — clear first when the model was reloaded wholesale.
+    if (force) editor.setHiddenAreas([]);
+    const last = model.getLineCount();
+    editor.setHiddenAreas([
+      new monaco.Range(1, 1, entry.headerLines, 1),
+      new monaco.Range(last, 1, last, 1),
+    ]);
+  };
+
+  const resize = () => {
+    const height = Math.min(editor.getContentHeight(), SCRIPT_EDITOR_MAX_LINES * SCRIPT_EDITOR_LINE + 12);
+    root.style.height = Math.max(height, 2 * SCRIPT_EDITOR_LINE + 12) + 'px';
+  };
+  // Content height reflects the hidden areas only once the view has
+  // taken them in, and how soon that is is not promised — measure a
+  // frame after any wholesale load, and once more for good measure.
+  const resizeSoon = () => {
+    requestAnimationFrame(resize);
+    setTimeout(resize, 80);
+  };
+
+  entry.currentCode = () => {
+    const all = model.getLinesContent();
+    return all.slice(entry.headerLines, all.length - 1).join('\n');
+  };
+
+  entry.load = (preamble, code) => {
+    entry.loading = true;
+    entry.preamble = preamble;
+    entry.headerLines = preamble.split('\n').length;
+    model.setValue(preamble + '\n' + code + '\n)');
+    hideWrapper(true);
+    // setValue parks the cursor at 1:1 — inside the hidden preamble,
+    // where typing would land invisibly. Park it at the code's end.
+    const lastCodeLine = model.getLineCount() - 1;
+    editor.setPosition({ lineNumber: lastCodeLine, column: model.getLineMaxColumn(lastCodeLine) });
+    resizeSoon();
+    entry.loading = false;
+  };
+
+  // The wrapper is hidden, not protected — a select-all delete can
+  // still take it out. Whatever survived is the author's code; put the
+  // frame back around it. Asynchronously, and that is load-bearing:
+  // inside the change event the editing command has not yet placed its
+  // final cursor, so a synchronous setValue would be re-cursored into
+  // the hidden preamble and the next keystroke would land there.
+  // What of the author's code survived a wrapper-damaging edit. Walks
+  // the preamble line by line rather than as one prefix: a deletion at
+  // the code's edge merges a code line into the last preamble line,
+  // and a whole-prefix comparison would then mistake the entire
+  // preamble for code and paste it into view.
+  const recoverCode = (text) => {
+    const preambleLines = entry.preamble.split('\n');
+    const lines = text.split('\n');
+    let at = 0;
+    while (at < preambleLines.length && at < lines.length && lines[at] === preambleLines[at]) at += 1;
+    let rest = lines.slice(at);
+    // A merged boundary line: the preamble part survives as a prefix.
+    if (at < preambleLines.length && rest.length && rest[0].startsWith(preambleLines[at])) {
+      rest = [rest[0].slice(preambleLines[at].length), ...rest.slice(1)];
+    }
+    let code = rest.join('\n');
+    if (code.endsWith('\n)')) code = code.slice(0, -2);
+    else if (code.endsWith(')')) code = code.slice(0, -1); // merged into the last code line
+    return code;
+  };
+
+  let restoreQueued = false;
+  const queueRestore = () => {
+    if (restoreQueued) return;
+    restoreQueued = true;
+    setTimeout(() => {
+      restoreQueued = false;
+      const text = model.getValue();
+      const head = entry.preamble + '\n';
+      if (text.startsWith(head) && text.endsWith('\n)')) return; // undo beat us to it
+      entry.load(entry.preamble, recoverCode(text));
+      if (entry.spec) entry.spec.onCode(entry.currentCode());
+      root.dispatchEvent(new Event('input', { bubbles: true }));
+    }, 0);
+  };
+
+  // Better than repairing: the two deletions that would eat into the
+  // wrapper — Backspace at the code's first character, Delete at its
+  // last — simply do nothing, the same as at a document edge.
+  editor.onKeyDown((e) => {
+    if (e.keyCode !== monaco.KeyCode.Backspace && e.keyCode !== monaco.KeyCode.Delete) return;
+    const selection = editor.getSelection();
+    if (!selection || !selection.isEmpty()) return;
+    const at = selection.getStartPosition();
+    const lastCodeLine = model.getLineCount() - 1;
+    const atStart = at.lineNumber === entry.headerLines + 1 && at.column === 1;
+    const atEnd = at.lineNumber === lastCodeLine && at.column === model.getLineMaxColumn(lastCodeLine);
+    if ((e.keyCode === monaco.KeyCode.Backspace && atStart)
+        || (e.keyCode === monaco.KeyCode.Delete && atEnd)) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  });
+
+  model.onDidChangeContent(() => {
+    if (entry.loading) return;
+    const text = model.getValue();
+    const head = entry.preamble + '\n';
+    if (!text.startsWith(head) || !text.endsWith('\n)')) return queueRestore();
+    hideWrapper(); // the last line's number moves as lines come and go
+    if (entry.spec) entry.spec.onCode(entry.currentCode());
+    // A real, bubbling event: the page's delegated autosave must see
+    // an edit here exactly as it would see one typed in a field.
+    root.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  editor.onDidContentSizeChange(resize);
+
+  // Escape belongs to the editor (dismissing its own widgets), never
+  // to the page's close-the-form handler while typing code.
+  root.addEventListener('keydown', (e) => { if (e.key === 'Escape') e.stopPropagation(); });
+
+  return entry;
+}
+
 // ---------- simple / advanced ----------
 //
 // Advanced hides nothing structural — it only decides whether the parts

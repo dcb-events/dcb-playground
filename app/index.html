@@ -3546,6 +3546,7 @@ function render() {
   const focusRank = mainFocusRank();
   paintPage();
   restoreMainFocusRank(focusRank);
+  sweepScriptEditors();
   if (!state.land) return;
   const selector = state.land;
   state.land = null;
@@ -6597,7 +6598,7 @@ function projectionFields(model, draft, { entityName } = {}) {
       }, '×'));
   });
 
-  const scriptedHandlerRows = (draft.handlers || []).map((handler, i) => h('div', { class: 'script-handler' },
+  const scriptedHandlerRows = !draft.script ? [] : (draft.handlers || []).map((handler, i) => h('div', { class: 'script-handler' },
     h('div', { class: 'tiny' },
       pick(eventChoicesFor(handler), handler.event,
         (v) => { handler.event = v; render(); }, '— which event? —'),
@@ -6605,10 +6606,10 @@ function projectionFields(model, draft, { entityName } = {}) {
         class: 'btn tiny danger', title: 'Stop handling this event',
         onclick: () => { draft.handlers.splice(i, 1); render(); },
       }, '×')),
-    h('textarea', {
-      class: 'mono', rows: Math.min(16, String(handler.code || '').split('\n').length + 1),
-      value: handler.code || '',
-      oninput: (e) => { handler.code = e.target.value; },
+    scriptCodeEditor(scriptEditorKey(draft, i), {
+      code: handler.code || '',
+      preamble: scriptHandlerPreamble(model, draft, handler),
+      onCode: (code) => { handler.code = code; },
     })));
 
   const movedBlock = h('div', { style: 'margin-top:8px' },
@@ -8942,8 +8943,14 @@ function watchProjectionAdder(model, names) {
               return toast(`Say which ${readable(slot.propertyType)} to watch it for.`, true);
             }
           }
-          togglePinned(projectionWatch(draft.projection, { ...draft.arguments }));
+          // The draft must close before the pin repaints: `togglePinned`
+          // renders, and a paint with the draft still set leaves this
+          // form on screen holding a stale closure — whose resubmission
+          // carries the old arguments and so *unpins* the watch it just
+          // added.
+          const watch = projectionWatch(draft.projection, { ...draft.arguments });
           state.watchDraft = null;
+          togglePinned(watch);
         },
       }, 'Watch it'),
       h('button', {

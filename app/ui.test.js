@@ -678,6 +678,38 @@ function build(index) {
     sandbox.state.watchDraft = null;
     sandbox.sessionReset();
   });
+
+  check('watching a second partition keeps the first — the form closes with the pin', () => {
+    // Driven the way the browser drives it: `togglePinned` repaints,
+    // and what that paint leaves on screen is what the next click
+    // lands on. A paint with the draft still set used to leave the
+    // submitted form open holding a stale closure — resubmitting it
+    // carried the old arguments and unpinned the watch it had just
+    // added, so watching two partitions ended with neither watched.
+    sandbox.sessionReset();
+    const names = ['CourseCapacity'];
+    const realRender = sandbox.render;
+    let screen = null;
+    sandbox.render = () => { screen = sandbox.watchProjectionAdder(active(), names); };
+    try {
+      const watchAt = (id) => {
+        sandbox.state.watchDraft = { projection: 'CourseCapacity', arguments: {} };
+        sandbox.render();
+        findAll(screen, (n) => n.tag === 'input')[0].onchange({ target: { value: id } });
+        findAll(screen, (n) => n.tag === 'button' && textOf(n) === 'Watch it')[0].onclick();
+      };
+      watchAt('c1');
+      eq(session.pinned.map((w) => w.arguments), [{ courseId: 'c1' }], 'the first is watched');
+      eq(findAll(screen, (n) => n.tag === 'input').length, 0,
+        'and the paint the pin triggered no longer shows the form');
+      watchAt('c2');
+      eq(session.pinned.map((w) => w.arguments), [{ courseId: 'c1' }, { courseId: 'c2' }],
+        'both partitions stay watched');
+    } finally {
+      sandbox.render = realRender;
+      sandbox.sessionReset();
+    }
+  });
 }
 
 // ---------------------------------------------------------------
@@ -1809,6 +1841,106 @@ function build(index) {
     eq(sandbox.unhandledEventChoices(names, handlers, handlers[0]),
       ['Assigned', 'Unassigned', 'Archived'], 'a row keeps its own event on offer');
     eq(sandbox.unhandledEventChoices(names, [], null), names, 'nothing claimed, everything offered');
+  });
+}
+
+// ---------------------------------------------------------------
+// What a scripted handler can see comes from the definitions alone —
+// the handled event's properties, the shape of the initial state, the
+// script's arguments — and is synthesized into the TypeScript preamble
+// the editor prefixes to the code. Pure model → text; the Monaco
+// widget around it is DOM and deliberately not reached here.
+// ---------------------------------------------------------------
+{
+  const { scriptHandlerPreamble } = sandbox;
+  const has = (text, part, why) =>
+    eq(text.includes(part), true, why + ' — expected the preamble to contain: ' + part);
+  const model = {
+    'custom-type-definitions': {
+      CourseId: { schema: { type: 'string' }, isTag: true },
+      StudentStatus: { schema: { type: 'string', enum: ['NonExistent', 'Existent'] } },
+      Money: { properties: [
+        { name: 'amount', propertyType: 'integer' },
+        { name: 'currency', propertyType: 'string' }] },
+    },
+    'event-definitions': {
+      CoursePriced: { properties: [
+        { name: 'courseId', propertyType: 'CourseId' },
+        { name: 'price', propertyType: 'Money' },
+        { name: 'seats', propertyType: 'integer', isList: true },
+        { name: 'note', propertyType: 'string', isOptional: true },
+        { name: 'status', propertyType: 'StudentStatus' },
+        { name: 'ghost', propertyType: 'NoSuchType' }] },
+    },
+  };
+  const body = {
+    valueType: 'integer',
+    script: {
+      initialState: { count: 0, open: true, ids: [], seats: { taken: 0 } },
+      arguments: [{ name: 'courseId', propertyType: 'CourseId' }, { name: '', propertyType: 'CourseId' }],
+    },
+  };
+
+  check('the preamble types exactly what the handler can see', () => {
+    const text = scriptHandlerPreamble(model, body, { event: 'CoursePriced' });
+    eq(text.split('\n')[0], 'export {};', 'each handler is its own file scope');
+    eq(text.split('\n').pop(), '__check(', 'and ends opening the checked expression the code is');
+    has(text, 'type CourseId = string & { readonly __type: "CourseId" };',
+      'identifier types are branded, so mixing two of them squiggles');
+    has(text, 'type StudentStatus = "NonExistent" | "Existent";',
+      'enums are literal unions');
+    has(text, 'type Money = { amount: number; currency: string };',
+      'a composite type carries its fields');
+    has(text, 'type: "CoursePriced";', 'event.type is the name itself');
+    has(text, 'courseId: CourseId;', 'event data is typed from the definition');
+    has(text, 'seats: number[];', 'a list property is a list');
+    has(text, 'note: string | null;', 'an optional property may be the null it publishes');
+    has(text, 'ghost: any;', 'a dangling type reference stays permissive, never fatal');
+    has(text, 'count: number', 'state keys are typed from the initial state');
+    has(text, '/** starts at 0 */', 'and hint where they start');
+    has(text, 'ids: any[]', 'an empty initial list promises nothing about elements');
+    has(text, '[key: string]: any', 'state stays loose — scripts may grow keys');
+    has(text, 'declare const args: { courseId: CourseId };',
+      'arguments are typed, unnamed rows are not offered');
+  });
+
+  check('what a handler returns is held to what the projection holds', () => {
+    const returned = (over) => {
+      const text = scriptHandlerPreamble(model, over, { event: 'CoursePriced' });
+      return text.match(/__check\(nextState: ([\s\S]*?)\): void;/)[1];
+    };
+    eq(returned({ valueType: 'boolean', script: { initialState: false } }), 'boolean',
+      'a boolean projection wants a boolean back');
+    eq(returned({ valueType: 'boolean', script: { initialState: null } }), 'boolean | null',
+      'a null start is how nullable is spelled, so null stays returnable');
+    eq(returned({ valueType: 'CourseId', script: { initialState: null } }), 'string | null',
+      'brands widen in return position — code can compare ids, never mint one');
+    eq(returned({ valueType: 'StudentStatus', script: { initialState: null } }),
+      '"NonExistent" | "Existent" | null', 'an enum wants one of its members back');
+    eq(returned({ valueType: 'StudentStatus', isList: true, script: { initialState: [] } }),
+      '("NonExistent" | "Existent")[] | any[]', 'a list projection wants the list');
+    eq(returned({ valueType: 'NoSuchType', script: { initialState: null } }), 'any',
+      'an unresolved held type checks nothing rather than everything wrongly');
+    eq(returned({ valueType: 'integer', script: { initialState: 7, exposes: 'total' } }),
+      '{ total: number } & { [key: string]: any } | number',
+      'with exposes the value type constrains the exposed field of the record');
+  });
+
+  check('no event chosen (or a renamed-away one) leaves the data open', () => {
+    const text = scriptHandlerPreamble(model, body, { event: '' });
+    has(text, 'declare const event: { type: string; data: { [key: string]: any } };',
+      'unknown event, unknowable data');
+  });
+
+  check('the predefined models synthesize cleanly', () => {
+    const { model: projected } = build(0);
+    const [eventName] = Object.keys(projected()['event-definitions']);
+    const text = scriptHandlerPreamble(projected(),
+      { valueType: 'integer', script: { initialState: null, arguments: [] } },
+      { event: eventName });
+    has(text, 'type: ' + JSON.stringify(eventName) + ';', 'a real event types by name');
+    has(text, 'declare const state: any;', 'a null initial state promises nothing');
+    has(text, '__check(nextState: number | null): void;', 'and stays returnable');
   });
 }
 

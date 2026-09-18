@@ -283,6 +283,16 @@ input.inline:focus { border-bottom-color: var(--command); }
 }
 #toast.err { background: var(--danger); }
 
+/* ---------- the scripted-handler editor ---------- */
+
+/* The Monaco host. The frame matches the textareas around it; the
+   height is set by the widget, tracking the code's own height. */
+.script-editor {
+  border: 1px solid var(--border); border-radius: 5px;
+  overflow: hidden; background: var(--bg);
+}
+.script-editor:focus-within { border-color: var(--command); }
+
 /* ---------- chooser ---------- */
 
 .chooser { max-width: 860px; margin: 0 auto; padding: 34px 20px 60px; }
