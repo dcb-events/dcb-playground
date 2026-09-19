@@ -44,7 +44,7 @@ function open_(index) {
 }
 
 const {
-  evaluateCommand, foldEntityProperty, foldProjection, tagsOfEvent,
+  evaluateCommand, foldEntityProperty, foldProjection, foldProjectionState, tagsOfEvent,
   deriveThen, runScenario, setScriptsDisabled,
   deriveProjectionScenarioThen, runProjectionScenario,
   addDefinition, updateDefinition, removeDefinition, renameDefinition, renameMember, reorderDefinitions,
@@ -1148,6 +1148,115 @@ function drive(model, log, command, args) {
   });
 }
 
+// ---------------------------------------------------------------
+// `equalsAny` — membership over a literal list. One scalar against
+// the listed values, `negate` for "is not one of"; the list is the
+// one operand position that is an array.
+// ---------------------------------------------------------------
+{
+  const { id, model } = openBlank('Membership');
+  addDefinition('event-definition', id, 'Filed', { properties: [] });
+  addDefinition('command-definition', id, 'File', {
+    properties: [{ name: 'status', propertyType: 'string', isOptional: true, isList: false }],
+    boundary: [],
+    conditions: [{
+      leftHandSide: { parameterName: 'status' },
+      predicate: 'equalsAny',
+      rightHandSide: ['Draft', 'Submitted'],
+    }],
+    publishes: [{ name: 'Filed', parameters: {} }],
+  });
+  const membership = (rightHandSide, negate) => [{
+    leftHandSide: { parameterName: 'status' },
+    predicate: 'equalsAny',
+    rightHandSide,
+    ...(negate ? { negate: true } : {}),
+  }];
+  const outcomeWith = (conditions, args) => {
+    const body = deepClone(model()['command-definitions'].File);
+    body.conditions = conditions;
+    updateDefinition('command-definition', id, 'File', body);
+    return evaluateCommand(model(), [], 'File', args);
+  };
+
+  check('equalsAny holds exactly when the value is listed', () => {
+    eq(evaluateCommand(model(), [], 'File', { status: 'Draft' }).outcome, 'published', 'a listed value');
+    const refused = evaluateCommand(model(), [], 'File', { status: 'Archived' });
+    eq(refused.outcome, 'rejected', 'an unlisted one');
+    eq(refused.failedRule.text, 'status equalsAny ["Draft", "Submitted"]', 'named in the rule');
+  });
+
+  check('negate reads as "is not one of"', () => {
+    eq(outcomeWith(membership(['Draft', 'Submitted'], true), { status: 'Archived' }).outcome,
+      'published', 'unlisted passes');
+    eq(outcomeWith(membership(['Draft', 'Submitted'], true), { status: 'Draft' }).outcome,
+      'rejected', 'listed is refused');
+  });
+
+  check('membership is repeated equality, so null is simply not a member', () => {
+    eq(outcomeWith(membership(['Draft', 'Submitted']), {}).outcome, 'rejected',
+      'an unset optional matches nothing');
+    eq(outcomeWith(membership(['Draft', 'Submitted'], true), {}).outcome, 'published',
+      'and so passes the negation');
+  });
+
+  check('an empty list holds for nothing — negated, for everything', () => {
+    eq(outcomeWith(membership([]), { status: 'Draft' }).outcome, 'rejected', 'one of nothing');
+    eq(outcomeWith(membership([], true), { status: 'Draft' }).outcome, 'published', 'not one of nothing');
+  });
+
+  check('enum-member entries unwrap like every other spelling of a member', () => {
+    eq(outcomeWith(membership([{ enumMember: 'Draft' }]), { status: 'Draft' }).outcome,
+      'published', 'the reference matches the value it names');
+  });
+
+  check('the defects an equalsAny list can carry are advisories, not refusals', () => {
+    const flagged = (conditions, pattern) => {
+      const body = deepClone(model()['command-definitions'].File);
+      body.conditions = conditions;
+      updateDefinition('command-definition', id, 'File', body);
+      eq(sandbox.modelAdvisories(model()).some(
+        (a) => a.name === 'File' && pattern.test(a.message)), true, String(pattern));
+    };
+    flagged(membership([]), /lists no values/);
+    flagged(membership(['Draft', null]), /lists null/);
+    flagged(membership([{ parameterName: 'status' }]), /literals or enum members/);
+    flagged([{ leftHandSide: { parameterName: 'status' }, predicate: 'equals', rightHandSide: ['Draft'] }],
+      /only "equalsAny" reads/);
+    flagged(membership('Draft'), /against a literal list\s+of values/);
+  });
+}
+
+// A listed enum member is checked against the enum the left-hand side
+// resolves to, and renaming that member rewrites the entries — the same
+// promises the single-value comparison already keeps.
+{
+  const { id, model } = open_(0);
+  const guardArchiveWith = (rightHandSide) => {
+    const body = deepClone(model()['command-definitions'].ArchiveCourse);
+    body.conditions = [{
+      leftHandSide: { alias: 'course', property: 'status' },
+      predicate: 'equalsAny',
+      rightHandSide,
+    }];
+    updateDefinition('command-definition', id, 'ArchiveCourse', body);
+  };
+
+  check('a listed member the enum does not hold is flagged', () => {
+    guardArchiveWith([{ enumMember: 'Existent' }, { enumMember: 'Retired' }]);
+    eq(sandbox.modelAdvisories(model()).some(
+      (a) => a.name === 'ArchiveCourse' && /"Retired" is not a member of CourseStatus/.test(a.message)
+    ), true, 'the dangling entry is named');
+  });
+
+  check('renaming an enum member rewrites the references inside a list', () => {
+    guardArchiveWith([{ enumMember: 'Existent' }, { enumMember: 'Archived' }]);
+    renameMember('custom-type-definition', id, 'CourseStatus', 'member', 'Existent', 'Active');
+    eq(model()['command-definitions'].ArchiveCourse.conditions[0].rightHandSide,
+      [{ enumMember: 'Active' }, { enumMember: 'Archived' }], 'the listed entry repointed');
+  });
+}
+
 check('an import missing the definition arrays is refused, not silently accepted', () => {
   let threw = false;
   try { importModelFromEnvelope({ name: 'Bad' }); } catch (error) { threw = !!error; }
@@ -1171,8 +1280,8 @@ check('an import missing the definition arrays is refused, not silently accepted
   // from: these two strings are the published contract, and a test that
   // derived them from the source could not notice one of them changing.
   check('an export carries both markers', () => {
-    eq(good.$schema, 'https://dcb.events/schemas/model/v4.json', '$schema');
-    eq(/^4\.\d+$/.test(good.dcbModelVersion), true, 'dcbModelVersion is a 4.x');
+    eq(good.$schema, 'https://dcb.events/schemas/model/v5.json', '$schema');
+    eq(/^5\.\d+$/.test(good.dcbModelVersion), true, 'dcbModelVersion is a 5.x');
   });
 
   check('the definition arrays sit at the top level, under no wrapper', () => {
@@ -1195,17 +1304,19 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('an import from an unknown major is refused', () => {
-    refuses({ ...good, dcbModelVersion: '5.0' }, 'a newer major');
+    refuses({ ...good, dcbModelVersion: '6.0' }, 'a newer major');
     // 2.x is where a projection scenario read several projections under
     // aliases — readable as JSON, and misread as a model.
     refuses({ ...good, dcbModelVersion: '2.0' }, 'the last unreadable major');
     refuses({ ...good, dcbModelVersion: '1.0' }, 'and the one before that');
   });
 
-  check('a 3.x document still imports whole — 4.0 only added what it never says', () => {
-    const older = { ...good, dcbModelVersion: '3.0' };
-    eq(typeof importModelFromEnvelope(older).modelId, 'string', 'imported');
-    eq(envelopeVersionWarning(older), '', 'nothing dropped, so nothing to warn about');
+  check('older readable majors still import whole — 5.0 only added what they never say', () => {
+    for (const raw of ['3.0', '4.1']) {
+      const older = { ...good, dcbModelVersion: raw };
+      eq(typeof importModelFromEnvelope(older).modelId, 'string', `${raw} imported`);
+      eq(envelopeVersionWarning(older), '', 'nothing dropped, so nothing to warn about');
+    }
   });
 
   check('$schema is required but never read, so a repointed one still imports', () => {
@@ -1214,7 +1325,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('a newer minor imports, and says what it is dropping', () => {
-    const newer = { ...good, dcbModelVersion: '4.99' };
+    const newer = { ...good, dcbModelVersion: '5.99' };
     eq(typeof importModelFromEnvelope(newer).modelId, 'string', 'imported');
     eq(envelopeVersionWarning(newer).length > 0, true, 'warned');
     eq(envelopeVersionWarning(good), '', 'nothing to warn about at the current version');
@@ -1329,6 +1440,93 @@ check('an import missing the definition arrays is refused, not silently accepted
     ];
     eq(foldEntityProperty(model(), log, 'Counter', 'total', 'x1'), 2, 'x1 counted its own');
     eq(foldEntityProperty(model(), log, 'Counter', 'total', 'x2'), 1, 'x2 counted its own');
+  });
+
+  check('a scripted projection may hold a record, and a condition reads it whole', () => {
+    const { id, model } = openScripted();
+    addDefinition('custom-type-definition', id, 'CounterStats', {
+      properties: [
+        { name: 'count', propertyType: 'integer' },
+        { name: 'odd', propertyType: 'boolean' },
+      ],
+    });
+    addDefinition('projection-definition', id, 'CounterStatsView', {
+      valueType: 'CounterStats', isList: false,
+      script: {
+        initialState: null,
+        tagFilter: ['CounterId:{counterId}'],
+        arguments: [{ name: 'counterId', propertyType: 'CounterId' }],
+      },
+      handlers: [{
+        event: 'Ticked',
+        code: '{ count: ((state && state.count) || 0) + 1, odd: !(state && state.odd) }',
+      }],
+    });
+    updateDefinition('entity-definition', id, 'Counter', {
+      properties: [
+        { name: 'total', projection: 'CounterTotal' },
+        { name: 'stats', projection: 'CounterStatsView' },
+      ],
+    });
+    addDefinition('command-definition', id, 'TickAtStats', {
+      properties: [
+        { name: 'counterId', propertyType: 'CounterId', isOptional: false, isList: false },
+        { name: 'expected', propertyType: 'CounterStats', isOptional: false, isList: false },
+      ],
+      boundary: [{ alias: 'counter', entity: 'Counter', id: { parameterName: 'counterId' } }],
+      conditions: [{
+        leftHandSide: { alias: 'counter', property: 'stats' },
+        predicate: 'equals',
+        rightHandSide: { parameterName: 'expected' },
+      }],
+      publishes: [{ name: 'Ticked', parameters: { counterId: { parameterName: 'counterId' } } }],
+    });
+
+    const log = [
+      { type: 'Ticked', data: { counterId: 'x1' } },
+      { type: 'Ticked', data: { counterId: 'x2' } },
+      { type: 'Ticked', data: { counterId: 'x1' } },
+    ];
+    eq(foldEntityProperty(model(), log, 'Counter', 'stats', 'x1'),
+      { count: 2, odd: false }, 'the record, whole');
+    const held = evaluateCommand(model(), log, 'TickAtStats',
+      { counterId: 'x1', expected: { count: 2, odd: false } });
+    eq(held.outcome, 'published', 'equality on a record is deep');
+    const refused = evaluateCommand(model(), log, 'TickAtStats',
+      { counterId: 'x1', expected: { count: 2, odd: true } });
+    eq(refused.outcome, 'rejected', 'and one differing field refuses');
+  });
+
+  check('`exposes` trims a reader to one field; the state fold keeps the record', () => {
+    const { id, model } = openScripted();
+    addDefinition('projection-definition', id, 'CounterAudit', {
+      valueType: 'integer', isList: false,
+      script: {
+        initialState: { total: 0, last: null },
+        exposes: 'total',
+        tagFilter: ['CounterId:{counterId}'],
+        arguments: [{ name: 'counterId', propertyType: 'CounterId' }],
+      },
+      handlers: [{
+        event: 'Ticked',
+        code: '{ total: state.total + 1, last: event.data.counterId }',
+      }],
+    });
+
+    const log = [
+      { type: 'Ticked', data: { counterId: 'x1' } },
+      { type: 'Ticked', data: { counterId: 'x2' } },
+      { type: 'Ticked', data: { counterId: 'x1' } },
+    ];
+    eq(foldProjection(model(), log, 'CounterAudit', { counterId: 'x1' }),
+      2, 'a reader sees the exposed field');
+    eq(foldProjectionState(model(), log, 'CounterAudit', { counterId: 'x1' }),
+      { total: 2, last: 'x1' }, 'the state fold keeps the bookkeeping');
+    eq(foldProjectionState(model(), [], 'CounterAudit', { counterId: 'x1' }),
+      { total: 0, last: null }, 'before anything happens, it is the initial state');
+    eq(foldProjectionState(model(), log, 'CounterTotal', { counterId: 'x1' }),
+      foldProjection(model(), log, 'CounterTotal', { counterId: 'x1' }),
+      'without `exposes` the two readings coincide');
   });
 
   advises('Counter', /never interpolates "\{counterId\}"/,

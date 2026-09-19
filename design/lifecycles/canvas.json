@@ -1,0 +1,34 @@
+{
+  "pages": [
+    { "id": "page-1", "name": "Round 2 — Mindmap" },
+    { "id": "page-2", "name": "Round 1 — not chosen" }
+  ],
+  "artboards": [
+    { "file": "Main.dc.html", "x": 0, "y": 0, "w": 920, "h": 900, "title": "Lifecycles", "page": "page-1", "is_interactive": true },
+    { "file": "Lanes.dc.html", "x": 0, "y": 0, "w": 920, "h": 1360, "title": "B · State lanes", "page": "page-2" },
+    { "file": "Grid.dc.html", "x": 1010, "y": 0, "w": 920, "h": 1120, "title": "C · Transition grid", "page": "page-2" }
+  ],
+  "annotations": [
+    {
+      "id": "overview",
+      "x": -470, "y": 0, "w": 400, "page": "page-1",
+      "text": "Lifecycles — round 2, from direction A\n\nDecluttered per feedback: only state nodes and event-labelled transitions stay on the map; the commands allowed at a state moved into a popover, on hover. The Existent popover is pinned open so the board reads without hovering — hover the other states in this preview, it works.\n\nStill fully derived, nothing authored:\n· States — the members of the enum typing the entity's status property.\n· Transitions — the status projection's handlers: the event that sets a member is an arrow into it, starting where the publishing command's status rule allows it.\n· Commands per state — every command binding the entity, placed by its status conditions. The blue badge is the count.\n\nHonesty marks, both derived: a pink dot is a command with no rule over that status (Define course; Unsubscribe on the student side) — it would run at any state. 'Terminal' marks a state nothing leaves (Archived, and Student · Existent).\n\nOpen question: should commands show on hover only, or should the 'Always' toggle be the default? The segmented control top-right mocks that choice."
+    },
+    {
+      "id": "note-main",
+      "x": 0, "y": 960, "w": 400, "page": "page-1",
+      "text": "Layout notes\n\nThe two machines share one canvas — each entity a loose cluster (label top-left, entry dot, curved arrows), mindmap rather than boxed cards. In the real view the nodes would be laid out by a tiny layered pass over the derived machine (the shipped models are linear chains, so a curve per hop is enough); a model with branches gets more rows of the same.\n\nEvent chips carry the publishing command in their tooltip — the 'via Define course' line from round 1 is gone from the surface but not from reach.\n\nIf hover feels too hidden for touch, the same popover can open on tap and the 'Always' mode lays the lists out under the nodes — that mode is roughly round 1's board A."
+    },
+    {
+      "id": "note-b",
+      "x": 0, "y": 1420, "w": 400, "page": "page-2",
+      "text": "B · State lanes (not chosen)\n\nOne lane per status, commands as cards inside it — answers \"what can I do to a course while it is Existent\". Closest to the app's card idiom, no SVG, degrades gracefully at any model size.\n\nTradeoff: transitions are labels on cards, not arrows — the machine's shape never quite appears. Kept for reference; the 'Always' mode of the chosen board covers most of what this one offered."
+    },
+    {
+      "id": "note-c",
+      "x": 1010, "y": 1180, "w": 400, "page": "page-2",
+      "text": "C · Transition grid (not chosen)\n\nCommands × states in the Coupling matrix's idiom. Densest, and the only variant where absences are visible: Define course filling its whole row exposes the missing status guard without prose — same for Unsubscribe on the student side.\n\nStill the natural home if 'unguarded command' ever becomes a real advisory, and the shape that scales best to big models. Parked, not dead."
+    }
+  ],
+  "launch": { "view": "canvas", "page": "page-1" }
+}

@@ -153,6 +153,8 @@ function build(index) {
     eq(initialValueWords([]), 'an empty list', 'an empty list');
     eq(initialValueWords(['a', 'b']), '"a", "b"', 'a list with things in it');
     eq(initialValueWords({ enumMember: 'Existent' }), 'Existent', 'an enum member');
+    eq(initialValueWords({ count: 2, odd: false }), '{"count":2,"odd":false}',
+      'a record a scripted projection folded to, as the JSON it is');
   });
 
   check('a row says what a projection is kept per, as the tag it is', () => {
@@ -216,6 +218,42 @@ function build(index) {
     eq(blankSlotValue(model(), 'integer'), 0, 'an integer');
     eq(blankSlotValue(model(), 'boolean'), false, 'a boolean');
     eq(blankSlotValue(model(), 'CourseStatus'), { enumMember: 'NonExistent' }, 'the first member');
+  });
+}
+
+// ---------------------------------------------------------------
+// A record is a value only code can advance: held by a declared
+// projection it is the advisory that used to be a refusal, held by a
+// scripted one it is legal.
+// ---------------------------------------------------------------
+{
+  const { id, model } = build(4);
+
+  check('a scripted projection may hold a record', () => {
+    const declared = projectionTypeOptions(model()).map(([t]) => t);
+    eq(declared.includes('Item'), false, 'declared, the composite stays off the list');
+    const scripted = projectionTypeOptions(model(), { scripted: true }).map(([t]) => t);
+    eq(scripted.includes('Item'), true, 'scripted, it joins it');
+  });
+
+  check('a declared projection holding a composite is advisory-flagged', () => {
+    addDefinition('projection-definition', id, 'ItemSnapshot', {
+      valueType: 'Item', isList: false, initialValue: null, parameters: [], handlers: [],
+    });
+    eq(sandbox.modelAdvisories(model()).some(
+      (a) => a.name === 'ItemSnapshot' && /composite/.test(a.message)
+    ), true, 'stored, and reported');
+  });
+
+  check('the same composite held by a scripted projection is legal', () => {
+    updateDefinition('projection-definition', id, 'ItemSnapshot', {
+      valueType: 'Item', isList: false,
+      script: { initialState: null, tagFilter: [], arguments: [] },
+      handlers: [],
+    });
+    eq(sandbox.modelAdvisories(model()).some(
+      (a) => a.name === 'ItemSnapshot' && /composite/.test(a.message)
+    ), false, 'nothing left to report');
   });
 }
 
@@ -292,7 +330,7 @@ function build(index) {
     }
   };
 
-  for (const slug of ['course-simple', 'course-sequence', 'course-tenant', 'course-schedules', 'pricing-simple']) {
+  for (const slug of ['course-simple', 'course-sequence', 'course-tenant', 'course-schedules', 'pricing-simple', 'content-decisions']) {
     const file = path.join(APP, 'examples', slug + '.json');
     const envelope = JSON.parse(fs.readFileSync(file, 'utf8'));
 
@@ -1941,6 +1979,176 @@ function build(index) {
     has(text, 'type: ' + JSON.stringify(eventName) + ';', 'a real event types by name');
     has(text, 'declare const state: any;', 'a null initial state promises nothing');
     has(text, '__check(nextState: number | null): void;', 'and stays returnable');
+  });
+}
+
+// ---------------------------------------------------------------
+// Lifecycles — each entity's status derived as a state machine.
+// ---------------------------------------------------------------
+{
+  const { lifecycleMachines } = sandbox;
+  const machineOf = (model, entity) =>
+    lifecycleMachines(model).machines.find((m) => m.entity === entity);
+
+  check('the base course model derives both machines', () => {
+    const { model } = build(0);
+    const course = machineOf(model(), 'Course');
+    eq(course.states, ['NonExistent', 'Existent', 'Archived'], 'the enum is the states');
+    eq(course.initial, 'NonExistent', 'the projection initial value is the entry state');
+    eq(course.terminal, ['Archived'], 'nothing guarded leaves Archived');
+    const defined = course.transitions.find((t) => t.event === 'CourseDefined');
+    eq(defined.target, 'Existent', 'the handler value is the arrow head');
+    eq(defined.sources, ['NonExistent'], 'DefineCourse is guarded, so the arrow starts there');
+    eq(defined.unguarded, false, 'and the base model guards it');
+    const archived = course.transitions.find((t) => t.event === 'CourseArchived');
+    eq(archived.sources, ['Existent'], 'ArchiveCourse requires Existent');
+    eq(course.perState.Existent.map((e) => e.command).sort(), [
+      'ArchiveCourse', 'ChangeCourseCapacity', 'SubscribeStudentToCourse',
+      'UnsubscribeStudentFromCourse',
+    ], 'every command guarded to Existent lands there');
+    eq(course.perState.Existent.find((e) => e.command === 'ArchiveCourse').movesTo,
+      'Archived', 'a command publishing a transitioning event knows where it moves');
+    eq(course.perState.Archived, [], 'nothing is guarded to run at Archived');
+  });
+
+  check('a command with no rule over a status it binds is unguarded', () => {
+    const { model } = build(0);
+    const student = machineOf(model(), 'Student');
+    // Unsubscribe binds the student but only course · status guards it.
+    for (const state of student.states) {
+      const entry = student.perState[state].find((e) => e.command === 'UnsubscribeStudentFromCourse');
+      eq(entry.unguarded, true, 'flagged unguarded at ' + state);
+    }
+    eq(student.perState.Existent.find((e) => e.command === 'SubscribeStudentToCourse').unguarded,
+      false, 'Subscribe carries a student · status rule and is pinned');
+    eq(student.terminal, ['Existent'], 'nothing leaves Existent — a derived dead end');
+  });
+
+  check('an unguarded transition is drawn from the initial state, by convention', () => {
+    const { model } = build(1); // the sequence layer drops DefineCourse's status rule
+    const course = machineOf(model(), 'Course');
+    const defined = course.transitions.find((t) => t.event === 'CourseDefined');
+    eq(defined.unguarded, true, 'the numbering guards it, the status does not');
+    eq(defined.conventional, true, 'so its source is convention, not derivation');
+    eq(defined.sources, ['NonExistent'], 'and the convention is the initial state');
+    eq(course.terminal, ['Archived'], 'the conventional arrow still counts as a way out');
+  });
+
+  check('the pricing model derives across both entities', () => {
+    const { model } = build(4);
+    const order = machineOf(model(), 'Order');
+    eq(order.states, ['NonExistent', 'Existent'], 'OrderStatus is the machine');
+    eq(order.transitions.find((t) => t.event === 'ProductsOrdered').sources, ['NonExistent'],
+      'OrderProducts requires the order not to exist yet');
+    const product = machineOf(model(), 'Product');
+    eq(product.perState.Existent.map((e) => e.command).sort(),
+      ['ChangeProductPrice', 'OrderProducts'],
+      'a fanned-out binding still pins the command by its status rule');
+  });
+
+  check('an entity outside the convention is excluded with its reason', () => {
+    const { id, model } = build(0);
+    addDefinition('entity-definition', id, 'Room', { properties: [] });
+    const { machines, excluded } = lifecycleMachines(model());
+    eq(machines.some((m) => m.entity === 'Room'), false, 'no machine without a status');
+    eq(excluded.find((e) => e.entity === 'Room').reason, 'no-status', 'and the page can say why');
+  });
+
+  check('a negated status rule allows the complement', () => {
+    const { id, model } = build(0);
+    const body = sandbox.deepClone(model()['command-definitions'].ArchiveCourse);
+    body.conditions[0].negate = true;
+    updateDefinition('command-definition', id, 'ArchiveCourse', body);
+    const course = machineOf(model(), 'Course');
+    eq(course.transitions.find((t) => t.event === 'CourseArchived').sources.sort(),
+      ['Archived', 'NonExistent'], 'everything but Existent');
+  });
+
+  // `equalsAny` over the status is a set of allowed states, so the
+  // derivation reads it — but only a list of member references; a bare
+  // literal makes the rule unreadable, not guessed at.
+  const archiveGuardedBy = (rightHandSide, negate) => {
+    const { id, model } = build(0);
+    const body = sandbox.deepClone(model()['command-definitions'].ArchiveCourse);
+    body.conditions = [{
+      leftHandSide: { alias: 'course', property: 'status' },
+      predicate: 'equalsAny',
+      rightHandSide,
+      ...(negate ? { negate: true } : {}),
+    }];
+    updateDefinition('command-definition', id, 'ArchiveCourse', body);
+    return machineOf(model(), 'Course').transitions.find((t) => t.event === 'CourseArchived');
+  };
+
+  check('an equalsAny status rule allows the listed set', () => {
+    const archived = archiveGuardedBy([{ enumMember: 'NonExistent' }, { enumMember: 'Existent' }]);
+    eq(archived.sources, ['NonExistent', 'Existent'], 'allowed exactly where listed');
+    eq(archived.unguarded, false, 'and read as a guard');
+  });
+
+  check('a negated equalsAny allows the complement of the listed set', () => {
+    const archived = archiveGuardedBy([{ enumMember: 'Existent' }], true);
+    eq(archived.sources.sort(), ['Archived', 'NonExistent'], 'everything but the listed');
+  });
+
+  check('a bare literal in the list leaves the command unguarded, not guessed at', () => {
+    const archived = archiveGuardedBy([{ enumMember: 'Existent' }, 'Archived']);
+    eq(archived.unguarded, true, 'unreadable, so unguarded');
+  });
+
+  check('an empty list reads as "allowed nowhere", which is what it evaluates to', () => {
+    const archived = archiveGuardedBy([]);
+    eq(archived.sources, [], 'no state allows it');
+    eq(archived.unguarded, false, 'a read guard, not a missing one');
+  });
+}
+
+// ---------------------------------------------------------------
+// `equalsAny` — the membership predicate across the pure UI layer.
+// ---------------------------------------------------------------
+{
+  check('equalsAny is offered wherever equals is, and only for scalars', () => {
+    eq(sandbox.predicatesForType({ propertyType: 'CourseStatus', isList: false }),
+      ['equals', 'equalsAny'], 'identity types get both identity predicates');
+    eq(sandbox.predicatesForType({ propertyType: 'string', isList: true }).includes('equalsAny'),
+      false, 'a list left-hand side is not offered membership');
+    eq(sandbox.rightHandExpectedType('equalsAny', { propertyType: 'CourseStatus', isList: false }),
+      { propertyType: 'CourseStatus', isList: true }, 'the right side is a list of the left type');
+  });
+
+  check('an equalsAny rule reads as "is one of"', () => {
+    const condition = {
+      leftHandSide: { alias: 'course', property: 'status' },
+      predicate: 'equalsAny',
+      rightHandSide: [{ enumMember: 'Existent' }, 'x'],
+    };
+    eq(sandbox.conditionParts(condition).verb, 'is one of', 'the verb');
+    eq(sandbox.conditionParts(condition).right, 'Existent, "x"', 'the entries, said in order');
+    eq(sandbox.conditionParts({ ...condition, negate: true }).verb, 'is not one of', 'negated');
+  });
+
+  check('a touched, complete equalsAny rule is added by leaving it', () => {
+    const { id, model } = build(0);
+    store.set('dcb-playground:model', id);
+    sandbox.state.slice = 'DefineCourse';
+    sandbox.state.adder = 'rule';
+    const count = model()['command-definitions'].DefineCourse.conditions.length;
+    sandbox.state.ruleDraft = {
+      predicate: 'equalsAny', negate: false,
+      left: JSON.stringify({ alias: 'course', property: 'status' }),
+      right: '',
+      rightEntries: [{ enumMember: 'NonExistent' }, { enumMember: 'Archived' }],
+      touched: true,
+    };
+    sandbox.ruleEditor(model(), sandbox.sliceOf(model(), 'DefineCourse'), null);
+    sandbox.closeForms();
+    const conditions = model()['command-definitions'].DefineCourse.conditions;
+    eq(conditions.length, count + 1, 'the rule landed without its button');
+    eq(conditions[conditions.length - 1], {
+      leftHandSide: { alias: 'course', property: 'status' },
+      predicate: 'equalsAny',
+      rightHandSide: [{ enumMember: 'NonExistent' }, { enumMember: 'Archived' }],
+    }, 'the checked members, as the list');
   });
 }
 

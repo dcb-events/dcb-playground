@@ -227,7 +227,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         "default": []
       },
       "valueType": {
-        "description": "The type of the value held. Never a composite value type:\nthe operations that advance a projection act on a single\nvalue, and a record of fields has none. A script that needs\nto accumulate a record keeps it private and names the one\nfield a reader sees in `script.exposes`, which is of this\ntype like anything else.\n",
+        "description": "The type of the value held.\n\nA composite value type is legal only on a *scripted*\nprojection (4.1): the operations that advance a declared one\nact on a single value, and a record of fields has none — but\ncode has no such limit, so a script may hold the record\noutright, and a condition against it gets identity predicates\nonly, as against any composite. A script that keeps a record\nas private bookkeeping instead names the one field a reader\nsees in `script.exposes`, which is of this type like anything\nelse.\n",
         "type": "string",
         "anyOf": [
           {
@@ -1163,7 +1163,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
               ]
             },
             {
-              "description": "`contains` asks whether a list holds one value; `containsAny` asks\nwhether two lists intersect, which is how \"these two schedules\nclash\" is stated. Both sides of `containsAny` must be lists of the\nsame type, and `negate` turns it into \"must not overlap\".\n",
+              "description": "`contains` asks whether a list holds one value; `containsAny` asks\nwhether two lists intersect, which is how \"these two schedules\nclash\" is stated. Both sides of `containsAny` must be lists of the\nsame type, and `negate` turns it into \"must not overlap\".\n\n`equalsAny` asks whether a scalar equals one entry of a literal\nlist — \"status is one of Draft, Submitted\" — and `negate` turns it\ninto \"is not one of\". It is the one predicate whose\n`rightHandSide` is a `ValueList` rather than a `CommandOperand`,\nand the only predicate a `ValueList` means anything under;\nmembership against *data* stays `contains`/`containsAny` over a\nlist-typed source. An empty list holds for nothing (negated: for\neverything).\n",
               "type": "object",
               "additionalProperties": false,
               "properties": {
@@ -1258,6 +1258,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                 "predicate": {
                   "enum": [
                     "equals",
+                    "equalsAny",
                     "countEquals",
                     "countLessThan",
                     "countGreaterThan",
@@ -1272,90 +1273,127 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                   ]
                 },
                 "rightHandSide": {
-                  "description": "Where a value comes from inside a command — its boundary, its\nconditions and its event emissions.\n",
                   "oneOf": [
                     {
-                      "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it —\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n",
-                      "type": "object",
-                      "additionalProperties": false,
-                      "properties": {
-                        "parameterName": {
-                          "type": "string",
-                          "minLength": 2,
-                          "maxLength": 100,
-                          "pattern": "^[a-z][A-Za-z0-9]+$",
-                          "examples": [
-                            "someProperty"
+                      "description": "Where a value comes from inside a command — its boundary, its\nconditions and its event emissions.\n",
+                      "oneOf": [
+                        {
+                          "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it —\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n",
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "parameterName": {
+                              "type": "string",
+                              "minLength": 2,
+                              "maxLength": 100,
+                              "pattern": "^[a-z][A-Za-z0-9]+$",
+                              "examples": [
+                                "someProperty"
+                              ]
+                            },
+                            "property": {
+                              "type": "string",
+                              "minLength": 2,
+                              "maxLength": 100,
+                              "pattern": "^[a-z][A-Za-z0-9]+$",
+                              "examples": [
+                                "someProperty"
+                              ],
+                              "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
+                            }
+                          },
+                          "required": [
+                            "parameterName"
                           ]
                         },
-                        "property": {
-                          "type": "string",
-                          "minLength": 2,
-                          "maxLength": 100,
-                          "pattern": "^[a-z][A-Za-z0-9]+$",
-                          "examples": [
-                            "someProperty"
-                          ],
-                          "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
-                        }
-                      },
-                      "required": [
-                        "parameterName"
-                      ]
-                    },
-                    {
-                      "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` is a projected property of\na bound entity instance. `{alias: courseNumbering}` — no\n`property` — is a bound projection's value.\n\n`property` is therefore **required on an entity alias** and\n**rejected on a projection alias**: an entity has many values and\nno single one to mean, a projection has exactly one and no name\nfor it. That is the same shape of rule `excluding` and\n`arguments` already follow — a field that means nothing in its\nposition is a mistake, not a no-op.\n",
-                      "type": "object",
-                      "additionalProperties": false,
-                      "properties": {
-                        "alias": {
-                          "type": "string",
-                          "minLength": 2,
-                          "maxLength": 100,
-                          "pattern": "^[a-z][A-Za-z0-9]*$",
-                          "examples": [
-                            "course",
-                            "sourceCourse"
+                        {
+                          "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` is a projected property of\na bound entity instance. `{alias: courseNumbering}` — no\n`property` — is a bound projection's value.\n\n`property` is therefore **required on an entity alias** and\n**rejected on a projection alias**: an entity has many values and\nno single one to mean, a projection has exactly one and no name\nfor it. That is the same shape of rule `excluding` and\n`arguments` already follow — a field that means nothing in its\nposition is a mistake, not a no-op.\n",
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "alias": {
+                              "type": "string",
+                              "minLength": 2,
+                              "maxLength": 100,
+                              "pattern": "^[a-z][A-Za-z0-9]*$",
+                              "examples": [
+                                "course",
+                                "sourceCourse"
+                              ]
+                            },
+                            "property": {
+                              "type": "string",
+                              "minLength": 2,
+                              "maxLength": 100,
+                              "pattern": "^[a-z][A-Za-z0-9]+$",
+                              "examples": [
+                                "someProperty"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "alias"
                           ]
                         },
-                        "property": {
-                          "type": "string",
-                          "minLength": 2,
-                          "maxLength": 100,
-                          "pattern": "^[a-z][A-Za-z0-9]+$",
-                          "examples": [
-                            "someProperty"
+                        {
+                          "description": "A member of an enum type — a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains — a plain string is by far the\ncommon case, but nothing here requires it.\n",
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "enumMember": {
+                              "type": [
+                                "string",
+                                "number",
+                                "boolean"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "enumMember"
                           ]
-                        }
-                      },
-                      "required": [
-                        "alias"
-                      ]
-                    },
-                    {
-                      "description": "A member of an enum type — a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains — a plain string is by far the\ncommon case, but nothing here requires it.\n",
-                      "type": "object",
-                      "additionalProperties": false,
-                      "properties": {
-                        "enumMember": {
+                        },
+                        {
+                          "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
                           "type": [
                             "string",
                             "number",
                             "boolean"
                           ]
                         }
-                      },
-                      "required": [
-                        "enumMember"
                       ]
                     },
                     {
-                      "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
-                      "type": [
-                        "string",
-                        "number",
-                        "boolean"
-                      ]
+                      "description": "A literal list of values to compare against — the right-hand side\nof `equalsAny`, and besides `InitialValue` the one place this\ndocument spells a list out. Entries are literals or renameable\nenum-member references, never parameter or alias references\n(membership against data is `contains`/`containsAny` over a\nlist-typed source) and never `null` — \"unset or one of these\" is\ntwo conditions, not a null entry.\n",
+                      "type": "array",
+                      "items": {
+                        "oneOf": [
+                          {
+                            "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
+                            "type": [
+                              "string",
+                              "number",
+                              "boolean"
+                            ]
+                          },
+                          {
+                            "description": "A member of an enum type — a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains — a plain string is by far the\ncommon case, but nothing here requires it.\n",
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "enumMember": {
+                                "type": [
+                                  "string",
+                                  "number",
+                                  "boolean"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "enumMember"
+                            ]
+                          }
+                        ]
+                      }
                     }
                   ]
                 },

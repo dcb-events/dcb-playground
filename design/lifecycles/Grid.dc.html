@@ -1,0 +1,241 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; }
+    .app {
+      --bg:#f8fafc; --surface:#ffffff; --border:#e2e8f0; --border-strong:#cbd5e1;
+      --text:#0f172a; --muted:#64748b;
+      --command:#2563eb; --command-soft:#eff6ff; --command-bd:#bfdbfe; --command-tx:#1e40af;
+      --event:#f97316; --event-soft:#fff7ed; --event-bd:#fed7aa; --event-tx:#9a3412;
+      --entity:#16a34a; --entity-soft:#f0fdf4; --entity-bd:#bbf7d0; --entity-tx:#166534;
+      --rule:#c026d3; --rule-soft:#fdf4ff; --rule-bd:#f5d0fe; --rule-tx:#86198f;
+      --type:#6b7280; --type-soft:#f9fafb;
+      --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+      font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: var(--text); background: var(--bg);
+      min-height: 100vh; padding-bottom: 40px;
+    }
+    a { color: #2563eb; } a:hover { color: #1d4ed8; }
+
+    .boardhead {
+      display: flex; align-items: baseline; gap: 12px;
+      padding: 18px 30px 14px; border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .boardhead .kicker {
+      font-size: 11px; text-transform: uppercase; letter-spacing: .07em;
+      color: var(--entity); font-weight: 700;
+    }
+    .boardhead .nm { font-size: 17px; font-weight: 600; }
+    .boardhead .ch { font-size: 12px; color: var(--muted); }
+    .boardhead .grow { flex: 1; }
+
+    .slice { padding: 22px 30px 0; }
+    .phead { margin-bottom: 16px; }
+    .phead .name { font-size: 20px; font-weight: 600; }
+    .muted { color: var(--muted); }
+    .small { font-size: 12px; }
+    .tiny { font-size: 11px; }
+    h4 {
+      margin: 0; font-size: 11px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: .07em; color: var(--muted);
+    }
+
+    .chip {
+      display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px;
+      font-size: 12px; font-family: var(--mono);
+      background: var(--type-soft); border: 1px solid var(--border);
+    }
+    .chip.entity { background: var(--entity-soft); border-color: var(--entity-bd); color: var(--entity-tx); }
+    .chip.tiny { font-size: 11px; padding: 2px 8px; }
+    .ic { font-style: normal; margin-right: 4px; }
+
+    .legend { display: flex; align-items: center; gap: 18px; margin-bottom: 18px; flex-wrap: wrap; }
+    .legend .li { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); }
+
+    .move {
+      display: inline-flex; align-items: center; font-family: var(--mono); font-size: 11px;
+      font-weight: 600; color: var(--event-tx);
+      background: var(--event-soft); border: 1px solid var(--event-bd);
+      border-radius: 4px; padding: 1px 7px; white-space: nowrap;
+    }
+    .move .arr { color: var(--event); margin-right: 4px; font-weight: 700; }
+    .move.unguarded {
+      background: var(--rule-soft); border: 1px dashed var(--rule);
+      color: var(--rule-tx);
+    }
+    .move.unguarded .arr { color: var(--rule); }
+    .stay {
+      display: inline-block; width: 13px; height: 13px; border-radius: 50%;
+      border: 2px solid var(--entity); box-sizing: border-box;
+    }
+    .stay.unguarded { border: 2px dashed var(--rule); }
+
+    .esec { margin-bottom: 24px; }
+    .ehead { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; }
+    .ehead .eic { font-size: 16px; font-style: normal; }
+    .ehead .enm { font-size: 15px; font-weight: 600; }
+
+    .sgrid {
+      display: grid; border: 1px solid var(--border); border-radius: 8px;
+      background: var(--surface); overflow: hidden;
+    }
+    .sgrid.course { grid-template-columns: 240px repeat(3, 170px); width: 751px; }
+    .sgrid.student { grid-template-columns: 240px repeat(2, 170px); width: 581px; }
+    .corner {
+      border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
+      background: var(--bg); padding: 8px 12px;
+      font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+      display: flex; align-items: flex-end;
+    }
+    .colhead {
+      border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
+      background: var(--bg); padding: 8px 6px 7px; text-align: center;
+    }
+    .colhead .st { font-family: var(--mono); font-size: 11.5px; font-weight: 600; }
+    .colhead .cap {
+      font-size: 9px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted);
+    }
+    .rowlabel {
+      display: flex; align-items: center; gap: 6px; padding: 0 12px; font-size: 12px;
+      border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
+      background: var(--surface); min-height: 40px;
+    }
+    .rowlabel .cic { font-style: normal; color: var(--command-tx); }
+    .cell {
+      display: flex; align-items: center; justify-content: center;
+      border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
+      min-height: 40px;
+    }
+    .crossnote { font-size: 11.5px; color: var(--muted); margin: 2px 0 22px; }
+    .advisory {
+      border-left: 3px solid var(--rule); background: var(--rule-soft);
+      border-radius: 0 6px 6px 0; padding: 6px 10px; font-size: 12px; line-height: 1.5;
+      margin: 12px 0 0; max-width: 751px;
+    }
+    .advisory .op { font-family: var(--mono); font-size: 11px; }
+  </style>
+</helmet>
+
+<div class="app">
+  <div class="boardhead">
+    <span class="kicker">Overview · Lifecycles</span>
+    <span class="nm">C · Transition grid</span>
+    <span class="grow"></span>
+    <span class="ch">Course example (with schedules)</span>
+  </div>
+
+  <div class="slice">
+    <div class="phead">
+      <div class="name">Lifecycles</div>
+      <div class="muted small">Every command against every status &#8212; what running it there would do.
+        The empty cells are as telling as the filled ones: a blank row-end is a state the model cannot leave,
+        a filled column under a terminal state is a guard someone forgot.</div>
+    </div>
+
+    <div class="legend">
+      <span class="li"><span class="move"><span class="arr">&#8594;</span>Existent</span> moves the status there</span>
+      <span class="li"><span class="stay"></span> allowed &#8212; status unchanged</span>
+      <span class="li"><span class="muted">(blank)</span> a status rule refuses it</span>
+      <span class="li"><span class="move unguarded"><span class="arr">&#8594;</span>Existent</span> <span class="stay unguarded"></span> no status rule &#8212; runs in any state</span>
+    </div>
+
+    <!-- ============ Course ============ -->
+    <div class="esec">
+      <div class="ehead">
+        <i class="eic">📚</i><span class="enm">Course</span>
+        <span class="chip entity tiny">Course status</span>
+      </div>
+
+      <div class="sgrid course">
+        <div class="corner">command &#8595; &#183; status &#8594;</div>
+        <div class="colhead"><div class="st">Non existent</div><div class="cap">initial</div></div>
+        <div class="colhead"><div class="st">Existent</div><div class="cap">&#160;</div></div>
+        <div class="colhead"><div class="st">Archived</div><div class="cap">terminal</div></div>
+
+        <div class="rowlabel"><span class="cic">&#11030;</span>Define course</div>
+        <div class="cell"><span class="move unguarded"><span class="arr">&#8594;</span>Existent</span></div>
+        <div class="cell"><span class="move unguarded"><span class="arr">&#8594;</span>Existent</span></div>
+        <div class="cell"><span class="move unguarded"><span class="arr">&#8594;</span>Existent</span></div>
+
+        <div class="rowlabel"><span class="cic">&#9673;</span>Change course capacity</div>
+        <div class="cell"></div>
+        <div class="cell"><span class="stay"></span></div>
+        <div class="cell"></div>
+
+        <div class="rowlabel"><span class="cic">&#9683;</span>Subscribe student to course</div>
+        <div class="cell"></div>
+        <div class="cell"><span class="stay"></span></div>
+        <div class="cell"></div>
+
+        <div class="rowlabel"><span class="cic">&#9655;</span>Unsubscribe student from course</div>
+        <div class="cell"></div>
+        <div class="cell"><span class="stay"></span></div>
+        <div class="cell"></div>
+
+        <div class="rowlabel"><span class="cic">&#9683;</span>Reschedule course</div>
+        <div class="cell"></div>
+        <div class="cell"><span class="stay"></span></div>
+        <div class="cell"></div>
+
+        <div class="rowlabel"><span class="cic">&#11031;</span>Archive course</div>
+        <div class="cell"></div>
+        <div class="cell"><span class="move"><span class="arr">&#8594;</span>Archived</span></div>
+        <div class="cell"></div>
+      </div>
+
+      <div class="advisory">
+        <span class="op">Define course</span> fills its whole row: it carries no rule over
+        <span class="op">course &#183; status</span>, so nothing refuses it anywhere. Rows like this are what
+        this view is for &#8212; every other command is pinned to exactly one column.
+      </div>
+    </div>
+
+    <!-- ============ Student ============ -->
+    <div class="esec">
+      <div class="ehead">
+        <i class="eic">🧑&#8205;🎓</i><span class="enm">Student</span>
+        <span class="chip entity tiny">Student status</span>
+      </div>
+
+      <div class="sgrid student">
+        <div class="corner">command &#8595; &#183; status &#8594;</div>
+        <div class="colhead"><div class="st">Non existent</div><div class="cap">initial</div></div>
+        <div class="colhead"><div class="st">Existent</div><div class="cap">&#160;</div></div>
+
+        <div class="rowlabel"><span class="cic">&#9682;</span>Register student</div>
+        <div class="cell"><span class="move"><span class="arr">&#8594;</span>Existent</span></div>
+        <div class="cell"></div>
+
+        <div class="rowlabel"><span class="cic">&#9683;</span>Subscribe student to course</div>
+        <div class="cell"></div>
+        <div class="cell"><span class="stay"></span></div>
+
+        <div class="rowlabel"><span class="cic">&#9655;</span>Unsubscribe student from course</div>
+        <div class="cell"><span class="stay unguarded"></span></div>
+        <div class="cell"><span class="stay unguarded"></span></div>
+      </div>
+
+      <div class="advisory" style="max-width: 581px;">
+        <span class="op">Unsubscribe student from course</span> binds the student but carries no rule over
+        <span class="op">student &#183; status</span> &#8212; only <span class="op">course &#183; status</span> guards it, so
+        its row fills here too.
+      </div>
+    </div>
+
+    <div class="crossnote">
+      A command that binds two entities is a row in both tables &#8212; each table reads only the rules
+      over its own status. Cells answer for the status alone; the other rules still apply.
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

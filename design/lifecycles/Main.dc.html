@@ -1,0 +1,299 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; }
+    .app {
+      --bg:#f8fafc; --surface:#ffffff; --border:#e2e8f0; --border-strong:#cbd5e1;
+      --text:#0f172a; --muted:#64748b;
+      --command:#2563eb; --command-soft:#eff6ff; --command-bd:#bfdbfe; --command-tx:#1e40af;
+      --event:#f97316; --event-soft:#fff7ed; --event-bd:#fed7aa; --event-tx:#9a3412;
+      --entity:#16a34a; --entity-soft:#f0fdf4; --entity-bd:#bbf7d0; --entity-tx:#166534;
+      --rule:#c026d3; --rule-soft:#fdf4ff; --rule-bd:#f5d0fe; --rule-tx:#86198f;
+      --type:#6b7280; --type-soft:#f9fafb;
+      --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+      font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: var(--text); background: var(--bg);
+      min-height: 100vh; padding-bottom: 40px;
+    }
+    a { color: #2563eb; } a:hover { color: #1d4ed8; }
+
+    .boardhead {
+      display: flex; align-items: baseline; gap: 12px;
+      padding: 18px 30px 14px; border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .boardhead .kicker {
+      font-size: 11px; text-transform: uppercase; letter-spacing: .07em;
+      color: var(--entity); font-weight: 700;
+    }
+    .boardhead .nm { font-size: 17px; font-weight: 600; }
+    .boardhead .ch { font-size: 12px; color: var(--muted); }
+    .boardhead .grow { flex: 1; }
+
+    .slice { padding: 22px 30px 0; }
+    .phead { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 6px; }
+    .phead .name { font-size: 20px; font-weight: 600; }
+    .phead .grow { flex: 1; }
+    .muted { color: var(--muted); }
+    .small { font-size: 12px; }
+    .tiny { font-size: 11px; }
+
+    .seg { display: inline-flex; align-items: center; gap: 0; margin-top: 5px; }
+    .seg .lbl { font-size: 11px; color: var(--muted); margin-right: 8px; }
+    .seg button {
+      font: inherit; font-size: 12px; padding: 3px 11px; cursor: pointer;
+      border: 1px solid var(--border-strong); background: var(--surface); color: var(--muted);
+    }
+    .seg button:first-of-type { border-radius: 6px 0 0 6px; }
+    .seg button:last-of-type { border-radius: 0 6px 6px 0; border-left: 0; }
+    .seg button.on { background: var(--command-soft); border-color: var(--command); color: var(--command-tx); }
+
+    .hint { font-size: 12px; color: var(--muted); margin-bottom: 14px; }
+
+    .chip {
+      display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px;
+      font-size: 12px; font-family: var(--mono);
+      background: var(--type-soft); border: 1px solid var(--border);
+    }
+    .chip.event { background: var(--event-soft); border-color: var(--event-bd); color: var(--event-tx); }
+    .chip.entity { background: var(--entity-soft); border-color: var(--entity-bd); color: var(--entity-tx); }
+    .chip.tiny { font-size: 11px; padding: 2px 8px; }
+    .ic { font-style: normal; margin-right: 4px; }
+
+    /* ---------- the map ---------- */
+    .map {
+      position: relative; height: 560px; margin: 0 -6px;
+    }
+    .map svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+    .cluster-label {
+      position: absolute; display: flex; align-items: center; gap: 8px;
+      font-size: 13px; font-weight: 600;
+    }
+    .cluster-label .eic { font-size: 15px; font-style: normal; }
+
+    .hot { position: absolute; }
+    .node {
+      position: relative;
+      display: inline-flex; align-items: center; gap: 7px;
+      border: 1.5px solid var(--entity); border-radius: 999px; background: var(--surface);
+      padding: 9px 18px; cursor: default;
+      box-shadow: 0 1px 2px rgba(15,23,42,.05);
+    }
+    .hot:hover .node, .hot.pinned .node { border-color: var(--entity); background: var(--entity-soft); }
+    .node .st { font-size: 13px; font-weight: 600; white-space: nowrap; }
+    .node .cap {
+      font-size: 9px; text-transform: uppercase; letter-spacing: .07em;
+      color: var(--muted); white-space: nowrap;
+    }
+    .hot.terminal .node { outline: 1.5px solid var(--entity); outline-offset: 3px; }
+    .badge {
+      position: absolute; top: -8px; right: -6px;
+      min-width: 17px; height: 17px; padding: 0 4px; border-radius: 999px;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 10px; font-family: var(--mono); font-weight: 600;
+      background: var(--command-soft); border: 1px solid var(--command-bd); color: var(--command-tx);
+    }
+
+    .elabel { position: absolute; display: inline-flex; align-items: center; gap: 5px; }
+    .dot-unguarded {
+      display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex: none;
+      background: var(--rule-soft); border: 1.5px solid var(--rule); cursor: help;
+    }
+
+    /* ---------- the popover ---------- */
+    .pop {
+      display: none; position: absolute; top: calc(100% + 9px); left: 50%;
+      transform: translateX(-50%); z-index: 6;
+      background: var(--surface); border: 1px solid var(--border-strong); border-radius: 8px;
+      padding: 9px 12px 10px; box-shadow: 0 8px 24px rgba(0,0,0,.14);
+      min-width: 250px;
+    }
+    .pop::before {
+      content: ""; position: absolute; top: -5px; left: 50%; margin-left: -5px;
+      width: 9px; height: 9px; background: var(--surface);
+      border-left: 1px solid var(--border-strong); border-top: 1px solid var(--border-strong);
+      transform: rotate(45deg);
+    }
+    .hot:hover .pop, .hot.pinned .pop { display: block; }
+    .pop h4 {
+      margin: 0 0 6px; font-size: 9.5px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: .07em; color: var(--muted);
+    }
+    .pop h4 + .prow { margin-top: 2px; }
+    .pop h4:not(:first-child) { margin-top: 9px; }
+    .prow {
+      display: flex; align-items: baseline; gap: 7px;
+      font-family: var(--mono); font-size: 11.5px; line-height: 1.9; white-space: nowrap;
+    }
+    .prow .cmd { color: var(--command-tx); }
+    .prow .to { color: var(--event-tx); font-weight: 600; }
+    .prow .warn { color: var(--rule-tx); font-family: inherit; font-size: 10.5px; }
+    .pop .none { font-size: 12px; color: var(--muted); font-style: italic; white-space: nowrap; }
+    .pinnote {
+      margin-top: 8px; padding-top: 7px; border-top: 1px dashed var(--border);
+      font-size: 10px; color: var(--muted); white-space: nowrap;
+    }
+
+    .footnotes { margin-top: 4px; }
+    .footnotes .fn { font-size: 11.5px; color: var(--muted); margin-bottom: 3px; }
+    .footnotes .op { font-family: var(--mono); font-size: 10.5px; }
+    .footnotes .dot-unguarded { vertical-align: baseline; margin-right: 2px; }
+  </style>
+</helmet>
+
+<div class="app">
+  <div class="boardhead">
+    <span class="kicker">Overview · Lifecycles</span>
+    <span class="nm">Lifecycles</span>
+    <span class="grow"></span>
+    <span class="ch">Course example (with schedules)</span>
+  </div>
+
+  <div class="slice">
+    <div class="phead">
+      <div>
+        <div class="name">Lifecycles</div>
+        <div class="muted small">Each entity&#8217;s status as a map &#8212; the states its enum declares and the events that move it.</div>
+      </div>
+      <div class="grow"></div>
+      <div class="seg">
+        <span class="lbl">Commands</span>
+        <button class="on">On hover</button>
+        <button>Always</button>
+      </div>
+    </div>
+    <div class="hint">Hover a state for the commands allowed there &#8212; shown pinned open on <b>Existent</b> below.</div>
+
+    <div class="map">
+      <svg class="wires" viewBox="0 0 866 560" preserveAspectRatio="none" aria-hidden="true">
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#f97316"></path>
+          </marker>
+          <marker id="ahg" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#cbd5e1"></path>
+          </marker>
+        </defs>
+
+        <!-- Course: entry -> Non existent -> Existent -> Archived -->
+        <circle cx="24" cy="117" r="4" fill="#cbd5e1"></circle>
+        <path d="M 28 117 C 42 117, 50 117, 62 117" fill="none" stroke="#cbd5e1" stroke-width="1.8" marker-end="url(#ahg)"></path>
+        <path d="M 222 108 C 285 92, 330 86, 390 84" fill="none" stroke="#f97316" stroke-width="1.8" marker-end="url(#ah)"></path>
+        <path d="M 520 98 C 575 112, 612 132, 656 156" fill="none" stroke="#f97316" stroke-width="1.8" marker-end="url(#ah)"></path>
+
+        <!-- Student: entry -> Non existent -> Existent -->
+        <circle cx="24" cy="390" r="4" fill="#cbd5e1"></circle>
+        <path d="M 28 390 C 42 390, 50 390, 62 390" fill="none" stroke="#cbd5e1" stroke-width="1.8" marker-end="url(#ahg)"></path>
+        <path d="M 222 381 C 285 368, 330 362, 390 360" fill="none" stroke="#f97316" stroke-width="1.8" marker-end="url(#ah)"></path>
+      </svg>
+
+      <!-- ============ Course ============ -->
+      <div class="cluster-label" style="left: 20px; top: 18px;">
+        <span class="eic">📚</span> Course
+        <span class="chip entity tiny">Course status</span>
+      </div>
+
+      <div class="hot" style="left: 66px; top: 93px;">
+        <div class="node">
+          <span class="st">Non existent</span>
+          <span class="cap">initial</span>
+        </div>
+        <div class="pop">
+          <h4>Allowed here &#183; 1</h4>
+          <div class="prow"><span class="cmd">&#11030; Define course</span> <span class="to">&#8594; Existent</span></div>
+          <div class="prow"><span class="warn">no rule over course &#183; status &#8212; runs anywhere</span></div>
+        </div>
+        <span class="badge">1</span>
+      </div>
+
+      <div class="elabel" style="left: 244px; top: 50px;">
+        <span class="chip event tiny" title="via &#11030; Define course"><i class="ic">&#11030;</i>Course defined</span>
+        <span class="dot-unguarded" title="Define course carries no rule over course &#183; status"></span>
+      </div>
+
+      <div class="hot pinned" style="left: 396px; top: 60px;">
+        <div class="node">
+          <span class="st">Existent</span>
+        </div>
+        <div class="pop">
+          <h4>Moves on</h4>
+          <div class="prow"><span class="cmd">&#11031; Archive course</span> <span class="to">&#8594; Archived</span></div>
+          <h4>Stays here</h4>
+          <div class="prow"><span class="cmd">&#9673; Change course capacity</span></div>
+          <div class="prow"><span class="cmd">&#9683; Subscribe student to course</span></div>
+          <div class="prow"><span class="cmd">&#9655; Unsubscribe student from course</span></div>
+          <div class="prow"><span class="cmd">&#9683; Reschedule course</span></div>
+          <div class="pinnote">pinned open for this board &#8212; normally on hover</div>
+        </div>
+        <span class="badge">5</span>
+      </div>
+
+      <div class="elabel" style="left: 548px; top: 124px;">
+        <span class="chip event tiny" title="via &#11031; Archive course &#8212; requires status = Existent"><i class="ic">&#11031;</i>Course archived</span>
+      </div>
+
+      <div class="hot terminal" style="left: 664px; top: 140px;">
+        <div class="node">
+          <span class="st">Archived</span>
+          <span class="cap">terminal</span>
+        </div>
+        <div class="pop">
+          <h4>Allowed here &#183; 0</h4>
+          <div class="none">Nothing is guarded to run here.</div>
+          <div class="prow"><span class="warn">only unguarded &#11030; Define course would still run</span></div>
+        </div>
+      </div>
+
+      <!-- ============ Student ============ -->
+      <div class="cluster-label" style="left: 20px; top: 296px;">
+        <span class="eic">🧑&#8205;🎓</span> Student
+        <span class="chip entity tiny">Student status</span>
+      </div>
+
+      <div class="hot" style="left: 66px; top: 366px;">
+        <div class="node">
+          <span class="st">Non existent</span>
+          <span class="cap">initial</span>
+        </div>
+        <div class="pop">
+          <h4>Allowed here &#183; 1</h4>
+          <div class="prow"><span class="cmd">&#9682; Register student</span> <span class="to">&#8594; Existent</span></div>
+        </div>
+        <span class="badge">1</span>
+      </div>
+
+      <div class="elabel" style="left: 240px; top: 325px;">
+        <span class="chip event tiny" title="via &#9682; Register student &#8212; requires status = Non existent"><i class="ic">&#9682;</i>Student registered</span>
+      </div>
+
+      <div class="hot terminal" style="left: 396px; top: 338px;">
+        <div class="node">
+          <span class="st">Existent</span>
+          <span class="cap">terminal</span>
+        </div>
+        <div class="pop">
+          <h4>Stays here</h4>
+          <div class="prow"><span class="cmd">&#9683; Subscribe student to course</span></div>
+          <div class="prow"><span class="cmd">&#9655; Unsubscribe student from course</span> <span class="dot-unguarded" title="carries no rule over student &#183; status &#8212; would run at any state"></span></div>
+        </div>
+        <span class="badge">2</span>
+      </div>
+    </div>
+
+    <div class="footnotes">
+      <div class="fn"><span class="dot-unguarded"></span> marks a command with no rule over that status &#8212; nothing refuses it at any state. <span class="op">Define course</span>&#8217;s arrow starts at <span class="op">Non existent</span> only by convention.</div>
+      <div class="fn">&#9683; Subscribe and &#9655; Unsubscribe bind both entities, so they count toward both maps. A state nothing leaves is marked <span class="op">terminal</span>.</div>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

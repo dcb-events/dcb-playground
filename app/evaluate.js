@@ -298,16 +298,22 @@ function evCompileTarget(model, target, label) {
     ? (state) => (state === null || state === undefined ? state : state[script.exposes])
     : (state) => state;
 
+  const run = (events, args) => {
+    let state = initial;
+    for (const event of events) {
+      const step = steps.get(event.type);
+      if (step) state = step(state, event, args || {});
+    }
+    return state;
+  };
+
   return {
     types: [...steps.keys()],
-    fold(events, args) {
-      let state = initial;
-      for (const event of events) {
-        const step = steps.get(event.type);
-        if (step) state = step(state, event, args || {});
-      }
-      return evNormalize(expose(state));
-    },
+    fold: (events, args) => evNormalize(expose(run(events, args))),
+    // The same fold read before `exposes` trims it: the whole state,
+    // bookkeeping included. Hidden from conditions — a statement about
+    // the boundary, not about the person watching the script work.
+    foldState: (events, args) => evNormalize(run(events, args)),
   };
 }
 
@@ -320,6 +326,10 @@ function evCompileTarget(model, target, label) {
 // agreeing was a thing that had to keep being true. Now the property is
 // a binding, so it fills in an argument and calls the same function:
 // nothing left to disagree.
+//
+// `foldProjectionState` is not a second fold but a second reading of
+// the same one: the state before `exposes` trims it to the exposed
+// field. Without `exposes` the two answers coincide.
 //
 // It replays from the start of the log every time. That is the same
 // choice the playground already makes for its own state, and it stays
@@ -438,6 +448,16 @@ function evWithExplicitOptionals(model, event) {
 }
 
 function foldProjection(model, events, projectionName, argumentValues) {
+  const { compiled, selected, values } = evProjectionFold(model, events, projectionName, argumentValues);
+  return compiled.fold(selected, values);
+}
+
+function foldProjectionState(model, events, projectionName, argumentValues) {
+  const { compiled, selected, values } = evProjectionFold(model, events, projectionName, argumentValues);
+  return compiled.foldState(selected, values);
+}
+
+function evProjectionFold(model, events, projectionName, argumentValues) {
   const projection = model['projection-definitions'][projectionName];
   if (!projection) fail(`This model has no projection "${projectionName}".`);
 
@@ -445,11 +465,9 @@ function foldProjection(model, events, projectionName, argumentValues) {
   const tags = projectionQueryTags(model, projectionName, values);
 
   const compiled = evCompileTarget(model, projection, `projection "${projectionName}"`);
-  return compiled.fold(
-    events.filter((event) => evMatchesTags(model, event, tags))
-      .map((event) => evWithExplicitOptionals(model, event)),
-    values
-  );
+  const selected = events.filter((event) => evMatchesTags(model, event, tags))
+    .map((event) => evWithExplicitOptionals(model, event));
+  return { compiled, selected, values };
 }
 
 // ============================================================
@@ -482,6 +500,9 @@ function evEntityInstance(model, events, entityName, id, args) {
 // instance, and a list read that way flattens — a list of lists is not
 // a shape anything downstream can use.
 function evReadOperand(operand, scope) {
+  // The one array operand — `equalsAny`'s literal list — reads as its
+  // entries, each normalized like any other literal.
+  if (Array.isArray(operand)) return operand.map(evNormalize);
   switch (operandSource(operand)) {
     case 'parameter': {
       const held = scope.args[operand.parameterName];
@@ -629,6 +650,14 @@ function evApplyPredicate(condition, left, right) {
     case 'isTrue': held = l === true; break;
     case 'isFalse': held = l === false; break;
     case 'equals': held = evDeepEqual(l, r); break;
+    case 'equalsAny':
+      // Membership is repeated equality — a null left is simply not a
+      // member unless listed — and an empty list holds for nothing
+      // (negated: for everything), which the advisory said ahead of
+      // time. A non-list right (a defect the advisories flag) wraps to
+      // one entry rather than erroring: a defective model evaluates.
+      held = evAsList(r).some((entry) => evDeepEqual(l, entry));
+      break;
     case 'countEquals': held = evAsList(l).length === r; break;
     case 'countLessThan': held = evAsList(l).length < r; break;
     case 'countGreaterThan': held = evAsList(l).length > r; break;

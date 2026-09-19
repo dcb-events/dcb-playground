@@ -15,7 +15,7 @@ handler's editor is on screen. The app runs from any static server —
 
 - `app/` — the application. Everything that runs.
 - `dcb-model.schema.json` — canonical JSON Schema for the interchange format
-  (`https://dcb.events/schemas/model/v3.json`). Source of truth for what a
+  (`https://dcb.events/schemas/model/v5.json`). Source of truth for what a
   DCB Model file contains; `app/webmcp-schemas.js` is generated from it.
 - `docs/research/` — dated primary-source research notes backing design
   decisions (one file per investigation, `YYYY-MM-DD-topic.md`).
@@ -140,11 +140,16 @@ it never works from `file:`.
   declarative handler cannot tell them apart; the fix is to split the
   event (one fact each) or script the projection, and an advisory
   points at the ambiguity. The editors offer only unhandled events.
-- **Wire format 4.0 vs 3.x**: binding `isOptional` is additive in shape
-  but a 3.x reader errors where the flag declares the absence expected,
-  so it is a *major* (see the versioning notes in
-  `dcb-model.schema.json` and `model.js`). The importer reads 3.x and
-  4.x (`READABLE_MAJORS`) and always writes 4.0.
+- **Wire format majors**: a new member of a closed vocabulary is a
+  *major*, judged from the reader's side (see the versioning notes in
+  `dcb-model.schema.json` and `model.js`). 4.0 added binding
+  `isOptional` (additive in shape, but a 3.x reader errors where the
+  flag declares the absence expected); 5.0 added the `equalsAny`
+  predicate — one scalar against a literal list, spelled as a bare
+  array of literals / `{enumMember}` references in `rightHandSide`, a
+  spelling only initial values had before. The importer reads 3.x, 4.x
+  and 5.x (`READABLE_MAJORS`) and always writes the current
+  `MODEL_VERSION`.
 - **Comment style**: file headers and block comments carry design rationale,
   not line-by-line narration. Match that register; keep headers truthful when
   behaviour changes.

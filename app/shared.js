@@ -7,7 +7,10 @@
 // The slice is the idea the page is built around: a command, what it
 // reads, in how many trips to the log, what it decides, what it emits,
 // and what those events change. The model layer stores none of that as
-// a unit; it is derived here, from the definitions.
+// a unit; it is derived here, from the definitions. The overview pages
+// read the same material across every command at once — the coupling
+// matrix, and each entity's status as a lifecycle machine — and those
+// derivations live here too.
 // ============================================================
 
 // ---------- DOM ----------
@@ -978,6 +981,168 @@ function couplingClusters(matrix) {
   };
 }
 
+// ---------- lifecycles ----------
+//
+// Each entity's status read as a state machine. Nothing here is
+// authored — every part is derived from definitions that already
+// exist, through the convention `model.js` documents: a lifecycle is
+// an ordinary enum custom type plus an ordinary property named
+// `status`.
+//
+//   states       the members of the enum typing the status property;
+//   transitions  the status projection's declared handlers — a handler
+//                that sets a member is an arrow into that member, and
+//                the arrow starts wherever the commands publishing its
+//                event are allowed to run;
+//   commands     every command binding the entity, placed by its
+//                status conditions.
+//
+// A command with no condition over a status it touches is *unguarded*:
+// nothing refuses it at any state. That is a fact worth surfacing, not
+// papering over — an unguarded transition is drawn from the initial
+// state only as a convention, and flagged as such, so a missing guard
+// stays visible.
+
+// The states `body`'s conditions allow `entityName`'s status to be in,
+// read off every `alias · status equals <member>` condition over an
+// alias binding the entity — the same comparison shape the
+// enum-membership advisory reads (either side may hold the status).
+// `states: null` means unguarded: the command binds the entity but no
+// condition constrains its status. Only identity is readable this way,
+// negated or not: `equals` against a member reference, and `equalsAny`
+// against a list whose every entry is one — a bare literal in the list
+// makes it unreadable, not guessed at. Any other predicate over the
+// status leaves the command unguarded rather than guessed at. Several
+// conditions (or several aliases) intersect: each is one more thing
+// that must hold.
+function statusConstraint(model, body, entityName, states) {
+  const aliases = new Set((body.boundary || [])
+    .filter((binding) => binding && binding.entity === entityName)
+    .map((binding) => binding.alias));
+  if (!aliases.size) return { binds: false, states: null };
+  let allowed = null;
+  for (const condition of body.conditions || []) {
+    for (const side of ['leftHandSide', 'rightHandSide']) {
+      const operand = condition[side];
+      if (operandSource(operand) !== 'alias-property') continue;
+      if (!aliases.has(operand.alias) || operand.property !== STATUS_PROPERTY) continue;
+      const other = condition[side === 'leftHandSide' ? 'rightHandSide' : 'leftHandSide'];
+      let these = null;
+      if (condition.predicate === 'equals' && operandSource(other) === 'enum-member') {
+        these = condition.negate
+          ? states.filter((member) => member !== other.enumMember)
+          : states.filter((member) => member === other.enumMember);
+      } else if (condition.predicate === 'equalsAny' && Array.isArray(other)
+          && other.every((entry) => operandSource(entry) === 'enum-member')) {
+        // An empty list is still read: "one of nothing" allows no
+        // state, which is what it evaluates to — unreadable would
+        // claim the opposite.
+        const listed = other.map((entry) => String(entry.enumMember));
+        these = condition.negate
+          ? states.filter((member) => !listed.includes(member))
+          : states.filter((member) => listed.includes(member));
+      }
+      if (these === null) continue;
+      allowed = allowed === null ? these : allowed.filter((member) => these.includes(member));
+    }
+  }
+  return { binds: true, states: allowed };
+}
+
+// Every entity's machine, plus the entities that do not yield one and
+// why — an entity without the convention is not an error, it is simply
+// not on this page, and the page should say so rather than silently
+// thin out.
+//
+// Per machine:
+//   states / initial      off the enum and the projection's initial
+//                         value;
+//   transitions           `{event, target, publishers, sources,
+//                         unguarded, conventional}` — `sources` is the
+//                         union of the publishing commands' allowed
+//                         states; a transition only unguarded
+//                         publishers reach is drawn from the initial
+//                         state (`conventional: true`);
+//   perState              state -> the commands allowed there, each
+//                         `{command, movesTo, unguarded}`;
+//   terminal              states no drawn transition leaves — with the
+//                         conventional arrows counted, so "terminal"
+//                         matches what the page draws;
+//   opaque                events whose handler touches the status in a
+//                         way this cannot read (a computed value, an
+//                         operation other than `set`).
+function lifecycleMachines(model) {
+  const machines = [];
+  const excluded = [];
+  for (const entityName of Object.keys(model['entity-definitions'])) {
+    const { binding, projection } = entityPropertyTarget(model, entityName, STATUS_PROPERTY);
+    if (!binding || !projection) { excluded.push({ entity: entityName, reason: 'no-status' }); continue; }
+    if (scriptOf(projection)) { excluded.push({ entity: entityName, reason: 'scripted' }); continue; }
+    const members = enumMembersFor(model, projection.valueType);
+    if (!members) { excluded.push({ entity: entityName, reason: 'not-enum' }); continue; }
+    const states = members.map(String);
+
+    const initial = operandSource(projection.initialValue) === 'enum-member'
+      && states.includes(projection.initialValue.enumMember)
+      ? projection.initialValue.enumMember : null;
+
+    const transitions = [];
+    const opaque = [];
+    for (const handler of projection.handlers || []) {
+      if (!handler || !handler.event) continue;
+      if (handler.operation !== 'set' || operandSource(handler.value) !== 'enum-member') {
+        opaque.push(handler.event);
+        continue;
+      }
+      const target = handler.value.enumMember;
+      const publishers = publishersOf(model, handler.event).map(({ command }) => ({
+        command,
+        sources: statusConstraint(model, model['command-definitions'][command], entityName, states).states,
+      }));
+      const sources = [...new Set(publishers.flatMap((p) => p.sources || []))];
+      const unguarded = publishers.some((p) => p.sources === null);
+      const conventional = !sources.length && unguarded && initial !== null && initial !== target;
+      transitions.push({
+        event: handler.event, target, publishers, unguarded, conventional,
+        sources: conventional ? [initial] : sources,
+        unpublished: !publishers.length,
+      });
+    }
+
+    const perState = {};
+    for (const state of states) perState[state] = [];
+    for (const [commandName, body] of Object.entries(model['command-definitions'])) {
+      const constraint = statusConstraint(model, body, entityName, states);
+      if (!constraint.binds) continue;
+      const moved = transitions.find((t) =>
+        (body.publishes || []).some((emission) => emission && emission.name === t.event));
+      const entry = {
+        command: commandName,
+        movesTo: moved ? moved.target : null,
+        unguarded: constraint.states === null,
+      };
+      for (const state of constraint.states === null ? states : constraint.states) {
+        perState[state].push(entry);
+      }
+    }
+
+    const leads = new Set();
+    for (const t of transitions) {
+      for (const from of t.sources) if (from !== t.target) leads.add(from);
+    }
+
+    machines.push({
+      entity: entityName,
+      property: STATUS_PROPERTY,
+      projection: binding.projection,
+      valueType: projection.valueType,
+      states, initial, transitions, opaque, perState,
+      terminal: states.filter((state) => !leads.has(state)),
+    });
+  }
+  return { machines, excluded };
+}
+
 // ---------- features ----------
 //
 // A feature groups the commands that make it up. It is not a definition
@@ -1170,6 +1335,10 @@ function suggestEventName(commandName) {
 // ---------- saying it in words ----------
 
 function operandWords(operand) {
+  // `equalsAny`'s literal list — the entries, said in order.
+  if (Array.isArray(operand)) {
+    return operand.length ? operand.map(operandWords).join(', ') : 'an empty list';
+  }
   switch (operandSource(operand)) {
     case 'alias-property':
       // No property means a bound projection's single value, which the
@@ -1184,7 +1353,13 @@ function operandWords(operand) {
     case 'event-property': return propertyWords(operand.eventProperty);
     case 'current-value': return 'its current value';
     case 'successor': return `the one after ${operandWords(operand.successor)}`;
-    default: return typeof operand === 'string' ? `"${operand}"` : String(operand);
+    default:
+      if (typeof operand === 'string') return `"${operand}"`;
+      // A record a scripted projection folded to is a static value
+      // with no operand shape — it reads as the JSON it is rather
+      // than as "[object Object]".
+      if (operand !== null && typeof operand === 'object') return JSON.stringify(operand);
+      return String(operand);
   }
 }
 
@@ -1205,6 +1380,7 @@ function initialValueWords(value) {
 
 const PREDICATE_WORDS = {
   equals: ['is', 'is not'],
+  equalsAny: ['is one of', 'is not one of'],
   lessThan: ['is less than', 'is not less than'],
   lessThanOrEquals: ['is at most', 'is more than'],
   greaterThan: ['is more than', 'is not more than'],

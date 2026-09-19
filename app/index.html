@@ -869,6 +869,98 @@
     border-left: 3px solid var(--rule); background: var(--rule-soft);
     border-radius: 0 6px 6px 0; padding: 6px 10px; font-size: 12px; line-height: 1.5;
   }
+
+  /* ---------- lifecycles ----------
+     States as bubbles on an open band, one band per entity; the wires
+     are an SVG laid under the nodes, drawn from the same computed
+     geometry the nodes are placed by. The commands allowed at a state
+     wait in a popover until the state is hovered, focused or pinned. */
+  .lc-machine { margin-bottom: 6px; }
+  .lc-cluster { display: flex; align-items: center; gap: 9px; margin: 14px 0 0; }
+  .lc-cluster .lc-ename {
+    display: inline-flex; align-items: center; gap: 7px;
+    border: 0; background: none; padding: 0; font: inherit;
+    font-size: 15px; font-weight: 600; color: inherit; cursor: pointer;
+  }
+  .lc-cluster .lc-ename:hover { color: var(--entity); }
+  .lc-scroll { overflow-x: auto; }
+  .lc-band { position: relative; }
+  .lc-wires, .lc-wires svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .lc-wires { pointer-events: none; }
+
+  .lc-hot { position: absolute; }
+  .lc-node {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    border: 1.5px solid var(--entity); border-radius: 999px; background: var(--surface);
+    font: inherit; cursor: pointer; padding: 0 12px;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, .05);
+  }
+  .lc-hot:hover .lc-node, .lc-hot:focus-within .lc-node, .lc-hot.on .lc-node {
+    background: var(--entity-soft);
+  }
+  .lc-node:focus-visible { outline: 2px solid var(--command); outline-offset: 2px; }
+  .lc-node .st {
+    font-size: 13px; font-weight: 600; white-space: nowrap;
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+  }
+  .lc-node .cap {
+    font-size: 9px; text-transform: uppercase; letter-spacing: .07em;
+    color: var(--muted); white-space: nowrap;
+  }
+  .lc-hot.terminal .lc-node { outline: 1.5px solid var(--entity); outline-offset: 3px; }
+  .lc-hot.terminal .lc-node:focus-visible { outline: 2px solid var(--command); outline-offset: 5px; }
+  .lc-badge {
+    position: absolute; top: -8px; right: -6px; z-index: 1;
+    min-width: 17px; height: 17px; padding: 0 4px; border-radius: 999px;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 10px; font-family: var(--mono); font-weight: 600;
+    background: var(--command-soft); border: 1px solid var(--command); color: var(--command);
+  }
+
+  .lc-elabel {
+    position: absolute; display: inline-flex; align-items: center; gap: 5px;
+    transform: translateX(-50%); white-space: nowrap;
+  }
+  .lc-loop {
+    position: absolute; transform: translateX(-50%);
+    font-size: 10px; font-family: var(--mono); color: var(--event); white-space: nowrap;
+  }
+  .lc-dot {
+    display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--rule-soft); border: 1.5px solid var(--rule); cursor: help;
+  }
+
+  .lc-pop {
+    display: none; position: absolute; top: calc(100% + 9px); left: 50%;
+    transform: translateX(-50%); z-index: 6;
+    background: var(--surface); border: 1px solid var(--border-strong); border-radius: 8px;
+    padding: 9px 12px 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, .14); min-width: 230px;
+  }
+  .lc-pop::before {
+    content: ""; position: absolute; top: -5px; left: 50%; margin-left: -5px;
+    width: 9px; height: 9px; background: var(--surface);
+    border-left: 1px solid var(--border-strong); border-top: 1px solid var(--border-strong);
+    transform: rotate(45deg);
+  }
+  .lc-hot:hover .lc-pop, .lc-hot:focus-within .lc-pop, .lc-hot.on .lc-pop { display: block; }
+  .lc-rows h4 { margin: 0 0 2px; }
+  .lc-rows h4 + h4, .lc-rows .lc-prow + h4 { margin-top: 8px; }
+  .lc-prow {
+    display: flex; align-items: center; gap: 6px;
+    font-family: var(--mono); font-size: 11.5px; line-height: 1.9; white-space: nowrap;
+  }
+  .lc-prow .cmd {
+    font: inherit; border: 0; background: none; padding: 0; cursor: pointer;
+    color: var(--command); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .lc-prow .cmd:hover { text-decoration: underline; }
+  .lc-prow .to { flex: none; color: var(--event); font-weight: 600; }
+  .lc-none { font-size: 12px; color: var(--muted); font-style: italic; white-space: nowrap; }
+  .lc-warn { font-size: 10.5px; font-family: inherit; color: var(--rule); white-space: nowrap; }
+
+  .lc-fn { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
+  .lc-fn .op { font-family: var(--mono); font-size: 10.5px; }
+  .lc-fn .lc-dot { vertical-align: baseline; margin-right: 2px; }
 </style>
 </head>
 <body>
@@ -2632,6 +2724,48 @@ function operandPicker(choices, draft, key, { placeholder, allowLiteral = true, 
   return control;
 }
 
+// The right half of an `equalsAny` rule: membership over a literal
+// list. Where the left side names an enum the members are checked
+// off; anywhere else the list is typed, one row per value. Entries
+// live in `draft.rightEntries` — enum-member references as objects,
+// typed text as strings — and are coerced on save, the same way
+// `draftOperand` coerces a literal.
+function membershipControls(draft, enumMembers) {
+  const entries = draft.rightEntries || (draft.rightEntries = []);
+  if (enumMembers) {
+    return enumMembers.map((member) => h('label', { class: 'tiny' },
+      h('input', {
+        type: 'checkbox',
+        checked: entries.some((entry) =>
+          entry !== null && typeof entry === 'object' && entry.enumMember === member),
+        onchange: (e) => {
+          const at = entries.findIndex((entry) =>
+            entry !== null && typeof entry === 'object' && entry.enumMember === member);
+          if (e.target.checked && at === -1) entries.push({ enumMember: member });
+          if (!e.target.checked && at !== -1) entries.splice(at, 1);
+          draft.touched = true;
+          render();
+        },
+      }), ' ' + readable(member)));
+  }
+  return [
+    ...entries.map((entry, i) => h('span', {},
+      h('input', {
+        type: 'text', style: 'width:110px', placeholder: 'e.g. 10',
+        value: entry !== null && typeof entry === 'object' ? JSON.stringify(entry) : String(entry),
+        oninput: (e) => { entries[i] = e.target.value; draft.touched = true; },
+      }),
+      h('button', {
+        class: 'btn ghost tiny',
+        onclick: () => { entries.splice(i, 1); draft.touched = true; render(); },
+      }, '×'))),
+    h('button', {
+      class: 'btn ghost tiny',
+      onclick: () => { entries.push(''); draft.touched = true; render(); },
+    }, '+ value'),
+  ];
+}
+
 // Everything readable at a given point in a command's boundary: the
 // payload, and the bindings declared *above* this one. A binding may
 // only draw from what came before it, so the list is what makes that
@@ -3198,6 +3332,11 @@ function renderRail() {
       title: 'Every command, its rules, and what it records',
       onclick: (e) => { e.preventDefault(); closeForms(); state.view = 'rulemap'; render(); },
     }, 'Rule map'));
+    rail.appendChild(h('a', {
+      href: '#', class: state.view === 'lifecycles' ? 'on' : '',
+      title: 'Each entity’s status as a state machine',
+      onclick: (e) => { e.preventDefault(); closeForms(); state.view = 'lifecycles'; render(); },
+    }, 'Lifecycles'));
   }
 
   // The sandbox belongs to no definition, so it hangs off nothing in
@@ -3649,7 +3788,8 @@ function paintPage() {
   if (state.view === 'events' && !advanced() && !Object.keys(model['event-definitions']).length) {
     state.view = 'slice';
   }
-  if ((state.view === 'coupling' || state.view === 'rulemap') && (!advanced() || !names.length)) {
+  if ((state.view === 'coupling' || state.view === 'rulemap' || state.view === 'lifecycles')
+      && (!advanced() || !names.length)) {
     state.view = 'slice';
   }
   // A thing removed from under its own page leaves the page with
@@ -3663,7 +3803,8 @@ function paintPage() {
 
   const main = document.getElementById('main');
   main.innerHTML = '';
-  main.className = 'slice' + (state.view === 'coupling' || state.view === 'rulemap' ? ' wide' : '');
+  main.className = 'slice'
+    + (state.view === 'coupling' || state.view === 'rulemap' || state.view === 'lifecycles' ? ' wide' : '');
 
   if (state.view === 'sandbox') return renderSandbox(model, main);
   if (state.view === 'entity') return renderEntity(model, main);
@@ -3672,6 +3813,7 @@ function paintPage() {
   if (state.view === 'events') return renderEvents(model, main);
   if (state.view === 'coupling') return renderCoupling(model, main);
   if (state.view === 'rulemap') return renderRuleMap(model, main);
+  if (state.view === 'lifecycles') return renderLifecycles(model, main);
 
   if (!state.slice) {
     // With nothing to keep track of, a command has no identifier to be
@@ -4405,10 +4547,19 @@ function stepRules(model, slice) {
             onclick: () => {
               closeForms();
               state.editRule = i;
-              state.ruleDraft = draftFromOperand(
-                draftFromOperand({ predicate: condition.predicate, negate: !!condition.negate },
-                  'left', condition.leftHandSide),
-                'right', condition.rightHandSide);
+              const opened = draftFromOperand(
+                { predicate: condition.predicate, negate: !!condition.negate },
+                'left', condition.leftHandSide);
+              // An `equalsAny` right-hand side is a literal list; its
+              // entries seed the membership widget, not the picker.
+              if (Array.isArray(condition.rightHandSide)) {
+                opened.right = '';
+                opened.rightEntries = condition.rightHandSide.map((entry) =>
+                  entry !== null && typeof entry === 'object' ? entry : String(entry));
+              } else {
+                draftFromOperand(opened, 'right', condition.rightHandSide);
+              }
+              state.ruleDraft = opened;
               render();
             },
           }, 'Edit'),
@@ -4456,6 +4607,22 @@ function ruleEditor(model, slice, index) {
     draft.predicate = predicateChoices[0] || draft.predicate;
   }
   const unary = UNARY_PREDICATES.includes(draft.predicate);
+  // `equalsAny` compares against a literal list, so its right half is
+  // a membership widget rather than the operand picker: checkboxes
+  // over the enum's members where the left side names an enum, typed
+  // rows anywhere else.
+  const membership = draft.predicate === 'equalsAny';
+
+  // The membership entries, read the way `draftOperand` reads a
+  // literal: enum-member references pass through, text coerces.
+  const entryOperands = () => (draft.rightEntries || []).map((entry) => {
+    if (entry !== null && typeof entry === 'object') return entry;
+    const text = String(entry).trim();
+    if (text === '') return undefined;
+    if (/^-?\d+(\.\d+)?$/.test(text)) return Number(text);
+    if (/^(true|false)$/i.test(text)) return /^true$/i.test(text);
+    return text;
+  }).filter((entry) => entry !== undefined);
 
   // The right side is filtered to what the predicate demands of it —
   // the same type as the left side for most predicates, a bare integer
@@ -4496,7 +4663,9 @@ function ruleEditor(model, slice, index) {
   // a row `ready()` already vouched for.
   const record = () => {
     const condition = { leftHandSide: draftOperand(draft, 'left'), predicate: draft.predicate };
-    if (!unary) condition.rightHandSide = draftOperand(draft, 'right');
+    if (!unary) {
+      condition.rightHandSide = membership ? entryOperands() : draftOperand(draft, 'right');
+    }
     if (draft.negate) condition.negate = true;
     state.editRule = null;
     state.adder = null;
@@ -4508,9 +4677,12 @@ function ruleEditor(model, slice, index) {
   // Touched and complete commits on leaving, the same as every other
   // row — clicking straight from a finished rule to the next step no
   // longer quietly drops the rule.
+  // A membership list left empty stores as the advisory case; the
+  // silent leave-commit holds out for at least one entry, while an
+  // explicit save is taken at its word.
   draft.ready = () => !!draft.touched
     && draftOperand(draft, 'left') !== undefined
-    && (unary || draftOperand(draft, 'right') !== undefined);
+    && (unary || (membership ? entryOperands().length > 0 : draftOperand(draft, 'right') !== undefined));
   draft.commit = record;
 
   // Once both sides are chosen, Enter anywhere in the row submits it —
@@ -4518,7 +4690,7 @@ function ruleEditor(model, slice, index) {
   // picked entirely from the keyboard never needs the mouse to land.
   const submit = () => {
     if (draftOperand(draft, 'left') === undefined) return toast('Say what the rule is about.', true);
-    if (!unary && draftOperand(draft, 'right') === undefined) {
+    if (!unary && !membership && draftOperand(draft, 'right') === undefined) {
       return toast('Say what to compare it with.', true);
     }
     state.ruleDraft = null;
@@ -4552,9 +4724,22 @@ function ruleEditor(model, slice, index) {
         onchange: (e) => { draft.negate = e.target.checked; draft.touched = true; },
       }), ' not'),
     pick(predicateChoices.map((p) => [p, readable(p).toLowerCase()]),
-      draft.predicate, (v) => { draft.predicate = v; draft.touched = true; render(); }),
-    ...(unary ? [] : operandPicker(rightRows, draft, 'right',
-      { placeholder: '— what? —', allowLiteral: !enums.length })),
+      draft.predicate, (v) => {
+        // Growing an `equals` into a set keeps the value already
+        // picked; shrinking back keeps the first one listed.
+        if (v === 'equalsAny' && draft.predicate !== 'equalsAny') {
+          const current = draftOperand(draft, 'right');
+          draft.rightEntries = current === undefined ? []
+            : [current !== null && typeof current === 'object' ? current : String(current)];
+        } else if (draft.predicate === 'equalsAny' && v !== 'equalsAny') {
+          draftFromOperand(draft, 'right', entryOperands()[0]);
+        }
+        draft.predicate = v; draft.touched = true; render();
+      }),
+    ...(unary ? [] : membership
+      ? membershipControls(draft, enumMembers)
+      : operandPicker(rightRows, draft, 'right',
+        { placeholder: '— what? —', allowLiteral: !enums.length })),
     h('button', { class: 'btn primary', onclick: submit }, index === null ? 'Add rule' : 'Save'),
     h('button', { class: 'btn ghost tiny', onclick: close }, 'Cancel'));
 
@@ -6172,13 +6357,15 @@ function fieldTypeOptions(model) {
 // every keystroke.
 
 // What a projection may hold: any simple type — booleans included —
-// and any scalar value type, enums among them, but never a composite,
-// since there is no single value there to advance.
-function projectionTypeOptions(model) {
+// and any scalar value type, enums among them. A composite joins the
+// list only when the projection is scripted: the declared operations
+// act on a single value and there is none in a record of fields, but
+// code has no such limit.
+function projectionTypeOptions(model, { scripted } = {}) {
   return allTypeNames(model)
     .filter((t) => {
       const cls = classifyType(model, t);
-      return cls.kind === 'value' ? !cls.composite : cls.kind === 'simple';
+      return cls.kind === 'value' ? (scripted || !cls.composite) : cls.kind === 'simple';
     })
     .map((t) => [t, readable(t)]);
 }
@@ -6476,7 +6663,7 @@ function projectionFields(model, draft, { entityName } = {}) {
 
   const heldRow = h('div', { class: 'row' },
     h('span', { class: 'muted tiny', style: 'min-width:90px' }, 'it holds'),
-    pick(projectionTypeOptions(model), draft.valueType, (v) => {
+    pick(projectionTypeOptions(model, { scripted: !!draft.script }), draft.valueType, (v) => {
       draft.valueType = v;
       // Everything scoped by the type goes with it: the operand picker
       // is built from it, and a value of the old type is not a value
@@ -6701,6 +6888,14 @@ function projectionFields(model, draft, { entityName } = {}) {
           }));
           toast('Now scripted — the declared operations are gone, the events they named are kept.');
         } else {
+          // A record is a value only code can advance — going declared
+          // with one held would store a projection the advisories flag
+          // on arrival, so the gesture asks for the re-typing first.
+          const cls = classifyType(model, draft.valueType);
+          if (cls.kind === 'value' && cls.composite) {
+            e.target.checked = true;
+            return toast(`It holds ${readable(draft.valueType)}, a record — only code can advance one. Pick a single-value type first.`, true);
+          }
           draft.initialValue = defaultInitialValue(model, draft);
           draft.parameters = entityName
             ? [{ name: defaultAlias(entityName) + 'Id', propertyType: idTypeOf(model, entityName) }]
@@ -7247,6 +7442,322 @@ function renderRuleMap(model, main) {
             : h('div', { class: 'empty tiny' }, 'records nothing yet'))));
     }
   }
+}
+
+// ---------- lifecycles ----------
+//
+// Each entity's status drawn as the machine `lifecycleMachines`
+// derives (shared.js): state bubbles on an open band, event-labelled
+// wires between them, and the commands allowed at a state kept in a
+// popover until the state is hovered, focused or pinned.
+
+const LC_GAP = 150;   // between two nodes: an arrow and its event label
+const LC_NODE_H = 46;
+const LC_ROW_H = 22;  // one command row in a popover or list
+
+// The initial state leads; the rest keep the enum's declared order,
+// which is the order the modeller wrote the lifecycle in.
+function lifecycleOrder(machine) {
+  if (machine.initial === null) return machine.states;
+  return [machine.initial, ...machine.states.filter((s) => s !== machine.initial)];
+}
+
+// What one state's popover holds: the commands that move the status
+// away (read off the transitions drawn from here, so a publisher that
+// never binds the entity — a numbering-guarded DefineCourse — still
+// appears), then the ones that leave it unchanged.
+function lifecycleStateRows(machine, state) {
+  const moves = [];
+  const seen = new Set();
+  for (const t of machine.transitions) {
+    if (!t.sources.includes(state) || t.target === state) continue;
+    for (const p of t.publishers) {
+      const from = p.sources === null ? (t.conventional ? [state] : machine.states) : p.sources;
+      if (!from.includes(state) || seen.has(p.command)) continue;
+      seen.add(p.command);
+      moves.push({ command: p.command, target: t.target, unguarded: p.sources === null });
+    }
+  }
+  const stays = machine.perState[state]
+    .filter((e) => (e.movesTo === null || e.movesTo === state) && !seen.has(e.command))
+    .map((e) => ({ command: e.command, target: null, unguarded: e.unguarded }));
+  return { moves, stays };
+}
+
+// Every command this machine cannot pin to a state — for the caveat an
+// otherwise-empty state carries.
+function lifecycleUnguarded(machine) {
+  const names = new Set();
+  for (const t of machine.transitions) {
+    for (const p of t.publishers) if (p.sources === null) names.add(p.command);
+  }
+  for (const entries of Object.values(machine.perState)) {
+    for (const e of entries) if (e.unguarded) names.add(e.command);
+  }
+  return [...names];
+}
+
+// Where everything sits — computed rather than measured: node widths
+// come from label length, so the geometry is a pure function of the
+// machine and the wires can be drawn against it without reading the
+// DOM back. Heights include the room the popovers need, so opening
+// one never grows the page under the pointer.
+function lifecycleLayout(machine) {
+  const order = lifecycleOrder(machine);
+  const nodes = [];
+  let x = 46;
+  order.forEach((state, i) => {
+    const label = readable(state);
+    const w = Math.max(120, Math.min(210, 40 + label.length * 8));
+    nodes.push({ state, x, y: 56 + (i % 2 ? 18 : 0), w, index: i });
+    x += w + LC_GAP;
+  });
+  const at = {};
+  for (const n of nodes) at[n.state] = n;
+
+  const edges = [];
+  const pairSeen = {};
+  let hasBack = false;
+  for (const t of machine.transitions) {
+    for (const source of t.sources) {
+      const from = at[source];
+      const to = at[t.target];
+      if (!from || !to) continue;
+      const pairKey = source + ' ' + t.target;
+      const lane = pairSeen[pairKey] || 0;
+      pairSeen[pairKey] = lane + 1;
+      const edge = { transition: t, from: source, to: t.target };
+      if (to.index > from.index) {
+        const x1 = from.x + from.w + 4;
+        const y1 = from.y + LC_NODE_H / 2 - 4;
+        const x2 = to.x - 8;
+        const y2 = to.y + LC_NODE_H / 2 - 4;
+        const lift = 30 + lane * 14;
+        edge.path = `M ${x1} ${y1} C ${x1 + 56} ${y1 - lift}, ${x2 - 56} ${y2 - lift}, ${x2} ${y2}`;
+        edge.labelX = (x1 + x2) / 2;
+        edge.labelY = Math.min(y1, y2) - 40 - lane * 16;
+      } else if (to.index === from.index) {
+        const cx = from.x + from.w / 2;
+        const top = from.y;
+        edge.path = `M ${cx - 15} ${top - 2} C ${cx - 15} ${top - 28}, ${cx + 15} ${top - 28}, ${cx + 15} ${top - 6}`;
+        edge.labelX = cx;
+        edge.labelY = top - 46;
+      } else {
+        hasBack = true;
+        const x1 = from.x + from.w / 2;
+        const y1 = from.y + LC_NODE_H;
+        const x2 = to.x + to.w / 2;
+        const y2 = to.y + LC_NODE_H;
+        const drop = 40 + lane * 14;
+        edge.path = `M ${x1} ${y1 + 2} C ${x1} ${y1 + drop}, ${x2} ${y2 + drop}, ${x2} ${y2 + 6}`;
+        edge.labelX = (x1 + x2) / 2;
+        edge.labelY = Math.max(y1, y2) + 26 + lane * 16;
+      }
+      edges.push(edge);
+    }
+  }
+
+  // The room a state's rows need, so an opened popover never spills
+  // past the band.
+  let maxRows = 1;
+  for (const state of machine.states) {
+    const { moves, stays } = lifecycleStateRows(machine, state);
+    const headers = (moves.length ? 1 : 0) + (stays.length ? 1 : 0);
+    maxRows = Math.max(maxRows, moves.length + stays.length + headers || 2);
+  }
+  const nodesBottom = Math.max(...nodes.map((n) => n.y)) + LC_NODE_H;
+  return {
+    nodes, at, edges,
+    width: Math.max(x - LC_GAP + 46, 320),
+    height: nodesBottom + (hasBack ? 58 : 14) + maxRows * LC_ROW_H + 44,
+  };
+}
+
+function renderLifecycles(model, main) {
+  main.appendChild(h('header', {},
+    h('div', { class: 'name' }, 'Lifecycles'),
+    h('div', { class: 'muted small' },
+      'Each entity’s status as a machine — every state its enum declares, the events that move '
+      + 'it from one to the next, and the commands allowed at each state. All of it is derived: '
+      + 'a lifecycle is an ordinary enum plus a property named “status” typed with it.')));
+
+  const { machines, excluded } = lifecycleMachines(model);
+  if (!machines.length) {
+    main.appendChild(h('div', { class: 'empty' },
+      'No entity has a lifecycle yet — give one a “status” property typed with an enum '
+      + 'and its machine appears here.'));
+    return;
+  }
+
+  main.appendChild(h('div', { class: 'muted small', style: 'margin-bottom:4px' },
+    'Hover or click a state for the commands allowed there.'));
+
+  machines.forEach((machine, index) => renderLifecycleMachine(model, main, machine, index));
+
+  const anyUnguarded = machines.some((m) => lifecycleUnguarded(m).length);
+  if (anyUnguarded) {
+    main.appendChild(h('div', { class: 'lc-fn', style: 'margin-top:14px' },
+      h('span', { class: 'lc-dot' }), ' marks a command with no rule over that status — nothing '
+      + 'refuses it at any state, and an arrow only it feeds starts at the initial state by '
+      + 'convention.'));
+  }
+  const machineEntities = new Set(machines.map((m) => m.entity));
+  const shared = Object.values(model['command-definitions']).some((body) =>
+    new Set((body.boundary || []).filter((b) => b && machineEntities.has(b.entity))
+      .map((b) => b.entity)).size > 1);
+  if (shared) {
+    main.appendChild(h('div', { class: 'lc-fn' },
+      'A command that binds two entities counts toward both machines — each machine reads only '
+      + 'the rules over its own status.'));
+  }
+  for (const machine of machines) {
+    if (!machine.opaque.length) continue;
+    main.appendChild(h('div', { class: 'lc-fn' },
+      `${readable(machine.entity)} · status is also touched by `
+      + machine.opaque.map(readable).join(', ')
+      + ' in a way this page cannot read (a computed value or a non-set operation).'));
+  }
+  if (excluded.length) {
+    const reasons = {
+      'no-status': 'no status property',
+      'not-enum': 'its status is not typed with an enum',
+      scripted: 'its status projection is scripted',
+    };
+    main.appendChild(h('div', { class: 'lc-fn' }, 'Not on this page: '
+      + excluded.map((e) => `${readable(e.entity)} (${reasons[e.reason] || e.reason})`).join(', ')
+      + '.'));
+  }
+}
+
+function renderLifecycleMachine(model, main, machine, index) {
+  const layout = lifecycleLayout(machine);
+  const unguardedNames = lifecycleUnguarded(machine);
+
+  const cluster = h('div', { class: 'lc-cluster' },
+    h('button', {
+      class: 'lc-ename', type: 'button', title: 'Open ' + readable(machine.entity),
+      onclick: () => openEntity(machine.entity),
+    }, h('i', { class: 'ic' }, entityIcon(model, machine.entity)), readable(machine.entity)),
+    h('span', {
+      class: 'chip entity tiny linkable', title: 'Open ' + readable(machine.projection),
+      onclick: () => goToProjection(machine.projection),
+    }, readable(machine.valueType)));
+  main.appendChild(cluster);
+
+  const band = h('div', { class: 'lc-band', style: `width:${layout.width}px; height:${layout.height}px` });
+
+  // The wires, one SVG from the computed geometry. Marker ids are
+  // scoped per machine so two bands never share one.
+  const ah = `lc-ah-${index}`;
+  const ahg = `lc-ahg-${index}`;
+  let wires = `<svg viewBox="0 0 ${layout.width} ${layout.height}" preserveAspectRatio="none">`
+    + `<defs><marker id="${ah}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">`
+    + `<path d="M 0 0 L 10 5 L 0 10 z" fill="var(--event)"></path></marker>`
+    + `<marker id="${ahg}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">`
+    + `<path d="M 0 0 L 10 5 L 0 10 z" fill="var(--border-strong)"></path></marker></defs>`;
+  const entry = machine.initial === null ? null : layout.at[machine.initial];
+  if (entry) {
+    const y = entry.y + LC_NODE_H / 2;
+    wires += `<circle cx="24" cy="${y}" r="4" fill="var(--border-strong)"></circle>`
+      + `<path d="M 28 ${y} C 34 ${y}, 38 ${y}, ${entry.x - 4} ${y}" fill="none" `
+      + `stroke="var(--border-strong)" stroke-width="1.8" marker-end="url(#${ahg})"></path>`;
+  }
+  for (const edge of layout.edges) {
+    wires += `<path d="${edge.path}" fill="none" stroke="var(--event)" stroke-width="1.8" `
+      + `marker-end="url(#${ah})"></path>`;
+  }
+  // The quiet loop over a state whose commands leave the status where
+  // it is — the count is on the band, the names are in the popover.
+  for (const node of layout.nodes) {
+    const stays = lifecycleStateRows(machine, node.state).stays.length;
+    if (!stays) continue;
+    const cx = node.x + node.w / 2;
+    wires += `<path d="M ${cx - 15} ${node.y - 2} C ${cx - 15} ${node.y - 24}, `
+      + `${cx + 15} ${node.y - 24}, ${cx + 15} ${node.y - 6}" fill="none" `
+      + `stroke="var(--event)" stroke-width="1.5" marker-end="url(#${ah})"></path>`;
+  }
+  wires += '</svg>';
+  band.appendChild(h('div', { class: 'lc-wires', html: wires }));
+
+  for (const edge of layout.edges) {
+    const t = edge.transition;
+    const via = t.publishers.map((p) => readable(p.command)).join(', ');
+    band.appendChild(h('div', {
+      class: 'lc-elabel', style: `left:${edge.labelX}px; top:${edge.labelY}px`,
+    }, eventRef(model, t.event, { cls: 'chip event tiny linkable' }),
+      t.unguarded ? h('span', {
+        class: 'lc-dot',
+        title: (via || 'This event’s command') + ' carries no rule over '
+          + readable(machine.entity).toLowerCase() + ' · status',
+      }) : null));
+  }
+
+  for (const node of layout.nodes) {
+    const rows = lifecycleStateRows(machine, node.state);
+    if (rows.stays.length) {
+      band.appendChild(h('div', {
+        class: 'lc-loop', style: `left:${node.x + node.w / 2}px; top:${node.y - 42}px`,
+        title: rows.stays.length + ' command' + (rows.stays.length === 1 ? '' : 's')
+          + ' leave the status unchanged',
+      }, rows.stays.length + ' stay'));
+    }
+
+    const caps = [];
+    if (node.state === machine.initial) caps.push('initial');
+    if (machine.terminal.includes(node.state)) caps.push('terminal');
+    const hot = h('div', {
+      class: 'lc-hot' + (machine.terminal.includes(node.state) ? ' terminal' : ''),
+      style: `left:${node.x}px; top:${node.y}px`,
+    });
+    hot.appendChild(h('button', {
+      class: 'lc-node', type: 'button', style: `width:${node.w}px; height:${LC_NODE_H}px`,
+      'aria-expanded': 'false',
+      onclick: (e) => {
+        const on = hot.classList.toggle('on');
+        e.currentTarget.setAttribute('aria-expanded', on ? 'true' : 'false');
+      },
+    }, h('span', { class: 'st', title: readable(node.state) }, readable(node.state)),
+      caps.length ? h('span', { class: 'cap' }, caps.join(' · ')) : null));
+
+    const count = rows.moves.length + rows.stays.length;
+    if (count) hot.appendChild(h('span', { class: 'lc-badge' }, String(count)));
+
+    hot.appendChild(h('div', { class: 'lc-pop lc-rows' },
+      ...lifecycleRowsView(model, machine, rows, unguardedNames)));
+    band.appendChild(hot);
+  }
+
+  main.appendChild(h('div', { class: 'lc-scroll' }, band));
+}
+
+// The popover's rows.
+function lifecycleRowsView(model, machine, rows, unguardedNames) {
+  const row = (entry) => h('div', { class: 'lc-prow' },
+    h('button', {
+      class: 'cmd', type: 'button', title: 'Open ' + readable(entry.command),
+      onclick: () => goToCommand(entry.command),
+    }, commandIcon(model, entry.command) + ' ' + readable(entry.command)),
+    entry.target ? h('span', { class: 'to' }, '→ ' + readable(entry.target)) : null,
+    entry.unguarded ? h('span', {
+      class: 'lc-dot',
+      title: 'No rule over ' + readable(machine.entity).toLowerCase()
+        + ' · status — would run at any state',
+    }) : null);
+
+  const out = [];
+  if (rows.moves.length) out.push(h('h4', {}, 'Moves on'), ...rows.moves.map(row));
+  if (rows.stays.length) {
+    out.push(h('h4', {}, rows.moves.length ? 'Stays here' : 'Allowed here · status unchanged'),
+      ...rows.stays.map(row));
+  }
+  if (!out.length) {
+    out.push(h('div', { class: 'lc-none' }, 'Nothing is guarded to run here.'));
+    if (unguardedNames.length) {
+      out.push(h('div', { class: 'lc-warn' },
+        'only unguarded ' + unguardedNames.map(readable).join(', ') + ' would still run'));
+    }
+  }
+  return out;
 }
 
 // The event's own shape: rename a field, retype it, remove it, add
@@ -8846,15 +9357,32 @@ function projectionWatchCard(model, watch) {
   if (!projection) return head(h('div', { class: 'sc-line' }, h('span', { class: 'k' }, '  gone from this model')));
 
   const held = foldWatch(model, watch);
-  return head(h('div', { class: 'sc-line' },
-    held.error
-      ? h('span', { class: 'k' }, '  — ' + held.error)
-      : h('span', {}, '  ' + initialValueWords(held.value))));
+  if (held.error) {
+    return head(h('div', { class: 'sc-line' }, h('span', { class: 'k' }, '  — ' + held.error)));
+  }
+
+  // A script that `exposes` one field keeps the rest of its record as
+  // bookkeeping a condition never sees — hidden from the *boundary*,
+  // not from the person watching the script work. So under the value a
+  // reader gets, the watch also shows the whole record it came from.
+  const script = scriptOf(projection);
+  const inside = script && script.exposes !== undefined
+    ? foldWatch(model, watch, foldProjectionState)
+    : null;
+  return head(
+    h('div', { class: 'sc-line' }, h('span', {}, '  ' + initialValueWords(held.value))),
+    inside ? h('div', { class: 'sc-line' },
+      h('span', { class: 'k' }, '  keeping '),
+      h('span', { class: 'k' }, inside.error
+        ? '— ' + inside.error
+        : (inside.value !== null && typeof inside.value === 'object' && !Array.isArray(inside.value)
+          ? payloadText(inside.value)
+          : JSON.stringify(inside.value)))) : null);
 }
 
-function foldWatch(model, watch) {
+function foldWatch(model, watch, fold) {
   try {
-    return { value: foldProjection(model, sessionVisible(), watch.projection, watch.arguments || {}) };
+    return { value: (fold || foldProjection)(model, sessionVisible(), watch.projection, watch.arguments || {}) };
   } catch (error) {
     if (error instanceof EvaluationError) return { error: error.message };
     throw error;

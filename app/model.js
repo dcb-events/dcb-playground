@@ -147,6 +147,7 @@ const CAMEL_RE = /^[a-z][A-Za-z0-9]+$/;
 const UNARY_PREDICATES = ['isEmpty', 'isNotEmpty', 'isTrue', 'isFalse'];
 const BINARY_PREDICATES = [
   'equals',
+  'equalsAny',
   'countEquals',
   'countLessThan',
   'countGreaterThan',
@@ -699,7 +700,7 @@ function operandText(operand) {
     case 'successor': return `next(${operandText(operand.successor)})`;
     default:
       if (operand === null || operand === undefined) return 'null';
-      if (Array.isArray(operand)) return '[]';
+      if (Array.isArray(operand)) return `[${operand.map(operandText).join(', ')}]`;
       return typeof operand === 'string' ? `"${operand}"` : String(operand);
   }
 }
@@ -709,6 +710,7 @@ function operandText(operand) {
 // structurally, because a literal that merely *contains* a question
 // mark is a value, not a gap.
 function operandIncomplete(operand) {
+  if (Array.isArray(operand)) return operand.some(operandIncomplete);
   switch (operandSource(operand)) {
     case 'parameter': return !operand.parameterName;
     case 'alias-property': return !operand.alias;
@@ -923,7 +925,13 @@ function forEachCommandOperand(body, visit) {
     if (!condition) continue;
     visit(condition.leftHandSide, { where: `condition "${conditionText(condition)}"` });
     if (condition.rightHandSide !== undefined) {
-      visit(condition.rightHandSide, { where: `condition "${conditionText(condition)}"` });
+      // `equalsAny` spells its right-hand side as a literal list. The
+      // entries are the operands; the array is only their container.
+      const rights = Array.isArray(condition.rightHandSide)
+        ? condition.rightHandSide : [condition.rightHandSide];
+      for (const operand of rights) {
+        visit(operand, { where: `condition "${conditionText(condition)}"` });
+      }
     }
   }
   for (const emission of body.publishes || []) {
@@ -998,17 +1006,21 @@ function predicatesForType(resolved) {
     return ['equals', 'countEquals', 'countLessThan', 'countGreaterThan',
       'contains', 'containsAny', 'isEmpty', 'isNotEmpty'];
   }
-  if (resolved.propertyType === 'boolean') return ['equals', 'isTrue', 'isFalse'];
+  if (resolved.propertyType === 'boolean') return ['equals', 'equalsAny', 'isTrue', 'isFalse'];
   if (resolved.propertyType === 'integer') {
-    return ['equals', 'lessThan', 'lessThanOrEquals', 'greaterThan', 'greaterThanOrEquals'];
+    return ['equals', 'equalsAny', 'lessThan', 'lessThanOrEquals', 'greaterThan', 'greaterThanOrEquals'];
   }
   if (resolved.propertyType === 'string') {
-    return ['equals', 'lessThan', 'lessThanOrEquals', 'greaterThan', 'greaterThanOrEquals',
+    return ['equals', 'equalsAny', 'lessThan', 'lessThanOrEquals', 'greaterThan', 'greaterThanOrEquals',
       'startsWith', 'endsWith'];
   }
   // Enum, id and composite types (custom or entity-derived): nothing
-  // but identity means anything without a declared ordering.
-  return ['equals'];
+  // but identity means anything without a declared ordering —
+  // `equalsAny` is that same identity, taken against each entry of a
+  // literal list, so it is admitted wherever `equals` is (and, like
+  // `equals`, only against a scalar left-hand side: "this list is one
+  // of these lists" is authorable noise).
+  return ['equals', 'equalsAny'];
 }
 
 // The type a rule's right-hand side has to hold for a given predicate
@@ -1021,6 +1033,8 @@ function rightHandExpectedType(predicate, leftType) {
   }
   if (predicate === 'contains') return { propertyType: leftType.propertyType, isList: false };
   if (predicate === 'containsAny') return { propertyType: leftType.propertyType, isList: true };
+  // `equalsAny` compares against a literal list of the left's own type.
+  if (predicate === 'equalsAny') return { propertyType: leftType.propertyType, isList: true };
   return { propertyType: leftType.propertyType, isList: leftType.isList };
 }
 
@@ -1863,15 +1877,19 @@ function validateProjectionBody(model, projectionName, body) {
       `Type "${body.valueType}" (projection "${projectionName}") does not resolve in this model.`
     );
   }
-  if (valueCls.kind === 'value' && valueCls.composite) {
+  const script = scriptOf(body);
+  // A record of fields is a value only code can advance: the declared
+  // operations act on a single value and have nothing to act on in
+  // one, so a composite is legal exactly where a script is what moves
+  // the projection.
+  if (valueCls.kind === 'value' && valueCls.composite && !script) {
     throw new DomainError(
       `Projection "${projectionName}" holds "${body.valueType}", which is a composite. ` +
-      'A projection holds a single value, and the operations that advance one have nothing ' +
-      'to act on in a record of fields.'
+      'The operations that advance a declared projection act on a single value and have ' +
+      'nothing to act on in a record of fields — script the projection to hold one.'
     );
   }
 
-  const script = scriptOf(body);
   if (script) {
     // A scripted projection replaces `parameters` with `arguments` and
     // a tag filter: its arguments are read-time values rather than
@@ -2263,6 +2281,61 @@ function validateCommandBody(model, body) {
     }
   }
 
+  // `equalsAny` compares one scalar against a literal list — the one
+  // operand position that is an array, and the one predicate that
+  // reads one. Its entries are literals or enum-member references,
+  // never a reference to data (that is `contains`/`containsAny` over a
+  // list-typed source) and never null (a membership list may not hold
+  // "no value").
+  for (const condition of body.conditions || []) {
+    if (!condition) continue;
+    const isValueList = Array.isArray(condition.rightHandSide);
+    if (condition.predicate !== 'equalsAny') {
+      if (isValueList) {
+        throw new DomainError(
+          `"${conditionText(condition)}" compares against a literal list, ` +
+          `which only "equalsAny" reads.`
+        );
+      }
+      continue;
+    }
+    if (!isValueList) {
+      throw new DomainError(
+        `"${conditionText(condition)}" — "equalsAny" compares against a literal list ` +
+        `of values ("equals" is the one-value comparison).`
+      );
+    }
+    const left = conditionOperandType(model, body, condition, condition.leftHandSide);
+    if (left && left.isList) {
+      throw new DomainError(
+        `Left side of "${conditionText(condition)}" is a list — "equalsAny" compares one ` +
+        `value against the listed ones ("contains"/"containsAny" read a list).`
+      );
+    }
+    if (!condition.rightHandSide.length) {
+      throw new DomainError(
+        `"${conditionText(condition)}" lists no values — membership over an empty list is ` +
+        `constant: it ${condition.negate ? 'always' : 'never'} holds.`
+      );
+    }
+    for (const entry of condition.rightHandSide) {
+      if (entry === null) {
+        throw new DomainError(
+          `"${conditionText(condition)}" lists null — a membership list may not hold ` +
+          `"no value". Spell "unset or one of these" as a separate condition.`
+        );
+      }
+      const source = operandSource(entry);
+      if (source !== 'enum-member' && source !== 'static') {
+        throw new DomainError(
+          `"${conditionText(condition)}" lists "${operandText(entry)}" — an "equalsAny" ` +
+          `list holds literals or enum members; membership against data is ` +
+          `"contains"/"containsAny" over a list-typed source.`
+        );
+      }
+    }
+  }
+
   const commandProperties = new Set((body.properties || []).map((p) => p.name));
   let failure = null;
   forEachCommandOperand(body, (operand, meta) => {
@@ -2362,10 +2435,13 @@ function validateCommandBody(model, body) {
   }
 
   // Enum members are checked against the alias property they sit
-  // opposite, which is where a status comparison always appears.
+  // opposite, which is where a status comparison always appears. In an
+  // `equalsAny` list every entry sits opposite the left-hand side.
   for (const condition of body.conditions || []) {
     if (!condition || condition.rightHandSide === undefined) continue;
-    const sides = [[condition.leftHandSide, condition.rightHandSide], [condition.rightHandSide, condition.leftHandSide]];
+    const sides = Array.isArray(condition.rightHandSide)
+      ? condition.rightHandSide.map((entry) => [entry, condition.leftHandSide])
+      : [[condition.leftHandSide, condition.rightHandSide], [condition.rightHandSide, condition.leftHandSide]];
     for (const [maybeEnum, other] of sides) {
       if (operandSource(maybeEnum) !== 'enum-member') continue;
       if (operandSource(other) !== 'alias-property') continue;
@@ -2375,12 +2451,15 @@ function validateCommandBody(model, body) {
       // check the member against — its value type is not examined here.
       const entity = binding.entity && model['entity-definitions'][binding.entity];
       if (!entity) continue;
-      const property = (entity.properties || []).find((p) => p.name === other.property);
-      if (!property) continue;
-      const members = enumMembersFor(model, property.propertyType);
+      // A property is a binding, so the type the member is checked
+      // against is the bound projection's — the same resolution the
+      // rename rewrite walks.
+      const { projection } = entityPropertyTarget(model, binding.entity, other.property);
+      if (!projection) continue;
+      const members = enumMembersFor(model, projection.valueType);
       if (members && !members.includes(maybeEnum.enumMember)) {
         throw new DomainError(
-          `"${maybeEnum.enumMember}" is not a member of ${property.propertyType} ` +
+          `"${maybeEnum.enumMember}" is not a member of ${projection.valueType} ` +
           `(condition "${conditionText(condition)}").`
         );
       }
@@ -2970,10 +3049,14 @@ const MEMBER_REWRITES = {
       let touched = false;
       for (const condition of command.conditions || []) {
         if (!condition) continue;
-        const sides = [
-          [condition.leftHandSide, condition.rightHandSide],
-          [condition.rightHandSide, condition.leftHandSide],
-        ];
+        // In an `equalsAny` list every entry sits opposite the left-hand
+        // side; the entry objects are mutated in place like any operand.
+        const sides = Array.isArray(condition.rightHandSide)
+          ? condition.rightHandSide.map((entry) => [entry, condition.leftHandSide])
+          : [
+            [condition.leftHandSide, condition.rightHandSide],
+            [condition.rightHandSide, condition.leftHandSide],
+          ];
         for (const [maybeEnum, other] of sides) {
           if (operandSource(maybeEnum) !== 'enum-member' || maybeEnum.enumMember !== previous) continue;
           if (operandSource(other) !== 'alias-property') continue;
@@ -3373,10 +3456,27 @@ function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
 // 3.x reader ignores the flag and errors on the very case the author
 // declared expected, so this is a major. The other direction is safe:
 // a 3.x document never says it, so this build reads 3.x whole
-// (`READABLE_MAJORS`) and always writes 4.0.
-const MODEL_VERSION = '4.0';
-const MODEL_SCHEMA_URL = 'https://dcb.events/schemas/model/v4.json';
-const READABLE_MAJORS = [3, 4];
+// (`READABLE_MAJORS`).
+// 4.1 lifted a documented restriction rather than adding anything: a
+// *scripted* projection's `valueType` may be a composite value type.
+// No shape changed, and a 4.0 reader loads and evaluates such a
+// document correctly — equality was always deep, a composite was
+// always offered identity predicates only, and a scripted fold is
+// opaque code either way. The one thing it does wrong is flag the
+// projection with the advisory that used to guard the restriction,
+// which is exactly the non-blocking miss `envelopeVersionWarning`
+// exists to explain.
+// 5.0 is the closed-vocabulary kind the reader-side rule names
+// outright: `equalsAny` joined the binary predicates — one scalar
+// against a literal list, spelled as a bare array of literals and
+// enum-member references in `rightHandSide`, the same list spelling
+// initial values already had. A 4.x reader fails on the predicate in
+// `evApplyPredicate` rather than passing it through, so this is a
+// major even though nothing a 4.x document says changed; this build
+// reads 3.x and 4.x whole.
+const MODEL_VERSION = '5.0';
+const MODEL_SCHEMA_URL = 'https://dcb.events/schemas/model/v5.json';
+const READABLE_MAJORS = [3, 4, 5];
 
 const SCHEMA_FIELD = {
   'custom-type-definition': 'customTypeDefinitions',
@@ -4314,6 +4414,134 @@ function seedProductPricing(modelId) {
   });
 }
 
+// A decision made from *content*, not from a recorded status. Whether
+// a document is Published or PendingChanges depends on whether its
+// current text equals the last published one — a comparison over two
+// values the events carried at different times, which no declared
+// handler vocabulary can express. So the status projection is
+// scripted: it keeps both texts as private state and exposes only the
+// status, and every command decides against that one exposed value.
+// Publishing "restores" silently: re-typing the published text flips
+// the status back to Published with no event saying so.
+function seedContentDecisions(modelId) {
+  const prop = seedProp;
+  const param = seedParam;
+  const of = seedOf;
+  const bind = seedBind;
+
+  // 1. The lifecycle enum, then the entity, bare — declaring Document
+  //    mints DocumentId, which the state type and events reference.
+  addDefinition('custom-type-definition', modelId, 'DocumentStatus', seedEnumType('DocumentStatus',
+    ['NonExistent', 'Draft', 'Published', 'PendingChanges', 'Archived']));
+  addDefinition('entity-definition', modelId, 'Document', { icon: '📄', properties: [] });
+
+  // The script's private state, written down as a composite type.
+  // Nothing references it — the script's initialState is untyped by
+  // design — but the shape a reader would otherwise reverse-engineer
+  // out of four code strings is worth one declaration.
+  addDefinition('custom-type-definition', modelId, 'DocumentChangeState', {
+    properties: [
+      { name: 'publishedText', propertyType: 'string' },
+      { name: 'currentText', propertyType: 'string' },
+      { name: 'status', propertyType: 'DocumentStatus' },
+    ],
+  });
+
+  // 2. Events. The texts live here; no projection re-publishes them.
+  const event = (name, properties) =>
+    addDefinition('event-definition', modelId, name, { properties });
+
+  event('DocumentAdded', [prop('id', 'DocumentId')]);
+  event('TextUpdated', [prop('docId', 'DocumentId'), prop('text', 'string')]);
+  event('DocumentPublished', [prop('docId', 'DocumentId')]);
+  event('DocumentArchived', [prop('docId', 'DocumentId')]);
+
+  // 3. The scripted projection. `exposes` is what keeps the two texts
+  //    out of the boundary: conditions read `status` and nothing else,
+  //    typed exactly as a declared projection would be.
+  addDefinition('projection-definition', modelId, 'DocumentStatus', {
+    valueType: 'DocumentStatus',
+    isList: false,
+    script: {
+      initialState: { currentText: '', publishedText: '', status: 'NonExistent' },
+      exposes: 'status',
+      arguments: [{ name: 'documentId', propertyType: 'DocumentId' }],
+      tagFilter: ['DocumentId:{documentId}'],
+    },
+    handlers: [
+      { event: 'DocumentAdded',
+        code: '{"currentText":"","publishedText":"","status":"Draft"}' },
+      { event: 'TextUpdated',
+        code: '{"currentText":event.data.text,"publishedText":state.publishedText,'
+          + '"status":event.data.text == state.publishedText ? "Published" : "PendingChanges"}' },
+      { event: 'DocumentPublished',
+        code: '{"currentText":state.currentText,"publishedText":state.currentText,"status":"Published"}' },
+      { event: 'DocumentArchived',
+        code: '{"currentText":state.currentText,"publishedText":state.publishedText,"status":"Archived"}' },
+    ],
+  });
+  seedPatch('entity-definition', modelId, 'Document', (document) => {
+    document.properties = [seedBindProp(STATUS_PROPERTY, 'DocumentStatus')];
+  });
+
+  // 4. Commands — every rule is a status check, and the two that allow
+  //    more than one status use `equalsAny` rather than spelling the
+  //    same read out once per member.
+  const command = (name, body) => addDefinition('command-definition', modelId, name, body);
+
+  command('AddDocument', {
+    feature: 'Document Authoring',
+    icon: '⭐',
+    properties: [prop('id', 'DocumentId')],
+    boundary: [bind('document', 'Document', 'id')],
+    conditions: [
+      { leftHandSide: of('document', STATUS_PROPERTY), predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' } },
+    ],
+    publishes: [{ name: 'DocumentAdded', parameters: { id: param('id') } }],
+  });
+
+  command('UpdateText', {
+    feature: 'Document Authoring',
+    icon: '✏️',
+    properties: [prop('docId', 'DocumentId'), prop('text', 'string')],
+    boundary: [bind('document', 'Document', 'docId')],
+    conditions: [
+      { leftHandSide: of('document', STATUS_PROPERTY), predicate: 'equals',
+        rightHandSide: { enumMember: 'NonExistent' }, negate: true },
+      { leftHandSide: of('document', STATUS_PROPERTY), predicate: 'equals',
+        rightHandSide: { enumMember: 'Archived' }, negate: true },
+    ],
+    publishes: [{
+      name: 'TextUpdated',
+      parameters: { docId: param('docId'), text: param('text') },
+    }],
+  });
+
+  command('PublishDocument', {
+    feature: 'Document Authoring',
+    icon: '💾',
+    properties: [prop('docId', 'DocumentId')],
+    boundary: [bind('document', 'Document', 'docId')],
+    conditions: [
+      { leftHandSide: of('document', STATUS_PROPERTY), predicate: 'equalsAny',
+        rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'PendingChanges' }] },
+    ],
+    publishes: [{ name: 'DocumentPublished', parameters: { docId: param('docId') } }],
+  });
+
+  command('ArchiveDocument', {
+    feature: 'Document Authoring',
+    icon: '🗑️',
+    properties: [prop('docId', 'DocumentId')],
+    boundary: [bind('document', 'Document', 'docId')],
+    conditions: [
+      { leftHandSide: of('document', STATUS_PROPERTY), predicate: 'equalsAny',
+        rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }, { enumMember: 'PendingChanges' }] },
+    ],
+    publishes: [{ name: 'DocumentArchived', parameters: { docId: param('docId') } }],
+  });
+}
+
 const PREDEFINED_MODELS = [
   {
     name: 'Course Example (simple)',
@@ -4351,6 +4579,14 @@ const PREDEFINED_MODELS = [
       + 'to the customer; the boundary fans out over the lines and checks each price against '
       + 'the product it belongs to.',
     build: (modelId) => { seedProductPricing(modelId); },
+  },
+  {
+    name: 'Content based decisions',
+    slug: 'content-decisions',
+    description: 'A document is Published or PendingChanges depending on whether its current '
+      + 'text equals the last published one — a comparison no declared handler can express, '
+      + 'so the status projection is scripted and exposes only the status.',
+    build: (modelId) => { seedContentDecisions(modelId); },
   },
 ];
 

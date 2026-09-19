@@ -1,0 +1,271 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; }
+    .app {
+      --bg:#f8fafc; --surface:#ffffff; --border:#e2e8f0; --border-strong:#cbd5e1;
+      --text:#0f172a; --muted:#64748b;
+      --command:#2563eb; --command-soft:#eff6ff; --command-bd:#bfdbfe; --command-tx:#1e40af;
+      --event:#f97316; --event-soft:#fff7ed; --event-bd:#fed7aa; --event-tx:#9a3412;
+      --entity:#16a34a; --entity-soft:#f0fdf4; --entity-bd:#bbf7d0; --entity-tx:#166534;
+      --rule:#c026d3; --rule-soft:#fdf4ff; --rule-bd:#f5d0fe; --rule-tx:#86198f;
+      --type:#6b7280; --type-soft:#f9fafb;
+      --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+      font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: var(--text); background: var(--bg);
+      min-height: 100vh; padding-bottom: 40px;
+    }
+    a { color: #2563eb; } a:hover { color: #1d4ed8; }
+
+    .boardhead {
+      display: flex; align-items: baseline; gap: 12px;
+      padding: 18px 30px 14px; border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .boardhead .kicker {
+      font-size: 11px; text-transform: uppercase; letter-spacing: .07em;
+      color: var(--entity); font-weight: 700;
+    }
+    .boardhead .nm { font-size: 17px; font-weight: 600; }
+    .boardhead .ch { font-size: 12px; color: var(--muted); }
+    .boardhead .grow { flex: 1; }
+
+    .slice { padding: 22px 30px 0; }
+    .phead { margin-bottom: 18px; }
+    .phead .name { font-size: 20px; font-weight: 600; }
+    .muted { color: var(--muted); }
+    .small { font-size: 12px; }
+    .tiny { font-size: 11px; }
+    .empty { color: var(--muted); font-size: 12px; font-style: italic; }
+    h4 {
+      margin: 0; font-size: 11px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: .07em; color: var(--muted);
+    }
+
+    .chip {
+      display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px;
+      font-size: 12px; font-family: var(--mono);
+      background: var(--type-soft); border: 1px solid var(--border);
+    }
+    .chip.command { background: var(--command-soft); border-color: var(--command-bd); color: var(--command-tx); }
+    .chip.event { background: var(--event-soft); border-color: var(--event-bd); color: var(--event-tx); }
+    .chip.entity { background: var(--entity-soft); border-color: var(--entity-bd); color: var(--entity-tx); }
+    .chip.tiny { font-size: 11px; padding: 2px 8px; }
+    .ic { font-style: normal; margin-right: 4px; }
+
+    .esec { margin-bottom: 26px; }
+    .ehead { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; }
+    .ehead .eic { font-size: 16px; font-style: normal; }
+    .ehead .enm { font-size: 15px; font-weight: 600; }
+
+    .lanes { display: grid; gap: 14px; align-items: start; }
+    .lanes.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .lanes.two { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 566px; }
+
+    .lane {
+      border: 1px solid var(--border); border-radius: 8px;
+      background: var(--type-soft); padding: 10px 10px 12px;
+    }
+    .lanehead {
+      display: flex; align-items: baseline; gap: 8px;
+      padding: 0 3px 8px; border-bottom: 2px solid var(--entity); margin-bottom: 10px;
+    }
+    .lanehead .st { font-size: 13px; font-weight: 600; }
+    .lanehead .cap {
+      font-size: 9.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted);
+    }
+    .lanehead .grow { flex: 1; }
+    .lanehead .n {
+      font-size: 10px; color: var(--muted); background: var(--surface);
+      border: 1px solid var(--border); border-radius: 999px; padding: 0 6px;
+    }
+
+    .enters {
+      display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+      font-size: 11px; color: var(--muted); margin: -2px 3px 9px;
+    }
+
+    .ccard {
+      border: 1px solid var(--border); border-left: 3px solid var(--command);
+      border-radius: 6px; background: var(--surface);
+      padding: 8px 10px 9px; margin-bottom: 8px;
+    }
+    .ccard .nm {
+      font-size: 12.5px; font-weight: 600; font-family: var(--mono); color: var(--command-tx);
+    }
+    .ccard .rec { font-size: 11px; color: var(--muted); margin-top: 3px; }
+    .ccard .rec .ev { font-family: var(--mono); color: var(--event-tx); }
+    .ccard .moves {
+      display: inline-flex; align-items: center; gap: 5px; margin-top: 5px;
+      font-size: 11px; font-family: var(--mono); font-weight: 600; color: var(--event-tx);
+      background: var(--event-soft); border: 1px solid var(--event-bd);
+      border-radius: 4px; padding: 1px 7px;
+    }
+    .ccard .stays { display: inline-block; margin-top: 5px; font-size: 10.5px; color: var(--muted); }
+    .ccard .more { font-size: 10.5px; color: var(--rule-tx); margin-top: 4px; }
+    .ccard .also { font-size: 10.5px; color: var(--muted); margin-top: 4px; }
+    .ccard.mover { border-left-color: var(--event); }
+    .ccard.unguarded { border-style: dashed; border-left-style: solid; border-left-color: var(--rule); }
+    .ccard .warn { font-size: 10.5px; color: var(--rule-tx); margin-top: 4px; }
+
+    .lane.dead { background: var(--bg); border-style: dashed; }
+    .lane.dead .empty { padding: 4px 3px 0; }
+
+    .crossnote { font-size: 11.5px; color: var(--muted); margin: -8px 0 22px; }
+  </style>
+</helmet>
+
+<div class="app">
+  <div class="boardhead">
+    <span class="kicker">Overview · Lifecycles</span>
+    <span class="nm">B · State lanes</span>
+    <span class="grow"></span>
+    <span class="ch">Course example (with schedules)</span>
+  </div>
+
+  <div class="slice">
+    <div class="phead">
+      <div class="name">Lifecycles</div>
+      <div class="muted small">One lane per status &#8212; what a course or a student can have done to it while it is in that state.
+        A card is a command the rules allow there; an orange card moves the status to the next lane.</div>
+    </div>
+
+    <!-- ============ Course ============ -->
+    <div class="esec">
+      <div class="ehead">
+        <i class="eic">📚</i><span class="enm">Course</span>
+        <span class="chip entity tiny">Course status</span>
+      </div>
+
+      <div class="lanes three">
+        <div class="lane">
+          <div class="lanehead">
+            <span class="st">Non existent</span>
+            <span class="cap">initial</span>
+            <span class="grow"></span>
+            <span class="n">1</span>
+          </div>
+          <div class="ccard mover unguarded">
+            <div class="nm">&#11030; Define course</div>
+            <div class="rec">records <span class="ev">&#11030; Course defined</span></div>
+            <span class="moves">&#8594; Existent</span>
+            <div class="warn">no rule over course &#183; status &#8212; would run in any lane</div>
+          </div>
+        </div>
+
+        <div class="lane">
+          <div class="lanehead">
+            <span class="st">Existent</span>
+            <span class="grow"></span>
+            <span class="n">5</span>
+          </div>
+          <div class="enters">enters via <span class="chip event tiny"><i class="ic">&#11030;</i>Course defined</span></div>
+          <div class="ccard">
+            <div class="nm">&#9673; Change course capacity</div>
+            <div class="rec">records <span class="ev">&#9673; Course capacity changed</span></div>
+            <span class="stays">status unchanged</span>
+            <div class="more">+ 1 more rule</div>
+          </div>
+          <div class="ccard">
+            <div class="nm">&#9683; Subscribe student to course</div>
+            <div class="rec">records <span class="ev">&#9683; Student subscribed to course</span></div>
+            <span class="stays">status unchanged</span>
+            <div class="more">+ 4 more rules</div>
+            <div class="also">also guarded by 🧑&#8205;🎓 Student &#183; status</div>
+          </div>
+          <div class="ccard">
+            <div class="nm">&#9655; Unsubscribe student from course</div>
+            <div class="rec">records <span class="ev">&#9655; Student unsubscribed from course</span></div>
+            <span class="stays">status unchanged</span>
+            <div class="more">+ 1 more rule</div>
+          </div>
+          <div class="ccard">
+            <div class="nm">&#9683; Reschedule course</div>
+            <div class="rec">records <span class="ev">&#9683; Course rescheduled</span></div>
+            <span class="stays">status unchanged</span>
+            <div class="more">+ 1 more rule</div>
+          </div>
+          <div class="ccard mover">
+            <div class="nm">&#11031; Archive course</div>
+            <div class="rec">records <span class="ev">&#11031; Course archived</span></div>
+            <span class="moves">&#8594; Archived</span>
+          </div>
+        </div>
+
+        <div class="lane dead">
+          <div class="lanehead">
+            <span class="st">Archived</span>
+            <span class="cap">terminal</span>
+            <span class="grow"></span>
+            <span class="n">0</span>
+          </div>
+          <div class="enters">enters via <span class="chip event tiny"><i class="ic">&#11031;</i>Course archived</span></div>
+          <div class="empty">No command is guarded to run here &#8212; only unguarded &#11030; Define course would.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Student ============ -->
+    <div class="esec">
+      <div class="ehead">
+        <i class="eic">🧑&#8205;🎓</i><span class="enm">Student</span>
+        <span class="chip entity tiny">Student status</span>
+      </div>
+
+      <div class="lanes two">
+        <div class="lane">
+          <div class="lanehead">
+            <span class="st">Non existent</span>
+            <span class="cap">initial</span>
+            <span class="grow"></span>
+            <span class="n">1</span>
+          </div>
+          <div class="ccard mover">
+            <div class="nm">&#9682; Register student</div>
+            <div class="rec">records <span class="ev">&#9682; Student registered</span></div>
+            <span class="moves">&#8594; Existent</span>
+          </div>
+        </div>
+
+        <div class="lane">
+          <div class="lanehead">
+            <span class="st">Existent</span>
+            <span class="grow"></span>
+            <span class="n">2</span>
+          </div>
+          <div class="enters">enters via <span class="chip event tiny"><i class="ic">&#9682;</i>Student registered</span></div>
+          <div class="ccard">
+            <div class="nm">&#9683; Subscribe student to course</div>
+            <div class="rec">records <span class="ev">&#9683; Student subscribed to course</span></div>
+            <span class="stays">status unchanged</span>
+            <div class="more">+ 4 more rules</div>
+            <div class="also">also guarded by 📚 Course &#183; status</div>
+          </div>
+          <div class="ccard unguarded">
+            <div class="nm">&#9655; Unsubscribe student from course</div>
+            <div class="rec">records <span class="ev">&#9655; Student unsubscribed from course</span></div>
+            <span class="stays">status unchanged</span>
+            <div class="more">+ 1 more rule</div>
+            <div class="warn">no rule over student &#183; status &#8212; would run in any lane</div>
+            <div class="also">guarded by 📚 Course &#183; status instead</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="crossnote">
+      &#8220;+ n more rules&#8221; counts the command&#8217;s conditions that are not status rules &#8212; capacity,
+      double-subscription, slot clashes &#8212; the ones the Rule map lays out in full.
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

@@ -1,6 +1,6 @@
 {
-  "$schema": "https://dcb.events/schemas/model/v4.json",
-  "dcbModelVersion": "4.0",
+  "$schema": "https://dcb.events/schemas/model/v5.json",
+  "dcbModelVersion": "5.0",
   "name": "Course Example (with sequence and tenant)",
   "customTypeDefinitions": [
     {
