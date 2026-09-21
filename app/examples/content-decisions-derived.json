@@ -1,0 +1,827 @@
+{
+  "$schema": "https://dcb.events/schemas/model/v6.json",
+  "dcbModelVersion": "6.0",
+  "name": "Content based decisions (derived projection)",
+  "customTypeDefinitions": [
+    {
+      "name": "DocumentLifecycle",
+      "schema": {
+        "type": "string",
+        "enum": [
+          "NonExistent",
+          "Draft",
+          "Published",
+          "Archived"
+        ]
+      }
+    },
+    {
+      "name": "DocumentId",
+      "schema": {
+        "type": "string"
+      },
+      "isTag": true
+    }
+  ],
+  "eventDefinitions": [
+    {
+      "name": "DocumentAdded",
+      "properties": [
+        {
+          "name": "id",
+          "propertyType": "DocumentId",
+          "isOptional": false,
+          "isList": false
+        }
+      ]
+    },
+    {
+      "name": "TextUpdated",
+      "properties": [
+        {
+          "name": "docId",
+          "propertyType": "DocumentId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "text",
+          "propertyType": "string",
+          "isOptional": false,
+          "isList": false
+        }
+      ]
+    },
+    {
+      "name": "DocumentPublished",
+      "properties": [
+        {
+          "name": "docId",
+          "propertyType": "DocumentId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "text",
+          "propertyType": "string",
+          "isOptional": false,
+          "isList": false
+        }
+      ]
+    },
+    {
+      "name": "DocumentArchived",
+      "properties": [
+        {
+          "name": "docId",
+          "propertyType": "DocumentId",
+          "isOptional": false,
+          "isList": false
+        }
+      ]
+    }
+  ],
+  "entityDefinitions": [
+    {
+      "name": "Document",
+      "icon": "📄",
+      "properties": [
+        {
+          "name": "status",
+          "projection": "DocumentLifecycle"
+        },
+        {
+          "name": "currentText",
+          "projection": "DocumentCurrentText"
+        },
+        {
+          "name": "publishedText",
+          "projection": "DocumentPublishedText"
+        },
+        {
+          "name": "hasPendingChanges",
+          "projection": "DocumentHasPendingChanges"
+        }
+      ]
+    }
+  ],
+  "projectionDefinitions": [
+    {
+      "name": "DocumentLifecycle",
+      "parameters": [
+        {
+          "name": "documentId",
+          "propertyType": "DocumentId"
+        }
+      ],
+      "valueType": "DocumentLifecycle",
+      "isList": false,
+      "initialValue": {
+        "enumMember": "NonExistent"
+      },
+      "handlers": [
+        {
+          "event": "DocumentAdded",
+          "operation": "set",
+          "value": {
+            "enumMember": "Draft"
+          }
+        },
+        {
+          "event": "DocumentPublished",
+          "operation": "set",
+          "value": {
+            "enumMember": "Published"
+          }
+        },
+        {
+          "event": "DocumentArchived",
+          "operation": "set",
+          "value": {
+            "enumMember": "Archived"
+          }
+        }
+      ]
+    },
+    {
+      "name": "DocumentCurrentText",
+      "parameters": [
+        {
+          "name": "documentId",
+          "propertyType": "DocumentId"
+        }
+      ],
+      "valueType": "string",
+      "isList": false,
+      "initialValue": null,
+      "handlers": [
+        {
+          "event": "DocumentAdded",
+          "operation": "set",
+          "value": ""
+        },
+        {
+          "event": "TextUpdated",
+          "operation": "set",
+          "value": {
+            "eventProperty": "text"
+          }
+        }
+      ]
+    },
+    {
+      "name": "DocumentPublishedText",
+      "parameters": [
+        {
+          "name": "documentId",
+          "propertyType": "DocumentId"
+        }
+      ],
+      "valueType": "string",
+      "isList": false,
+      "initialValue": null,
+      "handlers": [
+        {
+          "event": "DocumentPublished",
+          "operation": "set",
+          "value": {
+            "eventProperty": "text"
+          }
+        }
+      ]
+    },
+    {
+      "name": "DocumentHasPendingChanges",
+      "parameters": [
+        {
+          "name": "documentId",
+          "propertyType": "DocumentId"
+        }
+      ],
+      "valueType": "boolean",
+      "isList": false,
+      "derived": {
+        "leftHandSide": {
+          "projection": "DocumentCurrentText",
+          "arguments": {
+            "documentId": {
+              "parameterName": "documentId"
+            }
+          }
+        },
+        "predicate": "equals",
+        "rightHandSide": {
+          "projection": "DocumentPublishedText",
+          "arguments": {
+            "documentId": {
+              "parameterName": "documentId"
+            }
+          }
+        },
+        "negate": true
+      }
+    }
+  ],
+  "commandDefinitions": [
+    {
+      "name": "AddDocument",
+      "feature": "Document Authoring",
+      "icon": "⭐",
+      "properties": [
+        {
+          "name": "id",
+          "propertyType": "DocumentId",
+          "isOptional": false,
+          "isList": false
+        }
+      ],
+      "boundary": [
+        {
+          "alias": "document",
+          "entity": "Document",
+          "id": {
+            "parameterName": "id"
+          }
+        }
+      ],
+      "conditions": [
+        {
+          "leftHandSide": {
+            "alias": "document",
+            "property": "status"
+          },
+          "predicate": "equals",
+          "rightHandSide": {
+            "enumMember": "NonExistent"
+          }
+        }
+      ],
+      "publishes": [
+        {
+          "name": "DocumentAdded",
+          "parameters": {
+            "id": {
+              "parameterName": "id"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "UpdateText",
+      "feature": "Document Authoring",
+      "icon": "✏️",
+      "properties": [
+        {
+          "name": "docId",
+          "propertyType": "DocumentId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "text",
+          "propertyType": "string",
+          "isOptional": false,
+          "isList": false
+        }
+      ],
+      "boundary": [
+        {
+          "alias": "document",
+          "entity": "Document",
+          "id": {
+            "parameterName": "docId"
+          }
+        }
+      ],
+      "conditions": [
+        {
+          "leftHandSide": {
+            "alias": "document",
+            "property": "status"
+          },
+          "predicate": "equalsAny",
+          "rightHandSide": [
+            {
+              "enumMember": "Draft"
+            },
+            {
+              "enumMember": "Published"
+            }
+          ]
+        },
+        {
+          "leftHandSide": {
+            "alias": "document",
+            "property": "currentText"
+          },
+          "predicate": "equals",
+          "rightHandSide": {
+            "parameterName": "text"
+          },
+          "negate": true
+        }
+      ],
+      "publishes": [
+        {
+          "name": "TextUpdated",
+          "parameters": {
+            "docId": {
+              "parameterName": "docId"
+            },
+            "text": {
+              "parameterName": "text"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "PublishDocument",
+      "feature": "Document Authoring",
+      "icon": "💾",
+      "properties": [
+        {
+          "name": "docId",
+          "propertyType": "DocumentId",
+          "isOptional": false,
+          "isList": false
+        }
+      ],
+      "boundary": [
+        {
+          "alias": "document",
+          "entity": "Document",
+          "id": {
+            "parameterName": "docId"
+          }
+        }
+      ],
+      "conditions": [
+        {
+          "leftHandSide": {
+            "alias": "document",
+            "property": "status"
+          },
+          "predicate": "equalsAny",
+          "rightHandSide": [
+            {
+              "enumMember": "Draft"
+            },
+            {
+              "enumMember": "Published"
+            }
+          ]
+        },
+        {
+          "leftHandSide": {
+            "alias": "document",
+            "property": "hasPendingChanges"
+          },
+          "predicate": "isTrue"
+        }
+      ],
+      "publishes": [
+        {
+          "name": "DocumentPublished",
+          "parameters": {
+            "docId": {
+              "parameterName": "docId"
+            },
+            "text": {
+              "alias": "document",
+              "property": "currentText"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ArchiveDocument",
+      "feature": "Document Authoring",
+      "icon": "🗑️",
+      "properties": [
+        {
+          "name": "docId",
+          "propertyType": "DocumentId",
+          "isOptional": false,
+          "isList": false
+        }
+      ],
+      "boundary": [
+        {
+          "alias": "document",
+          "entity": "Document",
+          "id": {
+            "parameterName": "docId"
+          }
+        }
+      ],
+      "conditions": [
+        {
+          "leftHandSide": {
+            "alias": "document",
+            "property": "status"
+          },
+          "predicate": "equalsAny",
+          "rightHandSide": [
+            {
+              "enumMember": "Draft"
+            },
+            {
+              "enumMember": "Published"
+            }
+          ]
+        }
+      ],
+      "publishes": [
+        {
+          "name": "DocumentArchived",
+          "parameters": {
+            "docId": {
+              "parameterName": "docId"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "scenarioDefinitions": [
+    {
+      "id": "27895469-9062-4fb3-a2a4-5a1f44489f96",
+      "name": "is refused while the document does not exist",
+      "command": "UpdateText",
+      "given": [],
+      "when": {
+        "arguments": {
+          "docId": "d1",
+          "text": "test"
+        }
+      },
+      "then": {
+        "outcome": "rejected",
+        "events": [],
+        "failedRule": {
+          "index": 0,
+          "text": "document.status equalsAny [Draft, Published]",
+          "leftValue": "NonExistent",
+          "rightValue": [
+            "Draft",
+            "Published"
+          ],
+          "atInstance": null
+        }
+      }
+    },
+    {
+      "id": "0720a9e9-1920-496f-aa94-b3326992df68",
+      "name": "publishes a fresh draft — hasPendingChanges holds",
+      "command": "PublishDocument",
+      "given": [
+        {
+          "event": "DocumentAdded",
+          "data": {
+            "id": "d1"
+          }
+        }
+      ],
+      "when": {
+        "arguments": {
+          "docId": "d1"
+        }
+      },
+      "then": {
+        "outcome": "published",
+        "events": [
+          {
+            "type": "DocumentPublished",
+            "data": {
+              "docId": "d1",
+              "text": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "4cdadb13-9799-49da-a47f-6435b0778bdf",
+      "name": "refuses to republish — hasPendingChanges is false",
+      "command": "PublishDocument",
+      "given": [
+        {
+          "event": "DocumentAdded",
+          "data": {
+            "id": "d1"
+          }
+        },
+        {
+          "event": "TextUpdated",
+          "data": {
+            "docId": "d1",
+            "text": "test"
+          }
+        },
+        {
+          "event": "DocumentPublished",
+          "data": {
+            "docId": "d1",
+            "text": "test"
+          }
+        }
+      ],
+      "when": {
+        "arguments": {
+          "docId": "d1"
+        }
+      },
+      "then": {
+        "outcome": "rejected",
+        "events": [],
+        "failedRule": {
+          "index": 1,
+          "text": "document.hasPendingChanges isTrue",
+          "leftValue": false,
+          "rightValue": null,
+          "atInstance": null
+        }
+      }
+    },
+    {
+      "id": "f2daa0d4-126d-410b-aeff-063fdfcd07f7",
+      "name": "refuses to publish after re-typing the published text",
+      "command": "PublishDocument",
+      "given": [
+        {
+          "event": "DocumentAdded",
+          "data": {
+            "id": "d1"
+          }
+        },
+        {
+          "event": "TextUpdated",
+          "data": {
+            "docId": "d1",
+            "text": "test"
+          }
+        },
+        {
+          "event": "DocumentPublished",
+          "data": {
+            "docId": "d1",
+            "text": "test"
+          }
+        },
+        {
+          "event": "TextUpdated",
+          "data": {
+            "docId": "d1",
+            "text": "test 2"
+          }
+        },
+        {
+          "event": "TextUpdated",
+          "data": {
+            "docId": "d1",
+            "text": "test"
+          }
+        }
+      ],
+      "when": {
+        "arguments": {
+          "docId": "d1"
+        }
+      },
+      "then": {
+        "outcome": "rejected",
+        "events": [],
+        "failedRule": {
+          "index": 1,
+          "text": "document.hasPendingChanges isTrue",
+          "leftValue": false,
+          "rightValue": null,
+          "atInstance": null
+        }
+      }
+    },
+    {
+      "id": "f87efb0f-baa4-47da-a396-98d1be820ccb",
+      "name": "publishes a real change",
+      "command": "PublishDocument",
+      "given": [
+        {
+          "event": "DocumentAdded",
+          "data": {
+            "id": "d1"
+          }
+        },
+        {
+          "event": "TextUpdated",
+          "data": {
+            "docId": "d1",
+            "text": "test"
+          }
+        },
+        {
+          "event": "DocumentPublished",
+          "data": {
+            "docId": "d1",
+            "text": "test"
+          }
+        },
+        {
+          "event": "TextUpdated",
+          "data": {
+            "docId": "d1",
+            "text": "test 2"
+          }
+        }
+      ],
+      "when": {
+        "arguments": {
+          "docId": "d1"
+        }
+      },
+      "then": {
+        "outcome": "published",
+        "events": [
+          {
+            "type": "DocumentPublished",
+            "data": {
+              "docId": "d1",
+              "text": "test 2"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "dbed12c2-1b34-4501-a89d-cd563acf0e90",
+      "name": "archives a draft",
+      "command": "ArchiveDocument",
+      "given": [
+        {
+          "event": "DocumentAdded",
+          "data": {
+            "id": "d1"
+          }
+        },
+        {
+          "event": "TextUpdated",
+          "data": {
+            "docId": "d1",
+            "text": "test"
+          }
+        }
+      ],
+      "when": {
+        "arguments": {
+          "docId": "d1"
+        }
+      },
+      "then": {
+        "outcome": "published",
+        "events": [
+          {
+            "type": "DocumentArchived",
+            "data": {
+              "docId": "d1"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "projectionScenarioDefinitions": [
+    {
+      "id": "2b0bdd3f-2ad4-4250-a3cb-f2c8d48ec542",
+      "name": "a fresh draft has pending changes — nothing was ever published",
+      "projection": "DocumentHasPendingChanges",
+      "arguments": {
+        "documentId": "d1"
+      },
+      "given": [
+        {
+          "event": "DocumentAdded",
+          "data": {
+            "id": "d1"
+          }
+        }
+      ],
+      "then": true
+    },
+    {
+      "id": "6b17dd6b-fdf3-462b-ad34-7992e0f85a91",
+      "name": "nothing pending right after publishing",
+      "projection": "DocumentHasPendingChanges",
+      "arguments": {
+        "documentId": "d1"
+      },
+      "given": [
+        {
+          "event": "DocumentAdded",
+          "data": {
+            "id": "d1"
+          }
+        },
+        {
+          "event": "TextUpdated",
+          "data": {
+            "docId": "d1",
+            "text": "test"
+          }
+        },
+        {
+          "event": "DocumentPublished",
+          "data": {
+            "docId": "d1",
+            "text": "test"
+          }
+        }
+      ],
+      "then": false
+    },
+    {
+      "id": "8b05db3c-82fd-401a-ad72-cdbe6a762bd4",
+      "name": "a change makes it pending",
+      "projection": "DocumentHasPendingChanges",
+      "arguments": {
+        "documentId": "d1"
+      },
+      "given": [
+        {
+          "event": "DocumentAdded",
+          "data": {
+            "id": "d1"
+          }
+        },
+        {
+          "event": "TextUpdated",
+          "data": {
+            "docId": "d1",
+            "text": "test"
+          }
+        },
+        {
+          "event": "DocumentPublished",
+          "data": {
+            "docId": "d1",
+            "text": "test"
+          }
+        },
+        {
+          "event": "TextUpdated",
+          "data": {
+            "docId": "d1",
+            "text": "test 2"
+          }
+        }
+      ],
+      "then": true
+    },
+    {
+      "id": "27e92137-69c8-4ab2-adfe-0ca4fad3892d",
+      "name": "re-typing the published text clears it — no event says so",
+      "projection": "DocumentHasPendingChanges",
+      "arguments": {
+        "documentId": "d1"
+      },
+      "given": [
+        {
+          "event": "DocumentAdded",
+          "data": {
+            "id": "d1"
+          }
+        },
+        {
+          "event": "TextUpdated",
+          "data": {
+            "docId": "d1",
+            "text": "test"
+          }
+        },
+        {
+          "event": "DocumentPublished",
+          "data": {
+            "docId": "d1",
+            "text": "test"
+          }
+        },
+        {
+          "event": "TextUpdated",
+          "data": {
+            "docId": "d1",
+            "text": "test 2"
+          }
+        },
+        {
+          "event": "TextUpdated",
+          "data": {
+            "docId": "d1",
+            "text": "test"
+          }
+        }
+      ],
+      "then": false
+    }
+  ]
+}

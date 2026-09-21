@@ -377,11 +377,31 @@ function foldEntityProperty(model, events, entityName, propertyName, instanceId,
 // argument values. Extracted from `foldProjection` so the interface
 // can *say* what a fold will read — a watched projection's query, with
 // the actual values in it — without running the fold to find out.
-function projectionQueryTags(model, projectionName, argumentValues) {
+function projectionQueryTags(model, projectionName, argumentValues, seen = []) {
   const projection = model['projection-definitions'][projectionName];
   if (!projection) fail(`This model has no projection "${projectionName}".`);
 
   const values = argumentValues || {};
+
+  // A derived projection reads nothing itself: its query is the union
+  // of its operands', each read with this read's values resolved
+  // through the operand's own argument map.
+  const derived = derivedOf(projection);
+  if (derived) {
+    if (seen.includes(projectionName)) {
+      fail(`Projection "${projectionName}" derives from itself — a cycle has no value to start from.`);
+    }
+    const tags = new Set();
+    for (const operand of derivedOperands(derived)) {
+      if (operandSource(operand) !== 'projection-read') continue;
+      const resolved = evResolveDerivedArguments(model, projectionName, operand, values);
+      for (const tag of projectionQueryTags(model, operand.projection, resolved, [...seen, projectionName])) {
+        tags.add(tag);
+      }
+    }
+    return [...tags];
+  }
+
   const script = scriptOf(projection);
   // A tag filter's `:` is authoring syntax splitting "which identifier"
   // from "what value" — not the tag's actual separator, which is that
@@ -447,14 +467,73 @@ function evWithExplicitOptionals(model, event) {
   return data === event.data ? event : { ...event, data };
 }
 
-function foldProjection(model, events, projectionName, argumentValues) {
+function foldProjection(model, events, projectionName, argumentValues, seen = []) {
+  const projection = model['projection-definitions'][projectionName];
+  if (projection && derivedOf(projection)) {
+    return evDeriveProjection(model, events, projectionName, argumentValues, seen);
+  }
   const { compiled, selected, values } = evProjectionFold(model, events, projectionName, argumentValues);
   return compiled.fold(selected, values);
 }
 
 function foldProjectionState(model, events, projectionName, argumentValues) {
+  const projection = model['projection-definitions'][projectionName];
+  if (projection && derivedOf(projection)) {
+    // A derived projection keeps no bookkeeping: its whole state is
+    // the one boolean its predicate yields.
+    return evDeriveProjection(model, events, projectionName, argumentValues);
+  }
   const { compiled, selected, values } = evProjectionFold(model, events, projectionName, argumentValues);
   return compiled.foldState(selected, values);
+}
+
+// One argument map of a derived operand, resolved to values: each
+// `{parameterName}` names one of the derived projection's own
+// parameters — supplied by whoever read it — and anything else is a
+// literal.
+function evResolveDerivedArguments(model, projectionName, operand, values) {
+  const resolved = {};
+  for (const [name, argument] of Object.entries(operand.arguments || {})) {
+    if (operandSource(argument) === 'parameter') {
+      const held = values[argument.parameterName];
+      if (held === undefined) {
+        fail(`Projection "${projectionName}" was read without its parameter "${argument.parameterName}".`);
+      }
+      resolved[name] = argument.property
+        ? (evNormalize(held) || {})[argument.property]
+        : held;
+      continue;
+    }
+    resolved[name] = evNormalize(argument);
+  }
+  return resolved;
+}
+
+// A derived projection is not folded but computed: each operand that
+// reads a projection folds it (at the partition this read's values
+// name), and the predicate decides. `seen` is the cycle guard — a
+// value derived through itself has nowhere to start, and the advisory
+// said so before this error does.
+function evDeriveProjection(model, events, projectionName, argumentValues, seen = []) {
+  if (seen.includes(projectionName)) {
+    fail(`Projection "${projectionName}" derives from itself — a cycle has no value to start from.`);
+  }
+  const projection = model['projection-definitions'][projectionName];
+  const derived = derivedOf(projection);
+  const values = argumentValues || {};
+
+  const readOperand = (operand) => {
+    if (operandSource(operand) !== 'projection-read') return evNormalize(operand);
+    return foldProjection(
+      model, events, operand.projection,
+      evResolveDerivedArguments(model, projectionName, operand, values),
+      [...seen, projectionName]
+    );
+  };
+
+  const left = readOperand(derived.leftHandSide);
+  const right = readOperand(derived.rightHandSide);
+  return evApplyPredicate(derived, left, right);
 }
 
 function evProjectionFold(model, events, projectionName, argumentValues) {
@@ -847,6 +926,16 @@ function evaluateCommand(model, events, commandName, args) {
     if (!definition) {
       fail(`"${commandName}" publishes "${emission.name}", which this model does not define.`);
     }
+    // A guarded emission fires only while every guard holds. A guard
+    // that does not hold *skips* the emission and nothing else — the
+    // command has already been accepted; `when` decides what it
+    // records, never whether it happens.
+    let held = true;
+    for (const condition of emission.when || []) {
+      if (!condition) continue;
+      if (!evCheckCondition(model, body, condition, scope).held) { held = false; break; }
+    }
+    if (!held) continue;
     const data = {};
     for (const property of definition.properties || []) {
       const operand = (emission.parameters || {})[property.name];

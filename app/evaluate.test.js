@@ -1280,8 +1280,8 @@ check('an import missing the definition arrays is refused, not silently accepted
   // from: these two strings are the published contract, and a test that
   // derived them from the source could not notice one of them changing.
   check('an export carries both markers', () => {
-    eq(good.$schema, 'https://dcb.events/schemas/model/v5.json', '$schema');
-    eq(/^5\.\d+$/.test(good.dcbModelVersion), true, 'dcbModelVersion is a 5.x');
+    eq(good.$schema, 'https://dcb.events/schemas/model/v6.json', '$schema');
+    eq(/^6\.\d+$/.test(good.dcbModelVersion), true, 'dcbModelVersion is a 6.x');
   });
 
   check('the definition arrays sit at the top level, under no wrapper', () => {
@@ -1304,15 +1304,15 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('an import from an unknown major is refused', () => {
-    refuses({ ...good, dcbModelVersion: '6.0' }, 'a newer major');
+    refuses({ ...good, dcbModelVersion: '7.0' }, 'a newer major');
     // 2.x is where a projection scenario read several projections under
     // aliases — readable as JSON, and misread as a model.
     refuses({ ...good, dcbModelVersion: '2.0' }, 'the last unreadable major');
     refuses({ ...good, dcbModelVersion: '1.0' }, 'and the one before that');
   });
 
-  check('older readable majors still import whole — 5.0 only added what they never say', () => {
-    for (const raw of ['3.0', '4.1']) {
+  check('older readable majors still import whole — 6.0 only added what they never say', () => {
+    for (const raw of ['3.0', '4.1', '5.0']) {
       const older = { ...good, dcbModelVersion: raw };
       eq(typeof importModelFromEnvelope(older).modelId, 'string', `${raw} imported`);
       eq(envelopeVersionWarning(older), '', 'nothing dropped, so nothing to warn about');
@@ -1325,7 +1325,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('a newer minor imports, and says what it is dropping', () => {
-    const newer = { ...good, dcbModelVersion: '5.99' };
+    const newer = { ...good, dcbModelVersion: '6.99' };
     eq(typeof importModelFromEnvelope(newer).modelId, 'string', 'imported');
     eq(envelopeVersionWarning(newer).length > 0, true, 'warned');
     eq(envelopeVersionWarning(good), '', 'nothing to warn about at the current version');
@@ -2341,6 +2341,177 @@ check('every predefined model ships advisory-clean', () => {
     updateDefinition('command-definition', id, 'Assign', body);
     const found = sandbox.modelAdvisories(model()).map((a) => a.message).join('; ');
     eq(/may be absent/.test(found), true, 'the advisory names the fix: ' + found);
+  });
+}
+
+// ---------------------------------------------------------------
+// Guarded emissions (6.0). A guard decides what an accepted command
+// *records*, never whether it happens: a failing guard skips its
+// emission silently, and every guard failing publishes nothing at all
+// — still a `published` outcome. Exercised against the shipped
+// guarded-emissions variant of the content-decisions family, whose
+// UpdateText carries the complementary pair.
+// ---------------------------------------------------------------
+{
+  const GUARDED = 8;
+  const added = { type: 'DocumentAdded', data: { id: 'd1' } };
+  const changed = (text) => ({ type: 'TextChanged', data: { docId: 'd1', text } });
+  const published = (text) => ({ type: 'DocumentPublished', data: { docId: 'd1', text } });
+
+  check('complementary guards fire exactly one of the two emissions', () => {
+    const model = build(GUARDED);
+    const differs = evaluateCommand(model, [added], 'UpdateText', { docId: 'd1', text: 'x' });
+    eq(differs.outcome, 'published', 'accepted');
+    eq(differs.events.map((e) => e.type), ['TextChanged'], 'the text differs from the published one');
+
+    const reverts = evaluateCommand(
+      model, [added, changed('a'), published('a'), changed('b')],
+      'UpdateText', { docId: 'd1', text: 'a' });
+    eq(reverts.outcome, 'published', 'accepted');
+    eq(reverts.events.map((e) => e.type), ['TextRevertedToPublished'],
+      're-typing the published text is recorded as the fact it is');
+  });
+
+  check('every guard failing publishes nothing — an accepted command, not a rejection', () => {
+    const { id, model } = openBlank('Guarded');
+    addDefinition('event-definition', id, 'Pinged', { properties: [] });
+    addDefinition('command-definition', id, 'Ping', {
+      properties: [{ name: 'loud', propertyType: 'boolean', isOptional: false, isList: false }],
+      boundary: [],
+      conditions: [],
+      publishes: [{
+        name: 'Pinged',
+        when: [{ leftHandSide: { parameterName: 'loud' }, predicate: 'isTrue' }],
+        parameters: {},
+      }],
+    });
+    const quiet = evaluateCommand(model(), [], 'Ping', { loud: false });
+    eq(quiet.outcome, 'published', 'accepted either way');
+    eq(quiet.events, [], 'nothing recorded');
+    eq(evaluateCommand(model(), [], 'Ping', { loud: true }).events.map((e) => e.type),
+      ['Pinged'], 'and the guard holding publishes');
+  });
+
+  check('a guard read joins the derived DCB — it may hide nothing from the query', () => {
+    const model = build(GUARDED);
+    const dcb = sandbox.deriveDcb(model, model['command-definitions'].UpdateText);
+    const document = dcb.items.find((item) => item.alias === 'document');
+    eq(document.readProperties.includes('publishedText'), true,
+      'the property only the guards read is a read');
+    eq(document.types.includes('DocumentPublished'), true,
+      'so its projection\'s events are in the query');
+  });
+
+  check('renaming an enum member rewrites emission guards too', () => {
+    const { id, model } = open_(GUARDED);
+    const body = deepClone(model()['command-definitions'].PublishDocument);
+    body.publishes[0].when = [{
+      leftHandSide: { alias: 'document', property: 'status' },
+      predicate: 'equals',
+      rightHandSide: { enumMember: 'PendingChanges' },
+    }];
+    updateDefinition('command-definition', id, 'PublishDocument', body);
+    renameMember('custom-type-definition', id, 'DocumentStatus', 'member', 'PendingChanges', 'Dirty');
+    const guard = model()['command-definitions'].PublishDocument.publishes[0].when[0];
+    eq(guard.rightHandSide.enumMember, 'Dirty', 'the guard moved with the member');
+  });
+}
+
+// ---------------------------------------------------------------
+// Derived projections (6.0). One predicate over other projections —
+// no handlers, no initial value, one boolean — declared once, bound
+// as an entity property, read by command guards, and contributing its
+// operands' queries to any boundary that binds it. Exercised against
+// the shipped derived variant of the content-decisions family.
+// ---------------------------------------------------------------
+{
+  const DERIVED = 9;
+  const added = { type: 'DocumentAdded', data: { id: 'd1' } };
+  const updated = (text) => ({ type: 'TextUpdated', data: { docId: 'd1', text } });
+  const published = (text) => ({ type: 'DocumentPublished', data: { docId: 'd1', text } });
+
+  check('a derived projection is its predicate, at every point in the log', () => {
+    const model = build(DERIVED);
+    const pending = (log) => foldProjection(model, log, 'DocumentHasPendingChanges', { documentId: 'd1' });
+    eq(pending([]), false, 'null equals null before anything happened');
+    eq(pending([added]), true, 'a fresh draft: "" differs from never-published');
+    eq(pending([added, updated('a'), published('a')]), false, 'published, nothing since');
+    eq(pending([added, updated('a'), published('a'), updated('b'), updated('a')]), false,
+      're-typing the published text clears it, with no event saying so');
+  });
+
+  check('bound as a property and read by a guard, like any projection', () => {
+    const model = build(DERIVED);
+    eq(foldEntityProperty(model, [added], 'Document', 'hasPendingChanges', 'd1'), true,
+      'read through the entity binding');
+    const refused = evaluateCommand(model, [added, updated('a'), published('a')],
+      'PublishDocument', { docId: 'd1' });
+    eq(refused.outcome, 'rejected', 'nothing to publish');
+    eq(refused.failedRule.text, 'document.hasPendingChanges isTrue', 'refused by the derived read');
+    eq(refused.failedRule.leftValue, false, 'and the value it derived is reported');
+  });
+
+  check('its query is its operands\' union — the predicate hides nothing', () => {
+    const model = build(DERIVED);
+    const dcb = sandbox.deriveDcb(model, model['command-definitions'].PublishDocument);
+    const document = dcb.items.find((item) => item.alias === 'document');
+    for (const type of ['TextUpdated', 'DocumentPublished']) {
+      eq(document.types.includes(type), true, `${type} reached the query through the derivation`);
+    }
+  });
+
+  check('a cycle is an advisory and a broken run, never a crash or a hang', () => {
+    const { id, model } = openBlank('Cyclic');
+    addDefinition('projection-definition', id, 'Chicken', {
+      parameters: [], valueType: 'boolean', isList: false,
+      derived: { leftHandSide: { projection: 'Egg', arguments: {} }, predicate: 'equals', rightHandSide: true },
+    });
+    addDefinition('projection-definition', id, 'Egg', {
+      parameters: [], valueType: 'boolean', isList: false,
+      derived: { leftHandSide: { projection: 'Chicken', arguments: {} }, predicate: 'equals', rightHandSide: true },
+    });
+    const found = sandbox.modelAdvisories(model()).map((a) => a.message).join('; ');
+    eq(/derives from itself/.test(found), true, 'the advisory says so: ' + found);
+    let broke = null;
+    try { foldProjection(model(), [], 'Chicken', {}); } catch (error) { broke = error; }
+    eq(broke && broke.name, 'EvaluationError', 'and running it is the error kind, not a bug');
+  });
+
+  check('a non-boolean derived projection is an advisory, not a refusal', () => {
+    const { id, model } = open_(DERIVED);
+    const body = deepClone(model()['projection-definitions'].DocumentHasPendingChanges);
+    body.valueType = 'string';
+    updateDefinition('projection-definition', id, 'DocumentHasPendingChanges', body);
+    const found = sandbox.modelAdvisories(model()).map((a) => a.message).join('; ');
+    eq(/one boolean/.test(found), true, 'the advisory says what it holds: ' + found);
+  });
+
+  check('renaming an operand projection rewrites the derived reference', () => {
+    const { id, model } = open_(DERIVED);
+    renameDefinition('projection-definition', id, 'DocumentCurrentText', 'DocumentDraftText');
+    const derived = model()['projection-definitions'].DocumentHasPendingChanges.derived;
+    eq(derived.leftHandSide.projection, 'DocumentDraftText', 'the operand moved with the rename');
+  });
+
+  check('renaming parameters rewrites both halves of an operand\'s argument map', () => {
+    const { id, model } = open_(DERIVED);
+    // The operand's own `{parameterName}` values name the *owning*
+    // projection's parameters…
+    renameMember('projection-definition', id, 'DocumentHasPendingChanges', 'parameter',
+      'documentId', 'docId');
+    let derived = model()['projection-definitions'].DocumentHasPendingChanges.derived;
+    eq(derived.leftHandSide.arguments.documentId.parameterName, 'docId', 'the value half moved');
+    // …while its argument *keys* name the target's.
+    renameMember('projection-definition', id, 'DocumentCurrentText', 'parameter',
+      'documentId', 'docKey');
+    derived = model()['projection-definitions'].DocumentHasPendingChanges.derived;
+    eq('docKey' in derived.leftHandSide.arguments, true, 'the key half moved');
+    eq(derived.leftHandSide.arguments.docKey.parameterName, 'docId', 'carrying its value along');
+  });
+
+  check('derived is data, not code — the import gate stays closed', () => {
+    const model = build(DERIVED);
+    eq(envelopeHasScript(buildShareEnvelope(model, [])), false, 'nothing to confirm');
   });
 }
 

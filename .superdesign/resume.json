@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "targets": {
+    "command-definition-page": {
+      "targetKind": "existing-ui",
+      "projectId": "5d00367a-7395-4a63-acd7-b4050ecad7a7",
+      "baselineDraftId": "b6f7e33f-1db1-4d37-a624-919a00e4d7a9",
+      "activeDraftId": "cf87a99a-ee40-4d86-9d16-4059909eba93",
+      "designSystemPath": ".superdesign/design-system.md",
+      "referenceIds": [
+        "3f393f16-47d4-43e4-8ecd-a32e696c73bd",
+        "27370178-2784-4e2d-8fe2-1f7dc2b9c56f"
+      ],
+      "contextFiles": [
+        ".superdesign/design-system.md",
+        "app/shared.css",
+        ".superdesign/tmp/command-page.css.txt",
+        ".superdesign/tmp/command-page-render1.js.txt",
+        ".superdesign/tmp/command-page-render2.js.txt"
+      ],
+      "fingerprints": {
+        ".superdesign/design-system.md": "6614d4130338ac32193bb9eb5474b2d3336e39829d34742393337da445a26616",
+        "app/shared.css": "787619ace7d014ae3ca315b38f61c66ba0c0a8022300a010ef7a66f518b8d9dd",
+        ".superdesign/tmp/command-page.css.txt": "e1c2e69b30cecb2a13252ab4e08aafb8cfbe78ee00850f8b04310ab0ae4e3236",
+        ".superdesign/tmp/command-page-render1.js.txt": "c64ea7d887d89f67291900246e4ca49cd5f8d8dc7a1217a291305745552a66f0",
+        ".superdesign/tmp/command-page-render2.js.txt": "6d5f028164a1ffa896e825f9caadedce4e5d9190a934aacc7049d344b5bb901d"
+      },
+      "components": [],
+      "drafts": {
+        "b6f7e33f-1db1-4d37-a624-919a00e4d7a9": {
+          "title": "Current \u2014 Command page",
+          "visualDirection": "pixel-perfect reproduction of the live Archive course page (ground truth)",
+          "currentVersion": 2
+        },
+        "cf87a99a-ee40-4d86-9d16-4059909eba93": {
+          "title": "DCB Playground \u2014 Archive Course (Variant A - Quiet Reveal)",
+          "visualDirection": "Variant A 'Quiet reveal': hover-revealed adders + mobile FAB bottom sheet, type chips on fields, red-tinted diagnostic style for problems \u2014 SELECTED by user for implementation in the app",
+          "parentDraftId": "b6f7e33f-1db1-4d37-a624-919a00e4d7a9",
+          "currentVersion": 3
+        },
+        "5c029d06-d139-4c4c-aa24-bee2cbf9ba37": {
+          "title": "DCB Playground \u2014 Variant B (Edit Mode)",
+          "visualDirection": "Variant B 'Edit mode': View/Edit toggle hides all adders in View mode, name:Type inline fields, dark slate diagnostics strip + right-side Problems panel",
+          "parentDraftId": "b6f7e33f-1db1-4d37-a624-919a00e4d7a9",
+          "currentVersion": 3
+        },
+        "bb049254-ef53-433f-92db-88d18d6c26a1": {
+          "title": "DCB Playground \u2014 Archive Course (Variant C)",
+          "visualDirection": "Variant C 'Focus follows selection': contextual action bar on selected block, two-column fields with dotted leaders, IDE-style squiggle diagnostics + console-style Problems modal \u2014 SELECTED by user; v2 = direct-edit fix scoping the .trigger topbar-button CSS rule to .app-bar (it collided with the 'step trigger' section and squeezed it to 30px flex)",
+          "parentDraftId": "b6f7e33f-1db1-4d37-a624-919a00e4d7a9",
+          "currentVersion": 2
+        }
+      },
+      "updatedAt": "2026-09-21T09:00:00Z"
+    }
+  }
+}

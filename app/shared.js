@@ -1353,6 +1353,10 @@ function operandWords(operand) {
     case 'event-property': return propertyWords(operand.eventProperty);
     case 'current-value': return 'its current value';
     case 'successor': return `the one after ${operandWords(operand.successor)}`;
+    // A derived predicate's read of another projection. The arguments
+    // are not said — the partition is shared, and the editor is where
+    // it is spelled out.
+    case 'projection-read': return readable(operand.projection || '?');
     default:
       if (typeof operand === 'string') return `"${operand}"`;
       // A record a scripted projection folded to is a static value
@@ -1565,10 +1569,13 @@ function eventIcon(model, name) {
 }
 
 // Shown beside the type, never behind the Advanced gate: a value
-// arrived at by code is a different kind of claim from one arrived at
-// by a declaration, and a rule reading it should say so on the page.
+// arrived at by code, or worked out from other projections, is a
+// different kind of claim from one arrived at by a declaration, and a
+// rule reading it should say so on the page.
 function scriptLabel(property) {
-  return property && property.script ? 'scripted' : null;
+  if (property && property.script) return 'scripted';
+  if (property && property.derived) return 'derived';
+  return null;
 }
 
 // The payload as operand choices, expanded one level into composite

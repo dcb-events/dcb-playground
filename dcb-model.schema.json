@@ -1,9 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://dcb.events/schemas/model/v5.json",
+  "$id": "https://dcb.events/schemas/model/v6.json",
   "title": "DCB Model",
-  "description": "A DCB model: every definition a modeller has authored for one\nDCB-based system, in the form the playground exports it. The same\ndocument travels both ways out of the playground, as readable JSON and\nas the gzipped payload of a share link.\n\n**There is one kind of fold.** A `projectionDefinition` is it: a value\nthat starts somewhere and is advanced by the events it handles, over\nthe query `tag IN (its parameters' arguments) AND type IN (handled\nevents)`. Declare no parameters and there is no tag, which is what a\nglobal numbering is. Declare one and the same numbering restarts per\ntenant.\n\nAn **entity property is a binding to one of these**, not a second kind\nof thing. `entityDefinitions[].properties` holds `{name, projection}`\nentries: the projection declares one parameter typed with the entity's\nown identifier, and binding it as a property is what supplies that\nargument. Everything the fold needs — the type held, the value it\nstarts from, the handlers, the script — lives on the projection and\nnowhere else, so there is no second place for a type or an initial\nvalue to disagree with the first. The same projection may be bound by\nseveral properties, or read directly by a command, or both.\n\nA lifecycle is not a distinct concept: a modeller who wants one binds\na property named `status` (by convention only) to a projection holding\nan ordinary enum custom type. There is no standalone constraint kind:\nconditions are inlined into the commands that check them.\n\n**Tags come from value types, not from a separate kind.** Any\n`customTypeDefinition` may set `isTag: true`, which is what makes it\nan identifier. An entity's own derived identifier is such a value\ntype — created automatically when the entity is, and from then on\nedited exactly like any other value type. A composite value type is\nnever itself a tag; its tag-ness is derived by looking through it to\nwhichever of its fields are themselves tag-marked, which is what lets\ntwo unrelated entities share one component (a `TenantId` field) and\nbe scoped together by it.\n\n**Versioning.** `dcbModelVersion` is what an importer dispatches on;\n`$schema` is for editors and is deliberately never read by one. A major\nbump means an older reader cannot correctly read the document and must\nrefuse it; a minor bump means it can, because the addition is one it\nignores. Note that \"additive\" is judged from the reader's side, not the\nschema's: a new member of a closed vocabulary — another condition\noperator, operand shape or handler operation — is a *major* change even\nthough this document merely grows an enum, because a reader that has\nnever heard of it fails on the value rather than passing it through.\n\n2.0 is such a major. An entity property stopped being a definition of\nits own and became a binding; a projection's partition became explicit\nin every case; `isOptional` went away, since `null` is an ordinary\ninitial value of any type and means \"no value yet\"; and an initial\nvalue may now be a non-empty list. A 1.x reader would misread each of\nthose rather than ignore it.\n\n4.0 is a major of the subtler kind the reader-side rule exists for:\nits one addition is additive in shape but not additive to a reader.\nAn `EntityBinding` may carry `isOptional`, under which an unset\nidentifier binds nothing instead of erroring, conditions over the\nalias hold vacuously, and reading a property of it yields null — a\n3.x reader ignores the flag and errors on exactly the case the author\ndeclared expected. The other direction is safe: a 3.x document never\nsays it, so a 4.0 reader reads 3.x whole.\n\n4.1 is the in-place kind: a *scripted* projection's `valueType`\nmay now be a composite value type. No shape changed \u2014 a documented\nrestriction was lifted \u2014 and a 4.0 reader loads and evaluates\nsuch a document correctly (equality was always deep, and a\ncomposite was always offered identity predicates only); the one\nthing it does wrong is flag the projection with the advisory that\nused to guard the restriction.\n\n5.0 is the closed-vocabulary kind the reader-side rule names\noutright: `equalsAny` joins the binary predicates — the left-hand\nvalue must (or with `negate`, must not) equal one entry of a\nliteral list, spelled as a bare array of `StaticValue` /\n`EnumMemberValue` entries in `rightHandSide`, the same list\nspelling `initialValue` already had. A 4.x reader fails on the\npredicate rather than passing it through, so this is a major even\nthough nothing a 4.x document says changed — a 5.0 reader reads\n3.x and 4.x whole.\n\nThis schema moves in place for minor changes; a major change is\npublished at a new `/vN.json` and the old URL keeps serving what it\nalways served. `x-dcb-schema-revision` moves with every edit either way.\n\nThe format is young and the playground it describes is a prototype.\nExpect majors.\n",
-  "x-dcb-schema-revision": "5.0.0",
+  "description": "A DCB model: every definition a modeller has authored for one\nDCB-based system, in the form the playground exports it. The same\ndocument travels both ways out of the playground, as readable JSON and\nas the gzipped payload of a share link.\n\n**There is one kind of fold.** A `projectionDefinition` is it: a value\nthat starts somewhere and is advanced by the events it handles, over\nthe query `tag IN (its parameters' arguments) AND type IN (handled\nevents)`. Declare no parameters and there is no tag, which is what a\nglobal numbering is. Declare one and the same numbering restarts per\ntenant.\n\nAn **entity property is a binding to one of these**, not a second kind\nof thing. `entityDefinitions[].properties` holds `{name, projection}`\nentries: the projection declares one parameter typed with the entity's\nown identifier, and binding it as a property is what supplies that\nargument. Everything the fold needs — the type held, the value it\nstarts from, the handlers, the script — lives on the projection and\nnowhere else, so there is no second place for a type or an initial\nvalue to disagree with the first. The same projection may be bound by\nseveral properties, or read directly by a command, or both.\n\nA lifecycle is not a distinct concept: a modeller who wants one binds\na property named `status` (by convention only) to a projection holding\nan ordinary enum custom type. There is no standalone constraint kind:\nconditions are inlined into the commands that check them.\n\n**Tags come from value types, not from a separate kind.** Any\n`customTypeDefinition` may set `isTag: true`, which is what makes it\nan identifier. An entity's own derived identifier is such a value\ntype — created automatically when the entity is, and from then on\nedited exactly like any other value type. A composite value type is\nnever itself a tag; its tag-ness is derived by looking through it to\nwhichever of its fields are themselves tag-marked, which is what lets\ntwo unrelated entities share one component (a `TenantId` field) and\nbe scoped together by it.\n\n**Versioning.** `dcbModelVersion` is what an importer dispatches on;\n`$schema` is for editors and is deliberately never read by one. A major\nbump means an older reader cannot correctly read the document and must\nrefuse it; a minor bump means it can, because the addition is one it\nignores. Note that \"additive\" is judged from the reader's side, not the\nschema's: a new member of a closed vocabulary — another condition\noperator, operand shape or handler operation — is a *major* change even\nthough this document merely grows an enum, because a reader that has\nnever heard of it fails on the value rather than passing it through.\n\n2.0 is such a major. An entity property stopped being a definition of\nits own and became a binding; a projection's partition became explicit\nin every case; `isOptional` went away, since `null` is an ordinary\ninitial value of any type and means \"no value yet\"; and an initial\nvalue may now be a non-empty list. A 1.x reader would misread each of\nthose rather than ignore it.\n\n4.0 is a major of the subtler kind the reader-side rule exists for:\nits one addition is additive in shape but not additive to a reader.\nAn `EntityBinding` may carry `isOptional`, under which an unset\nidentifier binds nothing instead of erroring, conditions over the\nalias hold vacuously, and reading a property of it yields null — a\n3.x reader ignores the flag and errors on exactly the case the author\ndeclared expected. The other direction is safe: a 3.x document never\nsays it, so a 4.0 reader reads 3.x whole.\n\n4.1 is the in-place kind: a *scripted* projection's `valueType`\nmay now be a composite value type. No shape changed \u2014 a documented\nrestriction was lifted \u2014 and a 4.0 reader loads and evaluates\nsuch a document correctly (equality was always deep, and a\ncomposite was always offered identity predicates only); the one\nthing it does wrong is flag the projection with the advisory that\nused to guard the restriction.\n\n5.0 is the closed-vocabulary kind the reader-side rule names\noutright: `equalsAny` joins the binary predicates — the left-hand\nvalue must (or with `negate`, must not) equal one entry of a\nliteral list, spelled as a bare array of `StaticValue` /\n`EnumMemberValue` entries in `rightHandSide`, the same list\nspelling `initialValue` already had. A 4.x reader fails on the\npredicate rather than passing it through, so this is a major even\nthough nothing a 4.x document says changed — a 5.0 reader reads\n3.x and 4.x whole.\n\n6.0 adds two members at once, each the closed-vocabulary kind. An\n`EventEmission` may carry `when`: conditions over the same operands\nits command's `conditions` read, under which the emission is\npublished or silently skipped — a guarded skip is not a rejection,\nand every guard failing publishes nothing. And a projection may be\n**derived**: no handlers, no initial value, a single declared\npredicate over other projections' values (`derived`), always one\nboolean — logic stated once, as data, where a script would have\nhidden it in code. A 5.x reader would publish an emission its\nauthor guarded and has no fold for a handlerless projection — both\nmisreads, so this is a major; a 6.0 reader reads 3.x, 4.x and 5.x\nwhole.\n\nThis schema moves in place for minor changes; a major change is\npublished at a new `/vN.json` and the old URL keeps serving what it\nalways served. `x-dcb-schema-revision` moves with every edit either way.\n\nThe format is young and the playground it describes is a prototype.\nExpect majors.\n",
+  "x-dcb-schema-revision": "6.0.0",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -12,11 +12,11 @@
       "type": "string"
     },
     "dcbModelVersion": {
-      "description": "The version of this format, `major.minor`. The only thing an importer\ndispatches on. A reader refuses a major it does not know and warns on\na minor newer than its own, which it may read because minors only\never add what an older reader ignores.\n\nThe pattern admits every 5.x rather than pinning one value, because\nthis schema is edited in place as minors ship and must keep\nvalidating documents written against the earlier ones.\n",
+      "description": "The version of this format, `major.minor`. The only thing an importer\ndispatches on. A reader refuses a major it does not know and warns on\na minor newer than its own, which it may read because minors only\never add what an older reader ignores.\n\nThe pattern admits every 6.x rather than pinning one value, because\nthis schema is edited in place as minors ship and must keep\nvalidating documents written against the earlier ones.\n",
       "type": "string",
-      "pattern": "^5\\.\\d+$",
+      "pattern": "^6\\.\\d+$",
       "examples": [
-        "5.0"
+        "6.0"
       ]
     },
     "name": {
@@ -188,7 +188,7 @@
           "$ref": "#/$defs/ProjectionName"
         },
         "parameters": {
-          "description": "What partitions this projection. Every parameter is typed\nwith a tag-bearing value type — one whose leaves resolve to\nat least one `isTag` type, scalar or through a composite's\nfields — and contributes the tag(s) those types' `tagSchema`\nrender: one for a tag-marked scalar, one per tag-marked field\nfor a composite. Whoever binds the projection supplies one\nargument per parameter: a command states them outright, and\nan entity property binding supplies the instance it was read\nfor.\n\n**Tag-bearing types only.** A tag is the only thing that can\nnarrow a query, and only a tag-marked type is a tag. A parameter\ntyped `integer` could not restrict what the store returns —\nit could only discard events after reading them, which is a\npredicate, and predicates live in conditions. So \"numbering\nper year\" needs a `Year` entity; that requirement is what\nkeeps the read cheap.\n\nAn empty list is the ordinary case for a global numbering,\nand is what makes its query the only kind in this document\nthat carries no tag.\n\nA **scripted** projection has no parameters. Discarding after\nreading is exactly what its code does, so the values it needs\narrive as `script.arguments` instead, and the partition it\nwould otherwise have derived from parameters is stated\noutright in `script.tagFilter`.\n",
+          "description": "What partitions this projection. Every parameter is typed\nwith a tag-bearing value type — one whose leaves resolve to\nat least one `isTag` type, scalar or through a composite's\nfields — and contributes the tag(s) those types' `tagSchema`\nrender: one for a tag-marked scalar, one per tag-marked field\nfor a composite. Whoever binds the projection supplies one\nargument per parameter: a command states them outright, and\nan entity property binding supplies the instance it was read\nfor.\n\n**Tag-bearing types only.** A tag is the only thing that can\nnarrow a query, and only a tag-marked type is a tag. A parameter\ntyped `integer` could not restrict what the store returns —\nit could only discard events after reading them, which is a\npredicate, and predicates live in conditions. So \"numbering\nper year\" needs a `Year` entity; that requirement is what\nkeeps the read cheap.\n\nAn empty list is the ordinary case for a global numbering,\nand is what makes its query the only kind in this document\nthat carries no tag.\n\nA **scripted** projection has no parameters. Discarding after\nreading is exactly what its code does, so the values it needs\narrive as `script.arguments` instead, and the partition it\nwould otherwise have derived from parameters is stated\noutright in `script.tagFilter`.\n\nA **derived** projection declares parameters exactly as a\ndeclared one does — they are what its operands' own arguments\ndraw from, so its partition is theirs.\n",
           "type": "array",
           "items": {
             "$ref": "#/$defs/ProjectionParameter"
@@ -212,8 +212,12 @@
           "description": "Present when this projection is advanced by code. A script\ncarries a `tagFilter`: it declares no parameters to derive a\npartition from, so the filter is the only thing that can say\nwhat the query reads — empty meaning the whole log, exactly\nas no parameters do.\n",
           "$ref": "#/$defs/ProjectionScript"
         },
+        "derived": {
+          "description": "Present when this projection is not folded at all but\n*derived* (6.0): one declared predicate over other\nprojections' values. It carries no handlers, no initial value\nand no script — its query is the union of its operands'\nqueries, and its value is the predicate's outcome, so\n`valueType` is always `boolean` and `isList` false.\n",
+          "$ref": "#/$defs/DerivedValue"
+        },
         "handlers": {
-          "description": "At most one handler per event type; the handled types are the\nprojection's query. Declared handlers carry an operation and\nan operand; a scripted projection's carry one `code` body\neach.\n\nOne per type is a real constraint, not a convenience: tag\nmatching is by value, whichever property carries it, so an\nevent holding this projection's identifier type in *two*\nproperties (an assignment naming both the new holder and the\none replaced) reaches both partitions and the handler fires\nfor both. A declarative handler cannot tell the two apart —\nsplit the event so each records one fact, or script the\nprojection; an advisory points at the ambiguity.\n\nAn empty list is legal and means nothing moves this yet — a\nprojection mid-authoring reads as its initial value, which is\na more useful thing to show than a refusal to store it.\n",
+          "description": "At most one handler per event type; the handled types are the\nprojection's query. Declared handlers carry an operation and\nan operand; a scripted projection's carry one `code` body\neach.\n\nOne per type is a real constraint, not a convenience: tag\nmatching is by value, whichever property carries it, so an\nevent holding this projection's identifier type in *two*\nproperties (an assignment naming both the new holder and the\none replaced) reaches both partitions and the handler fires\nfor both. A declarative handler cannot tell the two apart —\nsplit the event so each records one fact, or script the\nprojection; an advisory points at the ambiguity.\n\nAn empty list is legal and means nothing moves this yet — a\nprojection mid-authoring reads as its initial value, which is\na more useful thing to show than a refusal to store it.\n\nA *derived* projection has no handlers at all — nothing\nadvances it, and its query is its operands'.\n",
           "type": "array",
           "items": {
             "$ref": "#/$defs/PropertyHandler"
@@ -222,8 +226,7 @@
       },
       "required": [
         "name",
-        "valueType",
-        "handlers"
+        "valueType"
       ]
     },
     "ProjectionName": {
@@ -307,6 +310,89 @@
       "required": [
         "name",
         "propertyType"
+      ]
+    },
+    "DerivedValue": {
+      "description": "One predicate over other projections' values — the whole of a\nderived projection (6.0). This is decision logic stated once, as\ndata: an entity property may bind it, a command guard may read\nit, and a real application's read side can interpret the same\ndeclaration, where a script would have buried the comparison in\ncode.\n\nThe predicate vocabulary is the binary half of `Condition`'s —\n`equalsAny` excepted, since its literal-list spelling belongs to\ncommand rules — and `negate` flips it the same way. The outcome\nis always one boolean, which is what the owning projection's\n`valueType` must declare.\n\nA `{parameterName}` inside an operand's `arguments` names one of\nthe *owning* projection's own parameters — the partition flows\ndown, so binding the derived projection reads its operands at\nthe same instance. Operands may themselves be derived; a cycle\nis a defect the advisories point out and evaluation refuses.\n",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "leftHandSide": {
+          "$ref": "#/$defs/DerivedOperand"
+        },
+        "predicate": {
+          "enum": [
+            "equals",
+            "countEquals",
+            "countLessThan",
+            "countGreaterThan",
+            "contains",
+            "containsAny",
+            "lessThan",
+            "lessThanOrEquals",
+            "greaterThan",
+            "greaterThanOrEquals",
+            "startsWith",
+            "endsWith"
+          ]
+        },
+        "rightHandSide": {
+          "$ref": "#/$defs/DerivedOperand"
+        },
+        "negate": {
+          "description": "When true the derived value is the predicate's complement.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "leftHandSide",
+        "predicate",
+        "rightHandSide"
+      ]
+    },
+    "DerivedOperand": {
+      "description": "One side of a derived projection's predicate: another\nprojection's value, read at the partition the arguments name, or\na literal / enum-member reference to compare against.\n",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ProjectionReadValue"
+        },
+        {
+          "$ref": "#/$defs/EnumMemberValue"
+        },
+        {
+          "$ref": "#/$defs/StaticValue"
+        }
+      ]
+    },
+    "ProjectionReadValue": {
+      "description": "Another projection's value, as a derived projection's operand.\n`arguments` supplies one entry per parameter of the named\nprojection (or per script argument, when it is scripted), each a\n`{parameterName}` reference to the owning projection's own\nparameters or a literal — the same \"required here, rejected\nthere\" rule every other argument map follows.\n",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "projection": {
+          "$ref": "#/$defs/ProjectionName"
+        },
+        "arguments": {
+          "type": "object",
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/ParameterValue"
+              },
+              {
+                "$ref": "#/$defs/EnumMemberValue"
+              },
+              {
+                "$ref": "#/$defs/StaticValue"
+              }
+            ]
+          },
+          "default": {}
+        }
+      },
+      "required": [
+        "projection"
       ]
     },
     "PropertyHandler": {
@@ -553,12 +639,20 @@
       ]
     },
     "EventEmission": {
-      "description": "A command's emission of one event, plus bindings supplying the\nevent's property values.\n",
+      "description": "A command's emission of one event, plus bindings supplying the\nevent's property values.\n\nAn emission may be **guarded** (6.0): `when` holds conditions —\nthe same shape and operands as the command's `conditions` — and\nthe event is published only while every one of them holds. A\nguard that does not hold *skips* the emission silently; it never\nrejects the command. That is the whole difference between the\ntwo lists: `conditions` decide whether the command happens,\n`when` decides what it records — the decision is made at write\ntime and the log carries its outcome as a distinct event type.\nGuards on sibling emissions are independent: any subset may\nfire, every guard failing publishes nothing, and a command that\nmust always record something leaves one emission unguarded.\n",
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "name": {
           "$ref": "#/$defs/EventName"
+        },
+        "when": {
+          "description": "Conditions under which this emission is published, ANDed —\nabsent or empty means always. Boundary reads inside a guard\ncount toward the command's query exactly as `conditions`\nreads do: a guard may hide nothing from the derived DCB.\n",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Condition"
+          },
+          "default": []
         },
         "parameters": {
           "description": "Keys are the event's property names; each value is a\n`CommandOperand` describing where the value comes from at\nexecution time. An *optional* event property's entry may be\nomitted; the published event then carries the explicit `null`\nthere — and writes no tag for it, when the property is\ntag-marked.\n",

@@ -2,7 +2,7 @@
 
 An in-browser modeling tool for designing and testing event-sourced systems
 built on Dynamic Consistency Boundaries (DCB, see https://dcb.events). Authors
-build *DCB Models* — collections of custom-type, event, entity, projection and
+build _DCB Models_ — collections of custom-type, event, entity, projection and
 command definitions — drive commands against a hypothetical event log, and see
 which consistency boundary each command derives.
 
@@ -15,7 +15,7 @@ handler's editor is on screen. The app runs from any static server —
 
 - `app/` — the application. Everything that runs.
 - `dcb-model.schema.json` — canonical JSON Schema for the interchange format
-  (`https://dcb.events/schemas/model/v5.json`). Source of truth for what a
+  (`https://dcb.events/schemas/model/v6.json`). Source of truth for what a
   DCB Model file contains; `app/webmcp-schemas.js` is generated from it.
 - `docs/research/` — dated primary-source research notes backing design
   decisions (one file per investigation, `YYYY-MM-DD-topic.md`).
@@ -27,17 +27,17 @@ handler's editor is on screen. The app runs from any static server —
 Layers, strictly ordered — each file's header comment is its real
 documentation; read it before editing the file:
 
-- `model.js` — what a definition *means*. The playground's own event log
+- `model.js` — what a definition _means_. The playground's own event log
   (localStorage-backed, append-only), the projection over it, validation,
   DCB derivation, editing commands, and the predefined models
   (`PREDEFINED_MODELS`). No DOM.
-- `evaluate.js` — what a definition *does*. Given a model, an event log and a
+- `evaluate.js` — what a definition _does_. Given a model, an event log and a
   command, resolves the boundary, folds projections, checks conditions,
   returns published events or the refusing rule. No DOM, no localStorage.
   Handlers compile to closures, never to generated source.
 - `shared.js` — DOM helpers (`h(...)`), simple/advanced mode, the scripted-
   handler editor (Monaco behind a synthesized per-handler TypeScript preamble
-  — the synthesis is pure and tested, the widget is not), and the *slice*
+  — the synthesis is pure and tested, the widget is not), and the _slice_
   view (everything one command touches, derived from the definitions — the
   idea the page is built around). `shared.css` is its stylesheet.
 - `index.html` — the entire UI, one page. Renders from the projected state and
@@ -92,13 +92,13 @@ it never works from `file:`.
   every script handler to a thrower, so the model loads and the script can be
   fixed. Keep both intact — together they are why unprompted is safe.
 - **Two failure kinds** in evaluation, never conflated: a command whose
-  conditions do not hold is *rejected* (an ordinary outcome); a scenario that
+  conditions do not hold is _rejected_ (an ordinary outcome); a scenario that
   cannot run at all (missing event, missing argument, throwing script) is an
-  *error*.
+  _error_.
 - **The write path refuses only structure** — a missing key, a name
   collision, a body whose containers are not lists (`assertStorableBody`).
   Everything semantic (dangling references, write coverage, name idiom,
-  mistyped values) is an *advisory*: computed per revision by
+  mistyped values) is an _advisory_: computed per revision by
   `modelAdvisories` (model.js), folded into the Problems panel, shown as a
   banner on the affected page, and echoed in mutating WebMCP tool results.
   Never promote an advisory back into a write-path throw — a defective model
@@ -128,28 +128,47 @@ it never works from `file:`.
   optional property reads as null). Downstream it is an ordinary value —
   equality and emptiness work — except where it would become a tag or an
   ordering: a null exclusion or projection parameter is an evaluation
-  *error*, and so is a null boundary identifier *unless the binding is
-  marked `isOptional`* — then it binds zero instances, conditions over
+  _error_, and so is a null boundary identifier _unless the binding is
+  marked `isOptional`_ — then it binds zero instances, conditions over
   the alias hold vacuously, and reading a property of it yields null.
   The optional-parameter and derived-null advisories say all of this
   ahead of time.
 - **One handler per event type, per projection** — and it is a real
-  constraint, not a convenience: tag matching is by *value*, whichever
+  constraint, not a convenience: tag matching is by _value_, whichever
   property carries it, so an event holding one identifier type in two
   properties reaches both partitions and a handler fires for both. A
   declarative handler cannot tell them apart; the fix is to split the
   event (one fact each) or script the projection, and an advisory
   points at the ambiguity. The editors offer only unhandled events.
 - **Wire format majors**: a new member of a closed vocabulary is a
-  *major*, judged from the reader's side (see the versioning notes in
+  _major_, judged from the reader's side (see the versioning notes in
   `dcb-model.schema.json` and `model.js`). 4.0 added binding
   `isOptional` (additive in shape, but a 3.x reader errors where the
   flag declares the absence expected); 5.0 added the `equalsAny`
   predicate — one scalar against a literal list, spelled as a bare
   array of literals / `{enumMember}` references in `rightHandSide`, a
-  spelling only initial values had before. The importer reads 3.x, 4.x
-  and 5.x (`READABLE_MAJORS`) and always writes the current
-  `MODEL_VERSION`.
+  spelling only initial values had before; 6.0 added guarded emissions
+  and derived projections (below). The importer reads 3.x–6.x
+  (`READABLE_MAJORS`) and always writes the current `MODEL_VERSION`.
+- **Guarded emissions (6.0)**: a `publishes` entry may carry
+  `when: [conditions]` — same operand and predicate vocabulary as
+  `conditions`, evaluated in the same scope. A failing guard _skips_
+  its emission, never rejects the command; every guard failing
+  publishes nothing, which is still a `published` outcome. Guard reads
+  count toward the derived DCB like condition reads (both flow through
+  `forEachCommandOperand` — anything walking a command's conditions
+  must walk each emission's `when` too, see `allConditions` in
+  `validateCommandBody`).
+- **Derived projections (6.0)**: a third projection kind — no handlers,
+  no initial value, one declared predicate over other projections
+  (`derived`), always a single boolean. Its query is its operands'
+  union (`projectionHandledTypes` / `projectionReadTags`); a cycle is
+  an advisory and an evaluation _error_; a body carrying both `script`
+  and `derived` reads as scripted (`derivedOf` is null then) and the
+  advisory says so. Derived is data, not code: it never trips the
+  script import gate. The exploration that produced both blocks, and
+  the case for keeping or dropping them, lives in
+  `docs/research/2026-09-19-content-decisions-variant-comparison.md`.
 - **Comment style**: file headers and block comments carry design rationale,
   not line-by-line narration. Match that register; keep headers truthful when
   behaviour changes.

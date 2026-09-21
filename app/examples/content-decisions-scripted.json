@@ -1,0 +1,881 @@
+{
+  "$schema": "https://dcb.events/schemas/model/v6.json",
+  "dcbModelVersion": "6.0",
+  "name": "Content based decisions (scripted projection)",
+  "customTypeDefinitions": [
+    {
+      "name": "DocumentStatus",
+      "schema": {
+        "type": "string",
+        "enum": [
+          "NonExistent",
+          "Draft",
+          "Published",
+          "PendingChanges",
+          "Archived"
+        ]
+      }
+    },
+    {
+      "name": "DocumentId",
+      "schema": {
+        "type": "string"
+      },
+      "isTag": true
+    },
+    {
+      "name": "DocumentChangeState",
+      "properties": [
+        {
+          "name": "publishedText",
+          "propertyType": "string"
+        },
+        {
+          "name": "currentText",
+          "propertyType": "string"
+        },
+        {
+          "name": "status",
+          "propertyType": "DocumentStatus"
+        }
+      ]
+    }
+  ],
+  "eventDefinitions": [
+    {
+      "name": "DocumentAdded",
+      "properties": [
+        {
+          "name": "id",
+          "propertyType": "DocumentId",
+          "isOptional": false,
+          "isList": false
+        }
+      ]
+    },
+    {
+      "name": "TextUpdated",
+      "properties": [
+        {
+          "name": "docId",
+          "propertyType": "DocumentId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "text",
+          "propertyType": "string",
+          "isOptional": false,
+          "isList": false
+        }
+      ]
+    },
+    {
+      "name": "DocumentPublished",
+      "properties": [
+        {
+          "name": "docId",
+          "propertyType": "DocumentId",
+          "isOptional": false,
+          "isList": false
+        }
+      ]
+    },
+    {
+      "name": "DocumentArchived",
+      "properties": [
+        {
+          "name": "docId",
+          "propertyType": "DocumentId",
+          "isOptional": false,
+          "isList": false
+        }
+      ]
+    }
+  ],
+  "entityDefinitions": [
+    {
+      "name": "Document",
+      "icon": "📄",
+      "properties": [
+        {
+          "name": "status",
+          "projection": "DocumentStatus"
+        }
+      ]
+    }
+  ],
+  "projectionDefinitions": [
+    {
+      "name": "DocumentStatus",
+      "valueType": "DocumentStatus",
+      "isList": false,
+      "script": {
+        "initialState": {
+          "currentText": "",
+          "publishedText": "",
+          "status": "NonExistent"
+        },
+        "exposes": "status",
+        "arguments": [
+          {
+            "name": "documentId",
+            "propertyType": "DocumentId"
+          }
+        ],
+        "tagFilter": [
+          "DocumentId:{documentId}"
+        ]
+      },
+      "handlers": [
+        {
+          "event": "DocumentAdded",
+          "code": "{\"currentText\":\"\",\"publishedText\":\"\",\"status\":\"Draft\"}"
+        },
+        {
+          "event": "TextUpdated",
+          "code": "{\"currentText\":event.data.text,\"publishedText\":state.publishedText,\"status\":event.data.text == state.publishedText ? \"Published\" : \"PendingChanges\"}"
+        },
+        {
+          "event": "DocumentPublished",
+          "code": "{\"currentText\":state.currentText,\"publishedText\":state.currentText,\"status\":\"Published\"}"
+        },
+        {
+          "event": "DocumentArchived",
+          "code": "{\"currentText\":state.currentText,\"publishedText\":state.publishedText,\"status\":\"Archived\"}"
+        }
+      ]
+    }
+  ],
+  "commandDefinitions": [
+    {
+      "name": "AddDocument",
+      "feature": "Document Authoring",
+      "icon": "⭐",
+      "properties": [
+        {
+          "name": "id",
+          "propertyType": "DocumentId",
+          "isOptional": false,
+          "isList": false
+        }
+      ],
+      "boundary": [
+        {
+          "alias": "document",
+          "entity": "Document",
+          "id": {
+            "parameterName": "id"
+          }
+        }
+      ],
+      "conditions": [
+        {
+          "leftHandSide": {
+            "alias": "document",
+            "property": "status"
+          },
+          "predicate": "equals",
+          "rightHandSide": {
+            "enumMember": "NonExistent"
+          }
+        }
+      ],
+      "publishes": [
+        {
+          "name": "DocumentAdded",
+          "parameters": {
+            "id": {
+              "parameterName": "id"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "UpdateText",
+      "feature": "Document Authoring",
+      "icon": "✏️",
+      "properties": [
+        {
+          "name": "docId",
+          "propertyType": "DocumentId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "text",
+          "propertyType": "string",
+          "isOptional": false,
+          "isList": false
+        }
+      ],
+      "boundary": [
+        {
+          "alias": "document",
+          "entity": "Document",
+          "id": {
+            "parameterName": "docId"
+          }
+        }
+      ],
+      "conditions": [
+        {
+          "leftHandSide": {
+            "alias": "document",
+            "property": "status"
+          },
+          "predicate": "equals",
+          "rightHandSide": {
+            "enumMember": "NonExistent"
+          },
+          "negate": true
+        },
+        {
+          "leftHandSide": {
+            "alias": "document",
+            "property": "status"
+          },
+          "predicate": "equals",
+          "rightHandSide": {
+            "enumMember": "Archived"
+          },
+          "negate": true
+        }
+      ],
+      "publishes": [
+        {
+          "name": "TextUpdated",
+          "parameters": {
+            "docId": {
+              "parameterName": "docId"
+            },
+            "text": {
+              "parameterName": "text"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "PublishDocument",
+      "feature": "Document Authoring",
+      "icon": "💾",
+      "properties": [
+        {
+          "name": "docId",
+          "propertyType": "DocumentId",
+          "isOptional": false,
+          "isList": false
+        }
+      ],
+      "boundary": [
+        {
+          "alias": "document",
+          "entity": "Document",
+          "id": {
+            "parameterName": "docId"
+          }
+        }
+      ],
+      "conditions": [
+        {
+          "leftHandSide": {
+            "alias": "document",
+            "property": "status"
+          },
+          "predicate": "equalsAny",
+          "rightHandSide": [
+            {
+              "enumMember": "Draft"
+            },
+            {
+              "enumMember": "PendingChanges"
+            }
+          ]
+        }
+      ],
+      "publishes": [
+        {
+          "name": "DocumentPublished",
+          "parameters": {
+            "docId": {
+              "parameterName": "docId"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ArchiveDocument",
+      "feature": "Document Authoring",
+      "icon": "🗑️",
+      "properties": [
+        {
+          "name": "docId",
+          "propertyType": "DocumentId",
+          "isOptional": false,
+          "isList": false
+        }
+      ],
+      "boundary": [
+        {
+          "alias": "document",
+          "entity": "Document",
+          "id": {
+            "parameterName": "docId"
+          }
+        }
+      ],
+      "conditions": [
+        {
+          "leftHandSide": {
+            "alias": "document",
+            "property": "status"
+          },
+          "predicate": "equalsAny",
+          "rightHandSide": [
+            {
+              "enumMember": "Draft"
+            },
+            {
+              "enumMember": "Published"
+            },
+            {
+              "enumMember": "PendingChanges"
+            }
+          ]
+        }
+      ],
+      "publishes": [
+        {
+          "name": "DocumentArchived",
+          "parameters": {
+            "docId": {
+              "parameterName": "docId"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "scenarioDefinitions": [
+    {
+      "id": "f25ca855-3186-44b9-bc23-34b7d0acfa10",
+      "command": "UpdateText",
+      "given": [],
+      "when": {
+        "arguments": {
+          "docId": "d1",
+          "text": "test"
+        }
+      },
+      "then": {
+        "outcome": "rejected",
+        "events": [],
+        "failedRule": {
+          "index": 0,
+          "text": "not(document.status == NonExistent)",
+          "leftValue": "NonExistent",
+          "rightValue": "NonExistent",
+          "atInstance": null
+        }
+      }
+    },
+    {
+      "id": "f68850b3-0be3-4316-9121-652359675b38",
+      "command": "UpdateText",
+      "given": [
+        {
+          "event": "DocumentAdded",
+          "data": {
+            "id": "d1"
+          }
+        }
+      ],
+      "when": {
+        "arguments": {
+          "docId": "d1",
+          "text": "test"
+        }
+      },
+      "then": {
+        "outcome": "published",
+        "events": [
+          {
+            "type": "TextUpdated",
+            "data": {
+              "docId": "d1",
+              "text": "test"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "d2df6fbd-7216-4867-adcc-d89c4f09b701",
+      "command": "ArchiveDocument",
+      "given": [],
+      "when": {
+        "arguments": {
+          "docId": "d1"
+        }
+      },
+      "then": {
+        "outcome": "rejected",
+        "events": [],
+        "failedRule": {
+          "index": 0,
+          "text": "document.status equalsAny [Draft, Published, PendingChanges]",
+          "leftValue": "NonExistent",
+          "rightValue": [
+            "Draft",
+            "Published",
+            "PendingChanges"
+          ],
+          "atInstance": null
+        }
+      }
+    },
+    {
+      "id": "4434e3ad-ce7f-4b57-a2c9-f459b8c21edd",
+      "command": "ArchiveDocument",
+      "given": [
+        {
+          "event": "DocumentAdded",
+          "data": {
+            "id": "d1"
+          }
+        },
+        {
+          "event": "DocumentArchived",
+          "data": {
+            "docId": "d1"
+          }
+        }
+      ],
+      "when": {
+        "arguments": {
+          "docId": "d1"
+        }
+      },
+      "then": {
+        "outcome": "rejected",
+        "events": [],
+        "failedRule": {
+          "index": 0,
+          "text": "document.status equalsAny [Draft, Published, PendingChanges]",
+          "leftValue": "Archived",
+          "rightValue": [
+            "Draft",
+            "Published",
+            "PendingChanges"
+          ],
+          "atInstance": null
+        }
+      }
+    },
+    {
+      "id": "fb337242-895b-4f2d-ac23-72476aab70c7",
+      "command": "ArchiveDocument",
+      "given": [
+        {
+          "event": "DocumentAdded",
+          "data": {
+            "id": "d1"
+          }
+        },
+        {
+          "event": "TextUpdated",
+          "data": {
+            "docId": "d1",
+            "text": "test"
+          }
+        }
+      ],
+      "when": {
+        "arguments": {
+          "docId": "d1"
+        }
+      },
+      "then": {
+        "outcome": "published",
+        "events": [
+          {
+            "type": "DocumentArchived",
+            "data": {
+              "docId": "d1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "deb42f08-4b8f-4739-a751-744288f2ec42",
+      "command": "PublishDocument",
+      "given": [
+        {
+          "event": "DocumentAdded",
+          "data": {
+            "id": "d1"
+          }
+        }
+      ],
+      "when": {
+        "arguments": {
+          "docId": "d1"
+        }
+      },
+      "then": {
+        "outcome": "published",
+        "events": [
+          {
+            "type": "DocumentPublished",
+            "data": {
+              "docId": "d1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "e8c3c9d1-b845-49aa-a839-d5d79700d4a7",
+      "command": "PublishDocument",
+      "given": [
+        {
+          "event": "DocumentAdded",
+          "data": {
+            "id": "d1"
+          }
+        },
+        {
+          "event": "DocumentPublished",
+          "data": {
+            "docId": "d1"
+          }
+        }
+      ],
+      "when": {
+        "arguments": {
+          "docId": "d1"
+        }
+      },
+      "then": {
+        "outcome": "rejected",
+        "events": [],
+        "failedRule": {
+          "index": 0,
+          "text": "document.status equalsAny [Draft, PendingChanges]",
+          "leftValue": "Published",
+          "rightValue": [
+            "Draft",
+            "PendingChanges"
+          ],
+          "atInstance": null
+        }
+      }
+    },
+    {
+      "id": "bd69daf3-7810-423e-8dac-be2b879a4ba0",
+      "command": "PublishDocument",
+      "given": [
+        {
+          "event": "DocumentAdded",
+          "data": {
+            "id": "d1"
+          }
+        },
+        {
+          "event": "DocumentArchived",
+          "data": {
+            "docId": "d1"
+          }
+        }
+      ],
+      "when": {
+        "arguments": {
+          "docId": "d1"
+        }
+      },
+      "then": {
+        "outcome": "rejected",
+        "events": [],
+        "failedRule": {
+          "index": 0,
+          "text": "document.status equalsAny [Draft, PendingChanges]",
+          "leftValue": "Archived",
+          "rightValue": [
+            "Draft",
+            "PendingChanges"
+          ],
+          "atInstance": null
+        }
+      }
+    },
+    {
+      "id": "cc53420e-edee-4749-ae99-3dacecfbf6ea",
+      "command": "PublishDocument",
+      "given": [
+        {
+          "event": "DocumentAdded",
+          "data": {
+            "id": "d1"
+          }
+        },
+        {
+          "event": "TextUpdated",
+          "data": {
+            "docId": "d1",
+            "text": "test"
+          }
+        },
+        {
+          "event": "DocumentPublished",
+          "data": {
+            "docId": "d1"
+          }
+        },
+        {
+          "event": "TextUpdated",
+          "data": {
+            "docId": "d1",
+            "text": "test 2"
+          }
+        },
+        {
+          "event": "TextUpdated",
+          "data": {
+            "docId": "d1",
+            "text": "test"
+          }
+        }
+      ],
+      "when": {
+        "arguments": {
+          "docId": "d1"
+        }
+      },
+      "then": {
+        "outcome": "rejected",
+        "events": [],
+        "failedRule": {
+          "index": 0,
+          "text": "document.status equalsAny [Draft, PendingChanges]",
+          "leftValue": "Published",
+          "rightValue": [
+            "Draft",
+            "PendingChanges"
+          ],
+          "atInstance": null
+        }
+      }
+    }
+  ],
+  "projectionScenarioDefinitions": [
+    {
+      "id": "d6ac72fa-a595-4ed8-afb1-1de344fce8e9",
+      "projection": "DocumentStatus",
+      "arguments": {
+        "documentId": "d1"
+      },
+      "given": [],
+      "then": "NonExistent"
+    },
+    {
+      "id": "d41ef079-0f3d-4c2f-830c-2fcd2bb9e538",
+      "projection": "DocumentStatus",
+      "arguments": {
+        "documentId": "d1"
+      },
+      "given": [
+        {
+          "event": "DocumentAdded",
+          "data": {
+            "id": "d1"
+          }
+        }
+      ],
+      "then": "Draft"
+    },
+    {
+      "id": "762a8c2a-0702-45b5-abaf-d78082e31a91",
+      "projection": "DocumentStatus",
+      "arguments": {
+        "documentId": "d1"
+      },
+      "given": [
+        {
+          "event": "DocumentAdded",
+          "data": {
+            "id": "d1"
+          }
+        },
+        {
+          "event": "TextUpdated",
+          "data": {
+            "docId": "d1",
+            "text": "test"
+          }
+        }
+      ],
+      "then": "PendingChanges"
+    },
+    {
+      "id": "9ef9d34d-6f31-4b55-bddd-ab5163e5400b",
+      "projection": "DocumentStatus",
+      "arguments": {
+        "documentId": "d1"
+      },
+      "given": [
+        {
+          "event": "DocumentAdded",
+          "data": {
+            "id": "d1"
+          }
+        },
+        {
+          "event": "TextUpdated",
+          "data": {
+            "docId": "d1",
+            "text": "test"
+          }
+        },
+        {
+          "event": "DocumentPublished",
+          "data": {
+            "docId": "d1"
+          }
+        }
+      ],
+      "then": "Published"
+    },
+    {
+      "id": "90e91be3-2949-4f13-bacf-5f3696562aa3",
+      "projection": "DocumentStatus",
+      "arguments": {
+        "documentId": "d1"
+      },
+      "given": [
+        {
+          "event": "DocumentAdded",
+          "data": {
+            "id": "d1"
+          }
+        },
+        {
+          "event": "TextUpdated",
+          "data": {
+            "docId": "d1",
+            "text": "test"
+          }
+        },
+        {
+          "event": "DocumentPublished",
+          "data": {
+            "docId": "d1"
+          }
+        },
+        {
+          "event": "TextUpdated",
+          "data": {
+            "docId": "d1",
+            "text": "test changed"
+          }
+        }
+      ],
+      "then": "PendingChanges"
+    },
+    {
+      "id": "e5d8262f-233d-43e8-ab23-6523431e2aa2",
+      "projection": "DocumentStatus",
+      "arguments": {
+        "documentId": "d1"
+      },
+      "given": [
+        {
+          "event": "DocumentAdded",
+          "data": {
+            "id": "d1"
+          }
+        },
+        {
+          "event": "TextUpdated",
+          "data": {
+            "docId": "d1",
+            "text": "test"
+          }
+        },
+        {
+          "event": "DocumentPublished",
+          "data": {
+            "docId": "d1"
+          }
+        },
+        {
+          "event": "TextUpdated",
+          "data": {
+            "docId": "d1",
+            "text": "test changed"
+          }
+        },
+        {
+          "event": "TextUpdated",
+          "data": {
+            "docId": "d1",
+            "text": "test"
+          }
+        }
+      ],
+      "then": "Published"
+    },
+    {
+      "id": "747dfa6f-9b78-4773-875e-92824767c413",
+      "projection": "DocumentStatus",
+      "arguments": {
+        "documentId": "d1"
+      },
+      "given": [
+        {
+          "event": "DocumentAdded",
+          "data": {
+            "id": "d1"
+          }
+        },
+        {
+          "event": "TextUpdated",
+          "data": {
+            "docId": "d1",
+            "text": "test"
+          }
+        },
+        {
+          "event": "DocumentPublished",
+          "data": {
+            "docId": "d1"
+          }
+        },
+        {
+          "event": "TextUpdated",
+          "data": {
+            "docId": "d1",
+            "text": "test changed"
+          }
+        },
+        {
+          "event": "TextUpdated",
+          "data": {
+            "docId": "d1",
+            "text": "test"
+          }
+        },
+        {
+          "event": "DocumentArchived",
+          "data": {
+            "docId": "d1"
+          }
+        }
+      ],
+      "then": "Archived"
+    }
+  ]
+}

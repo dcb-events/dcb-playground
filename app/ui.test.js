@@ -108,6 +108,80 @@ function build(index) {
 }
 
 // ---------------------------------------------------------------
+// The same seam, for a derived projection.
+// ---------------------------------------------------------------
+{
+  const { model } = build(9);
+
+  check('a draft round-trips a derived projection unchanged', () => {
+    const stored = model()['projection-definitions'].DocumentHasPendingChanges;
+    eq(cleanProjectionBody(projectionDraftFrom(stored)), stored, 'through the editor and back');
+  });
+
+  check('a derived body always stores as one boolean, whatever the draft says', () => {
+    const draft = projectionDraftFrom(model()['projection-definitions'].DocumentHasPendingChanges);
+    draft.valueType = 'string';
+    draft.isList = true;
+    const body = cleanProjectionBody(draft);
+    eq(body.valueType, 'boolean', 'the predicate\'s outcome');
+    eq(body.isList, false, 'and one of it');
+  });
+
+  check('the ledger says what kind of value it is', () => {
+    eq(sandbox.scriptLabel(model()['projection-definitions'].DocumentHasPendingChanges),
+      'derived', 'beside the type, like "scripted"');
+  });
+}
+
+// ---------------------------------------------------------------
+// The new editors, exercised as far as "it ran": the guard rows and
+// their open rule editor on the guarded variant, the derived detail
+// and its open editor on the derived one. A stub cannot say what they
+// looked like; it can say every branch painted.
+// ---------------------------------------------------------------
+{
+  check('the guard rows and their editor render without throwing', () => {
+    const { id, model } = build(8);
+    store.set('dcb-playground:model', id);
+    store.set('dcb-playground:mode', 'advanced');
+    sandbox.state.view = 'slice';
+    sandbox.state.slice = 'UpdateText';
+    sandbox.render();
+
+    // A guard being edited, seeded the way the Edit button seeds it.
+    const guarded = model()['command-definitions'].UpdateText.publishes[0].when[0];
+    sandbox.state.editGuard = { at: 0, index: 0 };
+    sandbox.state.ruleDraft = null;
+    sandbox.render();
+    eq(!!guarded, true, 'and the guard is still there afterwards');
+
+    // A fresh guard row on the second emission.
+    sandbox.closeForms();
+    sandbox.state.editGuard = { at: 1, index: null };
+    sandbox.render();
+    sandbox.closeForms();
+  });
+
+  check('the derived detail and its editor render without throwing', () => {
+    const { id, model } = build(9);
+    store.set('dcb-playground:model', id);
+    store.set('dcb-playground:mode', 'advanced');
+    sandbox.state.view = 'entity';
+    sandbox.state.entity = 'Document';
+    sandbox.state.projDraft = {
+      name: 'DocumentHasPendingChanges',
+      body: sandbox.projectionDraftFrom(model()['projection-definitions'].DocumentHasPendingChanges),
+    };
+    sandbox.render();
+    // Half-written too: an operand with no projection picked yet is
+    // the state every keystroke passes through.
+    sandbox.state.projDraft.body.derived.rightHandSide = '';
+    sandbox.render();
+    sandbox.closeForms();
+  });
+}
+
+// ---------------------------------------------------------------
 // A new projection's draft, and the name a new property gives one.
 // ---------------------------------------------------------------
 {
@@ -330,7 +404,9 @@ function build(index) {
     }
   };
 
-  for (const slug of ['course-simple', 'course-sequence', 'course-tenant', 'course-schedules', 'pricing-simple', 'content-decisions']) {
+  for (const slug of ['course-simple', 'course-sequence', 'course-tenant', 'course-schedules',
+    'pricing-simple', 'content-decisions-scripted', 'content-decisions-boundary',
+    'content-decisions-verified', 'content-decisions-guarded', 'content-decisions-derived']) {
     const file = path.join(APP, 'examples', slug + '.json');
     const envelope = JSON.parse(fs.readFileSync(file, 'utf8'));
 

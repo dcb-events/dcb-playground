@@ -77,7 +77,11 @@
 // a boundary binding declare `isOptional`: an unset identifier binds
 // nothing instead of erroring. Additive in shape, but a v16 reader
 // errors on the case the flag declares expected, so the key moves.
-const EVENT_LOG_KEY = 'dcb-playground:events:v17';
+// v18 added guarded emissions (`when` on a publishes entry) and
+// derived projections (`derived` in place of handlers): a v17 reader
+// would publish an emission its author made conditional and has no
+// fold for a handlerless projection — both misreads, so the key moves.
+const EVENT_LOG_KEY = 'dcb-playground:events:v18';
 
 const DEF_KINDS = [
   'entity-definition',
@@ -167,6 +171,11 @@ const PREDICATE_SYMBOL = {
   greaterThan: '>',
   greaterThanOrEquals: '>=',
 };
+
+// What a derived projection may state: the binary vocabulary minus
+// `equalsAny`, whose literal-list spelling belongs to command rules.
+// Whatever the predicate, the derived value is one boolean.
+const DERIVED_PREDICATES = BINARY_PREDICATES.filter((p) => p !== 'equalsAny');
 
 const OPERATIONS = ['set', 'increment', 'decrement', 'append', 'remove'];
 
@@ -593,6 +602,14 @@ function forEachReferenceSlot(kind, name, body, slot) {
       typeSlots((scriptOf(body) || {}).arguments);
       tagFilterSlots(scriptOf(body));
       for (const handler of body.handlers || []) at(handler, 'event', 'event-definition', 'name');
+      // A derived predicate names the projections it reads. `derived`
+      // is read raw rather than through `derivedOf`, so a body carrying
+      // both a script and a predicate still tracks the names it holds.
+      for (const operand of derivedOperands(body.derived)) {
+        if (operand && typeof operand === 'object' && operand.projection !== undefined) {
+          at(operand, 'projection', 'projection-definition', 'name');
+        }
+      }
       break;
     case 'command-definition':
       typeSlots(body.properties);
@@ -666,6 +683,7 @@ function findReferencers(model, targetKind, targetName) {
 //
 // Command operands:  {parameterName} | {alias, property?} | {enumMember} | literal
 // Handler operands:  {eventProperty} | {currentValue} | {successor} | {enumMember} | literal
+// Derived operands:  {projection, arguments?} | {enumMember} | literal
 //
 // `{alias}` with no `property` reads a bound projection's value: a
 // projection holds exactly one value and has no name for it. On an
@@ -681,6 +699,7 @@ function operandSource(operand) {
   if (operand.eventProperty !== undefined) return 'event-property';
   if (operand.currentValue !== undefined) return 'current-value';
   if (operand.successor !== undefined) return 'successor';
+  if (operand.projection !== undefined) return 'projection-read';
   return 'static';
 }
 
@@ -698,6 +717,11 @@ function operandText(operand) {
     case 'event-property': return `event.${operand.eventProperty || '?'}`;
     case 'current-value': return 'current';
     case 'successor': return `next(${operandText(operand.successor)})`;
+    case 'projection-read': {
+      const args = Object.entries(operand.arguments || {})
+        .map(([name, value]) => `${name}: ${operandText(value)}`).join(', ');
+      return `${operand.projection || '?'}(${args})`;
+    }
     default:
       if (operand === null || operand === undefined) return 'null';
       if (Array.isArray(operand)) return `[${operand.map(operandText).join(', ')}]`;
@@ -717,6 +741,7 @@ function operandIncomplete(operand) {
     case 'enum-member': return !operand.enumMember;
     case 'event-property': return !operand.eventProperty;
     case 'successor': return operandIncomplete(operand.successor);
+    case 'projection-read': return !operand.projection;
     default: return false;
   }
 }
@@ -782,6 +807,20 @@ function projectionScenarioName(body) {
 // are declared the ordinary way.
 function scriptOf(target) {
   return target && target.script ? target.script : null;
+}
+
+// The predicate a projection is *derived* by, or null when it is
+// folded (declared or scripted) the ordinary way. A body defective
+// enough to carry both a script and a derived predicate reads as
+// scripted — deterministic, and the advisory says both are there.
+function derivedOf(target) {
+  return target && target.derived && !target.script ? target.derived : null;
+}
+
+// Both sides of a derived predicate, in evaluation order — the derived
+// analogue of `conditionOperands`.
+function derivedOperands(derived) {
+  return derived ? [derived.leftHandSide, derived.rightHandSide] : [];
 }
 
 // The slot of a projection that an entity property binding fills with
@@ -921,22 +960,29 @@ function forEachCommandOperand(body, visit) {
       visit(operand, { where: `boundary binding "${binding.alias || '?'}" (argument ${key})` });
     }
   }
-  for (const condition of body.conditions || []) {
-    if (!condition) continue;
-    visit(condition.leftHandSide, { where: `condition "${conditionText(condition)}"` });
+  const visitCondition = (condition, where) => {
+    visit(condition.leftHandSide, { where });
     if (condition.rightHandSide !== undefined) {
       // `equalsAny` spells its right-hand side as a literal list. The
       // entries are the operands; the array is only their container.
       const rights = Array.isArray(condition.rightHandSide)
         ? condition.rightHandSide : [condition.rightHandSide];
-      for (const operand of rights) {
-        visit(operand, { where: `condition "${conditionText(condition)}"` });
-      }
+      for (const operand of rights) visit(operand, { where });
     }
+  };
+  for (const condition of body.conditions || []) {
+    if (!condition) continue;
+    visitCondition(condition, `condition "${conditionText(condition)}"`);
   }
   for (const emission of body.publishes || []) {
-    if (!emission || !emission.parameters) continue;
-    for (const [key, operand] of Object.entries(emission.parameters)) {
+    if (!emission) continue;
+    // An emission guard is a condition in every respect a walker cares
+    // about — the same operand set, read from the same scope.
+    for (const condition of emission.when || []) {
+      if (!condition) continue;
+      visitCondition(condition, `guard "${conditionText(condition)}" on "${emission.name}"`);
+    }
+    for (const [key, operand] of Object.entries(emission.parameters || {})) {
       visit(operand, { where: `emission "${emission.name}.${key}"` });
     }
   }
@@ -1213,6 +1259,57 @@ function entityBindingTags(model, entityName, idOperand, excludingOperand, fanne
   });
 }
 
+// The event types a projection's query covers: its handlers' events —
+// or, for a derived one, the union of its operands', walked
+// recursively. `seen` stops a cycle from recursing forever; the cycle
+// itself is the advisory's (and evaluation's) to report.
+function projectionHandledTypes(model, projectionName, seen = []) {
+  const projection = model['projection-definitions'][projectionName];
+  if (!projection || seen.includes(projectionName)) return [];
+  const derived = derivedOf(projection);
+  if (!derived) {
+    return uniq((projection.handlers || []).map((h) => h && h.event).filter(Boolean));
+  }
+  const out = [];
+  for (const operand of derivedOperands(derived)) {
+    if (operandSource(operand) !== 'projection-read') continue;
+    out.push(...projectionHandledTypes(model, operand.projection, [...seen, projectionName]));
+  }
+  return uniq(out);
+}
+
+// The tags one projection read contributes, for display: derived from
+// parameters, stated by a script's tag filter — or, derived, the union
+// of the operands' own reads with this read's argument operands
+// substituted through, so the shown tag stays in the caller's terms
+// ("DocumentId:docId", never the inner parameter name).
+function projectionReadTags(model, projectionName, argumentOperands, seen = []) {
+  const projection = model['projection-definitions'][projectionName];
+  if (!projection || seen.includes(projectionName)) return [];
+  const script = scriptOf(projection);
+  if (script) {
+    return (script.tagFilter || []).map((t) => resolveTagFilter(model, t, argumentOperands || {}));
+  }
+  const derived = derivedOf(projection);
+  if (!derived) {
+    return (projection.parameters || []).flatMap((p) =>
+      tagsForIdentifierValue(model, p.propertyType, (argumentOperands || {})[p.name]));
+  }
+  const tags = [];
+  for (const operand of derivedOperands(derived)) {
+    if (operandSource(operand) !== 'projection-read') continue;
+    const substituted = {};
+    for (const [name, inner] of Object.entries(operand.arguments || {})) {
+      substituted[name] = operandSource(inner) === 'parameter'
+        && (argumentOperands || {})[inner.parameterName] !== undefined
+        ? argumentOperands[inner.parameterName]
+        : inner;
+    }
+    tags.push(...projectionReadTags(model, operand.projection, substituted, [...seen, projectionName]));
+  }
+  return uniq(tags);
+}
+
 function deriveDcb(model, body) {
   const items = [];
 
@@ -1226,19 +1323,15 @@ function deriveDcb(model, body) {
       // is written from the parameter list rather than from anything
       // about the value — one tag for a scalar identifier parameter,
       // one per component for a composite one. A scripted projection
-      // states its tags itself, with argument names interpolated — the
-      // one thing the escape hatch is not allowed to hide is what it
+      // states its tags itself, with argument names interpolated, and a
+      // derived one contributes its operands' reads — neither the
+      // escape hatch nor the predicate is allowed to hide what it
       // reads.
-      const script = scriptOf(projection);
-      const tags = script
-        ? (script.tagFilter || []).map((t) => resolveTagFilter(model, t, binding.arguments || {}))
-        : (projection.parameters || []).flatMap((p) =>
-            tagsForIdentifierValue(model, p.propertyType, (binding.arguments || {})[p.name]));
       items.push({
         projection: binding.projection,
         alias: binding.alias,
-        tags,
-        types: uniq((projection.handlers || []).map((h) => h && h.event).filter(Boolean)).sort(),
+        tags: projectionReadTags(model, binding.projection, binding.arguments || {}),
+        types: projectionHandledTypes(model, binding.projection).sort(),
         readProperties: [],
       });
       continue;
@@ -1257,10 +1350,7 @@ function deriveDcb(model, body) {
     if (entity) {
       for (const property of entity.properties || []) {
         if (!readProperties.has(property.name)) continue;
-        const projection = model['projection-definitions'][property.projection];
-        for (const handler of (projection && projection.handlers) || []) {
-          if (handler && handler.event) types.add(handler.event);
-        }
+        for (const type of projectionHandledTypes(model, property.projection)) types.add(type);
       }
     }
     const fannedOut = isFannedOut(model, body, binding);
@@ -1878,15 +1968,10 @@ function validateProjectionBody(model, projectionName, body) {
     );
   }
   const script = scriptOf(body);
-  // A record of fields is a value only code can advance: the declared
-  // operations act on a single value and have nothing to act on in
-  // one, so a composite is legal exactly where a script is what moves
-  // the projection.
-  if (valueCls.kind === 'value' && valueCls.composite && !script) {
+  if (body.script && body.derived) {
     throw new DomainError(
-      `Projection "${projectionName}" holds "${body.valueType}", which is a composite. ` +
-      'The operations that advance a declared projection act on a single value and have ' +
-      'nothing to act on in a record of fields — script the projection to hold one.'
+      `Projection "${projectionName}" declares both a script and a derived predicate — one or ` +
+      'the other produces its value, not both. It reads as scripted until one goes.'
     );
   }
 
@@ -1905,6 +1990,46 @@ function validateProjectionBody(model, projectionName, body) {
     return;
   }
 
+  if (derivedOf(body)) {
+    // A derived projection is nothing but its predicate: no initial
+    // value (before any event it derives from its operands' initial
+    // values), no handlers (its operands' handlers are its query), and
+    // always one boolean (the predicate's outcome).
+    if (body.valueType !== 'boolean' || body.isList) {
+      throw new DomainError(
+        `Projection "${projectionName}" is derived, so it holds its predicate's outcome — ` +
+        `one boolean, never ${body.isList ? 'a list' : `a ${body.valueType}`}.`
+      );
+    }
+    if (body.initialValue !== undefined) {
+      throw new DomainError(
+        `Projection "${projectionName}" is derived and declares an initial value. Before any ` +
+        'event it already derives from its operands\' own initial values — a second start would disagree.'
+      );
+    }
+    if ((body.handlers || []).length) {
+      throw new DomainError(
+        `Projection "${projectionName}" is derived and declares handlers. Nothing advances a ` +
+        'derived projection — its operands\' handlers are its query.'
+      );
+    }
+    validateProjectionParameters(model, projectionName, body);
+    validateDerived(model, projectionName, body);
+    return;
+  }
+
+  // A record of fields is a value only code can advance: the declared
+  // operations act on a single value and have nothing to act on in
+  // one, so a composite is legal exactly where a script is what moves
+  // the projection.
+  if (valueCls.kind === 'value' && valueCls.composite) {
+    throw new DomainError(
+      `Projection "${projectionName}" holds "${body.valueType}", which is a composite. ` +
+      'The operations that advance a declared projection act on a single value and have ' +
+      'nothing to act on in a record of fields — script the projection to hold one.'
+    );
+  }
+
   if (body.initialValue === undefined) {
     throw new DomainError(
       `Projection "${projectionName}" needs an initial value — it is the value before any event ` +
@@ -1914,12 +2039,22 @@ function validateProjectionBody(model, projectionName, body) {
   }
   validateInitialValue(model, `Projection "${projectionName}"`, body);
 
-  // Only a tag-bearing type can narrow a query. A parameter of any
-  // other type could not restrict what the store returns — it could
-  // only discard events after reading them, which is a predicate, and
-  // predicates live in conditions. A script is exactly the place where
-  // discarding after reading is legitimate, which is why that one
-  // takes arguments and not parameters.
+  validateProjectionParameters(model, projectionName, body);
+
+  // Zero handlers is a legitimate draft: a projection nothing moves
+  // yet reads as its initial value, and the interface says so.
+  validateHandlers(model, `projection "${projectionName}"`, body, body.handlers);
+}
+
+// Only a tag-bearing type can narrow a query. A parameter of any
+// other type could not restrict what the store returns — it could
+// only discard events after reading them, which is a predicate, and
+// predicates live in conditions. A script is exactly the place where
+// discarding after reading is legitimate, which is why that one
+// takes arguments and not parameters. A derived projection declares
+// parameters like a declared one — its operands' arguments draw from
+// them, so its partition is its operands'.
+function validateProjectionParameters(model, projectionName, body) {
   const seenParameters = new Set();
   for (const parameter of body.parameters || []) {
     if (!parameter || !CAMEL_RE.test(parameter.name || '')) {
@@ -1937,10 +2072,128 @@ function validateProjectionBody(model, projectionName, body) {
       );
     }
   }
+}
 
-  // Zero handlers is a legitimate draft: a projection nothing moves
-  // yet reads as its initial value, and the interface says so.
-  validateHandlers(model, `projection "${projectionName}"`, body, body.handlers);
+// The derived predicate: both operands recognised, at least one of
+// them a projection read, every read's arguments covering exactly the
+// slots its target declares, each argument drawn from this
+// projection's own parameters or a literal, enum members belonging to
+// the type they sit opposite — and no cycle, since a value derived
+// through itself has nowhere to start.
+function validateDerived(model, projectionName, body) {
+  const derived = body.derived;
+  const label = `projection "${projectionName}"`;
+  if (!DERIVED_PREDICATES.includes(derived.predicate)) {
+    throw new DomainError(
+      `${label} derives through "${derived.predicate}", which is not a predicate a derived ` +
+      'projection can state.'
+    );
+  }
+
+  const declared = new Set((body.parameters || []).map((p) => p && p.name));
+  const reads = derivedOperands(derived).filter((o) => operandSource(o) === 'projection-read');
+  if (!reads.length) {
+    throw new DomainError(
+      `${label} derives from no projection — at least one side of its predicate must read one.`
+    );
+  }
+
+  for (const operand of derivedOperands(derived)) {
+    assertRecognisedOperand(operand, `An operand of ${label}`);
+    const source = operandSource(operand);
+    if (source === 'parameter' || source === 'alias-property'
+        || source === 'event-property' || source === 'current-value' || source === 'successor') {
+      throw new DomainError(
+        `An operand of ${label} is "${operandText(operand)}" — a derived projection reads other ` +
+        'projections, enum members and literals; nothing else is in scope.'
+      );
+    }
+    if (source !== 'projection-read') continue;
+
+    const target = model['projection-definitions'][operand.projection];
+    if (!target) {
+      throw new DomainError(
+        `${label} derives from "${operand.projection}", which this model does not define.`
+      );
+    }
+    const targetScript = scriptOf(target);
+    const slots = targetScript ? (targetScript.arguments || []) : (target.parameters || []);
+    const supplied = Object.keys(operand.arguments || {});
+    for (const slot of slots) {
+      if (!supplied.includes(slot.name)) {
+        throw new DomainError(
+          `${label} reads "${operand.projection}" without "${slot.name}", which it ` +
+          `${targetScript ? 'takes as an argument' : 'is partitioned by'}.`
+        );
+      }
+    }
+    for (const key of supplied) {
+      if (!slots.some((s) => s.name === key)) {
+        throw new DomainError(
+          `${label} reads "${operand.projection}" with "${key}", which it does not declare as ` +
+          `${targetScript ? 'an argument' : 'a parameter'}.`
+        );
+      }
+      const argument = operand.arguments[key];
+      const argumentSource = operandSource(argument);
+      if (argumentSource === 'parameter') {
+        if (!declared.has(argument.parameterName)) {
+          throw new DomainError(
+            `${label} supplies "${key}" from parameter "${argument.parameterName}", which it ` +
+            'does not declare — a derived projection\'s operands draw from its own parameters.'
+          );
+        }
+        continue;
+      }
+      if (argumentSource !== 'enum-member' && argumentSource !== 'static') {
+        throw new DomainError(
+          `${label} supplies "${key}" as "${operandText(argument)}" — an operand's argument is ` +
+          'one of this projection\'s own parameters, or a literal.'
+        );
+      }
+    }
+  }
+
+  // An enum member is checked against the projection it sits opposite,
+  // the same way a condition's is checked against its alias property.
+  const sides = [
+    [derived.leftHandSide, derived.rightHandSide],
+    [derived.rightHandSide, derived.leftHandSide],
+  ];
+  for (const [maybeEnum, other] of sides) {
+    if (operandSource(maybeEnum) !== 'enum-member') continue;
+    if (operandSource(other) !== 'projection-read') continue;
+    const target = model['projection-definitions'][other.projection];
+    if (!target) continue;
+    const members = enumMembersFor(model, target.valueType);
+    if (members && !members.includes(maybeEnum.enumMember)) {
+      throw new DomainError(
+        `"${maybeEnum.enumMember}" is not a member of ${target.valueType} (${label}'s predicate).`
+      );
+    }
+  }
+
+  const visit = (name, trail) => {
+    const target = model['projection-definitions'][name];
+    const inner = target && derivedOf(target);
+    if (!inner) return;
+    for (const operand of derivedOperands(inner)) {
+      if (operandSource(operand) !== 'projection-read') continue;
+      if (operand.projection === projectionName) {
+        throw new DomainError(
+          `${label} derives from itself through ${trail.join(' → ')} — a cycle has no value to start from.`
+        );
+      }
+      if (trail.includes(operand.projection)) continue;
+      visit(operand.projection, [...trail, operand.projection]);
+    }
+  };
+  for (const operand of reads) {
+    if (operand.projection === projectionName) {
+      throw new DomainError(`${label} derives from itself — a cycle has no value to start from.`);
+    }
+    visit(operand.projection, [operand.projection]);
+  }
 }
 
 // A value type is scalar (an opaque JSON Schema) or composite (typed
@@ -2203,6 +2456,20 @@ function validateCommandBody(model, body) {
     declaredAbove.push(binding.alias);
   }
 
+  // An emission guard is a condition in every respect the checks below
+  // care about — same operands, same predicates, same quantification —
+  // so each one reads this combined list rather than `conditions`
+  // alone. The one structural demand is that `when` is a list at all.
+  for (const emission of body.publishes || []) {
+    if (emission && emission.when !== undefined && !Array.isArray(emission.when)) {
+      throw new DomainError(`"${emission.name}"'s guard ("when") must be a list of conditions.`);
+    }
+  }
+  const allConditions = [
+    ...(body.conditions || []),
+    ...(body.publishes || []).flatMap((e) => (e && e.when) || []),
+  ];
+
   // A plural alias cannot supply a single value, so it may be read by a
   // condition — which quantifies over it — but never emitted.
   for (const emission of body.publishes || []) {
@@ -2223,7 +2490,7 @@ function validateCommandBody(model, body) {
   // distinct roots would have to be read as a cross product, and their
   // lengths are unrelated — nothing here can assert otherwise, and the
   // zipped and crossed readings look identical on the page.
-  for (const condition of body.conditions || []) {
+  for (const condition of allConditions) {
     if (!condition) continue;
     const roots = conditionFanRoots(model, body, condition);
     if (roots.length > 1) {
@@ -2235,7 +2502,7 @@ function validateCommandBody(model, body) {
     }
   }
 
-  for (const condition of body.conditions || []) {
+  for (const condition of allConditions) {
     if (!condition || condition.predicate !== 'containsAny') continue;
     const left = conditionOperandType(model, body, condition, condition.leftHandSide);
     const right = conditionOperandType(model, body, condition, condition.rightHandSide);
@@ -2257,7 +2524,7 @@ function validateCommandBody(model, body) {
 
   // `contains` asks one thing of its two sides, and it is worth
   // stating: a list on the left, one value on the right.
-  for (const condition of body.conditions || []) {
+  for (const condition of allConditions) {
     if (!condition || condition.predicate !== 'contains') continue;
     const left = conditionOperandType(model, body, condition, condition.leftHandSide);
     const right = conditionOperandType(model, body, condition, condition.rightHandSide);
@@ -2287,7 +2554,7 @@ function validateCommandBody(model, body) {
   // never a reference to data (that is `contains`/`containsAny` over a
   // list-typed source) and never null (a membership list may not hold
   // "no value").
-  for (const condition of body.conditions || []) {
+  for (const condition of allConditions) {
     if (!condition) continue;
     const isValueList = Array.isArray(condition.rightHandSide);
     if (condition.predicate !== 'equalsAny') {
@@ -2437,7 +2704,7 @@ function validateCommandBody(model, body) {
   // Enum members are checked against the alias property they sit
   // opposite, which is where a status comparison always appears. In an
   // `equalsAny` list every entry sits opposite the left-hand side.
-  for (const condition of body.conditions || []) {
+  for (const condition of allConditions) {
     if (!condition || condition.rightHandSide === undefined) continue;
     const sides = Array.isArray(condition.rightHandSide)
       ? condition.rightHandSide.map((entry) => [entry, condition.leftHandSide])
@@ -3042,12 +3309,39 @@ const MEMBER_REWRITES = {
       if (touched) out.push({ kind: 'projection-definition', name, body });
     }
 
+    // A derived predicate compares a projection's value against a
+    // member the same way a condition does — resolved through the
+    // operand it sits opposite.
+    for (const [name, projection] of Object.entries(model['projection-definitions'])) {
+      if (!derivedOf(projection)) continue;
+      const body = deepClone(projection);
+      let touched = false;
+      const sides = [
+        [body.derived.leftHandSide, body.derived.rightHandSide],
+        [body.derived.rightHandSide, body.derived.leftHandSide],
+      ];
+      for (const [maybeEnum, other] of sides) {
+        if (operandSource(maybeEnum) !== 'enum-member' || maybeEnum.enumMember !== previous) continue;
+        if (operandSource(other) !== 'projection-read') continue;
+        const target = model['projection-definitions'][other.projection];
+        if (!target || target.valueType !== typeName) continue;
+        maybeEnum.enumMember = next;
+        touched = true;
+      }
+      if (touched) out.push({ kind: 'projection-definition', name, body });
+    }
+
     // A command condition compares an entity's enum-typed property
     // against a member by value — resolved through the boundary rather
     // than assumed, since the bound entity is whichever the alias names.
+    // An emission guard is the same comparison in the same scope.
     out.push(...rewriteCommands(model, (command) => {
       let touched = false;
-      for (const condition of command.conditions || []) {
+      const guarded = [
+        ...(command.conditions || []),
+        ...(command.publishes || []).flatMap((e) => (e && e.when) || []),
+      ];
+      for (const condition of guarded) {
         if (!condition) continue;
         // In an `equalsAny` list every entry sits opposite the left-hand
         // side; the entry objects are mutated in place like any operand.
@@ -3190,9 +3484,11 @@ const MEMBER_REWRITES = {
     }),
   ],
 
-  // A projection parameter is supplied by key in a binding.
-  'projection-definition:parameter': (model, projectionName, previous, next) =>
-    rewriteCommands(model, (command) => {
+  // A projection parameter is supplied by key in a binding — and by
+  // key again in any derived projection that reads this one, while the
+  // owner's own derived operands draw from it by `{parameterName}`.
+  'projection-definition:parameter': (model, projectionName, previous, next) => {
+    const out = rewriteCommands(model, (command) => {
       let touched = false;
       for (const binding of command.boundary || []) {
         if (!binding || binding.projection !== projectionName) continue;
@@ -3202,7 +3498,35 @@ const MEMBER_REWRITES = {
         }
       }
       return touched;
-    }),
+    });
+    for (const [name, projection] of Object.entries(model['projection-definitions'])) {
+      if (!derivedOf(projection)) continue;
+      const body = deepClone(projection);
+      let touched = false;
+      for (const operand of derivedOperands(body.derived)) {
+        if (operandSource(operand) !== 'projection-read') continue;
+        // Reading the renamed projection: the argument keys are its
+        // parameter names.
+        if (operand.projection === projectionName
+            && operand.arguments && previous in operand.arguments) {
+          operand.arguments = renameKey(operand.arguments, previous, next);
+          touched = true;
+        }
+        // The renamed projection's own operands: `{parameterName}`
+        // values name its parameters, whatever projection they read.
+        if (name === projectionName) {
+          for (const argument of Object.values(operand.arguments || {})) {
+            if (operandSource(argument) === 'parameter' && argument.parameterName === previous) {
+              argument.parameterName = next;
+              touched = true;
+            }
+          }
+        }
+      }
+      if (touched) out.push({ kind: 'projection-definition', name, body });
+    }
+    return out;
+  },
 };
 
 // Applies `mutate` to a deep copy of every scenario and returns the ones
@@ -3474,9 +3798,17 @@ function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
 // `evApplyPredicate` rather than passing it through, so this is a
 // major even though nothing a 4.x document says changed; this build
 // reads 3.x and 4.x whole.
-const MODEL_VERSION = '5.0';
-const MODEL_SCHEMA_URL = 'https://dcb.events/schemas/model/v5.json';
-const READABLE_MAJORS = [3, 4, 5];
+// 6.0 added two members at once, each the closed-vocabulary kind: an
+// emission may carry `when` (conditions under which it publishes —
+// failing a guard skips the emission, never rejects the command), and
+// a projection may be derived (`derived` in place of handlers: one
+// declared predicate over other projections, always a boolean). A 5.x
+// reader would publish what an author made conditional and has no
+// fold for a handlerless projection — both misreads, so this is a
+// major; this build reads 3.x, 4.x and 5.x whole.
+const MODEL_VERSION = '6.0';
+const MODEL_SCHEMA_URL = 'https://dcb.events/schemas/model/v6.json';
+const READABLE_MAJORS = [3, 4, 5, 6];
 
 const SCHEMA_FIELD = {
   'custom-type-definition': 'customTypeDefinitions',
@@ -4414,16 +4746,32 @@ function seedProductPricing(modelId) {
   });
 }
 
-// A decision made from *content*, not from a recorded status. Whether
-// a document is Published or PendingChanges depends on whether its
-// current text equals the last published one — a comparison over two
-// values the events carried at different times, which no declared
-// handler vocabulary can express. So the status projection is
-// scripted: it keeps both texts as private state and exposes only the
-// status, and every command decides against that one exposed value.
-// Publishing "restores" silently: re-typing the published text flips
-// the status back to Published with no event saying so.
-function seedContentDecisions(modelId) {
+// ============================================================
+// Content based decisions — one domain, five spellings.
+//
+// A document's Published/PendingChanges distinction depends on whether
+// its current text equals the last published one: a decision made from
+// *content*, not from a recorded status. The declared handler
+// vocabulary cannot compare two values, so this family exists to
+// compare the ways out: a scripted projection (the baseline below),
+// the comparison moved into command conditions over two plain text
+// projections (`seedDocumentAuthoring`), the client echoing the text
+// it saw for the command to verify (`seedVerifiedPublish`), the
+// decision made at write time and recorded as distinct events through
+// guarded emissions (`seedGuardedAuthoring`), and the comparison
+// declared once as a derived projection (`seedDerivedPending`).
+// docs/research/2026-09-19-content-based-decision-alternatives.md
+// holds the primary sources; the comparison note beside it holds the
+// verdict.
+// ============================================================
+
+// The baseline: the status projection is scripted. It keeps both texts
+// as private state and exposes only the status, and every command
+// decides against that one exposed value. Publishing "restores"
+// silently: re-typing the published text flips the status back to
+// Published with no event saying so — and no event *carrying* the
+// published text either, which is what every alternative fixes first.
+function seedContentDecisionsScripted(modelId) {
   const prop = seedProp;
   const param = seedParam;
   const of = seedOf;
@@ -4542,6 +4890,332 @@ function seedContentDecisions(modelId) {
   });
 }
 
+// The comparison moved to decision time. Two plain `set` projections
+// hold the texts — `DocumentPublished` carries the text it publishes,
+// read off the boundary, so the log is self-contained — and the
+// publish guard compares them: `not(currentText == publishedText)`.
+// The stored status shrinks to a four-state lifecycle in which
+// Published means *has been published*; pending-ness is never stored,
+// only visible where the two bound texts differ. Initial values do
+// real work here: `currentText` becomes "" on add while
+// `publishedText` stays null, which is exactly what makes a fresh
+// Draft publishable without ever comparing against null explicitly.
+function seedDocumentAuthoring(modelId) {
+  const prop = seedProp;
+  const handler = seedHandler;
+  const param = seedParam;
+  const of = seedOf;
+  const bind = seedBind;
+
+  addDefinition('custom-type-definition', modelId, 'DocumentLifecycle', seedEnumType('DocumentLifecycle',
+    ['NonExistent', 'Draft', 'Published', 'Archived']));
+  addDefinition('entity-definition', modelId, 'Document', { icon: '📄', properties: [] });
+
+  const event = (name, properties) =>
+    addDefinition('event-definition', modelId, name, { properties });
+
+  event('DocumentAdded', [prop('id', 'DocumentId')]);
+  event('TextUpdated', [prop('docId', 'DocumentId'), prop('text', 'string')]);
+  // The enrichment the scripted baseline lacked: the published text is
+  // a fact of the publication, so the event carries it and a plain
+  // handler can read it back.
+  event('DocumentPublished', [prop('docId', 'DocumentId'), prop('text', 'string')]);
+  event('DocumentArchived', [prop('docId', 'DocumentId')]);
+
+  const projection = (name, body) =>
+    addDefinition('projection-definition', modelId, name, body);
+
+  projection('DocumentLifecycle', seedPropertyProjection('Document', 'DocumentLifecycle',
+    { enumMember: 'NonExistent' }, [
+      handler('DocumentAdded', 'set', { enumMember: 'Draft' }),
+      handler('DocumentPublished', 'set', { enumMember: 'Published' }),
+      handler('DocumentArchived', 'set', { enumMember: 'Archived' }),
+    ]));
+  projection('DocumentCurrentText', seedPropertyProjection('Document', 'string', null, [
+    handler('DocumentAdded', 'set', ''),
+    handler('TextUpdated', 'set', { eventProperty: 'text' }),
+  ]));
+  projection('DocumentPublishedText', seedPropertyProjection('Document', 'string', null, [
+    handler('DocumentPublished', 'set', { eventProperty: 'text' }),
+  ]));
+
+  seedPatch('entity-definition', modelId, 'Document', (document) => {
+    document.properties = [
+      seedBindProp(STATUS_PROPERTY, 'DocumentLifecycle'),
+      seedBindProp('currentText', 'DocumentCurrentText'),
+      seedBindProp('publishedText', 'DocumentPublishedText'),
+    ];
+  });
+
+  const command = (name, body) => addDefinition('command-definition', modelId, name, body);
+
+  command('AddDocument', {
+    feature: 'Document Authoring',
+    icon: '⭐',
+    properties: [prop('id', 'DocumentId')],
+    boundary: [bind('document', 'Document', 'id')],
+    conditions: [
+      { leftHandSide: of('document', STATUS_PROPERTY), predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' } },
+    ],
+    publishes: [{ name: 'DocumentAdded', parameters: { id: param('id') } }],
+  });
+
+  command('UpdateText', {
+    feature: 'Document Authoring',
+    icon: '✏️',
+    properties: [prop('docId', 'DocumentId'), prop('text', 'string')],
+    boundary: [bind('document', 'Document', 'docId')],
+    conditions: [
+      { leftHandSide: of('document', STATUS_PROPERTY), predicate: 'equalsAny',
+        rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }] },
+      // Recording an unchanged text is a no-op, and saying so pulls
+      // TextUpdated into this command's query — the same move
+      // ChangeProductPrice documents in the pricing example.
+      { leftHandSide: of('document', 'currentText'), predicate: 'equals',
+        rightHandSide: param('text'), negate: true },
+    ],
+    publishes: [{
+      name: 'TextUpdated',
+      parameters: { docId: param('docId'), text: param('text') },
+    }],
+  });
+
+  command('PublishDocument', {
+    feature: 'Document Authoring',
+    icon: '💾',
+    properties: [prop('docId', 'DocumentId')],
+    boundary: [bind('document', 'Document', 'docId')],
+    conditions: [
+      { leftHandSide: of('document', STATUS_PROPERTY), predicate: 'equalsAny',
+        rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }] },
+      // The content-based decision, in the boundary: publishing is
+      // refused exactly while nothing differs — a fresh Draft ("" vs
+      // null) differs, a republish does not, and re-typing the
+      // published text makes the two equal again, so the revert needs
+      // no event and no stored status to hold.
+      { leftHandSide: of('document', 'currentText'), predicate: 'equals',
+        rightHandSide: of('document', 'publishedText'), negate: true },
+    ],
+    publishes: [{
+      name: 'DocumentPublished',
+      parameters: { docId: param('docId'), text: of('document', 'currentText') },
+    }],
+  });
+
+  command('ArchiveDocument', {
+    feature: 'Document Authoring',
+    icon: '🗑️',
+    properties: [prop('docId', 'DocumentId')],
+    boundary: [bind('document', 'Document', 'docId')],
+    conditions: [
+      { leftHandSide: of('document', STATUS_PROPERTY), predicate: 'equalsAny',
+        rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }] },
+    ],
+    publishes: [{ name: 'DocumentArchived', parameters: { docId: param('docId') } }],
+  });
+}
+
+// Layer: the client sends proof. `PublishDocument` gains the text as a
+// parameter and verifies it against the boundary — the same pattern
+// `OrderProducts` applies to prices, and the one the DCB canon's
+// dynamic-product-price example blesses verbatim (`displayedPrice`).
+// The published event carries the parameter, now proven identical to
+// the current text; the pending-changes comparison stays, restated
+// against the proven value.
+function seedVerifiedPublish(modelId) {
+  updateDefinition('command-definition', modelId, 'PublishDocument', {
+    feature: 'Document Authoring',
+    icon: '💾',
+    properties: [seedProp('docId', 'DocumentId'), seedProp('text', 'string')],
+    boundary: [seedBind('document', 'Document', 'docId')],
+    conditions: [
+      { leftHandSide: seedOf('document', STATUS_PROPERTY), predicate: 'equalsAny',
+        rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }] },
+      // The proof: what the caller believes it is publishing must be
+      // the current text — a stale echo is rejected, which is the
+      // optimistic check made a domain rule.
+      { leftHandSide: seedOf('document', 'currentText'), predicate: 'equals',
+        rightHandSide: seedParam('text') },
+      { leftHandSide: seedParam('text'), predicate: 'equals',
+        rightHandSide: seedOf('document', 'publishedText'), negate: true },
+    ],
+    publishes: [{
+      name: 'DocumentPublished',
+      parameters: { docId: seedParam('docId'), text: seedParam('text') },
+    }],
+  });
+}
+
+// Layer: the comparison declared once. `DocumentHasPendingChanges` is
+// a *derived* projection — no handlers, one predicate over the two
+// text projections — bound as an entity property and read by the
+// publish guard, so the logic lives in exactly one declaration and a
+// real application's read side could interpret the same data. Its
+// query is its operands' union, so binding it guards the append
+// exactly as reading both texts would.
+function seedDerivedPending(modelId) {
+  addDefinition('projection-definition', modelId, 'DocumentHasPendingChanges', {
+    parameters: [{ name: 'documentId', propertyType: 'DocumentId' }],
+    valueType: 'boolean',
+    isList: false,
+    derived: {
+      leftHandSide: {
+        projection: 'DocumentCurrentText',
+        arguments: { documentId: { parameterName: 'documentId' } },
+      },
+      predicate: 'equals',
+      rightHandSide: {
+        projection: 'DocumentPublishedText',
+        arguments: { documentId: { parameterName: 'documentId' } },
+      },
+      negate: true,
+    },
+  });
+
+  seedPatch('entity-definition', modelId, 'Document', (document) => {
+    document.properties.push(seedBindProp('hasPendingChanges', 'DocumentHasPendingChanges'));
+  });
+
+  seedPatch('command-definition', modelId, 'PublishDocument', (publish) => {
+    publish.conditions = [
+      publish.conditions[0],
+      { leftHandSide: seedOf('document', 'hasPendingChanges'), predicate: 'isTrue' },
+    ];
+  });
+}
+
+// The decision made at write time and recorded. `UpdateText` carries
+// two guarded emissions — `TextChanged` while the new text differs
+// from the published one, `TextRevertedToPublished` while it does not
+// — so the log *says* a revert happened and the five-state status is
+// fully declarative again: one plain handler per event type, no
+// comparison anywhere downstream of the command. This is the decider
+// pattern's shape (decide: state and command in, one of several event
+// types out), which the DCB canon itself never exercises.
+function seedGuardedAuthoring(modelId) {
+  const prop = seedProp;
+  const handler = seedHandler;
+  const param = seedParam;
+  const of = seedOf;
+  const bind = seedBind;
+
+  addDefinition('custom-type-definition', modelId, 'DocumentStatus', seedEnumType('DocumentStatus',
+    ['NonExistent', 'Draft', 'Published', 'PendingChanges', 'Archived']));
+  addDefinition('entity-definition', modelId, 'Document', { icon: '📄', properties: [] });
+
+  const event = (name, properties) =>
+    addDefinition('event-definition', modelId, name, { properties });
+
+  event('DocumentAdded', [prop('id', 'DocumentId')]);
+  event('TextChanged', [prop('docId', 'DocumentId'), prop('text', 'string')]);
+  event('TextRevertedToPublished', [prop('docId', 'DocumentId'), prop('text', 'string')]);
+  event('DocumentPublished', [prop('docId', 'DocumentId'), prop('text', 'string')]);
+  event('DocumentArchived', [prop('docId', 'DocumentId')]);
+
+  const projection = (name, body) =>
+    addDefinition('projection-definition', modelId, name, body);
+
+  // The five states, every transition a plain `set` — the split events
+  // carry the distinction the scripted baseline computed.
+  projection('DocumentStatus', seedPropertyProjection('Document', 'DocumentStatus',
+    { enumMember: 'NonExistent' }, [
+      handler('DocumentAdded', 'set', { enumMember: 'Draft' }),
+      handler('TextChanged', 'set', { enumMember: 'PendingChanges' }),
+      handler('TextRevertedToPublished', 'set', { enumMember: 'Published' }),
+      handler('DocumentPublished', 'set', { enumMember: 'Published' }),
+      handler('DocumentArchived', 'set', { enumMember: 'Archived' }),
+    ]));
+  projection('DocumentCurrentText', seedPropertyProjection('Document', 'string', null, [
+    handler('DocumentAdded', 'set', ''),
+    handler('TextChanged', 'set', { eventProperty: 'text' }),
+    handler('TextRevertedToPublished', 'set', { eventProperty: 'text' }),
+  ]));
+  projection('DocumentPublishedText', seedPropertyProjection('Document', 'string', null, [
+    handler('DocumentPublished', 'set', { eventProperty: 'text' }),
+  ]));
+
+  seedPatch('entity-definition', modelId, 'Document', (document) => {
+    document.properties = [
+      seedBindProp(STATUS_PROPERTY, 'DocumentStatus'),
+      seedBindProp('currentText', 'DocumentCurrentText'),
+      seedBindProp('publishedText', 'DocumentPublishedText'),
+    ];
+  });
+
+  const command = (name, body) => addDefinition('command-definition', modelId, name, body);
+
+  command('AddDocument', {
+    feature: 'Document Authoring',
+    icon: '⭐',
+    properties: [prop('id', 'DocumentId')],
+    boundary: [bind('document', 'Document', 'id')],
+    conditions: [
+      { leftHandSide: of('document', STATUS_PROPERTY), predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' } },
+    ],
+    publishes: [{ name: 'DocumentAdded', parameters: { id: param('id') } }],
+  });
+
+  command('UpdateText', {
+    feature: 'Document Authoring',
+    icon: '✏️',
+    properties: [prop('docId', 'DocumentId'), prop('text', 'string')],
+    boundary: [bind('document', 'Document', 'docId')],
+    conditions: [
+      { leftHandSide: of('document', STATUS_PROPERTY), predicate: 'equalsAny',
+        rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }, { enumMember: 'PendingChanges' }] },
+      { leftHandSide: of('document', 'currentText'), predicate: 'equals',
+        rightHandSide: param('text'), negate: true },
+    ],
+    // The guards are complements, so exactly one emission fires and
+    // the accepted command always records which fact it was. Guard
+    // reads count toward the query like any condition's, so the
+    // comparison hides nothing from the derived DCB.
+    publishes: [
+      {
+        name: 'TextChanged',
+        when: [{ leftHandSide: param('text'), predicate: 'equals',
+          rightHandSide: of('document', 'publishedText'), negate: true }],
+        parameters: { docId: param('docId'), text: param('text') },
+      },
+      {
+        name: 'TextRevertedToPublished',
+        when: [{ leftHandSide: param('text'), predicate: 'equals',
+          rightHandSide: of('document', 'publishedText') }],
+        parameters: { docId: param('docId'), text: param('text') },
+      },
+    ],
+  });
+
+  command('PublishDocument', {
+    feature: 'Document Authoring',
+    icon: '💾',
+    properties: [prop('docId', 'DocumentId')],
+    boundary: [bind('document', 'Document', 'docId')],
+    conditions: [
+      // The stored status is trustworthy again, so the five-state
+      // guard the scripted baseline used works verbatim.
+      { leftHandSide: of('document', STATUS_PROPERTY), predicate: 'equalsAny',
+        rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'PendingChanges' }] },
+    ],
+    publishes: [{
+      name: 'DocumentPublished',
+      parameters: { docId: param('docId'), text: of('document', 'currentText') },
+    }],
+  });
+
+  command('ArchiveDocument', {
+    feature: 'Document Authoring',
+    icon: '🗑️',
+    properties: [prop('docId', 'DocumentId')],
+    boundary: [bind('document', 'Document', 'docId')],
+    conditions: [
+      { leftHandSide: of('document', STATUS_PROPERTY), predicate: 'equalsAny',
+        rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }, { enumMember: 'PendingChanges' }] },
+    ],
+    publishes: [{ name: 'DocumentArchived', parameters: { docId: param('docId') } }],
+  });
+}
+
 const PREDEFINED_MODELS = [
   {
     name: 'Course Example (simple)',
@@ -4581,12 +5255,45 @@ const PREDEFINED_MODELS = [
     build: (modelId) => { seedProductPricing(modelId); },
   },
   {
-    name: 'Content based decisions',
-    slug: 'content-decisions',
-    description: 'A document is Published or PendingChanges depending on whether its current '
-      + 'text equals the last published one — a comparison no declared handler can express, '
-      + 'so the status projection is scripted and exposes only the status.',
-    build: (modelId) => { seedContentDecisions(modelId); },
+    name: 'Content based decisions (scripted projection)',
+    slug: 'content-decisions-scripted',
+    description: 'The baseline: a document is Published or PendingChanges depending on whether '
+      + 'its current text equals the last published one — a comparison no declared handler can '
+      + 'express, so the status projection is scripted, keeps both texts as hidden state and '
+      + 'exposes only the status.',
+    build: (modelId) => { seedContentDecisionsScripted(modelId); },
+  },
+  {
+    name: 'Content based decisions (boundary comparison)',
+    slug: 'content-decisions-boundary',
+    description: 'The comparison moved into the boundary: two plain text projections, '
+      + 'DocumentPublished carrying the text it publishes, and a publish guard comparing them. '
+      + 'Nothing is scripted; pending-ness is never stored, only visible where the texts differ.',
+    build: (modelId) => { seedDocumentAuthoring(modelId); },
+  },
+  {
+    name: 'Content based decisions (client-verified)',
+    slug: 'content-decisions-verified',
+    description: 'Publishing takes the text the caller saw and verifies it against the current '
+      + 'one — the optimistic check OrderProducts applies to prices, made a domain rule. A stale '
+      + 'echo is rejected; the published event carries the proven text.',
+    build: (modelId) => { seedDocumentAuthoring(modelId); seedVerifiedPublish(modelId); },
+  },
+  {
+    name: 'Content based decisions (guarded emissions)',
+    slug: 'content-decisions-guarded',
+    description: 'The decision made at write time and recorded: UpdateText emits TextChanged or '
+      + 'TextRevertedToPublished under complementary guards, so the log says a revert happened '
+      + 'and the five-state status folds from plain handlers again.',
+    build: (modelId) => { seedGuardedAuthoring(modelId); },
+  },
+  {
+    name: 'Content based decisions (derived projection)',
+    slug: 'content-decisions-derived',
+    description: 'The comparison declared once: hasPendingChanges is a derived projection — no '
+      + 'handlers, one predicate over the two text projections — bound as an entity property and '
+      + 'read by the publish guard, so a frontend could interpret the same declaration.',
+    build: (modelId) => { seedDocumentAuthoring(modelId); seedDerivedPending(modelId); },
   },
 ];
 
