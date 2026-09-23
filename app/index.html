@@ -79,7 +79,10 @@
   .rail .drop-stub .gname { cursor: default; }
   .rail .drop-stub .gname:hover { color: var(--muted); }
   .rail.dragging-cmd .drop-stub { display: flex; }
-  .rail a.cmd { padding-left: 32px; cursor: grab; }
+  .rail a.cmd { padding-left: 32px; display: flex; align-items: center; gap: 6px; }
+  .rail a.cmd .grow { flex: 1; }
+  .rail a.cmd .grip { opacity: 0; }
+  .rail a.cmd:hover .grip, .rail a.cmd .grip:focus { opacity: 1; }
   .rail a.cmd.dragging { opacity: .4; }
   /* The count used to sit hard against the label — "Sandbox14" — because
      an <a> lays its children out as text, not as a row. This one alone
@@ -197,44 +200,16 @@
   .adder .btn.ghost { color: var(--muted); }
   .adder .btn.ghost:hover { color: var(--command); }
 
-  /* ---------- touch adders ----------
-     No hover on a touch screen, so the reveal above never fires there.
-     Instead: the folded adders disappear entirely (an invisible but
-     tappable button is a trap, not a shortcut), the rail's add row is
-     simply visible (opening the drawer was the gesture), and one
-     floating "+" gathers everything the page could grow — the same
-     `adderSlot` entries, collected per paint — into a bottom sheet.
-     `renderFab` fills #fab-host; this block is what confines the whole
-     mechanism to hover-less screens. */
-  #fab-host { display: none; }
-  @media (hover: none) {
-    .adder.quiet { display: none; }
+  /* ---------- touch screens ----------
+     No hover means no reveal, so wherever hover cannot happen — a
+     touch screen, a coarse pointer, or a window narrow enough to be
+     one — the folded adders and the rail's add row simply stay
+     visible, and the command grips too. Decluttering is a pointer
+     luxury; a button that can never appear is not quiet, it is gone. */
+  @media (hover: none), (pointer: coarse), (max-width: 760px) {
+    .adder.quiet { opacity: 1; }
     .rail .add { opacity: 1; }
-    #fab-host { display: contents; }
-    .fab {
-      position: fixed; right: 18px; bottom: 18px; z-index: 30;
-      width: 52px; height: 52px; border-radius: 50%; border: none;
-      background: var(--command); color: #fff; font-size: 26px; line-height: 1;
-      cursor: pointer; box-shadow: 0 4px 12px rgba(15, 23, 42, .3);
-    }
-    .sheet-backdrop { position: fixed; inset: 0; z-index: 39; background: rgba(15, 23, 42, .3); }
-    .bottom-sheet {
-      position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
-      background: var(--surface); border-radius: 16px 16px 0 0;
-      padding: 10px 0 24px; box-shadow: 0 -10px 40px rgba(0, 0, 0, .15);
-    }
-    .bottom-sheet .handle {
-      width: 36px; height: 4px; border-radius: 2px;
-      background: var(--border-strong); margin: 0 auto 12px;
-    }
-    .bottom-sheet h4 { padding: 0 20px 8px; }
-    .sheet-item {
-      display: flex; width: 100%; align-items: center; gap: 12px;
-      padding: 12px 20px; font: inherit; font-size: 14px; text-align: left;
-      border: none; background: none; color: var(--text); cursor: pointer;
-    }
-    .sheet-item:active { background: var(--bg); }
-    .sheet-item .plus { color: var(--command); font-weight: 600; }
+    .rail a.cmd .grip { opacity: 1; }
   }
 
   .card {
@@ -623,6 +598,16 @@
   }
   .issue:hover { border-color: var(--danger); }
   .issue .why { font-size: 11px; opacity: .75; }
+  /* The neutral row-button the Models modal's example list wears —
+     the shape .issue had before problems dressed as diagnostics. */
+  .choice {
+    display: flex; align-items: baseline; gap: 9px; width: 100%; text-align: left;
+    font: inherit; font-size: 12.5px; color: inherit; cursor: pointer;
+    border: 1px solid var(--border); border-radius: 7px;
+    background: var(--surface); padding: 8px 11px; margin-bottom: 6px;
+  }
+  .choice:hover { border-color: var(--command); }
+  .choice .why { font-size: 11px; color: var(--muted); }
   .badge {
     font-size: 10px; border-radius: 999px; padding: 0 6px; margin-left: 5px;
     background: var(--danger); color: #fff;
@@ -777,8 +762,12 @@
   .scenario.drop-before { box-shadow: inset 0 2px 0 var(--command); }
   .scenario.drop-after { box-shadow: inset 0 -2px 0 var(--command); }
   .scenario.dragging { opacity: .4; }
-  .sc-grip { cursor: grab; color: var(--muted); padding: 0 2px; font-size: 13px; user-select: none; }
-  .sc-grip:active { cursor: grabbing; }
+  /* The one grip everything draggable wears — scenario rows and rail
+     commands alike. touch-action: none is what lets `gripDrag` own the
+     finger: without it the browser claims the gesture for scrolling. */
+  .grip { cursor: grab; color: var(--muted); padding: 0 2px; font-size: 13px;
+          user-select: none; touch-action: none; flex: none; }
+  .grip:active { cursor: grabbing; }
 
   /* Always on, unlike the rest of a row's actions — branching a
      scenario is common enough to want a permanent handle, just a quiet
@@ -1080,7 +1069,6 @@
 </footer>
 <div id="modal-host"></div>
 <div id="palette-host"></div>
-<div id="fab-host"></div>
 
 <script src="model.js"></script>
 <script src="evaluate.js"></script>
@@ -1153,7 +1141,6 @@ const state = {
   settings: false,          // the settings modal
   problems: false,          // the loose-ends-and-drifted-scenarios panel
   railOpen: false,          // the rail, as an off-canvas drawer on a narrow screen
-  addSheet: false,          // the touch bottom sheet listing the page's folded adders
   importExport: false,      // the Import & Export modal
   ieTab: 'import',          // within it: 'import' | 'export'
   ieImportMode: 'url',      // within Import: 'url' | 'json'
@@ -1348,7 +1335,7 @@ function modelsModal() {
     h('div', { class: 'setting' },
       h('h4', {}, 'Or try an example'),
       PREDEFINED_MODELS.map((entry) => h('button', {
-        class: 'issue',
+        class: 'choice',
         onclick: () => runAsync(async () =>
           beginImport(await loadModelFromUrl('examples/' + entry.slug + '.json'))),
       }, h('span', { style: 'flex:0 0 170px' }, entry.name),
@@ -2421,16 +2408,10 @@ function qrow(tag, { cls = '', key, src, onRemove }, ...children) {
 // — so the row above it and the step below it are both one arrow key
 // away, exactly the way an unfolded row would be. The `quiet` class
 // keeps the folded button invisible until its step or card is hovered
-// or the keyboard lands on it — see the adder CSS.
-//
-// Every folded slot the current paint renders lands in `pageAdders`
-// (reset at the top of `paintPage`): on a touch screen, where hover
-// cannot reveal anything, the floating "+" lists exactly these in a
-// bottom sheet — see `renderFab`.
-const pageAdders = [];
+// or the keyboard lands on it — except where hover cannot happen; see
+// the adder and touch-screens CSS.
 function adderSlot(key, stepKey, label, build) {
   if (state.adder === key) return build();
-  pageAdders.push({ label, open: () => { state.adder = key; render(); focusOpenedAdder(stepKey); } });
   return h('div', { class: 'adder quiet' }, h('button', {
     class: 'btn ghost tiny flow-adder',
     onclick: () => { closeForms(); state.adder = key; render(); focusOpenedAdder(stepKey); },
@@ -2455,32 +2436,74 @@ function focusOpenedAdder(stepKey) {
   if (el) el.focus();
 }
 
-// The touch counterpart of the hover reveal: one floating "+" and a
-// bottom sheet over the `pageAdders` the paint just collected. The
-// host is display:none anywhere a pointer can hover — see the
-// touch-adders CSS — so rendering it unconditionally costs nothing.
-function renderFab() {
-  const host = document.getElementById('fab-host');
-  if (!host) return;
-  host.innerHTML = '';
-  if (!pageAdders.length) return;
-  host.appendChild(h('button', {
-    class: 'fab', type: 'button', 'aria-label': 'Add something to this page',
-    onclick: () => { closeForms(); state.addSheet = true; render(); },
-  }, '+'));
-  if (!state.addSheet) return;
-  const entries = [...pageAdders];
-  const close = () => { state.addSheet = false; render(); };
-  host.appendChild(h('div', { class: 'sheet-backdrop', onclick: close }));
-  host.appendChild(h('div', { class: 'bottom-sheet', role: 'menu' },
-    h('div', { class: 'handle' }),
-    h('h4', {}, 'Add to this page'),
-    entries.map((entry) => h('button', {
-      class: 'sheet-item', role: 'menuitem',
-      // The same sequence as the folded button's own click, so the
-      // sheet is a remote control for it, not a second mechanism.
-      onclick: () => { closeForms(); entry.open(); },
-    }, h('span', { class: 'plus' }, '+'), String(entry.label).replace(/^\+\s*/, '')))));
+// ---------- dragging by a grip ----------
+//
+// One mechanism for every ⠿ grip in the app: pointer events, never the
+// HTML5 drag-and-drop API, because that API does not fire on touch
+// screens and this one works the same for mouse, pen and finger. The
+// grip captures the pointer, whatever is under it as it moves is found
+// with `elementFromPoint` (capture does not change what is under the
+// pointer), and everything until the drop is direct DOM — nothing may
+// repaint mid-drag. Only the drop itself may run a command.
+function gripDrag({ title, onStart, onMove, onDrop, onEnd }) {
+  let dragging = false;
+  const finish = (e, dropped) => {
+    if (!dragging) return;
+    dragging = false;
+    if (onEnd) onEnd(e);
+    if (dropped) onDrop(document.elementFromPoint(e.clientX, e.clientY), e);
+  };
+  return h('span', {
+    class: 'grip', title,
+    onpointerdown: (e) => {
+      if (e.button) return;
+      e.preventDefault();
+      e.currentTarget.setPointerCapture(e.pointerId);
+      dragging = true;
+      if (onStart) onStart(e);
+    },
+    onpointermove: (e) => {
+      if (dragging) onMove(document.elementFromPoint(e.clientX, e.clientY), e);
+    },
+    onpointerup: (e) => finish(e, true),
+    onpointercancel: (e) => finish(e, false),
+    // The grip often sits inside something clickable (a rail row is a
+    // link); a tap that turned out not to be a drag must not follow it.
+    onclick: (e) => { e.preventDefault(); e.stopPropagation(); },
+  }, '⠿');
+}
+
+// The reorder drag both scenario lists share. Cards carry their key
+// and kind as data attributes; the paint marks the edge the dragged
+// one would land against, the drop reorders against that edge.
+function scenarioGrip(model, kind, key, title) {
+  let over = null;
+  const clear = () => { if (over) over.classList.remove('drop-before', 'drop-after'); over = null; };
+  const cardUnder = (under) => {
+    const card = under && under.closest(`[data-scen][data-scen-kind="${kind}"]`);
+    return card && card.getAttribute('data-scen') !== key ? card : null;
+  };
+  const landsBefore = (card, e) => {
+    const rect = card.getBoundingClientRect();
+    return (e.clientY - rect.top) < rect.height / 2;
+  };
+  return gripDrag({
+    title,
+    onMove: (under, e) => {
+      const card = cardUnder(under);
+      if (card !== over) { clear(); over = card; }
+      if (!card) return;
+      const before = landsBefore(card, e);
+      card.classList.toggle('drop-before', before);
+      card.classList.toggle('drop-after', !before);
+    },
+    onEnd: clear,
+    onDrop: (under, e) => {
+      const card = cardUnder(under);
+      if (!card) return;
+      run(() => reorderByDrag(kind, model, key, card.getAttribute('data-scen'), landsBefore(card, e)));
+    },
+  });
 }
 
 // ---------- removing things ----------
@@ -3215,7 +3238,7 @@ const FORM_KEYS = [
   'renamingCommand', 'editMember', 'editRule', 'editGuard', 'editBinding',
   'scenarioDraft', 'sandboxDraft',
   'projectionScenarioDraft',
-  'pendingImport', 'addSheet',
+  'pendingImport',
 ];
 
 // What a form was holding while it was open. These outlive the form
@@ -3241,34 +3264,52 @@ const closeForms = () => {
 // ---------- rail ----------
 
 // The command being dragged out of the rail list, module-level for the
-// same reason `dragScenarioKey` is: dragover fires continuously while
-// the pointer moves, and routing that through `render()` would repaint
-// the whole app many times a second. Only `drop` goes through `run()`.
-let dragCommandName = null;
+// Every feature heading *and* every command row under one carries its
+// group as `data-feature` — the whole group is the target, since
+// within a group commands sit alphabetically and a drop can only mean
+// "into this group". The grip below hit-tests these as it moves and
+// fills the element under the pointer; the group the command already
+// sits in is not a target — a drop there would do nothing, so nothing
+// lights up.
+function featureDropTarget(featureName) {
+  return { 'data-feature': featureName };
+}
 
-// The drop-target handlers on every feature heading *and* every command
-// row under one — the whole group is the target, since within a group
-// commands sit alphabetically and a drop can only mean "into this
-// group". Hover fills the element the pointer is over, drop moves the
-// dragged command. The group it already sits in is not a target: a
-// drop there would do nothing, so nothing lights up.
-function featureDropTarget(model, featureName) {
-  return {
-    ondragover: (e) => {
-      if (!dragCommandName) return;
-      if (featureOf(model['command-definitions'][dragCommandName]) === featureName) return;
-      e.preventDefault();
-      e.currentTarget.classList.add('drop-into');
-    },
-    ondragleave: (e) => e.currentTarget.classList.remove('drop-into'),
-    ondrop: (e) => {
-      e.preventDefault();
-      e.currentTarget.classList.remove('drop-into');
-      const from = dragCommandName;
-      dragCommandName = null;
-      if (from) moveToFeature(model, from, featureName);
-    },
+// The ⠿ grip a rail command is dragged by, on any pointer. Direct DOM
+// until the drop, for the same reason `gripDrag` demands it: nothing
+// may repaint mid-drag, and the stand-in Ungrouped target has to
+// appear right now.
+function commandGrip(model, name) {
+  let over = null;
+  const paint = (el) => {
+    if (el === over) return;
+    if (over) over.classList.remove('drop-into');
+    over = el;
+    if (over) over.classList.add('drop-into');
   };
+  const targetUnder = (under) => {
+    const el = under && under.closest('[data-feature]');
+    if (!el) return null;
+    const feature = el.getAttribute('data-feature');
+    return featureOf(model['command-definitions'][name]) === feature ? null : el;
+  };
+  return gripDrag({
+    title: 'Drag onto a feature to move this command there',
+    onStart: (e) => {
+      e.currentTarget.closest('a').classList.add('dragging');
+      e.currentTarget.closest('.rail').classList.add('dragging-cmd');
+    },
+    onMove: (under) => paint(targetUnder(under)),
+    onEnd: (e) => {
+      paint(null);
+      e.currentTarget.closest('a').classList.remove('dragging');
+      e.currentTarget.closest('.rail').classList.remove('dragging-cmd');
+    },
+    onDrop: (under) => {
+      const el = targetUnder(under);
+      if (el) moveToFeature(model, name, el.getAttribute('data-feature'));
+    },
+  });
 }
 
 function renderRail() {
@@ -3290,7 +3331,7 @@ function renderRail() {
       }));
     } else {
       const collapsed = !!state.collapsed[group.name];
-      rail.appendChild(h('div', { class: 'group', ...featureDropTarget(model, group.name) },
+      rail.appendChild(h('div', { class: 'group', ...featureDropTarget(group.name) },
         h('span', {
           class: 'caret', onclick: () => { state.collapsed[group.name] = !collapsed; render(); },
         }, collapsed ? '▸' : '▾'),
@@ -3331,31 +3372,16 @@ function renderRail() {
         // opens, where it can be changed; the stored identifier waits
         // for the pointer rather than sitting under every row.
         title: name,
-        // Dragging a row onto a feature — its heading or any command
+        // Dragging the grip onto a feature — its heading or any command
         // in it — is how a command changes feature; the page it opens
-        // only states which one. Every row is both ends of the
-        // gesture: a drag source, and a target for its group.
-        ...featureDropTarget(model, group.name),
-        draggable: 'true',
-        ondragstart: (e) => {
-          dragCommandName = name;
-          e.dataTransfer.effectAllowed = 'move';
-          e.dataTransfer.setData('text/plain', name);
-          e.currentTarget.classList.add('dragging');
-          // Direct DOM, not state: nothing may repaint mid-drag, and
-          // the stand-in Ungrouped target has to appear right now.
-          e.currentTarget.closest('.rail').classList.add('dragging-cmd');
-        },
-        ondragend: (e) => {
-          dragCommandName = null;
-          e.currentTarget.classList.remove('dragging');
-          e.currentTarget.closest('.rail').classList.remove('dragging-cmd');
-        },
+        // only states which one. Every row is a target for its group.
+        ...featureDropTarget(group.name),
         onclick: (e) => {
           e.preventDefault(); closeForms();
           state.slice = name; state.openEvent = null; state.view = 'slice'; render();
         },
-      }, h('i', { class: 'ic' }, commandIcon(model, name)), readable(name)));
+      }, h('i', { class: 'ic' }, commandIcon(model, name)), readable(name),
+        h('span', { class: 'grow' }), commandGrip(model, name)));
     }
     if (!group.commands.length) rail.appendChild(h('div', { class: 'gempty' }, 'nothing in it yet'));
     // Naming a command headed for this feature happens right under it —
@@ -3367,7 +3393,7 @@ function renderRail() {
   // so when nothing is ungrouped (the catch-all group not rendered), a
   // stand-in target appears, but only while a command is in the air.
   if (!featureGroups(model).some((g) => g.name === UNGROUPED)) {
-    rail.appendChild(h('div', { class: 'group drop-stub', ...featureDropTarget(model, UNGROUPED) },
+    rail.appendChild(h('div', { class: 'group drop-stub', ...featureDropTarget(UNGROUPED) },
       h('span', { class: 'caret' }),
       h('span', { class: 'gname' }, UNGROUPED)));
   }
@@ -3810,7 +3836,6 @@ function restoreMainFocusRank(rank) {
 function render() {
   const focusRank = mainFocusRank();
   paintPage();
-  renderFab();
   restoreMainFocusRank(focusRank);
   sweepScriptEditors();
   if (!state.land) return;
@@ -3820,7 +3845,6 @@ function render() {
 }
 
 function paintPage() {
-  pageAdders.length = 0;
   const model = activeModel();
   // The splash also shows over a model that's still loaded — reached
   // from the brand mark, see the button below. Escape (and picking a
@@ -4963,14 +4987,11 @@ function emissionGuardRows(model, slice, emission, emissionIndex) {
     rows.push(h('div', { class: 'card rule' }, ruleEditor(model, slice, null, target)));
   } else {
     // Not an `adderSlot` — a guard opens through `state.editGuard`, not
-    // `state.adder` — but it folds, reveals and lists in the touch
-    // sheet exactly like one.
-    const openGuard = () => { state.editGuard = { at: emissionIndex, index: null }; render(); };
-    pageAdders.push({ label: '+ only while — ' + readable(emission.name), open: openGuard });
+    // `state.adder` — but it folds and reveals exactly like one.
     rows.push(h('div', { class: 'adder quiet' }, h('button', {
       class: 'btn ghost tiny',
       title: 'Publish this event only under a condition — failing it skips the event, never the command',
-      onclick: () => { closeForms(); openGuard(); },
+      onclick: () => { closeForms(); state.editGuard = { at: emissionIndex, index: null }; render(); },
     }, '+ only while'), h('span', { class: 'slot' })));
   }
   return h('div', { style: 'margin-left:8px' }, ...rows);
@@ -8749,32 +8770,10 @@ function ordinal(n) {
 // dragover fires continuously while the pointer moves, and routing that
 // through `render()` would repaint the whole app many times a second.
 // Only `drop` — once, at the end — goes through `run()`.
-let dragScenarioKey = null;
-
-// The drop-target handlers shared by every `.scenario` card: hover
-// paints which edge the dragged one would land against, drop reorders
-// against that edge, leave/end clear the paint either way.
-function scenarioDropTarget(onDrop) {
-  const clear = (el) => el.classList.remove('drop-before', 'drop-after');
-  return {
-    ondragover: (e) => {
-      if (!dragScenarioKey) return;
-      e.preventDefault();
-      const rect = e.currentTarget.getBoundingClientRect();
-      const before = (e.clientY - rect.top) < rect.height / 2;
-      e.currentTarget.classList.toggle('drop-before', before);
-      e.currentTarget.classList.toggle('drop-after', !before);
-    },
-    ondragleave: (e) => clear(e.currentTarget),
-    ondrop: (e) => {
-      e.preventDefault();
-      const before = e.currentTarget.classList.contains('drop-before');
-      clear(e.currentTarget);
-      const from = dragScenarioKey;
-      dragScenarioKey = null;
-      if (from) onDrop(from, before);
-    },
-  };
+// A scenario card is a reorder target for grips of its own kind —
+// the attributes `scenarioGrip` hit-tests as it drags.
+function scenarioDropTarget(kind, key) {
+  return { 'data-scen': key, 'data-scen-kind': kind };
 }
 
 function scenarioRow(model, entry) {
@@ -8795,16 +8794,8 @@ function scenarioRow(model, entry) {
     h('span', { class: 'grow' }),
     result.status !== 'current' ? h('span', { class: 'muted tiny' }, word) : null,
     reveal(
-      h('span', {
-        class: 'sc-grip', title: 'Drag to reorder among this command\'s scenarios',
-        draggable: 'true',
-        ondragstart: (e) => {
-          dragScenarioKey = key;
-          e.dataTransfer.effectAllowed = 'move';
-          e.dataTransfer.setData('text/plain', key);
-        },
-        ondragend: () => { dragScenarioKey = null; },
-      }, '⠿'),
+      scenarioGrip(model, 'scenario-definition', key,
+        'Drag to reorder among this command\'s scenarios'),
       h('button', {
         class: 'btn tiny', title: 'Rename, change, or remove this scenario',
         onclick: () => editScenario(key, body),
@@ -8812,7 +8803,7 @@ function scenarioRow(model, entry) {
 
   const card = h('div', {
     class: 'scenario' + (open ? ' open' : ''),
-    ...scenarioDropTarget((from, before) => run(() => reorderByDrag('scenario-definition', model, from, key, before))),
+    ...scenarioDropTarget('scenario-definition', key),
   }, head);
 
   if (!open) return card;
@@ -9128,16 +9119,8 @@ function projectionScenarioRow(model, entry) {
     h('span', { class: 'grow' }),
     result.status !== 'current' ? h('span', { class: 'muted tiny' }, word) : null,
     reveal(
-      h('span', {
-        class: 'sc-grip', title: 'Drag to reorder among the scenarios listed here',
-        draggable: 'true',
-        ondragstart: (e) => {
-          dragScenarioKey = key;
-          e.dataTransfer.effectAllowed = 'move';
-          e.dataTransfer.setData('text/plain', key);
-        },
-        ondragend: () => { dragScenarioKey = null; },
-      }, '⠿'),
+      scenarioGrip(model, 'projection-scenario-definition', key,
+        'Drag to reorder among the scenarios listed here'),
       h('button', {
         class: 'btn tiny', title: 'Rename, change, or remove this scenario',
         onclick: () => editProjectionScenario(model, key, body),
@@ -9145,7 +9128,7 @@ function projectionScenarioRow(model, entry) {
 
   const card = h('div', {
     class: 'scenario' + (open ? ' open' : ''),
-    ...scenarioDropTarget((from, before) => run(() => reorderByDrag('projection-scenario-definition', model, from, key, before))),
+    ...scenarioDropTarget('projection-scenario-definition', key),
   }, head);
 
   if (!open) return card;

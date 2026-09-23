@@ -34,12 +34,14 @@ function h(tag, attrs = {}, ...children) {
 }
 
 let toastTimer = null;
+// A refusal has to be read, not glimpsed, so it stays up well past the
+// acknowledgements.
 function toast(message, isError) {
   document.querySelectorAll('#toast').forEach((n) => n.remove());
   const el = h('div', { id: 'toast', class: isError ? 'err' : '' }, message);
   document.body.appendChild(el);
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.remove(), 3200);
+  toastTimer = setTimeout(() => el.remove(), isError ? 8000 : 5000);
 }
 
 // Runs a model command, reports a domain error rather than throwing it
