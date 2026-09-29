@@ -144,10 +144,16 @@
 
   .slice { padding: 22px 30px 70px; max-width: 800px; }
   /* Pinned while its steps scroll by, so which command you are inside
-     is the one thing the page never loses. */
+     is the one thing the page never loses. The separator is always on:
+     it used to appear only once the page had scrolled, but a header
+     that changes shape at a scroll threshold changes the document's
+     height at that same threshold, which clamps the scroll back under
+     it — the page then flickers between the two states. Nothing here
+     reads the scroll position any more. */
   .slice > header {
     position: sticky; top: var(--topbar-h); z-index: 10;
     background: var(--bg); margin: 0 -30px 22px; padding: 8px 30px;
+    border-bottom: 1px solid var(--border); box-shadow: 0 6px 14px -12px rgba(15,23,42,.5);
   }
   .slice > header .name { font-size: 20px; font-weight: 600; }
 
@@ -698,15 +704,6 @@
     text-align: center; font-size: 11.5px; color: var(--muted);
     padding: 16px 18px; border-top: 1px solid var(--border);
   }
-
-  /* ---------- the command, kept in view ----------
-     Once the header has scrolled under its own sticky position, the
-     parts of it that are not the answer to "which one" stand down. */
-  body.scrolled .slice > header {
-    border-bottom: 1px solid var(--border); box-shadow: 0 6px 14px -12px rgba(15,23,42,.5);
-  }
-  body.scrolled .slice > header .summary,
-  body.scrolled .slice > header .feature-of { display: none; }
 
   /* A row the interface just moved you to. Long enough to find it,
      short enough not to become part of the page. */
@@ -3826,7 +3823,11 @@ function mainFocusRank() {
 function restoreMainFocusRank(rank) {
   if (rank === null) return;
   const stops = mainFocusStops();
-  if (stops.length) stops[Math.min(rank, stops.length - 1)].focus();
+  // `preventScroll` is the whole point of restoring by rank staying
+  // invisible: the Nth stop after a repaint is often a different
+  // element than before, and letting focus() bring it into view moved
+  // the page under the reader on every edit.
+  if (stops.length) stops[Math.min(rank, stops.length - 1)].focus({ preventScroll: true });
 }
 
 // A repaint, and the one thing that has to happen after every one of
@@ -3852,9 +3853,7 @@ function paintPage() {
   // and lands back here with `model` unchanged.
   const showSplash = !model || state.splash;
 
-  document.body.className = [
-    isDark() ? 'f-dark' : null,
-    window.scrollY > 60 ? 'scrolled' : null].filter(Boolean).join(' ');
+  document.body.className = isDark() ? 'f-dark' : '';
 
   // Which model is open, front and center where the old dropdown used
   // to be. Off the splash it switches models, loads another, or starts
@@ -10114,12 +10113,6 @@ window.addEventListener('keydown', (e) => {
     if (moveRow(e.key === 'ArrowDown' ? 1 : -1)) e.preventDefault();
   }
 });
-
-// Whether the page has been scrolled at all — the only thing the pinned
-// header needs to know to decide how much of itself to keep.
-window.addEventListener('scroll', () => {
-  document.body.classList.toggle('scrolled', window.scrollY > 60);
-}, { passive: true });
 
 // The disclaimer wraps to two lines on a narrow-enough screen, which
 // changes .topbar's real height — everything sticky beneath it reads
