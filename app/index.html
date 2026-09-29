@@ -3688,7 +3688,7 @@ function createCommand(model, label) {
 // wizard, because from there the whole page is on screen.
 const WIZARD_STEPS = [
   { key: 'trigger', paint: (m, s) => stepTrigger(m, s), empty: (s) => !s.payload.length, skipWords: 'takes no input' },
-  { key: 'reads', paint: (m, s) => stepReads(m, s), empty: (s) => !s.reads.length, skipWords: 'reads nothing' },
+  { key: 'reads', paint: (m, s) => stepReads(m, s), empty: (s) => !s.reads.length, skipWords: 'looks at nothing' },
   { key: 'rules', paint: (m, s) => stepRules(m, s), empty: (s) => !s.rules.length, skipWords: 'no rules' },
   { key: 'emits', paint: (m, s) => stepEmits(m, s), empty: () => false },
   { key: 'changes', paint: (m, s) => stepChanges(m, s), empty: () => false },
@@ -4048,7 +4048,7 @@ function paintPage() {
               }),
             }))),
     h('div', { class: 'muted small summary' },
-      'Reads ' + (slice.reads.length || 'nothing')
+      'Looks at ' + (slice.reads.length || 'nothing')
       // Round trips, not bindings: a command that reads three things
       // in one go is cheaper than one that reads two in sequence, and
       // the summary should not hide the difference.
@@ -4272,7 +4272,7 @@ function readCard(model, slice, binding, index, waitsFor) {
       // is answered where the binding is, not only in the union at the
       // foot of the page.
       advanced() && queryItem
-        ? queryPopover('read:' + binding.alias, 'what this read queries',
+        ? queryPopover('read:' + binding.alias, 'what this binding queries',
             h('div', {}, dcbQueryWords(queryItem)))
         : null,
       h('span', { class: 'grow' }),
@@ -4350,10 +4350,10 @@ function bindingEditor(model, slice, binding, index) {
       }),
       h('button', {
         class: 'btn tiny',
-        title: 'Rename this read. The alias is local to this command, so nothing else moves.',
+        title: 'Rename this binding. The alias is local to this command, so nothing else moves.',
         onclick: () => {
           const next = toCamel(draft.name);
-          if (!next) return toast('Give the read a name.', true);
+          if (!next) return toast('Give the binding a name.', true);
           if (next === binding.alias) return close();
           if (slice.reads.some((b) => b.alias === next)) {
             return toast(`"${next}" is already bound in this command.`, true);
@@ -4401,7 +4401,7 @@ function bindingEditor(model, slice, binding, index) {
         }),
         'may be absent'),
       h('span', { class: 'muted tiny' },
-        'an unset identifier binds nothing instead of erroring — rules over this read are skipped')),
+        'an unset identifier binds nothing instead of erroring — rules over this binding are skipped')),
 
     binding.projection || !fanned ? null : h('div', { class: 'adder' },
       h('span', { class: 'muted tiny' }, 'except'),
@@ -4452,7 +4452,7 @@ function roundLabel(index, total) {
 
 // What Enter on an empty property name means: that list is done, and
 // the next thing a command needs is what it reads. Opens the same
-// adder "+ read something" opens, and reaches for its first control —
+// adder "+ look at something" opens, and reaches for its first control —
 // best effort, since a model with no entity yet offers a button in its
 // place, not a field.
 function beginReadAdder() {
@@ -4481,7 +4481,7 @@ function stepReads(model, slice) {
   } else {
     cards = slice.reads.map((binding, i) => readCard(model, slice, binding, i, []));
   }
-  if (!cards.length) cards.push(h('div', { class: 'empty' }, 'Reads nothing — it decides unconditionally.'));
+  if (!cards.length) cards.push(h('div', { class: 'empty' }, 'Looks at nothing — it decides unconditionally.'));
 
   const sources = [
     ...payloadChoices(model, slice.payload),
@@ -4570,7 +4570,7 @@ function stepReads(model, slice) {
     // With nothing to choose between, a picker whose only row is
     // "+ New…" could never fire — so offer the button itself.
     body.push(h('div', { class: 'card' }, h('div', { class: 'adder' },
-      h('span', { class: 'muted tiny' }, 'Nothing to read yet.'),
+      h('span', { class: 'muted tiny' }, 'Nothing to look at yet.'),
       h('button', {
         class: 'btn primary',
         onclick: () => { closeForms(); state.newEntityAt = 'reads'; render(); },
@@ -4615,7 +4615,7 @@ function stepReads(model, slice) {
     // same as clicking the button — so a read picked entirely from the
     // keyboard never needs the mouse to land.
     const submit = () => {
-      if (!draft.entity) return toast('Pick something to read.', true);
+      if (!draft.entity) return toast('Pick something to look at.', true);
       if (chosenProjection) {
         for (const p of parameters) {
           if (!argChoice(p)) {
@@ -4641,7 +4641,7 @@ function stepReads(model, slice) {
       if (btn) btn.focus();
     }
 
-    body.push(adderSlot('read', 'reads', '+ read something', () =>
+    body.push(adderSlot('read', 'reads', '+ look at something', () =>
       h('div', { class: 'card' }, h('div', {
         class: 'adder',
         onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } },
@@ -4668,9 +4668,9 @@ function stepReads(model, slice) {
                 idSources.length
                   ? null : `— no ${propertyWords(idTypeOf(model, draft.entity))} in scope yet —`),
             ],
-        h('button', { class: 'btn', onclick: submit }, '+ Read something')))));
+        h('button', { class: 'btn', onclick: submit }, '+ Look at something')))));
   }
-  return step('reads', 'To decide, it reads', ...body);
+  return step('reads', 'To decide, it looks at', ...body);
 }
 
 function stepRules(model, slice) {
@@ -4883,7 +4883,7 @@ function ruleEditor(model, slice, index, target) {
   },
     ...operandPicker(leftScope, draft, 'left',
       {
-        placeholder: leftScope.length ? '— what? —' : '— read something first —',
+        placeholder: leftScope.length ? '— what? —' : '— look at something first —',
         onNew: boundEntities.length
           ? () => { state.addingProp = { at: 'rule' }; render(); }
           : undefined,
@@ -8293,7 +8293,7 @@ function stepConsistency(model, slice) {
         h('span', { class: 't' }, slice.dcb.writes.join(', ') || 'no tags'))),
     slice.coverage.length
       ? h('div', { class: 'card', style: 'border-color:var(--danger)' },
-          h('span', { class: 'small' }, 'Writes a tag it never read: '
+          h('span', { class: 'small' }, 'Writes a tag it never consulted: '
             + slice.coverage.map((c) => readable(c.entity)).join(', ')))
       : null);
 }
@@ -9703,7 +9703,7 @@ function sandboxDecision(model) {
               pinButton(entityWatch(read.entity + ':' + instance.id)),
               h('span', { class: 't' }, instance.id),
               h('span', { class: 'k' }, '  ' + payloadText(instance.properties))))))
-      : h('div', { class: 'card' }, h('div', { class: 'empty' }, 'It read nothing.')));
+      : h('div', { class: 'card' }, h('div', { class: 'empty' }, 'It looked at nothing.')));
 }
 
 function pinButton(watch) {
@@ -9914,7 +9914,7 @@ function sandboxNow(model) {
   } catch (error) {
     if (!(error instanceof EvaluationError)) throw error;
     return h('div', { class: 'card' },
-      h('div', { class: 'empty' }, 'See "What it read to decide" above.'));
+      h('div', { class: 'empty' }, 'See "What it looked at to decide" above.'));
   }
 
   const reads = Object.entries(then.reads || {});
@@ -9988,7 +9988,7 @@ function renderSandbox(model, main) {
               h('span', { class: 'k' }, '  ' + payloadText(event.data))))
           : h('div', { class: 'empty' }, 'nothing yet'))));
 
-    main.appendChild(step('reads', 'What it read to decide', sandboxDecision(model)));
+    main.appendChild(step('reads', 'What it looked at to decide', sandboxDecision(model)));
     main.appendChild(step('now', 'What it looks like now', sandboxNow(model)));
   }
 
