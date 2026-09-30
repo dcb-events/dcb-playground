@@ -1,18 +1,8 @@
 {
   "$schema": "https://dcb.events/schemas/model/v6.json",
-  "dcbModelVersion": "6.0",
+  "dcbModelVersion": "6.1",
   "name": "Course Example (with schedules)",
   "customTypeDefinitions": [
-    {
-      "name": "StudentStatus",
-      "schema": {
-        "type": "string",
-        "enum": [
-          "NonExistent",
-          "Existent"
-        ]
-      }
-    },
     {
       "name": "CourseStatus",
       "schema": {
@@ -168,8 +158,8 @@
       "icon": "🧑‍🎓",
       "properties": [
         {
-          "name": "status",
-          "projection": "StudentStatus"
+          "name": "exists",
+          "projection": "StudentExists"
         },
         {
           "name": "subscriptionCount",
@@ -179,7 +169,8 @@
           "name": "subscribedCourseIds",
           "projection": "StudentSubscribedCourseIds"
         }
-      ]
+      ],
+      "lifecycle": "exists"
     },
     {
       "name": "Course",
@@ -205,30 +196,27 @@
           "name": "slots",
           "projection": "CourseSlots"
         }
-      ]
+      ],
+      "lifecycle": "status"
     }
   ],
   "projectionDefinitions": [
     {
-      "name": "StudentStatus",
+      "name": "StudentExists",
       "parameters": [
         {
           "name": "studentId",
           "propertyType": "StudentId"
         }
       ],
-      "valueType": "StudentStatus",
+      "valueType": "boolean",
       "isList": false,
-      "initialValue": {
-        "enumMember": "NonExistent"
-      },
+      "initialValue": false,
       "handlers": [
         {
           "event": "StudentRegistered",
           "operation": "set",
-          "value": {
-            "enumMember": "Existent"
-          }
+          "value": true
         }
       ]
     },
@@ -613,12 +601,9 @@
         {
           "leftHandSide": {
             "alias": "student",
-            "property": "status"
+            "property": "exists"
           },
-          "predicate": "equals",
-          "rightHandSide": {
-            "enumMember": "NonExistent"
-          }
+          "predicate": "isFalse"
         }
       ],
       "publishes": [
@@ -687,12 +672,9 @@
         {
           "leftHandSide": {
             "alias": "student",
-            "property": "status"
+            "property": "exists"
           },
-          "predicate": "equals",
-          "rightHandSide": {
-            "enumMember": "Existent"
-          }
+          "predicate": "isTrue"
         },
         {
           "leftHandSide": {

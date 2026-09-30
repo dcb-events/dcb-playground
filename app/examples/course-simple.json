@@ -1,18 +1,8 @@
 {
   "$schema": "https://dcb.events/schemas/model/v6.json",
-  "dcbModelVersion": "6.0",
+  "dcbModelVersion": "6.1",
   "name": "Course Example (simple)",
   "customTypeDefinitions": [
-    {
-      "name": "StudentStatus",
-      "schema": {
-        "type": "string",
-        "enum": [
-          "NonExistent",
-          "Existent"
-        ]
-      }
-    },
     {
       "name": "CourseStatus",
       "schema": {
@@ -151,7 +141,8 @@
           "name": "subscribedStudentIds",
           "projection": "CourseSubscribedStudentIds"
         }
-      ]
+      ],
+      "lifecycle": "status"
     }
   ],
   "projectionDefinitions": [

@@ -81,7 +81,13 @@
 // derived projections (`derived` in place of handlers): a v17 reader
 // would publish an emission its author made conditional and has no
 // fold for a handlerless projection — both misreads, so the key moves.
-const EVENT_LOG_KEY = 'dcb-playground:events:v18';
+// v19 made an entity's lifecycle an explicit designation: the entity
+// carries `lifecycle`, naming one of its own property bindings, and the
+// two-state case is an ordinary `boolean` projection rather than a
+// `NonExistent`/`Existent` enum. The `status` convention is gone — no
+// reader keys off the name any more — so a v18 log replayed here would
+// produce entities whose lifecycle nothing designates.
+const EVENT_LOG_KEY = 'dcb-playground:events:v19';
 
 const DEF_KINDS = [
   'entity-definition',
@@ -137,13 +143,24 @@ function isIdKeyed(kind) { return ID_KEYED_KINDS.includes(kind); }
 
 const SIMPLE_TYPES = ['boolean', 'integer', 'string'];
 
-// Nothing below enforces either of these: a lifecycle is an ordinary
-// enum custom type plus an ordinary property, like any other. They
-// exist purely as the convention the "new entity" scaffold offers —
-// most entities want exactly this, and typing it out is the same
-// every time.
-const DEFAULT_STATUSES = ['NonExistent', 'Existent'];
-const STATUS_PROPERTY = 'status';
+// A lifecycle is an ordinary property, folded like any other — what
+// makes it the lifecycle is that the entity *designates* it, by name,
+// in `lifecycle`. Nothing keys off the property's own name any more:
+// `exists` is only what the scaffold happens to type, and an entity
+// whose lifecycle is called `state` or `phase` reads exactly the same.
+//
+// The two-state case is a plain `boolean`, not an enum. At first
+// contact there is no enum, no custom type and no vocabulary to learn:
+// the thing either exists or it does not, which is what every rule
+// wanted to ask anyway. A third state is what turns it into an enum,
+// and that promotion has to ask for names, so it is a gesture rather
+// than an inference — see `docs/research/2026-09-30-entity-lifecycle-as-boolean-existence.md`.
+const LIFECYCLE_PROPERTY = 'exists';
+// The spelling the convention had before v19, recognised in exactly one
+// place: inferring a designation for a 3.x–6.0 model at the import
+// gate. Narrow on purpose — a model that called it `state` never made
+// the designation, and guessing one for it invents authorship.
+const LEGACY_LIFECYCLE_PROPERTY = 'status';
 
 const PASCAL_RE = /^[A-Z][A-Za-z0-9]+$/;
 const CAMEL_RE = /^[a-z][A-Za-z0-9]+$/;
@@ -329,9 +346,9 @@ function apply(models, event) {
 // An entity brings an identifier type into existence — `<Entity>Id`
 // unless `identifierType` overrides the name — as an ordinary
 // `custom-type-definition`, created alongside the entity and stored
-// like any other. A lifecycle is not a derived type — a modeller who
-// wants one declares an ordinary enum value type and an ordinary
-// property typed with it, by convention named `status`.
+// like any other. A lifecycle is not a derived type: it is one of the
+// entity's own properties, named by `lifecycle`, and in the two-state
+// case its projection is typed `boolean` and declares no type at all.
 // ============================================================
 
 // `entityName`'s derived identifier type name — `identifierType` when
@@ -848,6 +865,67 @@ function entityPropertyTarget(model, entityName, propertyName) {
     binding,
     projection: model['projection-definitions'][binding.projection] || null,
   };
+}
+
+// An entity's designated lifecycle, resolved — or `null`, which is an
+// ordinary answer and not a defect: an entity need not have one.
+//
+// `lifecycle` names one of the entity's *own* property bindings. That
+// makes it a local name, like a command's alias, which is why it is not
+// a reference slot (nothing outside the entity can be renamed into or
+// out of it) and why `renameMember` moves it rather than
+// `rewriteReferences`.
+//
+// The one thing this resolver exists to flatten is that a lifecycle has
+// two spellings. `states` is what the thing can be in — an enum's
+// members, or `[false, true]` for the boolean two-state case — as
+// strings either way, so everything downstream (the machine, the
+// constraint reader, the diagram) treats the two identically and no
+// caller has to ask which spelling it got. `isBoolean` is there for the
+// one thing that genuinely differs: how a condition names a state.
+//
+// `null` also where the designation dangles, or names a projection that
+// is scripted, derived, a list, or typed something with no states to be
+// in. Each of those is reported as an advisory in its own right; this
+// just declines to invent a machine for it.
+function lifecycleOf(model, entityName) {
+  const entity = model['entity-definitions'][entityName];
+  const property = entity && entity.lifecycle;
+  if (!property || typeof property !== 'string') return null;
+  const { binding, projection } = entityPropertyTarget(model, entityName, property);
+  if (!binding || !projection) return null;
+  if (scriptOf(projection) || derivedOf(projection) || projection.isList) return null;
+  const isBoolean = projection.valueType === 'boolean';
+  const members = isBoolean ? [false, true] : enumMembersFor(model, projection.valueType);
+  if (!members) return null;
+  return {
+    entity: entityName,
+    property,
+    binding,
+    projection,
+    projectionName: binding.projection,
+    valueType: projection.valueType,
+    isBoolean,
+    states: members.map(String),
+  };
+}
+
+// Why `lifecycleOf` declined, for the one page that has to say so.
+// Kept beside it so the two can never drift into disagreeing about
+// what counts as a lifecycle.
+function lifecycleRefusal(model, entityName) {
+  const entity = model['entity-definitions'][entityName];
+  const property = entity && entity.lifecycle;
+  if (!property || typeof property !== 'string') return 'none';
+  const { binding, projection } = entityPropertyTarget(model, entityName, property);
+  if (!binding || !projection) return 'dangling';
+  if (scriptOf(projection)) return 'scripted';
+  if (derivedOf(projection)) return 'derived';
+  if (projection.isList) return 'list';
+  if (projection.valueType !== 'boolean' && !enumMembersFor(model, projection.valueType)) {
+    return 'stateless';
+  }
+  return null;
 }
 
 // What a bare literal of this type looks like at runtime — the shape an
@@ -2532,6 +2610,34 @@ function validateEntityBody(model, entityName, body) {
       );
     }
   }
+
+  // The designation. An entity need not have one, and a lifecycle is an
+  // ordinary property in every other respect, so the only thing wrong
+  // here is a designation pointing at nothing — which is advisory, like
+  // every other dangling reference: the model loads and the properties
+  // still fold.
+  //
+  // Designating a property that *is* declared but whose states cannot be
+  // read — scripted, derived, a list, typed a bare string — is not a
+  // defect and is deliberately not advised. It is a legitimate model
+  // (`content-decisions-scripted` ships one) whose lifecycle simply
+  // cannot be drawn, so it is the Lifecycles page's business to say so
+  // and nobody else's. `lifecycleRefusal` is what it asks.
+  if (body.lifecycle !== undefined && body.lifecycle !== null) {
+    if (typeof body.lifecycle !== 'string' || !CAMEL_RE.test(body.lifecycle)) {
+      throw new DomainError(
+        `Entity "${entityName}" designates the lifecycle "${body.lifecycle}", which is not a ` +
+        'camelCase property name.'
+      );
+    }
+    if (!seen.has(body.lifecycle)) {
+      throw new DomainError(
+        `Entity "${entityName}" designates "${body.lifecycle}" as its lifecycle but declares no ` +
+        `property by that name. Nothing else breaks — the entity's own rules still read whatever ` +
+        'properties it has — but no lifecycle is drawn for it.'
+      );
+    }
+  }
 }
 
 function validateCommandBody(model, body) {
@@ -3469,9 +3575,13 @@ function setAtDottedPath(obj, path, value) {
 // `(model, definitionName, previous, next) => [{kind, name, body}]`.
 const MEMBER_REWRITES = {
   // An entity property is read as `{alias, property}` by any command
-  // that binds this entity under that alias.
-  'entity-definition:property': (model, entityName, previous, next) =>
-    rewriteCommands(model, (command) => {
+  // that binds this entity under that alias — and, when it is the
+  // designated lifecycle, by the entity's own `lifecycle`. That one is
+  // a local name rather than a reference, so it moves here rather than
+  // through `rewriteReferences`; `renameMember` folds this owner
+  // rewrite together with the property-list rename.
+  'entity-definition:property': (model, entityName, previous, next) => {
+    const out = rewriteCommands(model, (command) => {
       const aliases = (command.boundary || [])
         .filter((b) => b && b.entity === entityName).map((b) => b.alias);
       let touched = false;
@@ -3483,7 +3593,17 @@ const MEMBER_REWRITES = {
         }
       });
       return touched;
-    }),
+    });
+    const entity = model['entity-definitions'][entityName];
+    if (entity && entity.lifecycle === previous) {
+      out.push({
+        kind: 'entity-definition',
+        name: entityName,
+        body: { ...deepClone(entity), lifecycle: next },
+      });
+    }
+    return out;
+  },
 
   // An enum member is an `{enumMember}` operand. The type it belongs to
   // may be held by any number of projections, so this reaches every one
@@ -4013,7 +4133,19 @@ function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
 // reader would publish what an author made conditional and has no
 // fold for a handlerless projection — both misreads, so this is a
 // major; this build reads 3.x, 4.x and 5.x whole.
-const MODEL_VERSION = '6.0';
+// 6.1 gave an entity an optional `lifecycle`, naming which of its own
+// properties is the state it is in — and made the two-state case an
+// ordinary `boolean` projection rather than a `NonExistent`/`Existent`
+// enum. Judged from the reader's side this is a minor, which is the
+// distinction 4.0 is here to sharpen: a 6.0 reader that ignores
+// `lifecycle` loses a diagram, and a boolean-typed projection was
+// always readable — no condition changed shape, `evaluate.js` did not
+// change, and nothing evaluates differently. Contrast 4.0, where the
+// ignored flag made the old reader error on exactly the case the flag
+// declared expected. So the schema URL stays at v6 and `READABLE_MAJORS`
+// is untouched. What a 6.0 reader misses is what the version warning
+// exists to say.
+const MODEL_VERSION = '6.1';
 const MODEL_SCHEMA_URL = 'https://dcb.events/schemas/model/v6.json';
 const READABLE_MAJORS = [3, 4, 5, 6];
 
@@ -4095,6 +4227,39 @@ function envelopeHasScript(envelope) {
 // so the bare form is always addable.
 function bareEntityBody(body) {
   return { ...body, properties: [] };
+}
+
+// Gives a pre-6.1 entity the designation its author never wrote, once,
+// here at the gate — mutating the decoded bodies before anything is
+// stored, so what lands in the log is an ordinary 6.1 entity and no
+// reader downstream has to know where the designation came from.
+//
+// Inferring at read time instead was the alternative and is worse for
+// the reason `boundary` is authoritative rather than recomputed: a
+// designation that is sometimes stored and sometimes derived is two
+// sources of truth, and every reader then has to know which it has.
+//
+// Deliberately narrow — a property named exactly `status`, bound to a
+// non-scripted projection typed with an enum. That was the one spelling
+// the convention had. A model that called it `state`, or typed it
+// `boolean`, never made the designation, and inferring one for it would
+// be inventing authorship; those import with no lifecycle and the
+// Lifecycles page says so, which is honest about a file that predates
+// the idea.
+function inferLifecycleDesignations(entities, projections, customTypes) {
+  for (const body of Object.values(entities)) {
+    if (!body || typeof body !== 'object') continue;
+    if (body.lifecycle !== undefined && body.lifecycle !== null) continue;
+    const binding = (body.properties || [])
+      .find((p) => p && p.name === LEGACY_LIFECYCLE_PROPERTY);
+    if (!binding) continue;
+    const projection = projections[binding.projection];
+    if (!projection || projection.script || projection.isList) continue;
+    const valueType = customTypes[projection.valueType];
+    const members = valueType && valueType.schema && valueType.schema.enum;
+    if (!Array.isArray(members) || !members.length) continue;
+    body.lifecycle = LEGACY_LIFECYCLE_PROPERTY;
+  }
 }
 
 // Adds a mixed batch of custom types and bare entities, retrying
@@ -4231,6 +4396,7 @@ function importModelFromEnvelope(envelope) {
   const propertyScenarios = schemaArrayToDefinitions(
     'projection-scenario-definition', envelope.projectionScenarioDefinitions
   );
+  inferLifecycleDesignations(entities, projections, customTypes);
 
   const modelId = createDcbModel(envelope.name);
 
@@ -4332,7 +4498,9 @@ function importModelFromEnvelope(envelope) {
 
 // A lifecycle enum is an ordinary scalar custom type whose schema
 // carries `enum`, declared once and referenced from an ordinary
-// `status` property — the same shape any other enum property has.
+// property — the same shape any other enum property has. Only a
+// lifecycle with three or more states needs one at all; two states are
+// a `boolean` projection and no type.
 const seedEnumType = (name, members) => ({ schema: { type: 'string', enum: members } });
 const seedProp = (name, type) => ({ name, propertyType: type, isOptional: false, isList: false });
 const seedListProp = (name, type) => ({ name, propertyType: type, isOptional: false, isList: true });
@@ -4375,11 +4543,16 @@ function seedBase(modelId) {
   const bind = seedBind;
   const bindProp = seedBindProp;
 
-  // 1. The lifecycle enums, declared like any other custom type. Then
-  //    the entities, bare: a property is a binding to a projection, and
-  //    no projection exists yet. Student first, since Course's
+  // 1. One lifecycle enum — Course's, because a course has three states
+  //    to be in. A student has two, so it needs no enum and gets none:
+  //    its lifecycle is a plain boolean, which is the whole of what
+  //    "does it exist" ever needed. The two spellings side by side in
+  //    the first model anyone opens is deliberate — it is where the
+  //    promotion from one to the other is taught.
+  //
+  //    Then the entities, bare: a property is a binding to a projection,
+  //    and no projection exists yet. Student first, since Course's
   //    subscriber list is typed StudentId.
-  addDefinition('custom-type-definition', modelId, 'StudentStatus', seedEnumType('StudentStatus', ['NonExistent', 'Existent']));
   addDefinition('custom-type-definition', modelId, 'CourseStatus', seedEnumType('CourseStatus', ['NonExistent', 'Existent', 'Archived']));
 
   addDefinition('entity-definition', modelId, 'Student', { icon: '🧑‍🎓', properties: [] });
@@ -4403,9 +4576,9 @@ function seedBase(modelId) {
   const projection = (name, body) =>
     addDefinition('projection-definition', modelId, name, body);
 
-  projection('StudentStatus', seedPropertyProjection('Student', 'StudentStatus',
-    { enumMember: 'NonExistent' },
-    [handler('StudentRegistered', 'set', { enumMember: 'Existent' })]));
+  projection('StudentExists', seedPropertyProjection('Student', 'boolean',
+    false,
+    [handler('StudentRegistered', 'set', true)]));
   projection('StudentSubscriptionCount', seedPropertyProjection('Student', 'integer', 0, [
     handler('StudentSubscribedToCourse', 'increment', 1),
     handler('StudentUnsubscribedFromCourse', 'decrement', 1),
@@ -4434,17 +4607,22 @@ function seedBase(modelId) {
   //    type or an initial value could disagree with the first.
   seedPatch('entity-definition', modelId, 'Student', (student) => {
     student.properties = [
-      bindProp(STATUS_PROPERTY, 'StudentStatus'),
+      bindProp(LIFECYCLE_PROPERTY, 'StudentExists'),
       bindProp('subscriptionCount', 'StudentSubscriptionCount'),
     ];
+    student.lifecycle = LIFECYCLE_PROPERTY;
   });
   seedPatch('entity-definition', modelId, 'Course', (course) => {
     course.properties = [
-      bindProp(STATUS_PROPERTY, 'CourseStatus'),
+      // Still called `status`, and that is the point: nothing privileges
+      // the name any more, so a model is free to use the word it wants.
+      // What makes this the lifecycle is the designation below.
+      bindProp('status', 'CourseStatus'),
       bindProp('capacity', 'CourseCapacity'),
       bindProp('subscriptionCount', 'CourseSubscriptionCount'),
       bindProp('subscribedStudentIds', 'CourseSubscribedStudentIds'),
     ];
+    course.lifecycle = 'status';
   });
 
   // 5. Commands. The boundary is the DCB.
@@ -4492,7 +4670,7 @@ function seedBase(modelId) {
     properties: [prop('studentId', 'StudentId')],
     boundary: [bind('student', 'Student', 'studentId')],
     conditions: [
-      { leftHandSide: of('student', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' } },
+      { leftHandSide: of('student', LIFECYCLE_PROPERTY), predicate: 'isFalse' },
     ],
     publishes: [{ name: 'StudentRegistered', parameters: { studentId: param('studentId') } }],
   });
@@ -4503,7 +4681,7 @@ function seedBase(modelId) {
     boundary: [bind('course', 'Course', 'courseId'), bind('student', 'Student', 'studentId')],
     conditions: [
       { leftHandSide: of('course', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'Existent' } },
-      { leftHandSide: of('student', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'Existent' } },
+      { leftHandSide: of('student', LIFECYCLE_PROPERTY), predicate: 'isTrue' },
       { leftHandSide: of('course', 'subscriptionCount'), predicate: 'lessThan', rightHandSide: of('course', 'capacity') },
       { leftHandSide: of('course', 'subscribedStudentIds'), predicate: 'contains', rightHandSide: param('studentId'), negate: true },
       { leftHandSide: of('student', 'subscriptionCount'), predicate: 'lessThan', rightHandSide: 10 },
@@ -4635,7 +4813,6 @@ function seedSequenceScenarios(modelId) {
 // identifier type, the minted value is not a tag, so write coverage
 // has nothing to exempt here.
 function seedAddTenancy(modelId) {
-  addDefinition('custom-type-definition', modelId, 'TenantStatus', seedEnumType('TenantStatus', ['NonExistent', 'Existent']));
   addDefinition('entity-definition', modelId, 'Tenant', { icon: '🏢', properties: [] });
   addDefinition('custom-type-definition', modelId, 'CourseNumber', {
     schema: { type: 'string', pattern: '^[0-9]+$' },
@@ -4649,11 +4826,12 @@ function seedAddTenancy(modelId) {
     event.properties.push(seedProp('courseNumber', 'CourseNumber'));
   });
 
-  addDefinition('projection-definition', modelId, 'TenantStatus',
-    seedPropertyProjection('Tenant', 'TenantStatus', { enumMember: 'NonExistent' },
-      [seedHandler('TenantRegistered', 'set', { enumMember: 'Existent' })]));
+  addDefinition('projection-definition', modelId, 'TenantExists',
+    seedPropertyProjection('Tenant', 'boolean', false,
+      [seedHandler('TenantRegistered', 'set', true)]));
   seedPatch('entity-definition', modelId, 'Tenant', (tenant) => {
-    tenant.properties = [seedBindProp(STATUS_PROPERTY, 'TenantStatus')];
+    tenant.properties = [seedBindProp(LIFECYCLE_PROPERTY, 'TenantExists')];
+    tenant.lifecycle = LIFECYCLE_PROPERTY;
   });
 
   // One parameter, so one tag: `Tenant:<id> AND type CourseDefined`.
@@ -4675,8 +4853,7 @@ function seedAddTenancy(modelId) {
     properties: [seedProp('tenantId', 'TenantId')],
     boundary: [seedBind('tenant', 'Tenant', 'tenantId')],
     conditions: [
-      { leftHandSide: seedOf('tenant', 'status'), predicate: 'equals',
-        rightHandSide: { enumMember: 'NonExistent' } },
+      { leftHandSide: seedOf('tenant', LIFECYCLE_PROPERTY), predicate: 'isFalse' },
     ],
     publishes: [{ name: 'TenantRegistered', parameters: { tenantId: seedParam('tenantId') } }],
   });
@@ -4691,9 +4868,8 @@ function seedAddTenancy(modelId) {
       tenantId: seedParam('tenantId'),
     }));
     define.conditions.push({
-      leftHandSide: seedOf('tenant', 'status'),
-      predicate: 'equals',
-      rightHandSide: { enumMember: 'Existent' },
+      leftHandSide: seedOf('tenant', LIFECYCLE_PROPERTY),
+      predicate: 'isTrue',
     });
     define.publishes[0].parameters.tenantId = seedParam('tenantId');
     define.publishes[0].parameters.courseNumber = seedOf('tenantCourseNumbering');
@@ -4823,8 +4999,6 @@ function seedProductPricing(modelId) {
   addDefinition('custom-type-definition', modelId, 'Money', {
     schema: { type: 'number', minimum: 0 },
   });
-  addDefinition('custom-type-definition', modelId, 'ProductStatus', seedEnumType('ProductStatus', ['NonExistent', 'Existent']));
-  addDefinition('custom-type-definition', modelId, 'OrderStatus', seedEnumType('OrderStatus', ['NonExistent', 'Existent']));
 
   // 2. Entities, bare — Item cannot be declared until ProductId
   //    exists, and ProductId comes from Product.
@@ -4851,9 +5025,9 @@ function seedProductPricing(modelId) {
   //    handles ProductsOrdered: a value-style handler would need to
   //    pick *this* product's line out of the event, which the model
   //    cannot yet express.
-  addDefinition('projection-definition', modelId, 'ProductStatus',
-    seedPropertyProjection('Product', 'ProductStatus', { enumMember: 'NonExistent' },
-      [handler('ProductDefined', 'set', { enumMember: 'Existent' })]));
+  addDefinition('projection-definition', modelId, 'ProductExists',
+    seedPropertyProjection('Product', 'boolean', false,
+      [handler('ProductDefined', 'set', true)]));
   // Starts at null — no value yet. A price of 0 on a product that does
   // not exist would be a lie the model then has to defend, and null is
   // a different answer from both 0 and "".
@@ -4862,18 +5036,20 @@ function seedProductPricing(modelId) {
       handler('ProductDefined', 'set', { eventProperty: 'price' }),
       handler('ProductPriceChanged', 'set', { eventProperty: 'newPrice' }),
     ]));
-  addDefinition('projection-definition', modelId, 'OrderStatus',
-    seedPropertyProjection('Order', 'OrderStatus', { enumMember: 'NonExistent' },
-      [handler('ProductsOrdered', 'set', { enumMember: 'Existent' })]));
+  addDefinition('projection-definition', modelId, 'OrderExists',
+    seedPropertyProjection('Order', 'boolean', false,
+      [handler('ProductsOrdered', 'set', true)]));
 
   seedPatch('entity-definition', modelId, 'Product', (product) => {
     product.properties = [
-      seedBindProp(STATUS_PROPERTY, 'ProductStatus'),
+      seedBindProp(LIFECYCLE_PROPERTY, 'ProductExists'),
       seedBindProp('currentPrice', 'ProductCurrentPrice'),
     ];
+    product.lifecycle = LIFECYCLE_PROPERTY;
   });
   seedPatch('entity-definition', modelId, 'Order', (order) => {
-    order.properties = [seedBindProp(STATUS_PROPERTY, 'OrderStatus')];
+    order.properties = [seedBindProp(LIFECYCLE_PROPERTY, 'OrderExists')];
+    order.lifecycle = LIFECYCLE_PROPERTY;
   });
 
   // 5. Commands defining and repricing a single product, so the
@@ -4883,9 +5059,8 @@ function seedProductPricing(modelId) {
     properties: [prop('productId', 'ProductId'), prop('price', 'Money')],
     boundary: [seedBind('product', 'Product', 'productId')],
     conditions: [{
-      leftHandSide: of('product', STATUS_PROPERTY),
-      predicate: 'equals',
-      rightHandSide: { enumMember: 'NonExistent' },
+      leftHandSide: of('product', LIFECYCLE_PROPERTY),
+      predicate: 'isFalse',
     }],
     publishes: [{
       name: 'ProductDefined',
@@ -4898,9 +5073,8 @@ function seedProductPricing(modelId) {
     boundary: [seedBind('product', 'Product', 'productId')],
     conditions: [
       {
-        leftHandSide: of('product', STATUS_PROPERTY),
-        predicate: 'equals',
-        rightHandSide: { enumMember: 'Existent' },
+        leftHandSide: of('product', LIFECYCLE_PROPERTY),
+        predicate: 'isTrue',
       },
       // Repricing to the price already in force is a no-op, and saying
       // so does more than tidy the log: reading `currentPrice` pulls
@@ -4933,15 +5107,13 @@ function seedProductPricing(modelId) {
     conditions: [
       // Singular: the order must not already have been placed.
       {
-        leftHandSide: of('order', STATUS_PROPERTY),
-        predicate: 'equals',
-        rightHandSide: { enumMember: 'NonExistent' },
+        leftHandSide: of('order', LIFECYCLE_PROPERTY),
+        predicate: 'isFalse',
       },
       // Universal over the fanned alias: every product must exist.
       {
-        leftHandSide: of('product', STATUS_PROPERTY),
-        predicate: 'equals',
-        rightHandSide: { enumMember: 'Existent' },
+        leftHandSide: of('product', LIFECYCLE_PROPERTY),
+        predicate: 'isTrue',
       },
       // Zipped: product[i] against items[i].price.
       {
@@ -5042,7 +5214,12 @@ function seedContentDecisionsScripted(modelId) {
     ],
   });
   seedPatch('entity-definition', modelId, 'Document', (document) => {
-    document.properties = [seedBindProp(STATUS_PROPERTY, 'DocumentStatus')];
+    document.properties = [seedBindProp('status', 'DocumentStatus')];
+    // Designated even though the fold is a script: what a document is in
+    // *is* this property, and saying so is right whether or not a
+    // machine can be drawn from it. The Lifecycles page reports why it
+    // cannot rather than pretending the entity has no lifecycle.
+    document.lifecycle = 'status';
   });
 
   // 4. Commands — every rule is a status check, and the two that allow
@@ -5056,7 +5233,7 @@ function seedContentDecisionsScripted(modelId) {
     properties: [prop('id', 'DocumentId')],
     boundary: [bind('document', 'Document', 'id')],
     conditions: [
-      { leftHandSide: of('document', STATUS_PROPERTY), predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' } },
+      { leftHandSide: of('document', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' } },
     ],
     publishes: [{ name: 'DocumentAdded', parameters: { id: param('id') } }],
   });
@@ -5067,9 +5244,9 @@ function seedContentDecisionsScripted(modelId) {
     properties: [prop('docId', 'DocumentId'), prop('text', 'string')],
     boundary: [bind('document', 'Document', 'docId')],
     conditions: [
-      { leftHandSide: of('document', STATUS_PROPERTY), predicate: 'equals',
+      { leftHandSide: of('document', 'status'), predicate: 'equals',
         rightHandSide: { enumMember: 'NonExistent' }, negate: true },
-      { leftHandSide: of('document', STATUS_PROPERTY), predicate: 'equals',
+      { leftHandSide: of('document', 'status'), predicate: 'equals',
         rightHandSide: { enumMember: 'Archived' }, negate: true },
     ],
     publishes: [{
@@ -5084,7 +5261,7 @@ function seedContentDecisionsScripted(modelId) {
     properties: [prop('docId', 'DocumentId')],
     boundary: [bind('document', 'Document', 'docId')],
     conditions: [
-      { leftHandSide: of('document', STATUS_PROPERTY), predicate: 'equalsAny',
+      { leftHandSide: of('document', 'status'), predicate: 'equalsAny',
         rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'PendingChanges' }] },
     ],
     publishes: [{ name: 'DocumentPublished', parameters: { docId: param('docId') } }],
@@ -5096,7 +5273,7 @@ function seedContentDecisionsScripted(modelId) {
     properties: [prop('docId', 'DocumentId')],
     boundary: [bind('document', 'Document', 'docId')],
     conditions: [
-      { leftHandSide: of('document', STATUS_PROPERTY), predicate: 'equalsAny',
+      { leftHandSide: of('document', 'status'), predicate: 'equalsAny',
         rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }, { enumMember: 'PendingChanges' }] },
     ],
     publishes: [{ name: 'DocumentArchived', parameters: { docId: param('docId') } }],
@@ -5154,10 +5331,11 @@ function seedDocumentAuthoring(modelId) {
 
   seedPatch('entity-definition', modelId, 'Document', (document) => {
     document.properties = [
-      seedBindProp(STATUS_PROPERTY, 'DocumentLifecycle'),
+      seedBindProp('status', 'DocumentLifecycle'),
       seedBindProp('currentText', 'DocumentCurrentText'),
       seedBindProp('publishedText', 'DocumentPublishedText'),
     ];
+    document.lifecycle = 'status';
   });
 
   const command = (name, body) => addDefinition('command-definition', modelId, name, body);
@@ -5168,7 +5346,7 @@ function seedDocumentAuthoring(modelId) {
     properties: [prop('id', 'DocumentId')],
     boundary: [bind('document', 'Document', 'id')],
     conditions: [
-      { leftHandSide: of('document', STATUS_PROPERTY), predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' } },
+      { leftHandSide: of('document', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' } },
     ],
     publishes: [{ name: 'DocumentAdded', parameters: { id: param('id') } }],
   });
@@ -5179,7 +5357,7 @@ function seedDocumentAuthoring(modelId) {
     properties: [prop('docId', 'DocumentId'), prop('text', 'string')],
     boundary: [bind('document', 'Document', 'docId')],
     conditions: [
-      { leftHandSide: of('document', STATUS_PROPERTY), predicate: 'equalsAny',
+      { leftHandSide: of('document', 'status'), predicate: 'equalsAny',
         rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }] },
       // Recording an unchanged text is a no-op, and saying so pulls
       // TextUpdated into this command's query — the same move
@@ -5199,7 +5377,7 @@ function seedDocumentAuthoring(modelId) {
     properties: [prop('docId', 'DocumentId')],
     boundary: [bind('document', 'Document', 'docId')],
     conditions: [
-      { leftHandSide: of('document', STATUS_PROPERTY), predicate: 'equalsAny',
+      { leftHandSide: of('document', 'status'), predicate: 'equalsAny',
         rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }] },
       // The content-based decision, in the boundary: publishing is
       // refused exactly while nothing differs — a fresh Draft ("" vs
@@ -5221,7 +5399,7 @@ function seedDocumentAuthoring(modelId) {
     properties: [prop('docId', 'DocumentId')],
     boundary: [bind('document', 'Document', 'docId')],
     conditions: [
-      { leftHandSide: of('document', STATUS_PROPERTY), predicate: 'equalsAny',
+      { leftHandSide: of('document', 'status'), predicate: 'equalsAny',
         rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }] },
     ],
     publishes: [{ name: 'DocumentArchived', parameters: { docId: param('docId') } }],
@@ -5242,7 +5420,7 @@ function seedVerifiedPublish(modelId) {
     properties: [seedProp('docId', 'DocumentId'), seedProp('text', 'string')],
     boundary: [seedBind('document', 'Document', 'docId')],
     conditions: [
-      { leftHandSide: seedOf('document', STATUS_PROPERTY), predicate: 'equalsAny',
+      { leftHandSide: seedOf('document', 'status'), predicate: 'equalsAny',
         rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }] },
       // The proof: what the caller believes it is publishing must be
       // the current text — a stale echo is rejected, which is the
@@ -5349,10 +5527,11 @@ function seedGuardedAuthoring(modelId) {
 
   seedPatch('entity-definition', modelId, 'Document', (document) => {
     document.properties = [
-      seedBindProp(STATUS_PROPERTY, 'DocumentStatus'),
+      seedBindProp('status', 'DocumentStatus'),
       seedBindProp('currentText', 'DocumentCurrentText'),
       seedBindProp('publishedText', 'DocumentPublishedText'),
     ];
+    document.lifecycle = 'status';
   });
 
   const command = (name, body) => addDefinition('command-definition', modelId, name, body);
@@ -5363,7 +5542,7 @@ function seedGuardedAuthoring(modelId) {
     properties: [prop('id', 'DocumentId')],
     boundary: [bind('document', 'Document', 'id')],
     conditions: [
-      { leftHandSide: of('document', STATUS_PROPERTY), predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' } },
+      { leftHandSide: of('document', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' } },
     ],
     publishes: [{ name: 'DocumentAdded', parameters: { id: param('id') } }],
   });
@@ -5374,7 +5553,7 @@ function seedGuardedAuthoring(modelId) {
     properties: [prop('docId', 'DocumentId'), prop('text', 'string')],
     boundary: [bind('document', 'Document', 'docId')],
     conditions: [
-      { leftHandSide: of('document', STATUS_PROPERTY), predicate: 'equalsAny',
+      { leftHandSide: of('document', 'status'), predicate: 'equalsAny',
         rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }, { enumMember: 'PendingChanges' }] },
       { leftHandSide: of('document', 'currentText'), predicate: 'equals',
         rightHandSide: param('text'), negate: true },
@@ -5407,7 +5586,7 @@ function seedGuardedAuthoring(modelId) {
     conditions: [
       // The stored status is trustworthy again, so the five-state
       // guard the scripted baseline used works verbatim.
-      { leftHandSide: of('document', STATUS_PROPERTY), predicate: 'equalsAny',
+      { leftHandSide: of('document', 'status'), predicate: 'equalsAny',
         rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'PendingChanges' }] },
     ],
     publishes: [{
@@ -5422,7 +5601,7 @@ function seedGuardedAuthoring(modelId) {
     properties: [prop('docId', 'DocumentId')],
     boundary: [bind('document', 'Document', 'docId')],
     conditions: [
-      { leftHandSide: of('document', STATUS_PROPERTY), predicate: 'equalsAny',
+      { leftHandSide: of('document', 'status'), predicate: 'equalsAny',
         rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }, { enumMember: 'PendingChanges' }] },
     ],
     publishes: [{ name: 'DocumentArchived', parameters: { docId: param('docId') } }],

@@ -1,6 +1,6 @@
 {
   "$schema": "https://dcb.events/schemas/model/v6.json",
-  "dcbModelVersion": "6.0",
+  "dcbModelVersion": "6.1",
   "name": "Content based decisions (scripted projection)",
   "customTypeDefinitions": [
     {
@@ -102,7 +102,8 @@
           "name": "status",
           "projection": "DocumentStatus"
         }
-      ]
+      ],
+      "lifecycle": "status"
     }
   ],
   "projectionDefinitions": [

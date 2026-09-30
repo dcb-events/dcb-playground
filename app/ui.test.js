@@ -631,14 +631,48 @@ function build(index) {
       'kept — the property that shares it still reads it');
   });
 
-  check('creating an entity gives it a status that is an ordinary projection', () => {
+  check('creating an entity gives it a boolean lifecycle and designates it', () => {
     sandbox.createEntity(active(), 'venue');
     const after = model();
-    eq(after['entity-definitions'].Venue.properties, [{ name: 'status', projection: 'VenueStatus' }], 'bound');
-    const projection = after['projection-definitions'].VenueStatus;
-    eq(projection.valueType, 'VenueStatus', 'typed with the enum of the same name');
+    eq(after['entity-definitions'].Venue.properties, [{ name: 'exists', projection: 'VenueExists' }], 'bound');
+    eq(after['entity-definitions'].Venue.lifecycle, 'exists', 'and designated');
+    const projection = after['projection-definitions'].VenueExists;
+    eq(projection.valueType, 'boolean', 'a boolean — no enum, no custom type');
+    eq(after['custom-type-definitions'].VenueStatus, undefined, 'nothing named VenueStatus exists');
     eq(projection.parameters, [{ name: 'venueId', propertyType: 'VenueId' }], 'kept per venue');
-    eq(sandbox.foldEntityProperty(after, [], 'Venue', 'status', 'v1'), 'NonExistent', 'and folds');
+    eq(sandbox.foldEntityProperty(after, [], 'Venue', 'exists', 'v1'), false, 'and folds');
+  });
+
+  check('the designated lifecycle resolves, whatever it is called', () => {
+    const lifecycle = sandbox.lifecycleOf(model(), 'Venue');
+    eq(lifecycle.property, 'exists', 'the designation names the property');
+    eq(lifecycle.isBoolean, true, 'spelled as a boolean');
+    eq(lifecycle.states, ['false', 'true'], 'two states, as strings like an enum\'s');
+    // The whole point of the designation: the name is free.
+    sandbox.renameMember('entity-definition', active().id, 'Venue', 'property', 'exists', 'isThere');
+    const moved = sandbox.lifecycleOf(model(), 'Venue');
+    eq(moved.property, 'isThere', 'renaming the property moves the designation with it');
+    eq(model()['entity-definitions'].Venue.lifecycle, 'isThere', 'stored, not guessed');
+    sandbox.renameMember('entity-definition', active().id, 'Venue', 'property', 'isThere', 'exists');
+  });
+
+  check('an entity designating a property it does not have is an advisory, not a refusal', () => {
+    const id = active().id;
+    sandbox.updateDefinition('entity-definition', id, 'Venue', {
+      properties: [{ name: 'exists', projection: 'VenueExists' }],
+      lifecycle: 'phase',
+    });
+    eq(model()['entity-definitions'].Venue.lifecycle, 'phase', 'it stored');
+    const said = sandbox.modelAdvisories(model())
+      .filter((a) => a.kind === 'entity-definition' && a.name === 'Venue');
+    eq(said.length, 1, 'and is reported once');
+    eq(/designates "phase"/.test(said[0].message), true, 'naming what is missing');
+    eq(sandbox.lifecycleOf(model(), 'Venue'), null, 'no lifecycle resolves');
+    eq(sandbox.lifecycleRefusal(model(), 'Venue'), 'dangling', 'and the page can say why');
+    sandbox.updateDefinition('entity-definition', id, 'Venue', {
+      properties: [{ name: 'exists', projection: 'VenueExists' }],
+      lifecycle: 'exists',
+    });
   });
 
   check('the shared editor renders on an entity page and on the projections page', () => {
@@ -2127,12 +2161,12 @@ function build(index) {
     eq(course.perState.Archived, [], 'nothing is guarded to run at Archived');
   });
 
-  check('a command with no rule over a status it binds is unguarded', () => {
+  check('a command with no rule over a lifecycle it binds is unguarded', () => {
     const { id, model } = build(0);
     // Built for the purpose rather than borrowed from a shipped model:
-    // a command that *binds* a student and never tests its status. The
-    // shipped Unsubscribe used to be that example, until it stopped
-    // reading the student it never tested.
+    // a command that *binds* a student and never tests whether it
+    // exists. The shipped Unsubscribe used to be that example, until it
+    // stopped reading the student it never tested.
     sandbox.addDefinition('command-definition', id, 'NudgeStudent', {
       properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
       boundary: [{ alias: 'student', entity: 'Student', id: { parameterName: 'studentId' } }],
@@ -2147,12 +2181,12 @@ function build(index) {
       const entry = student.perState[state].find((e) => e.command === 'NudgeStudent');
       eq(entry.unguarded, true, 'flagged unguarded at ' + state);
     }
-    eq(student.perState.Existent.find((e) => e.command === 'SubscribeStudentToCourse').unguarded,
-      false, 'Subscribe carries a student · status rule and is pinned');
-    eq(student.perState.Existent.some((e) => e.command === 'UnsubscribeStudentFromCourse'), false,
+    eq(student.perState.true.find((e) => e.command === 'SubscribeStudentToCourse').unguarded,
+      false, 'Subscribe carries a student · exists rule and is pinned');
+    eq(student.perState.true.some((e) => e.command === 'UnsubscribeStudentFromCourse'), false,
       'and Unsubscribe is absent — it no longer reads a student, so it is not in this machine');
     sandbox.removeDefinition('command-definition', id, 'NudgeStudent');
-    eq(student.terminal, ['Existent'], 'nothing leaves Existent — a derived dead end');
+    eq(student.terminal, ['true'], 'nothing leaves existing — a derived dead end');
   });
 
   check('an unguarded transition is drawn from the initial state, by convention', () => {
@@ -2168,21 +2202,34 @@ function build(index) {
   check('the pricing model derives across both entities', () => {
     const { model } = build(4);
     const order = machineOf(model(), 'Order');
-    eq(order.states, ['NonExistent', 'Existent'], 'OrderStatus is the machine');
-    eq(order.transitions.find((t) => t.event === 'ProductsOrdered').sources, ['NonExistent'],
-      'OrderProducts requires the order not to exist yet');
+    eq(order.states, ['false', 'true'], 'a boolean lifecycle is a two-state machine');
+    eq(order.compact, true, 'and the page draws it as a row, not a diagram');
+    eq(order.transitions.find((t) => t.event === 'ProductsOrdered').sources, ['false'],
+      'OrderProducts requires the order not to exist yet — read off isFalse');
     const product = machineOf(model(), 'Product');
-    eq(product.perState.Existent.map((e) => e.command).sort(),
+    eq(product.perState.true.map((e) => e.command).sort(),
       ['ChangeProductPrice', 'OrderProducts'],
-      'a fanned-out binding still pins the command by its status rule');
+      'a fanned-out binding still pins the command by its isTrue rule');
   });
 
-  check('an entity outside the convention is excluded with its reason', () => {
+  check('an entity designating no lifecycle is excluded with its reason', () => {
     const { id, model } = build(0);
     addDefinition('entity-definition', id, 'Room', { properties: [] });
     const { machines, excluded } = lifecycleMachines(model());
-    eq(machines.some((m) => m.entity === 'Room'), false, 'no machine without a status');
-    eq(excluded.find((e) => e.entity === 'Room').reason, 'no-status', 'and the page can say why');
+    eq(machines.some((m) => m.entity === 'Room'), false, 'no machine without a designation');
+    eq(excluded.find((e) => e.entity === 'Room').reason, 'none', 'and the page can say why');
+  });
+
+  check('a scripted lifecycle is excluded, not advised against', () => {
+    const { model } = build(5);   // content-decisions-scripted
+    const { machines, excluded } = lifecycleMachines(model());
+    eq(machines.some((m) => m.entity === 'Document'), false, 'no machine can be read from a script');
+    eq(excluded.find((e) => e.entity === 'Document').reason, 'scripted', 'the page says why');
+    // The designation is right even though the diagram is impossible, so
+    // nothing complains about it.
+    eq(sandbox.modelAdvisories(model())
+      .filter((a) => a.kind === 'entity-definition' && a.name === 'Document').length, 0,
+      'and it is not an advisory');
   });
 
   check('a negated status rule allows the complement', () => {
@@ -2231,6 +2278,378 @@ function build(index) {
     const archived = archiveGuardedBy([]);
     eq(archived.sources, [], 'no state allows it');
     eq(archived.unguarded, false, 'a read guard, not a missing one');
+  });
+}
+
+// ---------------------------------------------------------------
+// Promoting a boolean lifecycle into a real one, and the suggestion
+// that offers to.
+// ---------------------------------------------------------------
+{
+  const { lifecycleMachines, lifecycleMergeSuggestion, isMonotoneBoolean } = sandbox;
+
+  // A student is the two-state case in every shipped model, so it is
+  // what a promotion is exercised against.
+  const promoted = () => {
+    const { id, model } = build(0);
+    store.set('dcb-playground:model', id);
+    sandbox.mergeIntoLifecycle(model(), 'Student', {
+      typeName: 'StudentStatus', property: 'status', initialState: 'NonExistent',
+      steps: [{ state: 'Existent', from: 'exists' }, { state: 'Graduated', from: null }],
+    });
+    return { id, model };
+  };
+
+  check('promotion invents the enum, renames the property and moves the designation', () => {
+    const { model } = promoted();
+    const student = model()['entity-definitions'].Student;
+    eq(student.lifecycle, 'status', 'the designation followed the rename');
+    eq(student.properties.some((p) => p.name === 'status'), true, 'the property is renamed');
+    eq(student.properties.some((p) => p.name === 'exists'), false, 'and `exists` is gone');
+    eq(model()['custom-type-definitions'].StudentStatus.schema.enum,
+      ['NonExistent', 'Existent', 'Graduated'], 'the enum holds all three, in order');
+    const projection = model()['projection-definitions'].StudentStatus;
+    eq(projection.valueType, 'StudentStatus', 'the projection holds the enum');
+    eq(projection.initialValue, { enumMember: 'NonExistent' }, 'and starts where false did');
+    eq(projection.handlers.find((h) => h.event === 'StudentRegistered').value,
+      { enumMember: 'Existent' }, 'set true became set Existent');
+    eq(model()['projection-definitions'].StudentExists, undefined,
+      'the absorbed fold is gone, nothing referencing it');
+  });
+
+  check('promotion rewrites every rule that guarded the boolean', () => {
+    const { model } = promoted();
+    const register = model()['command-definitions'].RegisterStudent.conditions[0];
+    eq(register, {
+      leftHandSide: { alias: 'student', property: 'status' },
+      predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' },
+    }, 'isFalse became equals NonExistent');
+    // The part worth being exact about: a graduated student still
+    // exists, so "the student exists" is every state the boolean was
+    // true in — not just the one named after it. Narrowing this to
+    // `equals Existent` would silently change what the rule means, and
+    // an earlier cut of this did exactly that.
+    const subscribe = model()['command-definitions'].SubscribeStudentToCourse.conditions
+      .find((c) => c.leftHandSide && c.leftHandSide.alias === 'student');
+    eq(subscribe, {
+      leftHandSide: { alias: 'student', property: 'status' },
+      predicate: 'equalsAny',
+      rightHandSide: [{ enumMember: 'Existent' }, { enumMember: 'Graduated' }],
+    }, 'isTrue became every state it held in');
+  });
+
+  check('two hand-added booleans merge into one lifecycle', () => {
+    // The case the first cut of the suggestion missed entirely: neither
+    // boolean is the designated lifecycle, and both were added by hand.
+    const { id, model } = build(0);
+    store.set('dcb-playground:model', id);
+    addDefinition('event-definition', id, 'StudentExpelled', {
+      properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
+    });
+    addDefinition('projection-definition', id, 'StudentExpulsion', {
+      parameters: [{ name: 'studentId', propertyType: 'StudentId' }],
+      valueType: 'boolean', isList: false, initialValue: false,
+      handlers: [{ event: 'StudentExpelled', operation: 'set', value: true }],
+    });
+    const student = sandbox.deepClone(model()['entity-definitions'].Student);
+    student.properties.push({ name: 'expelled', projection: 'StudentExpulsion' });
+    updateDefinition('entity-definition', id, 'Student', student);
+    const body = sandbox.deepClone(model()['command-definitions'].SubscribeStudentToCourse);
+    body.conditions.push({
+      leftHandSide: { alias: 'student', property: 'expelled' }, predicate: 'isFalse',
+    });
+    updateDefinition('command-definition', id, 'SubscribeStudentToCourse', body);
+
+    eq(sandbox.entityMergeCandidates(model(), 'Student'), ['exists', 'expelled'],
+      'both are offered, in progression order');
+    const suggestion = sandbox.lifecycleMergeSuggestion(
+      model(), model()['command-definitions'].SubscribeStudentToCourse
+    );
+    eq(suggestion.booleans, ['exists', 'expelled'], 'and the command asks for it');
+
+    sandbox.mergeIntoLifecycle(model(), 'Student', {
+      typeName: 'StudentStatus', property: 'status', initialState: 'NonExistent',
+      steps: [{ state: 'Registered', from: 'exists' }, { state: 'Expelled', from: 'expelled' }],
+    });
+    const after = model()['entity-definitions'].Student;
+    eq(after.lifecycle, 'status', 'one designated lifecycle');
+    eq(after.properties.map((p) => p.name), ['status', 'subscriptionCount'],
+      'both booleans absorbed, the merged one where the first of them was');
+    eq(model()['projection-definitions'].StudentStatus.handlers, [
+      { event: 'StudentRegistered', operation: 'set', value: { enumMember: 'Registered' } },
+      { event: 'StudentExpelled', operation: 'set', value: { enumMember: 'Expelled' } },
+    ], 'one handler per absorbed setter, each into its own state');
+    eq(model()['projection-definitions'].StudentExpulsion, undefined, 'the absorbed folds are gone');
+
+    const rules = model()['command-definitions'].SubscribeStudentToCourse.conditions
+      .filter((c) => c.leftHandSide && c.leftHandSide.alias === 'student'
+        && c.leftHandSide.property === 'status');
+    eq(rules, [
+      { leftHandSide: { alias: 'student', property: 'status' }, predicate: 'equalsAny',
+        rightHandSide: [{ enumMember: 'Registered' }, { enumMember: 'Expelled' }] },
+      { leftHandSide: { alias: 'student', property: 'status' }, predicate: 'equalsAny',
+        rightHandSide: [{ enumMember: 'NonExistent' }, { enumMember: 'Registered' }] },
+    ], 'exists became both later states; not-expelled became both earlier ones');
+    eq(sandbox.modelAdvisories(model()).filter((a) => a.name === 'SubscribeStudentToCourse'), [],
+      'and the command is clean afterwards');
+  });
+
+  check('two booleans one event moves cannot become one lifecycle', () => {
+    const { id, model } = build(0);
+    store.set('dcb-playground:model', id);
+    // Both set by StudentRegistered, so the merged fold would need two
+    // handlers for one event — refused before anything is written.
+    addDefinition('projection-definition', id, 'StudentGreeted', {
+      parameters: [{ name: 'studentId', propertyType: 'StudentId' }],
+      valueType: 'boolean', isList: false, initialValue: false,
+      handlers: [{ event: 'StudentRegistered', operation: 'set', value: true }],
+    });
+    const student = sandbox.deepClone(model()['entity-definitions'].Student);
+    student.properties.push({ name: 'greeted', projection: 'StudentGreeted' });
+    updateDefinition('entity-definition', id, 'Student', student);
+    const before = JSON.stringify(model()['entity-definitions'].Student);
+    sandbox.mergeIntoLifecycle(model(), 'Student', {
+      typeName: 'StudentStatus', property: 'status', initialState: 'NonExistent',
+      steps: [{ state: 'Registered', from: 'exists' }, { state: 'Greeted', from: 'greeted' }],
+    });
+    eq(JSON.stringify(model()['entity-definitions'].Student), before, 'nothing was written');
+    eq(model()['custom-type-definitions'].StudentStatus, undefined, 'not even the enum');
+  });
+
+  check('a non-monotone boolean is refused as a stage', () => {
+    const { id, model } = build(0);
+    store.set('dcb-playground:model', id);
+    addDefinition('event-definition', id, 'StudentPaused', {
+      properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
+    });
+    addDefinition('event-definition', id, 'StudentResumed', {
+      properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
+    });
+    addDefinition('projection-definition', id, 'StudentPause', {
+      parameters: [{ name: 'studentId', propertyType: 'StudentId' }],
+      valueType: 'boolean', isList: false, initialValue: false,
+      handlers: [
+        { event: 'StudentPaused', operation: 'set', value: true },
+        { event: 'StudentResumed', operation: 'set', value: false },
+      ],
+    });
+    const student = sandbox.deepClone(model()['entity-definitions'].Student);
+    student.properties.push({ name: 'paused', projection: 'StudentPause' });
+    updateDefinition('entity-definition', id, 'Student', student);
+    eq(sandbox.entityMergeCandidates(model(), 'Student'), ['exists'],
+      'a two-way boolean is not a stage, so it is not offered');
+    sandbox.mergeIntoLifecycle(model(), 'Student', {
+      typeName: 'StudentStatus', property: 'status', initialState: 'NonExistent',
+      steps: [{ state: 'Registered', from: 'exists' }, { state: 'Paused', from: 'paused' }],
+    });
+    eq(model()['custom-type-definitions'].StudentStatus, undefined,
+      'and asking for it anyway is refused');
+  });
+
+  check('a promotion is one undo step', () => {
+    const { model } = promoted();
+    eq(model()['entity-definitions'].Student.lifecycle, 'status', 'promoted');
+    sandbox.undo();
+    const student = model()['entity-definitions'].Student;
+    eq(student.lifecycle, 'exists', 'and one undo puts the whole thing back');
+    eq(model()['custom-type-definitions'].StudentStatus, undefined, 'enum and all');
+    eq(model()['command-definitions'].RegisterStudent.conditions[0].predicate, 'isFalse',
+      'with the rules as they were');
+  });
+
+  check('the promoted machine is drawn as a real lifecycle, not a compact row', () => {
+    const { model } = promoted();
+    const student = lifecycleMachines(model()).machines.find((m) => m.entity === 'Student');
+    eq(student.states, ['NonExistent', 'Existent', 'Graduated'], 'three states');
+    eq(student.compact, false, 'so it earns the band');
+    eq(student.transitions.find((t) => t.event === 'StudentRegistered').sources, ['NonExistent'],
+      'and the rewritten rule still pins the arrow');
+  });
+
+  // The discriminator. A one-way boolean folds into a lifecycle; an
+  // orthogonal one must not, because collapsing it destroys a dimension.
+  const withSecondBoolean = (handlers) => {
+    const { id, model } = build(0);
+    store.set('dcb-playground:model', id);
+    addDefinition('event-definition', id, 'CourseFlagged', {
+      properties: [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false }],
+    });
+    addDefinition('event-definition', id, 'CourseUnflagged', {
+      properties: [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false }],
+    });
+    addDefinition('projection-definition', id, 'StudentFlag', {
+      parameters: [{ name: 'studentId', propertyType: 'StudentId' }],
+      valueType: 'boolean', isList: false, initialValue: false, handlers,
+    });
+    const student = sandbox.deepClone(model()['entity-definitions'].Student);
+    student.properties.push({ name: 'isFlagged', projection: 'StudentFlag' });
+    updateDefinition('entity-definition', id, 'Student', student);
+    const body = sandbox.deepClone(model()['command-definitions'].SubscribeStudentToCourse);
+    body.conditions.push({
+      leftHandSide: { alias: 'student', property: 'isFlagged' }, predicate: 'isFalse',
+    });
+    updateDefinition('command-definition', id, 'SubscribeStudentToCourse', body);
+    return { id, model };
+  };
+
+  check('a one-way boolean is monotone, and the merge is offered', () => {
+    const { model } = withSecondBoolean([
+      { event: 'CourseFlagged', operation: 'set', value: true },
+    ]);
+    eq(isMonotoneBoolean(model(), 'Student', 'isFlagged'), true, 'nothing sets it back');
+    const suggestion = lifecycleMergeSuggestion(
+      model(), model()['command-definitions'].SubscribeStudentToCourse
+    );
+    eq(suggestion && suggestion.entity, 'Student', 'the entity to promote');
+    eq(suggestion.booleans, ['exists', 'isFlagged'],
+      'both booleans, lifecycle first — existence is always the first stage');
+  });
+
+  check('a boolean that goes both ways is not monotone, and nothing is offered', () => {
+    // The `exists && !isPublic` shape: a student can be flagged and
+    // unflagged, so these are not stages of one life. Merging them into
+    // one enum would lose the ability to be existent-and-unflagged.
+    const { model } = withSecondBoolean([
+      { event: 'CourseFlagged', operation: 'set', value: true },
+      { event: 'CourseUnflagged', operation: 'set', value: false },
+    ]);
+    eq(isMonotoneBoolean(model(), 'Student', 'isFlagged'), false, 'one handler sets it back');
+    eq(lifecycleMergeSuggestion(
+      model(), model()['command-definitions'].SubscribeStudentToCourse
+    ), null, 'so the suggestion stays silent');
+  });
+
+  check('a boolean nothing ever sets is not a door either way', () => {
+    const { model } = withSecondBoolean([]);
+    eq(isMonotoneBoolean(model(), 'Student', 'isFlagged'), false, 'no handlers, no direction');
+  });
+
+  check('two rules over one lifecycle alone suggest nothing', () => {
+    const { model } = build(0);
+    eq(lifecycleMergeSuggestion(
+      model(), model()['command-definitions'].SubscribeStudentToCourse
+    ), null, 'the shipped command guards a lifecycle and no second boolean');
+  });
+}
+
+// ---------------------------------------------------------------
+// Saying "the course exists" — rendering only, never storage.
+// ---------------------------------------------------------------
+{
+  const { model } = build(0);
+  const body = () => model()['command-definitions'].SubscribeStudentToCourse;
+  const partsOf = (condition) => sandbox.conditionParts(condition, model(), body());
+
+  check('a read of a designated boolean lifecycle reads as existence', () => {
+    const exists = { leftHandSide: { alias: 'student', property: 'exists' }, predicate: 'isTrue' };
+    eq(partsOf(exists), { left: 'the student', verb: 'exists', right: null }, 'affirmative');
+    eq(partsOf({ ...exists, predicate: 'isFalse' }),
+      { left: 'the student', verb: 'does not exist', right: null }, 'and denied');
+    eq(partsOf({ ...exists, negate: true }),
+      { left: 'the student', verb: 'does not exist', right: null }, 'negation flips it too');
+  });
+
+  check('the sugar is rendering only — nothing is stored differently', () => {
+    const stored = body().conditions.find((c) => c.leftHandSide.alias === 'student');
+    eq(stored, { leftHandSide: { alias: 'student', property: 'exists' }, predicate: 'isTrue' },
+      'an ordinary unary condition over an ordinary property');
+    eq(sandbox.ruleSentence(model(), body(), stored), 'the student exists', 'said in words');
+  });
+
+  check('an enum lifecycle is left to say itself', () => {
+    const status = {
+      leftHandSide: { alias: 'course', property: 'status' },
+      predicate: 'equals', rightHandSide: { enumMember: 'Existent' },
+    };
+    eq(partsOf(status), { left: 'course · status', verb: 'is', right: 'Existent' },
+      'its states are named, and those names are the sentence');
+  });
+
+  check('without a model the reading is literal, and still correct', () => {
+    const exists = { leftHandSide: { alias: 'student', property: 'exists' }, predicate: 'isTrue' };
+    eq(sandbox.conditionParts(exists),
+      { left: 'student · exists', verb: 'holds', right: null }, 'no context, no sugar');
+  });
+
+  check('a boolean machine labels its states off the property', () => {
+    const student = sandbox.lifecycleMachines(model()).machines
+      .find((m) => m.entity === 'Student');
+    eq(sandbox.lifecycleStateWords(student, 'true'), 'exists', 'the true state');
+    eq(sandbox.lifecycleStateWords(student, 'false'), 'does not exist', 'and the false one');
+    eq(sandbox.lifecycleStateWords({ isBoolean: true, property: 'isArchived' }, 'false'),
+      'is not archived', 'an is-prefixed predicate negates in place');
+  });
+}
+
+// ---------------------------------------------------------------
+// Importing a model written before the designation existed.
+// ---------------------------------------------------------------
+{
+  const envelope = (entities, projections, customTypes) => ({
+    $schema: 'https://dcb.events/schemas/model/v6.json',
+    dcbModelVersion: '6.0',
+    name: 'Imported',
+    customTypeDefinitions: customTypes,
+    eventDefinitions: [{ name: 'ThingMade', properties: [
+      { name: 'thingId', propertyType: 'ThingId', isOptional: false, isList: false }] }],
+    entityDefinitions: entities,
+    projectionDefinitions: projections,
+    commandDefinitions: [],
+  });
+  const enumType = { name: 'ThingStatus', schema: { type: 'string', enum: ['NonExistent', 'Existent'] } };
+  const statusProjection = (name) => ({
+    name, parameters: [{ name: 'thingId', propertyType: 'ThingId' }],
+    valueType: 'ThingStatus', isList: false,
+    initialValue: { enumMember: 'NonExistent' },
+    handlers: [{ event: 'ThingMade', operation: 'set', value: { enumMember: 'Existent' } }],
+  });
+
+  const imported = (doc) => {
+    store.clear();
+    sandbox.bumpLogRevision();
+    const result = sandbox.importModelFromEnvelope(doc);
+    const id = typeof result === 'string' ? result : result.modelId;
+    return projectState()[id];
+  };
+
+  check('a pre-6.1 model with a status enum gets the designation, once, at the gate', () => {
+    const model = imported(envelope(
+      [{ name: 'Thing', properties: [{ name: 'status', projection: 'ThingStatus' }] }],
+      [statusProjection('ThingStatus')], [enumType]
+    ));
+    eq(model['entity-definitions'].Thing.lifecycle, 'status', 'inferred and stored');
+    eq(sandbox.lifecycleOf(model, 'Thing').states, ['NonExistent', 'Existent'],
+      'and it resolves as the enum it already was — nothing was converted');
+  });
+
+  check('a property called something else is left alone', () => {
+    // The old convention had one spelling. Guessing past it would be
+    // inventing a designation its author never made.
+    const model = imported(envelope(
+      [{ name: 'Thing', properties: [{ name: 'state', projection: 'ThingState' }] }],
+      [statusProjection('ThingState')], [enumType]
+    ));
+    eq(model['entity-definitions'].Thing.lifecycle, undefined, 'no designation');
+    eq(sandbox.lifecycleRefusal(model, 'Thing'), 'none', 'and the page says so plainly');
+  });
+
+  check('a status that was never an enum is left alone too', () => {
+    const model = imported(envelope(
+      [{ name: 'Thing', properties: [{ name: 'status', projection: 'ThingNote' }] }],
+      [{ name: 'ThingNote', parameters: [{ name: 'thingId', propertyType: 'ThingId' }],
+        valueType: 'string', isList: false, initialValue: null, handlers: [] }],
+      []
+    ));
+    eq(model['entity-definitions'].Thing.lifecycle, undefined,
+      'a string property named status is not a lifecycle');
+  });
+
+  check('a designation already present is never overwritten', () => {
+    const model = imported(envelope(
+      [{ name: 'Thing', lifecycle: 'status', properties: [{ name: 'status', projection: 'ThingStatus' }] }],
+      [statusProjection('ThingStatus')], [enumType]
+    ));
+    eq(model['entity-definitions'].Thing.lifecycle, 'status', 'it came across as written');
   });
 }
 
@@ -2345,7 +2764,7 @@ function build(index) {
     // the chain, so the read stays.
     const body = command('SubscribeStudentToCourse');
     const index = body.conditions.findIndex((c) => c.leftHandSide
-      && c.leftHandSide.alias === 'student' && c.leftHandSide.property === 'status');
+      && c.leftHandSide.alias === 'student' && c.leftHandSide.property === 'exists');
     eq(index >= 0, true, 'the rule about the student is there to drop');
     sandbox.patch('command-definition', 'SubscribeStudentToCourse', (b) => {
       b.conditions.splice(index, 1);
@@ -2536,8 +2955,10 @@ function build(index) {
     // same read, and one compared against a number nobody declared.
     addRule({ target: 'entity:Course', left: A('course', 'status'),
       predicate: 'equals', right: JSON.stringify({ enumMember: 'Existent' }) });
-    addRule({ target: 'entity:Student', left: A('student', 'status'),
-      predicate: 'equals', right: JSON.stringify({ enumMember: 'Existent' }) });
+    // A boolean lifecycle: `isTrue` is offered pre-answered, so the
+    // third question needs no value picked — the rule is "the student
+    // exists" and there is nothing else it could be.
+    addRule({ target: 'entity:Student', left: A('student', 'exists'), predicate: 'isTrue' });
     addRule({ onAlias: 'course', left: A('course', 'subscriptionCount'),
       predicate: 'lessThan', right: A('course', 'capacity') });
     addRule({ onAlias: 'course', left: A('course', 'subscribedStudentIds'),
@@ -2588,6 +3009,219 @@ function build(index) {
     sandbox.closeForms();
   });
 
+}
+
+// ---------------------------------------------------------------
+// The pages the lifecycle change added or reshaped, actually painted.
+//
+// Everything above tests the derivation. These paint it, because a
+// render path that throws takes the whole page with it and nothing
+// else here would notice.
+// ---------------------------------------------------------------
+{
+  const { readable } = sandbox;
+  const has = (text, part, why) =>
+    eq(text.includes(part), true, why + ' — expected the page to contain: ' + part);
+
+  const paint = (view, model, before) => {
+    const main = sandbox.document.createElement('div');
+    sandbox.state.view = view;
+    if (before) before();
+    if (view === 'lifecycles') sandbox.renderLifecycles(model, main);
+    else sandbox.renderEntity(model, main);
+    return textOf(main);
+  };
+
+  for (const [index, slug] of [[0, 'course-simple'], [4, 'pricing-simple'],
+    [5, 'content-decisions-scripted'], [2, 'course-tenant']]) {
+    check(`${slug} paints its Lifecycles page`, () => {
+      const { model } = build(index);
+      store.set('dcb-playground:model', model().id);
+      const text = paint('lifecycles', model());
+      eq(text.length > 0, true, 'something was drawn');
+      const { machines, excluded } = sandbox.lifecycleMachines(model());
+      for (const machine of machines) {
+        has(text, readable(machine.entity), `${machine.entity} is on the page`);
+      }
+      for (const e of excluded) {
+        has(text, readable(e.entity), `${e.entity} is said to be missing, not dropped`);
+      }
+    });
+  }
+
+  check('a boolean machine is drawn compactly and an enum one is not', () => {
+    const { model } = build(0);
+    store.set('dcb-playground:model', model().id);
+    const text = paint('lifecycles', model());
+    has(text, 'Existence only', 'the two weights are separated');
+    has(text, 'Student registered', 'and a boolean machine names what brings one into being');
+  });
+
+  check('an entity page paints its lifecycle in Identity, not the ledger', () => {
+    const { model } = build(0);
+    store.set('dcb-playground:model', model().id);
+    const text = paint('entity', model(), () => { sandbox.state.entity = 'Student'; });
+    has(text, 'exists once', 'the Identity row is there');
+    has(text, 'identified by', 'beside the identifier');
+    eq(/What we know about each one[\s\S]*exists/.test(text), false,
+      'and `exists` is not also a property row');
+  });
+
+  check('the promotion form paints for a boolean lifecycle', () => {
+    const { model } = build(0);
+    store.set('dcb-playground:model', model().id);
+    const text = paint('entity', model(), () => {
+      sandbox.state.entity = 'Student';
+      sandbox.state.promoting = 'Student';
+    });
+    has(text, 'Give it more than two states', 'the form is open');
+    has(text, '— nothing yet —', 'a state with no boolean behind it is expressible');
+    has(text, 'the enum these states belong to', 'and naming is what it asks for');
+    sandbox.closeForms();
+  });
+
+  check('the merge form can drop a boolean and reorder the stages', () => {
+    const { id, model } = build(0);
+    store.set('dcb-playground:model', id);
+    for (const [prop, event, fold] of [['registered', 'DidRegister', 'DidRegisterFold'],
+      ['expelled', 'WasExpelled', 'WasExpelledFold']]) {
+      addDefinition('event-definition', id, event, {
+        properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
+      });
+      addDefinition('projection-definition', id, fold, {
+        parameters: [{ name: 'studentId', propertyType: 'StudentId' }],
+        valueType: 'boolean', isList: false, initialValue: false,
+        handlers: [{ event, operation: 'set', value: true }],
+      });
+      const body = sandbox.deepClone(model()['entity-definitions'].Student);
+      body.properties.push({ name: prop, projection: fold });
+      updateDefinition('entity-definition', id, 'Student', body);
+    }
+    eq(sandbox.entityMergeCandidates(model(), 'Student'), ['exists', 'registered', 'expelled'],
+      'all three are one-way');
+
+    // Absorb only two of the three, in an order the offer would not have
+    // proposed — `exists` stays an ordinary property.
+    sandbox.mergeIntoLifecycle(model(), 'Student', {
+      typeName: 'StudentStatus', property: 'status', initialState: 'Prospective',
+      steps: [{ state: 'Registered', from: 'registered' }, { state: 'Expelled', from: 'expelled' }],
+    });
+    const after = model()['entity-definitions'].Student;
+    eq(after.lifecycle, 'status', 'the merged property is designated');
+    eq(after.properties.some((p) => p.name === 'exists'), true,
+      'the boolean left out stays as its own property');
+    eq(model()['projection-definitions'].StudentExists !== undefined, true,
+      'and so does its fold');
+    eq(model()['custom-type-definitions'].StudentStatus.schema.enum,
+      ['Prospective', 'Registered', 'Expelled'], 'in the order the steps were given');
+  });
+
+  check('the designation picker offers only properties with states', () => {
+    const { id, model } = build(0);
+    store.set('dcb-playground:model', id);
+    eq(sandbox.lifecycleCandidates(model(), 'Student'), ['exists'],
+      'a count is not a lifecycle; a boolean is');
+    eq(sandbox.lifecycleCandidates(model(), 'Course'), ['status'],
+      'an enum property is offered too');
+    const text = paint('entity', model(), () => {
+      sandbox.state.entity = 'Student';
+      sandbox.state.designating = 'Student';
+    });
+    has(text, 'the state is', 'the picker is open');
+    has(text, '— none —', 'and un-designating is possible wherever designating is');
+    sandbox.closeForms();
+  });
+
+  check('designating a different property moves the lifecycle', () => {
+    const { id, model } = build(0);
+    store.set('dcb-playground:model', id);
+    // A hand-built state property, which is the case the picker exists
+    // for: nothing about it came from the scaffold or a promotion.
+    addDefinition('custom-type-definition', id, 'Standing',
+      { schema: { type: 'string', enum: ['Unknown', 'Good', 'Poor'] } });
+    addDefinition('projection-definition', id, 'StudentStanding', {
+      parameters: [{ name: 'studentId', propertyType: 'StudentId' }],
+      valueType: 'Standing', isList: false, initialValue: { enumMember: 'Unknown' },
+      handlers: [{ event: 'StudentRegistered', operation: 'set', value: { enumMember: 'Good' } }],
+    });
+    const student = sandbox.deepClone(model()['entity-definitions'].Student);
+    student.properties.push({ name: 'standing', projection: 'StudentStanding' });
+    updateDefinition('entity-definition', id, 'Student', student);
+    eq(sandbox.lifecycleCandidates(model(), 'Student'), ['exists', 'standing'], 'both eligible');
+
+    const moved = sandbox.deepClone(model()['entity-definitions'].Student);
+    moved.lifecycle = 'standing';
+    updateDefinition('entity-definition', id, 'Student', moved);
+    const lifecycle = sandbox.lifecycleOf(model(), 'Student');
+    eq(lifecycle.property, 'standing', 'the designation moved');
+    eq(lifecycle.isBoolean, false, 'to an enum');
+    eq(lifecycle.states, ['Unknown', 'Good', 'Poor'], 'with its own states');
+    eq(sandbox.modelAdvisories(model()).filter((a) => a.name === 'Student'), [],
+      'and nothing complains — `exists` is now an ordinary property');
+  });
+
+  check('un-designating leaves an entity with no lifecycle, which is allowed', () => {
+    const { id, model } = build(0);
+    store.set('dcb-playground:model', id);
+    const body = sandbox.deepClone(model()['entity-definitions'].Student);
+    delete body.lifecycle;
+    updateDefinition('entity-definition', id, 'Student', body);
+    eq(sandbox.lifecycleOf(model(), 'Student'), null, 'none resolves');
+    eq(sandbox.lifecycleRefusal(model(), 'Student'), 'none', 'and that is the reason given');
+    eq(sandbox.modelAdvisories(model()).filter((a) => a.name === 'Student'), [],
+      'no advisory — an entity need not have one');
+    const text = paint('entity', model(), () => { sandbox.state.entity = 'Student'; });
+    has(text, 'nothing here says when one of these comes into being', 'the row says so');
+  });
+
+  check('the entity page offers the merge where the booleans are', () => {
+    const { id, model } = build(0);
+    store.set('dcb-playground:model', id);
+    addDefinition('event-definition', id, 'StudentExpelled2', {
+      properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
+    });
+    addDefinition('projection-definition', id, 'StudentExpelled2Fold', {
+      parameters: [{ name: 'studentId', propertyType: 'StudentId' }],
+      valueType: 'boolean', isList: false, initialValue: false,
+      handlers: [{ event: 'StudentExpelled2', operation: 'set', value: true }],
+    });
+    const student = sandbox.deepClone(model()['entity-definitions'].Student);
+    student.properties.push({ name: 'expelled', projection: 'StudentExpelled2Fold' });
+    updateDefinition('entity-definition', id, 'Student', student);
+    // No command guards either of them, so the rule wizard would never
+    // get the chance — this is the surface that does.
+    const text = paint('entity', model(), () => { sandbox.state.entity = 'Student'; });
+    has(text, 'exists and expelled are one-way', 'the offer names both booleans');
+    has(text, 'Merge into a lifecycle', 'and offers to take them');
+  });
+
+  check('the merge prompt paints in the decide step', () => {
+    const { id, model } = build(0);
+    store.set('dcb-playground:model', id);
+    addDefinition('event-definition', id, 'StudentSuspended', {
+      properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
+    });
+    addDefinition('projection-definition', id, 'StudentSuspension', {
+      parameters: [{ name: 'studentId', propertyType: 'StudentId' }],
+      valueType: 'boolean', isList: false, initialValue: false,
+      handlers: [{ event: 'StudentSuspended', operation: 'set', value: true }],
+    });
+    const student = sandbox.deepClone(model()['entity-definitions'].Student);
+    student.properties.push({ name: 'isSuspended', projection: 'StudentSuspension' });
+    updateDefinition('entity-definition', id, 'Student', student);
+    const body = sandbox.deepClone(model()['command-definitions'].SubscribeStudentToCourse);
+    body.conditions.push({
+      leftHandSide: { alias: 'student', property: 'isSuspended' }, predicate: 'isFalse',
+    });
+    updateDefinition('command-definition', id, 'SubscribeStudentToCourse', body);
+
+    const main = sandbox.document.createElement('div');
+    sandbox.state.slice = 'SubscribeStudentToCourse';
+    main.appendChild(sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'SubscribeStudentToCourse')));
+    const text = textOf(main);
+    has(text, 'stages of one life', 'the offer is made where the rule was written');
+    has(text, 'Give Student a lifecycle instead', 'with a way to take it');
+  });
 }
 
 finish();

@@ -1,6 +1,6 @@
 {
   "$schema": "https://dcb.events/schemas/model/v6.json",
-  "dcbModelVersion": "6.0",
+  "dcbModelVersion": "6.1",
   "name": "Dynamic Product Price (simple)",
   "customTypeDefinitions": [
     {
@@ -8,26 +8,6 @@
       "schema": {
         "type": "number",
         "minimum": 0
-      }
-    },
-    {
-      "name": "ProductStatus",
-      "schema": {
-        "type": "string",
-        "enum": [
-          "NonExistent",
-          "Existent"
-        ]
-      }
-    },
-    {
-      "name": "OrderStatus",
-      "schema": {
-        "type": "string",
-        "enum": [
-          "NonExistent",
-          "Existent"
-        ]
       }
     },
     {
@@ -117,47 +97,45 @@
       "icon": "📦",
       "properties": [
         {
-          "name": "status",
-          "projection": "ProductStatus"
+          "name": "exists",
+          "projection": "ProductExists"
         },
         {
           "name": "currentPrice",
           "projection": "ProductCurrentPrice"
         }
-      ]
+      ],
+      "lifecycle": "exists"
     },
     {
       "name": "Order",
       "icon": "🧾",
       "properties": [
         {
-          "name": "status",
-          "projection": "OrderStatus"
+          "name": "exists",
+          "projection": "OrderExists"
         }
-      ]
+      ],
+      "lifecycle": "exists"
     }
   ],
   "projectionDefinitions": [
     {
-      "name": "ProductStatus",
+      "name": "ProductExists",
       "parameters": [
         {
           "name": "productId",
           "propertyType": "ProductId"
         }
       ],
-      "valueType": "ProductStatus",
+      "valueType": "boolean",
       "isList": false,
-      "initialValue": {
-        "enumMember": "NonExistent"
-      },
+      "initialValue": false,
       "handlers": [
         {
           "event": "ProductDefined",
           "operation": "set",
-          "value": {
-            "enumMember": "Existent"
-          }
+          "value": true
         }
       ]
     },
@@ -190,25 +168,21 @@
       ]
     },
     {
-      "name": "OrderStatus",
+      "name": "OrderExists",
       "parameters": [
         {
           "name": "orderId",
           "propertyType": "OrderId"
         }
       ],
-      "valueType": "OrderStatus",
+      "valueType": "boolean",
       "isList": false,
-      "initialValue": {
-        "enumMember": "NonExistent"
-      },
+      "initialValue": false,
       "handlers": [
         {
           "event": "ProductsOrdered",
           "operation": "set",
-          "value": {
-            "enumMember": "Existent"
-          }
+          "value": true
         }
       ]
     }
@@ -244,12 +218,9 @@
         {
           "leftHandSide": {
             "alias": "product",
-            "property": "status"
+            "property": "exists"
           },
-          "predicate": "equals",
-          "rightHandSide": {
-            "enumMember": "NonExistent"
-          }
+          "predicate": "isFalse"
         }
       ],
       "publishes": [
@@ -296,12 +267,9 @@
         {
           "leftHandSide": {
             "alias": "product",
-            "property": "status"
+            "property": "exists"
           },
-          "predicate": "equals",
-          "rightHandSide": {
-            "enumMember": "Existent"
-          }
+          "predicate": "isTrue"
         },
         {
           "leftHandSide": {
@@ -367,22 +335,16 @@
         {
           "leftHandSide": {
             "alias": "order",
-            "property": "status"
+            "property": "exists"
           },
-          "predicate": "equals",
-          "rightHandSide": {
-            "enumMember": "NonExistent"
-          }
+          "predicate": "isFalse"
         },
         {
           "leftHandSide": {
             "alias": "product",
-            "property": "status"
+            "property": "exists"
           },
-          "predicate": "equals",
-          "rightHandSide": {
-            "enumMember": "Existent"
-          }
+          "predicate": "isTrue"
         },
         {
           "leftHandSide": {

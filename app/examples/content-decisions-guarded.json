@@ -1,6 +1,6 @@
 {
   "$schema": "https://dcb.events/schemas/model/v6.json",
-  "dcbModelVersion": "6.0",
+  "dcbModelVersion": "6.1",
   "name": "Content based decisions (guarded emissions)",
   "customTypeDefinitions": [
     {
@@ -116,7 +116,8 @@
           "name": "publishedText",
           "projection": "DocumentPublishedText"
         }
-      ]
+      ],
+      "lifecycle": "status"
     }
   ],
   "projectionDefinitions": [

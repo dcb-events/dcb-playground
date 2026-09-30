@@ -126,7 +126,7 @@ function drive(model, log, command, args) {
     eq(log.length, 3, 'log length');
     eq(foldEntityProperty(model, log, 'Course', 'subscriptionCount', 'c1'), 1, 'subscriptionCount');
     eq(foldEntityProperty(model, log, 'Course', 'subscribedStudentIds', 'c1'), ['s1'], 'subscribers');
-    eq(foldEntityProperty(model, log, 'Student', 'status', 's1'), 'Existent', 'student status');
+    eq(foldEntityProperty(model, log, 'Student', 'exists', 's1'), true, 'the student exists');
   });
 
   check('a course cannot be defined twice', () => {
@@ -236,7 +236,7 @@ function drive(model, log, command, args) {
   check('a course cannot be defined for an unregistered tenant', () => {
     const result = evaluateCommand(model, [], 'DefineCourse', { tenantId: 't9', capacity: 5 });
     eq(result.outcome, 'rejected', 'outcome');
-    eq(result.failedRule.text, 'tenant.status == Existent', 'rule');
+    eq(result.failedRule.text, 'tenant.exists isTrue', 'rule');
   });
 }
 

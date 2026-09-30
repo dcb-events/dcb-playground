@@ -985,39 +985,75 @@ function couplingClusters(matrix) {
 
 // ---------- lifecycles ----------
 //
-// Each entity's status read as a state machine. Nothing here is
-// authored — every part is derived from definitions that already
-// exist, through the convention `model.js` documents: a lifecycle is
-// an ordinary enum custom type plus an ordinary property named
-// `status`.
+// Each entity's lifecycle read as a state machine. Nothing here is
+// authored — every part is derived from definitions that already exist,
+// through the designation `model.js` resolves: an entity's `lifecycle`
+// names one of its own properties, and `lifecycleOf` flattens the two
+// spellings that property may have (a boolean, or an enum) into one
+// list of states.
 //
-//   states       the members of the enum typing the status property;
-//   transitions  the status projection's declared handlers — a handler
-//                that sets a member is an arrow into that member, and
-//                the arrow starts wherever the commands publishing its
+//   states       `lifecycleOf`'s states — an enum's members, or
+//                `false`/`true` for the two-state boolean case;
+//   transitions  the lifecycle projection's declared handlers — a
+//                handler that sets a state is an arrow into it, and the
+//                arrow starts wherever the commands publishing its
 //                event are allowed to run;
 //   commands     every command binding the entity, placed by its
-//                status conditions.
+//                conditions over the lifecycle.
 //
-// A command with no condition over a status it touches is *unguarded*:
-// nothing refuses it at any state. That is a fact worth surfacing, not
-// papering over — an unguarded transition is drawn from the initial
-// state only as a convention, and flagged as such, so a missing guard
-// stays visible.
+// A command with no condition over a lifecycle it touches is
+// *unguarded*: nothing refuses it at any state. That is a fact worth
+// surfacing, not papering over — an unguarded transition is drawn from
+// the initial state only as a convention, and flagged as such, so a
+// missing guard stays visible. It is also why the two-state machines
+// are on this page at all rather than filtered off it: a command that
+// creates a thing without checking that it does not exist yet is
+// exactly this bug, and it is commonest in the simplest machine.
 
-// The states `body`'s conditions allow `entityName`'s status to be in,
-// read off every `alias · status equals <member>` condition over an
-// alias binding the entity — the same comparison shape the
-// enum-membership advisory reads (either side may hold the status).
+// Which of `lifecycle`'s states a condition allows, or `null` when this
+// condition says nothing readable about it.
+//
+// An enum is read off `equals` against a member reference and
+// `equalsAny` against a list whose every entry is one — a bare literal
+// in the list makes it unreadable rather than guessed at. A boolean is
+// read off the unary `isTrue`/`isFalse` and off `equals` against a bare
+// `true`/`false`. Any other predicate leaves it unread.
+function lifecycleAllowedStates(condition, lifecycle, other) {
+  const states = lifecycle.states;
+  const only = (keep) => (condition.negate
+    ? states.filter((state) => !keep.includes(state))
+    : states.filter((state) => keep.includes(state)));
+
+  if (lifecycle.isBoolean) {
+    if (condition.predicate === 'isTrue') return only(['true']);
+    if (condition.predicate === 'isFalse') return only(['false']);
+    if (condition.predicate === 'equals' && typeof other === 'boolean') {
+      return only([String(other)]);
+    }
+    return null;
+  }
+  if (condition.predicate === 'equals' && operandSource(other) === 'enum-member') {
+    return only([String(other.enumMember)]);
+  }
+  if (condition.predicate === 'equalsAny' && Array.isArray(other)
+      && other.length && other.every((entry) => operandSource(entry) === 'enum-member')) {
+    return only(other.map((entry) => String(entry.enumMember)));
+  }
+  // An empty `equalsAny` list is still read: "one of nothing" allows no
+  // state, which is what it evaluates to — unreadable would claim the
+  // opposite.
+  if (condition.predicate === 'equalsAny' && Array.isArray(other) && !other.length) {
+    return only([]);
+  }
+  return null;
+}
+
+// The states `body`'s conditions allow `entityName`'s lifecycle to be
+// in, read off every condition over an alias binding that entity.
 // `states: null` means unguarded: the command binds the entity but no
-// condition constrains its status. Only identity is readable this way,
-// negated or not: `equals` against a member reference, and `equalsAny`
-// against a list whose every entry is one — a bare literal in the list
-// makes it unreadable, not guessed at. Any other predicate over the
-// status leaves the command unguarded rather than guessed at. Several
-// conditions (or several aliases) intersect: each is one more thing
-// that must hold.
-function statusConstraint(model, body, entityName, states) {
+// condition constrains its lifecycle. Several conditions (or several
+// aliases) intersect: each is one more thing that must hold.
+function lifecycleConstraint(model, body, entityName, lifecycle) {
   const aliases = new Set((body.boundary || [])
     .filter((binding) => binding && binding.entity === entityName)
     .map((binding) => binding.alias));
@@ -1027,37 +1063,26 @@ function statusConstraint(model, body, entityName, states) {
     for (const side of ['leftHandSide', 'rightHandSide']) {
       const operand = condition[side];
       if (operandSource(operand) !== 'alias-property') continue;
-      if (!aliases.has(operand.alias) || operand.property !== STATUS_PROPERTY) continue;
+      if (!aliases.has(operand.alias) || operand.property !== lifecycle.property) continue;
       const other = condition[side === 'leftHandSide' ? 'rightHandSide' : 'leftHandSide'];
-      let these = null;
-      if (condition.predicate === 'equals' && operandSource(other) === 'enum-member') {
-        these = condition.negate
-          ? states.filter((member) => member !== other.enumMember)
-          : states.filter((member) => member === other.enumMember);
-      } else if (condition.predicate === 'equalsAny' && Array.isArray(other)
-          && other.every((entry) => operandSource(entry) === 'enum-member')) {
-        // An empty list is still read: "one of nothing" allows no
-        // state, which is what it evaluates to — unreadable would
-        // claim the opposite.
-        const listed = other.map((entry) => String(entry.enumMember));
-        these = condition.negate
-          ? states.filter((member) => !listed.includes(member))
-          : states.filter((member) => listed.includes(member));
-      }
+      const these = lifecycleAllowedStates(condition, lifecycle, other);
       if (these === null) continue;
-      allowed = allowed === null ? these : allowed.filter((member) => these.includes(member));
+      allowed = allowed === null ? these : allowed.filter((state) => these.includes(state));
     }
   }
   return { binds: true, states: allowed };
 }
 
 // Every entity's machine, plus the entities that do not yield one and
-// why — an entity without the convention is not an error, it is simply
-// not on this page, and the page should say so rather than silently
+// why — an entity whose lifecycle cannot be read is not an error, it is
+// simply not drawable, and the page should say so rather than silently
 // thin out.
 //
 // Per machine:
-//   states / initial      off the enum and the projection's initial
+//   compact               a boolean lifecycle: two states, existence
+//                         and nothing else, which the page draws in one
+//                         row rather than as a diagram;
+//   states / initial      off `lifecycleOf` and the projection's initial
 //                         value;
 //   transitions           `{event, target, publishers, sources,
 //                         unguarded, conventional}` — `sources` is the
@@ -1070,36 +1095,45 @@ function statusConstraint(model, body, entityName, states) {
 //   terminal              states no drawn transition leaves — with the
 //                         conventional arrows counted, so "terminal"
 //                         matches what the page draws;
-//   opaque                events whose handler touches the status in a
-//                         way this cannot read (a computed value, an
+//   opaque                events whose handler touches the lifecycle in
+//                         a way this cannot read (a computed value, an
 //                         operation other than `set`).
 function lifecycleMachines(model) {
   const machines = [];
   const excluded = [];
   for (const entityName of Object.keys(model['entity-definitions'])) {
-    const { binding, projection } = entityPropertyTarget(model, entityName, STATUS_PROPERTY);
-    if (!binding || !projection) { excluded.push({ entity: entityName, reason: 'no-status' }); continue; }
-    if (scriptOf(projection)) { excluded.push({ entity: entityName, reason: 'scripted' }); continue; }
-    const members = enumMembersFor(model, projection.valueType);
-    if (!members) { excluded.push({ entity: entityName, reason: 'not-enum' }); continue; }
-    const states = members.map(String);
+    const lifecycle = lifecycleOf(model, entityName);
+    if (!lifecycle) {
+      excluded.push({ entity: entityName, reason: lifecycleRefusal(model, entityName) });
+      continue;
+    }
+    const { projection, states } = lifecycle;
 
-    const initial = operandSource(projection.initialValue) === 'enum-member'
-      && states.includes(projection.initialValue.enumMember)
-      ? projection.initialValue.enumMember : null;
+    const initialOperand = projection.initialValue;
+    const initial = lifecycle.isBoolean
+      ? (typeof initialOperand === 'boolean' ? String(initialOperand) : null)
+      : (operandSource(initialOperand) === 'enum-member'
+        && states.includes(String(initialOperand.enumMember))
+        ? String(initialOperand.enumMember) : null);
 
     const transitions = [];
     const opaque = [];
     for (const handler of projection.handlers || []) {
       if (!handler || !handler.event) continue;
-      if (handler.operation !== 'set' || operandSource(handler.value) !== 'enum-member') {
+      const target = handler.operation !== 'set' ? null
+        : (lifecycle.isBoolean
+          ? (typeof handler.value === 'boolean' ? String(handler.value) : null)
+          : (operandSource(handler.value) === 'enum-member'
+            ? String(handler.value.enumMember) : null));
+      if (target === null || !states.includes(target)) {
         opaque.push(handler.event);
         continue;
       }
-      const target = handler.value.enumMember;
       const publishers = publishersOf(model, handler.event).map(({ command }) => ({
         command,
-        sources: statusConstraint(model, model['command-definitions'][command], entityName, states).states,
+        sources: lifecycleConstraint(
+          model, model['command-definitions'][command], entityName, lifecycle
+        ).states,
       }));
       const sources = [...new Set(publishers.flatMap((p) => p.sources || []))];
       const unguarded = publishers.some((p) => p.sources === null);
@@ -1114,7 +1148,7 @@ function lifecycleMachines(model) {
     const perState = {};
     for (const state of states) perState[state] = [];
     for (const [commandName, body] of Object.entries(model['command-definitions'])) {
-      const constraint = statusConstraint(model, body, entityName, states);
+      const constraint = lifecycleConstraint(model, body, entityName, lifecycle);
       if (!constraint.binds) continue;
       const moved = transitions.find((t) =>
         (body.publishes || []).some((emission) => emission && emission.name === t.event));
@@ -1135,14 +1169,130 @@ function lifecycleMachines(model) {
 
     machines.push({
       entity: entityName,
-      property: STATUS_PROPERTY,
-      projection: binding.projection,
-      valueType: projection.valueType,
+      property: lifecycle.property,
+      projection: lifecycle.projectionName,
+      valueType: lifecycle.valueType,
+      isBoolean: lifecycle.isBoolean,
+      compact: lifecycle.isBoolean,
       states, initial, transitions, opaque, perState,
       terminal: states.filter((state) => !leads.has(state)),
     });
   }
   return { machines, excluded };
+}
+
+// ---------- promoting a lifecycle ----------
+//
+// Whether a boolean property is a *one-way door*: every handler sets it
+// away from where it starts, and none sets it back.
+//
+// This is the whole discriminator behind the promotion suggestion, and
+// it is worth being exact about why. `exists && !archived` folds into a
+// three-state lifecycle soundly, because archiving never un-archives —
+// the states are successive and a thing is in exactly one of them.
+// `exists && !isPublic` must not: a course can be existent-and-public
+// or existent-and-private, those are not stages, and collapsing them
+// into one enum destroys a dimension the model was using. Monotonicity
+// is the readable difference. A property nothing sets at all is not a
+// door either way, so it does not qualify.
+function isMonotoneBoolean(model, entityName, propertyName) {
+  const { binding, projection } = entityPropertyTarget(model, entityName, propertyName);
+  if (!binding || !projection) return false;
+  if (projection.valueType !== 'boolean' || projection.isList) return false;
+  if (scriptOf(projection) || derivedOf(projection)) return false;
+  if (typeof projection.initialValue !== 'boolean') return false;
+  const handlers = (projection.handlers || []).filter((handler) => handler && handler.event);
+  if (!handlers.length) return false;
+  return handlers.every((handler) => handler.operation === 'set'
+    && typeof handler.value === 'boolean'
+    && handler.value !== projection.initialValue);
+}
+
+// Which of an entity's properties could be designated its lifecycle:
+// single-valued, folded (not scripted or derived), and holding either a
+// boolean or an enum — the two things that have states to be in.
+//
+// This is what the designation picker offers, and it is deliberately
+// the same test `lifecycleOf` applies, so the picker can never offer a
+// property that would then fail to resolve.
+function lifecycleCandidates(model, entityName) {
+  const entity = model['entity-definitions'][entityName];
+  if (!entity) return [];
+  return (entity.properties || []).filter((binding) => {
+    const projection = model['projection-definitions'][binding.projection];
+    if (!projection || projection.isList) return false;
+    if (scriptOf(projection) || derivedOf(projection)) return false;
+    return projection.valueType === 'boolean' || !!enumMembersFor(model, projection.valueType);
+  }).map((binding) => binding.name);
+}
+
+// The monotone booleans of one entity that `body` guards — the raw
+// material of a merge. In the entity's own declaration order, with the
+// designated lifecycle first when it is one of them, because existence
+// is always the first stage of anything.
+function guardedMonotoneBooleans(model, body, entityName, alias) {
+  const found = new Set();
+  const walk = (condition) => {
+    const operand = condition.leftHandSide;
+    if (operandSource(operand) !== 'alias-property') return;
+    if (operand.alias !== alias || !operand.property) return;
+    if (isMonotoneBoolean(model, entityName, operand.property)) found.add(operand.property);
+  };
+  for (const condition of body.conditions || []) walk(condition);
+  for (const emission of body.publishes || []) {
+    for (const condition of emission.when || []) walk(condition);
+  }
+  return orderedMonotoneBooleans(model, entityName, found);
+}
+
+// Declaration order, lifecycle first. Shared by the rule wizard's offer
+// and the entity page's, so the two can never propose different
+// progressions for the same booleans.
+function orderedMonotoneBooleans(model, entityName, names) {
+  const entity = model['entity-definitions'][entityName];
+  if (!entity) return [];
+  const lifecycle = lifecycleOf(model, entityName);
+  const declared = (entity.properties || []).map((p) => p.name).filter((n) => names.has(n));
+  if (lifecycle && lifecycle.isBoolean && names.has(lifecycle.property)) {
+    return [lifecycle.property, ...declared.filter((n) => n !== lifecycle.property)];
+  }
+  return declared;
+}
+
+// The promotion this command's rules are asking for, or null.
+//
+// Two or more monotone booleans of one entity, guarded by one command.
+// Whether one of them is the designated lifecycle does not matter — what
+// matters is that they are successive one-way doors, which is the same
+// question either way. (It mattered in the first cut of this, and that
+// was a bug: two booleans an author had just added by hand — `registered`
+// and `expelled` — are exactly the shape this is for, and neither of
+// them was the designation.)
+//
+// Still narrow in the way that counts: **monotone**. `registered` and
+// `expelled` are stages; `registered` and `isPublic` are not, and
+// collapsing the second pair into one enum would destroy a dimension.
+// See `isMonotoneBoolean`.
+function lifecycleMergeSuggestion(model, body) {
+  for (const binding of body.boundary || []) {
+    if (!binding || !binding.entity) continue;
+    const booleans = guardedMonotoneBooleans(model, body, binding.entity, binding.alias);
+    if (booleans.length < 2) continue;
+    return { entity: binding.entity, alias: binding.alias, booleans };
+  }
+  return null;
+}
+
+// The same offer, for the entity's own page — where an author who has
+// just added two booleans by hand is actually looking, and where no
+// command need exist yet. Every monotone boolean the entity has, not
+// only the ones some command guards.
+function entityMergeCandidates(model, entityName) {
+  const entity = model['entity-definitions'][entityName];
+  if (!entity) return [];
+  const monotone = new Set((entity.properties || []).map((p) => p.name)
+    .filter((name) => isMonotoneBoolean(model, entityName, name)));
+  return orderedMonotoneBooleans(model, entityName, monotone);
 }
 
 // ---------- features ----------
@@ -1404,9 +1554,73 @@ const PREDICATE_WORDS = {
   isFalse: ['does not hold', 'holds'],
 };
 
+// A boolean property is named as a predicate, so its false state is
+// that predicate denied. Two shapes cover what the scaffold and
+// ordinary naming produce — `isArchived` -> "is not archived",
+// `exists` -> "does not exist" — and anything else falls back to a bare
+// "not …", which is graceless but never wrong. This is the one thing
+// the two-state spelling gives up: an enum's states are named, a
+// boolean's have to be said.
+function negatedPredicateWords(words) {
+  if (/^is\b/.test(words)) return words.replace(/^is\b/, 'is not');
+  const single = /^([a-z]{3,})(e?s)$/.exec(words);
+  if (single) return `does not ${single[1]}`;
+  return 'not ' + words;
+}
+
+// One of a machine's states, in words. An enum state is its member's
+// name; a boolean state has none, so it is said off the property —
+// which is why the page labels the two nodes "exists" and "does not
+// exist" rather than "true" and "false".
+function lifecycleStateWords(machine, state) {
+  if (!machine.isBoolean) return readable(state);
+  const words = propertyWords(machine.property);
+  return state === 'true' ? words : negatedPredicateWords(words);
+}
+
+// A read of a *boolean* designated lifecycle, or null. This is what
+// licenses saying "the course exists" instead of "course · exists
+// holds": the entity designated that property, so the condition is
+// about the thing's existence and can be said that way. Nothing is
+// stored differently — the condition is an ordinary `isTrue` over an
+// ordinary property, and this only decides how it reads.
+//
+// An enum lifecycle is deliberately not sugared. Its states are named,
+// those names are what the modeller chose, and "document · status is
+// one of Draft, Published" is already the sentence they wrote.
+function existenceRead(model, body, operand) {
+  if (!model || !body) return null;
+  if (operandSource(operand) !== 'alias-property' || !operand.property) return null;
+  const binding = (body.boundary || []).find((b) => b && b.alias === operand.alias);
+  if (!binding || !binding.entity) return null;
+  const lifecycle = lifecycleOf(model, binding.entity);
+  if (!lifecycle || !lifecycle.isBoolean) return null;
+  if (lifecycle.property !== operand.property) return null;
+  return { alias: operand.alias, lifecycle };
+}
+
 // A condition as a sentence. Returns parts so a renderer can style the
 // operands without re-parsing the text.
-function conditionParts(condition) {
+//
+// `model` and `body` are optional and only buy the existence wording: a
+// caller without them gets the literal reading, which is correct, just
+// less fluent.
+function conditionParts(condition, model, body) {
+  const read = existenceRead(model, body, condition.leftHandSide);
+  if (read) {
+    // Only when the condition pins the lifecycle to exactly one of its
+    // two states. Anything else is not "it exists" or "it does not" and
+    // is left to say itself.
+    const states = lifecycleAllowedStates(condition, read.lifecycle, condition.rightHandSide);
+    if (states && states.length === 1) {
+      const words = propertyWords(read.lifecycle.property);
+      return {
+        left: 'the ' + propertyWords(read.alias),
+        verb: states[0] === 'true' ? words : negatedPredicateWords(words),
+        right: null,
+      };
+    }
+  }
   const words = PREDICATE_WORDS[condition.predicate] || [condition.predicate, 'not ' + condition.predicate];
   const verb = words[condition.negate ? 1 : 0];
   const left = operandWords(condition.leftHandSide);
@@ -1418,7 +1632,7 @@ function conditionParts(condition) {
 // hands the slice page's rule editor, joined into a string for a
 // read-only overview that has nowhere to hang per-operand styling.
 function ruleSentence(model, body, condition) {
-  const p = conditionParts(condition);
+  const p = conditionParts(condition, model, body);
   const quantifier = quantifierWords(model, body, condition);
   return (quantifier ? quantifier + ', ' : '') + p.left + ' ' + p.verb + (p.right ? ' ' + p.right : '');
 }

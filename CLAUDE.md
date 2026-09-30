@@ -223,6 +223,73 @@ it never works from `file:`.
   spelling only initial values had before; 6.0 added guarded emissions
   and derived projections (below). The importer reads 3.x–6.x
   (`READABLE_MAJORS`) and always writes the current `MODEL_VERSION`.
+  **6.1 is the contrast worth knowing**: entity `lifecycle` is additive
+  in shape *and* a minor, because a 6.0 reader that ignores it loses a
+  derived diagram and misreads nothing — where 4.0's equally additive
+  flag made the old reader error on the case it declared expected.
+- **A lifecycle is designated, not named** (6.1): an entity carries
+  `lifecycle`, naming one of its *own* property bindings — a local name
+  like a command's alias, so it is not a reference slot and
+  `MEMBER_REWRITES['entity-definition:property']` is what moves it on a
+  rename. Nothing keys off the property's spelling any more: `exists` is
+  what the scaffold types, `course-simple`'s Course calls its `status`,
+  and both read the same. Pointing at a *projection* instead was
+  rejected because a condition reads `{alias, property}`, so a lifecycle
+  not bound as a property could never be guarded — which is the one
+  thing a lifecycle is for.
+  **The two-state case is a `boolean`**, not a two-member enum: no
+  custom type, no vocabulary, nothing to learn before writing "the
+  course must exist". `lifecycleOf` (model.js) flattens both spellings
+  into one `states` list of strings (`['false','true']` for a boolean),
+  so the machine, the constraint reader and the diagram never ask which
+  they got; `isBoolean` is for the one thing that differs, how a
+  condition names a state. A third state is a **promotion**
+  (`promoteLifecycle`, index.html): it must invent an enum and name its
+  members, so it is a form, never inferred, and it runs in one `run` —
+  a model whose conditions still say `isTrue` while the projection has
+  become an enum is the incoherent state the log has no migration for.
+  Existence conditions are stored as ordinary `isTrue`/`isFalse` over an
+  ordinary property and only *read* as "the course exists"
+  (`existenceRead` / `conditionParts`, shared.js) — no new predicate,
+  and `evaluate.js` did not change. A **dangling** designation is an
+  advisory; scripted, derived, list or stateless ones are not — they are
+  legitimate models (`content-decisions-scripted` ships one) whose
+  machine cannot be drawn, which is the Lifecycles page's business to
+  say (`lifecycleRefusal`). That page now shows every entity, compact
+  for existence-only and the full band for three states or more,
+  because the unguarded dot matters most in the simplest machine.
+  The offer to promote is made in **two places, never in Problems**: the
+  rule wizard, at the moment a rule brings two of them together, and the
+  entity's own Identity block, where an author who just added two
+  booleans is actually looking and no command need exist yet
+  (`lifecycleMergeSuggestion` / `entityMergeCandidates`). It fires for
+  **two or more monotone booleans of one entity** — whether one is the
+  designation is irrelevant and requiring it was a bug: `registered` and
+  `expelled` added by hand are exactly the shape, and neither is
+  designated. **Monotonicity is the gate that matters**
+  (`isMonotoneBoolean`): `registered`/`expelled` are stages,
+  `registered`/`isPublic` are not, and collapsing the second pair
+  destroys a dimension.
+  `mergeIntoLifecycle` absorbs *n* booleans into one enum, and the
+  condition translation is the subtle part: a boolean absorbed at step
+  *i* held in **every state from *i* onward**, so `exists isTrue` becomes
+  `equalsAny [Existent, Graduated]` — narrowing it to `equals Existent`
+  silently strengthens the rule, which an earlier cut did.
+  `statesWhereHeld` is that translation. Two guards fall out of it: two
+  booleans moved by one event cannot merge (the merged fold would need
+  two handlers for that event), and a non-monotone boolean is refused as
+  a stage even when asked for directly.
+  **Which property is the lifecycle is author-settable** from the
+  Identity row (`designationPicker` / `lifecycleCandidates`) — offering
+  only single-valued boolean and enum properties, plus "none". This
+  reverses an earlier "no picker" decision: it left an author who builds
+  a state property by hand unable to say so, and the promotion is no
+  door to that, since it invents an enum rather than adopting one. Imports infer the designation
+  once, at the gate, from exactly `status` + enum
+  (`inferLifecycleDesignations`) — never at read time, for the same
+  reason `boundary` stays authoritative. The decisions and what was
+  rejected are in
+  `docs/research/2026-09-30-entity-lifecycle-as-boolean-existence.md`.
 - **Guarded emissions (6.0)**: a `publishes` entry may carry
   `when: [conditions]` — same operand and predicate vocabulary as
   `conditions`, evaluated in the same scope. A failing guard _skips_

@@ -1,18 +1,8 @@
 {
   "$schema": "https://dcb.events/schemas/model/v6.json",
-  "dcbModelVersion": "6.0",
+  "dcbModelVersion": "6.1",
   "name": "Course Example (with sequence and tenant)",
   "customTypeDefinitions": [
-    {
-      "name": "StudentStatus",
-      "schema": {
-        "type": "string",
-        "enum": [
-          "NonExistent",
-          "Existent"
-        ]
-      }
-    },
     {
       "name": "CourseStatus",
       "schema": {
@@ -38,16 +28,6 @@
         "pattern": "^c[0-9]+$"
       },
       "isTag": true
-    },
-    {
-      "name": "TenantStatus",
-      "schema": {
-        "type": "string",
-        "enum": [
-          "NonExistent",
-          "Existent"
-        ]
-      }
     },
     {
       "name": "TenantId",
@@ -185,14 +165,15 @@
       "icon": "🧑‍🎓",
       "properties": [
         {
-          "name": "status",
-          "projection": "StudentStatus"
+          "name": "exists",
+          "projection": "StudentExists"
         },
         {
           "name": "subscriptionCount",
           "projection": "StudentSubscriptionCount"
         }
-      ]
+      ],
+      "lifecycle": "exists"
     },
     {
       "name": "Course",
@@ -214,40 +195,38 @@
           "name": "subscribedStudentIds",
           "projection": "CourseSubscribedStudentIds"
         }
-      ]
+      ],
+      "lifecycle": "status"
     },
     {
       "name": "Tenant",
       "icon": "🏢",
       "properties": [
         {
-          "name": "status",
-          "projection": "TenantStatus"
+          "name": "exists",
+          "projection": "TenantExists"
         }
-      ]
+      ],
+      "lifecycle": "exists"
     }
   ],
   "projectionDefinitions": [
     {
-      "name": "StudentStatus",
+      "name": "StudentExists",
       "parameters": [
         {
           "name": "studentId",
           "propertyType": "StudentId"
         }
       ],
-      "valueType": "StudentStatus",
+      "valueType": "boolean",
       "isList": false,
-      "initialValue": {
-        "enumMember": "NonExistent"
-      },
+      "initialValue": false,
       "handlers": [
         {
           "event": "StudentRegistered",
           "operation": "set",
-          "value": {
-            "enumMember": "Existent"
-          }
+          "value": true
         }
       ]
     },
@@ -404,25 +383,21 @@
       ]
     },
     {
-      "name": "TenantStatus",
+      "name": "TenantExists",
       "parameters": [
         {
           "name": "tenantId",
           "propertyType": "TenantId"
         }
       ],
-      "valueType": "TenantStatus",
+      "valueType": "boolean",
       "isList": false,
-      "initialValue": {
-        "enumMember": "NonExistent"
-      },
+      "initialValue": false,
       "handlers": [
         {
           "event": "TenantRegistered",
           "operation": "set",
-          "value": {
-            "enumMember": "Existent"
-          }
+          "value": true
         }
       ]
     },
@@ -495,12 +470,9 @@
         {
           "leftHandSide": {
             "alias": "tenant",
-            "property": "status"
+            "property": "exists"
           },
-          "predicate": "equals",
-          "rightHandSide": {
-            "enumMember": "Existent"
-          }
+          "predicate": "isTrue"
         }
       ],
       "publishes": [
@@ -652,12 +624,9 @@
         {
           "leftHandSide": {
             "alias": "student",
-            "property": "status"
+            "property": "exists"
           },
-          "predicate": "equals",
-          "rightHandSide": {
-            "enumMember": "NonExistent"
-          }
+          "predicate": "isFalse"
         }
       ],
       "publishes": [
@@ -718,12 +687,9 @@
         {
           "leftHandSide": {
             "alias": "student",
-            "property": "status"
+            "property": "exists"
           },
-          "predicate": "equals",
-          "rightHandSide": {
-            "enumMember": "Existent"
-          }
+          "predicate": "isTrue"
         },
         {
           "leftHandSide": {
@@ -856,12 +822,9 @@
         {
           "leftHandSide": {
             "alias": "tenant",
-            "property": "status"
+            "property": "exists"
           },
-          "predicate": "equals",
-          "rightHandSide": {
-            "enumMember": "NonExistent"
-          }
+          "predicate": "isFalse"
         }
       ],
       "publishes": [

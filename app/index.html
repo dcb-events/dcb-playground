@@ -1041,6 +1041,24 @@
   .lc-none { font-size: 12px; color: var(--muted); font-style: italic; white-space: nowrap; }
   .lc-warn { font-size: 10.5px; font-family: inherit; color: var(--rule); white-space: nowrap; }
 
+  /* A compact machine is one grid row, so its caveat has to span the
+     whole of it rather than sit in a column. */
+  .lc-rowwarn { grid-column: 1 / -1; margin-top: 5px; }
+
+  /* The promotion offer, and the form it opens. Both are questions
+     rather than statements, which is why neither looks like a card of
+     something already decided. */
+  .lc-suggest { border-style: dashed; }
+  .ident .lc-offer { align-items: flex-start; }
+  .ident .lc-offer > .tiny { flex: 1 1 320px; }
+  .lc-suggest .why { margin-bottom: 7px; }
+  .fieldrow {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 7px;
+    padding: 4px 0; font-size: 12px;
+  }
+  .fieldrow > .nm { min-width: 130px; color: var(--muted); font-size: 11px; }
+  .fieldrow > input { flex: 0 1 200px; }
+
   .lc-fn { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
   .lc-fn .op { font-family: var(--mono); font-size: 10.5px; }
   .lc-fn .lc-dot { vertical-align: baseline; margin-right: 2px; }
@@ -3249,6 +3267,7 @@ const FORM_KEYS = [
   'scenarioDraft', 'sandboxDraft',
   'projectionScenarioDraft',
   'pendingImport',
+  'promoting', 'designating',
 ];
 
 // What a form was holding while it was open. These outlive the form
@@ -3256,7 +3275,7 @@ const FORM_KEYS = [
 // behind — so they are cleared with the forms but never taken as
 // evidence that one is open.
 const DRAFT_KEYS = ['bindingDraft', 'ruleDraft', 'changeDraft',
-  'watchDraft', 'fieldDraft'];
+  'watchDraft', 'fieldDraft', 'promoteDraft'];
 
 const formOpen = () => FORM_KEYS.some((key) => state[key]);
 
@@ -3775,15 +3794,23 @@ function prefillChangeAdder(model, slice) {
     return target.projection && !scriptOf(target.projection) && !derivedOf(target.projection);
   });
   if (!property) return;
-  const status = (entity.properties || []).find((p) => p.name === STATUS_PROPERTY);
-  const chosen = status || property;
+  const lifecycle = lifecycleOf(model, binding.entity);
+  const designated = lifecycle
+    && (entity.properties || []).find((p) => p.name === lifecycle.property);
+  const chosen = designated || property;
+  // The value that moves it off where it starts. For a boolean lifecycle
+  // that is simply `true` — the whole of "and now it exists".
   let value = '';
-  const projection = entityPropertyTarget(model, binding.entity, chosen.name).projection;
-  const members = projection ? enumMembersFor(model, projection.valueType) : null;
-  if (members) {
-    const initial = projection.initialValue && projection.initialValue.enumMember;
-    const next = members.find((m) => m !== initial);
-    if (next) value = JSON.stringify({ enumMember: next });
+  if (designated && lifecycle.isBoolean) {
+    value = JSON.stringify(true);
+  } else {
+    const projection = entityPropertyTarget(model, binding.entity, chosen.name).projection;
+    const members = projection ? enumMembersFor(model, projection.valueType) : null;
+    if (members) {
+      const initial = projection.initialValue && projection.initialValue.enumMember;
+      const next = members.find((m) => m !== initial);
+      if (next) value = JSON.stringify({ enumMember: next });
+    }
   }
   state.adder = 'chg:' + first.emission.name;
   state.changeDraft = {
@@ -4525,7 +4552,7 @@ function beginReadAdder() {
 // is where it is painted, not what it says.
 function ruleRow(model, slice, condition, i) {
   if (state.editRule === i) return h('div', { class: 'card rule' }, ruleEditor(model, slice, i));
-  const p = conditionParts(condition);
+  const p = conditionParts(condition, model, slice.body);
   const quantifier = quantifierWords(model, slice.body, condition);
   // A rule over an alias declared "may be absent" does not decide on
   // the unset case — it steps aside. Said here, on the rule, so the
@@ -4698,6 +4725,15 @@ function stepDecision(model, slice) {
   body.push(adderSlot('rule', 'rules', '+ rule', () =>
     h('div', { class: 'card' }, ruleEditor(model, slice, null))));
 
+  // Said here and nowhere else. Two rules about one thing — it exists,
+  // and something one-way has not happened to it — are the shape of a
+  // lifecycle stated twice, and this is the moment the author can see
+  // both at once. It is not a defect and does not belong in Problems:
+  // the two-rule model is correct, evaluates correctly and derives the
+  // same DCB. What it gives up is only that the states stay unnamed.
+  const merge = lifecycleMergeSuggestion(model, slice.body);
+  if (merge) body.push(mergePrompt(model, merge));
+
   // Nothing tested is nothing decided. `DefineCourse` really is always
   // allowed: the numbering it reads is read in order to *record* the
   // course's id, which is said beside the event that records it.
@@ -4706,6 +4742,29 @@ function stepDecision(model, slice) {
   }
 
   return step('decide', 'It is only allowed if', ...body);
+}
+
+// The promotion offer, in words the author can check against what they
+// just wrote. It opens the entity's own merge form with a step per
+// boolean already filled in — the one part of the merge that *can* be
+// inferred, because the booleans themselves say what the stages are.
+function mergePrompt(model, merge) {
+  const named = merge.booleans.map(propertyWords);
+  return h('div', { class: 'card rule lc-suggest' },
+    h('div', { class: 'tiny muted why' },
+      `Rules about the ${propertyWords(merge.alias)}: that it `
+      + `${named.slice(0, -1).join(', ')} and ${named[named.length - 1]}. `
+      + 'None of those ever goes back once it holds, so they are stages of one life '
+      + 'rather than separate facts — a lifecycle with a state for each would say it once.'),
+    h('button', {
+      class: 'btn tiny',
+      onclick: () => {
+        closeForms();
+        state.promoting = merge.entity;
+        state.promoteDraft = mergeDraftFor(model, merge.entity, merge.booleans);
+        openEntity(merge.entity);
+      },
+    }, 'Give ' + readable(merge.entity) + ' a lifecycle instead'));
 }
 
 // The read a rule is about but which does not exist yet — the whole
@@ -4895,6 +4954,17 @@ function ruleEditor(model, slice, index, target) {
     .filter((p) => predicatesForType(leftType).includes(p));
   if (!predicateChoices.includes(draft.predicate)) {
     draft.predicate = predicateChoices[0] || draft.predicate;
+  }
+  // A read of a designated boolean lifecycle has one thing worth saying
+  // about it, and `isTrue` is it: "the course exists". Answered for the
+  // author the way a single property answers the second question — the
+  // picker still offers all four, so this is a proposal, and the guard
+  // keeps it to a draft nobody has steered yet (an existing `equals
+  // true` rule opened for editing carries a right-hand side and is left
+  // exactly as its author spelled it).
+  if (!draft.predicateChosen && draft.predicate === 'equals' && !draft.right
+      && existenceRead(model, { boundary: reads }, draftOperand(draft, 'left'))) {
+    draft.predicate = 'isTrue';
   }
   const unary = UNARY_PREDICATES.includes(draft.predicate);
   // `equalsAny` compares against a literal list, so its right half is
@@ -5128,7 +5198,7 @@ function ruleEditor(model, slice, index, target) {
             } else if (draft.predicate === 'equalsAny' && v !== 'equalsAny') {
               draftFromOperand(draft, 'right', entryOperands()[0]);
             }
-            draft.predicate = v; draft.touched = true; render();
+            draft.predicate = v; draft.predicateChosen = true; draft.touched = true; render();
           }),
         ...(unary ? [] : membership
           ? membershipControls(draft, enumMembers)
@@ -5187,7 +5257,7 @@ function emissionGuardRows(model, slice, emission, emissionIndex) {
 
   const rows = (emission.when || []).map((condition, j) => {
     if (editingAt(j)) return h('div', { class: 'card rule' }, ruleEditor(model, slice, j, target));
-    const p = conditionParts(condition);
+    const p = conditionParts(condition, model, slice.body);
     const quantifier = quantifierWords(model, slice.body, condition);
     return h('div', {},
       qrow('div', { cls: 'row', key: `guard:${emissionIndex}:${j}` },
@@ -5588,8 +5658,8 @@ function changeAdder(model, eventName) {
         if (created) {
           state.adder = 'chg:' + eventName;
           state.changeDraft = {
-            eventName, target: JSON.stringify([created, STATUS_PROPERTY]),
-            operation: 'set', value: '',
+            eventName, target: JSON.stringify([created, LIFECYCLE_PROPERTY]),
+            operation: 'set', value: JSON.stringify(true),
           };
           render();
         }
@@ -5793,31 +5863,202 @@ function copyCommandPropertiesIntoEvent(model, commandName, eventName) {
 function createEntity(model, label) {
   const name = toPascal(label);
   if (!name) return toast('Give it a name.', true);
-  // A lifecycle is not required — but almost every entity wants one, so
-  // it is offered as a convenience: an ordinary enum custom type plus an
-  // ordinary `status` property typed with it, both named the way anyone
-  // would type them by hand. In Simple mode neither is ever named: you
-  // say "it exists" by recording a change, not by declaring an enum.
-  const statusType = name + 'Status';
-  const statusProjection = name + toPascal(STATUS_PROPERTY);
+  // Every entity gets a lifecycle, and at first it is the smallest one
+  // there is: a boolean that starts false and is set true by whatever
+  // records that the thing is there. No enum, no custom type, no
+  // vocabulary — the first entity on a blank model introduces exactly
+  // one new word, and it is "exists".
+  //
+  // A third state is what turns this into an enum, and that promotion
+  // has to ask for names, so it is a gesture (`promoteLifecycle`) rather
+  // than something inferred.
+  const lifecycleProjection = name + toPascal(LIFECYCLE_PROPERTY);
   return run(() => {
-    addDefinition('custom-type-definition', model.id, statusType,
-      { schema: { type: 'string', enum: [...DEFAULT_STATUSES] } });
-    // The entity first and bare, because the projection that becomes
-    // its status is partitioned by an identifier the entity is what
+    // The entity first and bare, because the projection that becomes its
+    // lifecycle is partitioned by an identifier the entity is what
     // brings into existence.
     addDefinition('entity-definition', model.id, name, { properties: [] });
-    addDefinition('projection-definition', model.id, statusProjection, {
+    addDefinition('projection-definition', model.id, lifecycleProjection, {
       parameters: [{ name: defaultAlias(name) + 'Id', propertyType: name + 'Id' }],
-      valueType: statusType,
+      valueType: 'boolean',
       isList: false,
-      initialValue: { enumMember: DEFAULT_STATUSES[0] },
+      initialValue: false,
       handlers: [],
     });
     updateDefinition('entity-definition', model.id, name, {
-      properties: [{ name: STATUS_PROPERTY, projection: statusProjection }],
+      properties: [{ name: LIFECYCLE_PROPERTY, projection: lifecycleProjection }],
+      lifecycle: LIFECYCLE_PROPERTY,
     });
     return name;
+  });
+}
+
+// Turning one or more monotone booleans into a real lifecycle.
+//
+// Forced to be a form rather than a button: the enum has to be named,
+// every state has to be named, and the property the booleans collapse
+// into has to be named. None of that is inferable.
+//
+// **The shape.** `steps` is the progression, in order. Step *i* names
+// state *i+1* and, optionally, the boolean whose becoming-true is the
+// arrow into it; state 0 is `initialState`, where nothing has happened
+// yet. So `exists` alone promotes as one step plus a second step with no
+// boolean behind it yet (the "add Archived before anything archives"
+// case), and `registered` + `expelled` promote as two steps with a
+// boolean each.
+//
+// **Why the conditions need real thought.** A boolean absorbed at step
+// *i* held in every state from *i+1* onward — an expelled student was
+// still registered — so `registered isTrue` becomes
+// `equalsAny [Registered, Expelled]`, not `equals Registered`. Getting
+// this wrong would silently narrow every rule that mentioned the
+// boolean, which is the one way a promotion could change what a model
+// means. `statesWhereHeld` is that translation, and it is the reason a
+// merge is worth doing for the author rather than leaving them to it.
+//
+// One `run`, so the whole thing is a single undo step. A half-merged
+// model — conditions still naming a property that no longer exists —
+// is exactly the incoherent state the log has no migration for.
+function mergeIntoLifecycle(model, entityName, { typeName, property, initialState, steps }) {
+  const entity = model['entity-definitions'][entityName];
+  if (!entity) return toast('That entity is gone.', true);
+  const rows = (steps || []).filter((step) => step && (step.state || '').trim());
+  if (!rows.length) return toast('A lifecycle needs at least one state after the first.', true);
+
+  const states = [initialState, ...rows.map((r) => r.state)]
+    .map((name) => toPascal((name || '').trim()));
+  if (states.some((name) => !name)) return toast('Every state needs a name.', true);
+  if (states.length < 3) return toast('A lifecycle needs three states to be worth an enum.', true);
+  if (new Set(states).size !== states.length) return toast('Those states are not distinct.', true);
+
+  const absorbed = rows.map((r) => r.from || null);
+  const taken = absorbed.filter(Boolean);
+  if (new Set(taken).size !== taken.length) {
+    return toast('One property cannot be two states.', true);
+  }
+  for (const name of taken) {
+    if (!isMonotoneBoolean(model, entityName, name)) {
+      return toast(`"${propertyWords(name)}" is not a one-way boolean, so it is not a stage.`, true);
+    }
+  }
+  // One handler per event per projection is a real constraint, so two
+  // booleans moved by the same event cannot become one lifecycle: the
+  // merged fold would need two handlers for it. Said before anything is
+  // written, because the alternative is a refusal halfway through.
+  const byEvent = new Map();
+  for (const name of taken) {
+    const { projection } = entityPropertyTarget(model, entityName, name);
+    for (const handler of projection.handlers || []) {
+      if (!handler || !handler.event) continue;
+      if (byEvent.has(handler.event)) {
+        return toast(`${readable(handler.event)} moves both `
+          + `${propertyWords(byEvent.get(handler.event))} and ${propertyWords(name)}, so they `
+          + 'cannot be one lifecycle — one event moves a lifecycle to one state.', true);
+      }
+      byEvent.set(handler.event, name);
+    }
+  }
+
+  const type = toPascal(typeName || (entityName + 'Status'));
+  const merged = toCamel(property || 'status');
+  const mergedProjection = projectionNameFor(model, entityName, merged);
+  // The states a boolean absorbed at `index` was true in: that step's
+  // own state and every one after it.
+  const statesWhereHeld = (index) => states.slice(index + 1);
+  const asOperand = (list) => (list.length === 1
+    ? { predicate: 'equals', rightHandSide: { enumMember: list[0] } }
+    : { predicate: 'equalsAny', rightHandSide: list.map((name) => ({ enumMember: name })) });
+
+  const partition = (model_, name, index) => {
+    const { projection } = entityPropertyTarget(model_, entityName, name);
+    const lifecycleView = {
+      property: name, isBoolean: true, states: ['false', 'true'],
+    };
+    return { projection, lifecycleView, held: statesWhereHeld(index) };
+  };
+
+  return run(() => {
+    addDefinition('custom-type-definition', model.id, type,
+      { schema: { type: 'string', enum: states } });
+
+    // The merged fold: the first absorbed boolean's partition (they all
+    // share it — an entity property is partitioned by the entity's own
+    // identifier), and one handler per absorbed boolean's setters.
+    const first = taken.length ? entityPropertyTarget(model, entityName, taken[0]).projection : null;
+    const handlers = [];
+    rows.forEach((row, index) => {
+      if (!row.from) return;
+      const { projection } = entityPropertyTarget(model, entityName, row.from);
+      for (const handler of projection.handlers || []) {
+        if (!handler || !handler.event) continue;
+        handlers.push({
+          event: handler.event, operation: 'set',
+          value: { enumMember: states[index + 1] },
+        });
+      }
+    });
+    addDefinition('projection-definition', model.id, mergedProjection, {
+      parameters: first ? deepClone(first.parameters)
+        : [{ name: defaultAlias(entityName) + 'Id', propertyType: idTypeOf(model, entityName) }],
+      valueType: type,
+      isList: false,
+      initialValue: { enumMember: states[0] },
+      handlers,
+    });
+
+    // The entity: the absorbed properties go, the merged one arrives
+    // where the first of them was, and it is designated.
+    const body = deepClone(activeModel()['entity-definitions'][entityName]);
+    const at = (body.properties || []).findIndex((p) => taken.includes(p.name));
+    body.properties = (body.properties || []).filter((p) => !taken.includes(p.name));
+    const entry = { name: merged, projection: mergedProjection };
+    if (at >= 0) body.properties.splice(at, 0, entry); else body.properties.push(entry);
+    body.lifecycle = merged;
+    updateDefinition('entity-definition', model.id, entityName, body);
+
+    // Every rule that named an absorbed boolean, retyped against the
+    // states that boolean was true in.
+    for (const [commandName, commandBody] of Object.entries(activeModel()['command-definitions'])) {
+      const aliases = (commandBody.boundary || [])
+        .filter((b) => b && b.entity === entityName).map((b) => b.alias);
+      if (!aliases.length) continue;
+      const next = deepClone(commandBody);
+      let touched = false;
+      const retype = (condition) => {
+        const operand = condition.leftHandSide;
+        if (operandSource(operand) !== 'alias-property') return;
+        if (!aliases.includes(operand.alias)) return;
+        const index = absorbed.indexOf(operand.property);
+        if (index < 0) return;
+        const view = { property: operand.property, isBoolean: true, states: ['false', 'true'] };
+        const allowed = lifecycleAllowedStates(condition, view, condition.rightHandSide);
+        if (!allowed || allowed.length !== 1) return;
+        const held = statesWhereHeld(index);
+        const list = allowed[0] === 'true' ? held : states.filter((n) => !held.includes(n));
+        if (!list.length) return;
+        operand.property = merged;
+        delete condition.negate;
+        Object.assign(condition, asOperand(list));
+        touched = true;
+      };
+      for (const condition of next.conditions || []) retype(condition);
+      for (const emission of next.publishes || []) {
+        for (const condition of emission.when || []) retype(condition);
+      }
+      if (touched) updateDefinition('command-definition', model.id, commandName, next);
+    }
+
+    // The folds nothing binds or reads any more. Checked rather than
+    // assumed: a projection an author also read directly from a command
+    // stays, and the rule about it dangles visibly instead of vanishing.
+    for (const name of taken) {
+      const projectionName = entityPropertyTarget(model, entityName, name).binding.projection;
+      if (projectionName === mergedProjection) continue;
+      if (!findReferencers(activeModel(), 'projection-definition', projectionName).length) {
+        removeDefinition('projection-definition', model.id, projectionName);
+      }
+    }
+    return merged;
   });
 }
 
@@ -6109,15 +6350,24 @@ function renderEntity(model, main) {
 
   main.appendChild(identityBlock(model, name, entity));
 
+  if (state.promoting === name) main.appendChild(promoteLifecycleForm(model, name));
+
   // The same ledger the Projections page renders, one column narrower:
   // Identity above has already said what every row here is kept per.
+  //
+  // The designated lifecycle is not in it. It sits in Identity instead,
+  // with the identifier — see `identityBlock` for why that is a claim
+  // about what a lifecycle *is* and not a layout preference.
+  const lifecycle = lifecycleOf(model, name);
+  const ledgerProperties = properties.filter((binding) =>
+    !(lifecycle && binding.name === lifecycle.property));
   const section = h('section', { class: 'esection' },
     h('h4', {}, 'What we know about each one'));
 
   section.appendChild(projectionLedger(model, {
     owner: name,
     nameHead: 'property',
-    entries: properties.map((binding) => ({
+    entries: ledgerProperties.map((binding) => ({
       projection: binding.projection, label: propertyWords(binding.name), binding,
     })),
     add: adderSlot('prop:' + name, null, '+ property',
@@ -6128,9 +6378,25 @@ function renderEntity(model, main) {
 
 // The half of an entity nobody authored: the identifier is the only
 // kind of tag a DCB model has, and nothing declared it — it comes
-// with being a thing at all. A lifecycle, unlike the identifier, is not
-// part of this: it is an ordinary enum property, listed below with
-// everything else a modeler chose to track.
+// with being a thing at all.
+//
+// The lifecycle belongs here too, and that is a reversal: this block
+// used to say a lifecycle was "an ordinary enum property, listed below
+// with everything else a modeler chose to track". That was right while a
+// lifecycle was one arbitrary enum among however many an entity had. It
+// stopped being right when the entity began designating exactly one —
+// because existence is not something a modeller chose to track, it is
+// the precondition of everything else they track. Two rows that read as
+// a sentence: what makes one of these one of these, and whether there is
+// one at all.
+//
+// The identifier row is a read-only pointer — changing it happens in
+// Custom Types. The lifecycle row is not: which property is the
+// lifecycle is a designation the author makes, so it is editable here.
+// (It was read-only at first, on the argument that a picker nobody needs
+// is a concept everybody has to read past. That was wrong in practice:
+// an author who has just built a state property by hand has no way to
+// say so, and the promotion is not a door to that case.)
 //
 // The identifier itself is an ordinary custom type, created alongside
 // the entity — this row is a read-only pointer at it, not an editor.
@@ -6152,8 +6418,253 @@ function identityBlock(model, name, entity) {
     }, readable(idType), advanced() ? h('span', { class: 'tech' }, idType) : null),
     h('span', { class: 'tiny muted' }, 'the tag every event about one of these carries — and what everything below is folded per')));
 
+  box.appendChild(lifecycleRow(model, name, entity));
   return box;
 }
+
+// The lifecycle's row in Identity: what it is, what moves it, and the
+// two things that can be done to it — designate a different property, or
+// merge one-way booleans into a real lifecycle.
+//
+// An empty lifecycle is not a gap to hide: "nothing records that one of
+// these is there yet" is the most useful thing a blank model's first
+// entity page can say, because recording it is the next thing to do.
+function lifecycleRow(model, name, entity) {
+  const lifecycle = lifecycleOf(model, name);
+  const rows = h('div', {});
+
+  if (!lifecycle) {
+    const refusal = lifecycleRefusal(model, name);
+    rows.appendChild(h('div', { class: 'irow' },
+      h('span', { class: 'nm' }, 'its state'),
+      h('span', { class: 'tiny muted' }, refusal === 'none'
+        ? 'nothing here says when one of these comes into being'
+        : LIFECYCLE_REFUSAL_WORDS[refusal] || refusal),
+      h('span', { class: 'grow' }),
+      designateButton(model, name)));
+  } else {
+    const target = entityPropertyTarget(model, name, lifecycle.property);
+    const setters = (target.projection.handlers || [])
+      .filter((handler) => handler && handler.event);
+    const row = h('div', { class: 'irow' },
+      h('span', { class: 'nm' }, lifecycle.isBoolean ? 'exists once' : 'its state'),
+      h('span', {
+        class: 'chip editable', title: 'Open ' + readable(lifecycle.projectionName),
+        onclick: () => goToProjection(lifecycle.projectionName),
+      }, setters.length ? setters.map((handler) => readable(handler.event)).join(', ')
+        : propertyWords(lifecycle.property),
+      advanced() ? h('span', { class: 'tech' }, lifecycle.property) : null));
+
+    if (!setters.length) {
+      row.appendChild(h('span', { class: 'tiny muted' },
+        'nothing records this yet — every rule that asks whether one of these '
+        + 'exists will answer no'));
+    } else if (lifecycle.isBoolean) {
+      row.appendChild(h('span', { class: 'tiny muted' }, 'and exists from then on'));
+    } else {
+      row.appendChild(h('span', { class: 'tiny muted' },
+        `one of ${lifecycle.states.map((state) => readable(state)).join(', ')}`));
+    }
+    row.appendChild(h('span', { class: 'grow' }));
+    if (lifecycle.isBoolean) {
+      row.appendChild(reveal(h('button', {
+        class: 'btn tiny',
+        title: 'Give this more than two states',
+        onclick: () => { closeForms(); state.promoting = name; render(); },
+      }, '+ state')));
+    }
+    row.appendChild(designateButton(model, name));
+    rows.appendChild(row);
+  }
+
+  // The offer, where an author who has just added two booleans is
+  // looking. The rule wizard makes the same offer at the moment a rule
+  // brings them together; this one needs no command to exist yet.
+  const candidates = entityMergeCandidates(model, name);
+  if (candidates.length >= 2 && state.promoting !== name) {
+    rows.appendChild(h('div', { class: 'irow lc-offer' },
+      h('span', { class: 'nm' }, ''),
+      h('span', { class: 'tiny muted' },
+        candidates.map(propertyWords).join(' and ')
+        + ' are one-way — each holds from some event onward and never goes back. '
+        + 'That makes them stages of one life rather than separate facts.'),
+      h('span', { class: 'grow' }),
+      reveal(h('button', {
+        class: 'btn tiny',
+        onclick: () => {
+          closeForms();
+          state.promoting = name;
+          state.promoteDraft = mergeDraftFor(model, name, candidates);
+          render();
+        },
+      }, 'Merge into a lifecycle'))));
+  }
+
+  if (state.designating === name) rows.appendChild(designationPicker(model, name, entity));
+  return rows;
+}
+
+function designateButton(model, name) {
+  const choices = lifecycleCandidates(model, name);
+  if (!choices.length) return null;
+  return reveal(h('button', {
+    class: 'btn tiny',
+    title: 'Say which property holds the state one of these is in',
+    onclick: () => {
+      const open = state.designating === name;
+      closeForms();
+      state.designating = open ? null : name;
+      render();
+    },
+  }, 'Designate'));
+}
+
+// Which property is the lifecycle. A short list, because the only
+// properties eligible are the ones with states to be in — and "none",
+// because an entity need not have a lifecycle and un-saying it has to be
+// possible wherever saying it is.
+function designationPicker(model, name, entity) {
+  const choices = lifecycleCandidates(model, name);
+  const current = entity.lifecycle || '';
+  const set = (value) => run(() => {
+    const body = deepClone(activeModel()['entity-definitions'][name]);
+    if (value) body.lifecycle = value; else delete body.lifecycle;
+    updateDefinition('entity-definition', model.id, name, body);
+    state.designating = null;
+  });
+  return h('div', { class: 'irow' },
+    h('span', { class: 'nm' }, 'the state is'),
+    pick([['', '— none —'], ...choices.map((c) => [c, propertyWords(c)])], current, set),
+    h('span', { class: 'tiny muted' },
+      'only a single boolean or enum property can be one — everything else has no states to be in'));
+}
+
+// The draft the merge form opens holding: one step per boolean, named
+// after it, with the first state named for the absence of all of them.
+// Every name is a proposal; the form exists because none of them can be
+// known.
+function mergeDraftFor(model, entityName, candidates) {
+  return {
+    typeName: entityName + 'Status',
+    property: 'status',
+    initialState: 'NonExistent',
+    steps: candidates.map((from) => ({
+      from,
+      state: toPascal(from.replace(/^is/, '')) || 'Existent',
+    })),
+    extra: '',
+  };
+}
+
+// The merge form. Every field is a name, because naming is the whole of
+// what cannot be inferred — which property the states collapse into,
+// what the enum is called, and what each state is called.
+//
+// Two shapes reach it, and it is one form because they are one gesture:
+// a single boolean growing a state nothing sets yet ("add Archived
+// before anything archives"), and several one-way booleans absorbed into
+// the stages they already were. The rows say which is which — a step
+// with a boolean behind it names what moves into that state, a step
+// without one says nothing does yet.
+function promoteLifecycleForm(model, entityName) {
+  const lifecycle = lifecycleOf(model, entityName);
+  const candidates = entityMergeCandidates(model, entityName);
+  if (!state.promoteDraft) {
+    state.promoteDraft = candidates.length >= 2
+      ? mergeDraftFor(model, entityName, candidates)
+      : {
+        typeName: entityName + 'Status',
+        property: 'status',
+        initialState: 'NonExistent',
+        steps: [
+          ...(lifecycle && lifecycle.isBoolean
+            ? [{ from: lifecycle.property, state: 'Existent' }] : []),
+          { from: null, state: '' },
+        ],
+      };
+  }
+  const draft = state.promoteDraft;
+
+  const field = (key, label, hint) => h('label', { class: 'fieldrow' },
+    h('span', { class: 'nm' }, label),
+    h('input', {
+      type: 'text', value: draft[key] || '',
+      oninput: (e) => { draft[key] = e.target.value; },
+    }),
+    hint ? h('span', { class: 'tiny muted' }, hint) : null);
+
+  // Which boolean moves it into this state is a picker, not a label, and
+  // that is what makes the form able to say things the offer cannot
+  // guess: which of several booleans is the *first* stage, and which one
+  // to leave alone as an ordinary property. Order is the progression, so
+  // it has to be the author's to set.
+  const taken = draft.steps.map((s) => s.from).filter(Boolean);
+  const stepRow = (step, index) => h('label', { class: 'fieldrow' },
+    h('span', { class: 'nm' }, index === 0 ? 'then it is' : 'then'),
+    h('input', {
+      type: 'text', value: step.state || '', placeholder: 'a state',
+      oninput: (e) => { step.state = e.target.value; },
+    }),
+    h('span', { class: 'tiny muted' }, 'once'),
+    pick([['', '— nothing yet —'],
+      ...candidates.filter((c) => c === step.from || !taken.includes(c))
+        .map((c) => [c, propertyWords(c)])],
+    step.from || '', (value) => {
+      step.from = value || null;
+      // The state name followed the boolean, so it follows the change —
+      // unless the author has already written their own.
+      if (value && (!step.state || step.state === toPascal((step.from || '').replace(/^is/, '')))) {
+        step.state = toPascal(value.replace(/^is/, ''));
+      }
+      render();
+    }),
+    draft.steps.length > 1 ? h('button', {
+      class: 'btn tiny', type: 'button',
+      title: step.from
+        ? `Leave ${propertyWords(step.from)} as its own property`
+        : 'Drop this state',
+      onclick: () => { draft.steps.splice(index, 1); render(); },
+    }, 'Remove') : null);
+
+  const form = h('section', { class: 'esection' },
+    h('h4', {}, candidates.length >= 2 ? 'Merge these into one lifecycle'
+      : 'Give it more than two states'),
+    h('div', { class: 'muted tiny why' },
+      'Two states need no vocabulary — a thing either exists or it does not. More than two '
+      + 'do, so this is where the names come from. Every rule about the properties being '
+      + 'absorbed is rewritten to ask about the state instead, in one step you can undo.'),
+    field('property', 'the property', 'what the states are held in from now on'),
+    field('typeName', 'the type', 'the enum these states belong to'),
+    field('initialState', 'at first', 'before anything has happened'),
+    ...draft.steps.map(stepRow));
+
+  form.appendChild(h('div', { class: 'row' },
+    h('button', {
+      class: 'btn tiny', type: 'button',
+      onclick: () => { draft.steps.push({ from: null, state: '' }); render(); },
+    }, '+ another state'),
+    h('span', { class: 'grow' }),
+    h('button', {
+      class: 'btn primary tiny',
+      onclick: () => {
+        const merged = mergeIntoLifecycle(model, entityName, draft);
+        if (merged) { state.promoting = null; state.promoteDraft = null; render(); }
+      },
+    }, candidates.length >= 2 ? 'Merge' : 'Promote'),
+    h('button', {
+      class: 'btn tiny',
+      onclick: () => { state.promoting = null; state.promoteDraft = null; render(); },
+    }, 'Cancel')));
+  return form;
+}
+
+const LIFECYCLE_REFUSAL_WORDS = {
+  dangling: 'designates a property this entity does not declare',
+  scripted: 'its state is folded by a script, so it cannot be read here',
+  derived: 'its state is derived rather than folded',
+  list: 'its state holds a list',
+  stateless: 'its state is typed with something that has no states',
+};
 
 // ---------- the ledger ----------
 //
@@ -8143,10 +8654,25 @@ function renderRuleMap(model, main) {
 
 // ---------- lifecycles ----------
 //
-// Each entity's status drawn as the machine `lifecycleMachines`
+// Each entity's lifecycle drawn as the machine `lifecycleMachines`
 // derives (shared.js): state bubbles on an open band, event-labelled
 // wires between them, and the commands allowed at a state kept in a
 // popover until the state is hovered, focused or pinned.
+//
+// Two weights, because nearly every entity is on this page now that a
+// two-state lifecycle is an ordinary boolean. A machine that is only
+// existence gets one compact row; anything with three or more states
+// gets the band. Filtering the two-state ones off instead would have
+// been quieter and wrong: the unguarded dot is this page's most useful
+// output, and a command that brings a thing into being without checking
+// it does not exist yet is exactly that bug, in exactly the machine a
+// filter would have hidden.
+
+// The machine, named the way a caveat about it reads: "course · status",
+// or just "student · exists".
+function machineWords(machine) {
+  return memberWords(readable(machine.entity).toLowerCase(), machine.property);
+}
 
 const LC_GAP = 150;   // between two nodes: an arrow and its event label
 const LC_NODE_H = 46;
@@ -8204,7 +8730,7 @@ function lifecycleLayout(machine) {
   const nodes = [];
   let x = 46;
   order.forEach((state, i) => {
-    const label = readable(state);
+    const label = lifecycleStateWords(machine, state);
     const w = Math.max(120, Math.min(210, 40 + label.length * 8));
     nodes.push({ state, x, y: 56 + (i % 2 ? 18 : 0), w, index: i });
     x += w + LC_GAP;
@@ -8274,22 +8800,47 @@ function renderLifecycles(model, main) {
   main.appendChild(h('header', {},
     h('div', { class: 'name' }, 'Lifecycles'),
     h('div', { class: 'muted small' },
-      'Each entity’s status as a machine — every state its enum declares, the events that move '
-      + 'it from one to the next, and the commands allowed at each state. All of it is derived: '
-      + 'a lifecycle is an ordinary enum plus a property named “status” typed with it.')));
+      'Each entity’s lifecycle as a machine — every state it can be in, the events that move '
+      + 'it from one to the next, and the commands allowed at each state. All of it is derived '
+      + 'from the property the entity designates as its lifecycle.')));
 
   const { machines, excluded } = lifecycleMachines(model);
   if (!machines.length) {
-    main.appendChild(h('div', { class: 'empty' },
-      'No entity has a lifecycle yet — give one a “status” property typed with an enum '
-      + 'and its machine appears here.'));
+    // "Nothing to draw" and "nothing designated" are different answers,
+    // and a model whose only lifecycle is scripted is the second. Saying
+    // the first would be telling the author their designation did not
+    // land.
+    const designated = excluded.filter((e) => e.reason !== 'none');
+    main.appendChild(h('div', { class: 'empty' }, designated.length
+      ? 'Nothing here can be drawn as a machine, though a lifecycle is designated.'
+      : 'No entity has a lifecycle yet — an entity designates one of its own properties as '
+        + 'the state it is in, and its machine appears here.'));
+    if (excluded.length) main.appendChild(lifecycleExclusions(excluded));
     return;
   }
 
-  main.appendChild(h('div', { class: 'muted small', style: 'margin-bottom:4px' },
-    'Hover or click a state for the commands allowed there.'));
+  // Existence-only machines first and together: they are one line each,
+  // and reading them as a list says something a row of identical
+  // two-node diagrams would bury — which things this model knows only
+  // whether they are there, and which command is trusted to say so.
+  const compact = machines.filter((m) => m.compact);
+  const full = machines.filter((m) => !m.compact);
 
-  machines.forEach((machine, index) => renderLifecycleMachine(model, main, machine, index));
+  if (compact.length) {
+    main.appendChild(h('h3', { class: 'rulemap-feature' },
+      full.length ? 'Existence only' : 'Existence'));
+    main.appendChild(h('div', { class: 'muted small', style: 'margin-bottom:6px' },
+      'Two states, so no vocabulary — these either exist or they do not. '
+      + 'Add a third state from the entity’s own page.'));
+    compact.forEach((machine) => renderCompactLifecycle(model, main, machine));
+  }
+
+  if (full.length) {
+    if (compact.length) main.appendChild(h('h3', { class: 'rulemap-feature' }, 'Lifecycles'));
+    main.appendChild(h('div', { class: 'muted small', style: 'margin-bottom:4px' },
+      'Hover or click a state for the commands allowed there.'));
+    full.forEach((machine, index) => renderLifecycleMachine(model, main, machine, index));
+  }
 
   const anyUnguarded = machines.some((m) => lifecycleUnguarded(m).length);
   if (anyUnguarded) {
@@ -8310,20 +8861,72 @@ function renderLifecycles(model, main) {
   for (const machine of machines) {
     if (!machine.opaque.length) continue;
     main.appendChild(h('div', { class: 'lc-fn' },
-      `${readable(machine.entity)} · status is also touched by `
+      `${machineWords(machine)} is also touched by `
       + machine.opaque.map(readable).join(', ')
       + ' in a way this page cannot read (a computed value or a non-set operation).'));
   }
-  if (excluded.length) {
-    const reasons = {
-      'no-status': 'no status property',
-      'not-enum': 'its status is not typed with an enum',
-      scripted: 'its status projection is scripted',
-    };
-    main.appendChild(h('div', { class: 'lc-fn' }, 'Not on this page: '
-      + excluded.map((e) => `${readable(e.entity)} (${reasons[e.reason] || e.reason})`).join(', ')
-      + '.'));
+  if (excluded.length) main.appendChild(lifecycleExclusions(excluded));
+}
+
+// Who is not drawn, and why. Every reason here is a legitimate model,
+// not a defect — only `dangling` is also an advisory — so this is a
+// footnote rather than a warning.
+function lifecycleExclusions(excluded) {
+  const reasons = {
+    none: 'designates no lifecycle',
+    dangling: 'designates a property it does not declare',
+    scripted: 'its lifecycle is folded by a script',
+    derived: 'its lifecycle is derived',
+    list: 'its lifecycle holds a list',
+    stateless: 'its lifecycle is typed with something that has no states',
+  };
+  return h('div', { class: 'lc-fn' }, 'Not on this page: '
+    + excluded.map((e) => `${readable(e.entity)} (${reasons[e.reason] || e.reason})`).join(', ')
+    + '.');
+}
+
+// A boolean lifecycle in one row: what brings the thing into being, what
+// is allowed once it is there, and — the reason this is on the page at
+// all — the dot on anything that never checks.
+function renderCompactLifecycle(model, main, machine) {
+  const creators = machine.transitions.filter((t) => t.target === 'true');
+  const unguarded = lifecycleUnguarded(machine);
+  const guarded = (machine.perState.true || []).filter((e) => !e.unguarded);
+
+  const row = h('div', { class: 'card command rulemap-row' },
+    h('div', { class: 'rulemap-cmd' },
+      h('button', {
+        class: 'lc-ename', type: 'button', title: 'Open ' + readable(machine.entity),
+        onclick: () => openEntity(machine.entity),
+      }, h('i', { class: 'ic' }, entityIcon(model, machine.entity)), readable(machine.entity))),
+    h('div', { class: 'rulemap-arrow' }, '→'),
+    h('div', { class: 'rulemap-rules' },
+      creators.length
+        ? creators.map((t) => h('div', { class: 'rulemap-rule' },
+          eventRef(model, t.event, { cls: 'chip event tiny linkable' }),
+          h('span', { class: 'verb' }, ' brings one into being'),
+          t.unguarded ? h('span', {
+            class: 'lc-dot',
+            title: t.publishers.map((p) => readable(p.command)).join(', ')
+              + ' carries no rule over ' + machineWords(machine)
+              + ' — it would run even for one that already exists',
+          }) : null))
+        : h('div', { class: 'empty tiny' }, 'nothing records one of these yet')),
+    h('div', { class: 'rulemap-arrow' }, '→'),
+    h('div', { class: 'rulemap-events' },
+      guarded.length
+        ? h('div', { class: 'tiny muted' },
+          guarded.length + ' command' + (guarded.length === 1 ? '' : 's')
+          + ' require one to exist')
+        : h('div', { class: 'empty tiny' }, 'nothing requires one to exist')));
+
+  if (unguarded.length) {
+    row.appendChild(h('div', { class: 'lc-fn lc-rowwarn' },
+      h('span', { class: 'lc-dot' }),
+      ' no rule over ' + machineWords(machine) + ': '
+      + unguarded.map(readable).join(', ')));
   }
+  main.appendChild(row);
 }
 
 function renderLifecycleMachine(model, main, machine, index) {
@@ -8385,7 +8988,7 @@ function renderLifecycleMachine(model, main, machine, index) {
       t.unguarded ? h('span', {
         class: 'lc-dot',
         title: (via || 'This event’s command') + ' carries no rule over '
-          + readable(machine.entity).toLowerCase() + ' · status',
+          + machineWords(machine),
       }) : null));
   }
 
@@ -8395,7 +8998,7 @@ function renderLifecycleMachine(model, main, machine, index) {
       band.appendChild(h('div', {
         class: 'lc-loop', style: `left:${node.x + node.w / 2}px; top:${node.y - 42}px`,
         title: rows.stays.length + ' command' + (rows.stays.length === 1 ? '' : 's')
-          + ' leave the status unchanged',
+          + ' leave it where it is',
       }, rows.stays.length + ' stay'));
     }
 
@@ -8413,7 +9016,8 @@ function renderLifecycleMachine(model, main, machine, index) {
         const on = hot.classList.toggle('on');
         e.currentTarget.setAttribute('aria-expanded', on ? 'true' : 'false');
       },
-    }, h('span', { class: 'st', title: readable(node.state) }, readable(node.state)),
+    }, h('span', { class: 'st', title: lifecycleStateWords(machine, node.state) },
+      lifecycleStateWords(machine, node.state)),
       caps.length ? h('span', { class: 'cap' }, caps.join(' · ')) : null));
 
     const count = rows.moves.length + rows.stays.length;
@@ -8434,17 +9038,16 @@ function lifecycleRowsView(model, machine, rows, unguardedNames) {
       class: 'cmd', type: 'button', title: 'Open ' + readable(entry.command),
       onclick: () => goToCommand(entry.command),
     }, commandIcon(model, entry.command) + ' ' + readable(entry.command)),
-    entry.target ? h('span', { class: 'to' }, '→ ' + readable(entry.target)) : null,
+    entry.target ? h('span', { class: 'to' }, '→ ' + lifecycleStateWords(machine, entry.target)) : null,
     entry.unguarded ? h('span', {
       class: 'lc-dot',
-      title: 'No rule over ' + readable(machine.entity).toLowerCase()
-        + ' · status — would run at any state',
+      title: 'No rule over ' + machineWords(machine) + ' — would run at any state',
     }) : null);
 
   const out = [];
   if (rows.moves.length) out.push(h('h4', {}, 'Moves on'), ...rows.moves.map(row));
   if (rows.stays.length) {
-    out.push(h('h4', {}, rows.moves.length ? 'Stays here' : 'Allowed here · status unchanged'),
+    out.push(h('h4', {}, rows.moves.length ? 'Stays here' : 'Allowed here · unchanged'),
       ...rows.stays.map(row));
   }
   if (!out.length) {
