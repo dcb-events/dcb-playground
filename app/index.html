@@ -5642,6 +5642,19 @@ function stepChanges(model, slice) {
   return step('changes', 'Which changes what we know', h('div', {}, cards));
 }
 
+// The "does what" control. A picker while there is a choice, and the
+// verb itself once there is not — which is every fold but a list or an
+// integer. A one-option `<select>` is not a choice, it is a control that
+// looks like one, and this row already asks three questions.
+function operationControl(operations, draft) {
+  if (operations.length === 1) {
+    draft.operation = operations[0];
+    return h('span', { class: 'verb' }, OPERATION_WORDS[operations[0]] || operations[0]);
+  }
+  return pick(operations.map((op) => [op, OPERATION_WORDS[op] || op]), draft.operation,
+    (v) => { draft.operation = v; draft.touched = true; render(); });
+}
+
 function changeAdder(model, eventName) {
   const event = model['event-definitions'][eventName];
 
@@ -5719,13 +5732,9 @@ function changeAdder(model, eventName) {
     : null;
   const targetEnumMembers = targetProjection ? enumMembersFor(model, targetProjection.valueType) : null;
   const targetType = targetProjection ? targetProjection.valueType : null;
+  const targetIsBoolean = targetType === 'boolean' && !targetProjection.isList;
   const offerProperty = (p) => !targetType || p.propertyType === targetType;
-  const offerSuccessor = (() => {
-    if (!targetType) return true;
-    if (targetEnumMembers) return false;
-    const cls = classifyType(model, targetType);
-    return cls.kind !== 'simple' || ['integer', 'string'].includes(targetType);
-  })();
+  const offerSuccessor = !targetType || hasSuccessor(model, targetType);
   const values = [
     ...(event ? event.properties : []).filter(offerProperty).flatMap((p) => [
       [JSON.stringify({ eventProperty: p.name }), "the event's " + propertyWords(p.name)],
@@ -5733,6 +5742,13 @@ function changeAdder(model, eventName) {
         "the one after the event's " + propertyWords(p.name)]] : []),
     ]),
     [JSON.stringify({ currentValue: true }), 'its current value'],
+    // A boolean's two values are as much a closed set as an enum's
+    // members, so they are picked rather than typed. Unlike an enum's,
+    // they sit *beside* the literal row rather than replacing it: a
+    // handler already storing `true` reopens through the literal (that
+    // is what `draftFromOperand` does with any primitive), and taking
+    // the row away would strand every boolean fold the models ship.
+    ...(targetIsBoolean ? [['true', 'true'], ['false', 'false']] : []),
     ...(targetEnumMembers || []).map((m) =>
       [JSON.stringify({ enumMember: m }), propertyWords(targetPropertyName) + ' · ' + readable(m)]),
     ...(targetEnumMembers ? [[NEW, '+ New member…']] : []),
@@ -5747,6 +5763,10 @@ function changeAdder(model, eventName) {
     draft.value = '';
   }
   if (!draft.value) draft.value = values.length ? values[0][0] : '';
+
+  const operations = targetProjection ? operationsFor(model, targetProjection)
+    : Object.keys(OPERATION_WORDS);
+  if (!operations.includes(draft.operation)) draft.operation = operations[0];
 
   const targetSel = pick(targets, draft.target, (v) => {
     if (v === NEW) { closeForms(); state.addingProp = { eventName }; return render(); }
@@ -5798,8 +5818,7 @@ function changeAdder(model, eventName) {
       class: 'adder',
       onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); submitChange(); } },
     }, targetSel,
-      pick(Object.entries(OPERATION_WORDS), draft.operation,
-        (v) => { draft.operation = v; draft.touched = true; }),
+      operationControl(operations, draft),
       ...operandPicker(values, draft, 'value', { allowLiteral: !targetEnumMembers }),
       h('button', { class: 'btn', onclick: submitChange }, '+ Record a change')))];
 
@@ -7552,10 +7571,15 @@ function partitionTypeOptions(model) {
 function handlerValueChoices(model, draft, event) {
   const properties = event ? (event.properties || []) : [];
   const out = [];
+  // Only where the held type has a next value. Offered unconditionally
+  // this proposed "the one after true" on a boolean fold and "the one
+  // after Draft" on an enum — both stored fine and then failed
+  // validation, which is the wrong place to find out.
+  const successors = hasSuccessor(model, draft.valueType);
   for (const p of properties.filter((p2) => p2.propertyType === draft.valueType)) {
     out.push([JSON.stringify({ eventProperty: p.name }),
       p.isList ? `all of its ${propertyWords(p.name)}` : propertyWords(p.name)]);
-    if (!p.isList) {
+    if (!p.isList && successors) {
       out.push([JSON.stringify({ successor: { eventProperty: p.name } }),
         `the one after ${propertyWords(p.name)}`]);
     }
@@ -7564,6 +7588,11 @@ function handlerValueChoices(model, draft, event) {
   const enumMembers = enumMembersFor(model, draft.valueType);
   if (enumMembers) {
     for (const m of enumMembers) out.push([JSON.stringify({ enumMember: m }), readable(m)]);
+  }
+  // A boolean's two values, for the same reason an enum's members are
+  // here: a closed set is picked, not typed.
+  if (draft.valueType === 'boolean' && !draft.isList) {
+    out.push(['true', 'true'], ['false', 'false']);
   }
   return out;
 }
@@ -7911,8 +7940,7 @@ function projectionFields(model, draft, { entityName } = {}) {
       pick(eventChoicesFor(handler), handler.event,
         (v) => { handler.event = v; handler.value = ''; handler.valueText = ''; render(); },
         '— which event? —'),
-      pick(operations.map((op) => [op, OPERATION_WORDS[op] || op]), handler.operation,
-        (v) => { handler.operation = v; render(); }, '— do what? —'),
+      operationControl(operations, handler),
       ...(event
         ? operandPicker(values, handler, 'value', { allowLiteral: !enumMembers })
         : [pick([], '', () => {}, '— pick an event first —')]),

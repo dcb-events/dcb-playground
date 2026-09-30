@@ -2654,6 +2654,109 @@ function build(index) {
 }
 
 // ---------------------------------------------------------------
+// What a change may do to a fold, and what it may set it to — offered
+// per type rather than as one table for everything.
+// ---------------------------------------------------------------
+{
+  const { operationsFor, hasSuccessor, handlerValueChoices } = sandbox;
+
+  check('the operations offered follow the type held', () => {
+    const { model } = build(0);
+    eq(operationsFor(model(), { valueType: 'boolean', isList: false }), ['set'],
+      'a boolean only ever becomes something — it does not go up by or gain');
+    eq(operationsFor(model(), { valueType: 'CourseStatus', isList: false }), ['set'],
+      'nor does an enum');
+    eq(operationsFor(model(), { valueType: 'integer', isList: false }),
+      ['set', 'increment', 'decrement'], 'an integer counts');
+    eq(operationsFor(model(), { valueType: 'StudentId', isList: true }),
+      ['set', 'append', 'remove'], 'and a list gains and loses');
+  });
+
+  check('the change adder offers only the operations the target admits', () => {
+    const { id, model } = build(0);
+    store.set('dcb-playground:model', id);
+    const painted = (entity, property) => {
+      sandbox.state.adder = 'chg:StudentRegistered';
+      sandbox.state.changeDraft = {
+        eventName: 'StudentRegistered',
+        target: JSON.stringify([entity, property]),
+        operation: 'set', value: '',
+      };
+      const main = sandbox.document.createElement('div');
+      main.appendChild(sandbox.changeAdder(model(), 'StudentRegistered'));
+      return main;
+    };
+    // The reported bug: a boolean was offered every operation there is.
+    const bool = textOf(painted('Student', 'exists'));
+    eq(/goes up by|goes down by|gains|loses/.test(bool), false,
+      'nothing an existence flag cannot do is on screen');
+    eq(bool.includes('becomes'), true, 'only "becomes", and it is said rather than picked');
+
+    const counted = painted('Student', 'subscriptionCount');
+    const ops = findAll(counted, (n) => n.tag === 'select')
+      .map((sel) => (sel.children || []).map(textOf).join('|'))
+      .find((text) => text.includes('goes up by'));
+    eq(!!ops, true, 'an integer still gets the picker, because it has a choice');
+    sandbox.closeForms();
+  });
+
+  check('a boolean target offers true and false as values', () => {
+    const { id, model } = build(0);
+    store.set('dcb-playground:model', id);
+    sandbox.state.adder = 'chg:StudentRegistered';
+    sandbox.state.changeDraft = {
+      eventName: 'StudentRegistered',
+      target: JSON.stringify(['Student', 'exists']),
+      operation: 'set', value: '',
+    };
+    const main = sandbox.document.createElement('div');
+    main.appendChild(sandbox.changeAdder(model(), 'StudentRegistered'));
+    const text = textOf(main);
+    eq(text.includes('true') && text.includes('false'), true, 'both are pickable');
+    // Picked, they are the values themselves — the picker row is the
+    // JSON, so it round-trips through `draftOperand` untouched.
+    eq(sandbox.draftOperand({ value: 'true' }, 'value'), true, 'true parses to true');
+    eq(sandbox.draftOperand({ value: 'false' }, 'value'), false, 'and false to false');
+    sandbox.closeForms();
+  });
+
+  check('"the one after" is offered only where a next value exists', () => {
+    const { model } = build(0);
+    eq(hasSuccessor(model(), 'integer'), true, 'integers count up');
+    eq(hasSuccessor(model(), 'CourseId'), true, 'and so do scalar identifiers');
+    eq(hasSuccessor(model(), 'boolean'), false, 'there is no value after true');
+    eq(hasSuccessor(model(), 'CourseStatus'), false, 'and an enum is a set, not a sequence');
+
+    const event = { properties: [{ name: 'flag', propertyType: 'boolean', isList: false }] };
+    const offered = handlerValueChoices(model(), { valueType: 'boolean', isList: false }, event)
+      .map(([, label]) => label);
+    eq(offered.some((label) => label.startsWith('the one after')), false,
+      'so the editor does not propose what validation would then refuse');
+    eq(offered.includes('true') && offered.includes('false'), true,
+      'it proposes the two values instead');
+  });
+
+  check('a successor the editor no longer offers is still refused if written', () => {
+    const { id } = build(0);
+    let refused = null;
+    try {
+      sandbox.updateDefinition('projection-definition', id, 'StudentExists', {
+        parameters: [{ name: 'studentId', propertyType: 'StudentId' }],
+        valueType: 'boolean', isList: false, initialValue: false,
+        handlers: [{ event: 'StudentRegistered', operation: 'set',
+          value: { successor: { eventProperty: 'studentId' } } }],
+      });
+    } catch (error) { refused = error.message; }
+    // The write path takes it (only structure refuses there); the
+    // advisory is where it is said.
+    const said = sandbox.modelAdvisories(sandbox.projectState()[id])
+      .filter((a) => a.name === 'StudentExists');
+    eq(refused !== null || said.length > 0, true,
+      'the editor and the checker agree, whichever one gets there first');
+  });
+}
+
+// ---------------------------------------------------------------
 // `equalsAny` — the membership predicate across the pure UI layer.
 // ---------------------------------------------------------------
 {

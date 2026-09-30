@@ -1017,6 +1017,24 @@ function operationsFor(model, target) {
   return ['set'];
 }
 
+// Whether a value of this type has a *next* one — which is what decides
+// whether "the one after …" is worth offering as a handler operand.
+//
+// A scalar value type, tag-marked or not, is a string underneath, so it
+// counts up. An enum does not: its members are a set, and "the next
+// member" means nothing. Neither does a boolean.
+//
+// Extracted so the editors offering the operand and the validator
+// refusing it read the same rule off the same line. They did not, and
+// the projection editor offered "the one after true" on a boolean fold —
+// a choice that stored fine and then failed validation.
+function hasSuccessor(model, valueType) {
+  const cls = classifyType(model, valueType);
+  const underlying = cls.kind === 'simple' ? valueType
+    : (enumMembersFor(model, valueType) ? 'enum' : 'string');
+  return underlying === 'integer' || underlying === 'string';
+}
+
 // Walks every operand inside a command body.
 function forEachCommandOperand(body, visit) {
   for (const binding of body.boundary || []) {
@@ -1940,18 +1958,12 @@ function validateHandlers(model, label, target, handlers) {
   // walking into it. It is where numbering lives: a value set to the
   // successor of what an event carried *is* the next value to issue,
   // at every point in its life.
-  const successorTypes = ['integer', 'string'];
   const checkOperand = (operand, where) => {
     if (operandSource(operand) === 'successor') {
-      // A scalar value type, tag-marked or not, is a string underneath,
-      // so it has a successor. An enum does not: its members are a
-      // set, and "the next member" means nothing. (A composite has no
-      // successor either, but a projection never holds one — its
-      // valueType is refused before this runs.)
-      const cls = classifyType(model, target.valueType);
-      const underlying = cls.kind === 'simple' ? target.valueType
-        : (enumMembersFor(model, target.valueType) ? 'enum' : 'string');
-      if (!successorTypes.includes(underlying)) {
+      // `hasSuccessor` is the rule; this is where breaking it is
+      // refused. (A composite has no successor either, but a projection
+      // never holds one — its valueType is refused before this runs.)
+      if (!hasSuccessor(model, target.valueType)) {
         throw new DomainError(
           `${where} takes a successor, but ${label} is typed ${target.valueType}. ` +
           'A successor is defined on integers and on strings ending in digits.'

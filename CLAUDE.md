@@ -179,6 +179,21 @@ it never works from `file:`.
   the course only: which student is asserted by the caller, and whether
   they are in the course is answered off the course.
 
+- **An editor offers what the held type admits.** `operationsFor` and
+  `hasSuccessor` (model.js) are the two rules, and both the change adder
+  and the projection's handler editor read them — `operationControl`
+  renders the verb as plain text where there is only one, since a
+  one-option `<select>` is a control that looks like a choice. This was
+  wrong in both directions once: the change adder offered the whole
+  `OPERATION_WORDS` table regardless of type (a boolean was offered
+  "goes up by" and "gains"), and both editors offered "the one after …"
+  for booleans and enums, which stores fine and then fails validation.
+  `hasSuccessor` exists so the editor offering an operand and the
+  validator refusing it cannot read different rules. A boolean's two
+  values are picked like an enum's members, but *beside* the literal row
+  rather than instead of it — `draftFromOperand` turns any stored
+  primitive back into a literal, so removing that row would strand every
+  boolean fold the shipped models carry.
 - **Every edit goes through a command function** in `model.js`, and every
   command funnels into `appendEvents` — the seam where undo marks are taken
   (`onAppend`), so buttons and agent tools are undoable alike. New editing
