@@ -132,12 +132,18 @@ it never works from `file:`.
   rule now spans what used to be two steps, and asking it all at once
   put five pickers in a row nobody could read as a sentence. A rule
   added from a read's own card, and every guard, starts at the second
-  question; a rule opened for editing opens whole. Answering reveals
-  the next question — there is no Next button, and the first question
-  is deliberately *not* pre-answered, or the row would advance on its
-  own and put everything on screen at once, which is what the staging
-  exists to avoid. Revealing only ever moves forward, so going back to
-  change what is being read never hides the rule written about it. A test authors
+  question; a rule opened for editing opens whole. There is no Next
+  button: **which questions are on screen is derived from what has been
+  answered**, never accumulated by the act of answering. That is the
+  row's correctness, not a style choice — gate a question on a change
+  event and any pre-filled picker deadlocks, because a `<select>`
+  already showing the value you want fires nothing when you pick it,
+  which is what stranded an entity whose single property was filled in
+  for you. The first question is deliberately *not* pre-answered, or the
+  row would answer itself and put every control on screen at once.
+  Its picker offers only reads the command does not have yet — a read it
+  already makes carries its own "+ rule about …" button, which is the
+  other door into the same wizard and opens on the second question. A test authors
   `SubscribeStudentToCourse` through the three questions and compares
   the result to the shipped definition. Its first question offers only
   what the command can reach — entities some operand already in scope

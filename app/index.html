@@ -2858,7 +2858,7 @@ function draftFromOperand(draft, key, operand) {
 }
 
 function operandPicker(choices, draft, key, {
-  placeholder, allowLiteral = true, onNew, newLabel, onPicked,
+  placeholder, allowLiteral = true, onNew, newLabel,
 } = {}) {
   const rows = [
     ...choices,
@@ -2871,10 +2871,6 @@ function operandPicker(choices, draft, key, {
     // A pick is the modeler's hand on the row: from here on, leaving
     // it is finishing it, not declining it — see `commitPendingField`.
     draft.touched = true;
-    // What answering this picker reveals, where it is one question of
-    // several. A literal answers nothing until it is typed, so it does
-    // not count as picked.
-    if (onPicked && v !== LITERAL) onPicked(v);
     render();
   }, placeholder)];
   if (draft[key] === LITERAL) {
@@ -4781,11 +4777,6 @@ function ruleEditor(model, slice, index, target) {
     || (editingExisting || target
       ? null
       : undefined);
-  const aliasRows = (slice.reads || []).filter(Boolean).map((b) => [
-    'alias:' + b.alias,
-    propertyWords(b.alias) + (b.entity ? ' · ' + readable(b.entity) : ' · projection'),
-    b.entity ? entityIcon(model, b.entity) : undefined,
-  ]);
   const alreadyRead = new Set((slice.reads || []).filter(Boolean).map((b) => b.entity).filter(Boolean));
   // Only what this command could actually reach. An entity is offered
   // when something already in scope could identify one — a command
@@ -4810,7 +4801,13 @@ function ruleEditor(model, slice, index, target) {
       (alreadyRead.has(n) ? 'another ' : '') + readable(n) + '…',
       entityIcon(model, n),
     ]);
-  const targetRows = [...aliasRows, ...newRows, [NEW, '+ New entity…']];
+  // Only reads this command does not have yet. A read it already makes
+  // is not offered here, because it already carries its own "+ rule
+  // about …" button — that is where a second rule about the same
+  // instance belongs, and offering it twice made the same rule
+  // reachable two ways with nothing to tell them apart. "Another
+  // Course…" is a different matter: it is a different instance.
+  const targetRows = [...newRows, [NEW, '+ New entity…']];
   const chooseTarget = scoped === undefined;
   // Deliberately not defaulted. The row advances when the author
   // answers a question, so the first question has to be unanswered —
@@ -5034,19 +5031,21 @@ function ruleEditor(model, slice, index, target) {
   // opens whole — the staging is for writing one, not for re-reading
   // one.
   const READ_STAGE = 0, VALUE_STAGE = 1, TEST_STAGE = 2;
-  // A rule added from a read's own card knows its first answer, and a
-  // guard is always written against reads that already exist — both
-  // start at the second question.
-  const firstStage = chooseTarget ? READ_STAGE : VALUE_STAGE;
-  if (draft.stage === undefined || draft.stage < firstStage) {
-    draft.stage = editingExisting ? TEST_STAGE : firstStage;
-  }
-  const stage = draft.stage;
-  // Answering reveals the next question — there is no Next to press.
-  // It only ever moves forward: a stage already on screen stays there,
-  // so going back to change the thing being read does not hide the
-  // rule written about it.
-  const reveal_ = (next) => { draft.stage = Math.max(draft.stage, next); draft.touched = true; };
+  // What is on screen is *derived* from what has been answered, never
+  // accumulated by the act of answering. That distinction is the whole
+  // correctness of this row: gate a question on a change event and any
+  // pre-filled picker deadlocks, because a `<select>` that already
+  // shows the value you want fires nothing when you pick it. An entity
+  // with exactly one property did precisely that — its only property is
+  // filled in for you, so there was no event left to advance on, and
+  // the rule could never be finished.
+  //
+  // Derived, the single-property case is simply already answered, and
+  // the next question is already there. Nothing needs a Next button and
+  // nothing can get stuck.
+  const readSettled = !chooseTarget || (!!chosenTarget && (!draft.newRead || !!pending));
+  const valueSettled = draftOperand(draft, 'left') !== undefined;
+  const stage = !readSettled ? READ_STAGE : (valueSettled ? TEST_STAGE : VALUE_STAGE);
 
   // A question and its controls. The label is what makes the stack
   // read as a form rather than as a row that happens to wrap.
@@ -5069,12 +5068,11 @@ function ruleEditor(model, slice, index, target) {
         pick(targetRows, chosenTarget, (v) => {
           if (v === NEW) { closeForms(); state.newEntityAt = 'rules'; return render(); }
           draft.target = v;
+          // The value picked for the old target cannot mean anything
+          // against the new one. Clearing it is also what puts the
+          // second question back into the unanswered state the stage is
+          // derived from.
           draft.left = '';
-          // Which of its values comes next. A new read's identifier
-          // source appears at the same time, already picked and still
-          // on screen — it is part of *this* question, not the next
-          // one, so revealing the next does not put it out of reach.
-          if (v) reveal_(VALUE_STAGE);
           draft.touched = true;
           render();
         }, '— what? —'),
@@ -5109,7 +5107,6 @@ function ruleEditor(model, slice, index, target) {
             onNew: boundEntities.length
               ? () => { state.addingProp = { at: 'rule' }; render(); }
               : undefined,
-            onPicked: (v) => { if (v) reveal_(TEST_STAGE); },
           }));
 
   // ---------- stage three: what must be true of it? ----------
@@ -5345,8 +5342,12 @@ function stepEmits(model, slice) {
       h('div', { class: 'round-head' },
         h('span', { class: 'rule' }),
         h('span', { class: 'label' }, 'to record this, it reads')),
+      // `[]` rather than nothing: a read here has no rules by
+      // definition, but it still offers to take one — and taking one is
+      // exactly what moves it over to the decide step, since a rule is
+      // what makes a read part of the decision.
       ...caused.map((binding) =>
-        readCard(model, slice, binding, slice.reads.indexOf(binding), []))));
+        readCard(model, slice, binding, slice.reads.indexOf(binding), [], []))));
   }
 
   return step('emits', 'When it succeeds, this happened', ...body);

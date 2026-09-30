@@ -1489,8 +1489,10 @@ function build(index) {
     const values = targetOptions('SubscribeStudentToCourse');
     eq(values.some((v) => v.startsWith('projection:')), false,
       'no projections — a rule is never about a folded value');
-    eq(values.includes('entity:Course'), true, 'a Course — the payload carries a course id');
-    eq(values.includes('entity:Student'), true, 'a Student — and a student id');
+    eq(values.some((v) => v.startsWith('alias:')), false,
+      'and no read it already makes — those carry their own "+ rule about …" button');
+    eq(values.includes('entity:Course'), true, 'another Course — the payload carries a course id');
+    eq(values.includes('entity:Student'), true, 'another Student — and a student id');
     sandbox.closeForms();
   });
 
@@ -2464,27 +2466,39 @@ function build(index) {
   // selects themselves — a stage that stopped revealing the next one
   // fails here rather than passing quietly, because the control it
   // needs would never be on screen.
-  const addRule = ({ target, left, predicate, right, rightText, negate }) => {
+  // `target` names a read the command does not have yet — the step's own
+  // "+ rule" wizard. `onAlias` is the other door: the "+ rule about …"
+  // button on a read's card, which knows the first answer already and
+  // opens on the second question.
+  const addRule = ({ target, onAlias, left, predicate, right, rightText, negate }) => {
     sandbox.state.adder = 'rule';
-    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' };
+    sandbox.state.ruleDraft = {
+      predicate: 'equals', negate: false, left: '', right: '', ...(onAlias ? { onAlias } : {}),
+    };
     const paint = () => sandbox.stepDecision(model(), slice());
     const selects = () => findAll(paint(), (n) => n.tag === 'select');
     const draft = () => sandbox.state.ruleDraft;
+    const valueQuestion = () => {
+      const step = paint();
+      eq(/Which of its values\?/.test(textOf(step)), true, 'the second question is on screen');
+      // The property picker is the last control of the second question;
+      // the third question's own pickers come after it only once it is
+      // answered, which it is not yet.
+      const all = findAll(step, (n) => n.tag === 'select');
+      return all[all.length - 1];
+    };
 
-    // The first question is the row's first select, and it starts
-    // unanswered — nothing is pre-picked, or the row would advance
-    // on its own.
-    eq(draft().target || '', '', 'the first question opens unanswered');
-    selects()[0].onchange({ target: { value: target } });
+    if (target) {
+      // Nothing is pre-picked, or the row would answer its own first
+      // question and put every control on screen at once.
+      eq(draft().target || '', '', 'the first question opens unanswered');
+      eq(selects().length, 1, 'and it is the only one on screen');
+      selects()[0].onchange({ target: { value: target } });
+    }
+    valueQuestion().onchange({ target: { value: left } });
 
-    // Answering it revealed the second, which is the last select now on
-    // screen: a new read's identifier picker sits between them, as part
-    // of the question that produced it.
-    const afterTarget = selects();
-    eq(afterTarget.length >= 2, true, 'picking what it is about revealed which of its values');
-    afterTarget[afterTarget.length - 1].onchange({ target: { value: left } });
-
-    eq(draft().stage, 2, 'and answering that revealed what must be true of it');
+    eq(/What must be true of it\?/.test(textOf(paint())), true,
+      'answering that revealed the third question — no Next was pressed');
     draft().predicate = predicate;
     if (negate) draft().negate = true;
     if (right !== undefined) draft().right = right;
@@ -2524,17 +2538,56 @@ function build(index) {
       predicate: 'equals', right: JSON.stringify({ enumMember: 'Existent' }) });
     addRule({ target: 'entity:Student', left: A('student', 'status'),
       predicate: 'equals', right: JSON.stringify({ enumMember: 'Existent' }) });
-    addRule({ target: 'alias:course', left: A('course', 'subscriptionCount'),
+    addRule({ onAlias: 'course', left: A('course', 'subscriptionCount'),
       predicate: 'lessThan', right: A('course', 'capacity') });
-    addRule({ target: 'alias:course', left: A('course', 'subscribedStudentIds'),
+    addRule({ onAlias: 'course', left: A('course', 'subscribedStudentIds'),
       predicate: 'contains', right: JSON.stringify({ parameterName: 'studentId' }), negate: true });
-    addRule({ target: 'alias:student', left: A('student', 'subscriptionCount'),
+    addRule({ onAlias: 'student', left: A('student', 'subscriptionCount'),
       predicate: 'lessThan', rightText: '10' });
 
     eq(cmd().boundary, shipped.boundary,
       'the reads the rules brought with them are the reads the model ships');
     eq(cmd().conditions, shipped.conditions, 'and so are the rules, in order');
   });
+}
+
+{
+  const { id, model } = build(0);   // its own copy: this one strips an entity down
+  store.set('dcb-playground:model', id);
+  const slice = () => sandbox.sliceOf(model(), 'SubscribeStudentToCourse');
+
+  // The bug this guards: what is on screen is derived from what has
+  // been answered, never accumulated by the act of answering. Gate a
+  // question on a change event instead, and an entity with exactly one
+  // property deadlocks — its only property is filled in for you, so a
+  // `<select>` already showing it fires nothing when you pick it, and
+  // there is no event left to advance on.
+  check('an entity with one property does not strand the wizard', () => {
+    sandbox.updateDefinition('entity-definition', id, 'Student', {
+      properties: [{ name: 'subscriptionCount', projection: 'StudentSubscriptionCount' }],
+    });
+    sandbox.state.slice = 'SubscribeStudentToCourse';
+    sandbox.state.adder = 'rule';
+    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' };
+    const paint = () => sandbox.stepDecision(model(), slice());
+    paint();
+    findAll(paint(), (n) => n.tag === 'select')[0]
+      .onchange({ target: { value: 'entity:Student' } });
+    const step = paint();
+    // The only property is the answer, so the question after it is
+    // already there — no second pick, and nothing to get stuck on.
+    // `student2`, because this command already reads a student — the
+    // picker offered "another Student…", which is a different instance.
+    eq(sandbox.state.ruleDraft.left,
+      JSON.stringify({ alias: 'student2', property: 'subscriptionCount' }),
+      'its one property answered the second question by itself');
+    eq(/What must be true of it\?/.test(textOf(step)), true,
+      'so the third question is on screen without another event');
+    eq(findAll(step, (n) => n.tag === 'button').some((b) => textOf(b) === 'Add rule'), true,
+      'and the rule can actually be written');
+    sandbox.closeForms();
+  });
+
 }
 
 finish();
