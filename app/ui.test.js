@@ -221,10 +221,10 @@ function build(index) {
 {
   const { model } = build(4);
 
-  check('nothing yet is never rendered as an empty value', () => {
-    eq(initialValueWords(null), 'nothing yet', 'null');
+  check('null, "" and [] each keep their own spelling', () => {
+    eq(initialValueWords(null), 'null', 'null');
     eq(initialValueWords(''), '""', 'the empty string, visibly a value');
-    eq(initialValueWords([]), 'an empty list', 'an empty list');
+    eq(initialValueWords([]), '[]', 'an empty list');
     eq(initialValueWords(['a', 'b']), '"a", "b"', 'a list with things in it');
     eq(initialValueWords({ enumMember: 'Existent' }), 'Existent', 'an enum member');
     eq(initialValueWords({ count: 2, odd: false }), '{"count":2,"odd":false}',
@@ -2325,7 +2325,7 @@ function build(index) {
       predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' },
     }, 'isFalse became equals NonExistent');
     // The part worth being exact about: a graduated student still
-    // exists, so "the student exists" is every state the boolean was
+    // exists, so "student exists" is every state the boolean was
     // true in — not just the one named after it. Narrowing this to
     // `equals Existent` would silently change what the rule means, and
     // an earlier cut of this did exactly that.
@@ -2542,18 +2542,18 @@ function build(index) {
 
   check('a read of a designated boolean lifecycle reads as existence', () => {
     const exists = { leftHandSide: { alias: 'student', property: 'exists' }, predicate: 'isTrue' };
-    eq(partsOf(exists), { left: 'the student', verb: 'exists', right: null }, 'affirmative');
+    eq(partsOf(exists), { left: 'student', verb: 'exists', right: null }, 'affirmative');
     eq(partsOf({ ...exists, predicate: 'isFalse' }),
-      { left: 'the student', verb: 'does not exist', right: null }, 'and denied');
+      { left: 'student', verb: 'does not exist', right: null }, 'and denied');
     eq(partsOf({ ...exists, negate: true }),
-      { left: 'the student', verb: 'does not exist', right: null }, 'negation flips it too');
+      { left: 'student', verb: 'does not exist', right: null }, 'negation flips it too');
   });
 
   check('the sugar is rendering only — nothing is stored differently', () => {
     const stored = body().conditions.find((c) => c.leftHandSide.alias === 'student');
     eq(stored, { leftHandSide: { alias: 'student', property: 'exists' }, predicate: 'isTrue' },
       'an ordinary unary condition over an ordinary property');
-    eq(sandbox.ruleSentence(model(), body(), stored), 'the student exists', 'said in words');
+    eq(sandbox.ruleSentence(model(), body(), stored), 'student exists', 'said in words');
   });
 
   check('an enum lifecycle is left to say itself', () => {
@@ -3178,7 +3178,7 @@ function build(index) {
       sandbox.state.promoting = 'Student';
     });
     has(text, 'Give it more than two states', 'the form is open');
-    has(text, '— nothing yet —', 'a state with no boolean behind it is expressible');
+    has(text, '— none —', 'a state with no boolean behind it is expressible');
     has(text, 'the enum these states belong to', 'and naming is what it asks for');
     sandbox.closeForms();
   });
@@ -3274,7 +3274,7 @@ function build(index) {
     eq(sandbox.modelAdvisories(model()).filter((a) => a.name === 'Student'), [],
       'no advisory — an entity need not have one');
     const text = paint('entity', model(), () => { sandbox.state.entity = 'Student'; });
-    has(text, 'nothing here says when one of these comes into being', 'the row says so');
+    has(text, 'not designated', 'the row says so');
   });
 
   check('the entity page offers the merge where the booleans are', () => {
@@ -3294,7 +3294,7 @@ function build(index) {
     // No command guards either of them, so the rule wizard would never
     // get the chance — this is the surface that does.
     const text = paint('entity', model(), () => { sandbox.state.entity = 'Student'; });
-    has(text, 'exists and expelled are one-way', 'the offer names both booleans');
+    has(text, '2 monotone booleans: exists, expelled', 'the offer names both booleans');
     has(text, 'Merge into a lifecycle', 'and offers to take them');
   });
 

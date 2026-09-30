@@ -1489,7 +1489,7 @@ function suggestEventName(commandName) {
 function operandWords(operand) {
   // `equalsAny`'s literal list — the entries, said in order.
   if (Array.isArray(operand)) {
-    return operand.length ? operand.map(operandWords).join(', ') : 'an empty list';
+    return operand.length ? operand.map(operandWords).join(', ') : '[]';
   }
   switch (operandSource(operand)) {
     case 'alias-property':
@@ -1503,8 +1503,11 @@ function operandWords(operand) {
         : propertyWords(operand.parameterName);
     case 'enum-member': return readable(operand.enumMember);
     case 'event-property': return propertyWords(operand.eventProperty);
-    case 'current-value': return 'its current value';
-    case 'successor': return `the one after ${operandWords(operand.successor)}`;
+    // Both are operand *kinds*, not prose: the schema names them and
+    // nothing an author typed is being unwound here, so they read as
+    // the tokens they are rather than as descriptions of themselves.
+    case 'current-value': return 'currentValue';
+    case 'successor': return `successor(${operandWords(operand.successor)})`;
     // A derived predicate's read of another projection. The arguments
     // are not said — the partition is shared, and the editor is where
     // it is spelled out.
@@ -1519,17 +1522,16 @@ function operandWords(operand) {
   }
 }
 
-// Where a projection starts, as a reader reads it.
+// Where a projection starts, as the literal it is.
 //
-// `null` says *nothing yet* and never renders as a blank: a value that
-// has not arrived is a different answer from the empty string, and a
-// page that showed both as nothing would be lying about one of them.
-// An empty string is quoted for the same reason — so it is visibly a
-// value rather than an absence.
+// `null`, `""` and `[]` are three different answers and each keeps its
+// own spelling: a value that has not arrived is not the empty string,
+// and an empty list is neither. None of them is softened into words —
+// this reader gets the literal faster than a description of it.
 function initialValueWords(value) {
-  if (value === null || value === undefined) return 'nothing yet';
+  if (value === null || value === undefined) return 'null';
   if (Array.isArray(value)) {
-    return value.length ? value.map(operandWords).join(', ') : 'an empty list';
+    return value.length ? value.map(operandWords).join(', ') : '[]';
   }
   return operandWords(value);
 }
@@ -1615,7 +1617,11 @@ function conditionParts(condition, model, body) {
     if (states && states.length === 1) {
       const words = propertyWords(read.lifecycle.property);
       return {
-        left: 'the ' + propertyWords(read.alias),
+        // No article: every other condition row starts with the bare
+        // alias, and "the course exists" beside "course · capacity is at
+        // most 10" is one sentence pretending to be a different kind of
+        // thing from the other.
+        left: propertyWords(read.alias),
         verb: states[0] === 'true' ? words : negatedPredicateWords(words),
         right: null,
       };
@@ -1706,21 +1712,12 @@ function typeLabel(member) {
 // shape long before it is read by name. So every entity carries one
 // mark, and the mark goes wherever the entity does.
 //
-// It is authored rather than derived: only the modeler knows whether a
-// Course is a book or a lecture hall. Until one is chosen a neutral
-// glyph stands in — different per entity, so the page is legible
-// straight away, but never claiming a meaning nobody gave it.
+// It is authored and only authored. An unmarked thing carries no glyph:
+// a hashed stand-in was tried and did not earn its place — a shape
+// nobody chose says nothing about the thing, so every page paid a
+// column of noise for a legibility that never arrived. The tables below
+// are the picker's offer, not a fallback.
 const ENTITY_MARKS = ['◆', '●', '■', '▲', '★', '◇', '○', '□', '△', '✦'];
-
-// One hash for all three families: the mark is the identity of every
-// unmarked glyph on the page, so entities, events and commands must
-// shuffle the same way — a distribution fix applied to one kind and
-// not the others would be a bug wearing a different mask per page.
-function defaultMark(name, marks) {
-  let sum = 0;
-  for (const ch of String(name || '')) sum = (sum * 31 + ch.charCodeAt(0)) >>> 0;
-  return marks[sum % marks.length];
-}
 
 // The icon a body actually carries, or '' when it carries none worth
 // showing — the one place the trim-or-fall-back rule lives.
@@ -1729,37 +1726,30 @@ function chosenIcon(model, collection, name) {
   return body && typeof body.icon === 'string' ? body.icon.trim() : '';
 }
 
-function defaultEntityIcon(name) {
-  return defaultMark(name, ENTITY_MARKS);
+// A mark in front of a label, for the places that build one string
+// rather than two elements. Unmarked things are the common case now, so
+// the separator belongs to the mark and not to the label — otherwise
+// every unmarked name renders behind a space nobody can see but every
+// alignment can.
+function iconPrefix(icon, separator) {
+  return icon ? icon + (separator === undefined ? ' ' : separator) : '';
 }
 
 function entityIcon(model, name) {
-  return chosenIcon(model, 'entity-definitions', name) || defaultEntityIcon(name);
+  return chosenIcon(model, 'entity-definitions', name);
 }
 
-// An event earns the same legibility once it appears as more than a
-// line of text — the sandbox lays a whole session out as a strip of
-// these. But an event is a moment, not a thing, so its neutral mark
-// comes from a different family than an entity's: a spark rather than
-// a shape, so a page holding both never reads an unmarked glyph as the
-// wrong kind of thing.
+// An event is a moment, not a thing, so the picker offers it a
+// different family than an entity's — a spark rather than a shape, so
+// that two *authored* marks on one page never read as the wrong kind.
 const EVENT_MARKS = ['✱', '✲', '✳', '✴', '✵', '✶', '✷', '✸', '✹', '✺'];
 
-function defaultEventIcon(name) {
-  return defaultMark(name, EVENT_MARKS);
-}
-
-// A command earns the same legibility, from a third family again — a
-// tool, not a shape or a spark, since a page can hold all three kinds
-// at once and an unmarked glyph should never read as the wrong one.
+// A third family again, for the same reason: a tool, not a shape or a
+// spark, since one page can hold all three kinds at once.
 const COMMAND_MARKS = ['▶', '▷', '◈', '◉', '◐', '◑', '◒', '◓', '⬖', '⬗'];
 
-function defaultCommandIcon(name) {
-  return defaultMark(name, COMMAND_MARKS);
-}
-
 function commandIcon(model, name) {
-  return chosenIcon(model, 'command-definitions', name) || defaultCommandIcon(name);
+  return chosenIcon(model, 'command-definitions', name);
 }
 
 // Every command that publishes this event — usually none or one, since
@@ -1775,13 +1765,13 @@ function eventIcon(model, name) {
   const chosen = chosenIcon(model, 'event-definitions', name);
   if (chosen) return chosen;
   // Unmarked, and the outcome of exactly one command: read as that
-  // command's doing by default, the same mark and all — a modeler who
-  // wants this event to look like its own thing gives it its own icon,
-  // same as always. Two commands recording the same event agree on
-  // nothing this way, so that case falls back to the neutral mark.
+  // command's doing, the same mark and all — a modeler who wants this
+  // event to look like its own thing gives it its own icon, same as
+  // always. Two commands recording the same event agree on nothing this
+  // way, so that case stays unmarked.
   const commands = commandsPublishing(model, name);
   if (commands.length === 1) return commandIcon(model, commands[0]);
-  return defaultEventIcon(name);
+  return '';
 }
 
 // Shown beside the type, never behind the Advanced gate: a value

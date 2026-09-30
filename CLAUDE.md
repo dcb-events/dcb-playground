@@ -106,7 +106,7 @@ it never works from `file:`.
   structural gate is skipped and reported once, in a toast. Scenario kinds
   are excluded from advisories; their run/status channel already reports.
   The predefined models are held advisory-clean by a test.
-- **A read is never authored** — the merged step ("It is only allowed if")
+- **A read is never authored** — the merged step ("Decision model")
   is one step where there were two, because a boundary binding is not a
   thing anyone wants to declare: it is what a rule, a guard, an emission
   field, an emitted tag or another read *needs*. So the rule adder
@@ -264,7 +264,7 @@ it never works from `file:`.
   a model whose conditions still say `isTrue` while the projection has
   become an enum is the incoherent state the log has no migration for.
   Existence conditions are stored as ordinary `isTrue`/`isFalse` over an
-  ordinary property and only *read* as "the course exists"
+  ordinary property and only *read* as "course exists"
   (`existenceRead` / `conditionParts`, shared.js) — no new predicate,
   and `evaluate.js` did not change. A **dangling** designation is an
   advisory; scripted, derived, list or stateless ones are not — they are
@@ -324,6 +324,34 @@ it never works from `file:`.
   script import gate. The exploration that produced both blocks, and
   the case for keeping or dropping them, lives in
   `docs/research/2026-09-19-content-decisions-variant-comparison.md`.
+- **The interface register is technical, on purpose.** The audience is
+  developers who know what an event log is, so the page names things the
+  way the wire format does and does not narrate. `null`, `""` and `[]`
+  each keep their own spelling (`initialValueWords`); operand kinds read
+  as their schema tokens (`currentValue`, `successor(x)`); step headings
+  are `Payload` / `Decision model` / `Append` / `State changes` /
+  `Consistency boundary` / `Scenarios`; empty steps are `—`; single-field
+  forms carry noun labels (`New command`), not questions.
+  Two things are deliberately *not* technicalised, and reversing either
+  would be a regression, not a tidy-up. **Identifiers stay humanized** —
+  `readable` / `propertyWords` turn `DefineCourse` into "Define course"
+  and `courseId` into "course id", because that is what the author
+  typed; the stored spelling rides beside it in a `.tech` span.
+  **Conditions and changes stay English sentences** — `PREDICATE_WORDS`
+  and `OPERATION_WORDS` are untouched, the `·` separates alias from
+  property, and the existence sugar still reads `course exists` (minus
+  its article). Understanding what a command is guarded by is the point
+  of the tool, and an author never typed a predicate to begin with, so
+  there is no stored spelling being hidden.
+  Explanations live in `hint(...)` — one `ⓘ` per section, never one per
+  row, in both modes, linking dcb.events only where a page exists.
+  Inline field hints are deleted; *derived facts* stay on the page,
+  terse (`not designated`, `scripted fold`, `appended by: —`), because
+  hiding a fact about the model behind a popover is the opposite of what
+  the register is for. An entity, event or command carries a mark only
+  if one was authored — there is no hashed fallback, and `iconPrefix`
+  is what keeps an unmarked name from rendering behind a stray space.
+
 - **Comment style**: file headers and block comments carry design rationale,
   not line-by-line narration. Match that register; keep headers truthful when
   behaviour changes.

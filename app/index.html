@@ -342,6 +342,25 @@
                     letter-spacing: 0.06em; }
   .qpanel .trip + .trip { margin-top: 6px; }
 
+  /* The concept hint: same peek/pin behaviour as the query popover, a
+     quieter mark, and it rides a heading rather than a row. */
+  .hint { position: relative; display: inline-flex; vertical-align: middle; }
+  .hbtn { background: none; border: none; padding: 0 2px; cursor: help;
+          color: var(--muted); font-size: 12px; line-height: 1;
+          display: inline-flex; align-items: center; }
+  .hbtn:hover, .hbtn:focus-visible, .hint.on .hbtn { color: var(--command); }
+  .hint .hpanel { display: none; position: absolute; top: calc(100% + 5px); left: -10px;
+                  z-index: 60; background: var(--surface);
+                  border: 1px solid var(--border-strong); border-radius: 8px;
+                  padding: 8px 12px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+                  min-width: 260px; max-width: 420px;
+                  font-size: 11.5px; line-height: 1.55; color: var(--muted);
+                  font-weight: 400; text-transform: none; letter-spacing: 0; }
+  .hint:hover .hpanel, .hint:focus-within .hpanel, .hint.on .hpanel { display: block; }
+  .hpanel .qtitle { color: var(--text); margin-bottom: 3px; }
+  .hpanel .hline + .hline { margin-top: 5px; }
+  .hpanel .hlink { display: inline-block; margin-top: 6px; font-size: 11px; }
+
   /* An entity chip is a way in: click it anywhere and the thing itself
      slides in beside what you were reading, rather than replacing it. */
   .chip.entity, .op.ent { cursor: pointer; }
@@ -446,7 +465,6 @@
     padding: 11px 14px 12px; margin-bottom: 22px;
   }
   .ident > h4 { color: var(--entity); }
-  .ident .why { margin: 3px 0 10px; }
   .ident .irow {
     display: flex; align-items: center; flex-wrap: wrap; gap: 7px;
     padding: 5px 0; font-size: 12px;
@@ -459,6 +477,9 @@
   /* The mark that stands for a thing, wherever the thing is named. */
   .ic { font-style: normal; margin-right: 5px; }
   .chip .ic { margin-right: 4px; }
+  /* Unmarked is the common case: an authored mark is the exception, so
+     the slot has to vanish rather than reserve itself a gutter. */
+  .ic:empty { display: none; }
   .icon-btn {
     font: inherit; font-size: 20px; line-height: 1; cursor: pointer;
     width: 34px; height: 34px; flex: none; padding: 0;
@@ -1139,6 +1160,7 @@ const state = {
   changeDraft: null,        // in-progress "what this event changes" row
   fieldDraft: null,         // the one half-typed field row — see commitPendingField
   queryPop: null,           // key of the pinned DCB-query popover, if any
+  hintPop: null,            // key of the pinned concept hint, if any
   wizard: null,             // { slice, upto } — a brand-new command revealing its steps.
                             // Session-only on purpose: how far someone got is authoring
                             // state, not a fact about the model, so it is never stored.
@@ -1294,7 +1316,7 @@ function modelsModal() {
 
   const startNew = state.newModel
     ? inlineForm({
-        question: 'What is this model called?', placeholder: 'Course subscriptions',
+        question: 'Model name', placeholder: 'Course subscriptions',
         onSubmit: (v) => {
           state.newModel = false; state.splash = false; createNamedModel(v); close();
         },
@@ -1302,7 +1324,7 @@ function modelsModal() {
       })
     : state.loadingUrl
       ? inlineForm({
-          question: 'Where is the model hosted?', placeholder: 'https://…', submitLabel: 'Load',
+          question: 'Model URL', placeholder: 'https://…', submitLabel: 'Load',
           onSubmit: (v) => {
             state.loadingUrl = false;
             runAsync(async () => beginImport(await loadModelFromUrl(v)));
@@ -1420,7 +1442,7 @@ function renderSplash(main) {
 
   const cta = state.newModel
     ? inlineForm({
-        question: 'What is this model called?', placeholder: 'Course subscriptions',
+        question: 'Model name', placeholder: 'Course subscriptions',
         onSubmit: (v) => { state.newModel = false; state.splash = false; createNamedModel(v); },
         onCancel: () => { state.newModel = false; render(); },
       })
@@ -2136,7 +2158,7 @@ function paletteEntries(model) {
 
   for (const group of featureGroups(model)) {
     for (const name of group.commands) {
-      add('command', commandIcon(model, name) + ' ' + readable(name), group.name, () => {
+      add('command', iconPrefix(commandIcon(model, name)) + readable(name), group.name, () => {
         state.view = 'slice'; state.slice = name;
       });
     }
@@ -2148,7 +2170,7 @@ function paletteEntries(model) {
     }
   }
   for (const name of Object.keys(model['entity-definitions'])) {
-    add('entity', entityIcon(model, name) + ' ' + readable(name), 'the things themselves', () => {
+    add('entity', iconPrefix(entityIcon(model, name)) + readable(name), 'the things themselves', () => {
       state.entitiesCollapsed = false; state.view = 'entity'; state.entity = name;
     });
   }
@@ -2158,7 +2180,7 @@ function paletteEntries(model) {
   }
   for (const name of Object.keys(model['event-definitions'])) {
     const from = records[name];
-    add('event', eventIcon(model, name) + ' ' + readable(name),
+    add('event', iconPrefix(eventIcon(model, name)) + readable(name),
       from ? 'recorded by ' + readable(from) : 'recorded by nothing', () => goToEvent(name));
   }
   for (const name of Object.keys(model['projection-definitions'])) {
@@ -3288,6 +3310,7 @@ const closeForms = () => {
   commitPendingField();
   for (const key of [...FORM_KEYS, ...DRAFT_KEYS]) state[key] = null;
   state.sel = null; state.adder = null; state.lit = null; state.queryPop = null;
+  state.hintPop = null;
 };
 
 // ---------- rail ----------
@@ -3437,7 +3460,7 @@ function renderRail() {
 
   if (state.newFeature) {
     rail.appendChild(inlineForm({
-      question: 'What should this group of commands be called?',
+      question: 'Feature name',
       placeholder: 'Course management',
       onSubmit: (v) => {
         if (featureGroups(model).some((g) => g.name === v)) return toast('That feature already exists.', true);
@@ -3582,7 +3605,7 @@ function renderEntityRail(model) {
 
   if (state.newEntityAt === 'rail') {
     box.appendChild(inlineForm({
-      question: 'What kind of thing do we need to keep track of?', placeholder: 'course',
+      question: 'New entity', placeholder: 'course',
       showsIdentifier: true,
       onSubmit: (v) => {
         state.newEntityAt = null;
@@ -3665,7 +3688,7 @@ function beginNewCommand(model, feature) {
 
 function newCommandForm(model) {
   return inlineForm({
-    question: 'What can someone do?', placeholder: 'define course', showsIdentifier: true,
+    question: 'New command', placeholder: 'define course', showsIdentifier: true,
     onSubmit: (v) => createCommand(model, v),
     onCancel: () => { state.namingCommand = false; render(); },
   });
@@ -4025,7 +4048,7 @@ function paintPage() {
           + 'from inside them.'),
         state.newEntityAt === 'blank'
           ? inlineForm({
-              question: 'What kind of thing do we need to keep track of?', placeholder: 'course',
+              question: 'New entity', placeholder: 'course',
               showsIdentifier: true,
               onSubmit: (v) => {
                 state.newEntityAt = null;
@@ -4092,14 +4115,14 @@ function paintPage() {
               }),
             }))),
     h('div', { class: 'muted small summary' },
-      'Looks at ' + (slice.reads.length || 'nothing')
+      'reads ' + slice.reads.length
       // Round trips, not bindings: a command that reads three things
       // in one go is cheaper than one that reads two in sequence, and
       // the summary should not hide the difference.
-      + (slice.rounds.length > 1 ? ` in ${slice.rounds.length} passes over the log` : '')
+      + (slice.rounds.length > 1 ? ` in ${slice.rounds.length} rounds` : '')
       + ' · '
-      + slice.rules.length + ' rule' + (slice.rules.length === 1 ? '' : 's') + ' · records '
-      + (slice.emits.map((e) => readable(e.emission.name)).join(', ') || 'nothing')),
+      + slice.rules.length + ' rule' + (slice.rules.length === 1 ? '' : 's') + ' · appends '
+      + (slice.emits.map((e) => readable(e.emission.name)).join(', ') || '—')),
     featureLine(slice)));
 
   if (state.commandIconPicker === slice.name) {
@@ -4200,9 +4223,9 @@ function stepTrigger(model, slice) {
         h('span', { class: 'muted' }, 'can be '), ...enumMemberChips(model, enumType)) : null,
     ];
   });
-  if (!rows.length) rows.push(h('div', { class: 'empty' }, 'Takes no input.'));
+  if (!rows.length) rows.push(h('div', { class: 'empty' }, '—'));
 
-  return step('trigger', 'Someone asks for this, providing',
+  return step('trigger', 'Payload',
     h('div', { class: 'card command' }, rows,
       adderSlot('in', 'trigger', '+ input', () => propertyAdder(model, {
         label: '+ Add input', draftKey: 'in:' + slice.name,
@@ -4219,6 +4242,47 @@ function stepTrigger(model, slice) {
           beginReadAdder();
         },
       }))));
+}
+
+// ---------- the concept hint ----------
+//
+// Where the explanatory paragraphs went. The page used to carry them
+// inline, in a register written for someone who had not met DCB before;
+// this reader has, and a sentence explaining what an identifier is costs
+// them a line every time they scan the block.
+//
+// One per section, never one per row. A block that needed three
+// sentences needed them once — merging siblings into a single panel is
+// the point, because a section with three glyphs in it is the same prose
+// problem wearing a new mark. That keeps the app at roughly a dozen.
+//
+// Mechanically this is `queryPopover` with a different glyph: hover or
+// focus peeks, a click pins it across the repaint every editing command
+// triggers, Escape or a second click lets go. The trigger is a real
+// <button> because the panel must be reachable by tab — a `title` on a
+// <span> is not, which is the whole reason this exists instead.
+//
+// `href` is passed only where dcb.events has a page for the concept:
+// tags, projections, aggregates. Linking every panel at the spec's front
+// door would teach nothing and train the reader to ignore the link.
+function hint(key, title, lines, href) {
+  const on = state.hintPop === key;
+  return h('span', { class: 'hint' + (on ? ' on' : '') },
+    h('button', {
+      class: 'hbtn', type: 'button', title: title,
+      'aria-expanded': on ? 'true' : 'false',
+      onclick: (e) => {
+        e.stopPropagation();
+        state.hintPop = on ? null : key;
+        render();
+      },
+    }, 'ⓘ'),
+    h('span', { class: 'hpanel', onclick: (e) => e.stopPropagation() },
+      h('div', { class: 'k qtitle' }, title),
+      ...(Array.isArray(lines) ? lines : [lines]).map((line) => h('div', { class: 'hline' }, line)),
+      href ? h('a', {
+        class: 'hlink', href, target: '_blank', rel: 'noopener',
+      }, 'dcb.events ↗') : null));
 }
 
 // A query is one hover away rather than one more line on the page:
@@ -4484,7 +4548,7 @@ function bindingEditor(model, slice, binding, index) {
         }),
         'may be absent'),
       h('span', { class: 'muted tiny' },
-        'an unset identifier binds nothing instead of erroring — rules over this binding are skipped')),
+        'a null identifier binds nothing instead of erroring; conditions over the alias hold vacuously')),
 
     binding.projection || !fanned ? null : h('div', { class: 'adder' },
       h('span', { class: 'muted tiny' }, 'except'),
@@ -4497,8 +4561,7 @@ function bindingEditor(model, slice, binding, index) {
           });
         },
       }, 'Set'),
-      h('span', { class: 'muted tiny' },
-        'drops one from the set — a course rescheduling itself is in every subscriber’s list')),
+      h('span', { class: 'muted tiny' }, 'excludes one instance from the fan-out')),
 
     ...expected.map((argument) => h('div', { class: 'adder' },
       h('span', { class: 'muted tiny' }, 'with ', h('code', {}, argument.name)),
@@ -4680,7 +4743,7 @@ function stepDecision(model, slice) {
   // property form opens straight after, on the entity just made.
   if (state.newEntityAt === 'rules') {
     body.push(inlineForm({
-      question: 'What kind of thing does this rule need to look at?', placeholder: 'course',
+      question: 'New entity for this rule', placeholder: 'course',
       showsIdentifier: true,
       onSubmit: (v) => {
         state.newEntityAt = null;
@@ -4741,21 +4804,31 @@ function stepDecision(model, slice) {
     body.unshift(h('div', { class: 'empty' }, 'Always allowed.'));
   }
 
-  return step('decide', 'It is only allowed if', ...body);
+  return step('decide', 'Decision model', ...body);
 }
 
-// The promotion offer, in words the author can check against what they
-// just wrote. It opens the entity's own merge form with a step per
-// boolean already filled in — the one part of the merge that *can* be
-// inferred, because the booleans themselves say what the stages are.
+// The promotion offer: the facts that make this a candidate, checkable
+// against what the author just wrote, and the offer itself. The argument
+// for *why* monotone booleans are stages is in the hint — it is the same
+// argument every time, and the row that states it is different every
+// time. Opens the entity's own merge form with a step per boolean
+// already filled in — the one part of the merge that *can* be inferred,
+// because the booleans themselves say what the stages are.
 function mergePrompt(model, merge) {
   const named = merge.booleans.map(propertyWords);
   return h('div', { class: 'card rule lc-suggest' },
     h('div', { class: 'tiny muted why' },
-      `Rules about the ${propertyWords(merge.alias)}: that it `
-      + `${named.slice(0, -1).join(', ')} and ${named[named.length - 1]}. `
-      + 'None of those ever goes back once it holds, so they are stages of one life '
-      + 'rather than separate facts — a lifecycle with a state for each would say it once.'),
+      `${merge.booleans.length} monotone booleans on `,
+      h('span', { class: 'op' }, propertyWords(merge.alias)),
+      `: ${named.join(', ')}.`,
+      hint('lc-merge', 'Monotone booleans', [
+        'None of these ever goes back to false once it holds, so they are stages of one '
+        + 'lifecycle rather than independent facts.',
+        'Merging them into an enum states the stages once. Every condition over the '
+        + 'absorbed properties is rewritten over the enum — a boolean that held from '
+        + 'stage i onward becomes equalsAny over stages i..n, not equals stage i.',
+        'Non-monotone booleans are refused: collapsing them would destroy a dimension.',
+      ])),
     h('button', {
       class: 'btn tiny',
       onclick: () => {
@@ -5065,12 +5138,12 @@ function ruleEditor(model, slice, index, target) {
   const submit = () => {
     if (draft.newRead && !pending) {
       return toast(draft.newRead.entity.startsWith('projection:')
-        ? 'Say what that projection is kept separately for.'
-        : 'Say where that thing\u2019s id comes from.', true);
+        ? 'Pick what that projection is partitioned by.'
+        : 'Pick where that thing\u2019s id comes from.', true);
     }
-    if (draftOperand(draft, 'left') === undefined) return toast('Say what the rule is about.', true);
+    if (draftOperand(draft, 'left') === undefined) return toast('Pick what the rule is about.', true);
     if (!unary && !membership && draftOperand(draft, 'right') === undefined) {
-      return toast('Say what to compare it with.', true);
+      return toast('Pick a value to compare it with.', true);
     }
     state.ruleDraft = null;
     record();
@@ -5341,7 +5414,7 @@ function stepEmits(model, slice) {
       emissionGuardRows(model, slice, emission, i),
       open ? eventFields(model, emission, event) : null);
   });
-  if (!cards.length) cards.push(h('div', { class: 'empty' }, 'Records nothing yet.'));
+  if (!cards.length) cards.push(h('div', { class: 'empty' }, '—'));
 
   const existing = Object.keys(model['event-definitions']).sort()
     .filter((n) => !slice.emits.some((e) => e.emission.name === n));
@@ -5350,7 +5423,7 @@ function stepEmits(model, slice) {
   const body = [h('div', {}, cards)];
   if (state.newEntityAt === 'event') {
     body.push(inlineForm({
-      question: 'What happened?  (past tense)',
+      question: 'New event (past tense)',
       placeholder: readable(suggestEventName(slice.name)), showsIdentifier: true,
       onSubmit: (v) => {
         const name = toPascal(v);
@@ -5375,7 +5448,7 @@ function stepEmits(model, slice) {
       onCancel: () => { state.newEntityAt = null; render(); },
     }));
   } else {
-    body.push(adderSlot('emit', 'emits', '+ record something', () =>
+    body.push(adderSlot('emit', 'emits', '+ emission', () =>
       h('div', { class: 'card' }, h('div', {
         class: 'adder',
         // Enter records the picked event — unless focus is on a button,
@@ -5420,7 +5493,7 @@ function stepEmits(model, slice) {
         readCard(model, slice, binding, slice.reads.indexOf(binding), [], []))));
   }
 
-  return step('emits', 'When it succeeds, this happened', ...body);
+  return step('emits', 'Append', ...body);
 }
 
 // Renaming an event or one of its fields rewrites every declared
@@ -5568,7 +5641,7 @@ function eventFields(model, emission, event) {
   };
 
   return h('div', { class: 'fields' },
-    rows.length ? rows : h('div', { class: 'empty' }, 'Carries nothing yet.'),
+    rows.length ? rows : h('div', { class: 'empty' }, '—'),
     missing.length ? h('div', { class: 'copy-missing' },
       h('span', { class: 'muted tiny' }, 'Given but not recorded: '),
       missing.map((p) => h('button', {
@@ -5639,7 +5712,7 @@ function stepChanges(model, slice) {
       changeAdder(model, emission.name)));
   }
   if (!cards.length) cards.push(h('div', { class: 'empty' }, 'Nothing to change until it records something.'));
-  return step('changes', 'Which changes what we know', h('div', {}, cards));
+  return step('changes', 'State changes', h('div', {}, cards));
 }
 
 // The "does what" control. A picker while there is a choice, and the
@@ -5660,7 +5733,7 @@ function changeAdder(model, eventName) {
 
   if (state.newEntityAt === 'changes:' + eventName) {
     return inlineForm({
-      question: 'What kind of thing do we need to keep track of?', placeholder: 'course',
+      question: 'New entity', placeholder: 'course',
       showsIdentifier: true,
       onSubmit: (v) => {
         state.newEntityAt = null;
@@ -5682,7 +5755,7 @@ function changeAdder(model, eventName) {
   }
   if (!Object.keys(model['entity-definitions']).length) {
     return h('div', { class: 'adder' },
-      h('span', { class: 'muted tiny' }, 'Nothing to change yet.'),
+      h('span', { class: 'muted tiny' }, 'no entities'),
       h('button', {
         class: 'btn primary',
         onclick: () => { closeForms(); state.newEntityAt = 'changes:' + eventName; render(); },
@@ -5701,7 +5774,7 @@ function changeAdder(model, eventName) {
         })
         .map((p) =>
           [JSON.stringify([name, p.name]),
-            `${entityIcon(model, name)} ${readable(name)} · ${propertyWords(p.name)}`])),
+            `${iconPrefix(entityIcon(model, name))}${readable(name)} · ${propertyWords(p.name)}`])),
     [NEW, '+ New property…'],
   ];
   // The draft outlives a repaint, which a typed literal needs: the
@@ -6223,7 +6296,7 @@ function addEnumMemberForm(model, typeName) {
   const body = model['custom-type-definitions'][typeName];
   const members = (body && body.schema && body.schema.enum) || [];
   return inlineForm({
-    question: `What else can a ${readable(typeName)} be?`, placeholder: 'archived',
+    question: `New member of ${readable(typeName)}`, placeholder: 'archived',
     showsIdentifier: true,
     onSubmit: (v) => {
       const member = toPascal(v);
@@ -6381,7 +6454,12 @@ function renderEntity(model, main) {
   const ledgerProperties = properties.filter((binding) =>
     !(lifecycle && binding.name === lifecycle.property));
   const section = h('section', { class: 'esection' },
-    h('h4', {}, 'What we know about each one'));
+    h('h4', {}, 'Properties', hint('entity-props', 'Properties', [
+      'Each row is a projection folded per identifier value: the entity is not stored, it is '
+      + 'what these folds say when read together for one id.',
+      'A command binds the entity by id and reads these; which of them a condition names is '
+      + 'what puts the fold in the derived consistency boundary.',
+    ], 'https://dcb.events/topics/projections/')));
 
   section.appendChild(projectionLedger(model, {
     owner: name,
@@ -6405,9 +6483,8 @@ function renderEntity(model, main) {
 // lifecycle was one arbitrary enum among however many an entity had. It
 // stopped being right when the entity began designating exactly one —
 // because existence is not something a modeller chose to track, it is
-// the precondition of everything else they track. Two rows that read as
-// a sentence: what makes one of these one of these, and whether there is
-// one at all.
+// the precondition of everything else they track. Two rows: what
+// identifies one of these, and whether there is one at all.
 //
 // The identifier row is a read-only pointer — changing it happens in
 // Custom Types. The lifecycle row is not: which property is the
@@ -6421,21 +6498,28 @@ function renderEntity(model, main) {
 // the entity — this row is a read-only pointer at it, not an editor.
 // Changing its schema, composing it, or renaming it all happen in
 // Custom Types, which is what the chip opens.
+//
+// Both rows used to carry a sentence explaining themselves, and the
+// block carried a third above them. All three are in the heading's hint
+// now: the reader who needs to be told what a tag is needs it once, and
+// the reader who does not was paying three lines for it on every visit.
 function identityBlock(model, name, entity) {
   const idType = idTypeOf(model, name);
   const box = h('section', { class: 'ident' },
-    h('h4', {}, 'Identity'),
-    h('div', { class: 'muted tiny why' },
-      'What makes one of these one of these. Nobody added this row: the identifier is the '
-      + 'tag every event about this thing carries, and it comes with being a thing at all.'));
+    h('h4', {}, 'Identity', hint('ident', 'Identity', [
+      'Every event about one of these carries its identifier as a tag. Nothing declared '
+      + 'that row — it comes with being a thing at all.',
+      'Every property below is folded per identifier value.',
+      'The lifecycle is one of those properties, designated: it says whether an instance is '
+      + 'there at all, which is the precondition of everything else tracked about it.',
+    ], 'https://dcb.events/topics/tags/')));
 
   box.appendChild(h('div', { class: 'irow' },
     h('span', { class: 'nm' }, 'identified by'),
     h('span', {
       class: 'chip editable', title: 'Open ' + readable(idType) + ' in Custom Types',
       onclick: () => goToCustomType(idType),
-    }, readable(idType), advanced() ? h('span', { class: 'tech' }, idType) : null),
-    h('span', { class: 'tiny muted' }, 'the tag every event about one of these carries — and what everything below is folded per')));
+    }, readable(idType), advanced() ? h('span', { class: 'tech' }, idType) : null)));
 
   box.appendChild(lifecycleRow(model, name, entity));
   return box;
@@ -6445,9 +6529,9 @@ function identityBlock(model, name, entity) {
 // two things that can be done to it — designate a different property, or
 // merge one-way booleans into a real lifecycle.
 //
-// An empty lifecycle is not a gap to hide: "nothing records that one of
-// these is there yet" is the most useful thing a blank model's first
-// entity page can say, because recording it is the next thing to do.
+// An empty lifecycle is not a gap to hide: `not designated` is the most
+// useful thing a blank model's first entity page can say, because
+// designating one is the next thing to do.
 function lifecycleRow(model, name, entity) {
   const lifecycle = lifecycleOf(model, name);
   const rows = h('div', {});
@@ -6457,7 +6541,7 @@ function lifecycleRow(model, name, entity) {
     rows.appendChild(h('div', { class: 'irow' },
       h('span', { class: 'nm' }, 'its state'),
       h('span', { class: 'tiny muted' }, refusal === 'none'
-        ? 'nothing here says when one of these comes into being'
+        ? 'not designated'
         : LIFECYCLE_REFUSAL_WORDS[refusal] || refusal),
       h('span', { class: 'grow' }),
       designateButton(model, name)));
@@ -6476,8 +6560,7 @@ function lifecycleRow(model, name, entity) {
 
     if (!setters.length) {
       row.appendChild(h('span', { class: 'tiny muted' },
-        'nothing records this yet — every rule that asks whether one of these '
-        + 'exists will answer no'));
+        'nothing sets it — existence conditions answer false'));
     } else if (lifecycle.isBoolean) {
       row.appendChild(h('span', { class: 'tiny muted' }, 'and exists from then on'));
     } else {
@@ -6504,9 +6587,15 @@ function lifecycleRow(model, name, entity) {
     rows.appendChild(h('div', { class: 'irow lc-offer' },
       h('span', { class: 'nm' }, ''),
       h('span', { class: 'tiny muted' },
-        candidates.map(propertyWords).join(' and ')
-        + ' are one-way — each holds from some event onward and never goes back. '
-        + 'That makes them stages of one life rather than separate facts.'),
+        `${candidates.length} monotone booleans: ${candidates.map(propertyWords).join(', ')}.`,
+        hint('lc-offer', 'Monotone booleans', [
+          'None of these ever goes back to false once it holds, so they are stages of one '
+          + 'lifecycle rather than independent facts.',
+          'Merging them into an enum states the stages once. Every condition over the '
+          + 'absorbed properties is rewritten over the enum — a boolean that held from '
+          + 'stage i onward becomes equalsAny over stages i..n, not equals stage i.',
+          'Non-monotone booleans are refused: collapsing them would destroy a dimension.',
+        ])),
       h('span', { class: 'grow' }),
       reveal(h('button', {
         class: 'btn tiny',
@@ -6554,8 +6643,7 @@ function designationPicker(model, name, entity) {
   return h('div', { class: 'irow' },
     h('span', { class: 'nm' }, 'the state is'),
     pick([['', '— none —'], ...choices.map((c) => [c, propertyWords(c)])], current, set),
-    h('span', { class: 'tiny muted' },
-      'only a single boolean or enum property can be one — everything else has no states to be in'));
+    h('span', { class: 'tiny muted' }, 'single-valued boolean or enum only'));
 }
 
 // The draft the merge form opens holding: one step per boolean, named
@@ -6604,13 +6692,15 @@ function promoteLifecycleForm(model, entityName) {
   }
   const draft = state.promoteDraft;
 
-  const field = (key, label, hint) => h('label', { class: 'fieldrow' },
+  // `note`, not `hint`: the global `hint` is the concept popover, and a
+  // parameter shadowing it here is a trap for whoever adds one next.
+  const field = (key, label, note) => h('label', { class: 'fieldrow' },
     h('span', { class: 'nm' }, label),
     h('input', {
       type: 'text', value: draft[key] || '',
       oninput: (e) => { draft[key] = e.target.value; },
     }),
-    hint ? h('span', { class: 'tiny muted' }, hint) : null);
+    note ? h('span', { class: 'tiny muted' }, note) : null);
 
   // Which boolean moves it into this state is a picker, not a label, and
   // that is what makes the form able to say things the offer cannot
@@ -6625,7 +6715,7 @@ function promoteLifecycleForm(model, entityName) {
       oninput: (e) => { step.state = e.target.value; },
     }),
     h('span', { class: 'tiny muted' }, 'once'),
-    pick([['', '— nothing yet —'],
+    pick([['', '— none —'],
       ...candidates.filter((c) => c === step.from || !taken.includes(c))
         .map((c) => [c, propertyWords(c)])],
     step.from || '', (value) => {
@@ -6647,11 +6737,14 @@ function promoteLifecycleForm(model, entityName) {
 
   const form = h('section', { class: 'esection' },
     h('h4', {}, candidates.length >= 2 ? 'Merge these into one lifecycle'
-      : 'Give it more than two states'),
-    h('div', { class: 'muted tiny why' },
-      'Two states need no vocabulary — a thing either exists or it does not. More than two '
-      + 'do, so this is where the names come from. Every rule about the properties being '
-      + 'absorbed is rewritten to ask about the state instead, in one step you can undo.'),
+      : 'Give it more than two states',
+      hint('lc-promote', 'Promotion', [
+        'A two-state lifecycle is a boolean and needs no vocabulary. Three or more needs an '
+        + 'enum, so the states are named here rather than inferred.',
+        'Every condition over an absorbed property is rewritten over the enum in the same '
+        + 'append, undoable in one step: a model whose conditions still say isTrue while the '
+        + 'fold has become an enum is a state the log has no migration for.',
+      ])),
     field('property', 'the property', 'what the states are held in from now on'),
     field('typeName', 'the type', 'the enum these states belong to'),
     field('initialState', 'at first', 'before anything has happened'),
@@ -6677,12 +6770,16 @@ function promoteLifecycleForm(model, entityName) {
   return form;
 }
 
+// The reason a machine cannot be drawn, in as many words as the reason
+// takes. `dangling` is the only one of the five that is a defect, so it
+// is the only one that names the property it could not find — the other
+// four are legitimate models whose state simply has no states to draw.
 const LIFECYCLE_REFUSAL_WORDS = {
-  dangling: 'designates a property this entity does not declare',
-  scripted: 'its state is folded by a script, so it cannot be read here',
-  derived: 'its state is derived rather than folded',
-  list: 'its state holds a list',
-  stateless: 'its state is typed with something that has no states',
+  dangling: 'dangling designation',
+  scripted: 'scripted fold',
+  derived: 'derived',
+  list: 'list-valued',
+  stateless: 'no states',
 };
 
 // ---------- the ledger ----------
@@ -7236,7 +7333,7 @@ function renderCustomTypes(model, main) {
               readable(field.propertyType)),
             isId ? h('span', { class: 'tiny muted' },
               ownerEntity
-                ? ('identifies a ' + entityIcon(model, ownerEntity) + ' ' + readable(ownerEntity)
+                ? ('identifies a ' + iconPrefix(entityIcon(model, ownerEntity)) + readable(ownerEntity)
                   + ' — every event carrying this is tagged with it')
                 : 'a standalone tag — every event carrying this is tagged with it') : null,
             h('span', { style: 'flex:1' }),
@@ -7320,7 +7417,7 @@ function renderCustomTypes(model, main) {
 
   if (state.newType) {
     main.appendChild(inlineForm({
-      question: 'What is this value called?',
+      question: 'Name',
       placeholder: state.newType === 'enum' ? 'course status' : 'order line',
       showsIdentifier: true,
       onSubmit: (v) => {
@@ -7435,10 +7532,10 @@ function initialValueChip(body) {
   if (body.script) return h('code', {}, JSON.stringify(body.script.initialState));
   const value = body.initialValue;
   if (value === null || value === undefined) {
-    return h('span', { class: 'chip unset', title: 'No value yet — not the empty string' }, 'nothing yet');
+    return h('span', { class: 'chip unset', title: 'No value yet — not the empty string' }, 'null');
   }
   if (Array.isArray(value)) {
-    if (!value.length) return h('span', { class: 'chip unset' }, 'an empty list');
+    if (!value.length) return h('span', { class: 'chip unset' }, '[]');
     return h('span', {}, ...value.flatMap((element, i) => [
       i ? ' ' : null, h('span', { class: 'chip' }, operandWords(element)),
     ]));
@@ -7495,11 +7592,11 @@ function blankSlotValue(model, valueType) {
 // The first choice is whether there is a value at all, and it is a
 // choice rather than a blank field on purpose: `null` and `""` are
 // different answers, and a single text box cannot tell you which one
-// an empty box means. Saying "nothing yet" out loud is the only way
+// an empty box means. Naming `null` as its own option is the only way
 // the two stay distinguishable both on the page and in the model.
 //
-// For a list the same choice sits above the elements: nothing yet, or
-// a list — which may itself be empty, a third answer again.
+// For a list the same choice sits above the elements: `null`, or a
+// list — which may itself be empty, a third answer again.
 function initialValueEditor(model, draft) {
   const isNull = draft.initialValue === null || draft.initialValue === undefined;
   const choose = (toNull) => {
@@ -7517,9 +7614,9 @@ function initialValueEditor(model, draft) {
   }), ' ', label);
 
   const rows = [h('div', { class: 'adder' },
-    radio(isNull, 'nothing yet', 'No value until an event sets one — not the empty string',
+    radio(isNull, 'null', 'No value until an event sets one — not the empty string',
       () => choose(true)),
-    radio(!isNull, draft.isList ? 'a list' : 'a value',
+    radio(!isNull, draft.isList ? 'list' : 'value',
       draft.isList ? 'Starts holding these, before anything has happened'
         : 'Starts at this value', () => choose(false)),
     !isNull && !draft.isList
@@ -7537,7 +7634,7 @@ function initialValueEditor(model, draft) {
               class: 'btn tiny danger', title: 'Drop this one',
               onclick: () => { elements.splice(i, 1); render(); },
             }, '×')))
-        : h('div', { class: 'muted tiny' }, 'Empty — and an empty list is not the same as nothing yet.'),
+        : h('div', { class: 'muted tiny' }, '[]'),
       h('div', { class: 'adder' }, h('button', {
         class: 'btn ghost tiny',
         onclick: () => {
@@ -8606,7 +8703,7 @@ function renderCoupling(model, main) {
     // A non-breaking space between the icon and the first word keeps
     // them on the same line — an icon stranded alone on its own line
     // is the one wrapping outcome worth avoiding.
-    const label = eventIcon(model, event) + ' ' + readable(event);
+    const label = iconPrefix(eventIcon(model, event), '\u00a0') + readable(event);
     grid.appendChild(h('div', {
       class: 'coupling-colhead' + (clusterStartsAt(i) ? ' cluster-start' : ''),
       title: (bridge ? 'Bridge — removing this splits its cluster in two. ' : '') + 'Open ' + readable(event),
@@ -8626,7 +8723,7 @@ function renderCoupling(model, main) {
     row.cells.forEach((cell, i) => {
       const markClass = cell.produces && cell.consumes ? 'both'
         : cell.produces ? 'produces' : cell.consumes ? 'consumes' : null;
-      const label = eventIcon(model, cell.event) + ' ' + readable(cell.event);
+      const label = iconPrefix(eventIcon(model, cell.event)) + readable(cell.event);
       const tip = !markClass ? null
         : cell.produces && cell.consumes
           ? label + ' — written here, read back via ' + cell.via.join(', ')
@@ -9065,7 +9162,7 @@ function lifecycleRowsView(model, machine, rows, unguardedNames) {
     h('button', {
       class: 'cmd', type: 'button', title: 'Open ' + readable(entry.command),
       onclick: () => goToCommand(entry.command),
-    }, commandIcon(model, entry.command) + ' ' + readable(entry.command)),
+    }, iconPrefix(commandIcon(model, entry.command)) + readable(entry.command)),
     entry.target ? h('span', { class: 'to' }, '→ ' + lifecycleStateWords(machine, entry.target)) : null,
     entry.unguarded ? h('span', {
       class: 'lc-dot',
@@ -9177,7 +9274,7 @@ function stepConsistency(model, slice) {
     : items.map((item, i) => itemLine(item, i));
 
   const tripWords = rounds.length > 1 ? `, in ${rounds.length} trips` : ', one query';
-  return step('consistency', 'Which nothing else may have changed',
+  return step('consistency', 'Consistency boundary',
     h('div', { class: 'card dcb' },
       items.length
         ? h('div', { class: 'row' },
@@ -10709,7 +10806,7 @@ function instanceStateCard(model, tag) {
 function sandboxWatched(model) {
   const names = Object.keys(model['projection-definitions']).sort();
   if (!session.pinned.length && !names.length) return null;
-  return step('scenarios', 'Watched',
+  return step('scenarios', 'Scenarios',
     h('div', { class: 'muted small' },
       'Followed wherever you are on the timeline, whether or not the step you are looking at '
       + 'read them. A projection watched here is folded the same way a command folds it — a '
@@ -10914,6 +11011,7 @@ window.addEventListener('keydown', (e) => {
   // this while it is up means it is already gone.
   if (state.palette) { closePalette(); return render(); }
   if (state.queryPop) { state.queryPop = null; return render(); }
+  if (state.hintPop) { state.hintPop = null; return render(); }
   if (state.pendingImport) { state.pendingImport = null; return render(); }
   if (state.problems) { state.problems = false; return render(); }
   if (state.settings) { state.settings = false; return render(); }
