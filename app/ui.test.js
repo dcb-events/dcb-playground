@@ -1218,14 +1218,21 @@ function build(index) {
   });
 
   check('the event takes the command properties when its step is revealed', () => {
-    // Give it a payload and a read first, the way the wizard would.
+    // Give it a payload, and a read the way the merged step would
+    // produce one: with the rule that wanted it. A boundary written
+    // without one would be pruned by this very write — nothing would
+    // consult it — which is the whole point of the merge.
     sandbox.updateDefinition('command-definition', id, 'CertifyCourse', {
       ...model()['command-definitions'].CertifyCourse,
       properties: [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false }],
       boundary: [{ alias: 'course', entity: 'Course', id: { parameterName: 'courseId' } }],
+      conditions: [{
+        leftHandSide: { alias: 'course', property: 'status' },
+        predicate: 'equals',
+        rightHandSide: { enumMember: 'Existent' },
+      }],
     });
-    sandbox.advanceWizard(model(), slice());   // reads revealed
-    sandbox.advanceWizard(model(), slice());   // rules revealed
+    sandbox.advanceWizard(model(), slice());   // the merged decide step revealed
     eq(model()['event-definitions'].CourseCertified.properties, [],
       'nothing is copied while the event is still unrevealed');
     sandbox.advanceWizard(model(), slice());   // emits revealed — the default fires
@@ -1290,17 +1297,46 @@ function build(index) {
     button.onclick();
   };
 
-  check('an entity created from the reads step is the next read, already picked', () => {
+  check('an entity created mid-rule resumes the rule, holding it as the pending read', () => {
     sandbox.state.slice = 'DefineCourse';
     sandbox.state.view = 'slice';
-    sandbox.state.newEntityAt = 'reads';
-    const step = sandbox.stepReads(model(), sandbox.sliceOf(model(), 'DefineCourse'));
+    sandbox.state.newEntityAt = 'rules';
+    const step = sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'DefineCourse'));
     drive(step, 'room', 'Add');
     eq(!!model()['entity-definitions'].Room, true, 'the entity exists');
-    eq(sandbox.state.adder, 'read', 'the read adder came back');
-    eq(sandbox.state.readDraft && sandbox.state.readDraft.entity, 'Room',
-      'holding the thing that was just made');
+    eq(sandbox.state.adder, 'rule', 'the rule adder came back, not a read adder');
+    // A brand-new entity derives a brand-new identifier type, so
+    // nothing already in scope could identify one. The command gains
+    // the input that says which, in the same gesture — otherwise the
+    // entity is unreachable the instant it exists and the rule has
+    // nowhere to go.
+    eq(model()['command-definitions'].DefineCourse.properties.map((p) => p.name).includes('roomId'),
+      true, 'the command now takes the id that says which room');
+    eq(sandbox.state.ruleDraft.newRead.entity, 'Room',
+      'holding the thing that was just made as the read the rule will bring with it');
+    // A brand-new entity has no properties, so the rule's left side has
+    // nothing to name yet — the property form opens on it straight away
+    // rather than leaving the row in a dead end.
+    eq(sandbox.state.addingProp && sandbox.state.addingProp.only, 'Room',
+      'and the first property is what it asks for next');
     sandbox.closeForms();
+  });
+
+  // Under the merge a read is never committed on its own: nothing
+  // consults it, so the write path would prune it in the same append
+  // that stored it. The row holds out for the whole rule.
+  check('a rule row with a read but no rule commits nothing on leaving', () => {
+    sandbox.state.slice = 'ChangeCourseCapacity';
+    sandbox.state.adder = 'rule';
+    const before = model()['command-definitions'].ChangeCourseCapacity.boundary.length;
+    sandbox.state.ruleDraft = {
+      predicate: 'equals', negate: false, left: '', right: '',
+      target: 'entity:Course', touched: true,
+    };
+    sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'ChangeCourseCapacity'));
+    sandbox.closeForms();
+    eq(model()['command-definitions'].ChangeCourseCapacity.boundary.length, before,
+      'no read landed, because no rule wanted one yet');
   });
 
   check('a property created from inside a rule becomes the rule\'s subject', () => {
@@ -1401,46 +1437,32 @@ function build(index) {
     }, 'exactly as picked');
   });
 
-  check('a touched, complete read is bound by leaving it', () => {
-    sandbox.state.slice = 'ChangeCourseCapacity';
-    sandbox.state.adder = 'read';
-    const before = model()['command-definitions'].ChangeCourseCapacity.boundary.length;
-    sandbox.state.readDraft = {
-      slice: 'ChangeCourseCapacity', entity: 'Course',
-      source: JSON.stringify({ parameterName: 'courseId' }),
-      touched: true,
-    };
-    sandbox.stepReads(model(), sandbox.sliceOf(model(), 'ChangeCourseCapacity'));
-    sandbox.closeForms();
-    const boundary = model()['command-definitions'].ChangeCourseCapacity.boundary;
-    eq(boundary.length, before + 1, 'the read landed without its button');
-    eq(boundary[boundary.length - 1].alias, 'course2',
-      'aliased apart from the course already bound');
-  });
+  // The read half of the merged row narrows exactly as the old read
+  // adder did — it is the same question, asked inside the rule that
+  // wants the answer. The target picker is the row's first select, so
+  // the identifier or argument picker is its second.
+  const readRow = (command, target) => {
+    sandbox.state.slice = command;
+    sandbox.state.adder = 'rule';
+    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '', target };
+    const step = sandbox.stepDecision(model(), sandbox.sliceOf(model(), command));
+    const select = findAll(step, (n) => n.tag === 'select')[1];
+    return findAll(select, (n) => n.tag === 'option').map((n) => n.value);
+  };
 
   check('the identifier picker offers the id type only, first match pre-picked', () => {
-    sandbox.state.slice = 'SubscribeStudentToCourse';
-    sandbox.state.adder = 'read';
-    sandbox.state.readDraft = { slice: 'SubscribeStudentToCourse', entity: 'Course', source: '' };
-    const step = sandbox.stepReads(model(), sandbox.sliceOf(model(), 'SubscribeStudentToCourse'));
-    const select = findAll(step, (n) => n.tag === 'select')[1];
-    const values = findAll(select, (n) => n.tag === 'option').map((n) => n.value);
+    const values = readRow('SubscribeStudentToCourse', 'entity:Course');
     eq(values.includes(JSON.stringify({ parameterName: 'courseId' })), true,
       'the course id the payload carries is offered');
     eq(values.includes(JSON.stringify({ parameterName: 'studentId' })), false,
       'the student id beside it is not — wrong type');
-    eq(sandbox.state.readDraft.source, JSON.stringify({ parameterName: 'courseId' }),
+    eq(sandbox.state.ruleDraft.newRead.source, JSON.stringify({ parameterName: 'courseId' }),
       'and the matching source is already picked');
     sandbox.closeForms();
   });
 
   check('a list of the right type stays offered — that is the fan-out', () => {
-    sandbox.state.slice = 'SubscribeStudentToCourse';
-    sandbox.state.adder = 'read';
-    sandbox.state.readDraft = { slice: 'SubscribeStudentToCourse', entity: 'Student', source: '' };
-    const step = sandbox.stepReads(model(), sandbox.sliceOf(model(), 'SubscribeStudentToCourse'));
-    const select = findAll(step, (n) => n.tag === 'select')[1];
-    const values = findAll(select, (n) => n.tag === 'option').map((n) => n.value);
+    const values = readRow('SubscribeStudentToCourse', 'entity:Student');
     eq(values.includes(JSON.stringify({ alias: 'course', property: 'subscribedStudentIds' })), true,
       'a StudentId list identifies many students at once');
     eq(values.includes(JSON.stringify({ parameterName: 'courseId' })), false,
@@ -1448,19 +1470,35 @@ function build(index) {
     sandbox.closeForms();
   });
 
-  check('a projection parameter narrows to its own type the same way', () => {
-    sandbox.state.slice = 'SubscribeStudentToCourse';
-    sandbox.state.adder = 'read';
-    sandbox.state.readDraft = {
-      slice: 'SubscribeStudentToCourse', entity: 'projection:CourseCapacity', source: '',
-    };
-    const step = sandbox.stepReads(model(), sandbox.sliceOf(model(), 'SubscribeStudentToCourse'));
-    const select = findAll(step, (n) => n.tag === 'select')[1];
-    const values = findAll(select, (n) => n.tag === 'option').map((n) => n.value);
-    eq(values.includes(JSON.stringify({ parameterName: 'courseId' })), true, 'a CourseId is offered');
-    eq(values.includes(JSON.stringify({ parameterName: 'studentId' })), false, 'a StudentId is not');
-    eq(values.includes(JSON.stringify({ alias: 'course', property: 'subscribedStudentIds' })), false,
-      'nor a list of anything — a projection binding reads one partition');
+  // What the first question offers is what this command could actually
+  // reach. An entity nothing in scope can identify is a dead end, and a
+  // projection is not something a rule is about at all — it is a folded
+  // value a command mints from or records, which is the emission's
+  // business.
+  // The target picker is the first question's own select.
+  const targetOptions = (command) => {
+    sandbox.state.slice = command;
+    sandbox.state.adder = 'rule';
+    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' };
+    const step = sandbox.stepDecision(model(), sandbox.sliceOf(model(), command));
+    const select = findAll(step, (n) => n.tag === 'select')[0];
+    return findAll(select, (n) => n.tag === 'option').map((n) => n.value);
+  };
+
+  check('the first question offers only what this command can reach', () => {
+    const values = targetOptions('SubscribeStudentToCourse');
+    eq(values.some((v) => v.startsWith('projection:')), false,
+      'no projections — a rule is never about a folded value');
+    eq(values.includes('entity:Course'), true, 'a Course — the payload carries a course id');
+    eq(values.includes('entity:Student'), true, 'a Student — and a student id');
+    sandbox.closeForms();
+  });
+
+  check('an entity nothing in scope can identify is not offered', () => {
+    sandbox.addDefinition('entity-definition', id, 'Room', { properties: [] });
+    eq(targetOptions('SubscribeStudentToCourse').includes('entity:Room'), false,
+      'nothing here carries a RoomId, so a rule about a room could never be finished');
+    sandbox.removeDefinition('entity-definition', id, 'Room');
     sandbox.closeForms();
   });
 
@@ -1589,7 +1627,7 @@ function build(index) {
 
   check('each read card carries a query popover, not a query line', () => {
     sandbox.state.slice = 'SubscribeStudentToCourse';
-    const step = sandbox.stepReads(model(), sandbox.sliceOf(model(), 'SubscribeStudentToCourse'));
+    const step = sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'SubscribeStudentToCourse'));
     const panels = findAll(step, (n) => /\bqpanel\b/.test(n.className || '')).map(textOf);
     eq(panels.length, 2, 'one per read');
     eq(panels[0].includes('CourseId:courseId') && panels[0].includes('CourseDefined'),
@@ -1600,11 +1638,11 @@ function build(index) {
 
   check('clicking the glyph pins the popover; Escape state clears it', () => {
     sandbox.state.slice = 'SubscribeStudentToCourse';
-    const step = sandbox.stepReads(model(), sandbox.sliceOf(model(), 'SubscribeStudentToCourse'));
+    const step = sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'SubscribeStudentToCourse'));
     const button = findAll(step, (n) => /\bqbtn\b/.test(n.className || ''))[0];
     button.onclick({ stopPropagation() {} });
     eq(sandbox.state.queryPop, 'read:course', 'pinned under its own key');
-    const again = sandbox.stepReads(model(), sandbox.sliceOf(model(), 'SubscribeStudentToCourse'));
+    const again = sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'SubscribeStudentToCourse'));
     eq(findAll(again, (n) => /\bqpop on\b/.test(n.className || '')).length, 1,
       'and the pin survives the repaint');
     sandbox.state.queryPop = null;
@@ -1632,7 +1670,7 @@ function build(index) {
   check('in Simple mode none of these lines appear', () => {
     store.set('dcb-playground:mode', 'simple');
     sandbox.state.slice = 'SubscribeStudentToCourse';
-    const step = sandbox.stepReads(model(), sandbox.sliceOf(model(), 'SubscribeStudentToCourse'));
+    const step = sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'SubscribeStudentToCourse'));
     eq(findAll(step, (n) => /\bqpop\b/.test(n.className || '')).length, 0,
       'the reads step stays plain');
     const card = sandbox.projectionWatchCard(model(),
@@ -1773,7 +1811,7 @@ function build(index) {
       store.set('dcb-playground:mode', mode);
       const slice = sandbox.sliceOf(current, 'DefineCourse');
       textOf(sandbox.stepTrigger(current, slice));
-      textOf(sandbox.stepReads(current, slice));
+      textOf(sandbox.stepDecision(current, slice));
       textOf(sandbox.stepChanges(current, slice));
       textOf(sandbox.stepConsistency(current, slice));
     }
@@ -2088,15 +2126,30 @@ function build(index) {
   });
 
   check('a command with no rule over a status it binds is unguarded', () => {
-    const { model } = build(0);
+    const { id, model } = build(0);
+    // Built for the purpose rather than borrowed from a shipped model:
+    // a command that *binds* a student and never tests its status. The
+    // shipped Unsubscribe used to be that example, until it stopped
+    // reading the student it never tested.
+    sandbox.addDefinition('command-definition', id, 'NudgeStudent', {
+      properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
+      boundary: [{ alias: 'student', entity: 'Student', id: { parameterName: 'studentId' } }],
+      conditions: [{
+        leftHandSide: { alias: 'student', property: 'subscriptionCount' },
+        predicate: 'greaterThan', rightHandSide: 0,
+      }],
+      publishes: [{ name: 'StudentRegistered', parameters: { studentId: { parameterName: 'studentId' } } }],
+    });
     const student = machineOf(model(), 'Student');
-    // Unsubscribe binds the student but only course · status guards it.
     for (const state of student.states) {
-      const entry = student.perState[state].find((e) => e.command === 'UnsubscribeStudentFromCourse');
+      const entry = student.perState[state].find((e) => e.command === 'NudgeStudent');
       eq(entry.unguarded, true, 'flagged unguarded at ' + state);
     }
     eq(student.perState.Existent.find((e) => e.command === 'SubscribeStudentToCourse').unguarded,
       false, 'Subscribe carries a student · status rule and is pinned');
+    eq(student.perState.Existent.some((e) => e.command === 'UnsubscribeStudentFromCourse'), false,
+      'and Unsubscribe is absent — it no longer reads a student, so it is not in this machine');
+    sandbox.removeDefinition('command-definition', id, 'NudgeStudent');
     eq(student.terminal, ['Existent'], 'nothing leaves Existent — a derived dead end');
   });
 
@@ -2225,6 +2278,262 @@ function build(index) {
       predicate: 'equalsAny',
       rightHandSide: [{ enumMember: 'NonExistent' }, { enumMember: 'Archived' }],
     }, 'the checked members, as the list');
+  });
+}
+
+// ---------------------------------------------------------------
+// The merged step. "To decide, it looks at" and "It is only allowed
+// if" are one step, and the reason is a rule about ownership: a read
+// is not something anyone declares. It arrives with the rule, guard,
+// emission or chain that wanted it, and leaves with the last of them.
+// These hold the seam where that is true — the write path — and the
+// one gesture that now spans both halves.
+// ---------------------------------------------------------------
+{
+  const { id, model } = build(3);   // Course Example (with schedules)
+  store.set('dcb-playground:model', id);
+  const command = (name) => model()['command-definitions'][name];
+
+  check('the five reasons a read is consulted, on the shipped models', () => {
+    const refs = sandbox.bindingReferences(model(), command('RescheduleCourse'));
+    eq([...refs.get('theirs')], ['rule'], 'a read a rule is about');
+    eq([...refs.get('students')], ['chain'],
+      'an intermediate hop, wanted only so the next read can be reached');
+    const numbering = sandbox.bindingReferences(model(), command('DefineCourse'));
+    eq([...numbering.get('courseNumbering')], ['emission'],
+      'a projection read whose value the event records, with no rule at all');
+    // Coverage is the fifth reason, and it holds only for a *derived*
+    // tag. `Assign`'s previous instructor is one: the `Unassigned` tag
+    // is taken from `course.instructorId`, a claim about state that was
+    // read. A tag straight off the payload asserts nothing about state
+    // and keeps no read alive — which is why the shipped Unsubscribe no
+    // longer binds the student it never tests.
+    eq(command('UnsubscribeStudentFromCourse').boundary.map((b) => b.alias), ['course'],
+      'the course only — the student id is asserted by the caller');
+  });
+
+  check('no shipped command reads anything nothing consults', () => {
+    for (const [name, body] of Object.entries(model()['command-definitions'])) {
+      eq(sandbox.unreferencedBindings(model(), body), [],
+        `${name} binds only what something looks at`);
+    }
+  });
+
+  check('deleting the last rule about a read deletes the read, in one append', () => {
+    const before = command('RescheduleCourse');
+    eq(before.boundary.map((b) => b.alias), ['course', 'students', 'theirs'],
+      'three reads, chained');
+    const ruleIndex = before.conditions
+      .findIndex((c) => c.leftHandSide && c.leftHandSide.alias === 'theirs');
+    const revisionBefore = sandbox.logRevisionNow();
+    sandbox.state.slice = 'RescheduleCourse';
+    sandbox.patch('command-definition', 'RescheduleCourse', (b) => { b.conditions.splice(ruleIndex, 1); });
+    const after = command('RescheduleCourse');
+    // `theirs` went because its only rule went; `students` went with it
+    // because `theirs` was the only thing that wanted it. The cascade is
+    // transitive, and it is one event, not three.
+    eq(after.boundary.map((b) => b.alias), ['course'],
+      'the read and the hop that only served it both went');
+    eq(sandbox.logRevisionNow() - revisionBefore, 1, 'one gesture, one append');
+  });
+
+  check('a read with another reason survives its rule being dropped', () => {
+    // `course` in SubscribeStudentToCourse is read by a rule *and* is
+    // where `others` gets its identifier from. Losing the rule leaves
+    // the chain, so the read stays.
+    const body = command('SubscribeStudentToCourse');
+    const index = body.conditions.findIndex((c) => c.leftHandSide
+      && c.leftHandSide.alias === 'student' && c.leftHandSide.property === 'status');
+    eq(index >= 0, true, 'the rule about the student is there to drop');
+    sandbox.patch('command-definition', 'SubscribeStudentToCourse', (b) => {
+      b.conditions.splice(index, 1);
+    });
+    eq(command('SubscribeStudentToCourse').boundary.map((b) => b.alias).includes('student'), true,
+      'the student stays: `others` takes its identifier from it');
+  });
+}
+
+{
+  const { id, model } = build(3);   // its own copy: this one strips a command down
+  store.set('dcb-playground:model', id);
+  const command = (name) => model()['command-definitions'][name];
+
+  check('removing a read takes the rules about it, and leaves the chain to dangle', () => {
+    // `course` is the root of this command's chain: `students` draws
+    // its identifier from it, and `theirs` from `students`. Removing it
+    // takes its own rule with it — a rule whose subject is gone is not
+    // a rule — but not the reads below, which the author can see and
+    // repoint. They dangle, and the Problems panel says so.
+    const before = command('RescheduleCourse');
+    eq(before.boundary.map((b) => b.alias), ['course', 'students', 'theirs'], 'three, chained');
+    const rulesAboutCourse = before.conditions
+      .filter((c) => c.leftHandSide && c.leftHandSide.alias === 'course').length;
+    eq(rulesAboutCourse > 0, true, 'and a rule about the one being removed');
+    sandbox.state.slice = 'RescheduleCourse';
+    sandbox.patch('command-definition', 'RescheduleCourse', (b) => {
+      b.boundary = b.boundary.filter((x) => x.alias !== 'course');
+      b.conditions = b.conditions.filter((c) => !(c.leftHandSide && c.leftHandSide.alias === 'course'));
+    });
+    const after = command('RescheduleCourse');
+    eq(after.boundary.map((b) => b.alias), ['students', 'theirs'],
+      'the reads below it stay — deleting a subtree nobody pointed at would narrow the boundary');
+    eq(after.conditions.length, before.conditions.length - rulesAboutCourse, 'its rules went with it');
+    eq(sandbox.modelAdvisories(model()).some((a) => a.name === 'RescheduleCourse'), true,
+      'and the dangling identifier is reported rather than repaired behind the author');
+  });
+
+}
+
+{
+  const { id, model } = build(0);
+  store.set('dcb-playground:model', id);
+  const command = (name) => model()['command-definitions'][name];
+
+  check('a rule brings its read with it, in a single append', () => {
+    const before = command('ChangeCourseCapacity');
+    const revisionBefore = sandbox.logRevisionNow();
+    sandbox.state.slice = 'ChangeCourseCapacity';
+    sandbox.state.adder = 'rule';
+    // The step-level adder, opened on a read that does not exist yet:
+    // another Course, identified by the id the payload carries.
+    sandbox.state.ruleDraft = {
+      predicate: 'equals', negate: false, target: 'entity:Course', touched: true,
+      left: JSON.stringify({ alias: 'course2', property: 'status' }),
+      right: JSON.stringify({ enumMember: 'Existent' }),
+    };
+    sandbox.ruleEditor(model(), sandbox.sliceOf(model(), 'ChangeCourseCapacity'), null);
+    sandbox.closeForms();
+    const after = command('ChangeCourseCapacity');
+    eq(after.boundary.length, before.boundary.length + 1, 'the read landed');
+    eq(after.boundary[after.boundary.length - 1], {
+      alias: 'course2', entity: 'Course', id: { parameterName: 'courseId' },
+    }, 'aliased apart from the course already bound, identified as picked');
+    eq(after.conditions.length, before.conditions.length + 1, 'and the rule that wanted it');
+    eq(sandbox.logRevisionNow() - revisionBefore, 1,
+      'one append — a read stored without its rule would be pruned by its own write');
+  });
+
+  check('a read arriving from outside is reported, not silently dropped', () => {
+    // What an agent writing a whole body, or a hand-written file, can
+    // still produce. It bounds the append, so it stays until someone
+    // edits this command — and says so meanwhile.
+    sandbox.addDefinition('command-definition', id, 'TouchCourse', {
+      properties: [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false }],
+      boundary: [
+        { alias: 'course', entity: 'Course', id: { parameterName: 'courseId' } },
+        // A projection read: no rule names it, no emission takes its
+        // value, and coverage has nothing to say about it — the one
+        // shape of read that really is consulted by nothing.
+        { alias: 'spare', projection: 'CourseCapacity', arguments: { courseId: { parameterName: 'courseId' } } },
+      ],
+      conditions: [{
+        leftHandSide: { alias: 'course', property: 'status' },
+        predicate: 'equals', rightHandSide: { enumMember: 'Existent' },
+      }],
+      publishes: [{ name: 'CourseDefined', parameters: { courseId: { parameterName: 'courseId' } } }],
+    });
+    eq(command('TouchCourse').boundary.map((b) => b.alias), ['course', 'spare'],
+      'added whole, kept whole — nothing is pruned on the way in');
+    const advisory = sandbox.modelAdvisories(model())
+      .find((a) => a.name === 'TouchCourse' && /nothing consults/.test(a.message));
+    eq(!!advisory, true, 'and the Problems panel says which read that is');
+    eq(/spare/.test(advisory.message), true, 'naming it');
+    // The next edit is what drops it, which is what the advisory promised.
+    sandbox.patch('command-definition', 'TouchCourse', (b) => { b.icon = '👆'; });
+    eq(command('TouchCourse').boundary.map((b) => b.alias), ['course'],
+      'the next edit removes it');
+  });
+}
+
+// ---------------------------------------------------------------
+// The rule wizard, end to end. A rule spans what used to be two steps,
+// and asking all of it at once put five pickers in one row — so it is
+// staged: what it is about, which of its values, what must be true.
+// This drives the three questions the way a person does, and rebuilds
+// a shipped command from an empty boundary to prove the merged step
+// can still author everything the old two could.
+// ---------------------------------------------------------------
+{
+  const { id, model } = build(0);
+  store.set('dcb-playground:model', id);
+  const cmd = () => model()['command-definitions'].SubscribeStudentToCourse;
+  const shipped = JSON.parse(JSON.stringify(cmd()));
+  const slice = () => sandbox.sliceOf(model(), 'SubscribeStudentToCourse');
+
+  // Answering advances; there is no Next to press. So this drives the
+  // selects themselves — a stage that stopped revealing the next one
+  // fails here rather than passing quietly, because the control it
+  // needs would never be on screen.
+  const addRule = ({ target, left, predicate, right, rightText, negate }) => {
+    sandbox.state.adder = 'rule';
+    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' };
+    const paint = () => sandbox.stepDecision(model(), slice());
+    const selects = () => findAll(paint(), (n) => n.tag === 'select');
+    const draft = () => sandbox.state.ruleDraft;
+
+    // The first question is the row's first select, and it starts
+    // unanswered — nothing is pre-picked, or the row would advance
+    // on its own.
+    eq(draft().target || '', '', 'the first question opens unanswered');
+    selects()[0].onchange({ target: { value: target } });
+
+    // Answering it revealed the second, which is the last select now on
+    // screen: a new read's identifier picker sits between them, as part
+    // of the question that produced it.
+    const afterTarget = selects();
+    eq(afterTarget.length >= 2, true, 'picking what it is about revealed which of its values');
+    afterTarget[afterTarget.length - 1].onchange({ target: { value: left } });
+
+    eq(draft().stage, 2, 'and answering that revealed what must be true of it');
+    draft().predicate = predicate;
+    if (negate) draft().negate = true;
+    if (right !== undefined) draft().right = right;
+    if (rightText !== undefined) { draft().right = ' literal'; draft().rightText = rightText; }
+    paint();
+    const button = findAll(paint(), (n) => n.tag === 'button' && textOf(n) === 'Add rule')[0];
+    if (!button) throw new Error('no "Add rule" button on screen');
+    button.onclick();
+  };
+
+  check('the first question is asked on its own — two pickers, not five', () => {
+    sandbox.state.slice = 'SubscribeStudentToCourse';
+    sandbox.updateDefinition('command-definition', id, 'SubscribeStudentToCourse', {
+      ...cmd(), boundary: [], conditions: [],
+    });
+    sandbox.state.adder = 'rule';
+    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' };
+    const step = sandbox.stepDecision(model(), slice());
+    eq(findAll(step, (n) => n.tag === 'select').length, 1,
+      'one question, unanswered — nothing else is on screen yet');
+    eq(/What is this rule about\?/.test(textOf(step)), true, 'asked as a question');
+    // Answering it is what reveals the next: the row never asks for a
+    // Next to be pressed.
+    findAll(step, (n) => n.tag === 'select')[0].onchange({ target: { value: 'entity:Course' } });
+    const after = sandbox.stepDecision(model(), slice());
+    eq(findAll(after, (n) => n.tag === 'select').length, 3,
+      'what it is about, where its id comes from, and which of its values');
+    sandbox.closeForms();
+  });
+
+  check('a command is authored through the wizard, rule for rule', () => {
+    const A = (alias, property) => JSON.stringify({ alias, property });
+    // Two rules that each bring a read with them, then three more about
+    // reads that already exist — including one whose two sides are the
+    // same read, and one compared against a number nobody declared.
+    addRule({ target: 'entity:Course', left: A('course', 'status'),
+      predicate: 'equals', right: JSON.stringify({ enumMember: 'Existent' }) });
+    addRule({ target: 'entity:Student', left: A('student', 'status'),
+      predicate: 'equals', right: JSON.stringify({ enumMember: 'Existent' }) });
+    addRule({ target: 'alias:course', left: A('course', 'subscriptionCount'),
+      predicate: 'lessThan', right: A('course', 'capacity') });
+    addRule({ target: 'alias:course', left: A('course', 'subscribedStudentIds'),
+      predicate: 'contains', right: JSON.stringify({ parameterName: 'studentId' }), negate: true });
+    addRule({ target: 'alias:student', left: A('student', 'subscriptionCount'),
+      predicate: 'lessThan', rightText: '10' });
+
+    eq(cmd().boundary, shipped.boundary,
+      'the reads the rules brought with them are the reads the model ships');
+    eq(cmd().conditions, shipped.conditions, 'and so are the rules, in order');
   });
 }
 

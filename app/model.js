@@ -1445,8 +1445,21 @@ function mintsFromProjection(model, body, operand, eventName) {
   return !!projection && (projection.handlers || []).some((h) => h && h.event === eventName);
 }
 
-function coverageIssues(model, body) {
-  const issues = [];
+// Every entity tag an emission writes, with the operand that identifies
+// the instance and where that operand came from. One walk, because two
+// things are decided by it: what the coverage advisory says, and which
+// reads a tag keeps alive. They must not be allowed to disagree about
+// what a read is for.
+//
+// **Asserted against derived.** A tag whose value came straight off the
+// command payload is asserted by the caller — the caller says *which*
+// student, and this command's decision never depended on that student's
+// state. A tag whose value was *derived*, read off some instance this
+// command bound, is a different claim entirely: it says "this is the
+// course that student is in", which is only true of the state that was
+// read. The second wants covering; the first does not.
+function emittedTagRequirements(model, body) {
+  const out = [];
   for (const emission of body.publishes || []) {
     if (!emission) continue;
     const event = model['event-definitions'][emission.name];
@@ -1458,36 +1471,201 @@ function coverageIssues(model, body) {
       // consulted, so there is nothing for the boundary to cover.
       if (operand === undefined && property.isOptional && !property.isList) continue;
       if (mintsFromProjection(model, body, operand, emission.name)) continue;
-      // Checked against the identifier *leaves* of the property's
-      // type, not its surface: a property typed `Item[]` writes one
-      // tag per element, and each has to have been consulted.
+      const asserted = operand !== undefined && operandSource(operand) === 'parameter';
+      // Walked to the identifier *leaves* of the property's type, not
+      // its surface: a property typed `Item[]` writes one tag per
+      // element, and each names its own instance.
       for (const leaf of idLeavesOfType(model, property.propertyType)) {
         // A leaf whose identifier type is standalone — a component with
-        // no entity of its own — has no entity binding that could ever
-        // cover it, so there is nothing to check here: coverage is
-        // stated in terms of the entity instances a command binds.
+        // no entity of its own — names no entity instance, so there is
+        // nothing here to consult or to keep alive.
         const ownerEntity = entityOfIdType(model, leaf.identifierType);
         if (!ownerEntity) continue;
         const required = leaf.field === null
           ? operand
-          : (operandSource(operand) === 'parameter'
-            ? { parameterName: operand.parameterName, property: leaf.field }
-            : undefined);
-        const covered = required !== undefined && (body.boundary || []).some(
-          (binding) => binding && binding.entity === ownerEntity && sameOperand(binding.id, required)
-        );
-        if (!covered) {
-          issues.push({
-            event: emission.name,
-            property: leaf.field === null ? property.name : `${property.name}.${leaf.field}`,
-            entity: ownerEntity,
-            operand: required === undefined ? operand : required,
-          });
-        }
+          : (asserted ? { parameterName: operand.parameterName, property: leaf.field } : undefined);
+        out.push({
+          event: emission.name,
+          property: leaf.field === null ? property.name : `${property.name}.${leaf.field}`,
+          entity: ownerEntity,
+          operand: required === undefined ? operand : required,
+          required,
+          asserted,
+        });
       }
     }
   }
-  return issues;
+  return out;
+}
+
+// The tags this command writes about instances it never looked at.
+//
+// Advice, never a refusal, and deliberately narrow: writing an
+// uncovered tag is not unsound. The append condition is the union of
+// the bindings' queries, so a `Student:s1` tag on the event *this*
+// command writes is what makes every *other* command that read
+// `Student:s1` conflict with it — which holds whether or not this one
+// read it. What an uncovered tag gives up is only this command's own
+// protection against concurrent change to that instance, and where the
+// decision never depended on the instance's state there was nothing to
+// protect. So a tag the caller asserted passes in silence; a derived
+// one — a claim about state this command read — is what gets flagged.
+function coverageIssues(model, body) {
+  return emittedTagRequirements(model, body).filter((requirement) => {
+    if (requirement.asserted) return false;
+    if (requirement.required === undefined) return true;
+    return !(body.boundary || []).some((binding) => binding
+      && binding.entity === requirement.entity
+      && sameOperand(binding.id, requirement.required));
+  });
+}
+
+// ---------- what consults a read ----------
+//
+// A boundary binding is no longer authored. It comes into existence as
+// the side-effect of a gesture that needs it — a rule, a guard, an
+// emission field, a tag the emission writes, or another binding's
+// identifier — and it goes when the last of those goes. The list is
+// still stored, and still authoritative: a rule names its alias and
+// nothing else records the path that alias stands for, so the boundary
+// cannot be recomputed from the rules. What is maintained instead is
+// the invariant that every binding is consulted by something, which
+// reference counting gives exactly.
+//
+// The five reasons are the five places an alias can be named. Four are
+// operands (`forEachCommandOperand` walks the same set); the fifth is
+// write coverage, which can demand a binding no operand mentions — but
+// only for a *derived* tag value, never for one the caller asserted
+// (see `emittedTagRequirements`).
+const REFERENCE_REASONS = ['rule', 'guard', 'emission', 'coverage', 'chain'];
+
+function bindingReferences(model, body) {
+  const found = new Map();
+  for (const binding of body.boundary || []) {
+    if (binding && binding.alias) found.set(binding.alias, new Set());
+  }
+  const note = (alias, reason) => {
+    const reasons = found.get(alias);
+    if (reasons) reasons.add(reason);
+  };
+  // An operand naming an alias consults it whatever else it does, so
+  // the walk is over operand *shape*, not over the position it sits in.
+  const noteOperand = (operand, reason) => {
+    if (operandSource(operand) === 'alias-property') note(operand.alias, reason);
+  };
+  const noteCondition = (condition, reason) => {
+    if (!condition) return;
+    noteOperand(condition.leftHandSide, reason);
+    const rights = Array.isArray(condition.rightHandSide)
+      ? condition.rightHandSide : [condition.rightHandSide];
+    for (const operand of rights) noteOperand(operand, reason);
+  };
+
+  for (const condition of body.conditions || []) noteCondition(condition, 'rule');
+  for (const emission of body.publishes || []) {
+    if (!emission) continue;
+    for (const condition of emission.when || []) noteCondition(condition, 'guard');
+    for (const operand of Object.values(emission.parameters || {})) {
+      noteOperand(operand, 'emission');
+    }
+  }
+  // A binding reached *through* another is the chain: `theirs` is why
+  // `students` is read, and `students` is consulted by nothing else.
+  // `excluding` and `arguments` count for the same reason `id` does —
+  // they are operands resolved in the same scope, which is what
+  // `forEachCommandOperand` already treats them as.
+  for (const binding of body.boundary || []) {
+    if (!binding) continue;
+    noteOperand(binding.id, 'chain');
+    noteOperand(binding.excluding, 'chain');
+    for (const operand of Object.values(binding.arguments || {})) {
+      noteOperand(operand, 'chain');
+    }
+  }
+  // Coverage names no alias — it names the instance an emitted tag
+  // writes, and is satisfied by whichever binding consults it. So the
+  // binding a coverage issue *would* complain about is the one the
+  // emission keeps alive.
+  // Only a *derived* tag keeps a read alive, which is the same line
+  // `coverageIssues` draws: a tag the caller asserted does not demand a
+  // read, so a read held up by nothing else is unreferenced and goes.
+  for (const requirement of emittedTagRequirements(model, body)) {
+    if (requirement.asserted || requirement.required === undefined) continue;
+    for (const binding of body.boundary || []) {
+      if (binding && binding.entity === requirement.entity
+        && sameOperand(binding.id, requirement.required)) {
+        note(binding.alias, 'coverage');
+      }
+    }
+  }
+  return found;
+}
+
+// The aliases nothing consults, in declaration order. Transitive: a
+// binding kept alive only by one that is itself unreferenced is
+// unreferenced too, which is what makes deleting the last rule about
+// `theirs` take `students` with it.
+function unreferencedBindings(model, body) {
+  const bindings = (body.boundary || []).filter((b) => b && b.alias);
+  let live = bindings.map((b) => b.alias);
+  for (;;) {
+    const refs = bindingReferences(model, { ...body, boundary: bindings.filter((b) => live.includes(b.alias)) });
+    const next = live.filter((alias) => (refs.get(alias) || new Set()).size > 0);
+    if (next.length === live.length) break;
+    live = next;
+  }
+  return bindings.map((b) => b.alias).filter((alias) => !live.includes(alias));
+}
+
+// Which reads the *decision* walks, as against the ones an emission
+// causes. A read a rule or guard names is tested; so is every read it
+// had to be reached through, because a hop exists only to get to the
+// thing being tested.
+//
+// Everything else is read because an event records its value or writes
+// its tag — `CourseNumbering`, whose value becomes the new course's id,
+// and the student `StudentUnsubscribedFromCourse` tags. That is a fact
+// about what the command *records*, not about what it *decides*, so it
+// belongs beside the emission and not under "it is only allowed if".
+// A command with no tested reads at all is plainly always allowed, and
+// says so, with the reads it still makes shown where they come from.
+//
+// The split is presentation only: both halves are the same `boundary`,
+// and the derived DCB is their union either way.
+function decisionAliases(model, body) {
+  const references = bindingReferences(model, body);
+  const byAlias = new Map((body.boundary || [])
+    .filter((b) => b && b.alias).map((b) => [b.alias, b]));
+  const kept = new Set();
+  const visit = (alias) => {
+    if (!alias || kept.has(alias) || !byAlias.has(alias)) return;
+    kept.add(alias);
+    const binding = byAlias.get(alias);
+    const walk = (operand) => {
+      if (operandSource(operand) === 'alias-property') visit(operand.alias);
+    };
+    walk(binding.id);
+    walk(binding.excluding);
+    for (const operand of Object.values(binding.arguments || {})) walk(operand);
+  };
+  for (const [alias, reasons] of references) {
+    if (reasons.has('rule') || reasons.has('guard')) visit(alias);
+  }
+  return kept;
+}
+
+// Pruning is what "reads are determined by the rules" means on the
+// write path: every gesture that removes the last thing consulting a
+// read removes the read in the same append, so there is no moment at
+// which the boundary holds something nothing looks at. A body arriving
+// from elsewhere — a hand-written file, an agent writing a whole
+// body — may hold one, and keeps it until this runs: it is reported as
+// an advisory first and dropped at the next edit, never silently.
+function pruneUnreferencedBindings(model, body) {
+  const dropped = unreferencedBindings(model, body);
+  if (!dropped.length) return dropped;
+  body.boundary = (body.boundary || []).filter((b) => !(b && dropped.includes(b.alias)));
+  return dropped;
 }
 
 // ============================================================
@@ -1634,6 +1812,21 @@ function definitionAdvisories(model, kind, name, body) {
     validateReferences(model, kind, name, body);
   } catch (error) {
     messages.push(error && error.message ? error.message : String(error));
+  }
+  // A read nothing consults. The app cannot author one — a read exists
+  // because a rule, guard, emission, emitted tag or another read wanted
+  // it — so this only ever comes from outside: a hand-written file, or
+  // an agent writing a whole body. It still bounds the append, so it is
+  // never dropped behind anyone's back; it is reported here and pruned
+  // by the next edit to this command, which is what the message says.
+  if (kind === 'command-definition') {
+    const stranded = unreferencedBindings(model, body);
+    if (stranded.length) {
+      messages.push(`Reads nothing consults: ${stranded.join(', ')}. `
+        + `${stranded.length === 1 ? 'It still widens' : 'They still widen'} the consistency `
+        + `boundary, so nothing is dropped now — the next edit to this command will remove `
+        + `${stranded.length === 1 ? 'it' : 'them'}.`);
+    }
   }
   return messages;
 }
@@ -2833,11 +3026,13 @@ function validateCommandBody(model, body) {
     // an answer to a question nobody asked.
     throw new DomainError(
       first.operand === undefined
-        ? `Write coverage: "${first.event}.${first.property}" is a ${first.entity} tag, and this ` +
-          `command gives it no value. Say where it comes from, then bind that instance in the boundary.`
-        : `Write coverage: "${first.event}.${first.property}" writes the tag ` +
-          `${first.entity}:${operandText(first.operand)}, which the boundary does not consult. ` +
-          `Bind that instance in the boundary first.`
+        ? `"${first.event}.${first.property}" is a ${first.entity} tag, and this command gives ` +
+          `it no value. Say where it comes from.`
+        : `"${first.event}.${first.property}" writes the tag ` +
+          `${first.entity}:${operandText(first.operand)} from a value this command derived, ` +
+          `without reading that ${first.entity} — so nothing checked that the value ` +
+          `still holds. Reading it would put it in the boundary. (A tag taken straight from a ` +
+          `command property is asserted by the caller and needs no read.)`
     );
   }
 }
@@ -3078,6 +3273,18 @@ function updateDefinition(kind, modelId, name, body) {
 // each, so no change needs to see another one applied.
 function updateDefinitions(modelId, changes) {
   const model = getCtxOrThrow(modelId);
+  // Reads follow the rules, and this is the one place that is true.
+  // Pruning here rather than in every caller means one gesture is one
+  // append: deleting the last rule about a read deletes the read in the
+  // same event, and a rule that brought a read with it stored both at
+  // once. It is deliberately not in `addDefinition` — a body arriving
+  // whole, from a file or an agent, keeps what it came with until
+  // someone edits it, and `modelAdvisories` says so meanwhile.
+  for (const change of changes) {
+    if (change.kind === 'command-definition' && change.body) {
+      pruneUnreferencedBindings(model, change.body);
+    }
+  }
   for (const { kind, name, body } of changes) validateDefinitionUpdate(model, kind, name, body);
   appendEvents(changes.map(({ kind, name, body }) => (
     { type: `${kind}-updated`, data: { 'dcb-model-id': modelId, name, body } }
@@ -4310,7 +4517,13 @@ function seedBase(modelId) {
   command('UnsubscribeStudentFromCourse', {
     feature: 'Enrolment',
     properties: [prop('courseId', 'CourseId'), prop('studentId', 'StudentId')],
-    boundary: [bind('course', 'Course', 'courseId'), bind('student', 'Student', 'studentId')],
+    // The course only. Which student is asserted by the caller, and
+    // whether they are in this course is answered off the course — the
+    // student's own state decides nothing here, so reading it would
+    // widen the boundary and buy nothing. The event still carries the
+    // `Student` tag, which is what makes a concurrent command that
+    // *did* read this student conflict with it.
+    boundary: [bind('course', 'Course', 'courseId')],
     conditions: [
       { leftHandSide: of('course', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'Existent' } },
       { leftHandSide: of('course', 'subscribedStudentIds'), predicate: 'contains', rightHandSide: param('studentId') },

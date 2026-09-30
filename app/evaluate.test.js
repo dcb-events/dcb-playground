@@ -1108,18 +1108,32 @@ function drive(model, log, command, args) {
   // its boundary never consults — valid JSON, defective model. It must
   // load whole, the defect must come back as an advisory, and the
   // command must still evaluate: an unguarded write is legal DCB.
+  //
+  // The tag has to be a *derived* one. A tag whose value came off the
+  // command payload is asserted by the caller and wants no read — only
+  // a value this command read somewhere is a claim about state, and
+  // only that is worth flagging.
   const { id, model } = openBlank('Lenient');
   addDefinition('entity-definition', id, 'Festlegung', { properties: [] });
   addDefinition('event-definition', id, 'FestlegungErzeugt', {
     properties: [{ name: 'festlegungId', propertyType: 'FestlegungId', isOptional: false, isList: false }],
   });
+  addDefinition('event-definition', id, 'FestlegungVermerkt', {
+    properties: [{ name: 'festlegungId', propertyType: 'FestlegungId', isOptional: false, isList: false }],
+  });
+  // Folds a different event, so it is not the minting exemption: this
+  // is a value read from the log and then written as a tag.
+  addDefinition('projection-definition', id, 'LetzteFestlegung', {
+    parameters: [], valueType: 'FestlegungId', isList: false, initialValue: null,
+    handlers: [{ event: 'FestlegungVermerkt', operation: 'set', value: { eventProperty: 'festlegungId' } }],
+  });
   const envelope = buildShareEnvelope(model(), []);
   envelope.commandDefinitions.push({
     name: 'ErzeugeFestlegung',
-    properties: [{ name: 'festlegungId', propertyType: 'FestlegungId', isOptional: false, isList: false }],
-    boundary: [],
+    properties: [],
+    boundary: [{ alias: 'letzte', projection: 'LetzteFestlegung', arguments: {} }],
     conditions: [],
-    publishes: [{ name: 'FestlegungErzeugt', parameters: { festlegungId: { parameterName: 'festlegungId' } } }],
+    publishes: [{ name: 'FestlegungErzeugt', parameters: { festlegungId: { alias: 'letzte' } } }],
   });
 
   check('an import with a write-coverage gap loads whole, advisory-flagged', () => {
@@ -1128,9 +1142,9 @@ function drive(model, log, command, args) {
     const imported = sandbox.projectState()[modelId];
     eq('ErzeugeFestlegung' in imported['command-definitions'], true, 'the command loaded');
     eq(sandbox.modelAdvisories(imported).some(
-      (a) => a.name === 'ErzeugeFestlegung' && /Write coverage/.test(a.message)
+      (a) => a.name === 'ErzeugeFestlegung' && /without reading that Festlegung/.test(a.message)
     ), true, 'and carries the coverage advisory');
-    const outcome = evaluateCommand(imported, [], 'ErzeugeFestlegung', { festlegungId: 'f1' });
+    const outcome = evaluateCommand(imported, [], 'ErzeugeFestlegung', {});
     eq(outcome.outcome, 'published', 'the unguarded write still evaluates');
   });
 
@@ -2014,7 +2028,10 @@ check('an import missing the definition arrays is refused, not silently accepted
       { name: 'anordnungId', propertyType: 'AnordnungId', isOptional: false, isList: false },
       { name: 'notiz', propertyType: 'string', isOptional: true, isList: false },
     ],
-    boundary: [{ alias: 'anordnung', entity: 'Anordnung', id: { parameterName: 'anordnungId' } }],
+    // No boundary: the caller says which Anordnung, and nothing here
+    // tests its state — a read would widen the append condition and
+    // decide nothing.
+    boundary: [],
     conditions: [],
     publishes: [{
       name: 'AnordnungErzeugt',
@@ -2025,7 +2042,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   // without anything having to say so.
   addDefinition('command-definition', id, 'ErzeugeOhneNotiz', {
     properties: [{ name: 'anordnungId', propertyType: 'AnordnungId', isOptional: false, isList: false }],
-    boundary: [{ alias: 'anordnung', entity: 'Anordnung', id: { parameterName: 'anordnungId' } }],
+    boundary: [],
     conditions: [],
     publishes: [{ name: 'AnordnungErzeugt', parameters: { anordnungId: { parameterName: 'anordnungId' } } }],
   });
@@ -2225,9 +2242,13 @@ check('every predefined model ships advisory-clean', () => {
         { name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false },
         { name: 'instructorId', propertyType: 'InstructorId', isOptional: false, isList: false },
       ],
+      // The new instructor is asserted by the caller and tested by
+      // nothing, so it is not read. The *previous* one is read, because
+      // the rule is about it — and because the `Unassigned` tag is
+      // derived from `course.instructorId`, which is a claim about
+      // state this command looked at.
       boundary: [
         { alias: 'course', entity: 'Course', id: { parameterName: 'courseId' } },
-        { alias: 'instructor', entity: 'Instructor', id: { parameterName: 'instructorId' } },
         { alias: 'previousInstructor', entity: 'Instructor',
           id: { alias: 'course', property: 'instructorId' }, isOptional: true },
       ],
@@ -2291,7 +2312,7 @@ check('every predefined model ships advisory-clean', () => {
   check('without the flag, an unset identifier stays the loud error', () => {
     const { id, model } = openAssignment();
     const body = deepClone(model()['command-definitions'].Assign);
-    delete body.boundary[2].isOptional;
+    delete body.boundary[1].isOptional;
     updateDefinition('command-definition', id, 'Assign', body);
     let message = '';
     try { evaluateCommand(model(), [], 'Assign', { courseId: 'c1', instructorId: 'i1' }); }
@@ -2337,7 +2358,7 @@ check('every predefined model ships advisory-clean', () => {
   check('an unflagged binding off a null-starting projection is advised ahead of time', () => {
     const { id, model } = openAssignment();
     const body = deepClone(model()['command-definitions'].Assign);
-    delete body.boundary[2].isOptional;
+    delete body.boundary[1].isOptional;
     updateDefinition('command-definition', id, 'Assign', body);
     const found = sandbox.modelAdvisories(model()).map((a) => a.message).join('; ');
     eq(/may be absent/.test(found), true, 'the advisory names the fix: ' + found);

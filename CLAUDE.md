@@ -106,6 +106,73 @@ it never works from `file:`.
   structural gate is skipped and reported once, in a toast. Scenario kinds
   are excluded from advisories; their run/status channel already reports.
   The predefined models are held advisory-clean by a test.
+- **A read is never authored** — the merged step ("It is only allowed if")
+  is one step where there were two, because a boundary binding is not a
+  thing anyone wants to declare: it is what a rule, a guard, an emission
+  field, an emitted tag or another read *needs*. So the rule adder
+  carries the read with it (`pendingBinding` in index.html builds the
+  provisional binding; `record` appends binding and rule in one
+  `patchSlice`, because a binding stored without its rule would be
+  pruned by its own write), and the read card has no delete button.
+  `bindingReferences` / `unreferencedBindings` (model.js) name the five
+  reasons a read is consulted — rule, guard, emission, coverage, chain —
+  and `updateDefinitions` prunes what nothing consults, transitively, in
+  the same append: deleting the last rule about `theirs` takes the
+  `students` hop with it. Pruning is deliberately *not* in
+  `addDefinition`: a body arriving whole, from a file or a WebMCP tool,
+  keeps what it came with and earns an advisory instead, and the next
+  edit to that command is what drops it. All five reasons are
+  load-bearing in the shipped models, and a test holds them free of
+  unreferenced reads. The `boundary` stays authoritative in the wire
+  format and cannot be recomputed from the rules — a rule names an
+  alias, and only the binding records the path that alias stands for —
+  which is why this is reference counting and not derivation.
+  The rule adder is itself staged (`ruleEditor`): what it is about,
+  which of that thing's values, what must be true of it — because a
+  rule now spans what used to be two steps, and asking it all at once
+  put five pickers in a row nobody could read as a sentence. A rule
+  added from a read's own card, and every guard, starts at the second
+  question; a rule opened for editing opens whole. Answering reveals
+  the next question — there is no Next button, and the first question
+  is deliberately *not* pre-answered, or the row would advance on its
+  own and put everything on screen at once, which is what the staging
+  exists to avoid. Revealing only ever moves forward, so going back to
+  change what is being read never hides the rule written about it. A test authors
+  `SubscribeStudentToCourse` through the three questions and compares
+  the result to the shipped definition. Its first question offers only
+  what the command can reach — entities some operand already in scope
+  could identify, never projections (a rule is not about a folded
+  value) — and inventing an entity there also gives the command the
+  input that says *which* one, since a fresh identifier type is
+  reachable from nothing.
+- **Reads split by their reason** (`decisionAliases`, model.js): a read
+  a rule or guard names, and every hop it was reached through, belongs
+  to the decide step; everything else is read in order to *record*
+  something — a projection whose value becomes an id, an instance whose
+  tag the event writes — and is shown under the emission instead. So
+  `DefineCourse` is plainly "Always allowed" with its numbering beside
+  the event, and `UnsubscribeStudentFromCourse` shows the student it
+  never tests where the tag that demands it is. The split is
+  presentation only: both halves are one `boundary`, and the derived
+  DCB is their union. Reads stay removable, and removing one takes the
+  rules and guards about it while leaving reads further down the chain
+  to dangle with an advisory — narrowing the boundary is never silent.
+- **Write coverage is narrow, and advice only** (`emittedTagRequirements`,
+  model.js): it flags a tag whose value this command *derived* — read
+  off some instance it bound — and is silent for one taken straight
+  from a command property, which the caller asserted. The reason is
+  that an uncovered tag is not unsound: the append condition is the
+  union of the bindings' queries, so the tag this command writes is
+  what makes every *other* command that read that instance conflict
+  with it, read or not. What an uncovered tag gives up is only this
+  command's own protection against concurrent change, and where the
+  decision never depended on that instance there was nothing to
+  protect. One walk decides both what the advisory says and which reads
+  a tag keeps alive, so pruning and the advisory cannot disagree about
+  what a read is for. `UnsubscribeStudentFromCourse` therefore binds
+  the course only: which student is asserted by the caller, and whether
+  they are in the course is answered off the course.
+
 - **Every edit goes through a command function** in `model.js`, and every
   command funnels into `appendEvents` — the seam where undo marks are taken
   (`onAppend`), so buttons and agent tools are undoable alike. New editing

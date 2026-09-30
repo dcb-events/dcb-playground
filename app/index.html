@@ -177,8 +177,20 @@
                 padding-left: 26px; margin: -2px 0 10px; }
   .step.trigger > .dot { background: var(--command); }
   .step.reads > .dot, .step.changes > .dot, .step.now > .dot { background: var(--entity); }
-  .step.rules > .dot { background: var(--rule); }
+  .step.rules > .dot, .step.decide > .dot { background: var(--rule); }
   .card.rule { border-left: 3px solid var(--rule); }
+  /* A rule inside the read it is about: indented under the sentence
+     that introduced the thing, and carrying the rule colour so the two
+     kinds of line stay tellable apart now that they share a card. */
+  .rule-row { margin: 4px 0 0 12px; padding-left: 8px; border-left: 2px solid var(--rule); }
+  /* One question per line, so a rule being written reads as a form
+     rather than as a row of pickers that happened to wrap. */
+  .rule-wizard { display: flex; flex-direction: column; gap: 2px; }
+  .rule-stage + .rule-stage { border-top: 1px dashed var(--border); padding-top: 4px; }
+  .rule-stage > .q { font-size: 10px; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--muted); padding: 2px 0 0 2px; }
+  .rule-stage > .adder { padding-top: 0; }
+  .card > .adder.quiet { margin-left: 12px; }
   .step.emits > .dot { background: var(--event); }
   .step > .shead { display: flex; align-items: baseline; gap: 8px; margin-bottom: 7px; }
 
@@ -1107,7 +1119,6 @@ const state = {
   bindingDraft: null,       // in-progress edits to that binding
   ruleDraft: null,          // in-progress edits to a condition
   changeDraft: null,        // in-progress "what this event changes" row
-  readDraft: null,          // in-progress "read something" row
   fieldDraft: null,         // the one half-typed field row — see commitPendingField
   queryPop: null,           // key of the pinned DCB-query popover, if any
   wizard: null,             // { slice, upto } — a brand-new command revealing its steps.
@@ -1120,7 +1131,7 @@ const state = {
   namingCommand: false,     // naming a brand-new command: true, or the feature it lands in
   newFeature: false,        // inline form open in the rail
   renamingFeature: null,
-  newEntityAt: null,        // 'reads' | 'changes:<Event>' | 'rail'
+  newEntityAt: null,        // 'rules' | 'changes:<Event>' | 'rail'
   addingProp: null,         // { eventName } | { at }
   addingMember: null,       // { type, eventName? } — adding a member to an enum custom type
   renamingEntity: null,
@@ -2549,7 +2560,7 @@ function removeButton(key, { label = '×', title, confirm = 'Really remove?', on
 // accepting it. A draft that is not ready is abandoned silently,
 // because backing away from a half-thought is what "never mind" looks
 // like.
-const PENDING_EDIT_KEYS = ['fieldDraft', 'changeDraft', 'ruleDraft', 'readDraft'];
+const PENDING_EDIT_KEYS = ['fieldDraft', 'changeDraft', 'ruleDraft'];
 function commitPendingField() {
   for (const key of PENDING_EDIT_KEYS) {
     const draft = state[key];
@@ -2846,7 +2857,9 @@ function draftFromOperand(draft, key, operand) {
   return draft;
 }
 
-function operandPicker(choices, draft, key, { placeholder, allowLiteral = true, onNew, newLabel } = {}) {
+function operandPicker(choices, draft, key, {
+  placeholder, allowLiteral = true, onNew, newLabel, onPicked,
+} = {}) {
   const rows = [
     ...choices,
     ...(onNew ? [[NEW, newLabel || '+ New property…']] : []),
@@ -2858,6 +2871,10 @@ function operandPicker(choices, draft, key, { placeholder, allowLiteral = true, 
     // A pick is the modeler's hand on the row: from here on, leaving
     // it is finishing it, not declining it — see `commitPendingField`.
     draft.touched = true;
+    // What answering this picker reveals, where it is one question of
+    // several. A literal answers nothing until it is typed, so it does
+    // not count as picked.
+    if (onPicked && v !== LITERAL) onPicked(v);
     render();
   }, placeholder)];
   if (draft[key] === LITERAL) {
@@ -3242,7 +3259,7 @@ const FORM_KEYS = [
 // that filled them — a folded-away adder leaves its half-written row
 // behind — so they are cleared with the forms but never taken as
 // evidence that one is open.
-const DRAFT_KEYS = ['bindingDraft', 'ruleDraft', 'changeDraft', 'readDraft',
+const DRAFT_KEYS = ['bindingDraft', 'ruleDraft', 'changeDraft',
   'watchDraft', 'fieldDraft'];
 
 const formOpen = () => FORM_KEYS.some((key) => state[key]);
@@ -3688,8 +3705,12 @@ function createCommand(model, label) {
 // wizard, because from there the whole page is on screen.
 const WIZARD_STEPS = [
   { key: 'trigger', paint: (m, s) => stepTrigger(m, s), empty: (s) => !s.payload.length, skipWords: 'takes no input' },
-  { key: 'reads', paint: (m, s) => stepReads(m, s), empty: (s) => !s.reads.length, skipWords: 'looks at nothing' },
-  { key: 'rules', paint: (m, s) => stepRules(m, s), empty: (s) => !s.rules.length, skipWords: 'no rules' },
+  // One step where there were two. A read is not a question anyone
+  // wanted asked: it is what a rule needs, so it is answered by
+  // answering the rule. The skip reading covers both halves, because a
+  // command can look at nothing *and* have no rules — and, the other
+  // way round, can look at something with no rule at all.
+  { key: 'decide', paint: (m, s) => stepDecision(m, s), empty: (s) => !s.rules.length && !s.reads.length, skipWords: 'always allowed' },
   { key: 'emits', paint: (m, s) => stepEmits(m, s), empty: () => false },
   { key: 'changes', paint: (m, s) => stepChanges(m, s), empty: () => false },
 ];
@@ -4087,8 +4108,7 @@ function paintPage() {
     main.appendChild(wizardBar(model, slice));
   } else {
     main.appendChild(stepTrigger(model, slice));
-    main.appendChild(stepReads(model, slice));
-    main.appendChild(stepRules(model, slice));
+    main.appendChild(stepDecision(model, slice));
     main.appendChild(stepEmits(model, slice));
     main.appendChild(stepChanges(model, slice));
     if (advanced()) main.appendChild(stepConsistency(model, slice));
@@ -4225,7 +4245,7 @@ function dcbQueryWords(item) {
 // One binding, as a card. `index` is its position in the authored
 // boundary, which is what removal needs — the rounds regroup the cards
 // but never renumber the list underneath them.
-function readCard(model, slice, binding, index, waitsFor) {
+function readCard(model, slice, binding, index, waitsFor, ruleIndices) {
   const r = readParts(model, slice.body, binding);
   const queryItem = (slice.dcb.items || []).find((item) => item.alias === binding.alias);
   const sentence = r.projection
@@ -4285,9 +4305,28 @@ function readCard(model, slice, binding, index, waitsFor) {
             render();
           },
         }, 'Edit'),
+        // Removing a read takes the rules and guards about it with it:
+        // they are its own children on this page, and a rule whose
+        // subject is gone is not a rule. What it does *not* take is a
+        // read further down the chain that drew its identifier from
+        // this one — that is a sibling card the author can see and
+        // repoint, and deleting a subtree nobody pointed at would
+        // narrow the boundary behind their back. It dangles, and says
+        // so, until they deal with it.
         h('button', {
-          class: 'btn tiny danger',
-          onclick: () => patchSlice((b) => { b.boundary.splice(index, 1); }),
+          class: 'btn tiny danger', title: 'Remove this read, and the rules about it',
+          onclick: () => patchSlice((b) => {
+            const names = (condition) => conditionOperands(condition)
+              .some((operand) => operandSource(operand) === 'alias-property'
+                && operand.alias === binding.alias);
+            b.boundary = (b.boundary || []).filter((x) => !(x && x.alias === binding.alias));
+            b.conditions = (b.conditions || []).filter((c) => !(c && names(c)));
+            for (const emission of b.publishes || []) {
+              if (!emission || !emission.when) continue;
+              emission.when = emission.when.filter((c) => !(c && names(c)));
+              if (!emission.when.length) delete emission.when;
+            }
+          }),
         }, '×'))),
     state.editBinding === binding.alias ? bindingEditor(model, slice, binding, index) : null,
     // Which read this one had to wait for. The round header carries
@@ -4298,6 +4337,27 @@ function readCard(model, slice, binding, index, waitsFor) {
           ...waitsFor.flatMap((alias, i) => [
             i ? ' and ' : null, h('span', { class: 'op' }, alias),
           ]))
+      : null,
+    // The rules about this read, inside it. A card with none is an
+    // intermediate hop or an emission's read — it still costs a trip
+    // and still bounds the append, so it is shown as what it is
+    // rather than hidden for having nothing to check.
+    ...(ruleIndices || []).map((i) => ruleRow(model, slice, slice.rules[i], i)),
+    ruleIndices
+      ? h('div', { class: 'adder quiet' }, h('button', {
+          class: 'btn tiny',
+          onclick: () => {
+            closeForms();
+            state.adder = 'rule';
+            // Opened from a card, the target is settled — the editor
+            // skips its own read picker and scopes the left side to
+            // this alias.
+            state.ruleDraft = {
+              predicate: 'equals', negate: false, left: '', right: '', onAlias: binding.alias,
+            };
+            render();
+          },
+        }, '+ rule about ' + propertyWords(binding.alias)))
       : null);
 }
 
@@ -4451,23 +4511,129 @@ function roundLabel(index, total) {
 }
 
 // What Enter on an empty property name means: that list is done, and
-// the next thing a command needs is what it reads. Opens the same
-// adder "+ look at something" opens, and reaches for its first control —
-// best effort, since a model with no entity yet offers a button in its
-// place, not a field.
+// the next question is what decides. Opens the merged step's own
+// adder and reaches for its first control — which is the read picker,
+// since a rule begins by naming what it is about.
 function beginReadAdder() {
   closeForms();
-  state.adder = 'read';
+  state.adder = 'rule';
   render();
   setTimeout(() => {
-    const el = document.querySelector('.step.reads select, .step.reads input');
+    const el = document.querySelector('.step.decide select, .step.decide input');
     if (el) el.focus();
   }, 0);
 }
 
-function stepReads(model, slice) {
-  const rounds = slice.rounds || [];
+// One rule, as a sentence, inside the card of the read it is about.
+// Extracted from the old rules step unchanged in substance: what moved
+// is where it is painted, not what it says.
+function ruleRow(model, slice, condition, i) {
+  if (state.editRule === i) return h('div', { class: 'card rule' }, ruleEditor(model, slice, i));
+  const p = conditionParts(condition);
+  const quantifier = quantifierWords(model, slice.body, condition);
+  // A rule over an alias declared "may be absent" does not decide on
+  // the unset case — it steps aside. Said here, on the rule, so the
+  // skip the boundary's flag implies is visible where it applies.
+  const optionalAliases = uniq(conditionOperands(condition)
+    .filter((operand) => operandSource(operand) === 'alias-property')
+    .map((operand) => operand.alias))
+    .filter((alias) => (slice.body.boundary || []).some((b) => b && b.alias === alias && b.isOptional));
+  return h('div', { class: 'rule-row' },
+    qrow('div', { cls: 'row', key: 'rule:' + i },
+      h('span', { class: 'sentence' },
+        quantifier ? h('span', { class: 'verb' }, quantifier + ', ') : null,
+        opRef(condition.leftHandSide, null, p.left), ' ', h('span', { class: 'verb' }, p.verb),
+        p.right ? h('span', {}, ' ', opRef(condition.rightHandSide, null, p.right)) : null,
+        optionalAliases.length
+          ? h('span', { class: 'muted tiny' },
+              ' — skipped when ' + optionalAliases.map(propertyWords).join(' or ') + ' is absent')
+          : null),
+      h('span', { class: 'grow' }),
+      reveal(
+        h('button', {
+          class: 'btn tiny',
+          onclick: () => {
+            closeForms();
+            state.editRule = i;
+            const opened = draftFromOperand(
+              { predicate: condition.predicate, negate: !!condition.negate },
+              'left', condition.leftHandSide);
+            // An `equalsAny` right-hand side is a literal list; its
+            // entries seed the membership widget, not the picker.
+            if (Array.isArray(condition.rightHandSide)) {
+              opened.right = '';
+              opened.rightEntries = condition.rightHandSide.map((entry) =>
+                entry !== null && typeof entry === 'object' ? entry : String(entry));
+            } else {
+              draftFromOperand(opened, 'right', condition.rightHandSide);
+            }
+            state.ruleDraft = opened;
+            render();
+          },
+        }, 'Edit'),
+        // Removing the last rule about a read removes the read: the
+        // write path prunes what nothing consults, so this one button
+        // is also how a read goes away. There is no button for that on
+        // the read itself, because a read is not a thing anyone
+        // declared.
+        h('button', {
+          class: 'btn tiny danger',
+          onclick: () => patchSlice((b) => { b.conditions.splice(i, 1); }),
+        }, '×'))));
+}
+
+// ---------- the merged step ----------
+//
+// "To decide, it looks at" and "It is only allowed if" were two steps
+// and are one. The reason is not screen space: a read was never a
+// thing anyone wanted to declare. It is what some rule, guard,
+// emission or chain *needs*, and asking for it separately made the
+// modeller answer a question about storage before they had finished
+// the question about the domain.
+//
+// So a read is not authored here. Each card is a read something
+// demanded, and the rules about it live inside it — which is also why
+// the card has no delete button: `pruneUnreferencedBindings` takes it
+// away when the last thing consulting it goes, and there is nothing
+// for a user to remove that they ever added.
+//
+// The rounds spine survives the merge, and is the reason the cards did
+// not collapse into the rules. "We must read the courses before we
+// know which students to look at" is a fact about the domain, and an
+// intermediate read that carries no rule at all — bound only so the
+// next one can be reached — still costs a trip to the log and is still
+// shown, empty.
+function stepDecision(model, slice) {
+  // Only the reads the decision walks. What an emission causes — a
+  // value the event records, a tag it writes — is shown beside that
+  // emission instead, because that is where its reason is.
+  const decision = decisionAliases(model, slice.body);
+  const mine = (binding) => binding && decision.has(binding.alias);
+  const rounds = (slice.rounds || [])
+    .map((round) => round.filter((entry) => mine(entry.binding)))
+    .filter((round) => round.length);
   const indexOfBinding = new Map(slice.reads.map((b, i) => [b, i]));
+  const reads = slice.reads.filter(mine);
+
+  // A rule belongs to the read its left side is about — the left side
+  // is always something read, which is what the rule editor already
+  // enforced by filtering its own picker. A rule arriving from a
+  // hand-written file may name none, and is shown after the cards
+  // rather than dropped.
+  const rulesByAlias = new Map();
+  const loose = [];
+  slice.rules.forEach((condition, i) => {
+    const left = condition && condition.leftHandSide;
+    const alias = operandSource(left) === 'alias-property' ? left.alias : null;
+    if (alias && slice.reads.some((b) => b && b.alias === alias)) {
+      if (!rulesByAlias.has(alias)) rulesByAlias.set(alias, []);
+      rulesByAlias.get(alias).push(i);
+    } else loose.push(i);
+  });
+
+  const cardFor = (binding, waitsFor) => readCard(
+    model, slice, binding, indexOfBinding.get(binding), waitsFor,
+    rulesByAlias.get(binding.alias) || []);
 
   let cards;
   if (rounds.length > 1) {
@@ -4475,258 +4641,110 @@ function stepReads(model, slice) {
       h('div', { class: 'round-head' },
         h('span', { class: 'rule' }),
         h('span', { class: 'label' }, roundLabel(i, rounds.length))),
-      ...round.map((entry) =>
-        readCard(model, slice, entry.binding, indexOfBinding.get(entry.binding), entry.waitsFor)),
+      ...round.map((entry) => cardFor(entry.binding, entry.waitsFor)),
     ]);
   } else {
-    cards = slice.reads.map((binding, i) => readCard(model, slice, binding, i, []));
+    cards = reads.map((binding) => cardFor(binding, []));
   }
-  if (!cards.length) cards.push(h('div', { class: 'empty' }, 'Looks at nothing — it decides unconditionally.'));
-
-  const sources = [
-    ...payloadChoices(model, slice.payload),
-    ...slice.reads.flatMap((b) => {
-      if (b.projection) return [[JSON.stringify({ alias: b.alias }), propertyWords(b.alias)]];
-      const entity = model['entity-definitions'][b.entity];
-      return (entity ? entity.properties : []).map((p) =>
-        [JSON.stringify({ alias: b.alias, property: p.name }),
-          memberWords(b.alias, p.name), entityIcon(model, b.entity)]);
-    }),
-  ];
-  const entityNames = Object.keys(model['entity-definitions']).sort();
-  const projectionNames = Object.keys(model['projection-definitions']).sort();
-  // Projections are offered in the same picker as entities, prefixed
-  // so the two never look like the same kind of thing.
-  const readables = [
-    ...entityNames.map((n) => [n, readable(n), entityIcon(model, n)]),
-    ...projectionNames.map((n) => ['projection:' + n, readable(n) + ' (projection)']),
-  ];
-  // Held in `state` rather than in a local: picking a projection has to
-  // repaint — the form below it changes shape — and a local would be
-  // reset by the very repaint it asked for.
-  const draft = state.readDraft && state.readDraft.slice === slice.name
-    ? state.readDraft
-    : (state.readDraft = {
-        slice: slice.name,
-        entity: readables.length ? readables[0][0] : '',
-        source: '',
-      });
-  if (!readables.some(([v]) => v === draft.entity)) {
-    draft.entity = readables.length ? readables[0][0] : '';
-  }
-
-  // A projection asks for one operand per parameter — none at all
-  // when it has none, which is what a global numbering looks like.
-  const chosenProjection = draft.entity.startsWith('projection:')
-    ? model['projection-definitions'][draft.entity.slice('projection:'.length)]
-    : null;
-  const parameters = chosenProjection ? (chosenProjection.parameters || []) : [];
-  // What identifies the chosen thing is a type, so only sources of
-  // that type are offered — with the first one already picked, which
-  // is the whole answer when the payload carries exactly one such id.
-  // A parameter narrows the same way, minus lists: a projection
-  // binding reads one partition, so there is no fan-out there.
-  const idSources = !chosenProjection && draft.entity
-    ? choicesOfType(model, slice, sources, idTypeOf(model, draft.entity), { list: true })
-    : [];
-  const parameterSources = new Map(parameters.map((p) =>
-    [p.name, choicesOfType(model, slice, sources, p.propertyType)]));
-  if (!idSources.some(([v]) => v === draft.source)) {
-    draft.source = idSources.length ? idSources[0][0] : '';
-  }
-  for (const p of parameters) {
-    const key = 'arg:' + p.name;
-    if (draft[key] && !parameterSources.get(p.name).some(([v]) => v === draft[key])) {
-      delete draft[key];
-    }
-  }
-  const argChoice = (p) => draft['arg:' + p.name]
-    || ((parameterSources.get(p.name)[0] || [])[0]);
+  for (const i of loose) cards.push(h('div', { class: 'card rule' }, ruleRow(model, slice, slice.rules[i], i)));
 
   const body = [h('div', {}, cards)];
-  if (state.newEntityAt === 'reads') {
+
+  // Creating an entity mid-rule resumes the rule, not a read adder:
+  // the gesture that was interrupted continues exactly one choice
+  // further along. A brand-new entity has no properties, so there is
+  // nothing for the rule's left side to name yet — which is why the
+  // property form opens straight after, on the entity just made.
+  if (state.newEntityAt === 'rules') {
     body.push(inlineForm({
-      question: 'What kind of thing do we need to keep track of?', placeholder: 'course',
+      question: 'What kind of thing does this rule need to look at?', placeholder: 'course',
       showsIdentifier: true,
       onSubmit: (v) => {
         state.newEntityAt = null;
         const created = createEntity(model, v);
-        // The entity was made in order to be read, so the read adder
-        // comes back with it already picked — the command being
-        // defined never left the screen, and the gesture that was
-        // interrupted resumes exactly one choice further along.
         if (created) {
-          state.adder = 'read';
-          // The source stays open: the next paint narrows the choices
-          // to the fresh entity's own identifier type and picks the
-          // first of them, when the command already carries one.
-          state.readDraft = { slice: slice.name, entity: created, source: '' };
+          // A brand-new entity derives a brand-new identifier type, so
+          // nothing already in scope can identify one — it would be
+          // unreachable the instant it existed, and the rule would have
+          // nowhere to go. So the command gains the input that
+          // identifies it, in the same gesture: the question "which
+          // room?" has to be answerable before a rule about a room can
+          // be written, and the answer is that the caller says which.
+          // Renaming or retyping it afterwards is the trigger step's
+          // ordinary business.
+          const idType = idTypeOf(model, created);
+          const name = defaultAlias(created) + 'Id';
+          if (idType && !(slice.payload || []).some((p) => p.name === name)) {
+            patch('command-definition', slice.name, (b) => {
+              b.properties = b.properties || [];
+              b.properties.push({ name, propertyType: idType, isOptional: false, isList: false });
+            });
+          }
+          state.adder = 'rule';
+          state.ruleDraft = state.ruleDraft || { predicate: 'equals', negate: false, left: '', right: '' };
+          // Through `target`, not `newRead`: the target is what the row
+          // derives its pending read from on every paint, so setting the
+          // read directly would be undone by the render that follows.
+          state.ruleDraft.target = 'entity:' + created;
+          state.ruleDraft.left = '';
+          state.ruleDraft.touched = true;
+          // And with no properties yet, the rule's left side still has
+          // nothing to name — so the entity's first property is the
+          // next thing asked for.
+          state.addingProp = { at: 'rule', only: created };
           render();
         }
       },
       onCancel: () => { state.newEntityAt = null; render(); },
     }));
-  } else if (!entityNames.length) {
-    // With nothing to choose between, a picker whose only row is
-    // "+ New…" could never fire — so offer the button itself.
-    body.push(h('div', { class: 'card' }, h('div', { class: 'adder' },
-      h('span', { class: 'muted tiny' }, 'Nothing to look at yet.'),
-      h('button', {
-        class: 'btn primary',
-        onclick: () => { closeForms(); state.newEntityAt = 'reads'; render(); },
-      }, '+ New entity'))));
-  } else {
-    // The push itself, shared by Enter, the button, and the
-    // leave-the-row commit — which passes `quiet` because a commit
-    // that fired on the way to another control must not then steal
-    // focus back to this one.
-    const record = (quiet) => {
-      if (chosenProjection) {
-        const name = draft.entity.slice('projection:'.length);
-        const args = {};
-        for (const p of parameters) {
-          args[p.name] = JSON.parse(argChoice(p));
-        }
-        patchSlice((b) => b.boundary.push({
-          alias: uniqueAlias(defaultAlias(name), b.boundary.map((x) => x.alias)),
-          projection: name, arguments: args }));
-      } else {
-        const entity = draft.entity;
-        const source = draft.source;
-        patchSlice((b) => b.boundary.push({
-          alias: uniqueAlias(defaultAlias(entity), b.boundary.map((x) => x.alias)),
-          entity, id: JSON.parse(source) }));
-      }
-      if (!quiet) focusReadAdderButton();
-    };
-    // Touched and complete, so a read someone picked out and then
-    // clicked past is a read, not a lost thought. Untouched defaults
-    // stay a proposal.
-    draft.ready = () => {
-      if (!draft.touched || !draft.entity) return false;
-      if (chosenProjection) {
-        return parameters.every((p) => argChoice(p));
-      }
-      return !!draft.source;
-    };
-    draft.commit = () => record(true);
-
-    // Once something is chosen, Enter anywhere in the row reads it — the
-    // same as clicking the button — so a read picked entirely from the
-    // keyboard never needs the mouse to land.
-    const submit = () => {
-      if (!draft.entity) return toast('Pick something to look at.', true);
-      if (chosenProjection) {
-        for (const p of parameters) {
-          if (!argChoice(p)) {
-            return toast(`Say what ${readable(draft.entity.slice('projection:'.length))} `
-              + 'is kept separately for.', true);
-          }
-        }
-      } else if (!draft.source) {
-        return toast('Pick a thing and where its id comes from.', true);
-      }
-      state.readDraft = null;
-      record(false);
-    };
-    // A read just added leaves the form open for the next one, freshly
-    // reset to the first entity again — so the button, not the entity
-    // picker, is where Enter should leave the keyboard: Tab from here
-    // reaches the next step directly, and Shift+Tab still reaches the
-    // reset picker for anyone who does want another read.
-    function focusReadAdderButton() {
-      // Direct child on purpose: only the adder's own button is meant,
-      // never one a picker might nest inside the same card.
-      const btn = document.querySelector('.step.reads .card .adder > button');
-      if (btn) btn.focus();
-    }
-
-    body.push(adderSlot('read', 'reads', '+ look at something', () =>
-      h('div', { class: 'card' }, h('div', {
-        class: 'adder',
-        onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } },
-      },
-        pick([...readables, [NEW, '+ New entity…']], draft.entity, (v) => {
-          if (v === NEW) { closeForms(); state.newEntityAt = 'reads'; return render(); }
-          draft.entity = v;
-          draft.touched = true;
-          render();
-        }),
-        chosenProjection
-          ? (parameters.length
-              ? parameters.flatMap((p) => [
-                  h('span', { class: 'muted tiny' }, 'for its ' + propertyWords(p.name)),
-                  pick(parameterSources.get(p.name), argChoice(p),
-                    (v) => { draft['arg:' + p.name] = v; draft.touched = true; },
-                    parameterSources.get(p.name).length
-                      ? null : `— no ${propertyWords(p.propertyType)} in scope yet —`),
-                ])
-              : h('span', { class: 'muted tiny' }, '— the whole log, no tag'))
-          : [
-              h('span', { class: 'muted tiny' }, 'identified by'),
-              pick(idSources, draft.source, (v) => { draft.source = v; draft.touched = true; },
-                idSources.length
-                  ? null : `— no ${propertyWords(idTypeOf(model, draft.entity))} in scope yet —`),
-            ],
-        h('button', { class: 'btn', onclick: submit }, '+ Look at something')))));
   }
-  return step('reads', 'To decide, it looks at', ...body);
+
+  body.push(adderSlot('rule', 'rules', '+ rule', () =>
+    h('div', { class: 'card' }, ruleEditor(model, slice, null))));
+
+  // Nothing tested is nothing decided. `DefineCourse` really is always
+  // allowed: the numbering it reads is read in order to *record* the
+  // course's id, which is said beside the event that records it.
+  if (!slice.rules.length) {
+    body.unshift(h('div', { class: 'empty' }, 'Always allowed.'));
+  }
+
+  return step('decide', 'It is only allowed if', ...body);
 }
 
-function stepRules(model, slice) {
-  const cards = slice.rules.map((condition, i) => {
-    if (state.editRule === i) return h('div', { class: 'card rule' }, ruleEditor(model, slice, i));
-    const p = conditionParts(condition);
-    const quantifier = quantifierWords(model, slice.body, condition);
-    // A rule over an alias declared "may be absent" does not decide on
-    // the unset case — it steps aside. Said here, on the rule, so the
-    // skip the boundary's flag implies is visible where it applies.
-    const optionalAliases = uniq(conditionOperands(condition)
-      .filter((operand) => operandSource(operand) === 'alias-property')
-      .map((operand) => operand.alias))
-      .filter((alias) => (slice.body.boundary || []).some((b) => b && b.alias === alias && b.isOptional));
-    return h('div', { class: 'card rule' },
-      qrow('div', { cls: 'row', key: 'rule:' + i },
-        h('span', { class: 'sentence' },
-          quantifier ? h('span', { class: 'verb' }, quantifier + ', ') : null,
-          opRef(condition.leftHandSide, null, p.left), ' ', h('span', { class: 'verb' }, p.verb),
-          p.right ? h('span', {}, ' ', opRef(condition.rightHandSide, null, p.right)) : null,
-          optionalAliases.length
-            ? h('span', { class: 'muted tiny' },
-                ' — skipped when ' + optionalAliases.map(propertyWords).join(' or ') + ' is absent')
-            : null),
-        h('span', { class: 'grow' }),
-        reveal(
-          h('button', {
-            class: 'btn tiny',
-            onclick: () => {
-              closeForms();
-              state.editRule = i;
-              const opened = draftFromOperand(
-                { predicate: condition.predicate, negate: !!condition.negate },
-                'left', condition.leftHandSide);
-              // An `equalsAny` right-hand side is a literal list; its
-              // entries seed the membership widget, not the picker.
-              if (Array.isArray(condition.rightHandSide)) {
-                opened.right = '';
-                opened.rightEntries = condition.rightHandSide.map((entry) =>
-                  entry !== null && typeof entry === 'object' ? entry : String(entry));
-              } else {
-                draftFromOperand(opened, 'right', condition.rightHandSide);
-              }
-              state.ruleDraft = opened;
-              render();
-            },
-          }, 'Edit'),
-          h('button', {
-            class: 'btn tiny danger',
-            onclick: () => patchSlice((b) => { b.conditions.splice(i, 1); }),
-          }, '×'))));
-  });
-  if (!cards.length) cards.push(h('div', { class: 'empty' }, 'No rules — always allowed.'));
-
-  return step('rules', 'It is only allowed if', h('div', {}, cards),
-    adderSlot('rule', 'rules', '+ rule', () => h('div', { class: 'card' }, ruleEditor(model, slice, null))));
+// The read a rule is about but which does not exist yet — the whole
+// point of the merged step. A rule names an alias, and nothing else in
+// the file records the path that alias stands for, so the binding has
+// to be appended in the same gesture as the rule that wants it. The
+// alias is computed the way `uniqueAlias` would compute it on commit,
+// which makes it stable across repaints: `draft.left` embeds it, and a
+// name that moved under the draft would invalidate the rule being
+// written.
+//
+// Returns null while the choice is still incomplete — an entity whose
+// identifier source has not been picked yet is not a read.
+function pendingBinding(model, slice, draft) {
+  const choice = draft && draft.newRead;
+  if (!choice || !choice.entity) return null;
+  const taken = (slice.reads || []).map((b) => b && b.alias).filter(Boolean);
+  if (choice.entity.startsWith('projection:')) {
+    const name = choice.entity.slice('projection:'.length);
+    const projection = model['projection-definitions'][name];
+    if (!projection) return null;
+    const args = {};
+    for (const parameter of projection.parameters || []) {
+      const picked = (choice.args || {})[parameter.name];
+      if (!picked) return null;
+      args[parameter.name] = JSON.parse(picked);
+    }
+    return { alias: uniqueAlias(defaultAlias(name), taken), projection: name, arguments: args };
+  }
+  if (!choice.source) return null;
+  return {
+    alias: uniqueAlias(defaultAlias(choice.entity), taken),
+    entity: choice.entity,
+    id: JSON.parse(choice.source),
+  };
 }
 
 // One condition, open for editing — the same form whether it already
@@ -4749,15 +4767,128 @@ function ruleEditor(model, slice, index, target) {
   // grows one the first time it is painted, and keeps it across every
   // repaint a keystroke causes from then on.
   const draft = state.ruleDraft || (state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' });
-  const scope = operandChoicesAbove(model, slice);
+
+  // ---------- which read this rule is about ----------
+  //
+  // Progressive on purpose: the property picker's choices depend on the
+  // read, and the identifier sources depend on the entity, so a row
+  // that painted all of them at once would be offering answers to
+  // questions not yet asked. A rule opened from a read's own card, or
+  // a guard (which is written against reads that already exist), skips
+  // this entirely — `onAlias` says the question is already answered.
+  const editingExisting = index !== null;
+  const scoped = draft.onAlias
+    || (editingExisting || target
+      ? null
+      : undefined);
+  const aliasRows = (slice.reads || []).filter(Boolean).map((b) => [
+    'alias:' + b.alias,
+    propertyWords(b.alias) + (b.entity ? ' · ' + readable(b.entity) : ' · projection'),
+    b.entity ? entityIcon(model, b.entity) : undefined,
+  ]);
+  const alreadyRead = new Set((slice.reads || []).filter(Boolean).map((b) => b.entity).filter(Boolean));
+  // Only what this command could actually reach. An entity is offered
+  // when something already in scope could identify one — a command
+  // property, or a value off a read above it — because an entity whose
+  // identifier nothing here can supply is not a read anyone could
+  // finish picking, and offering it is offering a dead end.
+  //
+  // Projections are not offered at all. A projection read is not
+  // something a rule is *about*: it is a folded value a command mints
+  // from or records, which is the emission's business. Nothing in the
+  // shipped models states a rule over one.
+  const scopeAbove = operandChoicesAbove(model, slice);
+  const reachable = (entityName) => choicesOfType(
+    model, slice, scopeAbove, idTypeOf(model, entityName), { list: true }).length > 0;
+  const newRows = Object.keys(model['entity-definitions']).sort()
+    .filter(reachable)
+    .map((n) => [
+      // A second binding of the same entity is a real thing to want —
+      // the subscribers' *other* courses — so it is offered, spelled as
+      // "another" rather than as a duplicate of the row above.
+      'entity:' + n,
+      (alreadyRead.has(n) ? 'another ' : '') + readable(n) + '…',
+      entityIcon(model, n),
+    ]);
+  const targetRows = [...aliasRows, ...newRows, [NEW, '+ New entity…']];
+  const chooseTarget = scoped === undefined;
+  // Deliberately not defaulted. The row advances when the author
+  // answers a question, so the first question has to be unanswered —
+  // a pre-picked target would either advance on its own (putting
+  // everything on screen again, which is what the staging is for) or
+  // sit there waiting to be re-picked to mean the same thing.
+  if (chooseTarget && draft.target && !targetRows.some(([v]) => v === draft.target)) {
+    draft.target = '';
+  }
+  const chosenTarget = scoped ? 'alias:' + scoped : draft.target;
+  // The draft's read choice is derived from the target every paint, so
+  // switching target cannot leave a half-built read of the old one
+  // behind.
+  if (chooseTarget) {
+    if (chosenTarget && !chosenTarget.startsWith('alias:') && chosenTarget !== NEW) {
+      const entity = chosenTarget.startsWith('projection:')
+        ? chosenTarget : chosenTarget.slice('entity:'.length);
+      if (!draft.newRead || draft.newRead.entity !== entity) {
+        draft.newRead = { entity, source: '', args: {} };
+      }
+    } else if (draft.newRead) {
+      delete draft.newRead;
+    }
+  }
+
+  // A read's own operands come from the scope *above* it — the payload
+  // and the reads already bound — never from itself, which is the chain
+  // rule the format states outright. So they are resolved here, against
+  // the un-augmented scope, and before the pending binding is built out
+  // of them: a binding assembled from operands that had not been
+  // defaulted yet comes back null on the first paint and takes the
+  // rule's left side down with it.
+  const baseScope = operandChoicesAbove(model, slice);
+  const choice = draft.newRead;
+  const chosenProjection = choice && choice.entity.startsWith('projection:')
+    ? model['projection-definitions'][choice.entity.slice('projection:'.length)]
+    : null;
+  const parameters = chosenProjection ? (chosenProjection.parameters || []) : [];
+  const idSources = choice && !chosenProjection
+    ? choicesOfType(model, slice, baseScope, idTypeOf(model, choice.entity), { list: true })
+    : [];
+  if (choice && !chosenProjection && !idSources.some(([v]) => v === choice.source)) {
+    choice.source = idSources.length ? idSources[0][0] : '';
+  }
+  const parameterSources = new Map(parameters.map((parameter) =>
+    [parameter.name, choicesOfType(model, slice, baseScope, parameter.propertyType)]));
+  for (const parameter of parameters) {
+    const picked = (choice.args || {})[parameter.name];
+    const rows = parameterSources.get(parameter.name);
+    if (!picked || !rows.some(([v]) => v === picked)) {
+      choice.args = { ...(choice.args || {}) };
+      choice.args[parameter.name] = rows.length ? rows[0][0] : '';
+    }
+  }
+
+  // Everything below reads the boundary the *commit* will have, not the
+  // one on file: the provisional binding's properties are what the left
+  // side picks from, and its alias is what the stored rule will name.
+  const pending = pendingBinding(model, slice, draft);
+  const reads = pending ? [...(slice.reads || []), pending] : (slice.reads || []);
+  const typeScope = { boundary: reads, commandProperties: slice.payload, model };
+  const scope = operandChoicesAbove(model, { ...slice, reads });
   // A rule's left side says what it's about, and that's always
   // something read — a value the command was merely given belongs on
   // the right, compared against. Left keeps only what came off the
   // boundary, not the "given · …" entries `scope` also carries for the
-  // right side's sake.
-  const leftScope = scope.filter(([v]) => !('parameterName' in JSON.parse(v)));
-  const leftType = resolveOperandType(draftOperand(draft, 'left'),
-    { boundary: slice.reads, commandProperties: slice.payload, model });
+  // right side's sake — and, once a read is chosen, only that read's:
+  // the rule the modeller is writing is about the thing they just
+  // named.
+  const aboutAlias = pending ? pending.alias : (scoped || null);
+  const leftScope = scope.filter(([v]) => {
+    const operand = JSON.parse(v);
+    if ('parameterName' in operand) return false;
+    return aboutAlias ? operand.alias === aboutAlias : true;
+  });
+  if (draft.left && !leftScope.some(([v]) => v === draft.left)) draft.left = '';
+  if (aboutAlias && !draft.left && leftScope.length === 1) draft.left = leftScope[0][0];
+  const leftType = resolveOperandType(draftOperand(draft, 'left'), typeScope);
 
   // The predicate list narrows to what the left side's type supports —
   // "starts with" against an integer could never be true — and the
@@ -4795,8 +4926,7 @@ function ruleEditor(model, slice, index, target) {
   const rightType = rightHandExpectedType(draft.predicate, leftType);
   const rightScope = (rightType
     ? scope.filter(([v]) => {
-        const resolved = resolveOperandType(JSON.parse(v),
-          { boundary: slice.reads, commandProperties: slice.payload, model });
+        const resolved = resolveOperandType(JSON.parse(v), typeScope);
         return resolved && resolved.propertyType === rightType.propertyType
           && resolved.isList === rightType.isList;
       })
@@ -4839,6 +4969,12 @@ function ruleEditor(model, slice, index, target) {
     state.editGuard = null;
     state.adder = null;
     patchSlice((b) => {
+      // One append, both writes. A binding stored without its rule
+      // would be pruned by the very write that stored it, and a rule
+      // stored without its binding would dangle — so the read a rule
+      // brought into being lands in the same gesture, above the rule
+      // that names it.
+      if (pending) (b.boundary = b.boundary || []).push(deepClone(pending));
       const list = targetList(b);
       if (index === null) list.push(condition);
       else list[index] = condition;
@@ -4851,6 +4987,7 @@ function ruleEditor(model, slice, index, target) {
   // silent leave-commit holds out for at least one entry, while an
   // explicit save is taken at its word.
   draft.ready = () => !!draft.touched
+    && (!draft.newRead || !!pending)
     && draftOperand(draft, 'left') !== undefined
     && (unary || (membership ? entryOperands().length > 0 : draftOperand(draft, 'right') !== undefined));
   draft.commit = record;
@@ -4859,6 +4996,11 @@ function ruleEditor(model, slice, index, target) {
   // the same as clicking the primary button — so a rule typed and
   // picked entirely from the keyboard never needs the mouse to land.
   const submit = () => {
+    if (draft.newRead && !pending) {
+      return toast(draft.newRead.entity.startsWith('projection:')
+        ? 'Say what that projection is kept separately for.'
+        : 'Say where that thing\u2019s id comes from.', true);
+    }
     if (draftOperand(draft, 'left') === undefined) return toast('Say what the rule is about.', true);
     if (!unary && !membership && draftOperand(draft, 'right') === undefined) {
       return toast('Say what to compare it with.', true);
@@ -4872,46 +5014,151 @@ function ruleEditor(model, slice, index, target) {
   // it up the moment it exists. No navigation, no modal, no losing the
   // half-written rule: the form appears under the row and the row
   // stays.
-  const boundEntities = [...new Set(slice.reads.filter((b) => b.entity).map((b) => b.entity))];
+  const boundEntities = [...new Set(reads.filter((b) => b.entity).map((b) => b.entity))];
+
+  // ---------- three questions, one at a time ----------
+  //
+  // A rule spans what used to be two steps, and asking all of it at
+  // once put five pickers in a row nobody could read as a sentence.
+  // So it is staged, the way the command's own page is staged: one
+  // question, then the next, with what has been answered staying on
+  // screen. The stages are the three things a rule is — what it is
+  // about, which of that thing's values, and what must be true of it.
+  //
+  // Predicate and right-hand side share the last stage rather than
+  // splitting: a unary predicate has no right side at all, so a stage
+  // of its own would be one that sometimes vanishes, and `equalsAny`'s
+  // membership list *is* its right side.
+  //
+  // A rule opened for editing has answered all three already, so it
+  // opens whole — the staging is for writing one, not for re-reading
+  // one.
+  const READ_STAGE = 0, VALUE_STAGE = 1, TEST_STAGE = 2;
+  // A rule added from a read's own card knows its first answer, and a
+  // guard is always written against reads that already exist — both
+  // start at the second question.
+  const firstStage = chooseTarget ? READ_STAGE : VALUE_STAGE;
+  if (draft.stage === undefined || draft.stage < firstStage) {
+    draft.stage = editingExisting ? TEST_STAGE : firstStage;
+  }
+  const stage = draft.stage;
+  // Answering reveals the next question — there is no Next to press.
+  // It only ever moves forward: a stage already on screen stays there,
+  // so going back to change the thing being read does not hide the
+  // rule written about it.
+  const reveal_ = (next) => { draft.stage = Math.max(draft.stage, next); draft.touched = true; };
+
+  // A question and its controls. The label is what makes the stack
+  // read as a form rather than as a row that happens to wrap.
+  const stageRow = (label, ...controls) => h('div', { class: 'rule-stage' },
+    h('div', { class: 'q' }, label),
+    h('div', { class: 'adder' }, ...controls));
+
+  // ---------- stage one: what is it about? ----------
+  //
+  // The read. Existing reads first — two rules about the same course
+  // are two rules and one read — then the things this command could
+  // start reading, then a brand-new entity. The identifier source
+  // belongs to this question rather than to one of its own: "the
+  // course, identified by the course id" is a single thought, and an
+  // existing read skips it entirely.
+  const readStage = !chooseTarget
+    ? (scoped ? h('div', { class: 'rule-stage' },
+        h('div', { class: 'q' }, 'About ', h('span', { class: 'op' }, scoped))) : null)
+    : stageRow('What is this rule about?',
+        pick(targetRows, chosenTarget, (v) => {
+          if (v === NEW) { closeForms(); state.newEntityAt = 'rules'; return render(); }
+          draft.target = v;
+          draft.left = '';
+          // Which of its values comes next. A new read's identifier
+          // source appears at the same time, already picked and still
+          // on screen — it is part of *this* question, not the next
+          // one, so revealing the next does not put it out of reach.
+          if (v) reveal_(VALUE_STAGE);
+          draft.touched = true;
+          render();
+        }, '— what? —'),
+        ...(choice && !chosenProjection
+          ? [
+              h('span', { class: 'muted tiny' }, 'identified by'),
+              pick(idSources, choice.source, (v) => { choice.source = v; draft.touched = true; render(); },
+                idSources.length ? null : `— no ${propertyWords(idTypeOf(model, choice.entity))} in scope yet —`),
+            ]
+          : []),
+        ...(chosenProjection
+          ? (parameters.length
+              ? parameters.flatMap((parameter) => [
+                  h('span', { class: 'muted tiny' }, 'for its ' + propertyWords(parameter.name)),
+                  pick(parameterSources.get(parameter.name),
+                    (choice.args || {})[parameter.name],
+                    (v) => {
+                      choice.args = { ...(choice.args || {}), [parameter.name]: v };
+                      draft.touched = true; render();
+                    }),
+                ])
+              : [h('span', { class: 'muted tiny' }, '— the whole log, no tag')])
+          : []));
+
+  // ---------- stage two: which of its values? ----------
+  const valueStage = stage < VALUE_STAGE ? null
+    : stageRow('Which of its values?',
+        ...operandPicker(leftScope, draft, 'left',
+          {
+            placeholder: leftScope.length ? '— what? —'
+              : (aboutAlias ? '— it has no values yet —' : '— pick something to look at —'),
+            onNew: boundEntities.length
+              ? () => { state.addingProp = { at: 'rule' }; render(); }
+              : undefined,
+            onPicked: (v) => { if (v) reveal_(TEST_STAGE); },
+          }));
+
+  // ---------- stage three: what must be true of it? ----------
+  const testStage = stage < TEST_STAGE ? null
+    : stageRow('What must be true of it?',
+        h('label', { class: 'tiny muted' },
+          h('input', {
+            type: 'checkbox', checked: !!draft.negate,
+            onchange: (e) => { draft.negate = e.target.checked; draft.touched = true; },
+          }), ' not'),
+        pick(predicateChoices.map((p) => [p, readable(p).toLowerCase()]),
+          draft.predicate, (v) => {
+            // Growing an `equals` into a set keeps the value already
+            // picked; shrinking back keeps the first one listed.
+            if (v === 'equalsAny' && draft.predicate !== 'equalsAny') {
+              const current = draftOperand(draft, 'right');
+              draft.rightEntries = current === undefined ? []
+                : [current !== null && typeof current === 'object' ? current : String(current)];
+            } else if (draft.predicate === 'equalsAny' && v !== 'equalsAny') {
+              draftFromOperand(draft, 'right', entryOperands()[0]);
+            }
+            draft.predicate = v; draft.touched = true; render();
+          }),
+        ...(unary ? [] : membership
+          ? membershipControls(draft, enumMembers)
+          : operandPicker(rightRows, draft, 'right',
+            { placeholder: '— what? —', allowLiteral: !enums.length })));
+
   const row = h('div', {
-    class: 'adder',
+    class: 'rule-wizard',
+    // Enter answers the question on screen and moves to the next, and
+    // writes the rule on the last — so a rule picked entirely from the
+    // keyboard never reaches for the mouse, the same promise the single
+    // row used to make.
     onkeydown: (e) => {
       if (e.key !== 'Enter' || e.target.tagName === 'BUTTON') return;
       e.preventDefault();
       submit();
     },
   },
-    ...operandPicker(leftScope, draft, 'left',
-      {
-        placeholder: leftScope.length ? '— what? —' : '— look at something first —',
-        onNew: boundEntities.length
-          ? () => { state.addingProp = { at: 'rule' }; render(); }
-          : undefined,
-      }),
-    h('label', { class: 'tiny muted' },
-      h('input', {
-        type: 'checkbox', checked: !!draft.negate,
-        onchange: (e) => { draft.negate = e.target.checked; draft.touched = true; },
-      }), ' not'),
-    pick(predicateChoices.map((p) => [p, readable(p).toLowerCase()]),
-      draft.predicate, (v) => {
-        // Growing an `equals` into a set keeps the value already
-        // picked; shrinking back keeps the first one listed.
-        if (v === 'equalsAny' && draft.predicate !== 'equalsAny') {
-          const current = draftOperand(draft, 'right');
-          draft.rightEntries = current === undefined ? []
-            : [current !== null && typeof current === 'object' ? current : String(current)];
-        } else if (draft.predicate === 'equalsAny' && v !== 'equalsAny') {
-          draftFromOperand(draft, 'right', entryOperands()[0]);
-        }
-        draft.predicate = v; draft.touched = true; render();
-      }),
-    ...(unary ? [] : membership
-      ? membershipControls(draft, enumMembers)
-      : operandPicker(rightRows, draft, 'right',
-        { placeholder: '— what? —', allowLiteral: !enums.length })),
-    h('button', { class: 'btn primary', onclick: submit }, index === null ? addLabel : 'Save'),
-    h('button', { class: 'btn ghost tiny', onclick: close }, 'Cancel'));
+    readStage, valueStage, testStage,
+    h('div', { class: 'adder' },
+      // Only once there is a rule to write. Until then the row is a
+      // question waiting for an answer, and a button that could only
+      // scold is worse than no button.
+      stage < TEST_STAGE
+        ? h('span', { class: 'muted tiny' }, 'Pick one to go on.')
+        : h('button', { class: 'btn primary', onclick: submit }, index === null ? addLabel : 'Save'),
+      h('button', { class: 'btn ghost tiny', onclick: close }, 'Cancel')));
 
   if (!(state.addingProp && state.addingProp.at === 'rule')) return row;
   return h('div', {}, row, newPropertyForm(model, {
@@ -4920,7 +5167,7 @@ function ruleEditor(model, slice, index, target) {
       // The rule was the reason the property was made, so the rule is
       // what picks it up: its left side lands on the fresh property,
       // through the alias this command already reads the entity under.
-      const binding = slice.reads.find((b) => b.entity === entityName);
+      const binding = reads.find((b) => b.entity === entityName);
       if (binding && state.ruleDraft) {
         state.ruleDraft.left = JSON.stringify({ alias: binding.alias, property: propertyName });
       }
@@ -5082,6 +5329,26 @@ function stepEmits(model, slice) {
           onclick: () => { closeForms(); state.newEntityAt = 'event'; render(); },
         }, '+ New event')))));
   }
+  // The reads an emission causes, shown where their reason is. A
+  // projection whose value becomes the event's id, and an instance the
+  // event writes a tag for, are both read in order to *record*
+  // something — not in order to decide anything — so putting them
+  // under "it is only allowed if" made that step promise a rule it did
+  // not have. They are the same cards, with the same Edit and the same
+  // query popover; what they do not bring is the rounds spine, which
+  // is about the chain a decision walks and has nothing to explain
+  // here.
+  const decision = decisionAliases(model, slice.body);
+  const caused = slice.reads.filter((b) => b && !decision.has(b.alias));
+  if (caused.length) {
+    body.unshift(h('div', {},
+      h('div', { class: 'round-head' },
+        h('span', { class: 'rule' }),
+        h('span', { class: 'label' }, 'to record this, it reads')),
+      ...caused.map((binding) =>
+        readCard(model, slice, binding, slice.reads.indexOf(binding), []))));
+  }
+
   return step('emits', 'When it succeeds, this happened', ...body);
 }
 

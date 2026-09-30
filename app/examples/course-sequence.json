@@ -652,13 +652,6 @@
           "id": {
             "parameterName": "courseId"
           }
-        },
-        {
-          "alias": "student",
-          "entity": "Student",
-          "id": {
-            "parameterName": "studentId"
-          }
         }
       ],
       "conditions": [
