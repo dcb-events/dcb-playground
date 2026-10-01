@@ -106,7 +106,7 @@ it never works from `file:`.
   structural gate is skipped and reported once, in a toast. Scenario kinds
   are excluded from advisories; their run/status channel already reports.
   The predefined models are held advisory-clean by a test.
-- **A read is never authored** — the merged step ("Decision model")
+- **A read is never authored** — the merged step ("Rules")
   is one step where there were two, because a boundary binding is not a
   thing anyone wants to declare: it is what a rule, a guard, an emission
   field, an emitted tag or another read *needs*. So the rule adder
@@ -378,8 +378,11 @@ it never works from `file:`.
   way the wire format does and does not narrate. `null`, `""` and `[]`
   each keep their own spelling (`initialValueWords`); operand kinds read
   as their schema tokens (`currentValue`, `successor(x)`); step headings
-  are `Payload` / `Decision model` / `Append` / `State changes` /
-  `Consistency boundary` / `Scenarios`; empty steps are `—`; single-field
+  are `Payload` / `Rules` / `Append` / `State changes` /
+  `Consistency boundary` / `Scenarios` — `Rules` and not the wire's
+  `conditions`, because "rule" is the item word on every page (`+ rule`,
+  the Rule map, `refused by`), and not "Decision model", a term the
+  literature uses without ever defining; empty steps are `—`; single-field
   forms carry noun labels (`New command`), not questions.
   Two things are deliberately *not* technicalised, and reversing either
   would be a regression, not a tidy-up. **Identifiers stay humanized** —

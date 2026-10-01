@@ -4970,7 +4970,7 @@ function stepDecision(model, slice) {
     body.unshift(h('div', { class: 'empty' }, 'Always allowed.'));
   }
 
-  return step('decide', 'Decision model', ...body);
+  return step('decide', 'Rules', ...body);
 }
 
 // The promotion offer: the facts that make this a candidate, checkable
