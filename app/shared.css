@@ -248,6 +248,38 @@ input[type=text], select, textarea {
 input[type=text]:focus, select:focus, textarea:focus {
   outline: none; border-color: var(--command);
 }
+/* Every dropdown is a customizable <select> where the browser has one
+   (`appearance: base-select`) — all of them, not just the ones with
+   something to show, because a styled picker beside a native one in
+   the same row reads as two different widgets. What it buys: options
+   that carry markup (a mark re-fronted, a token in monospace, a
+   context span shown only once picked — see `pick`), group headings
+   that read as headings, and a popover in the page's palette. A
+   browser without it gets the native control and the options' plain
+   text, which every caller keeps readable on its own. */
+@supports (appearance: base-select) {
+  select, ::picker(select) { appearance: base-select; }
+  select { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+  select::picker-icon { color: var(--muted); font-size: 10px; }
+  ::picker(select) {
+    border: 1px solid var(--border-strong); border-radius: var(--radius);
+    background: var(--surface); color: var(--text); font-size: 13px;
+    padding: 4px; margin-top: 3px; box-shadow: 0 10px 28px -12px rgba(15, 23, 42, .45);
+  }
+  option { display: flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 4px; }
+  option:hover, option:focus-visible { background: var(--command-soft); outline: none; }
+  option:checked { font-weight: 600; }
+  option::checkmark { color: var(--command); }
+  option:disabled { color: var(--muted); }
+  optgroup {
+    font-size: 10px; font-weight: 400; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--muted); padding-top: 4px;
+  }
+  optgroup + optgroup, option + optgroup { border-top: 1px dashed var(--border); margin-top: 4px; }
+  optgroup option { font-size: 13px; text-transform: none; letter-spacing: normal; color: var(--text); }
+  selectedcontent { display: flex; align-items: center; gap: 4px; }
+  option .icon, selectedcontent .icon { order: -1; }
+}
 input.inline {
   border: 0; border-bottom: 1px dashed var(--border-strong);
   border-radius: 0; padding: 3px 4px; background: transparent;

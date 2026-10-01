@@ -1175,7 +1175,9 @@ function build(index) {
       draftKey: 'x', onAdd: () => { added += 1; },
     });
     type(adder, 'seat count');
-    const button = findAll(adder, (n) => n.tag === 'button')[0];
+    // A select's own face is a <button> too (see `pick`); the one that
+    // commits is the one with a handler.
+    const button = findAll(adder, (n) => n.tag === 'button' && n.onclick)[0];
     button.onclick();
     sandbox.closeForms();
     eq(added, 1, 'one field, however many ways out were taken');
@@ -1951,7 +1953,7 @@ function build(index) {
 // ("﹟") is carried the same way. In the option itself the name leads
 // the text — native type-ahead searches option text and nothing else,
 // so this is what keeps a select keyboard-searchable — and the mark
-// trails in its own span for the `.icon-select` CSS to re-front.
+// trails in its own span for the customizable-select CSS to re-front.
 // ---------------------------------------------------------------
 {
   const spansOf = (option) => (option.children || []).map((s) => [s.className, textOf(s)]);

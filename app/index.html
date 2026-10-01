@@ -981,23 +981,6 @@
   .pin:hover { color: var(--event); }
   .pin.on { color: var(--event); }
 
-  /* A picker whose options carry a mark (an entity, an event, a
-     command) builds its <option> text label-first so arrow-key
-     type-ahead matches the name a person actually types — native
-     <option> has no way to search on anything else. Where the browser
-     supports customizable <select> (`::picker(select)`,
-     `<selectedcontent>`), this puts the mark back in front visually
-     without touching that word order; everywhere else it just falls
-     back to "Name 🔖", which is still readable and still
-     keyboard-searchable. */
-  @supports (appearance: base-select) {
-    select.icon-select { appearance: base-select; }
-    select.icon-select option { display: flex; align-items: center; gap: 4px; }
-    select.icon-select option .icon,
-    select.icon-select selectedcontent .icon { order: -1; }
-    select.icon-select selectedcontent { display: flex; align-items: center; gap: 4px; }
-  }
-
   /* The two overview pages read across every command at once rather
      than down one of them, so they earn more width than an ordinary
      slice — capped, not unbounded, so a model with many events still
@@ -3291,9 +3274,9 @@ function typeOptions(model) {
 // same text a screen reader gets, so it can only ever match the first
 // character actually typed, which there is the icon. So a caller with
 // a mark passes it as the option's third element, and `pick` puts the
-// name first in the text with the mark in its own trailing span (see
-// the `.icon-select` CSS, which puts it back in front visually on
-// browsers that support customizable <select>). Passed, never
+// name first in the text with the mark in its own trailing span (the
+// customizable-<select> CSS in shared.css puts it back in front
+// visually, where the browser has one). Passed, never
 // detected: an earlier design regex-matched an emoji prefix out of
 // the text, which tore modifier sequences ("👮🏻‍♀️") into parts and
 // let a mark that is not an emoji at all ("﹟" is one) slip past — a
@@ -3324,10 +3307,8 @@ function pick(options, value, onchange, placeholder) {
     buckets.get(prefix).push({ v, suffix: text.slice(at + GROUP_SEP.length), icon });
   }
 
-  let hasIcon = false;
   const appendOption = (parent, v, text, icon) => {
     if (icon) {
-      hasIcon = true;
       parent.appendChild(h('option', { value: v, selected: v === value },
         h('span', { class: 'label' }, text),
         h('span', { class: 'icon' }, icon)));
@@ -3353,10 +3334,10 @@ function pick(options, value, onchange, placeholder) {
     sel.appendChild(group);
   }
 
-  if (hasIcon) {
-    sel.classList.add('icon-select');
-    sel.insertBefore(h('button', {}, h('selectedcontent', {})), sel.firstChild);
-  }
+  // The face a customizable <select> shows when closed: a copy of the
+  // picked option's markup rather than its flattened text. Every select
+  // gets one, so every select is styled alike (see shared.css).
+  sel.insertBefore(h('button', {}, h('selectedcontent', {})), sel.firstChild);
   return sel;
 }
 
