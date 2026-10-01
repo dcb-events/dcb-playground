@@ -567,6 +567,7 @@
 
   .esection { margin-bottom: 18px; }
   .esection > h4 { margin-bottom: 8px; }
+  .esection > .ehead .grow { flex: 1; }
 
   /* The mark that stands for a thing, wherever the thing is named. */
   .ic { font-style: normal; margin-right: 5px; }
@@ -6522,7 +6523,7 @@ function projectionNameFor(model, entityName, propertyName) {
   for (let i = 2; ; i++) if (!model['projection-definitions'][base + i]) return base + i;
 }
 
-// The entity page's own "+ property" form.
+// The entity page's own "+ new property" form.
 //
 // Adding a property is one gesture even though it writes two
 // definitions: the projection that does the folding, and the binding
@@ -6618,13 +6619,25 @@ function renderEntity(model, main) {
   const lifecycle = lifecycleOf(model, name);
   const ledgerProperties = properties.filter((binding) =>
     !(lifecycle && binding.name === lifecycle.property));
+  //
+  // Adding one is offered the way the Projections page offers a new
+  // projection — a button on the heading line, gone while its form is
+  // open — so the two halves of one ledger are not added to two ways.
+  const adderKey = 'prop:' + name;
+  const adding = state.adder === adderKey;
   const section = h('section', { class: 'esection' },
-    h('h4', {}, 'Properties', hint('entity-props', 'Properties', [
-      'Each row is a projection folded per identifier value: the entity is not stored, it is '
-      + 'what these folds say when read together for one id.',
-      'A command binds the entity by id and reads these; which of them a condition names is '
-      + 'what puts the fold in the derived consistency boundary.',
-    ], 'https://dcb.events/topics/projections/')));
+    h('div', { class: 'ehead' },
+      h('h4', {}, 'Properties', hint('entity-props', 'Properties', [
+        'Each row is a projection folded per identifier value: the entity is not stored, it is '
+        + 'what these folds say when read together for one id.',
+        'A command binds the entity by id and reads these; which of them a condition names is '
+        + 'what puts the fold in the derived consistency boundary.',
+      ], 'https://dcb.events/topics/projections/')),
+      h('span', { class: 'grow' }),
+      adding ? null : h('button', {
+        class: 'btn tiny',
+        onclick: () => { closeForms(); state.adder = adderKey; render(); },
+      }, '+ new property')));
 
   section.appendChild(projectionLedger(model, {
     owner: name,
@@ -6632,8 +6645,7 @@ function renderEntity(model, main) {
     entries: ledgerProperties.map((binding) => ({
       projection: binding.projection, label: propertyWords(binding.name), binding,
     })),
-    add: adderSlot('prop:' + name, null, '+ property',
-      () => entityPropertyAdder(model, name)),
+    add: adding ? entityPropertyAdder(model, name) : null,
   }));
   main.appendChild(section);
 }
