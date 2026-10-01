@@ -2992,7 +2992,7 @@ function build(index) {
   // "+ rule" wizard. `onAlias` is the other door: the "+ rule about …"
   // button on a read's card, which knows the first answer already and
   // opens on the second question.
-  const addRule = ({ target, onAlias, left, predicate, right, rightText, negate }) => {
+  const addRule = ({ target, onAlias, left, existence, predicate, right, rightText, negate }) => {
     sandbox.state.adder = 'rule';
     sandbox.state.ruleDraft = {
       predicate: 'equals', negate: false, left: '', right: '', ...(onAlias ? { onAlias } : {}),
@@ -3017,11 +3017,18 @@ function build(index) {
       eq(selects().length, 1, 'and it is the only one on screen');
       selects()[0].onchange({ target: { value: target } });
     }
-    valueQuestion().onchange({ target: { value: left } });
-
-    eq(/What must be true of it\?/.test(textOf(paint())), true,
-      'answering that revealed the third question — no Next was pressed');
-    draft().predicate = predicate;
+    if (existence) {
+      // An existence row answers the third question with the second, so
+      // it is never asked — the button is already there.
+      valueQuestion().onchange({ target: { value: ' ' + existence + ':' + left } });
+      eq(/What must be true of it\?/.test(textOf(paint())), false,
+        'existence picked: no third question');
+    } else {
+      valueQuestion().onchange({ target: { value: left } });
+      eq(/What must be true of it\?/.test(textOf(paint())), true,
+        'answering that revealed the third question — no Next was pressed');
+      draft().predicate = predicate;
+    }
     if (negate) draft().negate = true;
     if (right !== undefined) draft().right = right;
     if (rightText !== undefined) { draft().right = ' literal'; draft().rightText = rightText; }
@@ -3058,10 +3065,9 @@ function build(index) {
     // same read, and one compared against a number nobody declared.
     addRule({ target: 'entity:Course', left: A('course', 'status'),
       predicate: 'equals', right: JSON.stringify({ enumMember: 'Existent' }) });
-    // A boolean lifecycle: `isTrue` is offered pre-answered, so the
-    // third question needs no value picked — the rule is "the student
-    // exists" and there is nothing else it could be.
-    addRule({ target: 'entity:Student', left: A('student', 'exists'), predicate: 'isTrue' });
+    // A boolean lifecycle: "exists" is a row of the second question,
+    // and picking it is the whole rule.
+    addRule({ target: 'entity:Student', left: A('student', 'exists'), existence: 'exists' });
     addRule({ onAlias: 'course', left: A('course', 'subscriptionCount'),
       predicate: 'lessThan', right: A('course', 'capacity') });
     addRule({ onAlias: 'course', left: A('course', 'subscribedStudentIds'),
@@ -3072,6 +3078,33 @@ function build(index) {
     eq(cmd().boundary, shipped.boundary,
       'the reads the rules brought with them are the reads the model ships');
     eq(cmd().conditions, shipped.conditions, 'and so are the rules, in order');
+  });
+
+  check('existence is two rows of the value question, not a property and a predicate', () => {
+    const A = (alias, property) => JSON.stringify({ alias, property });
+    sandbox.state.adder = 'rule';
+    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '', onAlias: 'student' };
+    const picker = () => findAll(sandbox.stepDecision(model(), slice()), (n) => n.tag === 'select')[0];
+    const values = findAll(picker(), (n) => n.tag === 'option').map((o) => o.value);
+    eq(values.includes(' exists:' + A('student', 'exists')), true, 'the present state is offered');
+    eq(values.includes(' absent:' + A('student', 'exists')), true, 'and the absent one');
+    eq(/does not exist/.test(textOf(picker())), true, 'said as a state');
+    eq(values.includes(A('student', 'exists')), false,
+      'and the bare property is not, so there is no "not … is true" to assemble');
+    picker().onchange({ target: { value: ' absent:' + A('student', 'exists') } });
+    eq(sandbox.state.ruleDraft.predicate, 'isFalse', '"does not exist" is isFalse');
+    eq(!!sandbox.state.ruleDraft.negate, false, 'never a negated isTrue');
+    sandbox.closeForms();
+
+    // Opened for editing, another spelling of the same thing keeps its
+    // own row and the third question — it is shown as stored.
+    sandbox.state.adder = 'rule';
+    sandbox.state.ruleDraft = {
+      predicate: 'isTrue', negate: true, left: A('student', 'exists'), right: '', onAlias: 'student',
+    };
+    const step = sandbox.stepDecision(model(), slice());
+    eq(/What must be true of it\?/.test(textOf(step)), true, 'a negated isTrue opens whole');
+    sandbox.closeForms();
   });
 }
 
@@ -3163,11 +3196,72 @@ function build(index) {
   check('an entity page paints its lifecycle in Identity, not the ledger', () => {
     const { model } = build(0);
     store.set('dcb-playground:model', model().id);
+    sandbox.state.lcOpen = {};
     const text = paint('entity', model(), () => { sandbox.state.entity = 'Student'; });
-    has(text, 'exists once', 'the Identity row is there');
-    has(text, 'identified by', 'beside the identifier');
-    eq(/What we know about each one[\s\S]*exists/.test(text), false,
+    has(text, 'identified by', 'the Identity row is there');
+    // Folded by default: the lifecycle rides on the identifier line, in
+    // words, and the track is one click away.
+    has(text, 'state exists · set by Student registered', 'folded onto the identifier line');
+    eq(text.includes('stateexists'), false, 'with no state row of its own yet');
+    // The chip is the property in every branch — it used to be the
+    // setters when there were any, which left the empty case naming
+    // itself twice.
+    const open = paint('entity', model(), () => { sandbox.state.lcOpen = { Student: true }; });
+    has(open, 'stateexists', 'opened, the state row names the property');
+    has(open, 'Student registered', 'with what moves it drawn on the arrow');
+    eq(open.includes('exists once'), false, 'and no longer says the same word twice');
+    eq(/What we know about each one[\s\S]*exists/.test(open), false,
       'and `exists` is not also a property row');
+    sandbox.state.lcOpen = {};
+  });
+
+  check('an enum lifecycle folds to its state count', () => {
+    const { model } = build(0);
+    store.set('dcb-playground:model', model().id);
+    sandbox.state.lcOpen = {};
+    const text = paint('entity', model(), () => { sandbox.state.entity = 'Course'; });
+    has(text, 'state status · 3 states', 'counted, not listed');
+    eq(text.includes('Archived'), false, 'the states wait for the row');
+  });
+
+  check('a lifecycle nothing sets keeps no row of its own', () => {
+    const { id, model } = build(0);
+    store.set('dcb-playground:model', id);
+    const fold = sandbox.lifecycleOf(model(), 'Student').projectionName;
+    const body = sandbox.deepClone(model()['projection-definitions'][fold]);
+    body.handlers = [];
+    updateDefinition('projection-definition', id, fold, body);
+    eq(sandbox.lifecycleIsQuiet(model(), 'Student'), true,
+      'the scaffold exactly as it arrives is quiet');
+    const text = paint('entity', model(), () => { sandbox.state.entity = 'Student'; });
+    // A brand-new entity's page says nothing about it: no row, and no
+    // `state exists · set by —` riding on the identifier line either.
+    eq(text.includes('set by —'), false, 'nothing on the identifier line');
+    eq(/stateexists/.test(text), false, 'and no row of its own');
+  });
+
+  check('the inline track gives up on anything that is not a chain', () => {
+    const chain = {
+      isBoolean: false, states: ['Draft', 'Live', 'Gone'], initial: 'Draft',
+      opaque: [], terminal: ['Gone'],
+      transitions: [
+        { event: 'Published', target: 'Live', sources: ['Draft'] },
+        { event: 'Removed', target: 'Gone', sources: ['Live'] },
+      ],
+    };
+    eq(!!sandbox.lifecycleTrack(chain), true, 'a chain draws');
+    eq(sandbox.lifecycleTrack({ ...chain, states: [...chain.states, 'Revived'] }), null,
+      'a fourth state does not');
+    eq(sandbox.lifecycleTrack({ ...chain, opaque: ['Recomputed'] }), null,
+      'nor one with a handler this cannot read');
+    eq(sandbox.lifecycleTrack({
+      ...chain,
+      transitions: [...chain.transitions, { event: 'Restored', target: 'Live', sources: ['Gone'] }],
+    }), null, 'nor a way back');
+    eq(sandbox.lifecycleTrack({
+      ...chain,
+      transitions: [...chain.transitions, { event: 'Dropped', target: 'Gone', sources: ['Draft'] }],
+    }), null, 'nor a jump the chain would have hidden');
   });
 
   check('the promotion form paints for a boolean lifecycle', () => {
@@ -3294,8 +3388,8 @@ function build(index) {
     // No command guards either of them, so the rule wizard would never
     // get the chance — this is the surface that does.
     const text = paint('entity', model(), () => { sandbox.state.entity = 'Student'; });
-    has(text, '2 monotone booleans: exists, expelled', 'the offer names both booleans');
-    has(text, 'Merge into a lifecycle', 'and offers to take them');
+    has(text, 'exists, expelled never go back', 'the offer names both booleans, and why');
+    has(text, 'Merge', 'and offers to take them');
   });
 
   check('the merge prompt paints in the decide step', () => {

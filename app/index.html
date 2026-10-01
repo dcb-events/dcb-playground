@@ -344,10 +344,15 @@
 
   /* The concept hint: same peek/pin behaviour as the query popover, a
      quieter mark, and it rides a heading rather than a row. */
-  .hint { position: relative; display: inline-flex; vertical-align: middle; }
+  /* Centred on the capitals, not the lowercase: the box is 1em tall and
+     its bottom sits 0.15em under the baseline, so its middle is 0.35em
+     up — half a cap height. `middle` centred it on half the x-height,
+     which beside an uppercase heading read a pixel and more low. */
+  .hint { position: relative; display: inline-flex; vertical-align: -0.15em; }
   .hbtn { background: none; border: none; padding: 0 2px; cursor: help;
-          color: var(--muted); font-size: 12px; line-height: 1;
+          color: var(--muted); font-size: inherit; line-height: 1;
           display: inline-flex; align-items: center; }
+  .hbtn .imark, .hbtn .imark svg { display: block; width: 1em; height: 1em; }
   .hbtn:hover, .hbtn:focus-visible, .hint.on .hbtn { color: var(--command); }
   .hint .hpanel { display: none; position: absolute; top: calc(100% + 5px); left: -10px;
                   z-index: 60; background: var(--surface);
@@ -471,6 +476,95 @@
   }
   .ident .irow + .irow { border-top: 1px dashed var(--border); }
   .ident .irow > .nm { min-width: 110px; color: var(--muted); font-size: 11px; }
+  .ident .irow > .grow { flex: 1; }
+
+  /* The lifecycle, drawn where it is named: the Lifecycles band's own
+     vocabulary — a pill per state, the event on the arrow — shrunk to
+     one row, because a two-state machine is a picture that a sentence
+     was standing in for. The pills name the stored *values* where the
+     band names them in words: the band has room to say "does not
+     exist", and a row that already carries the property chip beside
+     them would only be saying `exists` twice. */
+  .lctrack { display: inline-flex; align-items: center; gap: 6px; }
+  .lctrack .st {
+    display: inline-flex; padding: 1px 8px; border-radius: 999px; white-space: nowrap;
+    border: 1.5px solid var(--entity); background: var(--surface);
+    font-size: 11px; font-weight: 600;
+  }
+  .lctrack .st.val { font-family: var(--mono); font-size: 10.5px; font-weight: 500; }
+  /* Nothing moves into it yet. Drawn as the absence it is, the way
+     `.chip.unset` draws a value nobody has given. */
+  .lctrack .st.unreached {
+    border-style: dashed; border-color: var(--border-strong);
+    background: transparent; color: var(--muted); font-weight: 400;
+  }
+  .lctrack .st.terminal { outline: 1.5px solid var(--entity); outline-offset: 2px; }
+  /* The label hangs above the wire rather than stacking with it, so the
+     wire itself is what the pills centre on — stacked, the hop's middle
+     falls between label and wire and the arrow rides low. The row that
+     holds a track pays for the overhang in padding (`.lcrow`). */
+  .lctrack .hop { position: relative; display: inline-flex; align-items: center; }
+  .lctrack .hop .ev {
+    position: absolute; left: 50%; bottom: calc(100% + 1px); transform: translateX(-50%);
+    font-family: var(--mono); font-size: 9.5px; color: var(--event); white-space: nowrap;
+  }
+  .ident .irow.lcrow { padding-top: 12px; }
+  .lctrack .wire { display: inline-flex; align-items: center; }
+  .lctrack .wire i { height: 0; border-top: 1px solid var(--border-strong); }
+  .lctrack .wire b {
+    width: 0; height: 0; border-left: 4px solid var(--border-strong);
+    border-top: 3px solid transparent; border-bottom: 3px solid transparent;
+  }
+  .lctrack .hop.dead .wire i { border-top-style: dashed; }
+
+  /* The folded lifecycle on the identifier line: a derived fact in the
+     page's muted register, and the button that unfolds it. Never faded
+     like the menu beside it — it is the only way to the row. */
+  .lcfold {
+    display: inline-flex; align-items: center; gap: 4px;
+    font: inherit; font-size: 11px; color: var(--muted); cursor: pointer;
+    padding: 2px 6px; border: 1px solid transparent; border-radius: 6px; background: none;
+  }
+  .lcfold:hover, .lcfold:focus-visible { border-color: var(--border-strong); }
+  .lcfold .p { font-family: var(--mono); color: var(--text); }
+  .lcfold .caret, .lcfold .caret svg { display: block; width: 8px; height: 8px; }
+  .lcfold .caret { margin-left: 2px; transition: transform .12s; }
+  .lcfold.on .caret { transform: rotate(180deg); }
+
+  /* Everything that can be done to a lifecycle, behind one mark — and
+     the mark itself waits for the pointer. Nobody opens an entity page
+     to designate a property, but the two buttons that did it sat at
+     full strength beside a fact nobody was editing. Click-only, never
+     hover like the hints: these are edits, and an edit that opens
+     because the pointer passed over it is a trap. */
+  /* Faded rather than hidden: `visibility: hidden` would take the button
+     out of the tab order, and the only other focusable thing in the row
+     is the chip — so the one way to the menu would be a pointer. */
+  .ident .lcmenu {
+    position: relative; display: inline-flex; vertical-align: middle; opacity: 0;
+  }
+  .ident:hover .lcmenu, .ident .lcmenu:focus-within, .ident .lcmenu.on { opacity: 1; }
+  .lcbtn {
+    font: inherit; font-size: 13px; line-height: 1.1; cursor: pointer;
+    padding: 0 4px; border: 1px solid transparent; border-radius: 6px;
+    background: none; color: var(--border-strong);
+  }
+  .lcbtn:hover, .lcbtn:focus-visible, .lcmenu.on .lcbtn {
+    color: var(--muted); border-color: var(--border-strong);
+  }
+  .lcmenu .lcpanel {
+    display: none; position: absolute; top: calc(100% + 5px); right: 0; z-index: 60;
+    background: var(--surface); border: 1px solid var(--border-strong); border-radius: 8px;
+    padding: 4px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18); min-width: 215px;
+  }
+  .lcmenu.on .lcpanel { display: block; }
+  .lcitem {
+    display: block; width: 100%; text-align: left; white-space: nowrap;
+    font: inherit; font-size: 12px; padding: 6px 10px;
+    border: 0; border-radius: 5px; background: none; color: var(--text); cursor: pointer;
+  }
+  .lcitem:hover, .lcitem:focus-visible { background: var(--command-soft); color: var(--command); }
+
   .esection { margin-bottom: 18px; }
   .esection > h4 { margin-bottom: 8px; }
 
@@ -1161,6 +1255,9 @@ const state = {
   fieldDraft: null,         // the one half-typed field row — see commitPendingField
   queryPop: null,           // key of the pinned DCB-query popover, if any
   hintPop: null,            // key of the pinned concept hint, if any
+  lcMenu: null,             // key of the open lifecycle menu in Identity, if any
+  lcOpen: {},               // entity name -> its state row unfolded in Identity.
+                            // Session-only, like `wizard`: a view choice, not the model.
   wizard: null,             // { slice, upto } — a brand-new command revealing its steps.
                             // Session-only on purpose: how far someone got is authoring
                             // state, not a fact about the model, so it is never stored.
@@ -2897,16 +2994,21 @@ function draftFromOperand(draft, key, operand) {
   return draft;
 }
 
+// `selected` and `intercept` are for a caller whose rows are not all
+// operands — the rule editor's existence rows, which answer the
+// predicate as well as the operand: it says which row is showing, and
+// takes the pick when the row is one of its own.
 function operandPicker(choices, draft, key, {
-  placeholder, allowLiteral = true, onNew, newLabel,
+  placeholder, allowLiteral = true, onNew, newLabel, selected, intercept,
 } = {}) {
   const rows = [
     ...choices,
     ...(onNew ? [[NEW, newLabel || '+ New property…']] : []),
     ...(allowLiteral ? [[LITERAL, '— a value…']] : []),
   ];
-  const control = [pick(rows, draft[key], (v) => {
+  const control = [pick(rows, selected !== undefined ? selected : draft[key], (v) => {
     if (onNew && v === NEW) return onNew();
+    if (intercept && intercept(v)) return;
     draft[key] = v;
     // A pick is the modeler's hand on the row: from here on, leaving
     // it is finishing it, not declining it — see `commitPendingField`.
@@ -3107,6 +3209,16 @@ function commandRef(model, name, { cls = 'chip command linkable', text } = {}) {
 
 function goToProjection(name) {
   openProjection(activeModel(), name);
+  render();
+}
+
+// The whole machine, from the row that shows a shrunk one. Lands on the
+// entity's own band rather than the top of the page — a model with six
+// lifecycles would otherwise answer "it is somewhere below".
+function goToLifecycles(entityName) {
+  closeForms();
+  state.view = 'lifecycles';
+  state.land = `[data-key="${CSS.escape('lifecycle:' + entityName)}"]`;
   render();
 }
 // A projection has no mark of its own — nothing passes an icon.
@@ -3310,7 +3422,7 @@ const closeForms = () => {
   commitPendingField();
   for (const key of [...FORM_KEYS, ...DRAFT_KEYS]) state[key] = null;
   state.sel = null; state.adder = null; state.lit = null; state.queryPop = null;
-  state.hintPop = null;
+  state.hintPop = null; state.lcMenu = null;
 };
 
 // ---------- rail ----------
@@ -4265,6 +4377,19 @@ function stepTrigger(model, slice) {
 // `href` is passed only where dcb.events has a page for the concept:
 // tags, projections, aggregates. Linking every panel at the spec's front
 // door would teach nothing and train the reader to ignore the link.
+// The mark itself, drawn rather than typed. The ⓘ glyph sat on the
+// font's math axis — centred on the lowercase letters — so beside an
+// all-caps heading it rode low, and by how much depended on the font.
+// An SVG sized in em and dropped by `.hint`'s vertical-align centres on
+// the capitals in every face.
+const INFO_MARK = '<svg viewBox="0 0 12 12" aria-hidden="true">'
+  + '<circle cx="6" cy="6" r="5.25" fill="none" stroke="currentColor" stroke-width="1.1"/>'
+  + '<line x1="6" y1="5.2" x2="6" y2="8.8" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>'
+  + '<circle cx="6" cy="3.5" r=".55" fill="currentColor"/></svg>';
+function infoMark() {
+  return h('span', { class: 'imark', html: INFO_MARK });
+}
+
 function hint(key, title, lines, href) {
   const on = state.hintPop === key;
   return h('span', { class: 'hint' + (on ? ' on' : '') },
@@ -4276,7 +4401,7 @@ function hint(key, title, lines, href) {
         state.hintPop = on ? null : key;
         render();
       },
-    }, 'ⓘ'),
+    }, infoMark()),
     h('span', { class: 'hpanel', onclick: (e) => e.stopPropagation() },
       h('div', { class: 'k qtitle' }, title),
       ...(Array.isArray(lines) ? lines : [lines]).map((line) => h('div', { class: 'hline' }, line)),
@@ -5016,7 +5141,53 @@ function ruleEditor(model, slice, index, target) {
     return aboutAlias ? operand.alias === aboutAlias : true;
   });
   if (draft.left && !leftScope.some(([v]) => v === draft.left)) draft.left = '';
-  if (aboutAlias && !draft.left && leftScope.length === 1) draft.left = leftScope[0][0];
+
+  // ---------- existence, answered in one pick ----------
+  //
+  // A designated boolean lifecycle has two rules worth writing about
+  // it — the thing exists, or it does not — and spelling either as
+  // "exists", then "not", then "is true" was three answers for one
+  // thought. So the value picker offers the two states in place of the
+  // property, and picking one answers the third question too:
+  // `isTrue` / `isFalse`, never `negate`, because those are what the
+  // sentence reads back as "exists" / "does not exist".
+  //
+  // The bare property row stays only for a rule opened with another
+  // spelling (`equals true`, a negated `isTrue`): opening it must show
+  // what is stored, not quietly rewrite it.
+  const existenceOf = (v) => existenceRead(model, { boundary: reads }, JSON.parse(v));
+  const sugaredExistence = (v) => v === draft.left && !draft.negate
+    && (draft.predicate === 'isTrue' || draft.predicate === 'isFalse');
+  const EXISTS = ' exists:', ABSENT = ' absent:';
+  const leftRows = leftScope.flatMap((row) => {
+    const read = existenceOf(row[0]);
+    if (!read) return [row];
+    const machine = { isBoolean: true, property: read.lifecycle.property };
+    const said = (state) => propertyWords(read.alias) + GROUP_SEP + lifecycleStateWords(machine, state);
+    return [
+      [EXISTS + row[0], said('true'), row[2]],
+      [ABSENT + row[0], said('false'), row[2]],
+      ...(row[0] === draft.left && !sugaredExistence(row[0]) ? [row] : []),
+    ];
+  });
+  const leftShown = draft.left && existenceOf(draft.left) && sugaredExistence(draft.left)
+    ? (draft.predicate === 'isTrue' ? EXISTS : ABSENT) + draft.left
+    : draft.left;
+  const pickExistence = (v) => {
+    const prefix = [EXISTS, ABSENT].find((p) => v.startsWith(p));
+    if (!prefix) return false;
+    draft.left = v.slice(prefix.length);
+    draft.predicate = prefix === EXISTS ? 'isTrue' : 'isFalse';
+    draft.negate = false;
+    draft.right = '';
+    draft.predicateChosen = true;
+    draft.touched = true;
+    render();
+    return true;
+  };
+  // One row is an answer already; two existence rows are a question.
+  if (aboutAlias && !draft.left && leftRows.length === 1) draft.left = leftRows[0][0];
+  const existenceAnswered = !!draft.left && !!existenceOf(draft.left) && sugaredExistence(draft.left);
   const leftType = resolveOperandType(draftOperand(draft, 'left'), typeScope);
 
   // The predicate list narrows to what the left side's type supports —
@@ -5027,17 +5198,6 @@ function ruleEditor(model, slice, index, target) {
     .filter((p) => predicatesForType(leftType).includes(p));
   if (!predicateChoices.includes(draft.predicate)) {
     draft.predicate = predicateChoices[0] || draft.predicate;
-  }
-  // A read of a designated boolean lifecycle has one thing worth saying
-  // about it, and `isTrue` is it: "the course exists". Answered for the
-  // author the way a single property answers the second question — the
-  // picker still offers all four, so this is a proposal, and the guard
-  // keeps it to a draft nobody has steered yet (an existing `equals
-  // true` rule opened for editing carries a right-hand side and is left
-  // exactly as its author spelled it).
-  if (!draft.predicateChosen && draft.predicate === 'equals' && !draft.right
-      && existenceRead(model, { boundary: reads }, draftOperand(draft, 'left'))) {
-    draft.predicate = 'isTrue';
   }
   const unary = UNARY_PREDICATES.includes(draft.predicate);
   // `equalsAny` compares against a literal list, so its right half is
@@ -5243,17 +5403,22 @@ function ruleEditor(model, slice, index, target) {
   // ---------- stage two: which of its values? ----------
   const valueStage = stage < VALUE_STAGE ? null
     : stageRow('Which of its values?',
-        ...operandPicker(leftScope, draft, 'left',
+        ...operandPicker(leftRows, draft, 'left',
           {
-            placeholder: leftScope.length ? '— what? —'
+            placeholder: leftRows.length ? '— what? —'
               : (aboutAlias ? '— it has no values yet —' : '— pick something to look at —'),
             onNew: boundEntities.length
               ? () => { state.addingProp = { at: 'rule' }; render(); }
               : undefined,
+            selected: leftShown,
+            intercept: pickExistence,
           }));
 
   // ---------- stage three: what must be true of it? ----------
-  const testStage = stage < TEST_STAGE ? null
+  //
+  // Not asked when an existence row answered it: the predicate came
+  // with the pick, and there is no right-hand side to ask for.
+  const testStage = stage < TEST_STAGE || existenceAnswered ? null
     : stageRow('What must be true of it?',
         h('label', { class: 'tiny muted' },
           h('input', {
@@ -6484,7 +6649,8 @@ function renderEntity(model, main) {
 // stopped being right when the entity began designating exactly one —
 // because existence is not something a modeller chose to track, it is
 // the precondition of everything else they track. Two rows: what
-// identifies one of these, and whether there is one at all.
+// identifies one of these, and whether there is one at all — the second
+// of which only appears once it has something to say (`lifecycleRow`).
 //
 // The identifier row is a read-only pointer — changing it happens in
 // Custom Types. The lifecycle row is not: which property is the
@@ -6512,82 +6678,151 @@ function identityBlock(model, name, entity) {
       'Every property below is folded per identifier value.',
       'The lifecycle is one of those properties, designated: it says whether an instance is '
       + 'there at all, which is the precondition of everything else tracked about it.',
+      'A lifecycle nothing publishes into stays at its initial value, so every existence '
+      + 'condition over it answers false.',
     ], 'https://dcb.events/topics/tags/')));
 
-  box.appendChild(h('div', { class: 'irow' },
+  const idRow = h('div', { class: 'irow' },
     h('span', { class: 'nm' }, 'identified by'),
     h('span', {
       class: 'chip editable', title: 'Open ' + readable(idType) + ' in Custom Types',
       onclick: () => goToCustomType(idType),
-    }, readable(idType), advanced() ? h('span', { class: 'tech' }, idType) : null)));
+    }, readable(idType), advanced() ? h('span', { class: 'tech' }, idType) : null),
+    // The quiet lifecycle has no row of its own, and a folded one has
+    // none until it is opened, so in both cases the menu comes here — the
+    // one line the lifecycle is always on. It stays here when the row
+    // opens, so opening it moves nothing.
+    ...(lifecycleIsQuiet(model, name)
+      ? [h('span', { class: 'grow' }), lifecycleMenu(model, name)]
+      : lifecycleFolds(model, name)
+        ? [h('span', { class: 'grow' }), lifecycleFold(model, name), lifecycleMenu(model, name)]
+        : []));
+  box.appendChild(idRow);
 
   box.appendChild(lifecycleRow(model, name, entity));
   return box;
 }
 
-// The lifecycle's row in Identity: what it is, what moves it, and the
-// two things that can be done to it — designate a different property, or
-// merge one-way booleans into a real lifecycle.
+// The stored spelling of a property, where it says something the words
+// do not. `exists` humanises to `exists`, and printing it twice in
+// advanced mode is the stutter this row was just rid of — the
+// identifier beside it (`Student id` / `StudentId`) is the case the
+// `.tech` span is actually for.
+function techSpelling(property) {
+  return advanced() && propertyWords(property) !== property
+    ? h('span', { class: 'tech' }, property) : null;
+}
+
+// Whether the lifecycle has anything to say yet. A boolean nothing
+// publishes into is the scaffold exactly as it arrives — designated
+// because every entity is, moved by nothing, guarding nothing. An enum
+// is always something somebody authored, and a merge offer is a thing to
+// act on, so neither is ever quiet.
+function lifecycleIsQuiet(model, name) {
+  const lifecycle = lifecycleOf(model, name);
+  if (!lifecycle || !lifecycle.isBoolean) return false;
+  if (entityMergeCandidates(model, name).length >= 2) return false;
+  return !(lifecycle.projection.handlers || []).some((handler) => handler && handler.event);
+}
+
+// Whether the lifecycle's row folds onto the identifier line. Every
+// drawable lifecycle does, and starts folded: an entity page is opened
+// for its properties far more often than for its machine, and a track
+// with its event labels hung above it was the tallest thing on the
+// card. The quiet one has nothing to unfold; a missing or refused one
+// is a next step or a fault, and a fault is not folded away.
+function lifecycleFolds(model, name) {
+  return !!lifecycleOf(model, name) && !lifecycleIsQuiet(model, name);
+}
+
+const FOLD_CARET = '<svg viewBox="0 0 8 8" aria-hidden="true"><polyline points="1.2,2.5 4,5.5 6.8,2.5" '
+  + 'fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+// The folded lifecycle, said in the page's muted register for a derived
+// fact — `state exists · set by Student registered` — and the
+// door to the row. An enum says how many states it has rather than
+// listing them: the list, and the events between, is what opening it is
+// for, and spelled out it ran longer than the identifier it sits beside.
+function lifecycleFold(model, name) {
+  const lifecycle = lifecycleOf(model, name);
+  const open = !!state.lcOpen[name];
+  const summary = lifecycle.isBoolean
+    ? lifecycleShapeWords(lifecycle)
+    : `${lifecycle.states.length} states`;
+  return h('button', {
+    class: 'lcfold' + (open ? ' on' : ''), type: 'button',
+    'aria-expanded': open ? 'true' : 'false',
+    title: open ? 'Fold the lifecycle away' : 'Show the lifecycle',
+    onclick: () => {
+      state.lcOpen = { ...state.lcOpen, [name]: !open };
+      render();
+    },
+  }, 'state ', h('span', { class: 'p' }, propertyWords(lifecycle.property)), ' · ' + summary,
+  h('span', { class: 'caret', html: FOLD_CARET }));
+}
+
+// The lifecycle's row in Identity — when there is one to show. A boolean
+// nothing sets does not get a row, nor a word on the identifier line:
+// it is the scaffold every new entity arrives with, and saying
+// `state exists · set by —` on a page nobody has touched yet was noise.
+// Only its menu stays, on the identifier line, and the row waits until
+// an event actually moves it. The row used to be on screen always, naming itself
+// twice — `exists once` beside a chip reading `exists` — and spending a
+// 47-character sentence on what `set by —` says. The chip is now the
+// property in every branch, which is the other half of that: it used to
+// be the setters when there were any and the property when there were
+// none, so the one case where it read worst was the empty one.
 //
-// An empty lifecycle is not a gap to hide: `not designated` is the most
+// `not designated` is the absence that keeps its own row: it is the most
 // useful thing a blank model's first entity page can say, because
-// designating one is the next thing to do.
+// designating one is the next thing to do — and it is the only state
+// where Designate stands rather than waiting in the menu.
 function lifecycleRow(model, name, entity) {
   const lifecycle = lifecycleOf(model, name);
   const rows = h('div', {});
 
   if (!lifecycle) {
     const refusal = lifecycleRefusal(model, name);
+    // Designated at something no machine can be drawn from: the property
+    // is the whole of what is wrong with it, so it is what the row
+    // shows, and the word beside it says why. Nothing designated at all
+    // is the one absence that reads as a next step rather than a fault.
     rows.appendChild(h('div', { class: 'irow' },
-      h('span', { class: 'nm' }, 'its state'),
-      h('span', { class: 'tiny muted' }, refusal === 'none'
-        ? 'not designated'
-        : LIFECYCLE_REFUSAL_WORDS[refusal] || refusal),
+      h('span', { class: 'nm' }, 'state'),
+      refusal === 'none'
+        ? h('span', { class: 'chip unset' }, 'not designated')
+        : h('span', { class: 'chip' },
+          propertyWords(entity.lifecycle), techSpelling(entity.lifecycle)),
+      refusal === 'none' ? null : h('span', { class: 'tiny muted' },
+        LIFECYCLE_REFUSAL_WORDS[refusal] || refusal),
       h('span', { class: 'grow' }),
-      designateButton(model, name)));
-  } else {
-    const target = entityPropertyTarget(model, name, lifecycle.property);
-    const setters = (target.projection.handlers || [])
-      .filter((handler) => handler && handler.event);
-    const row = h('div', { class: 'irow' },
-      h('span', { class: 'nm' }, lifecycle.isBoolean ? 'exists once' : 'its state'),
+      refusal === 'none' ? designateButton(model, name) : lifecycleMenu(model, name)));
+  } else if (lifecycleFolds(model, name) && state.lcOpen[name]) {
+    // A drawn track hangs its event labels above the wire, so the row it
+    // sits in has to make room for them. Its menu is on the identifier
+    // line, where it was while the row was folded.
+    const shape = lifecycleShape(model, name, lifecycle);
+    rows.appendChild(h('div', { class: shape.classList.contains('lctrack') ? 'irow lcrow' : 'irow' },
+      h('span', { class: 'nm' }, 'state'),
       h('span', {
         class: 'chip editable', title: 'Open ' + readable(lifecycle.projectionName),
         onclick: () => goToProjection(lifecycle.projectionName),
-      }, setters.length ? setters.map((handler) => readable(handler.event)).join(', ')
-        : propertyWords(lifecycle.property),
-      advanced() ? h('span', { class: 'tech' }, lifecycle.property) : null));
-
-    if (!setters.length) {
-      row.appendChild(h('span', { class: 'tiny muted' },
-        'nothing sets it — existence conditions answer false'));
-    } else if (lifecycle.isBoolean) {
-      row.appendChild(h('span', { class: 'tiny muted' }, 'and exists from then on'));
-    } else {
-      row.appendChild(h('span', { class: 'tiny muted' },
-        `one of ${lifecycle.states.map((state) => readable(state)).join(', ')}`));
-    }
-    row.appendChild(h('span', { class: 'grow' }));
-    if (lifecycle.isBoolean) {
-      row.appendChild(reveal(h('button', {
-        class: 'btn tiny',
-        title: 'Give this more than two states',
-        onclick: () => { closeForms(); state.promoting = name; render(); },
-      }, '+ state')));
-    }
-    row.appendChild(designateButton(model, name));
-    rows.appendChild(row);
+      }, propertyWords(lifecycle.property), techSpelling(lifecycle.property)),
+      shape));
   }
 
   // The offer, where an author who has just added two booleans is
   // looking. The rule wizard makes the same offer at the moment a rule
-  // brings them together; this one needs no command to exist yet.
+  // brings them together; this one needs no command to exist yet. Its
+  // button does not wait for a hover the way the menu does: the row
+  // exists only to make the offer, so hiding the offer's action would
+  // leave a sentence that does nothing.
   const candidates = entityMergeCandidates(model, name);
   if (candidates.length >= 2 && state.promoting !== name) {
     rows.appendChild(h('div', { class: 'irow lc-offer' },
       h('span', { class: 'nm' }, ''),
       h('span', { class: 'tiny muted' },
-        `${candidates.length} monotone booleans: ${candidates.map(propertyWords).join(', ')}.`,
+        `${candidates.map(propertyWords).join(', ')} never go back — stages of one lifecycle.`,
         hint('lc-offer', 'Monotone booleans', [
           'None of these ever goes back to false once it holds, so they are stages of one '
           + 'lifecycle rather than independent facts.',
@@ -6597,7 +6832,7 @@ function lifecycleRow(model, name, entity) {
           'Non-monotone booleans are refused: collapsing them would destroy a dimension.',
         ])),
       h('span', { class: 'grow' }),
-      reveal(h('button', {
+      h('button', {
         class: 'btn tiny',
         onclick: () => {
           closeForms();
@@ -6605,17 +6840,140 @@ function lifecycleRow(model, name, entity) {
           state.promoteDraft = mergeDraftFor(model, name, candidates);
           render();
         },
-      }, 'Merge into a lifecycle'))));
+      }, 'Merge')));
   }
 
   if (state.designating === name) rows.appendChild(designationPicker(model, name, entity));
   return rows;
 }
 
+// Three states is the cap, and a long name lowers it: past that the row
+// wraps, and a wrapped machine is worse than the sentence it replaced.
+// The band on the Lifecycles page is where a real one is read, which is
+// where the menu's last item goes.
+const LC_TRACK_STATES = 3;
+const LC_TRACK_STATE_CHARS = 16;
+const LC_TRACK_EVENT_CHARS = 22;
+
+// The machine where it is named, or the words when it will not fit.
+// `lifecycleMachines` already knows every transition and which states
+// are terminal, so the row draws that rather than reading the handlers a
+// second time — the Identity row and the Lifecycles band cannot disagree
+// about what moves what.
+function lifecycleShape(model, name, lifecycle) {
+  const machine = lifecycleMachines(model).machines.find((m) => m.entity === name);
+  return (machine && lifecycleTrack(machine))
+    || h('span', { class: 'tiny muted' }, lifecycleShapeWords(lifecycle));
+}
+
+// Drawable only as a chain: every transition has to be the step from one
+// state to the next one along. Anything else — a jump, a way back, a
+// loop, an event whose handler this cannot read — is a machine, and a
+// machine goes on the Lifecycles page.
+function lifecycleTrack(machine) {
+  const order = lifecycleOrder(machine);
+  if (order.length > LC_TRACK_STATES || machine.opaque.length) return null;
+  const words = order.map((st) => (machine.isBoolean ? st : readable(st)));
+  if (words.some((word) => word.length > LC_TRACK_STATE_CHARS)) return null;
+
+  const hops = [];
+  let drawn = 0;
+  for (let i = 0; i + 1 < order.length; i += 1) {
+    const moves = machine.transitions.filter((t) => t.target === order[i + 1]);
+    if (moves.some((t) => t.sources.length !== 1 || t.sources[0] !== order[i])) return null;
+    const label = moves.map((t) => readable(t.event)).join(', ');
+    if (label.length > LC_TRACK_EVENT_CHARS) return null;
+    hops.push(label);
+    drawn += moves.length;
+  }
+  // A transition left over is one the chain would not have drawn — into
+  // the first state, say. Drawing the rest would be drawing a lie.
+  if (drawn !== machine.transitions.length) return null;
+
+  const track = h('span', { class: 'lctrack' });
+  order.forEach((st, i) => {
+    const label = i ? hops[i - 1] : '';
+    if (i) {
+      track.appendChild(h('span', { class: 'hop' + (label ? '' : ' dead') },
+        label ? h('span', { class: 'ev' }, label) : null,
+        h('span', { class: 'wire' },
+          h('i', { style: `width:${Math.max(24, Math.round(label.length * 5.8))}px` }),
+          h('b', {}))));
+    }
+    const reached = i === 0 || label !== '';
+    // The outline marks a state nothing leaves. In an existence machine
+    // that is `true`, which is not news — only a real enum earns it.
+    const terminal = !machine.isBoolean && reached && machine.terminal.includes(st);
+    track.appendChild(h('span', {
+      class: 'st' + (machine.isBoolean ? ' val' : '')
+        + (reached ? '' : ' unreached') + (terminal ? ' terminal' : ''),
+    }, words[i]));
+  });
+  return track;
+}
+
+// What the track would have said, in words, for the machines it gives up
+// on. Same two halves: the states, and what moves it.
+function lifecycleShapeWords(lifecycle) {
+  const setters = (lifecycle.projection.handlers || [])
+    .filter((handler) => handler && handler.event);
+  const by = !setters.length ? 'set by —'
+    : setters.length <= 2
+      ? `set by ${setters.map((handler) => readable(handler.event)).join(', ')}`
+      : `set by ${setters.length} events`;
+  if (lifecycle.isBoolean) return by;
+  const states = lifecycle.states.length <= LC_TRACK_STATES
+    ? lifecycle.states.map((st) => readable(st)).join(', ')
+    : `${lifecycle.states.length} states`;
+  return `${states} · ${by}`;
+}
+
+// Everything that can be done to the lifecycle, behind one mark. There
+// are at most three, none destructive and none of them what anybody
+// opened the page for — which is exactly the shape a menu is for, and
+// exactly the shape two standing buttons were not.
+function lifecycleMenu(model, name) {
+  const lifecycle = lifecycleOf(model, name);
+  const items = [];
+  if (lifecycleCandidates(model, name).length) {
+    items.push(['Designate another property…',
+      () => { closeForms(); state.designating = name; render(); }]);
+  }
+  if (lifecycle && lifecycle.isBoolean) {
+    items.push(['Give it more than two states…',
+      () => { closeForms(); state.promoting = name; render(); }]);
+  }
+  // The Lifecycles page is advanced-only, like its rail link — offering
+  // it in simple mode would be a door onto `state.view = 'slice'`.
+  if (lifecycle && advanced()) {
+    items.push(['Open in Lifecycles', () => goToLifecycles(name)]);
+  }
+  if (!items.length) return null;
+
+  const key = 'lc:' + name;
+  const on = state.lcMenu === key;
+  return h('span', { class: 'lcmenu' + (on ? ' on' : '') },
+    h('button', {
+      class: 'lcbtn', type: 'button', title: 'What can be done to the lifecycle',
+      'aria-expanded': on ? 'true' : 'false',
+      onclick: (e) => {
+        e.stopPropagation();
+        closeForms();
+        state.lcMenu = on ? null : key;
+        render();
+      },
+    }, '⋮'),
+    h('span', { class: 'lcpanel' }, ...items.map(([label, go]) => h('button', {
+      class: 'lcitem', type: 'button', onclick: go,
+    }, label))));
+}
+
+// The one state where saying which property holds the state is the next
+// thing to do, so it stands rather than waiting in the menu.
 function designateButton(model, name) {
   const choices = lifecycleCandidates(model, name);
   if (!choices.length) return null;
-  return reveal(h('button', {
+  return h('button', {
     class: 'btn tiny',
     title: 'Say which property holds the state one of these is in',
     onclick: () => {
@@ -6624,7 +6982,7 @@ function designateButton(model, name) {
       state.designating = open ? null : name;
       render();
     },
-  }, 'Designate'));
+  }, 'Designate');
 }
 
 // Which property is the lifecycle. A short list, because the only
@@ -9058,7 +9416,7 @@ function renderLifecycleMachine(model, main, machine, index) {
   const layout = lifecycleLayout(machine);
   const unguardedNames = lifecycleUnguarded(machine);
 
-  const cluster = h('div', { class: 'lc-cluster' },
+  const cluster = h('div', { class: 'lc-cluster', 'data-key': 'lifecycle:' + machine.entity },
     h('button', {
       class: 'lc-ename', type: 'button', title: 'Open ' + readable(machine.entity),
       onclick: () => openEntity(machine.entity),
@@ -11012,6 +11370,7 @@ window.addEventListener('keydown', (e) => {
   if (state.palette) { closePalette(); return render(); }
   if (state.queryPop) { state.queryPop = null; return render(); }
   if (state.hintPop) { state.hintPop = null; return render(); }
+  if (state.lcMenu) { state.lcMenu = null; return render(); }
   if (state.pendingImport) { state.pendingImport = null; return render(); }
   if (state.problems) { state.problems = false; return render(); }
   if (state.settings) { state.settings = false; return render(); }

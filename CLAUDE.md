@@ -266,7 +266,12 @@ it never works from `file:`.
   Existence conditions are stored as ordinary `isTrue`/`isFalse` over an
   ordinary property and only *read* as "course exists"
   (`existenceRead` / `conditionParts`, shared.js) — no new predicate,
-  and `evaluate.js` did not change. A **dangling** designation is an
+  and `evaluate.js` did not change. The rule wizard *writes* them the
+  same way: its value picker offers `exists` / `does not exist` in
+  place of the bare property, and that one pick stores `isTrue` /
+  `isFalse` (never a negated `isTrue`) and skips the predicate
+  question. The bare row comes back only for a rule opened with
+  another spelling, so editing never silently rewrites one. A **dangling** designation is an
   advisory; scripted, derived, list or stateless ones are not — they are
   legitimate models (`content-decisions-scripted` ships one) whose
   machine cannot be drawn, which is the Lifecycles page's business to
@@ -305,6 +310,31 @@ it never works from `file:`.
   reason `boundary` stays authoritative. The decisions and what was
   rejected are in
   `docs/research/2026-09-30-entity-lifecycle-as-boolean-existence.md`.
+  **The Identity row earns its line** (`lifecycleIsQuiet`): a boolean
+  nothing publishes into is the scaffold as it arrives — designated
+  because every entity is, moving nothing, guarding nothing — so it has
+  no row and no words — only its `⋮` stays on the identifier line, since
+  a fresh entity's page saying `state exists · set by —` was noise.
+  Everything else keeps a row, and the row draws
+  the machine rather than describing it (`lifecycleTrack`, off
+  `lifecycleMachines`, so the row and the Lifecycles band cannot
+  disagree about what moves what). That row **starts folded**
+  (`lifecycleFold`, `state.lcOpen`, session-only): folded, it rides on
+  the identifier line in the quiet one's register — `state exists ·
+  set by …`, or `state status · 3 states` for an enum — and the `⋮`
+  lives on that line in both states, so unfolding moves nothing. A
+  refused or undesignated lifecycle never folds; a fault is not hidden.
+  The track is drawable only as a
+  *chain* — up to three states, short names, every transition the step
+  from one state to the next — and gives up to `lifecycleShapeWords`
+  rather than wrapping; a jump or a way back is a machine, and a machine
+  belongs on the Lifecycles page. The chip is the **property** in every
+  branch: it used to be the setters when there were any and the property
+  when there were none, which is why the empty case read worst, naming
+  itself twice beside a label saying `exists once`. The two actions sit
+  behind one `⋮` (`lifecycleMenu`, faded not hidden, so it keeps its
+  place in the tab order), and **Designate** stands as a button in the
+  one state where saying it is the next move — nothing designated yet.
 - **Guarded emissions (6.0)**: a `publishes` entry may carry
   `when: [conditions]` — same operand and predicate vocabulary as
   `conditions`, evaluated in the same scope. A failing guard _skips_
