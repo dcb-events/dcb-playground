@@ -253,8 +253,21 @@ it never works from `file:`.
   like a command's alias, so it is not a reference slot and
   `MEMBER_REWRITES['entity-definition:property']` is what moves it on a
   rename. Nothing keys off the property's spelling any more: `exists` is
-  what the scaffold types, `course-simple`'s Course calls its `status`,
-  and both read the same. Pointing at a *projection* instead was
+  what the one-click lifecycle types, `course-simple`'s Course calls its
+  `status`, and both read the same.
+  **No entity gets one unasked** (reversed 2026-10-01): `createEntity`
+  makes a bare entity, from every place one is created, and a lifecycle
+  is added only from the Identity block's `+ lifecycle` (`lifecycleAdder`)
+  — *Exists (boolean)* in one click (`addExistenceLifecycle`, which
+  re-designates a leftover usable `exists` rather than adding a second,
+  and is withdrawn when `exists` is taken: `existenceLifecycleOffer`),
+  *Named states (enum)* (the promotion form in `scratch` mode, where two
+  states suffice), or an existing property. Since the existence wording
+  keys off the designation, an entity without one never says "exists"
+  anywhere. **Remove lifecycle** (`⋮`, `removeLifecycle`) drops only the
+  designation; the property stays. Don't reintroduce a lifecycle from
+  the change adder or the rule wizard — that is the scaffold back
+  through another door. Pointing at a *projection* instead was
   rejected because a condition reads `{alias, property}`, so a lifecycle
   not bound as a property could never be guarded — which is the one
   thing a lifecycle is for.
@@ -316,20 +329,19 @@ it never works from `file:`.
   reason `boundary` stays authoritative. The decisions and what was
   rejected are in
   `docs/research/2026-09-30-entity-lifecycle-as-boolean-existence.md`.
-  **The Identity row earns its line** (`lifecycleIsQuiet`): a boolean
-  nothing publishes into is the scaffold as it arrives — designated
-  because every entity is, moving nothing, guarding nothing — so it has
-  no row and no words — only its `⋮` stays on the identifier line, since
-  a fresh entity's page saying `state exists · set by —` was noise.
-  Everything else keeps a row, and the row draws
+  **The Identity row is folded, not hidden**: with no lifecycle there
+  is no row and no `not designated` — the identifier line carries
+  `+ lifecycle` and nothing else. A lifecycle that exists was asked
+  for, so it always shows, even unmoved (`set by —` is the next step);
+  the old "quiet" case hid a boolean nobody had requested. The row draws
   the machine rather than describing it (`lifecycleTrack`, off
   `lifecycleMachines`, so the row and the Lifecycles band cannot
   disagree about what moves what). That row **starts folded**
   (`lifecycleFold`, `state.lcOpen`, session-only): folded, it rides on
-  the identifier line in the quiet one's register — `state exists ·
-  set by …`, or `state status · 3 states` for an enum — and the `⋮`
-  lives on that line in both states, so unfolding moves nothing. A
-  refused or undesignated lifecycle never folds; a fault is not hidden.
+  the identifier line — `state exists · set by …`, or `state status ·
+  3 states` for an enum — and the `⋮` lives on that line in both
+  states, so unfolding moves nothing. A refused lifecycle never folds;
+  a fault is not hidden.
   The track is drawable only as a
   *chain* — up to three states, short names, every transition the step
   from one state to the next — and gives up to `lifecycleShapeWords`
@@ -337,10 +349,11 @@ it never works from `file:`.
   belongs on the Lifecycles page. The chip is the **property** in every
   branch: it used to be the setters when there were any and the property
   when there were none, which is why the empty case read worst, naming
-  itself twice beside a label saying `exists once`. The two actions sit
+  itself twice beside a label saying `exists once`. The actions sit
   behind one `⋮` (`lifecycleMenu`, faded not hidden, so it keeps its
-  place in the tab order), and **Designate** stands as a button in the
-  one state where saying it is the next move — nothing designated yet.
+  place in the tab order); `+ lifecycle` opens the same kind of panel
+  (`lifecyclePanel`) but is never faded — with nothing designated it is
+  the only lifecycle control on the page.
 - **Guarded emissions (6.0)**: a `publishes` entry may carry
   `when: [conditions]` — same operand and predicate vocabulary as
   `conditions`, evaluated in the same scope. A failing guard _skips_

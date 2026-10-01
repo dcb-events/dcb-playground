@@ -146,15 +146,19 @@ const SIMPLE_TYPES = ['boolean', 'integer', 'string'];
 // A lifecycle is an ordinary property, folded like any other — what
 // makes it the lifecycle is that the entity *designates* it, by name,
 // in `lifecycle`. Nothing keys off the property's own name any more:
-// `exists` is only what the scaffold happens to type, and an entity
-// whose lifecycle is called `state` or `phase` reads exactly the same.
+// `exists` is only what the Entity view's "+ lifecycle → exists" types,
+// and an entity whose lifecycle is called `state` or `phase` reads
+// exactly the same.
 //
-// The two-state case is a plain `boolean`, not an enum. At first
-// contact there is no enum, no custom type and no vocabulary to learn:
-// the thing either exists or it does not, which is what every rule
-// wanted to ask anyway. A third state is what turns it into an enum,
-// and that promotion has to ask for names, so it is a gesture rather
-// than an inference — see `docs/research/2026-09-30-entity-lifecycle-as-boolean-existence.md`.
+// No entity gets one unasked. A new entity is bare — its identifier
+// and nothing else — and the existence wording ("course exists") is
+// licensed by a designation, so until an author adds a lifecycle that
+// wording appears nowhere. The two-state case is a plain `boolean`,
+// not an enum: no custom type and no vocabulary to learn, the thing
+// either exists or it does not. An enum is the other way in, and
+// promoting a boolean to one has to ask for names, so both are
+// gestures rather than inferences — see
+// `docs/research/2026-09-30-entity-lifecycle-as-boolean-existence.md`.
 const LIFECYCLE_PROPERTY = 'exists';
 // The spelling the convention had before v19, recognised in exactly one
 // place: inferring a designation for a 3.x–6.0 model at the import

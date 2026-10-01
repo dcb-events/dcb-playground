@@ -1226,6 +1226,23 @@ function lifecycleCandidates(model, entityName) {
   }).map((binding) => binding.name);
 }
 
+// What the one-click existence lifecycle would do for this entity:
+// `'create'` the `exists` boolean, `'designate'` the one it already has
+// (the round trip after removing a lifecycle, which leaves the property
+// behind), or `null` when `exists` is taken by something that cannot
+// be one — then the option is not offered at all, rather than inventing
+// `exists2`. The projection name is uniquified like any property's;
+// the property name is what conditions read, so it is not.
+function existenceLifecycleOffer(model, entityName) {
+  const entity = model['entity-definitions'][entityName];
+  if (!entity) return null;
+  const existing = (entity.properties || []).find((p) => p && p.name === LIFECYCLE_PROPERTY);
+  if (!existing) return 'create';
+  const projection = model['projection-definitions'][existing.projection];
+  return projection && projection.valueType === 'boolean'
+    && lifecycleCandidates(model, entityName).includes(LIFECYCLE_PROPERTY) ? 'designate' : null;
+}
+
 // The monotone booleans of one entity that `body` guards — the raw
 // material of a merge. In the entity's own declaration order, with the
 // designated lifecycle first when it is one of them, because existence
@@ -1561,8 +1578,8 @@ const PREDICATE_WORDS = {
 };
 
 // A boolean property is named as a predicate, so its false state is
-// that predicate denied. Two shapes cover what the scaffold and
-// ordinary naming produce — `isArchived` -> "is not archived",
+// that predicate denied. Two shapes cover what the one-click lifecycle
+// and ordinary naming produce — `isArchived` -> "is not archived",
 // `exists` -> "does not exist" — and anything else falls back to a bare
 // "not …", which is graceless but never wrong. This is the one thing
 // the two-state spelling gives up: an enum's states are named, a

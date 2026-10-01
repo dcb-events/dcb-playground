@@ -631,8 +631,18 @@ function build(index) {
       'kept — the property that shares it still reads it');
   });
 
-  check('creating an entity gives it a boolean lifecycle and designates it', () => {
+  check('creating an entity makes it bare — no lifecycle unasked', () => {
     sandbox.createEntity(active(), 'venue');
+    const after = model();
+    eq(after['entity-definitions'].Venue.properties, [], 'no properties');
+    eq(after['entity-definitions'].Venue.lifecycle, undefined, 'nothing designated');
+    eq('VenueExists' in after['projection-definitions'], false, 'and no fold made for one');
+    eq(sandbox.lifecycleOf(after, 'Venue'), null, 'so no existence wording can resolve');
+    eq(sandbox.existenceLifecycleOffer(after, 'Venue'), 'create', 'the one-click lifecycle is on offer');
+  });
+
+  check('adding the existence lifecycle gives it a boolean and designates it', () => {
+    eq(sandbox.addExistenceLifecycle(active(), 'Venue'), 'exists', 'added');
     const after = model();
     eq(after['entity-definitions'].Venue.properties, [{ name: 'exists', projection: 'VenueExists' }], 'bound');
     eq(after['entity-definitions'].Venue.lifecycle, 'exists', 'and designated');
@@ -673,6 +683,39 @@ function build(index) {
       properties: [{ name: 'exists', projection: 'VenueExists' }],
       lifecycle: 'exists',
     });
+  });
+
+  check('removing a lifecycle drops the designation and keeps the property', () => {
+    sandbox.removeLifecycle(active(), 'Venue');
+    const after = model();
+    eq(after['entity-definitions'].Venue.lifecycle, undefined, 'undesignated');
+    eq(after['entity-definitions'].Venue.properties, [{ name: 'exists', projection: 'VenueExists' }],
+      'the property stays — a rule may still read it');
+    eq('VenueExists' in after['projection-definitions'], true, 'and so does its fold');
+    eq(sandbox.existenceLifecycleOffer(after, 'Venue'), 'designate',
+      'adding it again would designate the one that is there');
+    sandbox.addExistenceLifecycle(active(), 'Venue');
+    eq(model()['entity-definitions'].Venue.properties.length, 1, 'not a second `exists`');
+    eq(model()['entity-definitions'].Venue.lifecycle, 'exists', 'designated again');
+    eq(Object.keys(model()['projection-definitions']).filter((n) => /^VenueExists/.test(n)),
+      ['VenueExists'], 'and no second fold');
+  });
+
+  check('an `exists` that cannot be a lifecycle withdraws the one-click offer', () => {
+    const id = active().id;
+    sandbox.createEntity(active(), 'stage');
+    sandbox.addDefinition('projection-definition', id, 'StageExistsCount', {
+      parameters: [{ name: 'stageId', propertyType: 'StageId' }],
+      valueType: 'integer', isList: false, initialValue: 0, handlers: [],
+    });
+    sandbox.updateDefinition('entity-definition', id, 'Stage', {
+      properties: [{ name: 'exists', projection: 'StageExistsCount' }],
+    });
+    eq(sandbox.existenceLifecycleOffer(model(), 'Stage'), null, 'not offered');
+    sandbox.addExistenceLifecycle(active(), 'Stage');
+    eq(model()['entity-definitions'].Stage.lifecycle, undefined, 'and refused if asked anyway');
+    sandbox.removeDefinition('entity-definition', id, 'Stage');
+    sandbox.removeDefinition('projection-definition', id, 'StageExistsCount');
   });
 
   check('the shared editor renders on an entity page and on the projections page', () => {
@@ -1388,6 +1431,20 @@ function build(index) {
       JSON.stringify({ alias: 'course', property: 'startingWeek' }),
       'and the rule is already about it, through the alias the command reads');
     eq(sandbox.state.addingProp, null, 'the form is gone');
+    sandbox.closeForms();
+  });
+
+  check('an entity created mid-change asks for its first property, not a lifecycle', () => {
+    sandbox.state.slice = 'DefineCourse';
+    sandbox.state.newEntityAt = 'changes:CourseDefined';
+    drive(sandbox.changeAdder(model(), 'CourseDefined'), 'venue', 'Add');
+    eq(model()['entity-definitions'].Venue.properties, [], 'the entity arrived bare');
+    eq(sandbox.state.addingProp, { eventName: 'CourseDefined', only: 'Venue' },
+      'and the property form opened for it');
+    sandbox.changeAdder(model(), 'CourseDefined');
+    eq(sandbox.state.fieldDraft.entity, 'Venue', 'on the entity just made, not the first by name');
+    eq(sandbox.state.changeDraft && sandbox.state.changeDraft.target
+      === JSON.stringify(['Venue', 'exists']), false, 'and nothing proposes setting `exists`');
     sandbox.closeForms();
   });
 
@@ -3269,20 +3326,74 @@ function build(index) {
     eq(text.includes('Archived'), false, 'the states wait for the row');
   });
 
-  check('a lifecycle nothing sets keeps no row of its own', () => {
+  check('a lifecycle nothing sets still says so, folded', () => {
     const { id, model } = build(0);
     store.set('dcb-playground:model', id);
     const fold = sandbox.lifecycleOf(model(), 'Student').projectionName;
     const body = sandbox.deepClone(model()['projection-definitions'][fold]);
     body.handlers = [];
     updateDefinition('projection-definition', id, fold, body);
-    eq(sandbox.lifecycleIsQuiet(model(), 'Student'), true,
-      'the scaffold exactly as it arrives is quiet');
+    sandbox.state.lcOpen = {};
     const text = paint('entity', model(), () => { sandbox.state.entity = 'Student'; });
-    // A brand-new entity's page says nothing about it: no row, and no
-    // `state exists · set by —` riding on the identifier line either.
-    eq(text.includes('set by —'), false, 'nothing on the identifier line');
-    eq(/stateexists/.test(text), false, 'and no row of its own');
+    // It is only there because somebody added it, so nothing hides it:
+    // `set by —` is the next step, not noise.
+    has(text, 'state exists · set by —', 'on the identifier line');
+    eq(text.includes('+ lifecycle'), false, 'and no offer to add another');
+  });
+
+  check('an entity with no lifecycle offers one and says nothing else about state', () => {
+    const { id, model } = build(0);
+    store.set('dcb-playground:model', id);
+    sandbox.createEntity(model(), 'room');
+    sandbox.state.lcMenu = null;
+    const text = paint('entity', model(), () => { sandbox.state.entity = 'Room'; });
+    has(text, '+ lifecycle', 'the one way to add one');
+    eq(/not designated|exists/.test(text), false, 'and no word about existence');
+    const open = paint('entity', model(), () => { sandbox.state.lcMenu = 'lc+:Room'; });
+    has(open, 'Exists (boolean)', 'the one-click boolean');
+    has(open, 'Named states (enum)…', 'the enum');
+    eq(open.includes('Existing property…'), false, 'and no designation with nothing to designate');
+    sandbox.state.lcMenu = null;
+  });
+
+  check('an enum lifecycle named from nothing needs only two states', () => {
+    const { id, model } = build(0);
+    store.set('dcb-playground:model', id);
+    sandbox.createEntity(model(), 'room');
+    const text = paint('entity', model(), () => {
+      sandbox.state.entity = 'Room';
+      sandbox.state.promoting = 'Room';
+      sandbox.state.promoteDraft = sandbox.scratchLifecycleDraft('Room');
+    });
+    has(text, 'Name its states', 'the form opens in its own mode');
+    sandbox.closeForms();
+    eq(sandbox.mergeIntoLifecycle(model(), 'Room', {
+      typeName: 'RoomStatus', property: 'status', initialState: 'Draft',
+      steps: [{ from: null, state: 'Published' }],
+    }), 'status', 'two states are enough');
+    const lifecycle = sandbox.lifecycleOf(model(), 'Room');
+    eq(lifecycle.isBoolean, false, 'an enum');
+    eq(lifecycle.states, ['Draft', 'Published'], 'with the states as named');
+    eq(model()['projection-definitions'].RoomStatus.handlers, [], 'and nothing moving it yet');
+    // Promoting a boolean still wants three: two would be the boolean
+    // again, with vocabulary.
+    eq(sandbox.mergeIntoLifecycle(model(), 'Student', {
+      typeName: 'StudentPhase', property: 'phase', initialState: 'Out',
+      steps: [{ from: 'exists', state: 'In' }],
+    }), undefined, 'a boolean promoted to two states is refused');
+    eq(sandbox.lifecycleOf(model(), 'Student').property, 'exists', 'and nothing changed');
+  });
+
+  check('an enum lifecycle cannot reuse a property name the entity has', () => {
+    const { id, model } = build(0);
+    store.set('dcb-playground:model', id);
+    sandbox.createEntity(model(), 'room');
+    sandbox.addExistenceLifecycle(model(), 'Room');
+    sandbox.removeLifecycle(model(), 'Room');
+    eq(sandbox.mergeIntoLifecycle(model(), 'Room', {
+      typeName: 'RoomPhase', property: 'exists', initialState: 'A', steps: [{ from: null, state: 'B' }],
+    }), undefined, 'refused');
+    eq('RoomPhase' in model()['custom-type-definitions'], false, 'before anything was written');
   });
 
   check('the inline track gives up on anything that is not a chain', () => {
@@ -3413,7 +3524,12 @@ function build(index) {
     eq(sandbox.modelAdvisories(model()).filter((a) => a.name === 'Student'), [],
       'no advisory — an entity need not have one');
     const text = paint('entity', model(), () => { sandbox.state.entity = 'Student'; });
-    has(text, 'not designated', 'the row says so');
+    has(text, '+ lifecycle', 'the page offers one back');
+    eq(text.includes('not designated'), false, 'rather than calling the absence a fault');
+    const open = paint('entity', model(), () => { sandbox.state.lcMenu = 'lc+:Student'; });
+    has(open, 'Exists (boolean)', 'which would designate the `exists` still there');
+    has(open, 'Existing property…', 'beside the picker for it');
+    sandbox.state.lcMenu = null;
   });
 
   check('the entity page offers the merge where the booleans are', () => {

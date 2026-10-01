@@ -286,3 +286,57 @@ surface meets a thing called "exists" and nothing else.
 - The advisory-clean test over `PREDEFINED_MODELS` is what proves the
   migration was complete.
 - All three suites run: `evaluate.test.js`, `ui.test.js`, `webmcp.test.js`.
+
+## Reversed (2026-10-01): no lifecycle unasked
+
+Decision 1 assumed every entity should arrive with `exists` designated, so
+that "the course exists" was available from the first rule. In practice that
+put "exists" / "does not exist" in front of authors who had never asked for a
+lifecycle: in the rule wizard's value picker, in rule sentences, on every
+fresh entity page. The vocabulary was cheap, but it was still vocabulary
+nobody had chosen.
+
+Now a new entity is **bare**: its identifier type and nothing else, from
+every place an entity is created (rail, blank model, rule wizard, change
+adder). A lifecycle is added from the entity's Identity block, through a
+`+ lifecycle` control with three doors:
+
+- **Exists (boolean)**: one click, the same `exists` boolean the scaffold
+  used to make, designated. If the entity still has a usable `exists`
+  boolean (for example after its lifecycle was removed), that one is
+  designated again instead of a second being created. If `exists` is taken by
+  something that cannot be a lifecycle, the door is not offered:
+  `existenceLifecycleOffer`.
+- **Named states (enum)**: the promotion form in a third mode
+  (`scratchLifecycleDraft`). Two states are enough here, because an author
+  who chose an enum on purpose (Draft, Published) should not be pushed to a
+  third state or back to a boolean. Promoting a boolean still needs three.
+- **Existing property**: the designation picker, shown only when there are
+  candidates.
+
+The rest follows from the designation, which is the explicit act:
+
+- **The sugar is unchanged.** `existenceRead` already keyed off a designated
+  boolean lifecycle, so without one the existence wording simply never
+  appears. A hand-built boolean designated by the author gets the same
+  treatment (`isActive` → "is active" / "is not active").
+- **`not designated` is gone**, and so is the "quiet lifecycle" case
+  (`lifecycleIsQuiet`). The first made an absence that is now the default
+  read as a fault. The second hid an unmoved boolean because nobody had asked
+  for it. Now a lifecycle exists only because somebody added it, so it always
+  shows, folded, and `set by —` tells the author the next step.
+- **Remove lifecycle** (`⋮`) drops only the designation. The property stays
+  an ordinary boolean that a rule may still read, and those conditions go
+  back to reading literally (`course · exists holds`). Deleting the property
+  goes through the ordinary property delete, with its own guard.
+- **The change adder** used to reopen on `set exists → true` after creating
+  an entity mid-change. It now opens the new-property form on the fresh
+  entity, the same move the rule wizard makes. The rule wizard offers no
+  lifecycle shortcut either: one would bring back the automatic lifecycle
+  through a different door.
+
+Unchanged: the shipped models (their `exists` designations were written on
+purpose), the import inference from `status` + enum, the Lifecycles page, the
+merge offer, and the wire format. No stored shape changed, so neither
+`EVENT_LOG_KEY` nor the schema moves. Logs written before this change keep
+their scaffolded `exists` designations as ordinary authored data.

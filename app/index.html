@@ -543,7 +543,8 @@
   .ident .lcmenu {
     position: relative; display: inline-flex; vertical-align: middle; opacity: 0;
   }
-  .ident:hover .lcmenu, .ident .lcmenu:focus-within, .ident .lcmenu.on { opacity: 1; }
+  .ident:hover .lcmenu, .ident .lcmenu:focus-within, .ident .lcmenu.on,
+  .ident .lcmenu.lcadd { opacity: 1; }
   .lcbtn {
     font: inherit; font-size: 13px; line-height: 1.1; cursor: pointer;
     padding: 0 4px; border: 1px solid transparent; border-radius: 6px;
@@ -5916,15 +5917,13 @@ function changeAdder(model, eventName) {
       onSubmit: (v) => {
         state.newEntityAt = null;
         const created = createEntity(model, v);
-        // A fresh entity brings a status with it, and an event that
-        // needed the entity almost always moves that status — so the
-        // change adder reopens on it, one pick from done.
+        // A fresh entity has no properties, so a change has nothing to
+        // target yet — the property form opens on it, the same move the
+        // rule wizard makes. A lifecycle is not offered here: that is
+        // added on the entity's own page, or not at all.
         if (created) {
-          state.adder = 'chg:' + eventName;
-          state.changeDraft = {
-            eventName, target: JSON.stringify([created, LIFECYCLE_PROPERTY]),
-            operation: 'set', value: JSON.stringify(true),
-          };
+          state.fieldDraft = null;
+          state.addingProp = { eventName, only: created };
           render();
         }
       },
@@ -6130,33 +6129,58 @@ function copyCommandPropertiesIntoEvent(model, commandName, eventName) {
 function createEntity(model, label) {
   const name = toPascal(label);
   if (!name) return toast('Give it a name.', true);
-  // Every entity gets a lifecycle, and at first it is the smallest one
-  // there is: a boolean that starts false and is set true by whatever
-  // records that the thing is there. No enum, no custom type, no
-  // vocabulary — the first entity on a blank model introduces exactly
-  // one new word, and it is "exists".
-  //
-  // A third state is what turns this into an enum, and that promotion
-  // has to ask for names, so it is a gesture (`promoteLifecycle`) rather
-  // than something inferred.
-  const lifecycleProjection = name + toPascal(LIFECYCLE_PROPERTY);
+  // Bare: an identifier and nothing else. Every entity used to arrive
+  // with an `exists` lifecycle, which put "exists" / "does not exist"
+  // in front of authors who had never asked for it — so a lifecycle is
+  // now something added from the entity's own page
+  // (`addExistenceLifecycle`, or the enum form), and until then the
+  // existence wording appears nowhere.
   return run(() => {
-    // The entity first and bare, because the projection that becomes its
-    // lifecycle is partitioned by an identifier the entity is what
-    // brings into existence.
     addDefinition('entity-definition', model.id, name, { properties: [] });
-    addDefinition('projection-definition', model.id, lifecycleProjection, {
-      parameters: [{ name: defaultAlias(name) + 'Id', propertyType: name + 'Id' }],
-      valueType: 'boolean',
-      isList: false,
-      initialValue: false,
-      handlers: [],
-    });
-    updateDefinition('entity-definition', model.id, name, {
-      properties: [{ name: LIFECYCLE_PROPERTY, projection: lifecycleProjection }],
-      lifecycle: LIFECYCLE_PROPERTY,
-    });
     return name;
+  });
+}
+
+// The smallest lifecycle there is, in one click: a boolean `exists`
+// that starts false and is set true by whatever records that the thing
+// is there. No enum, no custom type, no vocabulary. If the entity
+// still holds an `exists` boolean from a lifecycle it was relieved of,
+// that one is designated again rather than shadowed by a second
+// (`existenceLifecycleOffer`).
+function addExistenceLifecycle(model, entityName) {
+  const offer = existenceLifecycleOffer(model, entityName);
+  if (!offer) return toast(`${readable(entityName)} already has an "${LIFECYCLE_PROPERTY}" `
+    + 'property that cannot be a lifecycle.', true);
+  return run(() => {
+    const body = deepClone(activeModel()['entity-definitions'][entityName]);
+    if (offer === 'create') {
+      const projectionName = projectionNameFor(activeModel(), entityName, LIFECYCLE_PROPERTY);
+      addDefinition('projection-definition', model.id, projectionName, {
+        parameters: [{ name: defaultAlias(entityName) + 'Id', propertyType: idTypeOf(model, entityName) }],
+        valueType: 'boolean',
+        isList: false,
+        initialValue: false,
+        handlers: [],
+      });
+      body.properties = [...(body.properties || []), { name: LIFECYCLE_PROPERTY, projection: projectionName }];
+    }
+    body.lifecycle = LIFECYCLE_PROPERTY;
+    updateDefinition('entity-definition', model.id, entityName, body);
+    return LIFECYCLE_PROPERTY;
+  });
+}
+
+// Undoes exactly the designation. The property stays an ordinary one —
+// a condition may still read it, and deleting what a rule names is the
+// property delete's business, with its own guard — and every condition
+// over it goes back to reading literally (`course · exists holds`).
+function removeLifecycle(model, entityName) {
+  return run(() => {
+    const body = deepClone(activeModel()['entity-definitions'][entityName]);
+    delete body.lifecycle;
+    updateDefinition('entity-definition', model.id, entityName, body);
+    state.lcOpen = { ...state.lcOpen, [entityName]: false };
+    return entityName;
   });
 }
 
@@ -6195,11 +6219,19 @@ function mergeIntoLifecycle(model, entityName, { typeName, property, initialStat
   const states = [initialState, ...rows.map((r) => r.state)]
     .map((name) => toPascal((name || '').trim()));
   if (states.some((name) => !name)) return toast('Every state needs a name.', true);
-  if (states.length < 3) return toast('A lifecycle needs three states to be worth an enum.', true);
   if (new Set(states).size !== states.length) return toast('Those states are not distinct.', true);
 
   const absorbed = rows.map((r) => r.from || null);
   const taken = absorbed.filter(Boolean);
+  // Three when this replaces booleans — two states would be the boolean
+  // again, with vocabulary — but two for an enum named from nothing,
+  // which an author who picked the enum on purpose (Draft, Published)
+  // should not be argued out of.
+  const fromScratch = !taken.length && !lifecycleOf(model, entityName);
+  if (states.length < (fromScratch ? 2 : 3)) {
+    return toast(fromScratch ? 'A lifecycle needs at least two states.'
+      : 'A lifecycle needs three states to be worth an enum.', true);
+  }
   if (new Set(taken).size !== taken.length) {
     return toast('One property cannot be two states.', true);
   }
@@ -6228,6 +6260,9 @@ function mergeIntoLifecycle(model, entityName, { typeName, property, initialStat
 
   const type = toPascal(typeName || (entityName + 'Status'));
   const merged = toCamel(property || 'status');
+  if ((entity.properties || []).some((p) => p.name === merged && !taken.includes(p.name))) {
+    return toast(`${readable(entityName)} already has a property "${merged}".`, true);
+  }
   const mergedProjection = projectionNameFor(model, entityName, merged);
   // The states a boolean absorbed at `index` was true in: that step's
   // own state and every one after it.
@@ -6361,10 +6396,14 @@ function addEntityProperty(model, entityName, { name, valueType, isList }) {
 // any other reason.
 function newPropertyForm(model, { entities, onCreated } = {}) {
   const names = (entities || Object.keys(model['entity-definitions'])).sort();
+  // `only` is the entity just created mid-gesture: the property is for
+  // that one, so the picker starts there rather than alphabetically.
+  const only = state.addingProp && state.addingProp.only;
   const draft = state.fieldDraft && state.fieldDraft.key === 'addingProp'
     ? state.fieldDraft
     : (state.fieldDraft = {
-        key: 'addingProp', entity: names[0] || '', name: '', propertyType: 'integer', isList: false,
+        key: 'addingProp', entity: names.includes(only) ? only : (names[0] || ''),
+        name: '', propertyType: 'integer', isList: false,
       });
   const create = () => {
     state.addingProp = null;
@@ -6671,7 +6710,8 @@ function renderEntity(model, main) {
 // because existence is not something a modeller chose to track, it is
 // the precondition of everything else they track. Two rows: what
 // identifies one of these, and whether there is one at all — the second
-// of which only appears once it has something to say (`lifecycleRow`).
+// of which exists only once a lifecycle has been added (`lifecycleRow`);
+// until then the identifier line offers one (`lifecycleAdder`).
 //
 // The identifier row is a read-only pointer — changing it happens in
 // Custom Types. The lifecycle row is not: which property is the
@@ -6697,8 +6737,9 @@ function identityBlock(model, name, entity) {
       'Every event about one of these carries its identifier as a tag. Nothing declared '
       + 'that row — it comes with being a thing at all.',
       'Every property below is folded per identifier value.',
-      'The lifecycle is one of those properties, designated: it says whether an instance is '
-      + 'there at all, which is the precondition of everything else tracked about it.',
+      'A lifecycle is one of those properties, designated: whether an instance is there at '
+      + 'all (a boolean), or which of several named states it is in (an enum). None is added '
+      + 'until one is asked for.',
       'A lifecycle nothing publishes into stays at its initial value, so every existence '
       + 'condition over it answers false.',
     ], 'https://dcb.events/topics/tags/')));
@@ -6709,12 +6750,12 @@ function identityBlock(model, name, entity) {
       class: 'chip editable', title: 'Open ' + readable(idType) + ' in Custom Types',
       onclick: () => goToCustomType(idType),
     }, readable(idType), advanced() ? h('span', { class: 'tech' }, idType) : null),
-    // The quiet lifecycle has no row of its own, and a folded one has
-    // none until it is opened, so in both cases the menu comes here — the
-    // one line the lifecycle is always on. It stays here when the row
-    // opens, so opening it moves nothing.
-    ...(lifecycleIsQuiet(model, name)
-      ? [h('span', { class: 'grow' }), lifecycleMenu(model, name)]
+    // No lifecycle yet: the one way to add one, and nothing else — no
+    // row, no `not designated`. A folded one has no row until it is
+    // opened, so its menu comes here, the one line the lifecycle is
+    // always on, and stays when the row opens, so opening moves nothing.
+    ...(!entity.lifecycle
+      ? [h('span', { class: 'grow' }), lifecycleAdder(model, name)]
       : lifecycleFolds(model, name)
         ? [h('span', { class: 'grow' }), lifecycleFold(model, name), lifecycleMenu(model, name)]
         : []));
@@ -6734,26 +6775,18 @@ function techSpelling(property) {
     ? h('span', { class: 'tech' }, property) : null;
 }
 
-// Whether the lifecycle has anything to say yet. A boolean nothing
-// publishes into is the scaffold exactly as it arrives — designated
-// because every entity is, moved by nothing, guarding nothing. An enum
-// is always something somebody authored, and a merge offer is a thing to
-// act on, so neither is ever quiet.
-function lifecycleIsQuiet(model, name) {
-  const lifecycle = lifecycleOf(model, name);
-  if (!lifecycle || !lifecycle.isBoolean) return false;
-  if (entityMergeCandidates(model, name).length >= 2) return false;
-  return !(lifecycle.projection.handlers || []).some((handler) => handler && handler.event);
-}
-
 // Whether the lifecycle's row folds onto the identifier line. Every
 // drawable lifecycle does, and starts folded: an entity page is opened
 // for its properties far more often than for its machine, and a track
 // with its event labels hung above it was the tallest thing on the
-// card. The quiet one has nothing to unfold; a missing or refused one
-// is a next step or a fault, and a fault is not folded away.
+// card. A refused one is a fault, and a fault is not folded away.
+//
+// There used to be a third case — a boolean nothing sets, hidden as
+// "quiet" because every entity arrived with one unasked. Now a
+// lifecycle is only ever there because somebody added it, so it always
+// says so, and `set by —` is the next step it is telling them about.
 function lifecycleFolds(model, name) {
-  return !!lifecycleOf(model, name) && !lifecycleIsQuiet(model, name);
+  return !!lifecycleOf(model, name);
 }
 
 const FOLD_CARET = '<svg viewBox="0 0 8 8" aria-hidden="true"><polyline points="1.2,2.5 4,5.5 6.8,2.5" '
@@ -6782,42 +6815,32 @@ function lifecycleFold(model, name) {
   h('span', { class: 'caret', html: FOLD_CARET }));
 }
 
-// The lifecycle's row in Identity — when there is one to show. A boolean
-// nothing sets does not get a row, nor a word on the identifier line:
-// it is the scaffold every new entity arrives with, and saying
-// `state exists · set by —` on a page nobody has touched yet was noise.
-// Only its menu stays, on the identifier line, and the row waits until
-// an event actually moves it. The row used to be on screen always, naming itself
-// twice — `exists once` beside a chip reading `exists` — and spending a
-// 47-character sentence on what `set by —` says. The chip is now the
-// property in every branch, which is the other half of that: it used to
-// be the setters when there were any and the property when there were
-// none, so the one case where it read worst was the empty one.
-//
-// `not designated` is the absence that keeps its own row: it is the most
-// useful thing a blank model's first entity page can say, because
-// designating one is the next thing to do — and it is the only state
-// where Designate stands rather than waiting in the menu.
+// The lifecycle's row in Identity — when there is one to show. No
+// lifecycle at all has no row: the identifier line carries the one way
+// to add one (`lifecycleAdder`), and the page says nothing else about
+// state, because an entity need not have one and saying `not
+// designated` on every fresh page read as a fault. The row used to be
+// on screen always, naming itself twice — `exists once` beside a chip
+// reading `exists` — and spending a 47-character sentence on what
+// `set by —` says. The chip is now the property in every branch, which
+// is the other half of that: it used to be the setters when there were
+// any and the property when there were none, so the one case where it
+// read worst was the empty one.
 function lifecycleRow(model, name, entity) {
   const lifecycle = lifecycleOf(model, name);
   const rows = h('div', {});
 
-  if (!lifecycle) {
-    const refusal = lifecycleRefusal(model, name);
+  if (!lifecycle && entity.lifecycle) {
     // Designated at something no machine can be drawn from: the property
     // is the whole of what is wrong with it, so it is what the row
-    // shows, and the word beside it says why. Nothing designated at all
-    // is the one absence that reads as a next step rather than a fault.
+    // shows, and the word beside it says why.
+    const refusal = lifecycleRefusal(model, name);
     rows.appendChild(h('div', { class: 'irow' },
       h('span', { class: 'nm' }, 'state'),
-      refusal === 'none'
-        ? h('span', { class: 'chip unset' }, 'not designated')
-        : h('span', { class: 'chip' },
-          propertyWords(entity.lifecycle), techSpelling(entity.lifecycle)),
-      refusal === 'none' ? null : h('span', { class: 'tiny muted' },
-        LIFECYCLE_REFUSAL_WORDS[refusal] || refusal),
+      h('span', { class: 'chip' }, propertyWords(entity.lifecycle), techSpelling(entity.lifecycle)),
+      h('span', { class: 'tiny muted' }, LIFECYCLE_REFUSAL_WORDS[refusal] || refusal),
       h('span', { class: 'grow' }),
-      refusal === 'none' ? designateButton(model, name) : lifecycleMenu(model, name)));
+      lifecycleMenu(model, name)));
   } else if (lifecycleFolds(model, name) && state.lcOpen[name]) {
     // A drawn track hangs its event labels above the wire, so the row it
     // sits in has to make room for them. Its menu is on the identifier
@@ -6949,12 +6972,14 @@ function lifecycleShapeWords(lifecycle) {
   return `${states} · ${by}`;
 }
 
-// Everything that can be done to the lifecycle, behind one mark. There
-// are at most three, none destructive and none of them what anybody
-// opened the page for — which is exactly the shape a menu is for, and
-// exactly the shape two standing buttons were not.
+// Everything that can be done to the lifecycle, behind one mark. None
+// of it is what anybody opened the page for — which is exactly the
+// shape a menu is for, and exactly the shape standing buttons were not.
+// Remove undoes only the designation (`removeLifecycle`), so it is no
+// more destructive than the rest.
 function lifecycleMenu(model, name) {
   const lifecycle = lifecycleOf(model, name);
+  const entity = model['entity-definitions'][name];
   const items = [];
   if (lifecycleCandidates(model, name).length) {
     items.push(['Designate another property…',
@@ -6969,13 +6994,45 @@ function lifecycleMenu(model, name) {
   if (lifecycle && advanced()) {
     items.push(['Open in Lifecycles', () => goToLifecycles(name)]);
   }
+  if (entity && entity.lifecycle) {
+    items.push(['Remove lifecycle', () => { closeForms(); removeLifecycle(model, name); }]);
+  }
   if (!items.length) return null;
+  return lifecyclePanel('lc:' + name, '', '⋮',
+    { class: 'lcbtn', title: 'What can be done to the lifecycle' }, items);
+}
 
-  const key = 'lc:' + name;
+// The one way an entity gets a lifecycle: asked for, here. Three doors,
+// one per thing an author could mean — the one-click boolean, an enum
+// whose states they name, or a property they already built. Not faded
+// like the menu: with nothing designated it is the only lifecycle
+// control on the page, and a next step that waits for a hover is one
+// nobody finds.
+function lifecycleAdder(model, name) {
+  const items = [];
+  if (existenceLifecycleOffer(model, name)) {
+    items.push(['Exists (boolean)', () => { closeForms(); addExistenceLifecycle(model, name); }]);
+  }
+  items.push(['Named states (enum)…', () => {
+    closeForms();
+    state.promoting = name;
+    state.promoteDraft = scratchLifecycleDraft(name);
+    render();
+  }]);
+  if (lifecycleCandidates(model, name).length) {
+    items.push(['Existing property…', () => { closeForms(); state.designating = name; render(); }]);
+  }
+  return lifecyclePanel('lc+:' + name, ' lcadd', '+ lifecycle',
+    { class: 'lcfold', title: 'Give it a lifecycle' }, items);
+}
+
+// The click-to-open panel both of the above are. One `state.lcMenu` key
+// for the page, so opening one folds the other.
+function lifecyclePanel(key, extraClass, label, trigger, items) {
   const on = state.lcMenu === key;
-  return h('span', { class: 'lcmenu' + (on ? ' on' : '') },
+  return h('span', { class: 'lcmenu' + extraClass + (on ? ' on' : '') },
     h('button', {
-      class: 'lcbtn', type: 'button', title: 'What can be done to the lifecycle',
+      ...trigger, type: 'button',
       'aria-expanded': on ? 'true' : 'false',
       onclick: (e) => {
         e.stopPropagation();
@@ -6983,27 +7040,10 @@ function lifecycleMenu(model, name) {
         state.lcMenu = on ? null : key;
         render();
       },
-    }, '⋮'),
-    h('span', { class: 'lcpanel' }, ...items.map(([label, go]) => h('button', {
+    }, label),
+    h('span', { class: 'lcpanel' }, ...items.map(([text, go]) => h('button', {
       class: 'lcitem', type: 'button', onclick: go,
-    }, label))));
-}
-
-// The one state where saying which property holds the state is the next
-// thing to do, so it stands rather than waiting in the menu.
-function designateButton(model, name) {
-  const choices = lifecycleCandidates(model, name);
-  if (!choices.length) return null;
-  return h('button', {
-    class: 'btn tiny',
-    title: 'Say which property holds the state one of these is in',
-    onclick: () => {
-      const open = state.designating === name;
-      closeForms();
-      state.designating = open ? null : name;
-      render();
-    },
-  }, 'Designate');
+    }, text))));
 }
 
 // Which property is the lifecycle. A short list, because the only
@@ -7023,6 +7063,22 @@ function designationPicker(model, name, entity) {
     h('span', { class: 'nm' }, 'the state is'),
     pick([['', '— none —'], ...choices.map((c) => [c, propertyWords(c)])], current, set),
     h('span', { class: 'tiny muted' }, 'single-valued boolean or enum only'));
+}
+
+// The draft for an enum lifecycle named from nothing: no boolean behind
+// any state, and no state proposed either — `NonExistent` is how a
+// boolean that existed before reads, and here none did. Two blank
+// rows, the first state and one more, because two is enough when the
+// enum was chosen on purpose.
+function scratchLifecycleDraft(entityName) {
+  return {
+    scratch: true,
+    typeName: entityName + 'Status',
+    property: 'status',
+    initialState: '',
+    steps: [{ from: null, state: '' }],
+    extra: '',
+  };
 }
 
 // The draft the merge form opens holding: one step per boolean, named
@@ -7058,7 +7114,7 @@ function promoteLifecycleForm(model, entityName) {
   if (!state.promoteDraft) {
     state.promoteDraft = candidates.length >= 2
       ? mergeDraftFor(model, entityName, candidates)
-      : {
+      : !lifecycle ? scratchLifecycleDraft(entityName) : {
         typeName: entityName + 'Status',
         property: 'status',
         initialState: 'NonExistent',
@@ -7070,13 +7126,14 @@ function promoteLifecycleForm(model, entityName) {
       };
   }
   const draft = state.promoteDraft;
+  const scratch = !!draft.scratch;
 
   // `note`, not `hint`: the global `hint` is the concept popover, and a
   // parameter shadowing it here is a trap for whoever adds one next.
-  const field = (key, label, note) => h('label', { class: 'fieldrow' },
+  const field = (key, label, note, placeholder) => h('label', { class: 'fieldrow' },
     h('span', { class: 'nm' }, label),
     h('input', {
-      type: 'text', value: draft[key] || '',
+      type: 'text', value: draft[key] || '', placeholder: placeholder || '',
       oninput: (e) => { draft[key] = e.target.value; },
     }),
     note ? h('span', { class: 'tiny muted' }, note) : null);
@@ -7115,18 +7172,19 @@ function promoteLifecycleForm(model, entityName) {
     }, 'Remove') : null);
 
   const form = h('section', { class: 'esection' },
-    h('h4', {}, candidates.length >= 2 ? 'Merge these into one lifecycle'
-      : 'Give it more than two states',
+    h('h4', {}, scratch ? 'Name its states'
+      : candidates.length >= 2 ? 'Merge these into one lifecycle'
+        : 'Give it more than two states',
       hint('lc-promote', 'Promotion', [
-        'A two-state lifecycle is a boolean and needs no vocabulary. Three or more needs an '
-        + 'enum, so the states are named here rather than inferred.',
+        'A two-state lifecycle can be a boolean, which needs no vocabulary. An enum names its '
+        + 'states, so they are named here rather than inferred.',
         'Every condition over an absorbed property is rewritten over the enum in the same '
         + 'append, undoable in one step: a model whose conditions still say isTrue while the '
         + 'fold has become an enum is a state the log has no migration for.',
       ])),
     field('property', 'the property', 'what the states are held in from now on'),
     field('typeName', 'the type', 'the enum these states belong to'),
-    field('initialState', 'at first', 'before anything has happened'),
+    field('initialState', 'at first', 'before anything has happened', 'a state'),
     ...draft.steps.map(stepRow));
 
   form.appendChild(h('div', { class: 'row' },
@@ -7141,7 +7199,7 @@ function promoteLifecycleForm(model, entityName) {
         const merged = mergeIntoLifecycle(model, entityName, draft);
         if (merged) { state.promoting = null; state.promoteDraft = null; render(); }
       },
-    }, candidates.length >= 2 ? 'Merge' : 'Promote'),
+    }, scratch ? 'Add' : candidates.length >= 2 ? 'Merge' : 'Promote'),
     h('button', {
       class: 'btn tiny',
       onclick: () => { state.promoting = null; state.promoteDraft = null; render(); },
@@ -9187,8 +9245,8 @@ function renderRuleMap(model, main) {
 // wires between them, and the commands allowed at a state kept in a
 // popover until the state is hovered, focused or pinned.
 //
-// Two weights, because nearly every entity is on this page now that a
-// two-state lifecycle is an ordinary boolean. A machine that is only
+// Two weights, because most lifecycles are the ordinary two-state
+// boolean an entity's page adds in one click. A machine that is only
 // existence gets one compact row; anything with three or more states
 // gets the band. Filtering the two-state ones off instead would have
 // been quieter and wrong: the unguarded dot is this page's most useful
@@ -9341,8 +9399,8 @@ function renderLifecycles(model, main) {
     const designated = excluded.filter((e) => e.reason !== 'none');
     main.appendChild(h('div', { class: 'empty' }, designated.length
       ? 'Nothing here can be drawn as a machine, though a lifecycle is designated.'
-      : 'No entity has a lifecycle yet — an entity designates one of its own properties as '
-        + 'the state it is in, and its machine appears here.'));
+      : 'No entity has a lifecycle yet — add one from an entity’s page (+ lifecycle), and '
+        + 'its machine appears here.'));
     if (excluded.length) main.appendChild(lifecycleExclusions(excluded));
     return;
   }
