@@ -276,9 +276,9 @@ function build(index) {
 
   check('a list-typed event property is offerable to a list projection', () => {
     const draft = { valueType: 'TimeSlot', isList: true };
-    const choices = handlerValueChoices(model(), draft, model()['event-definitions'].CourseRescheduled)
-      .map(([, label]) => label);
-    eq(choices.includes('all of its slots'), true, `got: ${choices.join(' | ')}`);
+    const choices = handlerValueChoices(model(), draft, model()['event-definitions'].CourseRescheduled, 'set')
+      .map(([v]) => v);
+    eq(choices.includes(JSON.stringify({ eventProperty: 'slots' })), true, `got: ${choices.join(' | ')}`);
   });
 
   check('a literal is read as the type it is typed into', () => {
@@ -2660,7 +2660,7 @@ function build(index) {
 // per type rather than as one table for everything.
 // ---------------------------------------------------------------
 {
-  const { operationsFor, hasSuccessor, handlerValueChoices } = sandbox;
+  const { operationsFor, hasSuccessor, offersSuccessor, handlerValueChoices } = sandbox;
 
   check('the operations offered follow the type held', () => {
     const { model } = build(0);
@@ -2730,12 +2730,55 @@ function build(index) {
     eq(hasSuccessor(model(), 'CourseStatus'), false, 'and an enum is a set, not a sequence');
 
     const event = { properties: [{ name: 'flag', propertyType: 'boolean', isList: false }] };
-    const offered = handlerValueChoices(model(), { valueType: 'boolean', isList: false }, event)
+    const offered = handlerValueChoices(model(), { valueType: 'boolean', isList: false }, event, 'set')
       .map(([, label]) => label);
-    eq(offered.some((label) => label.startsWith('the one after')), false,
+    eq(offered.includes('flag'), true, 'the event field is offered');
+    eq(handlerValueChoices(model(), { valueType: 'boolean', isList: false }, event, 'set')
+      .some(([v]) => v.includes('successor')), false,
       'so the editor does not propose what validation would then refuse');
     eq(offered.includes('true') && offered.includes('false'), true,
       'it proposes the two values instead');
+  });
+
+  // Narrower than validation on purpose: a successor numbers something,
+  // so it is offered to `set` an integer or a named value type, never a
+  // plain string, never beside another verb — and `currentValue`, which
+  // only ever repeats or doubles what is held, is not offered at all.
+  check('a successor is offered only to set a numbering, and currentValue never', () => {
+    const { model } = build(0);
+    eq(offersSuccessor(model(), 'integer'), true, 'an integer counts');
+    eq(offersSuccessor(model(), 'CourseId'), true, 'and so does a named scalar type');
+    eq(offersSuccessor(model(), 'string'), false, 'a plain string does not, digits or not');
+    eq(hasSuccessor(model(), 'string'), true, 'though validation still accepts one');
+
+    const event = { properties: [
+      { name: 'title', propertyType: 'string', isList: false },
+      { name: 'count', propertyType: 'integer', isList: false },
+    ] };
+    const values = (valueType, operation) =>
+      handlerValueChoices(model(), { valueType, isList: false }, event, operation).map(([v]) => v);
+    const next = JSON.stringify({ successor: { eventProperty: 'count' } });
+    eq(values('integer', 'set').includes(next), true, 'set an integer: offered');
+    eq(values('integer', 'increment').includes(next), false, 'increment by it: not');
+    eq(values('string', 'set').some((v) => v.includes('successor')), false, 'set a string: not');
+    for (const [type, op] of [['integer', 'set'], ['integer', 'increment'], ['string', 'set']]) {
+      eq(values(type, op).some((v) => v.includes('currentValue')), false, `no currentValue for ${type} ${op}`);
+    }
+  });
+
+  check('an event field reads as its path once picked', () => {
+    const { model } = build(0);
+    const event = { properties: [{ name: 'courseId', propertyType: 'CourseId', isList: false }] };
+    const choices = handlerValueChoices(model(), { valueType: 'CourseId', isList: false }, event, 'set');
+    const sel = sandbox.pick(choices, choices[1][0], () => {});
+    const groups = findAll(sel, (n) => n.tag === 'optgroup');
+    eq(groups.map((g) => g.label), ['event', 'successor'], 'one heading per kind, even for a single row');
+    eq(findAll(groups[1], (n) => n.tag === 'option').map(textOf), ['successor(event.data.courseId)'],
+      'the option text is the whole token, for type-ahead and the native fallback');
+    eq(findAll(groups[1], (n) => n.className === 'ctx').map(textOf), ['successor(event.data.', ')'],
+      'with the context in spans the open list hides');
+    eq(sandbox.operandWords({ successor: { eventProperty: 'courseId' } }),
+      'successor(event.data.courseId)', 'and the rendered operand says the same');
   });
 
   check('a successor the editor no longer offers is still refused if written', () => {

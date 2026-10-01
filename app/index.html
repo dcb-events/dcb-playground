@@ -3292,14 +3292,31 @@ function typeOptions(model) {
 // would otherwise be lost.
 const GROUP_SEP = ' · ';
 
+// A token option — a path into the event, not a name — is the one kind
+// the text convention cannot express: it groups by what it *is*
+// (`event`, `successor`) rather than by a prefix of its text, and the
+// open list may show it short (`capacity`, under `event`) while
+// anywhere it stands alone it must read whole (`event.data.capacity`).
+// So a caller passes it as an option's fourth element,
+// `{ group, before, after }`: `pick` puts the context in `.ctx` spans
+// around the name, which the customizable-<select> CSS hides in the
+// open list and shows in the closed face. Without that CSS the
+// option's text is the whole token, which is also what type-ahead
+// and a screen reader get.
 function pick(options, value, onchange, placeholder) {
   const sel = h('select', { onchange: (e) => onchange(e.target.value) });
   if (placeholder) sel.appendChild(h('option', { value: '' }, placeholder));
 
   const buckets = new Map(); // prefix -> [{v, suffix, icon}]
-  const sequence = []; // {text} | {prefix}, in first-seen order
+  const sequence = []; // {text} | {prefix} | {token group}, in first-seen order
   for (const o of options) {
-    const [v, text, icon] = Array.isArray(o) ? o : [o, o];
+    const [v, text, icon, token] = Array.isArray(o) ? o : [o, o];
+    if (token) {
+      const key = '\0' + token.group;
+      if (!buckets.has(key)) { buckets.set(key, []); sequence.push({ token: token.group, key }); }
+      buckets.get(key).push({ v, suffix: text, icon, token });
+      continue;
+    }
     const at = text.indexOf(GROUP_SEP);
     if (at === -1) { sequence.push({ v, text, icon }); continue; }
     const prefix = text.slice(0, at);
@@ -3307,18 +3324,32 @@ function pick(options, value, onchange, placeholder) {
     buckets.get(prefix).push({ v, suffix: text.slice(at + GROUP_SEP.length), icon });
   }
 
-  const appendOption = (parent, v, text, icon) => {
+  const appendOption = (parent, v, text, icon, token) => {
+    const label = token
+      ? h('span', { class: 'token' },
+          token.before ? h('span', { class: 'ctx' }, token.before) : null,
+          text,
+          token.after ? h('span', { class: 'ctx' }, token.after) : null)
+      : text;
     if (icon) {
       parent.appendChild(h('option', { value: v, selected: v === value },
-        h('span', { class: 'label' }, text),
+        token ? label : h('span', { class: 'label' }, text),
         h('span', { class: 'icon' }, icon)));
     } else {
-      parent.appendChild(h('option', { value: v, selected: v === value }, text));
+      parent.appendChild(h('option', { value: v, selected: v === value }, label));
     }
   };
 
   for (const entry of sequence) {
     if ('text' in entry) { appendOption(sel, entry.v, entry.text, entry.icon); continue; }
+    // A token group is a group even with one row in it: its label is
+    // the context the short option leans on, not a prefix it repeats.
+    if ('token' in entry) {
+      const group = h('optgroup', { label: entry.token });
+      for (const row of buckets.get(entry.key)) appendOption(group, row.v, row.suffix, row.icon, row.token);
+      sel.appendChild(group);
+      continue;
+    }
     const rows = buckets.get(entry.prefix);
     if (rows.length === 1) {
       appendOption(sel, rows[0].v, entry.prefix + GROUP_SEP + rows[0].suffix, rows[0].icon);
@@ -5935,16 +5966,16 @@ function changeAdder(model, eventName) {
         value: '',
       });
 
-  // What a handler may take in: a property of the event, the value the
-  // property already holds, a member of whichever enum the currently
-  // targeted property is typed with — not any other enum, which
-  // nothing here could ever hold — the one *after* something, or a
-  // typed literal. Event properties are held to the same rule the
-  // emission fields and the rule editor's right side apply: only the
-  // ones typed like the targeted property are offered — a status is
-  // never set from a title. And a successor is only offered where the
-  // target has one (`validateHandlers` says the same after the fact):
-  // integers and strings count up; an enum has no "next member".
+  // What a handler may take in: a property of the event, a member of
+  // whichever enum the currently targeted property is typed with — not
+  // any other enum, which nothing here could ever hold — the successor
+  // of something, or a typed literal. Event properties are held to the
+  // same rule the emission fields and the rule editor's right side
+  // apply: only the ones typed like the targeted property are offered —
+  // a status is never set from a title. A successor is offered only to
+  // `set` a numbering (`offersSuccessor`), which is the one thing it is
+  // for. `currentValue` is not offered at all: `set` to it changes
+  // nothing and `increment` by it doubles — see `handlerValueChoices`.
   const [targetEntity, targetPropertyName] =
     draft.target && draft.target !== NEW ? JSON.parse(draft.target) : [null, null];
   const targetProjection = targetEntity
@@ -5954,14 +5985,15 @@ function changeAdder(model, eventName) {
   const targetType = targetProjection ? targetProjection.valueType : null;
   const targetIsBoolean = targetType === 'boolean' && !targetProjection.isList;
   const offerProperty = (p) => !targetType || p.propertyType === targetType;
-  const offerSuccessor = !targetType || hasSuccessor(model, targetType);
+  const operations = targetProjection ? operationsFor(model, targetProjection)
+    : Object.keys(OPERATION_WORDS);
+  if (!operations.includes(draft.operation)) draft.operation = operations[0];
+  const offerSuccessor = !!targetType && draft.operation === 'set'
+    && !targetProjection.isList && offersSuccessor(model, targetType);
+  const offeredFields = (event ? event.properties : []).filter(offerProperty);
   const values = [
-    ...(event ? event.properties : []).filter(offerProperty).flatMap((p) => [
-      [JSON.stringify({ eventProperty: p.name }), "the event's " + propertyWords(p.name)],
-      ...(offerSuccessor ? [[JSON.stringify({ successor: { eventProperty: p.name } }),
-        "the one after the event's " + propertyWords(p.name)]] : []),
-    ]),
-    [JSON.stringify({ currentValue: true }), 'its current value'],
+    ...offeredFields.map(eventFieldChoice),
+    ...(offerSuccessor ? offeredFields.filter((p) => !p.isList).map(successorChoice) : []),
     // A boolean's two values are as much a closed set as an enum's
     // members, so they are picked rather than typed. Unlike an enum's,
     // they sit *beside* the literal row rather than replacing it: a
@@ -5983,10 +6015,6 @@ function changeAdder(model, eventName) {
     draft.value = '';
   }
   if (!draft.value) draft.value = values.length ? values[0][0] : '';
-
-  const operations = targetProjection ? operationsFor(model, targetProjection)
-    : Object.keys(OPERATION_WORDS);
-  if (!operations.includes(draft.operation)) draft.operation = operations[0];
 
   const targetSel = pick(targets, draft.target, (v) => {
     if (v === NEW) { closeForms(); state.addingProp = { eventName }; return render(); }
@@ -8008,6 +8036,19 @@ function partitionTypeOptions(model) {
     .map((t) => [t, readable(t)]);
 }
 
+// A value the event carried, as a token option (see `pick`): short
+// under its `event` heading, `event.data.capacity` once picked — the
+// same path `operandWords` renders and a scripted handler writes.
+function eventFieldChoice(p) {
+  return [JSON.stringify({ eventProperty: p.name }), p.name, null,
+    { group: 'event', before: 'event.data.' }];
+}
+
+function successorChoice(p) {
+  return [JSON.stringify({ successor: { eventProperty: p.name } }), p.name, null,
+    { group: 'successor', before: 'successor(event.data.', after: ')' }];
+}
+
 // A projection's handler value, offered as the small set that makes
 // sense for the type it holds. `successor` is what turns a plain
 // projection into a numbering, so it is a value on this list rather
@@ -8016,23 +8057,25 @@ function partitionTypeOptions(model) {
 // A list-typed event property of the right type is offered too: a
 // list-valued projection is `set` from one whole, and `append` from a
 // list adds its elements rather than nesting them.
-function handlerValueChoices(model, draft, event) {
-  const properties = event ? (event.properties || []) : [];
-  const out = [];
-  // Only where the held type has a next value. Offered unconditionally
-  // this proposed "the one after true" on a boolean fold and "the one
-  // after Draft" on an enum — both stored fine and then failed
-  // validation, which is the wrong place to find out.
-  const successors = hasSuccessor(model, draft.valueType);
-  for (const p of properties.filter((p2) => p2.propertyType === draft.valueType)) {
-    out.push([JSON.stringify({ eventProperty: p.name }),
-      p.isList ? `all of its ${propertyWords(p.name)}` : propertyWords(p.name)]);
-    if (!p.isList && successors) {
-      out.push([JSON.stringify({ successor: { eventProperty: p.name } }),
-        `the one after ${propertyWords(p.name)}`]);
-    }
-  }
-  out.push([JSON.stringify({ currentValue: true }), 'its current value']);
+//
+// `currentValue` is not on the list, though the wire format keeps it:
+// `set` to the value already held changes nothing, `increment` by it
+// doubles and `append` of it repeats the list — no shipped model uses
+// it, and offering it only invited the question what it was for. A
+// stored one still runs and still reads as `currentValue`.
+function handlerValueChoices(model, draft, event, operation) {
+  const properties = (event ? (event.properties || []) : [])
+    .filter((p) => p.propertyType === draft.valueType);
+  // Only to `set` a numbering. Offered for any type with a next value
+  // it put "the one after …" beside every text field and every
+  // operation, and before that — offered unconditionally — "the one
+  // after true" on a boolean fold, which stored fine and then failed
+  // validation.
+  const successors = operation === 'set' && !draft.isList && offersSuccessor(model, draft.valueType);
+  const out = [
+    ...properties.map(eventFieldChoice),
+    ...(successors ? properties.filter((p) => !p.isList).map(successorChoice) : []),
+  ];
   const enumMembers = enumMembersFor(model, draft.valueType);
   if (enumMembers) {
     for (const m of enumMembers) out.push([JSON.stringify({ enumMember: m }), readable(m)]);
@@ -8381,9 +8424,18 @@ function projectionFields(model, draft, { entityName } = {}) {
 
   const declaredHandlerRows = (draft.handlers || []).map((handler, i) => {
     const event = model['event-definitions'][handler.event];
-    const values = handlerValueChoices(model, draft, event);
     const operations = operationsFor(model, draft);
+    if (!operations.includes(handler.operation)) handler.operation = operations[0];
+    const values = handlerValueChoices(model, draft, event, handler.operation);
     const enumMembers = enumMembersFor(model, draft.valueType);
+    // A value the row can no longer offer — a successor once the verb
+    // is no longer `set`, a stored `currentValue` — would leave the
+    // picker showing one thing and the draft saving another, so it
+    // resets to the first offer, as the change adder's does.
+    if (event && handler.value && handler.value !== LITERAL
+      && !values.some(([v]) => v === handler.value)) {
+      handler.value = values.length ? values[0][0] : (enumMembers ? '' : LITERAL);
+    }
     return h('div', { class: 'adder' },
       pick(eventChoicesFor(handler), handler.event,
         (v) => { handler.event = v; handler.value = ''; handler.valueText = ''; render(); },

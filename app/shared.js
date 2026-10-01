@@ -1502,7 +1502,11 @@ function operandWords(operand) {
         ? memberWords(propertyWords(operand.parameterName), operand.property)
         : propertyWords(operand.parameterName);
     case 'enum-member': return readable(operand.enumMember);
-    case 'event-property': return propertyWords(operand.eventProperty);
+    // A path, not a name: the same `event.data.capacity` a scripted
+    // handler writes, so the stored spelling stays — humanizing inside
+    // a dotted path reads as a typo. It is also what tells a value the
+    // event carried apart from a constant at a glance.
+    case 'event-property': return `event.data.${operand.eventProperty}`;
     // Both are operand *kinds*, not prose: the schema names them and
     // nothing an author typed is being unwound here, so they read as
     // the tokens they are rather than as descriptions of themselves.

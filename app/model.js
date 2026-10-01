@@ -731,9 +731,9 @@ function operandText(operand) {
         ? `${operand.alias || '?'}.${operand.property}`
         : (operand.alias || '?');
     case 'enum-member': return operand.enumMember || '?';
-    case 'event-property': return `event.${operand.eventProperty || '?'}`;
+    case 'event-property': return `event.data.${operand.eventProperty || '?'}`;
     case 'current-value': return 'current';
-    case 'successor': return `next(${operandText(operand.successor)})`;
+    case 'successor': return `successor(${operandText(operand.successor)})`;
     case 'projection-read': {
       const args = Object.entries(operand.arguments || {})
         .map(([name, value]) => `${name}: ${operandText(value)}`).join(', ');
@@ -1033,6 +1033,21 @@ function hasSuccessor(model, valueType) {
   const underlying = cls.kind === 'simple' ? valueType
     : (enumMembersFor(model, valueType) ? 'enum' : 'string');
   return underlying === 'integer' || underlying === 'string';
+}
+
+// Whether an editor *offers* "successor" for a value of this type —
+// narrower than `hasSuccessor`, which is what the validator accepts.
+// Every successor the shipped models carry numbers something: the next
+// course id, the next course number. A plain `string` has one only by
+// accident of ending in digits, and offering it put "the one after the
+// title" beside every text field; an integer or a named scalar value
+// type — an id, a number — is what a numbering is made of. A stored
+// successor outside this rule still validates and still runs.
+function offersSuccessor(model, valueType) {
+  if (!hasSuccessor(model, valueType)) return false;
+  if (valueType === 'integer') return true;
+  const cls = classifyType(model, valueType);
+  return cls.kind === 'value' && !cls.composite;
 }
 
 // Walks every operand inside a command body.

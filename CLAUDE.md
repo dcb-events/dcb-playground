@@ -194,6 +194,12 @@ it never works from `file:`.
   rather than instead of it — `draftFromOperand` turns any stored
   primitive back into a literal, so removing that row would strand every
   boolean fold the shipped models carry.
+  Handler values are narrower still than validation: `successor` is
+  offered only to `set` an integer or a named scalar value type
+  (`offersSuccessor` — a numbering, never a plain string, never beside
+  another verb), and `currentValue` is not offered at all (`set` to it
+  is a no-op, `increment` by it doubles). Both stay in the wire format
+  and still run when stored.
 - **Every edit goes through a command function** in `model.js`, and every
   command funnels into `appendEvents` — the seam where undo marks are taken
   (`onAppend`), so buttons and agent tools are undoable alike. New editing
@@ -367,6 +373,12 @@ it never works from `file:`.
   `readable` / `propertyWords` turn `DefineCourse` into "Define course"
   and `courseId` into "course id", because that is what the author
   typed; the stored spelling rides beside it in a `.tech` span.
+  The one exception is a value an event carried: it reads as the path
+  `event.data.capacity` (stored name, monospace) in pickers and
+  sentences alike, because it is a path — the one a scripted handler
+  writes — and a humanized name inside a dotted path reads as a typo.
+  In the open list it is short under an `event` heading; once picked it
+  is whole (`pick`'s token options, `.ctx` spans).
   **Conditions and changes stay English sentences** — `PREDICATE_WORDS`
   and `OPERATION_WORDS` are untouched, the `·` separates alias from
   property, and the existence sugar still reads `course exists` (minus

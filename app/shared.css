@@ -275,10 +275,18 @@ input[type=text]:focus, select:focus, textarea:focus {
     font-size: 10px; font-weight: 400; text-transform: uppercase;
     letter-spacing: .06em; color: var(--muted); padding-top: 4px;
   }
-  optgroup + optgroup, option + optgroup { border-top: 1px dashed var(--border); margin-top: 4px; }
+  optgroup + optgroup, option + optgroup, optgroup + option {
+    border-top: 1px dashed var(--border); margin-top: 4px;
+  }
   optgroup option { font-size: 13px; text-transform: none; letter-spacing: normal; color: var(--text); }
   selectedcontent { display: flex; align-items: center; gap: 4px; }
   option .icon, selectedcontent .icon { order: -1; }
+  /* A token option (`pick`'s fourth element): monospace, short in the
+     open list where its group heading carries the context, whole in
+     the closed face where nothing else does. */
+  .token { font-family: var(--mono); font-size: 12px; }
+  option .ctx { display: none; }
+  selectedcontent .ctx { display: inline; }
 }
 input.inline {
   border: 0; border-bottom: 1px dashed var(--border-strong);
