@@ -1413,7 +1413,7 @@ function modelsModal() {
 
   const startNew = state.newModel
     ? inlineForm({
-        question: 'Model name', placeholder: 'Course subscriptions',
+        question: 'Model name',
         onSubmit: (v) => {
           state.newModel = false; state.splash = false; createNamedModel(v); close();
         },
@@ -1539,7 +1539,7 @@ function renderSplash(main) {
 
   const cta = state.newModel
     ? inlineForm({
-        question: 'Model name', placeholder: 'Course subscriptions',
+        question: 'Model name',
         onSubmit: (v) => { state.newModel = false; state.splash = false; createNamedModel(v); },
         onCancel: () => { state.newModel = false; render(); },
       })
@@ -1874,7 +1874,7 @@ function renderImportExportModal() {
       ? h('div', { class: 'ie-field' },
           h('label', {}, 'Model URL'),
           h('input', {
-            type: 'text', placeholder: 'https://example.com/course-model.json',
+            type: 'text', placeholder: 'https://…/model.json',
             oninput: (e) => { urlValue = e.target.value; },
             onkeydown: (e) => { if (e.key === 'Enter') doImportLoad(); },
           }),
@@ -2736,7 +2736,7 @@ function discardPendingEdits() {
 // The draft lives in `state`, keyed, so a repaint from some unrelated
 // edit neither loses the typed text nor forgets that it is pending.
 function propertyAdder(model, {
-  placeholder = 'course id', label = '+ Add', type = 'string',
+  placeholder = 'property name', label = '+ Add', type = 'string',
   onAdd, onRemoveLast, onEmptyEnter, draftKey = 'field',
   types = typeOptions, offerOptional = true,
 }) {
@@ -3017,7 +3017,7 @@ function operandPicker(choices, draft, key, {
   }, placeholder)];
   if (draft[key] === LITERAL) {
     control.push(h('input', {
-      type: 'text', style: 'width:110px', placeholder: 'e.g. 10',
+      type: 'text', style: 'width:110px', placeholder: 'value',
       value: draft[key + 'Text'] || '',
       oninput: (e) => { draft[key + 'Text'] = e.target.value; draft.touched = true; },
     }));
@@ -3052,7 +3052,7 @@ function membershipControls(draft, enumMembers) {
   return [
     ...entries.map((entry, i) => h('span', {},
       h('input', {
-        type: 'text', style: 'width:110px', placeholder: 'e.g. 10',
+        type: 'text', style: 'width:110px', placeholder: 'value',
         value: entry !== null && typeof entry === 'object' ? JSON.stringify(entry) : String(entry),
         oninput: (e) => { entries[i] = e.target.value; draft.touched = true; },
       }),
@@ -3573,7 +3573,7 @@ function renderRail() {
   if (state.newFeature) {
     rail.appendChild(inlineForm({
       question: 'Feature name',
-      placeholder: 'Course management',
+      placeholder: 'feature name',
       onSubmit: (v) => {
         if (featureGroups(model).some((g) => g.name === v)) return toast('That feature already exists.', true);
         addPendingFeature(v); state.newFeature = false; render();
@@ -3717,7 +3717,7 @@ function renderEntityRail(model) {
 
   if (state.newEntityAt === 'rail') {
     box.appendChild(inlineForm({
-      question: 'New entity', placeholder: 'course',
+      question: 'New entity', placeholder: 'entity name',
       showsIdentifier: true,
       onSubmit: (v) => {
         state.newEntityAt = null;
@@ -3800,7 +3800,7 @@ function beginNewCommand(model, feature) {
 
 function newCommandForm(model) {
   return inlineForm({
-    question: 'New command', placeholder: 'define course', showsIdentifier: true,
+    question: 'New command', placeholder: 'command name', showsIdentifier: true,
     onSubmit: (v) => createCommand(model, v),
     onCancel: () => { state.namingCommand = false; render(); },
   });
@@ -4160,7 +4160,7 @@ function paintPage() {
           + 'from inside them.'),
         state.newEntityAt === 'blank'
           ? inlineForm({
-              question: 'New entity', placeholder: 'course',
+              question: 'New entity', placeholder: 'entity name',
               showsIdentifier: true,
               onSubmit: (v) => {
                 state.newEntityAt = null;
@@ -4340,7 +4340,7 @@ function stepTrigger(model, slice) {
   return step('trigger', 'Payload',
     h('div', { class: 'card command' }, rows,
       adderSlot('in', 'trigger', '+ input', () => propertyAdder(model, {
-        label: '+ Add input', draftKey: 'in:' + slice.name,
+        placeholder: 'field name', label: '+ Add input', draftKey: 'in:' + slice.name,
         onAdd: (property) => patchSlice((b) => b.properties.push(property)),
         onRemoveLast: slice.payload.length ? () => dropProperty(slice.payload.length - 1) : undefined,
         // Enter on an empty name means "done with these". Mid-wizard
@@ -4868,7 +4868,7 @@ function stepDecision(model, slice) {
   // property form opens straight after, on the entity just made.
   if (state.newEntityAt === 'rules') {
     body.push(inlineForm({
-      question: 'New entity for this rule', placeholder: 'course',
+      question: 'New entity for this rule', placeholder: 'entity name',
       showsIdentifier: true,
       onSubmit: (v) => {
         state.newEntityAt = null;
@@ -5898,7 +5898,7 @@ function changeAdder(model, eventName) {
 
   if (state.newEntityAt === 'changes:' + eventName) {
     return inlineForm({
-      question: 'New entity', placeholder: 'course',
+      question: 'New entity', placeholder: 'entity name',
       showsIdentifier: true,
       onSubmit: (v) => {
         state.newEntityAt = null;
@@ -6372,7 +6372,7 @@ function newPropertyForm(model, { entities, onCreated } = {}) {
       pick(names.map((n) => [n, readable(n), entityIcon(model, n)]),
         draft.entity, (v) => { draft.entity = v; }),
       h('input', {
-        type: 'text', placeholder: 'seat count', value: draft.name,
+        type: 'text', placeholder: 'property name', value: draft.name,
         oninput: (e) => { draft.name = e.target.value; },
       }),
       pick(projectionTypeOptions(model), draft.propertyType, (v) => { draft.propertyType = v; }),
@@ -6461,7 +6461,7 @@ function addEnumMemberForm(model, typeName) {
   const body = model['custom-type-definitions'][typeName];
   const members = (body && body.schema && body.schema.enum) || [];
   return inlineForm({
-    question: `New member of ${readable(typeName)}`, placeholder: 'archived',
+    question: `New member of ${readable(typeName)}`, placeholder: 'member name',
     showsIdentifier: true,
     onSubmit: (v) => {
       const member = toPascal(v);
@@ -6537,7 +6537,7 @@ function entityPropertyAdder(model, entityName) {
   // projection, the binding, the derived name — so nothing about what
   // a property *is* changed hands here, only when it lands.
   return propertyAdder(model, {
-    placeholder: 'seat count', label: '+ Property',
+    placeholder: 'property name', label: '+ Property',
     type: 'integer', types: projectionTypeOptions, offerOptional: false,
     draftKey: 'prop:' + entityName,
     onAdd: (property) => addEntityProperty(model, entityName, {
@@ -7715,7 +7715,7 @@ function renderCustomTypes(model, main) {
 
       let fname = '', ftype = 'string';
       card.appendChild(adderSlot('field:' + name, null, '+ field', () => h('div', { class: 'adder' },
-        h('input', { type: 'text', placeholder: 'price', oninput: (e) => { fname = e.target.value; } }),
+        h('input', { type: 'text', placeholder: 'field name', oninput: (e) => { fname = e.target.value; } }),
         pick(fieldTypeOptions(model), ftype, (v) => { ftype = v; }),
         h('button', {
           class: 'btn', onclick: () => {
@@ -7776,7 +7776,7 @@ function renderCustomTypes(model, main) {
   if (state.newType) {
     main.appendChild(inlineForm({
       question: 'Name',
-      placeholder: state.newType === 'enum' ? 'course status' : 'order line',
+      placeholder: state.newType === 'enum' ? 'enum name' : 'type name',
       showsIdentifier: true,
       onSubmit: (v) => {
         const typeName = toPascal(v);
@@ -7924,7 +7924,7 @@ function initialValueSlot(model, valueType, value, onSet) {
   return h('input', {
     type: 'text', style: 'width:150px',
     value: value === undefined || value === null ? '' : String(value),
-    placeholder: literalKindOf(model, valueType) === 'number' ? '0' : 'c1',
+    placeholder: literalKindOf(model, valueType) === 'number' ? '0' : 'value',
     onblur: (e) => {
       const parsed = literalOfType(model, valueType, e.target.value);
       if (parsed === undefined) return toast('That is not a ' + readable(valueType) + '.', true);
@@ -8327,7 +8327,7 @@ function projectionFields(model, draft, { entityName } = {}) {
     const saved = savedParameterName(model, draft, i);
     return h('div', { class: 'adder' },
       h('input', {
-        type: 'text', value: parameter.name || '', placeholder: 'tenantId',
+        type: 'text', value: parameter.name || '', placeholder: 'parameter name',
         oninput: (e) => { parameter.name = e.target.value; },
       }),
       // Shown whenever the parameter is already stored, not only once
@@ -8613,7 +8613,7 @@ function scriptArgumentRows(model, draft, entityName) {
     const bound = idType && argument.propertyType === idType;
     return h('div', { class: 'adder' },
       h('input', {
-        type: 'text', value: argument.name || '', placeholder: 'asOf',
+        type: 'text', value: argument.name || '', placeholder: 'argument name',
         oninput: (e) => { argument.name = e.target.value; },
       }),
       h('span', { class: 'muted tiny' }, 'a'),
@@ -8647,7 +8647,7 @@ function tagFilterRows(model, draft, entityName) {
   const rows = filters.map((template, i) => h('div', { class: 'adder' },
     h('input', {
       type: 'text', class: 'mono', style: 'width:260px', value: template,
-      placeholder: 'CourseId:{courseId}',
+      placeholder: '{type}:{value}',
       onblur: (e) => { draft.script.tagFilter[i] = e.target.value; render(); },
       onkeydown: (e) => { if (e.key === 'Enter') e.target.blur(); },
     }),
@@ -8756,7 +8756,7 @@ function renderProjections(model, main) {
     card.appendChild(h('div', { class: 'row' },
       h('span', { class: 'muted tiny', style: 'min-width:90px' }, 'called'),
       h('input', {
-        type: 'text', value: draft.name, placeholder: 'course numbering',
+        type: 'text', value: draft.name, placeholder: 'projection name',
         oninput: (e) => { draft.name = e.target.value; },
       })));
     card.appendChild(h('div', { class: 'card projection' }, ...projectionFields(model, draft.body)));
@@ -8838,7 +8838,7 @@ function renderEvents(model, main) {
     card.appendChild(h('div', { class: 'row' },
       h('span', { class: 'muted tiny', style: 'min-width:90px' }, 'called'),
       h('input', {
-        type: 'text', value: draft.name, placeholder: 'course capacity reached',
+        type: 'text', value: draft.name, placeholder: 'event name',
         oninput: (e) => { draft.name = e.target.value; },
       })));
     card.appendChild(h('div', { class: 'adder', style: 'margin-top:10px' },
@@ -9590,7 +9590,7 @@ function eventFieldsEditor(model, name, event) {
   return h('div', { class: 'fields' },
     rows.length ? rows : h('div', { class: 'empty' }, 'Carries nothing yet.'),
     adderSlot('evown:' + name, null, '+ field', () => propertyAdder(model, {
-      label: '+ Add field', draftKey: 'evown:' + name,
+      placeholder: 'field name', label: '+ Add field', draftKey: 'evown:' + name,
       onAdd: (property) => patch('event-definition', name, (b) => b.properties.push(property)),
       onRemoveLast: rows.length
         ? () => removeEventField(model, name, event.properties.length - 1,
