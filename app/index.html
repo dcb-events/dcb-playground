@@ -2983,14 +2983,39 @@ function draftFromOperand(draft, key, operand) {
 // operands — the rule editor's existence rows, which answer the
 // predicate as well as the operand: it says which row is showing, and
 // takes the pick when the row is one of its own.
+//
+// Without a placeholder the picker is not asking a question, and then
+// the draft must hold whatever the closed face shows. A `<select>`
+// already showing a row fires nothing when that row is picked, so a
+// face showing row 0 over an empty draft is a row no one can choose —
+// with one row, a dead end: "a value…" on show and no box to type in.
+// So the draft takes the first row — a value before a "+ New…" door,
+// the door only when it is all there is — and a lone row is not a picker at all, for the reason
+// `operationControl` gives: the literal is just its box, anything else
+// is the operand itself as text. Callers that pass a placeholder are
+// asking, and are left to.
 function operandPicker(choices, draft, key, {
   placeholder, allowLiteral = true, onNew, newLabel, selected, intercept,
 } = {}) {
   const rows = [
     ...choices,
     ...(onNew ? [[NEW, newLabel || '+ New property…']] : []),
-    ...(allowLiteral ? [[LITERAL, '— a value…']] : []),
+    ...(allowLiteral ? [[LITERAL, 'a value…']] : []),
   ];
+  if (!placeholder) {
+    const lone = rows.length === 1 && rows[0][0] !== NEW ? rows[0] : null;
+    if (lone) draft[key] = lone[0];
+    else if (!draft[key]) {
+      const first = rows.find(([v]) => v !== NEW) || rows[0];
+      if (first) draft[key] = first[0];
+    }
+    if (lone && lone[0] === LITERAL) return [literalInput(draft, key)];
+    if (lone) {
+      const [, text, icon, token] = lone;
+      return [h('span', { class: token ? 'verb mono' : 'verb' }, iconPrefix(icon),
+        token ? (token.before || '') + text + (token.after || '') : text)];
+    }
+  }
   const control = [pick(rows, selected !== undefined ? selected : draft[key], (v) => {
     if (onNew && v === NEW) return onNew();
     if (intercept && intercept(v)) return;
@@ -3000,14 +3025,16 @@ function operandPicker(choices, draft, key, {
     draft.touched = true;
     render();
   }, placeholder)];
-  if (draft[key] === LITERAL) {
-    control.push(h('input', {
-      type: 'text', style: 'width:110px', placeholder: 'value',
-      value: draft[key + 'Text'] || '',
-      oninput: (e) => { draft[key + 'Text'] = e.target.value; draft.touched = true; },
-    }));
-  }
+  if (draft[key] === LITERAL) control.push(literalInput(draft, key));
   return control;
+}
+
+function literalInput(draft, key) {
+  return h('input', {
+    type: 'text', style: 'width:110px', placeholder: 'a value…',
+    value: draft[key + 'Text'] || '',
+    oninput: (e) => { draft[key + 'Text'] = e.target.value; draft.touched = true; },
+  });
 }
 
 // The right half of an `equalsAny` rule: membership over a literal
@@ -6007,13 +6034,12 @@ function changeAdder(model, eventName) {
   // Retargeting can strip the row the draft was holding — a value the
   // new target cannot take, or the literal row an enum never offers.
   // The stale choice would silently diverge from what the picker
-  // shows, so it resets to the first offer instead.
+  // shows, so it resets, and `operandPicker` takes the first offer.
   const offered = new Set(values.map(([v]) => v));
   if (draft.value === LITERAL ? targetEnumMembers
     : draft.value && draft.value !== NEW && !offered.has(draft.value)) {
     draft.value = '';
   }
-  if (!draft.value) draft.value = values.length ? values[0][0] : '';
 
   const targetSel = pick(targets, draft.target, (v) => {
     if (v === NEW) { closeForms(); state.addingProp = { eventName }; return render(); }

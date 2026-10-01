@@ -108,6 +108,57 @@ function build(index) {
 }
 
 // ---------------------------------------------------------------
+// The operand picker never shows a row its draft does not hold.
+// A `<select>` already showing a row fires nothing when it is picked,
+// so the mismatch is a row no one can choose — which is how a
+// projection handler over an event with no field of its type got
+// stuck on "a value…" with no box to type in.
+// ---------------------------------------------------------------
+{
+  const { operandPicker, draftOperand, eventFieldChoice } = sandbox;
+  const capacity = eventFieldChoice({ name: 'capacity' });
+
+  check('a lone literal row is just its box, and the draft is a literal', () => {
+    const draft = { value: '' };
+    const out = operandPicker([], draft, 'value');
+    eq(out.map((n) => n.tag), ['input'], 'no one-option select in front of it');
+    eq(out[0].attributes.placeholder, 'a value…', 'the box says what it wants');
+    out[0].oninput({ target: { value: '5' } });
+    eq(draftOperand(draft, 'value'), 5, 'what is typed is the operand');
+  });
+
+  check('a lone operand reads as itself, and is the draft', () => {
+    const draft = { value: '' };
+    const out = operandPicker([capacity], draft, 'value', { allowLiteral: false });
+    eq(out.length, 1, 'one node');
+    eq(out[0].tag, 'span', 'text, not a control');
+    eq(textOf(out[0]), 'event.data.capacity', 'the whole path, as the closed face would');
+    eq(draftOperand(draft, 'value'), { eventProperty: 'capacity' }, 'and the draft holds it');
+  });
+
+  check('with a choice, the draft holds the row on show', () => {
+    const draft = { value: '' };
+    const out = operandPicker([capacity], draft, 'value');
+    eq(out.map((n) => n.tag), ['select'], 'a picker, the first row showing');
+    eq(draft.value, capacity[0], 'and the first row picked');
+  });
+
+  check('a "+ New…" door is never taken while a value is on offer', () => {
+    const draft = { value: '' };
+    const out = operandPicker([], draft, 'value', { onNew: () => {} });
+    eq(draft.value, ' literal', 'the literal, not the door');
+    eq(out.map((n) => n.tag), ['select', 'input'], 'and its box is there');
+  });
+
+  check('a picker with a placeholder is asking, and is left unanswered', () => {
+    const draft = { right: '' };
+    const out = operandPicker([], draft, 'right', { placeholder: '— what? —' });
+    eq(out.map((n) => n.tag), ['select'], 'still a picker');
+    eq(draft.right, '', 'nothing answered for the author');
+  });
+}
+
+// ---------------------------------------------------------------
 // The same seam, for a derived projection.
 // ---------------------------------------------------------------
 {
