@@ -293,7 +293,14 @@
       + 'advisory in the result. For the id-keyed scenario kinds, `name` is the id.',
     inputSchema: {
       type: 'object',
-      properties: { kind: kindSchema(DEF_KINDS), name: { type: 'string' } },
+      properties: {
+        kind: kindSchema(DEF_KINDS),
+        name: {
+          type: 'string',
+          description: 'The name of the definition to remove — or its id, for the '
+            + 'id-keyed scenario kinds.',
+        },
+      },
       required: ['kind', 'name'],
     },
     mutates: true,
@@ -312,8 +319,12 @@
       type: 'object',
       properties: {
         kind: kindSchema(DEF_KINDS.filter((k) => !isIdKeyed(k))),
-        previousName: { type: 'string' },
-        newName: { type: 'string' },
+        previousName: { type: 'string', description: 'The definition\'s current name.' },
+        newName: {
+          type: 'string',
+          description: 'The name to give it — PascalCase, and not already taken by '
+            + 'another definition of the same kind.',
+        },
       },
       required: ['kind', 'previousName', 'newName'],
     },
@@ -338,15 +349,22 @@
       type: 'object',
       properties: {
         kind: kindSchema([...new Set(memberCombos.map(([k]) => k))]),
-        definitionName: { type: 'string' },
+        definitionName: {
+          type: 'string',
+          description: 'The name of the definition the member belongs to.',
+        },
         memberKind: {
           type: 'string',
           enum: [...new Set(memberCombos.map(([, m]) => m))],
           description: 'What is being renamed; only the pairs listed in the tool '
             + 'description are valid.',
         },
-        previousName: { type: 'string' },
-        newName: { type: 'string' },
+        previousName: { type: 'string', description: 'The member\'s current name.' },
+        newName: {
+          type: 'string',
+          description: 'The name to give it — not already taken by another member of '
+            + 'the same definition.',
+        },
       },
       required: ['kind', 'definitionName', 'memberKind', 'previousName', 'newName'],
     },

@@ -3,7 +3,7 @@
   "$id": "https://dcb.events/schemas/model/v6.json",
   "title": "DCB Model",
   "description": "A DCB model: every definition a modeller has authored for one\nDCB-based system, in the form the playground exports it. The same\ndocument travels both ways out of the playground, as readable JSON and\nas the gzipped payload of a share link.\n\n**There is one kind of fold.** A `projectionDefinition` is it: a value\nthat starts somewhere and is advanced by the events it handles, over\nthe query `tag IN (its parameters' arguments) AND type IN (handled\nevents)`. Declare no parameters and there is no tag, which is what a\nglobal numbering is. Declare one and the same numbering restarts per\ntenant.\n\nAn **entity property is a binding to one of these**, not a second kind\nof thing. `entityDefinitions[].properties` holds `{name, projection}`\nentries: the projection declares one parameter typed with the entity's\nown identifier, and binding it as a property is what supplies that\nargument. Everything the fold needs — the type held, the value it\nstarts from, the handlers, the script — lives on the projection and\nnowhere else, so there is no second place for a type or an initial\nvalue to disagree with the first. The same projection may be bound by\nseveral properties, or read directly by a command, or both.\n\nA lifecycle is one of an entity's own properties, named by its\n`lifecycle`. The two-state case — does one of these exist at all —\ndeclares no vocabulary: the projection is typed `boolean`. There is no\nstandalone constraint kind: conditions are inlined into the commands\nthat check them.\n\n**Tags come from value types, not from a separate kind.** Any\n`customTypeDefinition` may set `isTag: true`, which is what makes it\nan identifier. An entity's own derived identifier is such a value\ntype — created automatically when the entity is, and from then on\nedited exactly like any other value type. A composite value type is\nnever itself a tag; its tag-ness is derived by looking through it to\nwhichever of its fields are themselves tag-marked, which is what lets\ntwo unrelated entities share one component (a `TenantId` field) and\nbe scoped together by it.\n\n**Versioning.** `dcbModelVersion` is what an importer dispatches on;\n`$schema` is for editors and is deliberately never read by one. A major\nbump means an older reader cannot correctly read the document and must\nrefuse it; a minor bump means it can, because the addition is one it\nignores. Note that \"additive\" is judged from the reader's side, not the\nschema's: a new member of a closed vocabulary — another condition\noperator, operand shape or handler operation — is a *major* change even\nthough this document merely grows an enum, because a reader that has\nnever heard of it fails on the value rather than passing it through.\n\n2.0 is such a major. An entity property stopped being a definition of\nits own and became a binding; a projection's partition became explicit\nin every case; `isOptional` went away, since `null` is an ordinary\ninitial value of any type and means \"no value yet\"; and an initial\nvalue may now be a non-empty list. A 1.x reader would misread each of\nthose rather than ignore it.\n\n4.0 is a major of the subtler kind the reader-side rule exists for:\nits one addition is additive in shape but not additive to a reader.\nAn `EntityBinding` may carry `isOptional`, under which an unset\nidentifier binds nothing instead of erroring, conditions over the\nalias hold vacuously, and reading a property of it yields null — a\n3.x reader ignores the flag and errors on exactly the case the author\ndeclared expected. The other direction is safe: a 3.x document never\nsays it, so a 4.0 reader reads 3.x whole.\n\n4.1 is the in-place kind: a *scripted* projection's `valueType`\nmay now be a composite value type. No shape changed — a documented\nrestriction was lifted — and a 4.0 reader loads and evaluates\nsuch a document correctly (equality was always deep, and a\ncomposite was always offered identity predicates only); the one\nthing it does wrong is flag the projection with the advisory that\nused to guard the restriction.\n\n5.0 is the closed-vocabulary kind the reader-side rule names\noutright: `equalsAny` joins the binary predicates — the left-hand\nvalue must (or with `negate`, must not) equal one entry of a\nliteral list, spelled as a bare array of `StaticValue` /\n`EnumMemberValue` entries in `rightHandSide`, the same list\nspelling `initialValue` already had. A 4.x reader fails on the\npredicate rather than passing it through, so this is a major even\nthough nothing a 4.x document says changed — a 5.0 reader reads\n3.x and 4.x whole.\n\n6.0 adds two members at once, each the closed-vocabulary kind. An\n`EventEmission` may carry `when`: conditions over the same operands\nits command's `conditions` read, under which the emission is\npublished or silently skipped — a guarded skip is not a rejection,\nand every guard failing publishes nothing. And a projection may be\n**derived**: no handlers, no initial value, a single declared\npredicate over other projections' values (`derived`), always one\nboolean — logic stated once, as data, where a script would have\nhidden it in code. A 5.x reader would publish an emission its\nauthor guarded and has no fold for a handlerless projection — both\nmisreads, so this is a major; a 6.0 reader reads 3.x, 4.x and 5.x\nwhole.\n\n6.1 is the ordinary minor, and a useful contrast with 4.0. An\n`entityDefinition` may carry `lifecycle`, naming which of its own\nproperties holds the state one of these is in, and a two-state\nlifecycle is spelled as a `boolean` projection rather than as a\ntwo-member enum. A 6.0 reader that ignores `lifecycle` loses a\nderived diagram and misreads nothing — no condition changed shape,\nand a boolean-valued projection was always readable. That is what\nmakes it a minor where 4.0's equally additive `isOptional` was a\nmajor: there, the ignored flag made the old reader error on exactly\nthe case the flag declared expected.\n\nThis schema moves in place for minor changes; a major change is\npublished at a new `/vN.json` and the old URL keeps serving what it\nalways served. `x-dcb-schema-revision` moves with every edit either way.\n\nThe format is young and the playground it describes is a prototype.\nExpect majors.\n",
-  "x-dcb-schema-revision": "6.1.0",
+  "x-dcb-schema-revision": "6.1.1",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -95,6 +95,7 @@
       "additionalProperties": false,
       "properties": {
         "name": {
+          "description": "What this entity is called — PascalCase, unique among entities.\nA command binds it by this name, and its identifier type is\nderived from it unless `identifierType` says otherwise.\n",
           "$ref": "#/$defs/EntityName"
         },
         "icon": {
@@ -189,6 +190,7 @@
       "additionalProperties": false,
       "properties": {
         "name": {
+          "description": "What this projection is called — PascalCase, unique among\nprojections. Entity properties, command bindings and projection\nscenarios refer to it by this name.\n",
           "$ref": "#/$defs/ProjectionName"
         },
         "parameters": {
@@ -493,6 +495,7 @@
       "additionalProperties": false,
       "properties": {
         "name": {
+          "description": "What this command is called — PascalCase, imperative by\nconvention, unique among commands. Scenarios refer to it by this\nname.\n",
           "$ref": "#/$defs/CommandName"
         },
         "icon": {
@@ -995,6 +998,7 @@
       "additionalProperties": false,
       "properties": {
         "name": {
+          "description": "What this value type is called — PascalCase, unique among value\ntypes, an entity's derived identifier type included. Properties,\nparameters and fields name it wherever they name a type.\n",
           "$ref": "#/$defs/CustomTypeName"
         },
         "schema": {
@@ -1067,6 +1071,7 @@
       "additionalProperties": false,
       "properties": {
         "name": {
+          "description": "What this event type is called — PascalCase, past tense by\nconvention, unique among events. Handlers, emissions and\nscenarios refer to it by this name, and it is the `type` every\nrecorded instance carries.\n",
           "$ref": "#/$defs/EventName"
         },
         "icon": {
@@ -1080,6 +1085,7 @@
           ]
         },
         "properties": {
+          "description": "The event's payload, in declaration order. A property typed with\na tag-marked value type also makes its value a tag on the event\n(see `eventDefinitions`).\n",
           "type": "array",
           "items": {
             "$ref": "#/$defs/PropertyDefinition"

@@ -17,7 +17,8 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         "examples": [
           "Course",
           "Student"
-        ]
+        ],
+        "description": "What this entity is called — PascalCase, unique among entities.\nA command binds it by this name, and its identifier type is\nderived from it unless `identifierType` says otherwise.\n"
       },
       "icon": {
         "description": "A short glyph — one emoji, or a character or two — that stands\nfor this entity wherever it is named. Presentation only: no\npart of the model reads it, and two entities may share one.\nAbsent means an authoring tool picks its own placeholder.\n",
@@ -103,7 +104,8 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         "examples": [
           "CourseDefined",
           "StudentSubscribedToCourse"
-        ]
+        ],
+        "description": "What this event type is called — PascalCase, past tense by\nconvention, unique among events. Handlers, emissions and\nscenarios refer to it by this name, and it is the `type` every\nrecorded instance carries.\n"
       },
       "icon": {
         "description": "A short glyph — one emoji, or a character or two — that stands\nfor this event wherever it is named. Presentation only: no\npart of the model reads it, and two events may share one.\nAbsent means an authoring tool picks its own placeholder —\nconventionally the icon of the one command that publishes\nthis event, when exactly one does, and otherwise a neutral\nmark of its own.\n",
@@ -116,6 +118,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         ]
       },
       "properties": {
+        "description": "The event's payload, in declaration order. A property typed with\na tag-marked value type also makes its value a tag on the event\n(see `eventDefinitions`).\n",
         "type": "array",
         "items": {
           "type": "object",
@@ -187,7 +190,8 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         "examples": [
           "CourseNumbering",
           "TenantCourseNumbering"
-        ]
+        ],
+        "description": "What this projection is called — PascalCase, unique among\nprojections. Entity properties, command bindings and projection\nscenarios refer to it by this name.\n"
       },
       "parameters": {
         "description": "What partitions this projection. Every parameter is typed\nwith a tag-bearing value type — one whose leaves resolve to\nat least one `isTag` type, scalar or through a composite's\nfields — and contributes the tag(s) those types' `tagSchema`\nrender: one for a tag-marked scalar, one per tag-marked field\nfor a composite. Whoever binds the projection supplies one\nargument per parameter: a command states them outright, and\nan entity property binding supplies the instance it was read\nfor.\n\n**Tag-bearing types only.** A tag is the only thing that can\nnarrow a query, and only a tag-marked type is a tag. A parameter\ntyped `integer` could not restrict what the store returns —\nit could only discard events after reading them, which is a\npredicate, and predicates live in conditions. So \"numbering\nper year\" needs a `Year` entity; that requirement is what\nkeeps the read cheap.\n\nAn empty list is the ordinary case for a global numbering,\nand is what makes its query the only kind in this document\nthat carries no tag.\n\nA **scripted** projection has no parameters. Discarding after\nreading is exactly what its code does, so the values it needs\narrive as `script.arguments` instead, and the partition it\nwould otherwise have derived from parameters is stated\noutright in `script.tagFilter`.\n\nA **derived** projection declares parameters exactly as a\ndeclared one does — they are what its operands' own arguments\ndraw from, so its partition is theirs.\n",
@@ -264,6 +268,14 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         "default": false
       },
       "initialValue": {
+        "type": [
+          "string",
+          "number",
+          "boolean",
+          "array",
+          "object",
+          "null"
+        ],
         "description": "The value before any event has been applied. Required on a\ndeclared projection and forbidden on a scripted one, whose\n`script.initialState` starts it instead.\n\nFor a numbering this is the first number issued, and the only\nplace a prefix is stated.\n",
         "oneOf": [
           {
@@ -802,7 +814,8 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         "pattern": "^[A-Z][A-Za-z0-9]+$",
         "examples": [
           "SubscribeStudentToCourse"
-        ]
+        ],
+        "description": "What this command is called — PascalCase, imperative by\nconvention, unique among commands. Scenarios refer to it by this\nname.\n"
       },
       "icon": {
         "description": "A short glyph — one emoji, or a character or two — that stands\nfor this command wherever it is named. Presentation only: no\npart of the model reads it, and two commands may share one.\nAbsent means an authoring tool picks its own placeholder. The\nevent this command publishes on success takes this same icon\nby default (see `EventDefinition.icon`), which is why setting\none here is usually enough to mark both.\n",
@@ -2183,7 +2196,8 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         "pattern": "^[A-Z][A-Za-z0-9]+$",
         "examples": [
           "EmailAddress"
-        ]
+        ],
+        "description": "What this value type is called — PascalCase, unique among value\ntypes, an entity's derived identifier type included. Properties,\nparameters and fields name it wherever they name a type.\n"
       },
       "schema": {
         "type": "object",
@@ -2472,6 +2486,14 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         }
       },
       "then": {
+        "type": [
+          "string",
+          "number",
+          "boolean",
+          "array",
+          "object",
+          "null"
+        ],
         "description": "The value this projection should have folded to — of whatever type\nit holds, `null` included, and an array when it holds many. Nothing\nhere can be checked against the model by this schema alone: a\nmistyped value is caught when the model is loaded, not when the\ndocument is validated.\n"
       }
     },

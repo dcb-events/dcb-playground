@@ -74,6 +74,22 @@ async function call(name, args) {
     }
   });
 
+  await check('every tool argument is described and typed the way auditors read it', () => {
+    // A WebMCP schema audit reads each top-level argument's own
+    // `description` and `type` — a choice spelled only through
+    // `oneOf`, or no type at all, reads as unsupported.
+    const supported = ['string', 'number', 'integer', 'boolean', 'array', 'object', 'null'];
+    for (const [name, tool] of registered) {
+      for (const [arg, schema] of Object.entries(tool.inputSchema.properties)) {
+        eq(typeof schema.description === 'string' && schema.description.trim() !== '', true,
+          `${name}.${arg} is described`);
+        const types = [].concat(schema.type);
+        eq(types.length > 0 && types.every((t) => supported.includes(t)), true,
+          `${name}.${arg} has a supported type`);
+      }
+    }
+  });
+
   await check('each add/update tool carries its kind\'s full schema, inlined', () => {
     const add = registered.get('add_command_definition').inputSchema;
     eq(Object.keys(add.properties).includes('boundary'), true, 'the real shape, not a free body');

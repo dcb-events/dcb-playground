@@ -109,11 +109,36 @@ function flattenTopLevelChoice(schema, kind) {
   return schema;
 }
 
+// WebMCP auditors (and the stricter function-calling consumers) read a
+// tool argument's `type` and nothing else, so a top-level property
+// that says what it admits only through `oneOf`/`anyOf` — an initial
+// value — or not at all — what a projection scenario expects — reads
+// as having no type. Each such property is given the union of what it
+// admits, beside the choice it already states: a restatement, never a
+// narrowing. Nested properties are left alone; nothing reads them that
+// way.
+const ANY_TYPE = ['string', 'number', 'boolean', 'array', 'object', 'null'];
+function admittedTypes(node) {
+  if (node.type !== undefined) return [].concat(node.type);
+  const branches = node.oneOf || node.anyOf;
+  if (!branches) return ANY_TYPE;
+  const types = new Set(branches.flatMap(admittedTypes));
+  return ANY_TYPE.filter((t) => types.has(t))
+    .concat(types.has('integer') && !types.has('number') ? ['integer'] : []);
+}
+function typeTopLevelProperties(schema) {
+  return {
+    ...schema,
+    properties: Object.fromEntries(Object.entries(schema.properties).map(([name, prop]) =>
+      [name, prop.type !== undefined ? prop : { type: admittedTypes(prop), ...prop }])),
+  };
+}
+
 const out = {};
 for (const [kind, rootName] of Object.entries(ROOTS)) {
   const root = defs[rootName];
   if (!root) throw new Error(`dcb-model.schema.json has no $def "${rootName}"`);
-  out[kind] = flattenTopLevelChoice(inline(root, [rootName]), kind);
+  out[kind] = typeTopLevelProperties(flattenTopLevelChoice(inline(root, [rootName]), kind));
 }
 
 // What this exists to guarantee: nothing referencing anything.
