@@ -872,19 +872,27 @@
     background: var(--surface); padding: 7px 11px;
   }
   .scenario.open { border-color: var(--border-strong); }
-  .scenario-row { display: flex; align-items: center; gap: 9px; font-size: 13px; }
+  .scenario-row { display: flex; align-items: center; gap: 9px; font-size: 13px; cursor: pointer; }
+  .scenario-row:hover .sc-name { color: var(--command); }
   .sc-name {
     background: none; border: none; font: inherit; color: inherit;
     cursor: pointer; text-align: left; padding: 0;
   }
-  .sc-name:hover { color: var(--command); }
   .sc-mark {
     width: 18px; height: 18px; flex: none; border-radius: 50%;
     display: inline-flex; align-items: center; justify-content: center;
     font-size: 11px; font-weight: 700; border: 1px solid;
   }
   .sc-mark.s-current { color: var(--entity); border-color: var(--entity); background: var(--entity-soft); }
-  .sc-mark.s-drifted { color: var(--event); border-color: var(--event); background: var(--event-soft); }
+  .sc-mark.s-drifted { color: var(--danger); border-color: var(--danger); background: var(--danger-soft); }
+  /* A scenario that no longer agrees with the model is the thing on
+     this tab that needs doing, so the whole card says so, not only its
+     mark: drifted and broken alike wear the error colour, broken with
+     the hollow mark, drifted with the filled one. */
+  .scenario.s-drifted, .scenario.s-broken { border-color: var(--danger); border-left-width: 3px; }
+  .scenario.s-drifted { background: var(--danger-soft); }
+  .sc-status { font-size: 11px; color: var(--muted); }
+  .sc-status.s-drifted, .sc-status.s-broken { color: var(--danger); font-weight: 600; }
   .sc-mark.s-broken { color: var(--danger); border-color: var(--danger); background: var(--surface); }
 
   /* Whether the Then a card shows is a record or a refusal — orange for
@@ -10332,23 +10340,37 @@ function scenarioDropTarget(kind, key) {
   return { 'data-scen': key, 'data-scen-kind': kind };
 }
 
+// The row a scenario card folds to, shared by both kinds. The whole row
+// unfolds it, not only the name: the card is drawn as one target, and
+// a hit area the width of the name was a card that looked clickable and
+// mostly was not — which, with every card folded after a reload, read
+// as no way in at all. The name stays a button so the keyboard has a
+// stop; its click bubbles here. `actions` is the reveal on the right,
+// whose own buttons (and grip) are not a click on the row.
+function scenarioHead(openSet, key, status, [mark, word, why], name, actions) {
+  return h('div', {
+    class: 'row scenario-row',
+    onclick: (e) => {
+      if (e.target.closest('.reveal')) return;
+      if (openSet.has(key)) openSet.delete(key); else openSet.add(key);
+      render();
+    },
+  },
+    h('span', { class: 'sc-mark s-' + status, title: why }, mark),
+    h('button', { class: 'sc-name' }, name),
+    h('span', { class: 'grow' }),
+    status !== 'current' ? h('span', { class: 'sc-status s-' + status, title: why }, word) : null,
+    actions);
+}
+
 function scenarioRow(model, entry) {
   const { key, body } = entry;
   const result = runScenario(model, body);
   const [mark, word, why] = STATUS_WORDS[result.status];
   const open = state.openScenarios.has(key);
 
-  const head = h('div', { class: 'row scenario-row' },
-    h('span', { class: 'sc-mark s-' + result.status, title: why }, mark),
-    h('button', {
-      class: 'sc-name',
-      onclick: () => {
-        if (open) state.openScenarios.delete(key); else state.openScenarios.add(key);
-        render();
-      },
-    }, scenarioName(body, readable)),
-    h('span', { class: 'grow' }),
-    result.status !== 'current' ? h('span', { class: 'muted tiny' }, word) : null,
+  const head = scenarioHead(state.openScenarios, key, result.status, [mark, word, why],
+    scenarioName(body, readable),
     reveal(
       scenarioGrip(model, 'scenario-definition', key,
         'Drag to reorder among this command\'s scenarios'),
@@ -10358,7 +10380,7 @@ function scenarioRow(model, entry) {
       }, 'Edit')));
 
   const card = h('div', {
-    class: 'scenario' + (open ? ' open' : ''),
+    class: 'scenario s-' + result.status + (open ? ' open' : ''),
     ...scenarioDropTarget('scenario-definition', key),
   }, head);
 
@@ -10663,17 +10685,8 @@ function projectionScenarioRow(model, entry) {
   const [mark, word, why] = PROJECTION_SCENARIO_STATUS_WORDS[result.status];
   const open = state.openProjectionScenarios.has(key);
 
-  const head = h('div', { class: 'row scenario-row' },
-    h('span', { class: 'sc-mark s-' + result.status, title: why }, mark),
-    h('button', {
-      class: 'sc-name',
-      onclick: () => {
-        if (open) state.openProjectionScenarios.delete(key); else state.openProjectionScenarios.add(key);
-        render();
-      },
-    }, projectionScenarioName(body)),
-    h('span', { class: 'grow' }),
-    result.status !== 'current' ? h('span', { class: 'muted tiny' }, word) : null,
+  const head = scenarioHead(state.openProjectionScenarios, key, result.status, [mark, word, why],
+    projectionScenarioName(body),
     reveal(
       scenarioGrip(model, 'projection-scenario-definition', key,
         'Drag to reorder among the scenarios listed here'),
@@ -10683,7 +10696,7 @@ function projectionScenarioRow(model, entry) {
       }, 'Edit')));
 
   const card = h('div', {
-    class: 'scenario' + (open ? ' open' : ''),
+    class: 'scenario s-' + result.status + (open ? ' open' : ''),
     ...scenarioDropTarget('projection-scenario-definition', key),
   }, head);
 

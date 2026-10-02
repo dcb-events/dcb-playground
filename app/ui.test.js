@@ -3715,4 +3715,37 @@ function build(index) {
   });
 }
 
+// ---------------------------------------------------------------
+// A folded scenario card unfolds from anywhere on its row — not only
+// from its name — and not from the actions at its right.
+// ---------------------------------------------------------------
+{
+  const { id, model } = build(0);
+  store.set('dcb-playground:model', id);
+  // Nothing has happened, so the subscription is refused — any
+  // scenario will do; what is under test is its row.
+  const scenario = {
+    command: 'SubscribeStudentToCourse', given: [],
+    when: { arguments: { courseId: 'c1', studentId: 's1' } },
+  };
+  addDefinition('scenario-definition', id, 'row-toggle',
+    { ...scenario, then: sandbox.deriveThen(model(), scenario) });
+  const entry = { key: 'row-toggle', body: model()['scenario-definitions']['row-toggle'] };
+  const head = () => sandbox.scenarioRow(model(), entry).children[0];
+  const clickOn = (inReveal) => head().onclick({ target: { closest: () => inReveal } });
+
+  check('the whole row toggles a scenario open and shut', () => {
+    sandbox.state.openScenarios.clear();
+    clickOn(null);
+    eq(sandbox.state.openScenarios.has(entry.key), true, 'unfolded by a click beside the name');
+    clickOn(null);
+    eq(sandbox.state.openScenarios.has(entry.key), false, 'and folded again');
+  });
+
+  check('a click among the row\'s actions is not a click on the row', () => {
+    clickOn({});
+    eq(sandbox.state.openScenarios.has(entry.key), false, 'Edit and the grip leave it folded');
+  });
+}
+
 finish();
