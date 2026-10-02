@@ -183,6 +183,16 @@
      that introduced the thing, and carrying the rule colour so the two
      kinds of line stay tellable apart now that they share a card. */
   .rule-row { margin: 4px 0 0 12px; padding-left: 8px; border-left: 2px solid var(--rule); }
+  /* The grip sits in the margin left of the rule line, outside the
+     row, so it neither shifts the sentence nor waits for the row to be
+     opened — it fades in on hover, the way a rail command's does. */
+  .rule-row { position: relative; }
+  .rule-row > .grip { position: absolute; left: -16px; top: 3px; opacity: 0; }
+  .rule-row:hover > .grip, .rule-row > .grip:focus, .rule-row.dragging > .grip { opacity: 1; }
+  /* The same edge line a scenario drop draws — see `.scenario.drop-before`. */
+  .rule-row.drop-before { box-shadow: inset 0 2px 0 var(--rule); }
+  .rule-row.drop-after { box-shadow: inset 0 -2px 0 var(--rule); }
+  .rule-row.dragging { opacity: .4; }
   /* One question per line, so a rule being written reads as a form
      rather than as a row of pickers that happened to wrap. */
   .rule-wizard { display: flex; flex-direction: column; gap: 2px; }
@@ -228,6 +238,7 @@
     .adder.quiet { opacity: 1; }
     .rail .add { opacity: 1; }
     .rail a.cmd .grip { opacity: 1; }
+    .rule-row > .grip { opacity: 1; }
   }
 
   .card {
@@ -2636,6 +2647,61 @@ function scenarioGrip(model, kind, key, title) {
   });
 }
 
+// Moves `list[from]` to land against `list[to]`'s edge, in place, and
+// returns the index it landed at. Positions, not keys: rules have no
+// name of their own, only their place in `conditions`.
+function moveAgainst(list, from, to, before) {
+  const [item] = list.splice(from, 1);
+  const at = (to > from ? to - 1 : to) + (before ? 0 : 1);
+  list.splice(at, 0, item);
+  return at;
+}
+
+// The reorder drag among the rules inside one read's card. Order is
+// meaning here, not tidiness: rules are checked top to bottom and the
+// first that fails is the one a refusal names. A rule only lands among
+// rules about the same alias — dropping it into another card would be
+// a different rule, not a different place. Everything keyed by a
+// rule's index (the open row, the one being edited) follows it.
+function ruleGrip(slice, i, alias) {
+  let over = null;
+  const clear = () => { if (over) over.classList.remove('drop-before', 'drop-after'); over = null; };
+  const rowUnder = (under) => {
+    const row = under && under.closest(`[data-rule][data-rule-alias="${CSS.escape(alias)}"]`);
+    return row && Number(row.getAttribute('data-rule')) !== i ? row : null;
+  };
+  const landsBefore = (row, e) => {
+    const rect = row.getBoundingClientRect();
+    return (e.clientY - rect.top) < rect.height / 2;
+  };
+  return gripDrag({
+    title: 'Drag to reorder — rules are checked top to bottom',
+    onStart: (e) => e.currentTarget.closest('.rule-row').classList.add('dragging'),
+    onMove: (under, e) => {
+      const row = rowUnder(under);
+      if (row !== over) { clear(); over = row; }
+      if (!row) return;
+      const before = landsBefore(row, e);
+      row.classList.toggle('drop-before', before);
+      row.classList.toggle('drop-after', !before);
+    },
+    onEnd: (e) => { clear(); e.currentTarget.closest('.rule-row').classList.remove('dragging'); },
+    onDrop: (under, e) => {
+      const row = rowUnder(under);
+      if (!row) return;
+      const to = Number(row.getAttribute('data-rule'));
+      const before = landsBefore(row, e);
+      const positions = [...Array(slice.rules.length).keys()];
+      moveAgainst(positions, i, to, before);
+      const follow = (k) => positions.indexOf(k);
+      const selected = /^rule:(\d+)$/.exec(state.sel || '');
+      if (selected) state.sel = 'rule:' + follow(Number(selected[1]));
+      if (state.editRule !== null) state.editRule = follow(state.editRule);
+      patchSlice((b) => { moveAgainst(b.conditions, i, to, before); });
+    },
+  });
+}
+
 // ---------- removing things ----------
 //
 // Two gestures, and the difference is what is being removed.
@@ -4595,7 +4661,10 @@ function readCard(model, slice, binding, index, waitsFor, ruleIndices) {
     // intermediate hop or an emission's read — it still costs a trip
     // and still bounds the append, so it is shown as what it is
     // rather than hidden for having nothing to check.
-    ...(ruleIndices || []).map((i) => ruleRow(model, slice, slice.rules[i], i)),
+    // More than one, and they can be dragged into the order they are
+    // checked in — among themselves only.
+    ...(ruleIndices || []).map((i) => ruleRow(model, slice, slice.rules[i], i,
+      ruleIndices.length > 1 ? binding.alias : null)),
     ruleIndices
       ? h('div', { class: 'adder quiet' }, h('button', {
           class: 'btn tiny',
@@ -4778,8 +4847,9 @@ function beginReadAdder() {
 
 // One rule, as a sentence, inside the card of the read it is about.
 // Extracted from the old rules step unchanged in substance: what moved
-// is where it is painted, not what it says.
-function ruleRow(model, slice, condition, i) {
+// is where it is painted, not what it says. `dragAlias` names the card
+// it may be reordered within, when it shares that card with another.
+function ruleRow(model, slice, condition, i, dragAlias) {
   if (state.editRule === i) return h('div', { class: 'card rule' }, ruleEditor(model, slice, i));
   const p = conditionParts(condition, model, slice.body);
   const quantifier = quantifierWords(model, slice.body, condition);
@@ -4790,7 +4860,11 @@ function ruleRow(model, slice, condition, i) {
     .filter((operand) => operandSource(operand) === 'alias-property')
     .map((operand) => operand.alias))
     .filter((alias) => (slice.body.boundary || []).some((b) => b && b.alias === alias && b.isOptional));
-  return h('div', { class: 'rule-row' },
+  return h('div', {
+      class: 'rule-row',
+      'data-rule': dragAlias ? i : null, 'data-rule-alias': dragAlias || null,
+    },
+    dragAlias ? ruleGrip(slice, i, dragAlias) : null,
     qrow('div', { cls: 'row', key: 'rule:' + i },
       h('span', { class: 'sentence' },
         quantifier ? h('span', { class: 'verb' }, quantifier + ', ') : null,

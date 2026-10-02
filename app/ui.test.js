@@ -3633,4 +3633,86 @@ function build(index) {
   });
 }
 
+// ---------------------------------------------------------------
+// Rules reorder by drag, within the card of the read they are about.
+// Order is meaning — the first failing rule is the refusal — so the
+// drop rewrites `conditions`, and only among one alias's rules.
+// ---------------------------------------------------------------
+{
+  check('moveAgainst lands an entry against either edge of another', () => {
+    const move = (from, to, before) => {
+      const list = ['a', 'b', 'c', 'd'];
+      const at = sandbox.moveAgainst(list, from, to, before);
+      return list.join('') + at;
+    };
+    eq(move(3, 0, true), 'dabc0', 'up, before');
+    eq(move(0, 2, false), 'bcad2', 'down, after');
+    eq(move(0, 2, true), 'bacd1', 'down, before');
+    eq(move(2, 0, false), 'acbd1', 'up, after');
+  });
+
+  const { id, model } = build(0);
+  store.set('dcb-playground:model', id);
+  const command = 'SubscribeStudentToCourse';
+  const lefts = () => model()['command-definitions'][command].conditions
+    .map((c) => c.leftHandSide.alias + '.' + c.leftHandSide.property);
+  const rows = () => {
+    sandbox.state.slice = command;
+    const step = sandbox.stepDecision(model(), sandbox.sliceOf(model(), command));
+    return findAll(step, (n) => /\brule-row\b/.test(n.className || ''));
+  };
+
+  // A drag, as the pointer would make it: the grip on rule `from`,
+  // released over the lower half of rule `to` (or the upper half,
+  // `before`). `elementFromPoint` answers with the row under the
+  // pointer, the way the browser would.
+  const drag = (from, to, before) => {
+    const all = rows();
+    const at = (i) => all.find((n) => n.attributes['data-rule'] === i);
+    const grip = findAll(at(from), (n) => /\bgrip\b/.test(n.className || ''))[0];
+    const target = at(to);
+    const row = target && {
+      getAttribute: (k) => String(target.attributes[k]),
+      getBoundingClientRect: () => ({ top: 0, height: 10 }),
+      classList: { add() {}, remove() {}, toggle() {} },
+    };
+    const sameCard = target && target.attributes['data-rule-alias'] === at(from).attributes['data-rule-alias'];
+    sandbox.CSS = { escape: (s) => s };
+    sandbox.document.elementFromPoint = () => ({ closest: () => (sameCard ? row : null) });
+    const e = {
+      button: 0, pointerId: 1, clientX: 0, clientY: before ? 2 : 8,
+      preventDefault() {}, stopPropagation() {},
+      currentTarget: { setPointerCapture() {}, closest: () => ({ classList: { add() {}, remove() {} } }) },
+    };
+    grip.onpointerdown(e);
+    grip.onpointermove(e);
+    grip.onpointerup(e);
+  };
+
+  check('every rule sharing a card carries a grip', () => {
+    const all = rows();
+    eq(all.length, 5, 'three about the course, two about the student');
+    eq(all.every((n) => findAll(n, (m) => /\bgrip\b/.test(m.className || '')).length === 1), true,
+      'one grip each');
+    eq(all.map((n) => n.attributes['data-rule-alias']),
+      ['course', 'course', 'course', 'student', 'student'], 'each names the card it moves within');
+  });
+
+  check('dropping a rule above another moves it there in conditions', () => {
+    const [first, second, third] = lefts().filter((l) => l.startsWith('course.'));
+    sandbox.state.sel = 'rule:3';
+    drag(3, 0, true);
+    eq(lefts().filter((l) => l.startsWith('course.')), [third, first, second],
+      'the course rules in their new order');
+    eq(lefts().filter((l) => l.startsWith('student.')).length, 2, 'the student rules untouched');
+    eq(sandbox.state.sel, 'rule:0', 'the open row follows the rule it showed');
+  });
+
+  check('a drop onto another card\'s rule does nothing', () => {
+    const before = lefts();
+    drag(0, 1, true);
+    eq(lefts(), before, 'conditions unchanged');
+  });
+}
+
 finish();
