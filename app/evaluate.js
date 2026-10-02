@@ -1021,8 +1021,20 @@ function evCanonical(value) {
   return value === undefined ? null : value;
 }
 
+// Nor is where the refusing rule sits in `conditions`. Rules are
+// reordered by hand, and a rule that moved is still the rule the
+// scenario named — its text says which one it is. If the move made a
+// *different* rule refuse first, the text differs and that is drift.
+// The index stays in the stored Then (the wire format requires it);
+// everything that reads one reads a freshly derived Then, never this.
+function evComparableOutcome(then) {
+  const canonical = evCanonical(then);
+  if (canonical && canonical.failedRule) delete canonical.failedRule.index;
+  return canonical;
+}
+
 function evSameOutcome(a, b) {
-  return JSON.stringify(evCanonical(a)) === JSON.stringify(evCanonical(b));
+  return JSON.stringify(evComparableOutcome(a)) === JSON.stringify(evComparableOutcome(b));
 }
 
 // The Given, as the evaluator reads a log.

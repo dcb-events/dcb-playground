@@ -521,6 +521,40 @@ function drive(model, log, command, args) {
     eq(result.actual.failedRule.text, 'student.subscriptionCount < 0', 'the rule that now refuses it');
   });
 
+  // Nothing has happened, so the course rule refuses first; the
+  // student's course count holds (no subscriptions yet), and the
+  // student's existence would refuse too if it were asked first.
+  const refused = () => ({ ...scenarioBody(), given: [] });
+  const moveToFront = (model, id, pick) => {
+    const command = deepClone(model()['command-definitions'].SubscribeStudentToCourse);
+    const at = command.conditions.findIndex(pick);
+    command.conditions.unshift(...command.conditions.splice(at, 1));
+    updateDefinition('command-definition', id, 'SubscribeStudentToCourse', command);
+  };
+
+  check('moving rules is not drift while the same rule refuses', () => {
+    const { id, model } = open_(0);
+    const key = store_(id, model(), refused());
+    const before = model()['scenario-definitions'][key].then.failedRule;
+    moveToFront(model, id, (c) => c.leftHandSide.alias === 'student'
+      && c.leftHandSide.property === 'subscriptionCount');
+    const result = runScenario(model(), model()['scenario-definitions'][key]);
+    eq(result.actual.failedRule.text, before.text, 'the same rule still refuses');
+    eq(result.actual.failedRule.index, before.index + 1, 'from one place further down');
+    eq(result.status, 'current', 'and that is not a change in behaviour');
+  });
+
+  check('moving rules so another refuses first is drift', () => {
+    const { id, model } = open_(0);
+    const key = store_(id, model(), refused());
+    const before = model()['scenario-definitions'][key].then.failedRule;
+    moveToFront(model, id, (c) => c.leftHandSide.alias === 'student'
+      && c.leftHandSide.property !== 'subscriptionCount');
+    const result = runScenario(model(), model()['scenario-definitions'][key]);
+    eq(result.actual.failedRule.text === before.text, false, 'a different rule refuses now');
+    eq(result.status, 'drifted', 'which is what a refusal names, so it drifts');
+  });
+
   check('a scenario never stops you deleting what it tests', () => {
     const { id, model } = open_(0);
     store_(id, model(), { ...scenarioBody(), command: 'ArchiveCourse',
