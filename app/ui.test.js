@@ -622,7 +622,7 @@ function build(index) {
     // would leave most of what changed untouched.
     for (const mode of ['simple', 'advanced']) {
       store.set('dcb-playground:mode', mode);
-      for (const view of ['slice', 'entity', 'types', 'projections', 'events', 'map']) {
+      for (const view of ['overview', 'slice', 'entity', 'types', 'projections', 'events', 'map']) {
         sandbox.state.view = view;
         sandbox.state.entity = 'Course';
         sandbox.state.slice = 'SubscribeStudentToCourse';
@@ -3745,6 +3745,52 @@ function build(index) {
   check('a click among the row\'s actions is not a click on the row', () => {
     clickOn({});
     eq(sandbox.state.openScenarios.has(entry.key), false, 'Edit and the grip leave it folded');
+  });
+}
+
+// ---------------------------------------------------------------
+// The overview a model opens on: read-only, a row per command, the
+// stored name and payload kept out of the text and in the tooltip.
+// ---------------------------------------------------------------
+{
+  const { id, model } = build(3);
+  store.set('dcb-playground:model', id);
+
+  const paint = () => {
+    const main = sandbox.document.createElement('div');
+    sandbox.renderOverview(model(), main);
+    return main;
+  };
+
+  check('the overview names every command, humanized, and what it reads and appends', () => {
+    eq(model().name, 'Course Example (with schedules)', 'the example these expectations are about');
+    const text = textOf(paint());
+    for (const name of Object.keys(model()['command-definitions'])) {
+      eq(text.includes(sandbox.readable(name)), true, 'shows ' + name);
+    }
+    eq(text.includes('SubscribeStudentToCourse'), false, 'the stored name is not on the page');
+    eq(text.includes('Student subscribed to course'), true, 'the event it appends');
+    eq(text.includes('others'), true, 'an alias that says more than the entity name');
+    eq(text.includes('always allowed'), true, 'DefineCourse has no rules');
+    eq(text.includes('6 rules'), true, 'SubscribeStudentToCourse has six');
+  });
+
+  check('a command row carries its stored name and payload in the tooltip', () => {
+    const links = findAll(paint(), (n) => n.className === 'overview-cmd');
+    eq(links.length, Object.keys(model()['command-definitions']).length, 'one link per command');
+    const define = links.find((n) => (n.attributes.title || '').startsWith('DefineCourse'));
+    eq(define.attributes.title, 'DefineCourse\ncapacity: integer\nslots: TimeSlot[]', 'name, then payload');
+  });
+
+  check('opening a model lands on the overview; an empty one on the slice page', () => {
+    sandbox.switchToModel(id);
+    eq(sandbox.state.view, 'overview', 'a model with commands');
+    sandbox.render();
+    eq(sandbox.state.view, 'overview', 'and stays there once painted');
+    const empty = sandbox.createDcbModel('Overview Probe');
+    sandbox.switchToModel(empty);
+    sandbox.render();
+    eq(sandbox.state.view, 'slice', 'nothing to give an overview of');
   });
 }
 

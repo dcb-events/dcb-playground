@@ -1059,6 +1059,52 @@
   }
   .coupling-cell.cluster-start { border-left: 2px solid var(--border-strong); }
 
+  /* ---------- overview ----------
+     The page a model opens on: what it holds, counted, then every
+     command on one row. Nothing here edits; a name is only the way to
+     its own page. */
+  .overview-stats {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(124px, 1fr));
+    gap: 10px; margin-bottom: 26px;
+  }
+  .overview-stat {
+    display: flex; flex-direction: column; gap: 1px; text-align: left;
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 10px 14px; font: inherit; color: inherit;
+  }
+  button.overview-stat { cursor: pointer; }
+  button.overview-stat:hover { border-color: var(--border-strong); }
+  .overview-stat .label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  /* Only a count of one kind of definition carries that kind's colour. */
+  .overview-stat.kind .label::before {
+    content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--kind);
+  }
+  .overview-stat .count { font-size: 24px; font-weight: 600; line-height: 1.3; }
+  .overview-stat .sub { font-size: 12px; color: var(--muted); }
+  .overview-section { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+  .overview-commands {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    overflow-x: auto;
+  }
+  .overview-row {
+    display: grid; gap: 12px; align-items: center; min-width: 640px;
+    grid-template-columns: minmax(170px, 1.5fr) minmax(170px, 1.6fr) minmax(100px, .8fr) minmax(160px, 1.4fr);
+    padding: 9px 16px; border-bottom: 1px solid var(--border);
+  }
+  .overview-row:last-child { border-bottom: 0; }
+  .overview-row.head {
+    padding-top: 8px; padding-bottom: 8px; font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .07em; color: var(--muted);
+  }
+  .overview-feature {
+    min-width: 640px; padding: 9px 16px 5px; font-size: 12px; font-weight: 600;
+    color: var(--muted); background: var(--bg); border-bottom: 1px solid var(--border);
+  }
+  .overview-cmd { font-weight: 600; color: var(--command); text-decoration: none; }
+  .overview-cmd:hover { text-decoration: underline; }
+  .overview-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+  .overview-rules { font-size: 12px; font-weight: 600; color: var(--rule); }
+
   /* ---------- rule map ---------- */
   .rulemap-feature { margin: 22px 0 10px; font-size: 13px; color: var(--muted); }
   .rulemap-feature:first-child { margin-top: 0; }
@@ -1240,7 +1286,7 @@
 // ============================================================
 
 const state = {
-  view: 'slice',            // 'slice' | 'entity' | 'types' | 'projections' | 'events'
+  view: 'overview',         // 'overview' | 'slice' | 'entity' | 'types' | 'projections' | 'events' | …
   slice: null,
   sel: null,                // the row being attended to
   adder: null,              // which "add another" is unfolded
@@ -1338,7 +1384,7 @@ function switchToModel(id) {
   sessionReset();
   setPendingFeatures([]);
   state.slice = null;
-  state.view = 'slice';
+  state.view = 'overview';
   state.splash = false;
 }
 
@@ -3599,6 +3645,13 @@ function renderRail() {
   rail.classList.toggle('open', !!state.railOpen);
   document.getElementById('rail-backdrop').classList.toggle('open', !!state.railOpen);
   rail.innerHTML = '';
+  // Where a model opens, so it heads the rail rather than sitting with
+  // Coupling and the rest: those read across every command for one
+  // question each, this one answers "what is in here" before any other.
+  rail.appendChild(h('a', {
+    href: '#', class: state.view === 'overview' ? 'on' : '', style: 'margin-bottom:16px',
+    onclick: (e) => { e.preventDefault(); closeForms(); state.view = 'overview'; render(); },
+  }, 'Overview'));
   rail.appendChild(h('h4', {}, 'Features'));
 
   for (const group of featureGroups(model)) {
@@ -4222,6 +4275,10 @@ function paintPage() {
   renderPalette();
 
   const names = Object.keys(model['command-definitions']);
+  // A model with no command has nothing to give an overview of, and its
+  // first command is begun from the slice page — so that is where an
+  // empty model opens instead.
+  if (state.view === 'overview' && !names.length) state.view = 'slice';
   if (state.view === 'slice' && (!state.slice || !names.includes(state.slice))) {
     state.slice = names[0] || null;
     state.tab = 'definition';
@@ -4249,8 +4306,9 @@ function paintPage() {
   const main = document.getElementById('main');
   main.innerHTML = '';
   main.className = 'slice'
-    + (state.view === 'coupling' || state.view === 'rulemap' || state.view === 'lifecycles' ? ' wide' : '');
+    + (['overview', 'coupling', 'rulemap', 'lifecycles'].includes(state.view) ? ' wide' : '');
 
+  if (state.view === 'overview') return renderOverview(model, main);
   if (state.view === 'sandbox') return renderSandbox(model, main);
   if (state.view === 'entity') return renderEntity(model, main);
   if (state.view === 'types') return renderCustomTypes(model, main);
@@ -9159,6 +9217,106 @@ function eventCard(model, name) {
   }
 
   return card;
+}
+
+// ---------- overview ----------
+//
+// The page a model opens on: what it holds, counted, and every command
+// on one row — what it reads, how many rules guard it, what it appends.
+// Read-only on purpose. A command's stored name and payload are not
+// columns; they ride in the row's tooltip, because the question this
+// page answers is what the model does, not how a call is spelled.
+function renderOverview(model, main) {
+  main.appendChild(h('header', {}, h('div', { class: 'name' }, 'Overview')));
+
+  const commands = model['command-definitions'];
+  const bodies = Object.values(commands);
+  const sum = (xs) => xs.reduce((a, b) => a + b, 0);
+  const plural = (n, word) => n + ' ' + word + (n === 1 ? '' : 's');
+  const ruleCount = sum(bodies.map((b) => (b.conditions || []).length));
+  const appended = new Set(bodies.flatMap((b) => (b.publishes || []).map((p) => p && p.name)));
+  const events = Object.keys(model['event-definitions']);
+  const unappended = events.filter((e) => !appended.has(e)).length;
+  const entities = Object.values(model['entity-definitions']);
+  const lifecycles = entities.filter((e) => e.lifecycle).length;
+  const standalone = Object.keys(model['projection-definitions'])
+    .filter((p) => !boundAs(model, p).length).length;
+  const types = Object.keys(model['custom-type-definitions']).length;
+  const scenarios = Object.keys(model['scenario-definitions'] || {}).length
+    + Object.keys(model['projection-scenario-definitions'] || {}).length;
+  const trouble = scenarioTrouble(model).length;
+  const found = problems(model);
+
+  const stat = (label, kind, count, sub, onclick) => h(onclick ? 'button' : 'div', {
+    class: 'overview-stat' + (kind ? ' kind' : ''), style: kind ? '--kind: var(--' + kind + ')' : null,
+    type: onclick ? 'button' : null, onclick,
+  }, h('span', { class: 'label' }, label),
+    h('span', { class: 'count' }, String(count)),
+    sub ? h('span', { class: 'sub' }, sub) : null);
+
+  // The same mode rule the rail follows: what Simple keeps out of the
+  // rail it keeps out of the count, unless the model already has one.
+  main.appendChild(h('div', { class: 'overview-stats' },
+    stat('Commands', 'command', bodies.length, plural(ruleCount, 'rule')),
+    stat('Events', 'event', events.length, unappended ? unappended + ' not appended' : null),
+    stat('Entities', 'entity', entities.length, lifecycles ? lifecycles + ' with a lifecycle' : null),
+    advanced() || standalone ? stat('Projections', 'projection', standalone, 'standalone') : null,
+    advanced() ? stat('Custom types', 'type', types) : null,
+    stat('Scenarios', null, scenarios, trouble ? trouble + ' not current' : null),
+    stat('Problems', null, found.length, null,
+      found.length ? () => { closeForms(); state.problems = true; render(); } : null)));
+
+  main.appendChild(h('div', { class: 'overview-section' },
+    h('h2', {}, 'Commands'), h('span', { class: 'muted small' }, 'by feature')));
+
+  const table = h('div', { class: 'overview-commands' },
+    h('div', { class: 'overview-row head' },
+      h('span', {}, 'Command'), h('span', {}, 'Reads'), h('span', {}, 'Rules'), h('span', {}, 'Appends')));
+
+  for (const group of featureGroups(model).filter((g) => g.commands.length)) {
+    table.appendChild(h('div', { class: 'overview-feature' }, group.name));
+    for (const name of group.commands) {
+      const body = commands[name];
+      const payload = body.properties || [];
+      const tip = [name, ...payload.map((p) => p.name + ': ' + typeLabel(p))].join('\n');
+
+      // A read is named after what it reads; the alias is shown only
+      // where it says something the name does not — `others`, `theirs`.
+      const reads = (body.boundary || []).map((binding) => {
+        const target = binding.projection || binding.entity;
+        const plain = target ? target[0].toLowerCase() + target.slice(1) : null;
+        const text = binding.alias === plain ? undefined
+          : [readable(target), h('span', { class: 'tech' }, binding.alias)];
+        return binding.projection
+          ? projectionRef(model, binding.projection, { text })
+          : entityRef(model, binding.entity, { text });
+      });
+
+      const rules = (body.conditions || []).length;
+      const guards = sum((body.publishes || []).map((p) => (p && p.when ? p.when.length : 0)));
+      const ruleWords = [rules ? plural(rules, 'rule') : null, guards ? plural(guards, 'guard') : null]
+        .filter(Boolean).join(' · ');
+
+      const emits = (body.publishes || []).filter((p) => p && p.name);
+
+      table.appendChild(h('div', { class: 'overview-row' },
+        h('div', {},
+          h('a', {
+            href: '#', class: 'overview-cmd', title: tip,
+            onclick: (e) => { e.preventDefault(); goToCommand(name); },
+          }, iconPrefix(commandIcon(model, name)) + readable(name))),
+        h('div', { class: 'overview-chips' },
+          reads.length ? reads : h('span', { class: 'empty tiny' }, '—')),
+        ruleWords
+          ? h('span', { class: 'overview-rules' }, ruleWords)
+          : h('span', { class: 'empty tiny' }, 'always allowed'),
+        h('div', { class: 'overview-chips' },
+          emits.length
+            ? emits.map((p) => eventRef(model, p.name))
+            : h('span', { class: 'empty tiny' }, 'records nothing yet'))));
+    }
+  }
+  main.appendChild(table);
 }
 
 // ---------- coupling ----------
