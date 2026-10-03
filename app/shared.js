@@ -1181,6 +1181,120 @@ function lifecycleMachines(model) {
   return { machines, excluded };
 }
 
+// The initial state leads; the rest keep the enum's declared order,
+// which is the order the modeller wrote the lifecycle in.
+function lifecycleOrder(machine) {
+  if (machine.initial === null) return machine.states;
+  return [machine.initial, ...machine.states.filter((s) => s !== machine.initial)];
+}
+
+// ---------- event model ----------
+//
+// The model laid out the way eventmodeling.org draws a system: time
+// running left to right, each command with its payload above it and
+// the events it appends below, and a read model after it for every
+// piece of state those events move for the first time.
+//
+// The event lanes are tags, not streams. An event belongs to every
+// instance it is tagged with, so one carrying a course id and a student
+// id is one card across both lanes — the fact a stream-per-aggregate
+// model would have to split in two, which is the whole case for DCB.
+//
+// A definition holds no time, so the order is derived, along the
+// lifecycles: a command that brings something into being comes first,
+// one that only works on what exists next, and one that moves a thing
+// further along — or back to where it started, which ends it — after
+// that. Feature order breaks every tie, which is all it is for a model
+// without lifecycles.
+function eventModel(model) {
+  const commands = model['command-definitions'];
+  const CREATES = 1;
+  const WORKS_ON = 1.5;
+  const rank = {};
+  for (const machine of lifecycleMachines(model).machines) {
+    const order = lifecycleOrder(machine);
+    for (const transition of machine.transitions) {
+      const step = order.indexOf(transition.target);
+      if (step < 0) continue;
+      const position = step === 0 ? order.length : Math.max(step, CREATES);
+      for (const { command } of transition.publishers) {
+        rank[command] = Math.max(rank[command] === undefined ? -Infinity : rank[command], position);
+      }
+    }
+  }
+  const featureOrder = featureGroups(model).flatMap((group) => group.commands);
+  const ordered = Object.keys(commands)
+    .map((name) => ({ name, rank: rank[name] === undefined ? WORKS_ON : rank[name], at: featureOrder.indexOf(name) }))
+    .sort((a, b) => a.rank - b.rank || a.at - b.at)
+    .map((entry) => entry.name);
+
+  const lanes = [];
+  const laneOf = (tag) => {
+    if (!lanes.includes(tag)) lanes.push(tag);
+    return lanes.indexOf(tag);
+  };
+  const tagsOf = (eventName) => {
+    const definition = model['event-definitions'][eventName];
+    const tags = (definition && definition.properties || [])
+      .flatMap((property) => idLeavesOfType(model, property.propertyType).map((leaf) => leaf.identifierType));
+    return [...new Set(tags)];
+  };
+
+  // Lanes are claimed in timeline order, so the first lane is the tag
+  // the story starts with; untagged events share one lane, last.
+  const columns = [];
+  const shown = new Set();
+  const untagged = [];
+  for (const name of ordered) {
+    const body = commands[name];
+    const emits = (body.publishes || []).filter((emission) => emission && emission.name);
+    const events = emits.map((emission) => {
+      const tags = tagsOf(emission.name);
+      const event = { name: emission.name, tags, guarded: !!(emission.when && emission.when.length), lanes: tags.map(laneOf) };
+      if (!tags.length) untagged.push(event);
+      return event;
+    });
+    columns.push({
+      kind: 'command', command: name,
+      payload: body.properties || [],
+      rules: (body.conditions || []).length,
+      guards: emits.reduce((n, emission) => n + (emission.when ? emission.when.length : 0), 0),
+      reads: (body.boundary || []).map((binding) => binding.alias),
+      events,
+    });
+
+    for (const event of events) {
+      const fresh = new Map();
+      for (const effect of effectsOf(model, event.name)) {
+        const key = effect.entity + '.' + effect.property.name;
+        if (shown.has(key)) continue;
+        shown.add(key);
+        if (!fresh.has(effect.entity)) fresh.set(effect.entity, []);
+        fresh.get(effect.entity).push(effect.property.name);
+      }
+      // In lane order, so the read models under a two-tag event come
+      // in the order its lanes do.
+      const laneRank = (entity) => {
+        const at = lanes.indexOf(idTypeOf(model, entity));
+        return at < 0 ? lanes.length : at;
+      };
+      for (const [entity, properties] of [...fresh].sort((a, b) => laneRank(a[0]) - laneRank(b[0]))) {
+        columns.push({ kind: 'read', entity, properties, from: event.name });
+      }
+      for (const { projection } of projectionsHandling(model, event.name)) {
+        if (shown.has(projection)) continue;
+        shown.add(projection);
+        columns.push({ kind: 'read', projection, properties: [], from: event.name });
+      }
+    }
+  }
+  if (untagged.length) {
+    const lane = laneOf(null);
+    for (const event of untagged) event.lanes = [lane];
+  }
+  return { lanes, columns };
+}
+
 // ---------- promoting a lifecycle ----------
 //
 // Whether a boolean property is a *one-way door*: every handler sets it

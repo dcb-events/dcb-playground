@@ -8,7 +8,10 @@
 <link rel="alternate icon" href="favicon.ico">
 <link rel="stylesheet" href="shared.css">
 <style>
-  .layout { display: grid; grid-template-columns: 250px 1fr; min-height: calc(100vh - var(--topbar-h)); }
+  /* `minmax(0, …)` so a page wider than the window (Coupling's matrix,
+     a lifecycle or event-model band) scrolls inside its own strip
+     instead of stretching the column, and the page, to fit it. */
+  .layout { display: grid; grid-template-columns: 250px minmax(0, 1fr); min-height: calc(100vh - var(--topbar-h)); }
   /* Nothing loaded means no rail to show — the splash takes the whole
      row rather than sitting in a column sized for a rail that isn't
      there. */
@@ -22,7 +25,7 @@
      (`.menu-btn`); a backdrop and picking an actual link both close it
      — see `renderRail` and the delegated click listener on #rail. */
   @media (max-width: 760px) {
-    .layout { grid-template-columns: 1fr; }
+    .layout { grid-template-columns: minmax(0, 1fr); }
     .rail {
       position: fixed; top: var(--topbar-h); bottom: 0; left: 0; z-index: 25;
       width: 82vw; max-width: 300px; overflow-y: auto;
@@ -1117,6 +1120,47 @@
     border-left: 3px solid var(--rule); background: var(--rule-soft);
     border-radius: 0 6px 6px 0; padding: 6px 10px; font-size: 12px; line-height: 1.5;
   }
+
+  /* ---------- event model ----------
+     A band of lanes like a lifecycle's: cards placed from computed
+     geometry, the wires one SVG laid under them. */
+  .em-scroll { overflow-x: auto; padding-bottom: 6px; }
+  .em-band { position: relative; }
+  .em-lane { position: absolute; left: 0; right: 0; border-top: 1px solid var(--border); }
+  .em-lane.payload { background: var(--surface); }
+  .em-lane.decide { background: var(--command-soft); }
+  .em-lane.events { background: var(--event-soft); }
+  .em-lane.events + .em-lane.events { border-top-style: dashed; }
+  .em-lane-label {
+    position: absolute; left: 12px; width: 120px; font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .07em; color: var(--muted); line-height: 1.4;
+  }
+  .em-lane-label .tech { display: block; margin: 2px 0 0; font-size: 11px; text-transform: none; letter-spacing: 0; }
+  .em-wires, .em-wires svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .em-wires { pointer-events: none; }
+  .em-card {
+    position: absolute; box-sizing: border-box; padding: 8px 10px; border-radius: 6px;
+    border: 1px solid var(--border); font-size: 13px; line-height: 18px; overflow: hidden;
+  }
+  .em-card .title { font-weight: 600; cursor: pointer; }
+  .em-card .title:hover { text-decoration: underline; }
+  .em-card .line { font-size: 12px; line-height: 16px; color: var(--muted); }
+  .em-card.payload { background: var(--surface); border-color: var(--border-strong); }
+  .em-card.payload .field { font-family: var(--mono); font-size: 11px; line-height: 20px; color: var(--muted); display: flex; gap: 6px; }
+  .em-card.payload .field::after { content: ""; flex: 1; border-bottom: 1px solid var(--border-strong); margin-bottom: 5px; }
+  .em-card.command { background: var(--surface); border-color: var(--command); }
+  .em-card.command .title { color: var(--command); }
+  .em-card.command .rules { font-size: 12px; font-weight: 600; color: var(--rule); }
+  .em-card.read { background: var(--entity-soft); border-color: var(--entity); }
+  /* The orange and green tokens are fills; as text on a light card they
+     fall short of legible, so light mode takes the darker shade the
+     chips use, and dark mode the token, which is already light. */
+  .em-card.read .title { color: #15803d; }
+  body.f-dark .em-card.read .title { color: var(--entity); }
+  .em-card.event { background: var(--surface); border-color: var(--event); }
+  .em-card.event .title { color: #c2410c; }
+  body.f-dark .em-card.event .title { color: var(--event); }
+  .em-card.event .line { font-family: var(--mono); font-size: 11px; }
 
   /* ---------- lifecycles ----------
      States as bubbles on an open band, one band per entity; the wires
@@ -3799,10 +3843,10 @@ function renderRail() {
     }, 'Events'));
   }
 
-  // Neither of these is a definition of its own — each reads across
+  // None of these is a definition of its own — each reads across
   // every command at once rather than living on any one of theirs,
   // the way Events reads across every command that publishes one. And
-  // unlike Events, neither holds anything a simple model would ever
+  // unlike Events, none holds anything a simple model would ever
   // need to reach — so there is no "or it already has one" exception.
   if (advanced() && Object.keys(model['command-definitions']).length) {
     rail.appendChild(h('h4', { style: 'margin-top:20px' }, 'Overview'));
@@ -3816,6 +3860,11 @@ function renderRail() {
       title: 'Every command, its rules, and what it records',
       onclick: (e) => { e.preventDefault(); closeForms(); state.view = 'rulemap'; render(); },
     }, 'Rule map'));
+    rail.appendChild(h('a', {
+      href: '#', class: state.view === 'eventmodel' ? 'on' : '',
+      title: 'The commands on a timeline, with their payloads, events and read models',
+      onclick: (e) => { e.preventDefault(); closeForms(); state.view = 'eventmodel'; render(); },
+    }, 'Event model'));
     rail.appendChild(h('a', {
       href: '#', class: state.view === 'lifecycles' ? 'on' : '',
       title: 'Each entity’s status as a state machine',
@@ -4290,7 +4339,7 @@ function paintPage() {
   if (state.view === 'events' && !advanced() && !Object.keys(model['event-definitions']).length) {
     state.view = 'slice';
   }
-  if ((state.view === 'coupling' || state.view === 'rulemap' || state.view === 'lifecycles')
+  if (['coupling', 'rulemap', 'eventmodel', 'lifecycles'].includes(state.view)
       && (!advanced() || !names.length)) {
     state.view = 'slice';
   }
@@ -4306,7 +4355,7 @@ function paintPage() {
   const main = document.getElementById('main');
   main.innerHTML = '';
   main.className = 'slice'
-    + (['overview', 'coupling', 'rulemap', 'lifecycles'].includes(state.view) ? ' wide' : '');
+    + (['overview', 'coupling', 'rulemap', 'eventmodel', 'lifecycles'].includes(state.view) ? ' wide' : '');
 
   if (state.view === 'overview') return renderOverview(model, main);
   if (state.view === 'sandbox') return renderSandbox(model, main);
@@ -4316,6 +4365,7 @@ function paintPage() {
   if (state.view === 'events') return renderEvents(model, main);
   if (state.view === 'coupling') return renderCoupling(model, main);
   if (state.view === 'rulemap') return renderRuleMap(model, main);
+  if (state.view === 'eventmodel') return renderEventModel(model, main);
   if (state.view === 'lifecycles') return renderLifecycles(model, main);
 
   if (!state.slice) {
@@ -9504,6 +9554,194 @@ function renderRuleMap(model, main) {
   }
 }
 
+// ---------- event model ----------
+//
+// `eventModel` (shared.js) decides what goes where; this places it.
+// Like a lifecycle band, the geometry is computed rather than measured
+// — card heights from text length, every card in a lane as tall as the
+// lane's tallest, so the wires can be drawn against it without reading
+// the DOM back.
+
+const EM = { LABEL: 140, W: 168, GAP: 44, PAD: 14, LINE: 18, SMALL: 16, CHARS: 21 };
+
+// Lines a label wraps to in a card — a guess, not a measurement, and
+// erring long: a card a line too tall is a gap, one too short clips.
+function emLines(text, chars = EM.CHARS) {
+  return Math.max(1, Math.ceil(String(text).length / chars));
+}
+
+function eventModelLayout(model, em) {
+  const columns = [];
+  let x = EM.LABEL;
+  for (const column of em.columns) {
+    const slots = column.kind === 'command' ? Math.max(1, column.events.length) : 1;
+    const width = slots * EM.W + (slots - 1) * EM.GAP;
+    const left = x;
+    columns.push({ ...column, x: left, width, slotX: (i) => left + i * (EM.W + EM.GAP) });
+    x += width + EM.GAP;
+  }
+
+  const commandsOnly = columns.filter((c) => c.kind === 'command');
+  const reads = columns.filter((c) => c.kind === 'read');
+  const payloadH = Math.max(...commandsOnly.map((c) =>
+    16 + emLines(readable(c.command)) * EM.LINE + Math.max(1, c.payload.length) * 20));
+  const decideH = Math.max(
+    ...commandsOnly.map((c) => 16 + emLines(readable(c.command)) * EM.LINE + EM.SMALL
+      + (c.reads.length ? emLines('reads ' + c.reads.join(', '), 26) * EM.SMALL : 0)),
+    ...reads.map((c) => 16 + emLines(readable(c.entity || c.projection)) * EM.LINE
+      + (c.properties.length ? emLines(c.properties.map(propertyWords).join(', '), 26) * EM.SMALL : 0)));
+  const events = commandsOnly.flatMap((c) => c.events);
+  const eventH = Math.max(52, ...events.map((e) => 16 + emLines(readable(e.name)) * EM.LINE + EM.SMALL));
+
+  const lanes = [];
+  let y = 0;
+  const lane = (kind, height, tag) => { lanes.push({ kind, y, height, tag }); y += height; return lanes[lanes.length - 1]; };
+  const payloadLane = lane('payload', payloadH + 2 * EM.PAD);
+  const decideLane = lane('decide', decideH + 2 * EM.PAD);
+  const eventLanes = em.lanes.map((tag) => lane('events', eventH + 2 * EM.PAD, tag));
+  const lanesBottom = y;
+
+  const cards = [];
+  const wires = [];
+  let buses = 0;
+  const readCard = {};
+  for (const column of columns) {
+    if (column.kind === 'read') {
+      const card = {
+        kind: 'read', column, x: column.x, y: decideLane.y + EM.PAD, w: EM.W, h: decideH,
+      };
+      cards.push(card);
+      (readCard[column.from] = readCard[column.from] || []).push(card);
+    }
+  }
+  for (const column of columns) {
+    if (column.kind !== 'command') continue;
+    const payload = { kind: 'payload', column, x: column.x, y: payloadLane.y + EM.PAD, w: column.width, h: payloadH };
+    const command = { kind: 'command', column, x: column.x, y: decideLane.y + EM.PAD, w: column.width, h: decideH };
+    cards.push(payload, command);
+    const cx = column.x + column.width / 2;
+    wires.push({ arrow: true, d: `M ${cx} ${payload.y + payload.h} L ${cx} ${command.y - 2}` });
+
+    column.events.forEach((event, i) => {
+      const top = eventLanes[Math.min(...event.lanes)];
+      const bottom = eventLanes[Math.max(...event.lanes)];
+      const card = {
+        kind: 'event', column, event, x: column.slotX(i), y: top.y + EM.PAD, w: EM.W,
+        h: bottom.y + bottom.height - EM.PAD - (top.y + EM.PAD),
+      };
+      cards.push(card);
+      const ex = card.x + EM.W / 2;
+      wires.push({ arrow: true, d: `M ${ex} ${command.y + command.h} L ${ex} ${card.y - 2}` });
+
+      // Out to the read models this event introduces: along the event's
+      // own lane when that is clear, and along a strip under every lane
+      // when a later event of the same command sits in the way.
+      const targets = readCard[event.name] || [];
+      if (!targets.length) return;
+      const lastX = targets[targets.length - 1].x + EM.W / 2;
+      const blocked = column.events.slice(i + 1)
+        .some((later) => later.lanes.some((l) => l >= Math.min(...event.lanes) && l <= Math.max(...event.lanes)));
+      let wireY;
+      if (blocked) {
+        wireY = lanesBottom + 12 + buses * 10;
+        buses += 1;
+        wires.push({ d: `M ${ex} ${card.y + card.h} L ${ex} ${wireY} L ${lastX} ${wireY}` });
+      } else {
+        wireY = top.y + top.height / 2;
+        wires.push({ d: `M ${card.x + EM.W} ${wireY} L ${lastX} ${wireY}` });
+      }
+      for (const target of targets) {
+        const tx = target.x + EM.W / 2;
+        wires.push({ arrow: true, d: `M ${tx} ${wireY} L ${tx} ${target.y + target.h + 2}` });
+      }
+    });
+  }
+  return {
+    lanes, cards, wires,
+    width: x - EM.GAP + 24,
+    height: lanesBottom + (buses ? 16 + buses * 10 : 0),
+  };
+}
+
+function renderEventModel(model, main) {
+  main.appendChild(h('header', {},
+    h('div', { class: 'name' }, 'Event model'),
+    h('div', { class: 'muted small' },
+      'Every command with its payload above it and the events it appends below, time running left '
+      + 'to right; after it, a read model for each piece of state those events move first. Event '
+      + 'lanes are tags, so an event with two tags spans two lanes. The order follows the '
+      + 'lifecycles: what creates a thing first, what ends it last.')));
+
+  const em = eventModel(model);
+  if (!em.columns.length) {
+    main.appendChild(h('div', { class: 'empty' }, 'No commands yet.'));
+    return;
+  }
+  const layout = eventModelLayout(model, em);
+  const band = h('div', { class: 'em-band', style: `width:${layout.width}px; height:${layout.height}px` });
+
+  const LANE_NAMES = { payload: 'Payload', decide: 'Commands · read models' };
+  for (const lane of layout.lanes) {
+    band.appendChild(h('div', { class: 'em-lane ' + lane.kind, style: `top:${lane.y}px; height:${lane.height}px` }));
+    band.appendChild(h('div', { class: 'em-lane-label', style: `top:${lane.y + EM.PAD}px` },
+      lane.kind === 'events'
+        ? (lane.tag ? ['Events tagged', h('span', { class: 'tech' }, lane.tag)] : 'Untagged events')
+        : LANE_NAMES[lane.kind]));
+  }
+
+  // Unique per page, like a lifecycle band's: two marker ids that
+  // collide resolve to whichever came first.
+  const ah = 'em-ah';
+  let wires = `<svg viewBox="0 0 ${layout.width} ${layout.height}" preserveAspectRatio="none">`
+    + `<defs><marker id="${ah}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">`
+    + `<path d="M 0 0 L 10 5 L 0 10 z" fill="var(--muted)"></path></marker></defs>`;
+  for (const wire of layout.wires) {
+    wires += `<path d="${wire.d}" fill="none" stroke="var(--muted)" stroke-width="1.5"`
+      + (wire.arrow ? ` marker-end="url(#${ah})"` : '') + '></path>';
+  }
+  band.appendChild(h('div', { class: 'em-wires', html: wires + '</svg>' }));
+
+  const place = (card) => `left:${card.x}px; top:${card.y}px; width:${card.w}px; height:${card.h}px`;
+  for (const card of layout.cards) {
+    const { column } = card;
+    if (card.kind === 'payload') {
+      band.appendChild(h('div', { class: 'em-card payload', style: place(card) },
+        h('div', {}, readable(column.command)),
+        column.payload.length
+          ? column.payload.map((p) => h('div', { class: 'field', title: typeLabel(p) }, p.name))
+          : h('div', { class: 'line' }, '—')));
+    } else if (card.kind === 'command') {
+      const ruleWords = [
+        column.rules ? column.rules + (column.rules === 1 ? ' rule' : ' rules') : null,
+        column.guards ? column.guards + (column.guards === 1 ? ' guard' : ' guards') : null,
+      ].filter(Boolean).join(' · ');
+      band.appendChild(h('div', { class: 'em-card command', style: place(card) },
+        h('div', { class: 'title', title: column.command, onclick: () => goToCommand(column.command) },
+          iconPrefix(commandIcon(model, column.command)) + readable(column.command)),
+        ruleWords ? h('div', { class: 'rules' }, ruleWords) : h('div', { class: 'line' }, 'always allowed'),
+        column.reads.length ? h('div', { class: 'line' }, 'reads ' + column.reads.join(', ')) : null));
+    } else if (card.kind === 'read') {
+      const name = column.entity || column.projection;
+      band.appendChild(h('div', { class: 'em-card read', style: place(card) },
+        h('div', {
+          class: 'title', title: name,
+          onclick: () => (column.entity ? openEntity(column.entity) : goToProjection(column.projection)),
+        }, iconPrefix(column.entity ? entityIcon(model, column.entity) : null) + readable(name)),
+        column.properties.length
+          ? h('div', { class: 'line' }, column.properties.map(propertyWords).join(', '))
+          : null));
+    } else {
+      const { event } = card;
+      band.appendChild(h('div', { class: 'em-card event', style: place(card) },
+        h('div', { class: 'title', title: event.name, onclick: () => goToEvent(event.name) },
+          iconPrefix(eventIcon(model, event.name)) + readable(event.name)),
+        h('div', { class: 'line' },
+          (event.tags.length ? event.tags.join(' + ') : 'untagged') + (event.guarded ? ' · guarded' : ''))));
+    }
+  }
+  main.appendChild(h('div', { class: 'em-scroll' }, band));
+}
+
 // ---------- lifecycles ----------
 //
 // Each entity's lifecycle drawn as the machine `lifecycleMachines`
@@ -9529,13 +9767,6 @@ function machineWords(machine) {
 const LC_GAP = 150;   // between two nodes: an arrow and its event label
 const LC_NODE_H = 46;
 const LC_ROW_H = 22;  // one command row in a popover or list
-
-// The initial state leads; the rest keep the enum's declared order,
-// which is the order the modeller wrote the lifecycle in.
-function lifecycleOrder(machine) {
-  if (machine.initial === null) return machine.states;
-  return [machine.initial, ...machine.states.filter((s) => s !== machine.initial)];
-}
 
 // What one state's popover holds: the commands that move the status
 // away (read off the transitions drawn from here, so a publisher that

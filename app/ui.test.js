@@ -622,7 +622,7 @@ function build(index) {
     // would leave most of what changed untouched.
     for (const mode of ['simple', 'advanced']) {
       store.set('dcb-playground:mode', mode);
-      for (const view of ['overview', 'slice', 'entity', 'types', 'projections', 'events', 'map']) {
+      for (const view of ['overview', 'slice', 'entity', 'types', 'projections', 'events', 'eventmodel', 'map']) {
         sandbox.state.view = view;
         sandbox.state.entity = 'Course';
         sandbox.state.slice = 'SubscribeStudentToCourse';
@@ -3791,6 +3791,70 @@ function build(index) {
     sandbox.switchToModel(empty);
     sandbox.render();
     eq(sandbox.state.view, 'slice', 'nothing to give an overview of');
+  });
+}
+
+// ---------------------------------------------------------------
+// The event model: an order derived along the lifecycles, event lanes
+// by tag, and a read model wherever an event first moves some state.
+// ---------------------------------------------------------------
+{
+  const { model } = build(3);
+  const em = () => sandbox.eventModel(model());
+  const commandsOf = (columns) => columns.filter((c) => c.kind === 'command').map((c) => c.command);
+
+  check('commands are ordered along the lifecycles, feature order breaking ties', () => {
+    eq(model().name, 'Course Example (with schedules)', 'the example these expectations are about');
+    eq(commandsOf(em().columns), [
+      'DefineCourse', 'RegisterStudent',
+      'ChangeCourseCapacity', 'RescheduleCourse', 'SubscribeStudentToCourse', 'UnsubscribeStudentFromCourse',
+      'ArchiveCourse',
+    ], 'creators first, the command that ends a course last');
+  });
+
+  check('event lanes are tags, and an event with two tags spans both', () => {
+    const { lanes, columns } = em();
+    eq(lanes, ['CourseId', 'StudentId'], 'in the order the timeline first meets them');
+    const subscribe = columns.find((c) => c.command === 'SubscribeStudentToCourse');
+    eq(subscribe.events[0].lanes, [0, 1], 'one card across both lanes');
+  });
+
+  check('a read model follows the first event that moves each piece of state, once', () => {
+    const reads = em().columns.filter((c) => c.kind === 'read');
+    eq(reads[0], { kind: 'read', entity: 'Course', properties: ['status', 'capacity', 'slots'], from: 'CourseDefined' },
+      'what defining a course sets');
+    eq(reads.some((r) => r.projection === 'CourseNumbering'), true, 'a standalone projection is a read model too');
+    const seen = reads.flatMap((r) => r.properties.map((p) => r.entity + '.' + p));
+    eq(seen.length, new Set(seen).size, 'no property introduced twice');
+    const fromSubscribe = reads.filter((r) => r.from === 'StudentSubscribedToCourse').map((r) => r.entity);
+    eq(fromSubscribe, ['Course', 'Student'], 'in lane order');
+  });
+
+  check('the layout places no two cards on top of each other', () => {
+    for (const index of [0, 3, 8]) {
+      const { model: m } = build(index);
+      const layout = sandbox.eventModelLayout(m(), sandbox.eventModel(m()));
+      const cards = layout.cards;
+      for (let i = 0; i < cards.length; i += 1) {
+        for (let j = i + 1; j < cards.length; j += 1) {
+          const a = cards[i];
+          const b = cards[j];
+          const overlap = a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+          eq(overlap, false, `${m().name}: ${a.kind} and ${b.kind} at x ${a.x} / ${b.x}`);
+        }
+      }
+    }
+  });
+
+  check('the page paints, guarded emissions and all', () => {
+    const { id, model: m } = build(8);
+    store.set('dcb-playground:model', id);
+    const main = sandbox.document.createElement('div');
+    sandbox.renderEventModel(m(), main);
+    const text = textOf(main);
+    eq(text.includes('Events tagged'), true, 'a tag lane');
+    eq(text.includes('guarded'), true, 'an emission with a when');
+    eq(text.includes('2 rules · 2 guards'), true, 'UpdateText counts both');
   });
 }
 
