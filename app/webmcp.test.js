@@ -29,7 +29,7 @@ sandbox.document.modelContext = {
 // Same order as the <script> tags in index.html — webmcp.js *before*
 // the page script — so a load-time dependency that would break in the
 // browser breaks here too.
-loadApp(sandbox, ['model.js', 'evaluate.js', 'shared.js', 'webmcp-schemas.js', 'webmcp.js'], {
+loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js', 'shared.js', 'webmcp-schemas.js', 'webmcp.js'], {
   withPage: true,
 });
 
@@ -57,7 +57,8 @@ async function call(name, args) {
       'projection_scenario_definition',
     ];
     const names = [
-      'get_model', 'derive_boundary', 'evaluate_command', 'list_problems',
+      'get_model', 'get_model_source', 'apply_model_source',
+      'derive_boundary', 'evaluate_command', 'list_problems',
       'start_model', 'remove_definition', 'rename_definition', 'rename_member',
       'drive_command', 'get_sandbox', 'reset_sandbox',
       ...kinds.map((k) => 'add_' + k), ...kinds.map((k) => 'update_' + k),
@@ -344,6 +345,34 @@ async function call(name, args) {
     const { isError, text } = await call('start_model', { name: '   ' });
     eq(isError, true, 'refused');
     eq(text.includes('must not be empty'), true, 'with the domain\'s words');
+  });
+
+  await check('the model as code goes out, comes back edited, and is refused whole on an error', async () => {
+    await call('start_model', { name: 'Code Probe' });
+    const { text: empty } = await call('get_model_source');
+    eq(empty, 'model "Code Probe"\n', 'an empty model is its name');
+    const source = empty + [
+      'event ProbeHappened { probeId: ProbeId }',
+      'entity Probe {}',
+      'command Probe2(probeId: ProbeId) {',
+      '  read probe = Probe[probeId]',
+      '  emit ProbeHappened { probeId }',
+      '}',
+    ].join('\n');
+    const before = sandbox.loadEvents().length;
+    const applied = await call('apply_model_source', { source });
+    eq(applied.isError, false, applied.text);
+    eq(applied.text.startsWith('applied code: added'), true, applied.text);
+    const after = sandbox.loadEvents().length;
+    sandbox.undo();
+    eq(sandbox.loadEvents().length, before, 'one undo takes the whole apply back');
+    sandbox.redo();
+    const { text: back } = await call('get_model_source');
+    eq(back.includes('tag type ProbeId = string'), true, 'the implied identifier is now stated');
+    const refused = await call('apply_model_source', { source: source + '\nevent {' });
+    eq(refused.isError, true, 'refused');
+    eq(refused.text.includes('- line 8, column 7: Expected an event name'), true, refused.text);
+    eq(sandbox.loadEvents().length, after, 'nothing appended');
   });
 
   await check('an agent edit is one undo step of its own', async () => {

@@ -1271,6 +1271,41 @@
   .lc-fn { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
   .lc-fn .op { font-family: var(--mono); font-size: 10.5px; }
   .lc-fn .lc-dot { vertical-align: baseline; margin-right: 2px; }
+
+  /* ---------- code ---------- */
+  .surface {
+    display: inline-flex; height: 30px; flex: none;
+    border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
+  }
+  .surface button {
+    display: inline-flex; align-items: center; gap: 5px; padding: 0 11px;
+    font: inherit; font-size: 12.5px; border: 0; background: transparent; color: var(--muted); cursor: pointer;
+  }
+  .surface button + button { border-left: 1px solid var(--border); }
+  .surface button.on { background: var(--command-soft); color: var(--command); font-weight: 600; }
+  .surface button:not(.on):hover { color: var(--text); background: var(--bg); }
+  .surface-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--event); }
+  @media (max-width: 760px) {
+    .surface { height: 40px; }
+    .surface button { padding: 0 9px; }
+  }
+  .code-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 10px; }
+  .code-bar .grow { flex: 1; }
+  .code-controls { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .code-status .code-bad, .code-status .code-stale { color: var(--danger); }
+  .code-status .code-dirty { color: var(--event); }
+  .code-editor, .code-text {
+    width: 100%; height: calc(100vh - var(--topbar-h, 90px) - 230px); min-height: 360px;
+    border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+  }
+  .code-editor { overflow: hidden; }
+  .code-text {
+    display: block; resize: vertical; padding: 10px 12px; color: var(--text);
+    font-size: 12.5px; line-height: 19px; tab-size: 2; white-space: pre; overflow: auto;
+  }
+  .code-problems { margin-top: 10px; }
+  .code-problems .issue .mono { color: var(--muted); font-size: 11px; }
+  .diag-mark.err { color: var(--danger); }
 </style>
 </head>
 <body>
@@ -1308,6 +1343,7 @@
 
 <script src="model.js"></script>
 <script src="evaluate.js"></script>
+<script src="dsl.js"></script>
 <script src="shared.js"></script>
 <script src="webmcp-schemas.js"></script>
 <script src="webmcp.js"></script>
@@ -1331,6 +1367,10 @@
 
 const state = {
   view: 'overview',         // 'overview' | 'slice' | 'entity' | 'types' | 'projections' | 'events' | …
+  // The main area shows the model as code instead of its pages — see
+  // `renderCode`. Remembered per browser, like the other view choices;
+  // the key is spelled out because SURFACE_KEY is declared further down.
+  code: localStorage.getItem('dcb-playground:surface') === 'code',
   slice: null,
   sel: null,                // the row being attended to
   adder: null,              // which "add another" is unfolded
@@ -1756,6 +1796,21 @@ const SETTINGS_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentC
   + '1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 '
   + '2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 '
   + '0 0-1.51 1z"></path></svg>';
+// Pages or code — two surfaces over one model, see `renderCode`. The
+// dot says a text is waiting to be applied, wherever you are.
+function surfaceToggle(model) {
+  const waiting = codeView.modelId === model.id && codeDirty();
+  return h('span', { class: 'surface', role: 'group', 'aria-label': 'Show the model as' },
+    h('button', {
+      type: 'button', class: state.code ? '' : 'on', 'aria-pressed': state.code ? 'false' : 'true',
+      title: 'The model as pages', onclick: leaveCode,
+    }, 'Visual'),
+    h('button', {
+      type: 'button', class: state.code ? 'on' : '', 'aria-pressed': state.code ? 'true' : 'false',
+      title: waiting ? 'The model as code — edited, not applied' : 'The model as code', onclick: enterCode,
+    }, 'Code', waiting ? h('span', { class: 'surface-dot' }) : null));
+}
+
 function settingsButton() {
   return h('button', {
     class: 'icon-btn', type: 'button', title: 'Settings — how this interface behaves',
@@ -4306,6 +4361,7 @@ function paintPage() {
   // A scenario that no longer agrees with its command, or a loose end
   // nobody has tied — the one count of what needs attention, shown
   // only when there is any.
+  tools.appendChild(surfaceToggle(model));
   const problemsBtn = problemsButton(model);
   if (problemsBtn) tools.appendChild(problemsBtn);
 
@@ -4350,10 +4406,22 @@ function paintPage() {
     state.entity = rest[0] || null;
     if (!state.entity) state.view = 'slice';
   }
+  // A rail click on a page that is not one definition — the sandbox,
+  // an overview — is a request for that page, so the code steps aside;
+  // whatever was typed stays, unapplied, for when it comes back.
+  if (state.code && codeView.shownView !== null && state.view !== codeView.shownView
+      && !CODE_FOLLOWS.includes(state.view)) {
+    setCodeSurface(false);
+    if (codeDirty()) toast('Your code edits are kept, unapplied — switch back to Code to finish them.');
+  }
   renderRail();
 
   const main = document.getElementById('main');
   main.innerHTML = '';
+  if (state.code) {
+    main.className = 'slice wide code-view';
+    return renderCode(model, main);
+  }
   main.className = 'slice'
     + (['overview', 'coupling', 'rulemap', 'eventmodel', 'lifecycles'].includes(state.view) ? ' wide' : '');
 
@@ -11957,6 +12025,540 @@ function renderSandbox(model, main) {
   // value states.
   const watched = sandboxWatched(model);
   if (watched) main.appendChild(watched);
+}
+
+// ============================================================
+// Code — the whole model as text (see dsl.js), edited in place.
+//
+// A second surface over the same definitions rather than a page among
+// the others: the toggle in the bar swaps the main area between the
+// pages and the text, and the two follow each other. Opening the code
+// lands on whatever definition the page was showing; going back lands
+// on the page of the definition the cursor is in. The rail stays, and
+// a click on a command, entity, event or projection reveals it in the
+// text; a click on anything else (the sandbox, the overviews) shows
+// that page, keeping whatever was typed.
+//
+// The text is a draft until applied — ⌘S, the Apply button, or going
+// back to the pages, which applies a text that parses and keeps one
+// that does not. An apply is one append (`replaceDefinitions`) and so
+// one undo step. What the author typed stays in the editor after an
+// apply, comments and all; it is replaced by a fresh print only when
+// the model changes under a clean text (an undo, an agent, another
+// page). A text with edits is never replaced — it is marked stale
+// instead, since applying it now would put back what changed.
+//
+// Monaco is the editor when it loads (the same lazily loaded copy the
+// scripted handlers use, see shared.js), with the grammar from dsl.js,
+// errors and advisories as markers, go-to-definition, an outline and
+// a hover showing each command's derived boundary; a plain textarea
+// otherwise, which is everything that is needed.
+// ============================================================
+
+const SURFACE_KEY = 'dcb-playground:surface';
+function setCodeSurface(on) {
+  state.code = on;
+  localStorage.setItem(SURFACE_KEY, on ? 'code' : 'visual');
+}
+
+// The pages that are one definition each — what the code follows.
+const CODE_FOLLOWS = ['slice', 'entity', 'events', 'projections', 'types'];
+
+const codeView = {
+  modelId: null,
+  text: '',             // what the editor holds
+  base: '',             // the text the model is known to say
+  printed: '',          // the model's own print at `revision`
+  revision: -1,
+  stale: false,         // the model moved under a text with edits
+  shownView: null,      // the page state the code was last shown over
+  focus: null,          // the definition last revealed for it
+  analysis: null,       // { text, parsed, errors, advisories }
+  editor: null,         // { root, editor, model } once Monaco is up
+  loading: false,       // writing into Monaco, not the author typing
+  timer: null,
+  statusEl: null,
+  listEl: null,
+  drafts: new Map(),    // model id → a text left unapplied on another model
+};
+
+function codeDirty() { return codeView.text !== codeView.base; }
+
+// Brings the held text up to date with the model it is about.
+function syncCodeView(model) {
+  const now = logRevisionNow();
+  if (codeView.modelId !== model.id) {
+    if (codeView.modelId && codeDirty()) codeView.drafts.set(codeView.modelId, { ...codeView });
+    const kept = codeView.drafts.get(model.id);
+    codeView.drafts.delete(model.id);
+    const printed = modelSource(model);
+    Object.assign(codeView, kept
+      ? { text: kept.text, base: kept.base, printed: kept.printed, revision: kept.revision }
+      : { text: printed, base: printed, printed, revision: now });
+    codeView.modelId = model.id;
+    codeView.stale = !!kept && (kept.stale || kept.printed !== printed);
+    codeView.focus = null;
+    codeView.analysis = null;
+    return;
+  }
+  if (codeView.revision === now) return;
+  const printed = modelSource(model);
+  codeView.revision = now;
+  if (printed === codeView.printed) return; // a scenario moved; the text did not
+  codeView.printed = printed;
+  if (codeDirty()) { codeView.stale = true; return; }
+  codeView.text = printed;
+  codeView.base = printed;
+  codeView.stale = false;
+  codeView.analysis = null;
+  writeCodeEditor(printed);
+}
+
+function analyseCode(model) {
+  if (codeView.analysis && codeView.analysis.text === codeView.text) return codeView.analysis;
+  const parsed = parseModelSource(codeView.text);
+  const errors = parsed.diagnostics;
+  const advisories = errors.length ? [] : sourceAdvisories(model, parsed);
+  codeView.analysis = { text: codeView.text, parsed, errors, advisories };
+  return codeView.analysis;
+}
+
+function onCodeInput(text) {
+  codeView.text = text;
+  clearTimeout(codeView.timer);
+  codeView.timer = setTimeout(refreshCodeChrome, 250);
+}
+
+// The parts of the page that follow the text — markers, status, the
+// problem list — without a repaint, which would cost the editor its
+// focus on every keystroke.
+function refreshCodeChrome() {
+  const model = activeModel();
+  if (!model || !state.code) return;
+  const analysis = analyseCode(model);
+  if (codeView.editor) {
+    const toMarker = (severity) => (d) => ({
+      severity, message: d.message,
+      startLineNumber: d.line, startColumn: d.col, endLineNumber: d.endLine, endColumn: d.endCol,
+    });
+    const markers = [
+      ...analysis.errors.map(toMarker(monaco.MarkerSeverity.Error)),
+      ...codeAdvisoryAt(analysis).map(toMarker(monaco.MarkerSeverity.Warning)),
+    ];
+    monaco.editor.setModelMarkers(codeView.editor.model, 'dcb', markers);
+  }
+  if (codeView.statusEl) codeView.statusEl.replaceWith(codeView.statusEl = codeControls());
+  if (codeView.listEl) codeView.listEl.replaceWith(codeView.listEl = codeProblemList(analysis));
+  const toggle = document.querySelector('#tools .surface');
+  if (toggle) toggle.replaceWith(surfaceToggle(model));
+}
+
+// Advisories, placed on the name of the definition they are about.
+function codeAdvisoryAt(analysis) {
+  return analysis.advisories.map((a) => {
+    const span = sourceSpanOf(analysis.parsed, a.kind, a.name);
+    return {
+      message: a.message, kind: a.kind, name: a.name,
+      line: span ? span.nameLine : 1, col: span ? span.nameCol : 1,
+      endLine: span ? span.nameLine : 1, endCol: span ? span.nameEndCol : 2,
+    };
+  });
+}
+
+function codeStatus() {
+  const analysis = codeView.analysis;
+  const errors = analysis ? analysis.errors.length : 0;
+  const advisories = analysis ? analysis.advisories.length : 0;
+  const parts = [];
+  if (codeView.stale) {
+    parts.push(h('span', { class: 'code-stale' }, 'The model changed since these edits began — applying puts back what changed. '),
+      h('button', { class: 'btn tiny ghost', onclick: revertCode }, 'Discard my edits'));
+  } else if (errors) {
+    parts.push(h('span', { class: 'code-bad' }, `${errors} error${errors === 1 ? '' : 's'} — nothing can be applied yet`));
+  } else if (codeDirty()) {
+    parts.push(h('span', { class: 'code-dirty' }, 'Edited — not applied yet'));
+  } else {
+    parts.push(h('span', { class: 'muted' }, 'In step with the model'));
+  }
+  if (!errors && advisories) parts.push(h('span', { class: 'muted' }, ` · ${advisories} advisor${advisories === 1 ? 'y' : 'ies'}`));
+  return h('span', { class: 'code-status small' }, parts);
+}
+
+// Apply, Revert and the status — the part of the bar that follows
+// every keystroke.
+function codeControls() {
+  return h('span', { class: 'code-controls' },
+    h('button', {
+      class: 'btn primary tiny', type: 'button', title: 'Apply — ⌘S',
+      disabled: !codeDirty() ? true : null, onclick: applyCode,
+    }, 'Apply'),
+    h('button', {
+      class: 'btn tiny', type: 'button', title: 'Put back what the model says',
+      disabled: !codeDirty() ? true : null, onclick: revertCode,
+    }, 'Revert'),
+    codeStatus());
+}
+
+function codeProblemList(analysis) {
+  const rows = [
+    ...analysis.errors.map((d) => ({ ...d, error: true })),
+    ...codeAdvisoryAt(analysis),
+  ];
+  if (!rows.length) return h('div', { class: 'code-problems' });
+  return h('div', { class: 'code-problems' }, rows.map((d) => h('button', {
+    class: 'issue', type: 'button',
+    onclick: () => revealCodeAt(d.line, d.col),
+  }, h('span', { class: 'diag-mark' + (d.error ? ' err' : '') }, d.error ? '✕' : '⚠'),
+    h('span', { class: 'mono' }, `${d.line}:${d.col}`),
+    h('span', { class: 'why' }, d.name ? `${readable(d.name)} — ${d.message}` : d.message))));
+}
+
+function applyCode() {
+  const model = activeModel();
+  if (!model) return false;
+  // A text is only ever applied to the model it was written against —
+  // a model switched under it parks it as that model's draft instead.
+  syncCodeView(model);
+  if (!codeDirty()) return false;
+  const analysis = analyseCode(model);
+  if (analysis.errors.length) {
+    refreshCodeChrome();
+    const first = analysis.errors[0];
+    toast(`Line ${first.line}: ${first.message}`, true);
+    revealCodeAt(first.line, first.col);
+    return false;
+  }
+  const text = codeView.text;
+  const summary = run(() => {
+    const out = applyModelSource(model.id, text);
+    // The text is what the model now says, whatever its print would
+    // be — settled before the gesture's repaint reads it.
+    codeView.base = text;
+    codeView.printed = modelSource(activeModel());
+    codeView.revision = logRevisionNow();
+    codeView.stale = false;
+    return out;
+  });
+  if (!summary) return false;
+  toast('Applied — ' + sourceApplySummary(summary));
+  return true;
+}
+
+function revertCode() {
+  const model = activeModel();
+  if (!model) return;
+  const printed = modelSource(model);
+  Object.assign(codeView, { text: printed, base: printed, printed, revision: logRevisionNow(), stale: false, analysis: null });
+  writeCodeEditor(printed);
+  render();
+}
+
+// Into the code view, revealing what the page was about.
+function enterCode() {
+  if (state.code) return;
+  closeForms(); // commits whatever a page had half-typed
+  setCodeSurface(true);
+  codeView.shownView = null;
+  codeView.focus = null;
+  render();
+}
+
+// Back to the pages: a text that parses is applied first, one that
+// does not is kept for later; the page is the one for the definition
+// under the cursor.
+function leaveCode() {
+  if (!state.code) return;
+  const model = activeModel();
+  let at = null;
+  if (model) {
+    syncCodeView(model);
+    const analysis = analyseCode(model);
+    const line = codeCursorLine();
+    at = line ? sourceSpanAt(analysis.parsed, line) : null;
+    if (codeDirty() && !codeView.stale) {
+      if (analysis.errors.length) {
+        toast(`The code has ${analysis.errors.length} error${analysis.errors.length === 1 ? '' : 's'} and was not `
+          + 'applied — it is kept as it is for when you come back.', true);
+      } else if (!applyCode()) {
+        return;
+      }
+    } else if (codeDirty()) {
+      toast('Your edits were not applied — the model changed under them. They are kept for when you come back.', true);
+    }
+  }
+  setCodeSurface(false);
+  const current = activeModel();
+  if (at && current && current[DEF_COLLECTIONS[at.kind]][at.name] !== undefined) {
+    return openDefinition(at.kind, at.name);
+  }
+  render();
+}
+
+function openDefinition(kind, name) {
+  if (kind === 'command-definition') return goToCommand(name);
+  if (kind === 'entity-definition') return openEntity(name);
+  if (kind === 'event-definition') return goToEvent(name);
+  if (kind === 'projection-definition') return goToProjection(name);
+  if (kind === 'custom-type-definition' && advanced()) return goToCustomType(name);
+  render();
+}
+
+// The definition the page in front of the code is about, if it is
+// about one.
+function pageDefinition() {
+  if (state.view === 'slice' && state.slice) return ['command-definition', state.slice];
+  if (state.projDraft && ['entity', 'projections'].includes(state.view)) {
+    return ['projection-definition', state.projDraft.name];
+  }
+  if (state.view === 'entity' && state.entity) return ['entity-definition', state.entity];
+  if (state.view === 'events' && state.openEvent) return ['event-definition', state.openEvent];
+  return null;
+}
+
+function codeCursorLine() {
+  if (codeView.editor) {
+    const position = codeView.editor.editor.getPosition();
+    return position ? position.lineNumber : null;
+  }
+  const area = document.querySelector('.code-text');
+  if (!area || typeof area.value !== 'string') return null;
+  return area.value.slice(0, area.selectionStart).split('\n').length;
+}
+
+// `from` is where a whole declaration starts — its annotations — and
+// is put near the top, the way a jump to a definition reads.
+function revealCodeAt(line, col, from) {
+  if (codeView.editor) {
+    const { editor } = codeView.editor;
+    if (from) editor.revealLineNearTop(from);
+    else editor.revealLineInCenterIfOutsideViewport(line);
+    editor.setPosition({ lineNumber: line, column: col || 1 });
+    editor.focus();
+    return;
+  }
+  const area = document.querySelector('.code-text');
+  if (!area || typeof area.value !== 'string') return;
+  const lines = area.value.split('\n');
+  const offset = lines.slice(0, line - 1).reduce((sum, l) => sum + l.length + 1, 0) + (col || 1) - 1;
+  area.focus();
+  area.setSelectionRange(offset, offset);
+  // A textarea scrolls to its caret only when it gains focus; put the
+  // line near the top explicitly.
+  area.scrollTop = Math.max(0, ((from || line) - 4) * parseFloat(getComputedStyle(area).lineHeight || '18'));
+}
+
+// A text the model put there, never one the author typed — so it is a
+// fresh start for the editor's own undo, too. Were it an edit, ⌘Z in
+// the editor could step back to another model's text, or to one from
+// before an agent's change, and that would read as ordinary typing:
+// dirty, not stale, and applied on the way back to the pages.
+function writeCodeEditor(text) {
+  if (!codeView.editor) return;
+  const { editor, model } = codeView.editor;
+  if (model.getValue() === text) return;
+  const view = editor.saveViewState();
+  codeView.loading = true;
+  model.setValue(text);
+  codeView.loading = false;
+  if (view) editor.restoreViewState(view);
+}
+
+let sourceLanguageRegistered = false;
+function registerSourceLanguage() {
+  if (sourceLanguageRegistered) return;
+  sourceLanguageRegistered = true;
+  const L = monaco.languages;
+  L.register({ id: 'dcb', extensions: [SOURCE_EXTENSION] });
+  L.setMonarchTokensProvider('dcb', SOURCE_MONARCH);
+  const pairs = [{ open: '{', close: '}' }, { open: '[', close: ']' }, { open: '(', close: ')' }];
+  L.setLanguageConfiguration('dcb', {
+    comments: { lineComment: '//', blockComment: ['/*', '*/'] },
+    brackets: [['{', '}'], ['[', ']'], ['(', ')']],
+    autoClosingPairs: [...pairs, { open: '"', close: '"', notIn: ['string'] }],
+    surroundingPairs: [...pairs, { open: '"', close: '"' }],
+  });
+  const parsed = () => {
+    const model = activeModel();
+    return model ? analyseCode(model).parsed : null;
+  };
+  const SYMBOL = {
+    'custom-type-definition': 'TypeParameter',
+    'event-definition': 'Event',
+    'entity-definition': 'Class',
+    'projection-definition': 'Function',
+    'command-definition': 'Method',
+  };
+  const nameRange = (span) => new monaco.Range(span.nameLine, span.nameCol, span.nameLine, span.nameEndCol);
+  L.registerCompletionItemProvider('dcb', {
+    provideCompletionItems: (textModel, position) => {
+      const word = textModel.getWordUntilPosition(position);
+      const range = new monaco.Range(position.lineNumber, word.startColumn, position.lineNumber, word.endColumn);
+      const read = parsed();
+      const names = read ? read.spans.map((span) => ({
+        label: span.name, kind: L.CompletionItemKind[SYMBOL[span.kind]], detail: SOURCE_KEYWORD[span.kind],
+        insertText: span.name, range,
+      })) : [];
+      const words = [...SOURCE_KEYWORDS, ...SOURCE_BASE_TYPES].map((k) => ({
+        label: k, kind: L.CompletionItemKind.Keyword, insertText: k, range,
+      }));
+      return { suggestions: [...names, ...words] };
+    },
+  });
+  L.registerDefinitionProvider('dcb', {
+    provideDefinition: (textModel, position) => {
+      const word = textModel.getWordAtPosition(position);
+      const read = parsed();
+      if (!word || !read) return null;
+      const span = read.spans.find((s) => s.name === word.word);
+      return span ? { uri: textModel.uri, range: nameRange(span) } : null;
+    },
+  });
+  L.registerDocumentSymbolProvider('dcb', {
+    provideDocumentSymbols: () => {
+      const read = parsed();
+      return read ? read.spans.map((span) => ({
+        name: span.name, detail: SOURCE_KEYWORD[span.kind], kind: L.SymbolKind[SYMBOL[span.kind]], tags: [],
+        range: new monaco.Range(span.line, span.col, span.endLine, span.endCol), selectionRange: nameRange(span),
+      })) : [];
+    },
+  });
+  // A command's derived boundary, on its name — the question the tool
+  // exists to answer, asked of the text before it is applied.
+  L.registerHoverProvider('dcb', {
+    provideHover: (textModel, position) => {
+      const model = activeModel();
+      const word = textModel.getWordAtPosition(position);
+      if (!model || !word) return null;
+      const analysis = analyseCode(model);
+      const span = analysis.parsed.spans.find((s) => s.kind === 'command-definition'
+        && s.nameLine === position.lineNumber && s.nameCol === word.startColumn);
+      if (!span) return null;
+      const draft = sourceDraftModel(model, analysis.parsed);
+      let dcb;
+      try { dcb = deriveDcb(draft, draft['command-definitions'][span.name]); } catch { return null; }
+      const lines = dcb.items.map((item) => `- \`${item.alias}\`${item.fannedOut ? ' (each)' : ''}: `
+        + `${item.tags.length ? item.tags.map((t) => `\`${t}\``).join(' ∧ ') : 'no tag'}`
+        + `${item.types.length ? ` · ${item.types.join(', ')}` : ''}`);
+      return {
+        range: nameRange(span),
+        contents: [
+          { value: '**Consistency boundary** — the append condition this command derives' },
+          { value: lines.length ? lines.join('\n') : 'Reads nothing: the append is unconditional.' },
+          ...(dcb.writes.length ? [{ value: `Writes tags ${dcb.writes.map((t) => `\`${t}\``).join(', ')}` }] : []),
+        ],
+      };
+    },
+  });
+}
+
+function createCodeEditor() {
+  registerSourceLanguage();
+  const root = h('div', { class: 'code-editor' });
+  const uri = monaco.Uri.parse('inmemory://model/model' + SOURCE_EXTENSION);
+  const model = monaco.editor.getModel(uri) || monaco.editor.createModel(codeView.text, 'dcb', uri);
+  const editor = monaco.editor.create(root, {
+    model,
+    automaticLayout: true,
+    minimap: { enabled: false },
+    fontSize: 12.5,
+    lineHeight: 19,
+    fontFamily: scriptEditorFont(),
+    tabSize: 2,
+    scrollBeyondLastLine: false,
+    wordBasedSuggestions: 'off',
+    fixedOverflowWidgets: true,
+    renderLineHighlight: 'line',
+    padding: { top: 8, bottom: 8 },
+    scrollbar: { alwaysConsumeMouseWheel: false },
+  });
+  editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, applyCode);
+  editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, applyCode);
+  model.onDidChangeContent(() => { if (!codeView.loading) onCodeInput(model.getValue()); });
+  // Escape belongs to the editor's own widgets, never to the page.
+  root.addEventListener('keydown', (e) => { if (e.key === 'Escape') e.stopPropagation(); });
+  return { root, editor, model };
+}
+
+function codeEditorElement() {
+  if (scriptEditorPhase !== 'ready') {
+    ensureScriptEditorLoaded();
+    return h('textarea', {
+      class: 'code-text mono', spellcheck: 'false', value: codeView.text,
+      oninput: (e) => onCodeInput(e.target.value),
+      onkeydown: (e) => {
+        if (e.key === 'Escape') { e.stopPropagation(); return; }
+        const key = e.key.toLowerCase();
+        if ((e.metaKey || e.ctrlKey) && (key === 's' || key === 'enter')) {
+          e.preventDefault();
+          e.stopPropagation();
+          applyCode();
+        }
+      },
+    });
+  }
+  if (!codeView.editor) codeView.editor = createCodeEditor();
+  writeCodeEditor(codeView.text);
+  monaco.editor.setTheme(isDark() ? 'vs-dark' : 'vs');
+  return codeView.editor.root;
+}
+
+function downloadCode(model) {
+  const blob = new Blob([codeView.text], { type: 'text/plain' });
+  const link = h('a', {
+    href: URL.createObjectURL(blob),
+    download: (toCamel(model.name) || 'model') + SOURCE_EXTENSION,
+  });
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+
+function renderCode(model, main) {
+  syncCodeView(model);
+  main.appendChild(h('header', {},
+    h('div', { class: 'name' }, 'Code',
+      hint('code', 'The model as code', [
+        'Every type, event, entity, projection and command on the other pages, as one text. '
+          + 'Edit it and apply with ⌘S; going back to the pages applies it too. An apply is one undo step.',
+        'Scenarios are not part of the text and are left as they are. Comments are not stored — '
+          + 'they last as long as the text in this editor.',
+        'Hover a command\'s name for the consistency boundary it derives; ⌘-click a name to go to it; '
+          + '⇧⌘O lists every definition.',
+      ])),
+    h('div', { class: 'muted small' }, 'The same definitions as the pages, written out.')));
+
+  codeView.statusEl = codeControls();
+  main.appendChild(h('div', { class: 'code-bar' },
+    codeView.statusEl,
+    h('span', { class: 'grow' }),
+    h('button', {
+      class: 'btn ghost tiny', type: 'button',
+      onclick: () => runAsync(async () => { await navigator.clipboard.writeText(codeView.text); toast('Copied.'); }),
+    }, 'Copy'),
+    h('button', { class: 'btn ghost tiny', type: 'button', onclick: () => downloadCode(model) },
+      'Download ' + SOURCE_EXTENSION)));
+
+  main.appendChild(codeEditorElement());
+  const analysis = analyseCode(model);
+  codeView.listEl = codeProblemList(analysis);
+  main.appendChild(codeView.listEl);
+
+  // Follow the page state: reveal the definition it is about whenever
+  // that changed since the code was last shown.
+  const target = pageDefinition();
+  const key = target ? target.join(':') : null;
+  const shown = codeView.shownView;
+  codeView.shownView = state.view;
+  if (key !== codeView.focus || shown === null) {
+    codeView.focus = key;
+    const span = target ? sourceSpanOf(analysis.parsed, target[0], target[1]) : null;
+    // After this paint has attached the editor — a timeout rather than
+    // a frame, which a background tab never gets.
+    setTimeout(() => {
+      if (span) revealCodeAt(span.nameLine, span.nameCol, span.line);
+      else if (codeView.editor) codeView.editor.editor.focus();
+    }, 0);
+  }
+  setTimeout(refreshCodeChrome, 0);
 }
 
 // Escape backs out of one layer, wherever the focus happens to be, and

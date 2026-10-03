@@ -128,6 +128,20 @@
     }),
   });
 
+  // The same model as code (dsl.js) — usually the shorter read, and
+  // the one an agent can edit as a whole with `apply_model_source`.
+  register({
+    name: 'get_model_source',
+    description: 'The open model as code — the playground\'s own model language, the text its '
+      + 'Code view edits: types, events, entities, projections and commands, without scenarios. '
+      + 'Usually far shorter than get_model. Edit it and send it back with apply_model_source.',
+    inputSchema: { type: 'object', properties: {} },
+    run: (model) => ({
+      summary: `read model "${model.name}" as code`,
+      payload: modelSource(model),
+    }),
+  });
+
   register({
     name: 'derive_boundary',
     description: 'The consistency boundary derived for one command: what it reads '
@@ -307,6 +321,32 @@
     run: (model, { kind, name }) => {
       removeDefinition(kind, model.id, name);
       return { summary: `removed ${humanize(kind)} "${name}"` };
+    },
+  });
+
+  register({
+    name: 'apply_model_source',
+    description: 'Replace the open model\'s definitions with the ones a whole model text declares '
+      + '(the text get_model_source returns, edited). Only what differs is written, as one undoable '
+      + 'step; a definition left out of the text is removed, and scenarios are left as they are. A '
+      + 'renamed definition is a removal plus an addition here — use rename_definition to move '
+      + 'references with it. A text with any error is refused whole, with every error and its line.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        source: { type: 'string', description: 'The whole model, as code.' },
+      },
+      required: ['source'],
+    },
+    mutates: true,
+    run: (model, { source }) => {
+      const errors = parseModelSource(source).diagnostics;
+      if (errors.length) {
+        throw new DomainError('Nothing was applied — the text has '
+          + `${errors.length} error${errors.length === 1 ? '' : 's'}:\n`
+          + errors.map((e) => `- line ${e.line}, column ${e.col}: ${e.message}`).join('\n'));
+      }
+      return { summary: 'applied code: ' + sourceApplySummary(applyModelSource(model.id, source)) };
     },
   });
 

@@ -35,6 +35,10 @@ documentation; read it before editing the file:
   command, resolves the boundary, folds projections, checks conditions,
   returns published events or the refusing rule. No DOM, no localStorage.
   Handlers compile to closures, never to generated source.
+- `dsl.js` — the model as _code_: prints a model in the playground's own
+  language, parses it back with positioned diagnostics, and applies a text
+  as the difference (`replaceDefinitions`, model.js — one append). Also the
+  Monaco grammar, as data. No DOM. The Code view in index.html is its UI.
 - `shared.js` — DOM helpers (`h(...)`), simple/advanced mode, the scripted-
   handler editor (Monaco behind a synthesized per-handler TypeScript preamble
   — the synthesis is pure and tested, the widget is not), and the _slice_
@@ -52,16 +56,17 @@ Monaco loads itself through its own AMD loader, outside that scope.)
 
 ## Commands
 
-Tests (plain Node, no runner — run all three after any change):
+Tests (plain Node, no runner — run all four after any change):
 
 ```
 node app/evaluate.test.js   # semantics, against the shipped example models
 node app/ui.test.js         # the pure layer under the interface
 node app/webmcp.test.js     # WebMCP tool seam
+node app/dsl.test.js        # the code view's language: round trips, apply
 ```
 
 The DOM stub, sandbox, script loader and assertions live once in
-`app/test-harness.js`, `require`d by all three suites.
+`app/test-harness.js`, `require`d by all four suites.
 
 Generated files — regenerate, never hand-edit:
 
@@ -410,6 +415,23 @@ it never works from `file:`.
   if one was authored — there is no hashed fallback, and `iconPrefix`
   is what keeps an unmarked name from rendering behind a stray space.
 
+- **The code view's language is a spelling of the wire format** (`dsl.js`,
+  research in `docs/research/2026-10-03-code-view-language.md`): every
+  construct is one schema shape, so print and parse are each other's
+  inverse and nothing is inferred. Printing is **lossless by contract**:
+  each definition is printed, parsed back and compared
+  (`sameDefinition`), and one that does not survive is written as its
+  stored JSON (`command Foo json { … }`) under a comment saying why. A
+  test holds every shipped model and example file free of fallbacks —
+  so **a new wire-format construct needs a spelling in the printer and
+  the parser**, or that test fails the moment a predefined model uses
+  it. Applying writes only the difference, through `replaceDefinitions`
+  (one append, one undo step, nothing for an untouched text); like an
+  import it never prunes reads. Scenarios are not in the text and an
+  apply leaves them alone; a rename in the text is a remove plus an add.
+  Operand names resolve per command — a read when a `read` declares
+  the name, a payload property otherwise — so a parameter and a read
+  sharing a name is the one ordinary case that falls back to JSON.
 - **Comment style**: file headers and block comments carry design rationale,
   not line-by-line narration. Match that register; keep headers truthful when
   behaviour changes.

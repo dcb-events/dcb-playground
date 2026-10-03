@@ -1,5 +1,5 @@
 // ============================================================
-// Shared harness for the three suites. The DOM stub is the contract
+// Shared harness for the four suites. The DOM stub is the contract
 // between index.html and the tests — it lives here once, so ui and
 // webmcp cannot drift onto different fakes — and the loader is the
 // one place that knows how the browser concatenates the scripts.
@@ -113,7 +113,7 @@ function loadApp(sandbox, files, { withPage = false, trailer = '' } = {}) {
 
 // `check` records, `eq` asserts, `finish` prints the tally and sets
 // the exit code. `check` follows its function: a sync body is recorded
-// on the spot, an async one when it settles — one pair for all three
+// on the spot, an async one when it settles — one pair for all four
 // suites, awaited only where a suite is actually async.
 function makeChecker() {
   let passed = 0;

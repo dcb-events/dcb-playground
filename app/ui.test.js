@@ -28,10 +28,10 @@ const { sandbox, store } = createSandbox();
 // scope, not as properties of the context object — the same as they
 // would on `window` in a browser. The trailer hands out the few this
 // drives, the way `generate-examples.js` reaches `PREDEFINED_MODELS`.
-loadApp(sandbox, ['model.js', 'evaluate.js', 'shared.js'], {
+loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js', 'shared.js'], {
   withPage: true,
   trailer: 'globalThis.state = state; globalThis.render = render; globalThis.session = session;'
-    + ' globalThis.closeForms = closeForms;',
+    + ' globalThis.closeForms = closeForms; globalThis.codeView = codeView;',
 });
 const { check, eq, finish } = makeChecker();
 
@@ -3844,6 +3844,51 @@ function build(index) {
         }
       }
     }
+  });
+
+  check('the code view paints, and going back to the pages applies what was typed', () => {
+    const { id, model: m } = build(0);
+    store.set('dcb-playground:model', id);
+    const { state } = sandbox;
+    Object.assign(state, { view: 'slice', slice: 'ArchiveCourse', code: false });
+    sandbox.enterCode();
+    eq(state.code, true, 'in the code');
+    const main = sandbox.document.createElement('div');
+    sandbox.renderCode(m(), main);
+    const text = textOf(main);
+    eq(text.includes('In step with the model'), true, 'a clean text says so');
+    eq(findAll(main, (n) => n.tag === 'textarea').length, 1, 'the textarea, with no Monaco to load');
+    const codeView = sandbox.codeView;
+    sandbox.onCodeInput(codeView.text.replace('emit CourseArchived { courseId }', 'emit CourseCapacityChanged { courseId }'));
+    eq(sandbox.codeDirty(), true, 'edited');
+    sandbox.leaveCode();
+    eq(state.code, false, 'back on the pages');
+    eq(m()['command-definitions'].ArchiveCourse.publishes[0].name, 'CourseCapacityChanged', 'applied on the way');
+    eq(sandbox.codeDirty(), false, 'and the text is what the model says');
+  });
+
+  check('a text the model moved under stays stale through a model switch, and is never applied', () => {
+    const { id, model: m } = build(0);
+    const other = createDcbModel('Other');
+    const { state, codeView } = sandbox;
+    store.set('dcb-playground:model', id);
+    Object.assign(state, { view: 'slice', slice: 'ArchiveCourse', code: true });
+    const paint = () => sandbox.renderCode(sandbox.activeModel(), sandbox.document.createElement('div'));
+    paint();
+    sandbox.onCodeInput(codeView.text.replace('student.subscriptionCount < 10', 'student.subscriptionCount < 12'));
+    const body = JSON.parse(JSON.stringify(m()['command-definitions'].ArchiveCourse));
+    body.publishes[0].name = 'CourseCapacityChanged';
+    updateDefinition('command-definition', id, 'ArchiveCourse', body);
+    paint();
+    eq(codeView.stale, true, 'stale on its own model');
+    store.set('dcb-playground:model', other);
+    paint();
+    eq(sandbox.codeDirty(), false, 'the other model has its own text');
+    store.set('dcb-playground:model', id);
+    paint();
+    eq([codeView.stale, sandbox.codeDirty()], [true, true], 'still stale, still edited, when it comes back');
+    sandbox.leaveCode();
+    eq(m()['command-definitions'].ArchiveCourse.publishes[0].name, 'CourseCapacityChanged', 'the change it missed survives');
   });
 
   check('the page paints, guarded emissions and all', () => {

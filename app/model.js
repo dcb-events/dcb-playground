@@ -305,8 +305,8 @@ function apply(models, event) {
     models[modelId] = emptyModel(modelId, data.name);
     return;
   }
-  // Nothing appends this any more — the command that did was removed
-  // unused — but a stored log may still carry one, so it stays foldable.
+  // Appended by `replaceDefinitions` when the code view's `model "…"`
+  // header changed — the one way to rename a model.
   if (type === 'dcb-model-renamed') {
     if (models[modelId]) models[modelId].name = data.name;
     return;
@@ -4052,6 +4052,156 @@ function reorderDefinitions(kind, modelId, order) {
     throw new DomainError(`Reordering ${humanize(kind)}s must name every one of them, exactly once.`);
   }
   appendEvents([{ type: `${kind}-reordered`, data: { 'dcb-model-id': modelId, order } }]);
+}
+
+// Two bodies that say the same thing. Stored bodies spell their
+// defaults inconsistently — `isList: false` here, absent there, `when:
+// []` on one emission and nothing on the next — and a writer that
+// compared them literally would rewrite half a model to change one
+// rule. So the defaults the schema names are dropped before comparing,
+// as are key order and empty containers.
+//
+// Only on the schema's own keys, though. An operand, and the
+// author-keyed maps of them (an emission's `parameters`, a read's
+// `arguments`), hold values rather than definition — `false`, `[]` and
+// a property that happens to be called `isList` are content there —
+// so they are compared as written, key order aside; the one thing
+// dropped inside them is an empty `arguments`, which says "none" the
+// same way its absence does. Data (`schema`, `initialState`,
+// `initialValue`) is compared as written too. `rightHandSide`, `derived`
+// and `script` keep their empties: `equalsAny []` holds for nothing,
+// and an empty `derived` or `script` still decides what kind of
+// projection this is.
+const DEFAULT_FLAGS = ['isOptional', 'isList', 'negate', 'isTag'];
+const DATA_FIELDS = ['schema', 'initialState', 'initialValue'];
+const OPERAND_FIELDS = ['leftHandSide', 'rightHandSide', 'id', 'excluding', 'value', 'successor'];
+const OPERAND_MAPS = ['parameters', 'arguments'];
+const KEEPS_EMPTY = ['rightHandSide', 'tagFilter', 'derived', 'script'];
+
+// Keys are set as own properties: a key called `__proto__` is a key.
+function normalizedPut(out, key, value) {
+  Object.defineProperty(out, key, { value, enumerable: true, writable: true, configurable: true });
+}
+
+function isEmptyContainer(value) {
+  if (Array.isArray(value)) return !value.length;
+  return value !== null && typeof value === 'object' && !Object.keys(value).length;
+}
+
+function canonicalData(value) {
+  if (Array.isArray(value)) return value.map(canonicalData);
+  if (value === null || typeof value !== 'object') return value;
+  const out = {};
+  for (const key of Object.keys(value).sort()) normalizedPut(out, key, canonicalData(value[key]));
+  return out;
+}
+
+function canonicalOperand(value) {
+  if (Array.isArray(value)) return value.map(canonicalOperand);
+  if (value === null || typeof value !== 'object') return value;
+  const out = {};
+  for (const key of Object.keys(value).sort()) {
+    if (value[key] === undefined) continue;
+    if (key === 'arguments' && isEmptyContainer(value[key])) continue;
+    normalizedPut(out, key, canonicalOperand(value[key]));
+  }
+  return out;
+}
+
+function normalizedDefinition(value) {
+  if (Array.isArray(value)) return value.map(normalizedDefinition);
+  if (value === null || typeof value !== 'object') return value;
+  const out = {};
+  for (const key of Object.keys(value).sort()) {
+    const field = value[key];
+    if (field === undefined) continue;
+    if (DEFAULT_FLAGS.includes(key) && field === false) continue;
+    if (key === 'tagSchema' && field === '{type}:{value}') continue;
+    if (DATA_FIELDS.includes(key)) { normalizedPut(out, key, canonicalData(field)); continue; }
+    if (OPERAND_FIELDS.includes(key)) { normalizedPut(out, key, canonicalOperand(field)); continue; }
+    if (isEmptyContainer(field) && !KEEPS_EMPTY.includes(key)) continue;
+    if (OPERAND_MAPS.includes(key) && field !== null && typeof field === 'object' && !Array.isArray(field)) {
+      normalizedPut(out, key, canonicalOperand(field));
+      continue;
+    }
+    normalizedPut(out, key, normalizedDefinition(field));
+  }
+  return out;
+}
+
+function sameDefinition(a, b) {
+  return JSON.stringify(normalizedDefinition(a)) === JSON.stringify(normalizedDefinition(b));
+}
+
+// The whole model at once — every definition kind but the two scenario
+// kinds, as ordered `{ name: body }` maps — written as the difference
+// from what is stored: an added, updated, removed or reordered event
+// for exactly what changed, and all of them in one append, so a
+// gesture that rewrote the model from a text is one undo step and one
+// that changed nothing appends nothing. A body equal to its stored one
+// up to `sameDefinition` keeps the stored spelling.
+//
+// The code view is the writer this exists for, and it is why this is
+// a replacement and not a merge: a definition missing from the text is
+// one the author deleted. Scenarios are left alone because the text
+// does not carry them — a scenario whose command was renamed away is
+// broken and says so, the same as after a rename-by-delete anywhere.
+//
+// Only structure is refused, the same as every other writer (see
+// `assertStorableBody`); a body arriving whole keeps every read it came
+// with — pruning is the next *edit's* business, as for an import. Names
+// are trimmed like everywhere else, and a name the fold could not key
+// a collection by (`constructor`, `__proto__`) is refused.
+function replaceDefinitions(modelId, next) {
+  const model = getCtxOrThrow(modelId);
+  const has = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
+  const events = [];
+  const summary = { added: [], updated: [], removed: [], reordered: [], renamed: null };
+  if (next.name !== undefined && next.name !== null) {
+    const name = validateModelName(next.name);
+    if (name !== model.name) {
+      events.push({ type: 'dcb-model-renamed', data: { 'dcb-model-id': modelId, name } });
+      summary.renamed = name;
+    }
+  }
+  for (const kind of ADVISORY_KINDS) {
+    const current = model[DEF_COLLECTIONS[kind]];
+    const wanted = {};
+    for (const [key, body] of Object.entries(next.collections[kind] || {})) {
+      const name = validateDefinitionKey(kind, key, `${humanize(kind)} name`);
+      if (name in Object.prototype) throw new DomainError(`"${name}" cannot name a ${humanize(kind).toLowerCase()}.`);
+      if (has(wanted, name)) throw new DomainError(`Two ${humanize(kind).toLowerCase()}s are named "${name}".`);
+      assertStorableBody(kind, body);
+      wanted[name] = body;
+    }
+    const order = Object.keys(current);
+    for (const name of order) {
+      if (has(wanted, name)) continue;
+      events.push({ type: `${kind}-removed`, data: { 'dcb-model-id': modelId, name } });
+      summary.removed.push({ kind, name });
+    }
+    for (const [name, body] of Object.entries(wanted)) {
+      if (!has(current, name)) {
+        events.push({ type: `${kind}-added`, data: { 'dcb-model-id': modelId, name, body } });
+        summary.added.push({ kind, name });
+      } else if (!sameDefinition(current[name], body)) {
+        events.push({ type: `${kind}-updated`, data: { 'dcb-model-id': modelId, name, body } });
+        summary.updated.push({ kind, name });
+      }
+    }
+    // The order the fold will have produced — survivors where they
+    // were, additions at the end — against the order asked for.
+    const landed = [
+      ...order.filter((name) => has(wanted, name)),
+      ...Object.keys(wanted).filter((name) => !has(current, name)),
+    ];
+    if (landed.join('\n') !== Object.keys(wanted).join('\n')) {
+      events.push({ type: `${kind}-reordered`, data: { 'dcb-model-id': modelId, order: Object.keys(wanted) } });
+      summary.reordered.push({ kind });
+    }
+  }
+  if (events.length) appendEvents(events);
+  return summary;
 }
 
 // ============================================================
