@@ -763,4 +763,49 @@ check('completion knows scenarios, declarations, and when to stay quiet', () => 
     'an entity\'s properties, written below');
 });
 
+// ---------------------------------------------------------------
+// What a read queries.
+// ---------------------------------------------------------------
+
+check('a read says which events it adds — only those of the properties used', () => {
+  const { model } = build(0);
+  const text = modelToSource(model());
+  const queries = (source) => sandbox.sourceReadQueries(model(), parseModelSource(source));
+  const of = (list, command) => list.find((q) => q.command === command);
+
+  const archive = of(queries(text), 'ArchiveCourse');
+  eq(archive.hint, '‹CourseArchived, CourseDefined›', 'status only, no capacity events');
+  eq(archive.properties, [{ name: 'status', types: ['CourseArchived', 'CourseDefined'] }], 'per property');
+  eq(archive.unread, ['capacity', 'subscriptionCount', 'subscribedStudentIds'], 'what it leaves out');
+  eq(archive.reasons, ['rule'], 'why it is read');
+  const line = text.split('\n')[archive.start.line - 1];
+  eq(line.slice(archive.start.col - 1, archive.end.endCol - 1), 'read course = Course[courseId]', 'the statement');
+
+  eq(of(queries(text), 'SubscribeStudentToCourse').types.includes('CourseCapacityChanged'), true,
+    'a rule on capacity brings its events in');
+
+  // Nothing uses it: queried by tag alone, every event under it.
+  const unused = of(queries(text.replace('  require course.status == Existent\n\n  emit CourseArchived',
+    '  emit CourseArchived')), 'ArchiveCourse');
+  eq([unused.hint, unused.reasons, unused.properties], ['‹any type — unused›', [], []], 'an unused read');
+});
+
+check('a fanned-out read is marked, a projection read lists its events', () => {
+  PREDEFINED_MODELS.forEach((entry, index) => {
+    const { model } = build(index);
+    const text = modelToSource(model());
+    const all = sandbox.sourceReadQueries(model(), parseModelSource(text));
+    const reads = (text.match(/^\s+read /gm) || []).length;
+    eq(all.length, reads, `${entry.slug}: every read has a query`);
+    for (const q of all) {
+      eq(q.hint.includes('unused'), false, `${entry.slug} ${q.command} ${q.alias} is used`);
+      eq(q.hint.startsWith('‹each · '), q.fannedOut, `${entry.slug} ${q.command} ${q.alias} fan-out`);
+    }
+  });
+  const { model } = build(PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-sequence'));
+  const numbering = sandbox.sourceReadQueries(model(), parseModelSource(modelToSource(model())))
+    .find((q) => q.alias === 'courseNumbering');
+  eq([numbering.hint, numbering.tags, numbering.unread], ['‹CourseDefined›', [], []], 'a projection read');
+});
+
 finish();

@@ -452,6 +452,14 @@ it never works from `file:`.
   marks and a case in `sourceSymbols`**. Completion reads the cursor's
   context off the tokens, not the parse — the block being typed rarely
   parses.
+  A `read` names an instance, not what is queried of it — only the
+  properties something uses contribute events (`deriveDcb`) — so the
+  editor prints those types beside each read (`sourceReadQueries`);
+  don't add syntax that lists them, that is a derived fact authored
+  twice. Fold arms stay **keywords, not expressions** (`set`,
+  `increment`, …): the vocabulary is closed because it is analysed,
+  `script` is the expression door, and the reasoning is in the
+  `dsl.js` header — read it before adding `=> state + 1`.
 - **Comment style**: file headers and block comments carry design rationale,
   not line-by-line narration. Match that register; keep headers truthful when
   behaviour changes.

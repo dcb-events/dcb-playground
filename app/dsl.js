@@ -62,6 +62,23 @@
 // `Course[courseId]` for an entity instance — brackets for "look one
 // up by identifier", parentheses for a projection's arguments.
 //
+// **A fold arm is a keyword, not an expression.** `on E => set x`,
+// `increment` / `decrement` (integers), `append` / `remove` (lists):
+// the wire format's closed operation vocabulary, spelled as itself.
+// heklang writes `=> expr`, and `=> state + 1` could be parsed into
+// `increment 1` without loss; it is not, because an arm that looks
+// like an expression invites `state + 2 * event.data.n`, which no
+// operation stores. The vocabulary is closed because it is analysed,
+// not only run — what an editor offers per type (`operationsFor`),
+// whether a boolean only ever moves one way (`isMonotoneBoolean`),
+// which event moves a lifecycle — and a keyword shows that edge where
+// an expression would hide it. Arithmetic is what `script` is for: its
+// arms are expressions over `state`, `event` and `args`, behind a door
+// that says analysis stops there. Expect the list to stay short: each
+// new operation is a major (a reader fails on one it does not know)
+// and has to earn its place by being analysable — `max` / `min` and a
+// duplicate-free append are the candidates in sight.
+//
 // **Operand names resolve per command.** A bare or dotted lowercase
 // name is a read when some `read` in the same command declares it and
 // a payload property otherwise — the schema keeps the two apart, a
@@ -116,7 +133,10 @@
 // body the name may also hide in, a member whose enum the text cannot
 // tell, or a result that would not read back the same. Completion
 // (`sourceCompletions`) reads the cursor's place off the tokens before
-// it, since a text being typed rarely parses there.
+// it, since a text being typed rarely parses there. And beside every
+// `read` it prints the event types that read adds to the append
+// condition (`sourceReadQueries`) — only the used properties' — since
+// `read course = Course[courseId]` otherwise reads as the whole entity.
 // ============================================================
 
 const SOURCE_EXTENSION = '.dcb';
@@ -822,7 +842,8 @@ function parseModelSource(text, options = {}) {
     body.publishes = [];
     while (!is('}')) {
       guardBlock('}');
-      if (accept('read')) {
+      const readToken = accept('read');
+      if (readToken) {
         const aliasToken = ident('the name it is read as');
         const alias = aliasToken.v;
         const isOptional = !!accept('?');
@@ -844,6 +865,11 @@ function parseModelSource(text, options = {}) {
           mark(binding, 'projection', target);
         }
         mark(binding, 'alias', aliasToken);
+        // The statement's extent, for what the editor says about the
+        // read as a whole (`sourceReadQueries`) — not names, so nothing
+        // resolves or renames them.
+        mark(binding, 'statement', readToken);
+        mark(binding, 'statementEnd', last());
         if (isOptional) binding.isOptional = true;
         body.boundary.push(binding);
       } else if (accept('require')) {
@@ -1848,6 +1874,54 @@ function sourceAdvisories(model, parsed) {
   for (const kind of SOURCE_KINDS) {
     for (const [name, body] of Object.entries(parsed.collections[kind])) {
       for (const message of definitionAdvisories(draft, kind, name, body)) found.push({ kind, name, message });
+    }
+  }
+  return found;
+}
+
+// What each `read` adds to its command's append condition, as the text
+// stands. `read course = Course[courseId]` names an instance, not what
+// is queried of it: only the properties a rule, guard or emission
+// actually uses put their projections' events in the query
+// (`deriveDcb`), so a command testing `course.status` never conflicts
+// with a `CourseCapacityChanged`. The line says the opposite at a
+// glance, which is why the editor prints the event types beside it
+// (`hint`) and the rest — tag, per-property events, the properties
+// left out, why the read is made — on hover. One whose properties
+// nothing uses is queried by tag alone, every event under it, and the
+// hint says so rather than reading as empty.
+function sourceReadQueries(model, parsed) {
+  const draft = sourceDraftModel(model, parsed);
+  const found = [];
+  for (const [command, body] of Object.entries(parsed.collections['command-definition'])) {
+    let dcb;
+    let references;
+    try {
+      dcb = deriveDcb(draft, body);
+      references = bindingReferences(draft, body);
+    } catch { continue; }
+    for (const binding of body.boundary || []) {
+      const slots = (binding && parsed.marks.get(binding)) || {};
+      const item = dcb.items.find((i) => i.alias === binding.alias);
+      if (!slots.statement || !slots.statementEnd || !item) continue;
+      const entity = binding.entity !== undefined ? draft['entity-definitions'][binding.entity] : null;
+      const properties = ((entity && entity.properties) || []).filter((p) => p && p.name);
+      const read = properties.filter((p) => item.readProperties.includes(p.name));
+      const reasons = [...(references.get(binding.alias) || [])];
+      const types = item.types.length ? item.types.join(', ') : 'any type';
+      found.push({
+        command,
+        alias: binding.alias,
+        start: slots.statement,
+        end: slots.statementEnd,
+        tags: item.tags,
+        types: item.types,
+        fannedOut: !!item.fannedOut,
+        properties: read.map((p) => ({ name: p.name, types: projectionHandledTypes(draft, p.projection).sort() })),
+        unread: properties.filter((p) => !read.includes(p)).map((p) => p.name),
+        reasons,
+        hint: `‹${item.fannedOut ? 'each · ' : ''}${types}${reasons.length ? '' : ' — unused'}›`,
+      });
     }
   }
   return found;

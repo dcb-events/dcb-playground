@@ -1299,6 +1299,7 @@
     border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
   }
   .code-editor { overflow: hidden; }
+  .code-editor .code-read-hint { color: var(--muted); }
   .code-text {
     display: block; resize: vertical; padding: 10px 12px; color: var(--text);
     font-size: 12.5px; line-height: 19px; tab-size: 2; white-space: pre; overflow: auto;
@@ -12160,11 +12161,32 @@ function refreshCodeChrome() {
       ...codeAdvisoryAt(analysis).map(toMarker(monaco.MarkerSeverity.Warning)),
     ];
     monaco.editor.setModelMarkers(codeView.editor.model, 'dcb', markers);
+    // What each read queries, after it. A decoration, not an inlay
+    // hint: this Monaco cuts those at 43 characters, and a list of
+    // event types cut short drops exactly the one being looked for.
+    const { editor } = codeView.editor;
+    if (!codeView.editor.readHints) codeView.editor.readHints = editor.createDecorationsCollection();
+    codeView.editor.readHints.set(codeReadQueries(model).map((q) => ({
+      range: new monaco.Range(q.end.endLine, q.end.endCol, q.end.endLine, q.end.endCol),
+      options: { showIfCollapsed: true, after: { content: '\u00a0\u00a0' + q.hint, inlineClassName: 'code-read-hint' } },
+    })));
   }
   if (codeView.statusEl) codeView.statusEl.replaceWith(codeView.statusEl = codeControls());
   if (codeView.listEl) codeView.listEl.replaceWith(codeView.listEl = codeProblemList(analysis));
   const toggle = document.querySelector('#tools .surface');
   if (toggle) toggle.replaceWith(surfaceToggle(model));
+}
+
+// What each `read` adds to the append condition, for the text as it
+// stands: `read course = Course[courseId]` looks like the whole entity
+// and is only the properties something uses (sourceReadQueries, dsl.js).
+// Cached on the analysis, so it moves with the text.
+function codeReadQueries(model) {
+  const analysis = analyseCode(model);
+  if (analysis.readQueries === undefined) {
+    try { analysis.readQueries = sourceReadQueries(model, analysis.parsed); } catch { analysis.readQueries = []; }
+  }
+  return analysis.readQueries;
 }
 
 // Advisories, placed on the name of the definition they are about, and
@@ -12569,13 +12591,33 @@ function registerSourceLanguage() {
       return { actions, dispose() {} };
     },
   });
+  const readHover = (q) => {
+    const code = (words) => words.map((w) => `\`${w}\``).join(', ');
+    const types = q.types.length ? code(q.types) : 'any type';
+    return {
+      range: new monaco.Range(q.start.line, q.start.col, q.end.endLine, q.end.endCol),
+      contents: [
+        { value: `**Read \`${q.alias}\`** — what it adds to the append condition` },
+        { value: (q.tags.length ? `${code(q.tags)} ∧ ${types}` : `${types} (no tag — the whole log)`)
+          + (q.fannedOut ? ' — one per element' : '') },
+        ...(q.properties.length ? [{ value: q.properties
+          .map((p) => `- \`${q.alias}.${p.name}\`: ${p.types.length ? code(p.types) : 'no events'}`).join('\n') }] : []),
+        ...(q.unread.length ? [{ value: `Not read: ${code(q.unread)}` }] : []),
+        { value: q.reasons.length ? `Read for: ${q.reasons.join(', ')}` : 'Read for nothing — unused' },
+      ],
+    };
+  };
   // A command's derived boundary, on its name — the question the tool
-  // exists to answer, asked of the text before it is applied.
+  // exists to answer, asked of the text before it is applied. On a read,
+  // that read's share of it.
   L.registerHoverProvider('dcb', {
     provideHover: (textModel, position) => {
       const model = activeModel();
       const word = textModel.getWordAtPosition(position);
       if (!model || !word) return null;
+      const read = codeReadQueries(model).find((q) => new monaco.Range(q.start.line, q.start.col, q.end.endLine, q.end.endCol)
+        .containsPosition(position));
+      if (read) return readHover(read);
       const analysis = analyseCode(model);
       const span = analysis.parsed.spans.find((s) => s.kind === 'command-definition'
         && s.nameLine === position.lineNumber && s.nameCol === word.startColumn);
