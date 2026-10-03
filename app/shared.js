@@ -780,6 +780,7 @@ function sliceOf(model, commandName) {
       emission,
       event: model['event-definitions'][emission.name] || null,
       effects: effectsOf(model, emission.name),
+      standalone: projectionsHandling(model, emission.name),
     })),
     projections: projectionsRead(body),
     // Grouped by the trip to the store each read actually happens on,
@@ -1784,17 +1785,18 @@ const OPERATION_WORDS = {
 };
 
 function effectParts(effect) {
+  // A standalone projection (`projectionsHandling`) is its own subject;
+  // an entity property is named through its entity.
+  const subject = effect.entity
+    ? memberWords(readable(effect.entity), effect.property.name)
+    : readable(effect.projection);
   // A scripted handler has no operation and no operand to name — the
   // code is both, and nothing here reads it.
   if (effect.handler.code !== undefined) {
-    return {
-      subject: memberWords(readable(effect.entity), effect.property.name),
-      verb: 'is worked out by',
-      object: 'a script',
-    };
+    return { subject, verb: 'is worked out by', object: 'a script' };
   }
   return {
-    subject: memberWords(readable(effect.entity), effect.property.name),
+    subject,
     verb: OPERATION_WORDS[effect.handler.operation] || effect.handler.operation,
     object: operandWords(effect.handler.value),
   };

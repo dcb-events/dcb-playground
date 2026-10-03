@@ -6160,21 +6160,47 @@ function eventFields(model, emission, event) {
 
 function stepChanges(model, slice) {
   const cards = [];
-  for (const { emission, effects } of slice.emits) {
-    const rows = effects.map((effect) => {
+  for (const { emission, effects, standalone } of slice.emits) {
+    // Everything the event moves: entity properties, named through
+    // their entity, then the projections no entity binds — a model
+    // without entities keeps its state there, and an event that moves
+    // one does not "change nothing we know".
+    const changes = [
+      ...effects.map((effect) => ({
+        effect,
+        key: effect.entity + '.' + effect.property.name,
+        target: JSON.stringify([effect.entity, effect.property.name]),
+        ref: (text) => entityRef(model, effect.entity, { cls: 'op ent', text }),
+      })),
+      ...(standalone || []).map((effect) => ({
+        effect,
+        key: 'projection:' + effect.projection,
+        target: JSON.stringify({ projection: effect.projection }),
+        ref: (text) => projectionRef(model, effect.projection, { text }),
+      })),
+    ];
+    const rows = changes.map(({ effect, key, target, ref }) => {
       const p = effectParts(effect);
+      const projectionName = effect.projectionName || effect.projection;
+      // An entity property names its instance through the entity; a
+      // projection says which of its instances outright.
+      const args = effect.entity ? [] : changeArguments(model, emission, projectionName);
+      // A handler the event cannot reach is kept, never hidden — it is
+      // an advisory, and this is where it is wrong.
+      const missing = partitionTagsMissing(model, model['projection-definitions'][projectionName], emission.name);
       // A scripted handler has no operation/value for this form to
       // pre-fill — it is edited where its code is, in the projection's
       // own editor.
       const scripted = effect.handler.code !== undefined;
-      return qrow('div', {
-        cls: 'row',
-        key: 'chg:' + emission.name + ':' + effect.entity + '.' + effect.property.name,
-      },
+      return qrow('div', { cls: 'row', key: 'chg:' + emission.name + ':' + key },
         h('span', { class: 'sentence' },
-          entityRef(model, effect.entity, { cls: 'op ent', text: p.subject }), ' ',
+          ref(p.subject), ' ',
+          ...(args.length ? [h('span', { class: 'muted' }, 'for '),
+            ...args.flatMap((a, i) => [i ? ' and ' : null, opRef(a, emission.name)]), ' '] : []),
           h('span', { class: 'verb' }, p.verb), ' ',
-          opRef(effect.handler.value, emission.name, p.object)),
+          opRef(effect.handler.value, emission.name, p.object),
+          missing.length ? h('span', { class: 'muted tiny' },
+            ` — never fires: carries no ${missing.map(propertyWords).join(' or ')}`) : null),
         h('span', { class: 'grow' }),
         reveal(
           scripted ? null : h('button', {
@@ -6182,9 +6208,7 @@ function stepChanges(model, slice) {
             onclick: () => {
               closeForms();
               state.changeDraft = draftFromOperand({
-                eventName: emission.name,
-                target: JSON.stringify([effect.entity, effect.property.name]),
-                operation: effect.handler.operation,
+                eventName: emission.name, target, operation: effect.handler.operation,
               }, 'value', effect.handler.value);
               state.adder = 'chg:' + emission.name;
               render();
@@ -6192,7 +6216,7 @@ function stepChanges(model, slice) {
           }, 'Edit'),
           h('button', {
             class: 'btn tiny danger',
-            onclick: () => patch('projection-definition', effect.projectionName, (b) => {
+            onclick: () => patch('projection-definition', projectionName, (b) => {
               b.handlers = (b.handlers || []).filter((x) => x.event !== emission.name);
             }),
           }, '×')));
@@ -6203,10 +6227,50 @@ function stepChanges(model, slice) {
         h('span', { class: 'muted tiny' }, 'changes')),
       h('div', { style: 'margin-top:6px' },
         rows.length ? rows : h('div', { class: 'empty' }, 'Changes nothing we know.')),
-      changeAdder(model, emission.name)));
+      changeAdder(model, emission.name, emission)));
   }
   if (!cards.length) cards.push(h('div', { class: 'empty' }, 'Nothing to change until it records something.'));
   return step('changes', 'State changes', h('div', {}, cards));
+}
+
+// Which instance of a projection a change moves, in the emitting
+// command's own terms: for each parameter, the event field carrying its
+// tag, and what this command puts in that field — `Book exists` for
+// `isbn`, the one it was given. A field the emission leaves unset is
+// said as its path. Not said for a scripted projection, whose tags are
+// its filter's business.
+function changeArguments(model, emission, projectionName) {
+  const projection = model['projection-definitions'][projectionName];
+  const event = model['event-definitions'][emission.name];
+  if (!projection || !event || scriptOf(projection)) return [];
+  const typesOf = (type) => idLeavesOfType(model, type).map((leaf) => leaf.identifierType);
+  return (projection.parameters || []).flatMap((parameter) => {
+    const wanted = typesOf(parameter.propertyType);
+    return (event.properties || [])
+      .filter((p) => p && typesOf(p.propertyType).some((type) => wanted.includes(type)))
+      .map((p) => {
+        const operand = (emission.parameters || {})[p.name];
+        return operand !== undefined ? operand : { eventProperty: p.name };
+      });
+  });
+}
+
+// What a change targets: an entity property, `[entity, property]`, or a
+// projection no entity binds, `{projection}`. Both come down to the
+// projection that holds the handler; `word` is what its enum members
+// are labelled with in the value picker.
+function changeTargetOf(model, target) {
+  if (!target || target === NEW) return null;
+  const parsed = JSON.parse(target);
+  if (Array.isArray(parsed)) {
+    const { binding, projection } = entityPropertyTarget(model, parsed[0], parsed[1]);
+    return { projectionName: binding && binding.projection, projection, word: propertyWords(parsed[1]) };
+  }
+  return {
+    projectionName: parsed.projection,
+    projection: model['projection-definitions'][parsed.projection] || null,
+    word: readable(parsed.projection),
+  };
 }
 
 // The "does what" control. A picker while there is a choice, and the
@@ -6222,7 +6286,7 @@ function operationControl(operations, draft) {
     (v) => { draft.operation = v; draft.touched = true; render(); });
 }
 
-function changeAdder(model, eventName) {
+function changeAdder(model, eventName, emission) {
   const event = model['event-definitions'][eventName];
 
   if (state.newEntityAt === 'changes:' + eventName) {
@@ -6245,7 +6309,26 @@ function changeAdder(model, eventName) {
       onCancel: () => { state.newEntityAt = null; render(); },
     });
   }
-  if (!Object.keys(model['entity-definitions']).length) {
+  // A scripted or derived projection is not offered here: this form
+  // writes an operation and an operand, and neither takes one — code
+  // is edited where the code is, and nothing moves a derived value.
+  // Nor one this event cannot reach: a projection kept per copy id is
+  // not moved by an event that carries no copy id, whichever one it is
+  // (`partitionTagsMissing`).
+  const settable = (projection) => !!projection && !scriptOf(projection) && !derivedOf(projection)
+    && !partitionTagsMissing(model, projection, eventName).length;
+  const hasEntities = Object.keys(model['entity-definitions']).length > 0;
+  // Beside the entity properties, every projection no entity binds — a
+  // bound one is already offered as its entity's property, and offering
+  // it twice would be one handler reachable under two names.
+  const standaloneTargets = Object.keys(model['projection-definitions']).sort()
+    .filter((name) => !boundAs(model, name).length && settable(model['projection-definitions'][name]))
+    .map((name) => {
+      const args = emission ? changeArguments(model, emission, name).map(operandWords) : [];
+      return [JSON.stringify({ projection: name }),
+        'projection' + GROUP_SEP + readable(name) + (args.length ? ' for ' + args.join(' and ') : '')];
+    });
+  if (!hasEntities && !standaloneTargets.length) {
     return h('div', { class: 'adder' },
       h('span', { class: 'muted tiny' }, 'no entities'),
       h('button', {
@@ -6254,28 +6337,26 @@ function changeAdder(model, eventName) {
       }, '+ New entity'));
   }
 
-  // A scripted or derived projection is not offered here: this form
-  // writes an operation and an operand, and neither takes one — code
-  // is edited where the code is, and nothing moves a derived value.
   const targets = [
     ...Object.entries(model['entity-definitions']).flatMap(([name, entity]) =>
       (entity.properties || [])
-        .filter((p) => {
-          const target = entityPropertyTarget(model, name, p.name).projection;
-          return !scriptOf(target) && !derivedOf(target);
-        })
+        .filter((p) => settable(entityPropertyTarget(model, name, p.name).projection))
         .map((p) =>
           [JSON.stringify([name, p.name]),
             `${iconPrefix(entityIcon(model, name))}${readable(name)} · ${propertyWords(p.name)}`])),
-    [NEW, '+ New property…'],
+    ...standaloneTargets,
+    // A new property lands on an entity, so it is offered only where
+    // there is one to land on.
+    ...(hasEntities ? [[NEW, '+ New property…']] : []),
   ];
+  const firstTarget = (targets.find(([v]) => v !== NEW) || [''])[0];
   // The draft outlives a repaint, which a typed literal needs: the
   // picker rebuilds on every keystroke otherwise.
   const draft = state.changeDraft && state.changeDraft.eventName === eventName
     ? state.changeDraft
     : (state.changeDraft = {
         eventName,
-        target: targets.length > 1 ? targets[0][0] : '',
+        target: firstTarget,
         operation: 'set',
         value: '',
       });
@@ -6290,11 +6371,8 @@ function changeAdder(model, eventName) {
   // `set` a numbering (`offersSuccessor`), which is the one thing it is
   // for. `currentValue` is not offered at all: `set` to it changes
   // nothing and `increment` by it doubles — see `handlerValueChoices`.
-  const [targetEntity, targetPropertyName] =
-    draft.target && draft.target !== NEW ? JSON.parse(draft.target) : [null, null];
-  const targetProjection = targetEntity
-    ? entityPropertyTarget(model, targetEntity, targetPropertyName).projection
-    : null;
+  const target = changeTargetOf(model, draft.target);
+  const targetProjection = target ? target.projection : null;
   const targetEnumMembers = targetProjection ? enumMembersFor(model, targetProjection.valueType) : null;
   const targetType = targetProjection ? targetProjection.valueType : null;
   const targetIsBoolean = targetType === 'boolean' && !targetProjection.isList;
@@ -6316,7 +6394,7 @@ function changeAdder(model, eventName) {
     // the row away would strand every boolean fold the models ship.
     ...(targetIsBoolean ? [['true', 'true'], ['false', 'false']] : []),
     ...(targetEnumMembers || []).map((m) =>
-      [JSON.stringify({ enumMember: m }), propertyWords(targetPropertyName) + ' · ' + readable(m)]),
+      [JSON.stringify({ enumMember: m }), target.word + ' · ' + readable(m)]),
     ...(targetEnumMembers ? [[NEW, '+ New member…']] : []),
   ];
   // Retargeting can strip the row the draft was holding — a value the
@@ -6342,9 +6420,8 @@ function changeAdder(model, eventName) {
   // `submitChange`, which is the only caller that can still ask.
   const record = () => {
     const value = draftOperand(draft, 'value');
-    const [entityName, propertyName] = JSON.parse(draft.target);
     const operation = draft.operation;
-    const projectionName = entityPropertyTarget(model, entityName, propertyName).binding.projection;
+    const { projectionName } = changeTargetOf(model, draft.target);
     patch('projection-definition', projectionName, (b) => {
       b.handlers = (b.handlers || []).filter((x) => x.event !== eventName);
       b.handlers.push({ event: eventName, operation, value });
@@ -8790,8 +8867,12 @@ function projectionFields(model, draft, { entityName } = {}) {
   // One handler per event type is law, so an event another row already
   // claims is simply not offered — the row's own event stays, or the
   // picker could not show its current choice.
+  // Nor one that carries nothing it is kept separately by — it would
+  // reach no instance (`partitionTagsMissing`). A row's own event stays
+  // even then, for the same reason; the advisory says what is wrong.
   const eventChoicesFor = (handler) =>
     unhandledEventChoices(eventNames, draft.handlers, handler)
+      .filter((n) => n === handler.event || !partitionTagsMissing(model, draft, n).length)
       .map((n) => [n, readable(n), eventIcon(model, n)]);
 
   const declaredHandlerRows = (draft.handlers || []).map((handler, i) => {

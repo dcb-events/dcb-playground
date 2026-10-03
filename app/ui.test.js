@@ -3340,6 +3340,89 @@ function build(index) {
     eq(/What must be true of it\?/.test(textOf(paint())), true, 'opens whole otherwise');
     sandbox.closeForms();
   });
+
+  // State changes, the same way: an event that moves a projection no
+  // entity binds says so, and the change adder sets one.
+  const changes = () => sandbox.stepChanges(model(), slice());
+  check('the state changes name the projections an event moves', () => {
+    sandbox.state.slice = 'Finish';
+    const step = changes();
+    eq(/Done count/.test(textOf(step)), true, 'DoneCount counts Done');
+    eq(/Changes nothing we know/.test(textOf(step)), false, 'so it is not nothing');
+    eq(findAll(step, (n) => n.tag === 'button' && textOf(n) === '+ New entity').length, 0,
+      'and no entity is asked for to change it');
+  });
+
+  check('a change to a projection is recorded, and opened again, from the step', () => {
+    sandbox.state.slice = 'Finish';
+    sandbox.state.adder = 'chg:Done';
+    sandbox.state.changeDraft = null;
+    const targets = findAll(findAll(changes(), (n) => n.tag === 'select')[0], (n) => n.tag === 'option')
+      .map((n) => n.value);
+    const label = JSON.stringify({ projection: 'Label' });
+    eq(targets.includes(label), true, 'a projection is a target');
+    eq(targets.includes(JSON.stringify({ projection: 'DoneCount' })), true, 'one already moved by it too');
+    eq(targets.includes(' new'), false, 'no "+ New property…" without an entity to put it on');
+    Object.assign(sandbox.state.changeDraft, { target: label, value: ' literal', valueText: 'done', touched: true });
+    findAll(changes(), (n) => n.tag === 'button' && textOf(n) === '+ Record a change')[0].onclick();
+    eq(model()['projection-definitions'].Label.handlers.find((x) => x.event === 'Done'),
+      { event: 'Done', operation: 'set', value: 'done' }, 'the handler it wrote');
+    eq(/Label for document id becomes "done"/.test(textOf(changes())), true,
+      'said with the instance it moves — the document id this command was given');
+
+    const editOf = (row) => findAll(row, (n) => n.tag === 'button' && textOf(n) === 'Edit');
+    const rows = findAll(changes(), (n) => n.tag === 'div' && editOf(n).length === 1 && /^Label/.test(textOf(n)));
+    editOf(rows[rows.length - 1])[0].onclick();
+    eq([sandbox.state.changeDraft.target, sandbox.state.changeDraft.operation],
+      [label, 'set'], 'Edit opens it on the projection');
+    sandbox.closeForms();
+  });
+
+  // FolderSize is kept per FolderId, and no event here carries one: no
+  // event can reach an instance of it, so none is offered to move it.
+  check('an event that reaches no instance of a projection is not offered to move it', () => {
+    sandbox.state.slice = 'Finish';
+    sandbox.state.adder = 'chg:Done';
+    sandbox.state.changeDraft = null;
+    const options = findAll(findAll(changes(), (n) => n.tag === 'select')[0], (n) => n.tag === 'option');
+    eq(options.some((n) => n.value === JSON.stringify({ projection: 'FolderSize' })), false,
+      'Done carries no folder id');
+    eq(options.filter((n) => n.value === JSON.stringify({ projection: 'Label' })).map(textOf),
+      ['Label for document id'], 'and a target says which instance');
+    sandbox.closeForms();
+
+    // The projection's own editor, the other door: a new handler row
+    // offers only events that carry what it is kept separately by.
+    store.set('dcb-playground:mode', 'advanced');
+    const offered = (name) => {
+      const body = sandbox.projectionDraftFrom(model()['projection-definitions'][name]);
+      body.handlers.push({ event: '', operation: 'set', value: '' });
+      sandbox.state.projDraft = { name, body };
+      sandbox.state.projTab = 'definition';
+      sandbox.state.view = 'projections';
+      const main = sandbox.document.createElement('div');
+      sandbox.renderProjections(model(), main);
+      const select = findAll(main, (n) => n.tag === 'select'
+        && findAll(n, (o) => o.tag === 'option' && o.value === 'Done' && !('selected' in o.attributes)).length
+          + findAll(n, (o) => o.tag === 'option' && o.value === 'Labelled').length > 0);
+      return select.length;
+    };
+    eq(offered('Label') > 0, true, 'both events carry a document id');
+    eq(offered('FolderSize'), 0, 'neither carries a folder id');
+    sandbox.state.projDraft = null;
+  });
+
+  check('a handler that reaches no instance is an advisory, not a silent no-op', () => {
+    const before = model()['projection-definitions'].FolderSize;
+    sandbox.updateDefinition('projection-definition', id, 'FolderSize',
+      { ...before, handlers: [{ event: 'Done', operation: 'increment', value: 1 }] });
+    const found = sandbox.modelAdvisories(model()).filter((a) => a.name === 'FolderSize');
+    eq(found.length, 1, 'reported once');
+    eq(/never fires/.test(found[0].message) && /FolderId/.test(found[0].message), true, found[0].message);
+    eq(/Folder size goes up by 1 — never fires: carries no folder id/.test(textOf(changes())), true,
+      'and the row says so where it sits');
+    sandbox.updateDefinition('projection-definition', id, 'FolderSize', before);
+  });
 }
 
 {

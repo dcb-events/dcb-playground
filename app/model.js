@@ -1981,6 +1981,25 @@ function modelAdvisories(model) {
   return found;
 }
 
+// The identifier types a projection keeps its value separately for
+// that this event does not carry. Tag matching is by value — an event
+// reaches a partition only by carrying a tag of each type the query
+// names — so an event missing one reaches no instance at all, and a
+// handler for it never fires: `CopyExists(id)` moved by a
+// `BookCatalogued` that carries an isbn and no copy id. Looked at
+// through composites, the same way `tagsOfEvent` derives the tags.
+// Empty for a projection with no parameters (it reads the whole log)
+// and for a scripted one, whose tags are its own `tagFilter`.
+function partitionTagsMissing(model, projection, eventName) {
+  const event = model['event-definitions'][eventName];
+  if (!projection || !event || scriptOf(projection)) return [];
+  const typesOf = (properties) => (properties || [])
+    .flatMap((p) => (p && p.propertyType ? idLeavesOfType(model, p.propertyType) : []))
+    .map((leaf) => leaf.identifierType);
+  const carried = new Set(typesOf(event.properties));
+  return uniq(typesOf(projection.parameters)).filter((type) => !carried.has(type));
+}
+
 // Handler validation. `target` is a projection body: `valueType`,
 // `isList`, `script` — an entity property is a binding to one, so
 // there is exactly one shape to validate.
@@ -2030,6 +2049,16 @@ function validateHandlers(model, label, target, handlers) {
       throw new DomainError(`${label} handles "${handler.event}", which this model does not define.`);
     }
     const where = `The handler for "${handler.event}" on ${label}`;
+    // The other way round: no property at all, so no partition is ever
+    // reached. The editors no longer offer such an event; this is for
+    // what arrived another way, or was left behind by a rename.
+    const missing = partitionTagsMissing(model, target, handler.event);
+    if (missing.length) {
+      throw new DomainError(
+        `${where} never fires: ${label} is kept separately for each ${missing.join(' and ')}, ` +
+        `and "${handler.event}" carries none, so it reaches no instance to change.`
+      );
+    }
     // Tag matching is by value, whichever property carries it — so an
     // event holding the partition's identifier type in two properties
     // (an assignment naming both the new holder and the one replaced)

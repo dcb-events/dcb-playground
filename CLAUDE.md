@@ -244,6 +244,14 @@ it never works from `file:`.
   declarative handler cannot tell them apart; the fix is to split the
   event (one fact each) or script the projection, and an advisory
   points at the ambiguity. The editors offer only unhandled events.
+  The opposite case is zero carriers: an event with no property of a
+  type the projection is kept separately by reaches no instance, and
+  its handler never fires (`partitionTagsMissing`). Neither the
+  projection's handler editor nor the State changes adder offers such
+  an event; one stored anyway is an advisory and is marked on its row.
+  A State changes row about a standalone projection names the instance
+  it moves in the command's terms (`changeArguments`: `Book exists`
+  for `isbn`).
 - **Wire format majors**: a new member of a closed vocabulary is a
   _major_, judged from the reader's side (see the versioning notes in
   `dcb-model.schema.json` and `model.js`). 4.0 added binding
