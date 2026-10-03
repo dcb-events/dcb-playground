@@ -6,8 +6,10 @@
 // for every shipped model and every example file, with no definition
 // falling back to JSON), and that applying a text writes exactly the
 // difference, as one append. The rest pins down the grammar's
-// spellings, its diagnostics, and the JSON fallback that keeps
-// printing lossless for bodies the grammar cannot say.
+// spellings, its diagnostics, the JSON fallback that keeps printing
+// lossless for bodies the grammar cannot say, and the language service
+// over it: every name resolving to the one thing it means, a rename
+// that is exact or refused, and completion that knows the cursor.
 //
 // Run with `node app/dsl.test.js`.
 // ============================================================
@@ -19,7 +21,8 @@ const APP = __dirname;
 const { sandbox, store } = createSandbox();
 loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js'], {
   trailer: 'globalThis.PREDEFINED_MODELS = PREDEFINED_MODELS; globalThis.SOURCE_KINDS = SOURCE_KINDS;'
-    + ' globalThis.DEF_COLLECTIONS = DEF_COLLECTIONS; globalThis.DomainError = DomainError;',
+    + ' globalThis.DEF_COLLECTIONS = DEF_COLLECTIONS; globalThis.DomainError = DomainError;'
+    + ' globalThis.SOURCE_KEYWORDS = SOURCE_KEYWORDS; globalThis.SOURCE_BASE_TYPES = SOURCE_BASE_TYPES;',
 });
 const { check, eq, finish } = makeChecker();
 const {
@@ -542,6 +545,222 @@ check('the draft is advised on before it is applied', () => {
   eq(found[0].name, 'ArchiveCourse', 'on the command');
   const span = sourceSpanAt(parsed, text.split('\n').findIndex((l) => l.includes('CourseBurnt')) + 1);
   eq([span.kind, span.name], ['command-definition', 'ArchiveCourse'], 'the line belongs to it');
+});
+
+// ---------------------------------------------------------------
+// The language service.
+// ---------------------------------------------------------------
+
+// Every shipped text, printed: the predefined models and the examples.
+function shippedTexts() {
+  const texts = PREDEFINED_MODELS.map((entry, index) => [entry.slug, modelToSource(build(index).model())]);
+  for (const file of fs.readdirSync(path.join(APP, 'examples')).filter((f) => f.endsWith('.json'))) {
+    texts.push([file, modelToSource(importExample(file.replace(/\.json$/, '')).model())]);
+  }
+  return texts;
+}
+
+// 1-based line and column of `needle` (plus `offset`) in a text.
+function positionOf(text, needle, offset = 0) {
+  const index = text.indexOf(needle);
+  if (index < 0) throw new Error(`"${needle}" is not in the text`);
+  const before = text.slice(0, index + offset);
+  return [before.split('\n').length, before.length - before.lastIndexOf('\n')];
+}
+
+function renameAt(text, needle, offset, to) {
+  const [line, col] = positionOf(text, needle, offset);
+  const result = sandbox.sourceRename(text, line, col, to);
+  return result.error ? result : { text: sandbox.sourceApplyEdits(text, result.edits) };
+}
+
+// The text up to a cursor written as `|`, completed there.
+function completeAt(source) {
+  const at = source.indexOf('|');
+  const text = source.slice(0, at) + source.slice(at + 1);
+  const before = text.slice(0, at);
+  const result = sandbox.sourceCompletions(text, before.split('\n').length, at - before.lastIndexOf('\n'));
+  return { labels: result.items.map((i) => i.label), items: result.items, slot: result.slot };
+}
+
+check('every name in every shipped text resolves to a symbol', () => {
+  // JSON Schema keywords and a script's own state are not model names.
+  const notNames = new Set([...sandbox.SOURCE_KEYWORDS, ...sandbox.SOURCE_BASE_TYPES, 'number', 'icon', 'feature', 'tagSchema',
+    'data', 'pattern', 'minimum']);
+  for (const [slug, text] of shippedTexts()) {
+    const parsed = parseModelSource(text);
+    const { occurrences, ambiguous } = sandbox.sourceSymbols(parsed);
+    const key = (t) => `${t.line}:${t.col}`;
+    const resolved = new Set([...occurrences, ...ambiguous].map((o) => key(o.token)));
+    const scriptState = new Set(text.split('\n').map((l, i) => (/^\s*(initialState|exposes)\b/.test(l) ? i + 1 : 0)));
+    const missed = sandbox.lexSource(text).tokens
+      .filter((t) => t.t === 'ident' && !notNames.has(t.v) && !resolved.has(key(t)) && !scriptState.has(t.line))
+      .map((t) => `${t.v} at ${key(t)}`);
+    eq(missed, [], `${slug}: names nothing resolves`);
+    eq(ambiguous.length, 0, `${slug}: members whose enum cannot be told`);
+  }
+});
+
+check('renaming any declared name and back changes nothing, or is refused over a script', () => {
+  for (const [slug, text] of shippedTexts()) {
+    const parsed = parseModelSource(text);
+    for (const declaration of sandbox.sourceSymbols(parsed).occurrences.filter((o) => o.decl)) {
+      const { token, symbol } = declaration;
+      const fresh = (/^[A-Z]/.test(token.v) ? 'Zz' : 'zz') + token.v;
+      const there = sandbox.sourceRename(text, token.line, token.col, fresh);
+      if (there.error) {
+        eq(/script or JSON/.test(there.error), true, `${slug} ${symbol}: ${there.error}`);
+        continue;
+      }
+      const renamed = sandbox.sourceApplyEdits(text, there.edits);
+      const read = parseModelSource(renamed);
+      eq(read.diagnostics, [], `${slug} ${symbol} renamed`);
+      const back = sandbox.sourceSymbols(read).occurrences.find((o) => o.decl && o.symbol.endsWith(' ' + fresh)
+        && o.symbol.split(' ')[0] === symbol.split(' ')[0]);
+      const again = sandbox.sourceRename(renamed, back.token.line, back.token.col, token.v);
+      eq(again.error, undefined, `${slug} ${symbol} renamed back`);
+      const restored = parseModelSource(sandbox.sourceApplyEdits(renamed, again.edits));
+      // A type renamed away from its entity pins it, and an identifier
+      // pinned to `<Entity>Id` is the one it tracked: the same model.
+      for (const [name, body] of Object.entries(restored.collections['entity-definition'])) {
+        if (body.identifierType === name + 'Id' && !parsed.collections['entity-definition'][name].identifierType) {
+          delete body.identifierType;
+        }
+      }
+      const model = { name: parsed.name };
+      for (const kind of SOURCE_KINDS) model[DEF_COLLECTIONS[kind]] = parsed.collections[kind];
+      assertSameModel(model, restored, `${slug} ${symbol} there and back`);
+    }
+  }
+});
+
+check('a rename is exact: a member, not its look-alikes', () => {
+  const text = modelToSource(build(0).model());
+  const { text: out } = renameAt(text, 'NonExistent, Existent', 'NonExistent, '.length, 'Active');
+  eq((out.match(/\bActive\b/g) || []).length, 6, 'the declaration, a handler and four rules');
+  eq((out.match(/\bNonExistent\b/g) || []).length, (text.match(/\bNonExistent\b/g) || []).length, 'NonExistent untouched');
+  eq(out.includes('enum CourseStatus { NonExistent, Active, Archived }'), true, 'declared');
+});
+
+check('a projection and an enum sharing a name are two names', () => {
+  const text = modelToSource(build(0).model());
+  const { text: out } = renameAt(text, 'status = CourseStatus', 'status = '.length, 'CourseState');
+  eq(out.includes('projection CourseState(courseId: CourseId): CourseStatus = NonExistent {'), true, 'the projection, not its type');
+  eq(out.includes('enum CourseStatus {'), true, 'the enum kept');
+  const parsed = parseModelSource(text);
+  const [line, col] = positionOf(text, 'status = CourseStatus', 'status = '.length);
+  const at = sandbox.sourceSymbolAt(parsed, line, col);
+  eq(at.symbol, 'projection CourseStatus', 'resolved');
+  eq(sandbox.sourceDeclarationOf(parsed, at.symbol).token.line,
+    text.split('\n').findIndex((l) => l.startsWith('projection CourseStatus(')) + 1, 'goes to the projection');
+});
+
+check('a shorthand splits when either of its names is renamed', () => {
+  const text = modelToSource(build(0).model());
+  const param = renameAt(text, 'emit CourseDefined { courseId', 'emit CourseDefined { '.length, 'id').text;
+  eq(param.includes('command DefineCourse(id: CourseId, capacity: integer) {'), true, 'the parameter');
+  eq(param.includes('emit CourseDefined { courseId: id, capacity }'), true, 'the shorthand, as the value');
+  const property = renameAt(text, 'event CourseDefined { courseId', 'event CourseDefined { '.length, 'id').text;
+  eq(property.includes('emit CourseDefined { id: courseId, capacity }'), true, 'the shorthand, as the key');
+  eq(property.includes('command DefineCourse(courseId: CourseId, capacity: integer) {'), true, 'the parameter kept');
+});
+
+check('an entity takes its tracking identifier type along, and a type renamed under one is pinned', () => {
+  const text = modelToSource(build(0).model());
+  const entity = renameAt(text, 'entity Course {', 'entity '.length, 'Class').text;
+  eq(entity.includes('tag type ClassId = string'), true, 'the type moved');
+  eq(entity.includes('read course = Class[courseId]'), true, 'the reads moved');
+  eq(/\bCourseId\b/.test(entity), false, 'nothing left on the old type');
+  const type = renameAt(text, 'tag type CourseId', 'tag type '.length, 'CourseKey').text;
+  eq(type.includes('entity Course[CourseKey] {'), true, 'pinned');
+  const parsed = parseModelSource(type);
+  eq(parsed.collections['entity-definition'].Course.identifierType, 'CourseKey', 'and so still its identifier');
+  eq(parsed.implicit, [], 'no type synthesized');
+});
+
+check('a rename refuses what it cannot do exactly', () => {
+  const text = modelToSource(build(0).model());
+  eq(renameAt(text, 'read course = Course', 'read '.length, 'courseId').error,
+    'There already is a command property named courseId in DefineCourse.', 'a read and a parameter share a namespace');
+  eq(renameAt(text, 'NonExistent, Existent', 'NonExistent, '.length, 'Archived').error,
+    'There already is an enum member named Archived in CourseStatus.', 'a member collision');
+  eq(renameAt(text, 'NonExistent, Existent', 'NonExistent, '.length, 'active').error,
+    '"active" cannot name an enum member: an enum member starts with a capital letter.', 'a member is capitalised');
+  eq(renameAt(text, 'read course = Course', 'read '.length, 'Course').error,
+    '"Course" cannot name a read: a read starts with a lowercase letter.', 'a name is not');
+  eq(renameAt(text, '// Types', 3, 'X').error, 'There is nothing here to rename.', 'a comment');
+  const scripted = modelToSource(build(5).model());
+  eq(/also appears in the script or JSON at line \d+/.test(renameAt(scripted, 'Draft, Published', 0, 'Concept').error), true,
+    'a member a script spells as a string');
+  eq(renameAt(scripted, 'command UpdateText', 'command '.length, 'EditText').error, undefined, 'a script cannot name a command');
+  const shared = 'enum A { Open, Closed }\nenum B { Open, Shut }\nprojection P: Unknown = Open\n'
+    + 'command C(a: A) {\n  require a == Open\n}\n';
+  eq(/Open at line 3 could be a member of A or B/.test(renameAt(shared, 'A { Open', 4, 'Opened').error), true,
+    'a member where its enum cannot be told');
+  eq(renameAt(shared, 'Unknown = Open', 'Unknown = '.length, 'X').error,
+    'Open is a member of A and B, and nothing here says which — rename it at its declaration.', 'from there');
+  const typed = renameAt(shared.replace('projection P: Unknown = Open\n', ''), 'A { Open', 4, 'Opened').text;
+  eq(typed.includes('require a == Opened') && typed.includes('enum B { Open, Shut }'), true, 'typed by the rule\'s other side');
+});
+
+check('a rename reaches into scenarios', () => {
+  const { model } = importExample('course-simple');
+  const text = modelToSource(model());
+  const out = renameAt(text, 'enum CourseStatus { NonExistent', 'enum CourseStatus { '.length, 'Missing').text;
+  eq(/saw NonExistent\b/.test(out), false, 'a refusal\'s values');
+  eq(out.includes('saw Missing'), true, 'renamed there');
+  const alias = renameAt(text, 'read course = Course[courseId]', 'read '.length, 'c').text;
+  eq(alias.includes('then rejected by c.status == NonExistent'), true, 'a refusal\'s rule');
+});
+
+check('completion knows an event\'s payload in a handler', () => {
+  const text = modelToSource(build(0).model());
+  const handler = text.replace('on CourseDefined => set event.data.capacity', 'on CourseDefined => set event.|');
+  eq(completeAt(handler).labels, ['data'], 'event.');
+  eq(completeAt(handler.replace('event.|', 'event.data.|')).labels, ['courseId', 'capacity'], 'event.data.');
+  eq(completeAt(handler.replace('event.|', 'event.data.ca|')).labels, ['courseId', 'capacity'], 'with a word begun');
+  const operand = completeAt(handler.replace('event.|', '|'));
+  eq(operand.labels.slice(0, 2), ['event.data', 'successor'], 'an integer fold');
+  eq(completeAt(text.replace('on CourseArchived => set Archived', 'on CourseArchived => set |')).labels,
+    ['event.data', 'NonExistent', 'Existent', 'Archived'], 'an enum fold offers its members');
+  eq(completeAt(text.replace('on CourseArchived => set Archived', 'on |')).labels.includes('CourseDefined'), false,
+    'an event already handled');
+});
+
+check('completion knows a command\'s reads and payload', () => {
+  const text = modelToSource(build(0).model());
+  const rule = (insert) => completeAt(text.replace('  require course.subscriptionCount <= newCapacity',
+    `  require course.subscriptionCount <= newCapacity\n  ${insert}`));
+  eq(rule('require |').labels, ['course', 'courseId', 'newCapacity', 'count', 'not'], 'what a rule can be about');
+  eq(rule('require course.|').labels, ['status', 'capacity', 'subscriptionCount', 'subscribedStudentIds'], 'the read\'s properties');
+  eq(rule('require course.status == |').labels.slice(0, 3), ['NonExistent', 'Existent', 'Archived'], 'members first');
+  eq(rule('require course.status in [|]').labels, ['NonExistent', 'Existent', 'Archived'], 'in a list');
+  eq(rule('require course.status |').labels, ['==', '!=', 'in', 'not in'], 'what an enum admits');
+  eq(rule('read other = |').items.find((i) => i.label === 'Course').insert, 'Course[$1]', 'an entity read');
+  eq(rule('read other = Course[|]').labels.includes('other'), false, 'not the read being written');
+  eq(rule('emit CourseCapacityChanged { courseId, |}').labels, ['newCapacity'], 'an event\'s remaining properties');
+  eq(rule('emit CourseCapacityChanged { |}').items.map((i) => i.insert), ['courseId', 'newCapacity'], 'as shorthands');
+  eq(rule('emit CourseArchived { courseId } when |').labels.slice(0, 3), ['course', 'courseId', 'newCapacity'], 'a guard');
+  const start = rule('|');
+  eq([start.labels, start.slot], [['read', 'require', 'emit', 'scenario'], false], 'a statement, not on a space');
+});
+
+check('completion knows scenarios, declarations, and when to stay quiet', () => {
+  const { model } = importExample('course-simple');
+  const text = modelToSource(model());
+  const block = (insert) => completeAt(text.replace('  emit CourseArchived { courseId }\n',
+    `  emit CourseArchived { courseId }\n\n  scenario {\n    ${insert}\n  }\n`));
+  eq(block('given CourseDefined { |}').labels, ['courseId', 'capacity'], 'a payload\'s keys');
+  eq(block('when |').labels[0], 'ArchiveCourse', 'the block\'s command first');
+  eq(block('then |').items.filter((i) => i.sort === '0').map((i) => i.label), ['CourseArchived'], 'what it emits, first');
+  eq(block('then rejected by course.status == |').labels.slice(0, 3), ['NonExistent', 'Existent', 'Archived'], 'a refusal');
+  eq(completeAt(text.replace('// Commands', '// Commands\n@|')).labels, ['icon', 'feature', 'tagSchema'], 'annotations');
+  eq(completeAt(text.replace('command DefineCourse(courseId: CourseId', 'command DefineCourse(courseId: |')).labels
+    .slice(0, 3), ['boolean', 'integer', 'string'], 'a type');
+  eq(completeAt(text.replace('// Commands', '// Commands |')).labels, [], 'in a comment');
+  eq(completeAt(text.replace('@feature("Enrolment")', '@feature("Enrol|ment")')).labels, [], 'in a string');
+  eq(completeAt(text.replace('entity Course {', 'entity Course {\n  lifecycle |')).labels.includes('status'), true,
+    'an entity\'s properties, written below');
 });
 
 finish();

@@ -438,6 +438,20 @@ it never works from `file:`.
   Operand names resolve per command — a read when a `read` declares
   the name, a payload property otherwise — so a parameter and a read
   sharing a name is the one ordinary case that falls back to JSON.
+  The **language service** (end of `dsl.js`) sits on parser *marks* —
+  which token each part of a body came from, kept in a `WeakMap` beside
+  the bodies so the parse result is still exactly the stored shape —
+  and resolves every name to a symbol (`member CourseStatus Existent`,
+  `alias DefineCourse course`): go to definition, references and F2
+  rename all read that, never the bare word, which is what keeps
+  `Existent` apart from `NonExistent` and the projection CourseStatus
+  apart from the enum. Rename refuses rather than guesses (a name a
+  script or json body may hide, a member whose enum cannot be told) and
+  proves itself by re-reading the result. A test holds every name in
+  every shipped text resolved, so **a new construct also needs its
+  marks and a case in `sourceSymbols`**. Completion reads the cursor's
+  context off the tokens, not the parse — the block being typed rarely
+  parses.
 - **Comment style**: file headers and block comments carry design rationale,
   not line-by-line narration. Match that register; keep headers truthful when
   behaviour changes.

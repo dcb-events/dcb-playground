@@ -12051,9 +12051,10 @@ function renderSandbox(model, main) {
 //
 // Monaco is the editor when it loads (the same lazily loaded copy the
 // scripted handlers use, see shared.js), with the grammar from dsl.js,
-// errors and advisories as markers, go-to-definition, an outline and
-// a hover showing each command's derived boundary; a plain textarea
-// otherwise, which is everything that is needed.
+// errors and advisories as markers, an outline, a hover showing each
+// command's derived boundary, and dsl.js's language service behind
+// completion, go to definition, references and rename; a plain
+// textarea otherwise, which is everything that is needed.
 // ============================================================
 
 const SURFACE_KEY = 'dcb-playground:surface';
@@ -12442,10 +12443,35 @@ function registerSourceLanguage() {
     'command-definition': 'Method',
   };
   const nameRange = (span) => new monaco.Range(span.nameLine, span.nameCol, span.nameLine, span.nameEndCol);
+  const tokenRange = (token) => new monaco.Range(token.line, token.col, token.endLine, token.endCol);
+  const COMPLETION_KIND = {
+    keyword: 'Keyword', type: 'TypeParameter', event: 'Event', entity: 'Class', projection: 'Function',
+    command: 'Method', member: 'EnumMember', field: 'Field', eventProperty: 'Field', entityProperty: 'Property',
+    property: 'Property', commandProperty: 'Variable', alias: 'Variable', projectionParameter: 'Variable',
+  };
+  // What fits the cursor (sourceCompletions, dsl.js). A space or a
+  // bracket opens the list only where something specific is expected
+  // — after `require`, inside `emit E {` — never at a statement's start;
+  // asked for outright where nothing is, it offers every name.
   L.registerCompletionItemProvider('dcb', {
-    provideCompletionItems: (textModel, position) => {
+    triggerCharacters: ['.', ' ', '(', '[', '{', ',', ':', '@'],
+    provideCompletionItems: (textModel, position, context) => {
       const word = textModel.getWordUntilPosition(position);
       const range = new monaco.Range(position.lineNumber, word.startColumn, position.lineNumber, word.endColumn);
+      const { items, slot } = sourceCompletions(textModel.getValue(), position.lineNumber, position.column,
+        { model: activeModel() });
+      if (context.triggerKind === L.CompletionTriggerKind.TriggerCharacter && !slot) return { suggestions: [] };
+      if (items.length) {
+        return {
+          suggestions: items.map((item, index) => ({
+            label: item.label, kind: L.CompletionItemKind[COMPLETION_KIND[item.kind] || 'Text'], detail: item.detail,
+            insertText: item.insert, range, sortText: item.sort + String(index).padStart(4, '0'),
+            insertTextRules: item.snippet ? L.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
+            command: item.retrigger ? { id: 'editor.action.triggerSuggest', title: '' } : undefined,
+          })),
+        };
+      }
+      if (slot || context.triggerKind === L.CompletionTriggerKind.TriggerCharacter) return { suggestions: [] };
       const read = parsed();
       const names = read ? read.spans.map((span) => ({
         label: span.name, kind: L.CompletionItemKind[SYMBOL[span.kind]], detail: SOURCE_KEYWORD[span.kind],
@@ -12457,13 +12483,58 @@ function registerSourceLanguage() {
       return { suggestions: [...names, ...words] };
     },
   });
+  // Names resolve as symbols (sourceSymbols, dsl.js): `status =
+  // CourseStatus` goes to the projection, not the enum it shares a name
+  // with, and `course.status` to the entity's property.
+  const symbolAt = (position) => {
+    const read = parsed();
+    return read ? sourceSymbolAt(read, position.lineNumber, position.column) : null;
+  };
   L.registerDefinitionProvider('dcb', {
     provideDefinition: (textModel, position) => {
-      const word = textModel.getWordAtPosition(position);
       const read = parsed();
-      if (!word || !read) return null;
-      const span = read.spans.find((s) => s.name === word.word);
-      return span ? { uri: textModel.uri, range: nameRange(span) } : null;
+      const at = symbolAt(position);
+      if (!read || !at || at.ambiguous) return null;
+      return at.symbols.map((symbol) => sourceDeclarationOf(read, symbol)).filter(Boolean)
+        .map((o) => ({ uri: textModel.uri, range: tokenRange(o.token) }));
+    },
+  });
+  L.registerReferenceProvider('dcb', {
+    provideReferences: (textModel, position, context) => {
+      const at = symbolAt(position);
+      if (!at || at.ambiguous) return [];
+      return at.occurrences.filter((o) => context.includeDeclaration || !o.decl)
+        .map((o) => ({ uri: textModel.uri, range: tokenRange(o.token) }));
+    },
+  });
+  L.registerDocumentHighlightProvider('dcb', {
+    provideDocumentHighlights: (textModel, position) => {
+      const at = symbolAt(position);
+      if (!at || at.ambiguous) return [];
+      return at.occurrences.map((o) => ({
+        range: tokenRange(o.token), kind: o.decl ? L.DocumentHighlightKind.Write : L.DocumentHighlightKind.Read,
+      }));
+    },
+  });
+  // F2: everywhere the symbol occurs and nowhere else, or a reason why
+  // not (sourceRename, dsl.js). An edit like any other — it still has to
+  // be applied.
+  L.registerRenameProvider('dcb', {
+    resolveRenameLocation: (textModel, position) => {
+      const read = parsed();
+      const target = read ? sourceRenameTarget(read, position.lineNumber, position.column) : { error: 'Nothing to rename.' };
+      if (target.error) return { range: new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column), text: '', rejectReason: target.error };
+      return { range: tokenRange(target.token), text: target.token.v };
+    },
+    provideRenameEdits: (textModel, position, newName) => {
+      const result = sourceRename(textModel.getValue(), position.lineNumber, position.column, newName);
+      if (result.error) return { edits: [], rejectReason: result.error };
+      return {
+        edits: result.edits.map((e) => ({
+          resource: textModel.uri, versionId: textModel.getVersionId(),
+          textEdit: { range: new monaco.Range(e.line, e.col, e.endLine, e.endCol), text: e.text },
+        })),
+      };
     },
   });
   L.registerDocumentSymbolProvider('dcb', {
@@ -12599,7 +12670,8 @@ function renderCode(model, main) {
           + 'applying records what the model does; a drifted one is marked, with a fix that accepts it. '
           + 'Comments are not stored — they last as long as the text in this editor.',
         'Hover a command\'s name for the consistency boundary it derives; ⌘-click a name to go to it; '
-          + '⇧⌘O lists every definition.',
+          + '⇧⌘O lists every definition. ⌃Space suggests what fits where the cursor is; F2 renames a name '
+          + 'everywhere it means the same thing, and ⇧F12 lists where it is used.',
       ])),
     h('div', { class: 'muted small' }, 'The same definitions as the pages, written out.')));
 
