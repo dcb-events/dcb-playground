@@ -5286,7 +5286,7 @@ function pendingBinding(model, slice, draft) {
     const projection = model['projection-definitions'][name];
     if (!projection) return null;
     const args = {};
-    for (const parameter of projection.parameters || []) {
+    for (const parameter of projectionSlots(projection)) {
       const picked = (choice.args || {})[parameter.name];
       if (!picked) return null;
       args[parameter.name] = JSON.parse(picked);
@@ -5342,10 +5342,13 @@ function ruleEditor(model, slice, index, target) {
   // identifier nothing here can supply is not a read anyone could
   // finish picking, and offering it is offering a dead end.
   //
-  // Projections are not offered at all. A projection read is not
-  // something a rule is *about*: it is a folded value a command mints
-  // from or records, which is the emission's business. Nothing in the
-  // shipped models states a rule over one.
+  // A projection is offered on the same terms, so a model can state its
+  // rules without an entity at all: `read label = Label(documentId)`
+  // and a rule about `label`. Except one an entity property binds —
+  // that value is read through the entity (`course.capacity`), and
+  // offering it here as well would be the same fact reachable as two
+  // different reads. Reachable means every parameter it takes has a
+  // source in scope; one with none is the whole log, untagged.
   const scopeAbove = operandChoicesAbove(model, slice);
   const reachable = (entityName) => choicesOfType(
     model, slice, scopeAbove, idTypeOf(model, entityName), { list: true }).length > 0;
@@ -5359,13 +5362,23 @@ function ruleEditor(model, slice, index, target) {
       (alreadyRead.has(n) ? 'another ' : '') + readable(n) + '…',
       entityIcon(model, n),
     ]);
+  const boundByEntity = entityBoundProjections(model);
+  const alreadyReadProjection = new Set((slice.reads || []).filter(Boolean).map((b) => b.projection).filter(Boolean));
+  const projectionRows = Object.keys(model['projection-definitions']).sort()
+    .filter((n) => !boundByEntity.has(n))
+    .filter((n) => projectionSlots(model['projection-definitions'][n]).every((slot) =>
+      choicesOfType(model, slice, scopeAbove, slot.propertyType).length > 0))
+    .map((n) => [
+      'projection:' + n,
+      'projection' + GROUP_SEP + (alreadyReadProjection.has(n) ? 'another ' : '') + readable(n) + '…',
+    ]);
   // Only reads this command does not have yet. A read it already makes
   // is not offered here, because it already carries its own "+ rule
   // about …" button — that is where a second rule about the same
   // instance belongs, and offering it twice made the same rule
   // reachable two ways with nothing to tell them apart. "Another
   // Course…" is a different matter: it is a different instance.
-  const targetRows = [...newRows, [NEW, '+ New entity…']];
+  const targetRows = [...newRows, ...projectionRows, [NEW, '+ New entity…']];
   const chooseTarget = scoped === undefined;
   // Deliberately not defaulted. The row advances when the author
   // answers a question, so the first question has to be unanswered —
@@ -5403,7 +5416,7 @@ function ruleEditor(model, slice, index, target) {
   const chosenProjection = choice && choice.entity.startsWith('projection:')
     ? model['projection-definitions'][choice.entity.slice('projection:'.length)]
     : null;
-  const parameters = chosenProjection ? (chosenProjection.parameters || []) : [];
+  const parameters = chosenProjection ? projectionSlots(chosenProjection) : [];
   const idSources = choice && !chosenProjection
     ? choicesOfType(model, slice, baseScope, idTypeOf(model, choice.entity), { list: true })
     : [];
@@ -5471,6 +5484,10 @@ function ruleEditor(model, slice, index, target) {
       ...(row[0] === draft.left && !sugaredExistence(row[0]) ? [row] : []),
     ];
   });
+  // One row is an answer already; two existence rows are a question.
+  // Answered before `leftShown` reads it, or the first paint shows the
+  // picker empty over a value that is already set.
+  if (aboutAlias && !draft.left && leftRows.length === 1) draft.left = leftRows[0][0];
   const leftShown = draft.left && existenceOf(draft.left) && sugaredExistence(draft.left)
     ? (draft.predicate === 'isTrue' ? EXISTS : ABSENT) + draft.left
     : draft.left;
@@ -5486,8 +5503,6 @@ function ruleEditor(model, slice, index, target) {
     render();
     return true;
   };
-  // One row is an answer already; two existence rows are a question.
-  if (aboutAlias && !draft.left && leftRows.length === 1) draft.left = leftRows[0][0];
   const existenceAnswered = !!draft.left && !!existenceOf(draft.left) && sugaredExistence(draft.left);
   const leftType = resolveOperandType(draftOperand(draft, 'left'), typeScope);
 
@@ -5702,7 +5717,20 @@ function ruleEditor(model, slice, index, target) {
           : []));
 
   // ---------- stage two: which of its values? ----------
-  const valueStage = stage < VALUE_STAGE ? null
+  //
+  // Not asked about a projection read: it *is* one value, so the
+  // question has one answer and a picker for it reads as a choice that
+  // isn't. That is the read this rule is about when it is being
+  // written, and the one its stored left side names when it is opened
+  // again — the stored side, not the draft's, so the stage cannot
+  // vanish under a pick. Answered, never assumed: a left side still
+  // unset keeps the question on screen rather than strand the row.
+  const isProjectionRead = (alias) => reads.some((b) => b && b.alias === alias && b.projection);
+  const storedLeft = editingExisting ? ((targetList(slice.body) || [])[index] || {}).leftHandSide : null;
+  const oneValue = (aboutAlias && isProjectionRead(aboutAlias))
+    || (operandSource(storedLeft) === 'alias-property' && storedLeft.property === undefined
+      && isProjectionRead(storedLeft.alias));
+  const valueStage = stage < VALUE_STAGE || (oneValue && valueSettled) ? null
     : stageRow('Which of its values?',
         ...operandPicker(leftRows, draft, 'left',
           {

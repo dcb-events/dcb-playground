@@ -852,9 +852,26 @@ function derivedOperands(derived) {
 function entityIdSlotOf(model, entityName, projection) {
   if (!projection) return null;
   const idType = idTypeOf(model, entityName);
+  return projectionSlots(projection).find((slot) => slot && slot.propertyType === idType) || null;
+}
+
+// What a reader of this projection must supply: its parameters, or a
+// script's arguments — the same `{name, propertyType}` either way.
+function projectionSlots(projection) {
   const script = scriptOf(projection);
-  const slots = script ? (script.arguments || []) : (projection.parameters || []);
-  return slots.find((slot) => slot && slot.propertyType === idType) || null;
+  return (script ? script.arguments : projection.parameters) || [];
+}
+
+// The projections some entity property binds. Those are read through
+// the entity (`course.capacity`), so a rule about one goes there.
+function entityBoundProjections(model) {
+  const bound = new Set();
+  for (const entity of Object.values(model['entity-definitions'] || {})) {
+    for (const property of (entity && entity.properties) || []) {
+      if (property && property.projection) bound.add(property.projection);
+    }
+  }
+  return bound;
 }
 
 // An entity property is a binding `{name, projection}` pointing at an

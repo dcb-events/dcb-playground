@@ -152,10 +152,15 @@ it never works from `file:`.
   `SubscribeStudentToCourse` through the three questions and compares
   the result to the shipped definition. Its first question offers only
   what the command can reach — entities some operand already in scope
-  could identify, never projections (a rule is not about a folded
-  value) — and inventing an entity there also gives the command the
-  input that says *which* one, since a fresh identifier type is
-  reachable from nothing.
+  could identify, and projections whose every parameter something in
+  scope can supply — and inventing an entity there also gives the
+  command the input that says *which* one, since a fresh identifier
+  type is reachable from nothing. A projection an entity property
+  binds is not offered: it is read through the entity
+  (`course.capacity`), and offering it bare too would make one fact
+  reachable as two different reads. The others are what lets a model
+  without entities or lifecycles state its rules on the pages, not
+  only in the code view (`read label = Label(documentId)`).
 - **Reads split by their reason** (`decisionAliases`, model.js): a read
   a rule or guard names, and every hop it was reached through, belongs
   to the decide step; everything else is read in order to *record*

@@ -1616,9 +1616,8 @@ function build(index) {
 
   // What the first question offers is what this command could actually
   // reach. An entity nothing in scope can identify is a dead end, and a
-  // projection is not something a rule is about at all — it is a folded
-  // value a command mints from or records, which is the emission's
-  // business.
+  // projection an entity property binds is read through that entity —
+  // every projection in this model is one.
   // The target picker is the first question's own select.
   const targetOptions = (command) => {
     sandbox.state.slice = command;
@@ -1632,7 +1631,7 @@ function build(index) {
   check('the first question offers only what this command can reach', () => {
     const values = targetOptions('SubscribeStudentToCourse');
     eq(values.some((v) => v.startsWith('projection:')), false,
-      'no projections — a rule is never about a folded value');
+      'no projection an entity binds — course.capacity is read through the course');
     eq(values.some((v) => v.startsWith('alias:')), false,
       'and no read it already makes — those carry their own "+ rule about …" button');
     eq(values.includes('entity:Course'), true, 'another Course — the payload carries a course id');
@@ -3257,6 +3256,88 @@ function build(index) {
     };
     const step = sandbox.stepDecision(model(), slice());
     eq(/What must be true of it\?/.test(textOf(step)), true, 'a negated isTrue opens whole');
+    sandbox.closeForms();
+  });
+}
+
+// ---------------------------------------------------------------
+// A model with no entity at all states its rules over projections: the
+// first question offers one this command can supply the arguments of,
+// and the read it brings is the plain `read label = Label(documentId)`.
+// ---------------------------------------------------------------
+{
+  const id = sandbox.createDcbModel('Entity Free Probe');
+  store.set('dcb-playground:model', id);
+  sandbox.applyModelSource(id, [
+    'model "Entity Free Probe"',
+    'tag type DocumentId = string',
+    'tag type FolderId = string',
+    'event Labelled { documentId: DocumentId, label: string }',
+    'event Done { documentId: DocumentId }',
+    'projection Label(documentId: DocumentId): string = "" {',
+    '  on Labelled => set event.data.label',
+    '}',
+    'projection DoneCount: integer = 0 {',
+    '  on Done => increment 1',
+    '}',
+    'projection FolderSize(folderId: FolderId): integer = 0 {}',
+    'command Finish(documentId: DocumentId) {',
+    '  emit Done { documentId }',
+    '}',
+  ].join('\n'));
+  const model = () => projectState()[id];
+  const slice = () => sandbox.sliceOf(model(), 'Finish');
+  const paint = () => sandbox.stepDecision(model(), slice());
+  const selects = () => findAll(paint(), (n) => n.tag === 'select');
+
+  check('with no entity, the first question offers the projections it can reach', () => {
+    sandbox.state.slice = 'Finish';
+    sandbox.state.adder = 'rule';
+    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' };
+    const values = findAll(selects()[0], (n) => n.tag === 'option').map((n) => n.value);
+    eq(values.includes('projection:Label'), true, 'its argument is the payload\'s document id');
+    eq(values.includes('projection:DoneCount'), true, 'no parameters: the whole log');
+    eq(values.includes('projection:FolderSize'), false, 'nothing here carries a FolderId');
+    sandbox.closeForms();
+  });
+
+  check('a rule about a projection is written through the same three questions', () => {
+    sandbox.state.slice = 'Finish';
+    sandbox.state.adder = 'rule';
+    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' };
+    selects()[0].onchange({ target: { value: 'projection:Label' } });
+    // The argument is picked for it, and a projection has one value, so
+    // the second question has answered itself.
+    eq(/What must be true of it\?/.test(textOf(paint())), true, 'straight to the test');
+    eq(/Which of its values\?/.test(textOf(paint())), false, 'one value: the question is not asked');
+    sandbox.state.ruleDraft.right = ' literal';
+    sandbox.state.ruleDraft.rightText = 'foo';
+    const button = findAll(paint(), (n) => n.tag === 'button' && textOf(n) === 'Add rule')[0];
+    button.onclick();
+    const body = model()['command-definitions'].Finish;
+    eq(body.boundary, [{ alias: 'label', projection: 'Label', arguments: { documentId: { parameterName: 'documentId' } } }],
+      'the read it brought');
+    eq(body.conditions, [{ leftHandSide: { alias: 'label' }, predicate: 'equals', rightHandSide: 'foo' }],
+      'and the rule about it');
+    eq(sandbox.modelAdvisories(model()).length, 0, 'advisory-clean');
+  });
+
+  check('a projection read is never asked which of its values — from its card, or reopened', () => {
+    sandbox.state.slice = 'Finish';
+    sandbox.state.adder = 'rule';
+    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '', onAlias: 'label' };
+    eq(/Which of its values\?/.test(textOf(paint())), false, '"+ rule about label"');
+    eq(/What must be true of it\?/.test(textOf(paint())), true, 'opens on the test');
+    sandbox.closeForms();
+
+    // Reopened, the picker would list every read's values — the rule
+    // is about the one it names.
+    sandbox.state.editRule = 0;
+    sandbox.state.ruleDraft = {
+      predicate: 'equals', negate: false, left: JSON.stringify({ alias: 'label' }), right: ' literal', rightText: 'foo',
+    };
+    eq(/Which of its values\?/.test(textOf(paint())), false, 'an existing rule, opened');
+    eq(/What must be true of it\?/.test(textOf(paint())), true, 'opens whole otherwise');
     sandbox.closeForms();
   });
 }
