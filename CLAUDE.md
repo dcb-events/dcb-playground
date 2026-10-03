@@ -467,7 +467,14 @@ it never works from `file:`.
   parses.
   A `read` names an instance, not what is queried of it — only the
   properties something uses contribute events (`deriveDcb`) — so the
-  editor prints those types beside each read (`sourceReadQueries`);
+  editor says beside each read how many types it adds, naming them
+  on hover (`sourceReadQueries`: "reads 2 types"), and beside each
+  command's `{` what it reads in all (`sourceCommandQueries`: "reads
+  5 types, 2 tags, in 2 queries"),
+  off `boundarySummary` (model.js) — the Consistency boundary step
+  speaks from the same function, so the two cannot disagree. A chain
+  is read in as many *queries* as it is deep; the interface says
+  "queries", never "rounds" or "trips" (`deriveRounds` keeps its name);
   don't add syntax that lists them, that is a derived fact authored
   twice. Fold arms stay **keywords, not expressions** (`set`,
   `increment`, …): the vocabulary is closed because it is analysed,

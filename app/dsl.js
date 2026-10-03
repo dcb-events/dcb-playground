@@ -134,9 +134,11 @@
 // tell, or a result that would not read back the same. Completion
 // (`sourceCompletions`) reads the cursor's place off the tokens before
 // it, since a text being typed rarely parses there. And beside every
-// `read` it prints the event types that read adds to the append
-// condition (`sourceReadQueries`) — only the used properties' — since
-// `read course = Course[courseId]` otherwise reads as the whole entity.
+// `read` it says how many event types that read adds to the append
+// condition, and names them on hover (`sourceReadQueries`) — only the
+// used properties' — since `read course = Course[courseId]` otherwise
+// reads as the whole entity; and beside each command, what it reads in
+// all (`sourceCommandQueries`), in the same words.
 // ============================================================
 
 const SOURCE_EXTENSION = '.dcb';
@@ -836,7 +838,9 @@ function parseModelSource(text, options = {}) {
     const body = annotate('command-definition', {}, annotations);
     expect('(', '"(" and the payload');
     body.properties = propertyList(')');
-    expect('{');
+    // Where the header ends, for what the editor says about the command
+    // as a whole (`sourceCommandQueries`) — not a name.
+    mark(body, 'open', expect('{'));
     body.boundary = [];
     body.conditions = [];
     body.publishes = [];
@@ -1885,11 +1889,12 @@ function sourceAdvisories(model, parsed) {
 // actually uses put their projections' events in the query
 // (`deriveDcb`), so a command testing `course.status` never conflicts
 // with a `CourseCapacityChanged`. The line says the opposite at a
-// glance, which is why the editor prints the event types beside it
-// (`hint`) and the rest — tag, per-property events, the properties
-// left out, why the read is made — on hover. One whose properties
-// nothing uses is queried by tag alone, every event under it, and the
-// hint says so rather than reading as empty.
+// glance, which is why the editor says beside it how many event types
+// it reads (`hint`, in the command line's words: "reads 2 types") and
+// the rest — the types themselves, tag, per-property events, the
+// properties left out, why the read is made — on hover. One whose
+// properties nothing uses is queried by tag alone, every event under
+// it, and the hint says so rather than reading as empty.
 function sourceReadQueries(model, parsed) {
   const draft = sourceDraftModel(model, parsed);
   const found = [];
@@ -1908,7 +1913,8 @@ function sourceReadQueries(model, parsed) {
       const properties = ((entity && entity.properties) || []).filter((p) => p && p.name);
       const read = properties.filter((p) => item.readProperties.includes(p.name));
       const reasons = [...(references.get(binding.alias) || [])];
-      const types = item.types.length ? item.types.join(', ') : 'any type';
+      const types = item.types.length
+        ? `${item.types.length} type${item.types.length === 1 ? '' : 's'}` : 'any type';
       found.push({
         command,
         alias: binding.alias,
@@ -1920,9 +1926,30 @@ function sourceReadQueries(model, parsed) {
         properties: read.map((p) => ({ name: p.name, types: projectionHandledTypes(draft, p.projection).sort() })),
         unread: properties.filter((p) => !read.includes(p)).map((p) => p.name),
         reasons,
-        hint: `‹${item.fannedOut ? 'each · ' : ''}${types}${reasons.length ? '' : ' — unused'}›`,
+        hint: `‹reads ${types}${item.fannedOut ? ', one per element' : ''}${reasons.length ? '' : ' — unused'}›`,
       });
     }
+  }
+  return found;
+}
+
+// What each command reads in all, for its header line: the summary
+// every view gives (`boundarySummary` — "reads 5 types, 2 tags, in 2
+// queries") and the queries behind it, for the hover. `start`/`end`
+// span the header, from the line the name is on to its `{`.
+function sourceCommandQueries(model, parsed) {
+  const draft = sourceDraftModel(model, parsed);
+  const found = [];
+  for (const [command, body] of Object.entries(parsed.collections['command-definition'])) {
+    const open = (parsed.marks.get(body) || {}).open;
+    const span = sourceSpanOf(parsed, 'command-definition', command);
+    if (!open || !span) continue;
+    let summary;
+    try { summary = boundarySummary(draft, body); } catch { continue; }
+    found.push({
+      command, start: { line: span.nameLine, col: 1 }, end: open,
+      ...summary, hint: `‹${summary.words}›`,
+    });
   }
   return found;
 }

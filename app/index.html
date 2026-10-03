@@ -119,8 +119,6 @@
   .rail .inline-form { margin: 6px 16px; }
   .becomes { font-family: var(--mono); font-size: 11px; color: var(--muted); }
 
-  .feature-of { display: flex; align-items: center; gap: 7px; margin-top: 9px; }
-
   .blank { max-width: 470px; padding: 40px 0; }
   .blank h2 { margin-bottom: 6px; }
   .blank p { margin-bottom: 14px; }
@@ -281,7 +279,7 @@
   .script textarea:focus, .script-handler textarea:focus {
     outline: none; border-color: var(--command);
   }
-  /* Rounds. The header carries the cost — how many times this command
+  /* Queries. The header carries the cost — how many times this command
      goes to the log — and the note under a card carries the reason it
      could not go earlier. Neither is authored: both are read off the
      operands already written. */
@@ -4519,16 +4517,7 @@ function paintPage() {
                 state.slice = null;
               }),
             }))),
-    h('div', { class: 'muted small summary' },
-      'reads ' + slice.reads.length
-      // Round trips, not bindings: a command that reads three things
-      // in one go is cheaper than one that reads two in sequence, and
-      // the summary should not hide the difference.
-      + (slice.rounds.length > 1 ? ` in ${slice.rounds.length} rounds` : '')
-      + ' · '
-      + slice.rules.length + ' rule' + (slice.rules.length === 1 ? '' : 's') + ' · appends '
-      + (slice.emits.map((e) => readable(e.emission.name)).join(', ') || '—')),
-    featureLine(slice)));
+  ));
 
   if (state.commandIconPicker === slice.name) {
     main.appendChild(commandIconPicker(model, slice.name, model['command-definitions'][slice.name]));
@@ -4569,16 +4558,6 @@ function paintPage() {
 
   // A pinned reference outlives the repaint that follows clicking it.
   paintLit();
-}
-
-// Where this command sits. Moving it happens in the rail — drag the
-// command onto a feature heading there — so the page only states it.
-function featureLine(slice) {
-  const current = featureOf(slice.body);
-  return h('div', { class: 'feature-of' },
-    h('span', { class: 'muted tiny' }, current === UNGROUPED
-      ? 'ungrouped — drag it onto a feature in the list to place it'
-      : 'part of ' + current));
 }
 
 function step(kind, title, ...body) {
@@ -4748,7 +4727,7 @@ function dcbQueryWords(item) {
 }
 
 // One binding, as a card. `index` is its position in the authored
-// boundary, which is what removal needs — the rounds regroup the cards
+// boundary, which is what removal needs — the queries regroup the cards
 // but never renumber the list underneath them.
 function readCard(model, slice, binding, index, waitsFor, ruleIndices) {
   const r = readParts(model, slice.body, binding);
@@ -4834,8 +4813,8 @@ function readCard(model, slice, binding, index, waitsFor, ruleIndices) {
           }),
         }, '×'))),
     state.editBinding === binding.alias ? bindingEditor(model, slice, binding, index) : null,
-    // Which read this one had to wait for. The round header carries
-    // the cost; this carries the reason, and stays useful once a round
+    // Which read this one had to wait for. The query header carries
+    // the cost; this carries the reason, and stays useful once a query
     // holds more than one card.
     (waitsFor || []).length
       ? h('div', { class: 'waits' }, '↳ needs ',
@@ -4844,7 +4823,7 @@ function readCard(model, slice, binding, index, waitsFor, ruleIndices) {
           ]))
       : null,
     // The rules about this read, inside it. A card with none is an
-    // intermediate hop or an emission's read — it still costs a trip
+    // intermediate hop or an emission's read — it still costs a query
     // and still bounds the append, so it is shown as what it is
     // rather than hidden for having nothing to check.
     // More than one, and they can be dragged into the order they are
@@ -5006,9 +4985,9 @@ function bindingEditor(model, slice, binding, index) {
       h('button', { class: 'btn ghost tiny', onclick: () => { state.bindingDraft = null; close(); } }, 'Done')));
 }
 
-// Headers appear only when there is more than one round: a lone
+// Headers appear only when there is more than one query: a lone
 // "first" over a single card is noise, and most commands decide in one
-// trip. Shown in both modes — "we must read the courses before we know
+// query. Shown in both modes — "we must read the courses before we know
 // which students to look at" is a fact about the domain, not about the
 // store.
 const ROUND_WORDS = ['first', 'then, using what came back', 'then again'];
@@ -5109,11 +5088,11 @@ function ruleRow(model, slice, condition, i, dragAlias) {
 // away when the last thing consulting it goes, and there is nothing
 // for a user to remove that they ever added.
 //
-// The rounds spine survives the merge, and is the reason the cards did
+// The queries spine survives the merge, and is the reason the cards did
 // not collapse into the rules. "We must read the courses before we
 // know which students to look at" is a fact about the domain, and an
 // intermediate read that carries no rule at all — bound only so the
-// next one can be reached — still costs a trip to the log and is still
+// next one can be reached — still costs a query to the log and is still
 // shown, empty.
 function stepDecision(model, slice) {
   // Only the reads the decision walks. What an emission causes — a
@@ -5969,7 +5948,7 @@ function stepEmits(model, slice) {
   // something — not in order to decide anything — so putting them
   // under "it is only allowed if" made that step promise a rule it did
   // not have. They are the same cards, with the same Edit and the same
-  // query popover; what they do not bring is the rounds spine, which
+  // query popover; what they do not bring is the queries spine, which
   // is about the chain a decision walks and has nothing to explain
   // here.
   const decision = decisionAliases(model, slice.body);
@@ -10393,32 +10372,29 @@ function stepConsistency(model, slice) {
       : null,
     dcbQueryWords(item));
 
-  // The combined query — the one the append condition actually is. A
-  // chained boundary cannot be one query: a later trip's tags are
-  // answers from an earlier one, so what really reaches the log is one
-  // combined query per trip, and that is what is shown.
-  const items = slice.dcb.items;
-  const rounds = slice.rounds || [];
-  const byAlias = new Map(items.map((item) => [item.alias, item]));
-  const combined = rounds.length > 1
-    ? rounds.map((round, r) => h('div', { class: 'trip' },
+  // The queries, in the order they run. A chained boundary cannot be
+  // one query — a later query's tags are answers from an earlier one —
+  // so what reaches the log is one combined query per level of the
+  // chain, and the append condition is all of them, ORed. The summary
+  // and the layout are `boundarySummary`'s, which the code view's
+  // command line speaks from too.
+  const summary = boundarySummary(model, slice.body);
+  const { items, queries } = summary;
+  const combined = queries.length > 1
+    ? [...queries.map((query, r) => h('div', { class: 'trip' },
         h('div', { class: 'k' },
-          `trip ${r + 1}${r ? ' — its tags are answers from the trip above' : ''}`),
-        round
-          .map((entry) => byAlias.get(entry.binding.alias))
-          .filter(Boolean)
-          .map((item, i) => itemLine(item, i))))
+          `query ${r + 1}${r ? ` — its tags are answers from ${r === 1 ? 'query 1' : 'the queries above'}` : ''}`),
+        query.map((item, i) => itemLine(item, i)))),
+      h('div', { class: 'trip k' }, 'append condition: all of the above, ORed')]
     : items.map((item, i) => itemLine(item, i));
 
-  const tripWords = rounds.length > 1 ? `, in ${rounds.length} trips` : ', one query';
   return step('consistency', 'Consistency boundary',
     h('div', { class: 'card dcb' },
       items.length
         ? h('div', { class: 'row' },
-            h('span', { class: 'k' },
-              items.length + (items.length === 1 ? ' item' : ' items') + tripWords),
+            h('span', { class: 'k' }, summary.words),
             queryPopover('dcb:' + slice.name,
-              rounds.length > 1 ? 'the combined queries, one per trip' : 'the combined query',
+              queries.length > 1 ? 'the queries, in order' : 'the query',
               ...combined))
         : h('div', { class: 'empty' }, 'Unguarded.'),
       h('div', { style: 'margin-top:6px' },
@@ -12275,7 +12251,7 @@ function refreshCodeChrome() {
     // event types cut short drops exactly the one being looked for.
     const { editor } = codeView.editor;
     if (!codeView.editor.readHints) codeView.editor.readHints = editor.createDecorationsCollection();
-    codeView.editor.readHints.set(codeReadQueries(model).map((q) => ({
+    codeView.editor.readHints.set([...codeReadQueries(model), ...codeCommandQueries(model)].map((q) => ({
       range: new monaco.Range(q.end.endLine, q.end.endCol, q.end.endLine, q.end.endCol),
       options: { showIfCollapsed: true, after: { content: '\u00a0\u00a0' + q.hint, inlineClassName: 'code-read-hint' } },
     })));
@@ -12296,6 +12272,17 @@ function codeReadQueries(model) {
     try { analysis.readQueries = sourceReadQueries(model, analysis.parsed); } catch { analysis.readQueries = []; }
   }
   return analysis.readQueries;
+}
+
+// And beside each command's `{`, what it reads in all
+// (sourceCommandQueries, dsl.js) — the same summary the Consistency
+// boundary step leads with.
+function codeCommandQueries(model) {
+  const analysis = analyseCode(model);
+  if (analysis.commandQueries === undefined) {
+    try { analysis.commandQueries = sourceCommandQueries(model, analysis.parsed); } catch { analysis.commandQueries = []; }
+  }
+  return analysis.commandQueries;
 }
 
 // Advisories, placed on the name of the definition they are about, and
@@ -12716,35 +12703,48 @@ function registerSourceLanguage() {
       ],
     };
   };
-  // A command's derived boundary, on its name — the question the tool
-  // exists to answer, asked of the text before it is applied. On a read,
-  // that read's share of it.
+  // A command's whole boundary, on its header — the question the tool
+  // exists to answer, asked of the text before it is applied: the
+  // queries in the order they run, each read's share ORed within one,
+  // and what the command appends. The same layout as the Consistency
+  // boundary step's popover.
+  const commandHover = (q) => {
+    const code = (words) => words.map((w) => `\`${w}\``).join(', ');
+    const itemLine = (item) => `- \`${item.alias}\`: `
+      + (item.tags.length ? `${item.tags.map((t) => `\`${t}\``).join(' ∧ ')} ∧ ` : '')
+      + (item.types.length ? code(item.types) : 'any type')
+      + (item.tags.length ? '' : ' (no tag — the whole log)')
+      + (item.fannedOut ? ' — one per element' : '');
+    const queries = q.queries.length > 1
+      ? q.queries.map((items, i) => ({
+          value: `query ${i + 1}${i ? ` — its tags are answers from ${i === 1 ? 'query 1' : 'the queries above'}` : ''}\n\n`
+            + items.map(itemLine).join('\n'),
+        }))
+      : [{ value: q.items.length ? q.items.map(itemLine).join('\n') : 'Reads nothing: the append is unconditional.' }];
+    return {
+      range: new monaco.Range(q.start.line, q.start.col, q.end.endLine, q.end.endCol),
+      contents: [
+        { value: `**Consistency boundary** — ${q.words}` },
+        ...queries,
+        ...(q.queries.length > 1 ? [{ value: 'append condition: all of the above, ORed' }] : []),
+        { value: `appends ${q.writes.length ? code(q.writes) : 'no tags'}` },
+        ...(q.coverage.length ? [{ value: `⚠ Writes a tag it never consulted: ${q.coverage.map((c) => readable(c.entity)).join(', ')}` }] : []),
+      ],
+    };
+  };
+  // On a read, that read's share of the boundary; on a command's
+  // header, the whole of it. Anywhere on either, the summary beside
+  // them included — so no word under the cursor is required.
   L.registerHoverProvider('dcb', {
     provideHover: (textModel, position) => {
       const model = activeModel();
-      const word = textModel.getWordAtPosition(position);
-      if (!model || !word) return null;
-      const read = codeReadQueries(model).find((q) => new monaco.Range(q.start.line, q.start.col, q.end.endLine, q.end.endCol)
-        .containsPosition(position));
+      if (!model) return null;
+      const within = (q) => new monaco.Range(q.start.line, q.start.col, q.end.endLine, q.end.endCol)
+        .containsPosition(position);
+      const read = codeReadQueries(model).find(within);
       if (read) return readHover(read);
-      const analysis = analyseCode(model);
-      const span = analysis.parsed.spans.find((s) => s.kind === 'command-definition'
-        && s.nameLine === position.lineNumber && s.nameCol === word.startColumn);
-      if (!span) return null;
-      const draft = sourceDraftModel(model, analysis.parsed);
-      let dcb;
-      try { dcb = deriveDcb(draft, draft['command-definitions'][span.name]); } catch { return null; }
-      const lines = dcb.items.map((item) => `- \`${item.alias}\`${item.fannedOut ? ' (each)' : ''}: `
-        + `${item.tags.length ? item.tags.map((t) => `\`${t}\``).join(' ∧ ') : 'no tag'}`
-        + `${item.types.length ? ` · ${item.types.join(', ')}` : ''}`);
-      return {
-        range: nameRange(span),
-        contents: [
-          { value: '**Consistency boundary** — the append condition this command derives' },
-          { value: lines.length ? lines.join('\n') : 'Reads nothing: the append is unconditional.' },
-          ...(dcb.writes.length ? [{ value: `Writes tags ${dcb.writes.map((t) => `\`${t}\``).join(', ')}` }] : []),
-        ],
-      };
+      const command = codeCommandQueries(model).find(within);
+      return command ? commandHover(command) : null;
     },
   });
 }

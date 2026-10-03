@@ -1531,12 +1531,14 @@ function bindingDependsOn(body, binding) {
   return aliases;
 }
 
-// Groups the boundary into the rounds it actually resolves in.
+// Groups the boundary into the queries it actually resolves in — one
+// per level of the chain (the identifier says "rounds"; every view
+// says "queries").
 //
 // A binding waits only for the bindings it names, so the number of
-// trips to the store is the *depth* of that graph and not the length
+// queries to the store is the *depth* of that graph and not the length
 // of the list: two bindings both reading from the payload come back
-// together. Because a binding may only name one declared above it, the
+// in one query. Because a binding may only name one declared above it, the
 // list is already topologically sorted and one left-to-right pass does
 // it.
 //
@@ -1556,6 +1558,34 @@ function deriveRounds(body) {
     rounds[round - 1].push({ binding, waitsFor });
   }
   return rounds;
+}
+
+// The consistency boundary, summed up and laid out the way every view
+// says it: how wide (`words` — "reads 5 types, 2 tags, in 2 queries")
+// and the queries in the order they run. A chained read cannot share a
+// query with the read it waits for — its tags are answers from that
+// one — so the boundary is read in as many queries as the chain is
+// deep (`deriveRounds`), and the append condition is all of them,
+// ORed. A read whose properties nothing uses queries any type under
+// its tag, which no count of types could say. The code view's command
+// line and the Consistency boundary step both speak from here, so they
+// cannot disagree.
+function boundarySummary(model, body) {
+  const dcb = deriveDcb(model, body);
+  const byAlias = new Map(dcb.items.map((item) => [item.alias, item]));
+  const queries = deriveRounds(body)
+    .map((round) => round.map((entry) => byAlias.get(entry.binding.alias)).filter(Boolean))
+    .filter((query) => query.length);
+  const items = dcb.items;
+  const types = uniq(items.flatMap((item) => item.types)).sort();
+  const anyType = items.some((item) => !item.types.length);
+  const tags = uniq(items.flatMap((item) => item.tags));
+  const count = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  const words = !items.length ? 'reads nothing'
+    : `reads ${anyType ? 'any type' : count(types.length, 'type')}, `
+      + `${tags.length ? count(tags.length, 'tag') : 'no tag'}`
+      + (queries.length > 1 ? `, in ${queries.length} queries` : '');
+  return { items, queries, types, tags, anyType, writes: dcb.writes, coverage: coverageIssues(model, body), words };
 }
 
 // Every entity-id property of every published event must resolve to a

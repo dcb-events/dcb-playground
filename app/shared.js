@@ -783,7 +783,7 @@ function sliceOf(model, commandName) {
       standalone: projectionsHandling(model, emission.name),
     })),
     projections: projectionsRead(body),
-    // Grouped by the trip to the store each read actually happens on,
+    // Grouped by the query to the store each read actually happens in,
     // which is the depth of the boundary's dependency graph and not
     // its length. Derived here so nothing has to author it.
     rounds: deriveRounds(body),

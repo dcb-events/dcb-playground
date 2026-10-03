@@ -774,7 +774,8 @@ check('a read says which events it adds — only those of the properties used', 
   const of = (list, command) => list.find((q) => q.command === command);
 
   const archive = of(queries(text), 'ArchiveCourse');
-  eq(archive.hint, '‹CourseArchived, CourseDefined›', 'status only, no capacity events');
+  eq(archive.hint, '‹reads 2 types›', 'status only, no capacity events');
+  eq(archive.types, ['CourseArchived', 'CourseDefined'], 'which the hover names');
   eq(archive.properties, [{ name: 'status', types: ['CourseArchived', 'CourseDefined'] }], 'per property');
   eq(archive.unread, ['capacity', 'subscriptionCount', 'subscribedStudentIds'], 'what it leaves out');
   eq(archive.reasons, ['rule'], 'why it is read');
@@ -787,7 +788,37 @@ check('a read says which events it adds — only those of the properties used', 
   // Nothing uses it: queried by tag alone, every event under it.
   const unused = of(queries(text.replace('  require course.status == Existent\n\n  emit CourseArchived',
     '  emit CourseArchived')), 'ArchiveCourse');
-  eq([unused.hint, unused.reasons, unused.properties], ['‹any type — unused›', [], []], 'an unused read');
+  eq([unused.hint, unused.reasons, unused.properties], ['‹reads any type — unused›', [], []], 'an unused read');
+});
+
+check('a command says what it reads in all, on its header line', () => {
+  const at = (slug) => {
+    const { model } = build(PREDEFINED_MODELS.findIndex((m) => m.slug === slug));
+    const text = modelToSource(model());
+    return { text, all: sandbox.sourceCommandQueries(model(), parseModelSource(text)) };
+  };
+  const of = (list, command) => list.find((q) => q.command === command);
+
+  const simple = at('course-simple');
+  const archive = of(simple.all, 'ArchiveCourse');
+  eq(archive.hint, '‹reads 2 types, 1 tag›', 'one read, one query');
+  const line = simple.text.split('\n')[archive.end.line - 1];
+  eq([line.slice(archive.end.col - 1, archive.end.endCol - 1), archive.start.line], ['{', archive.end.line],
+    'the header, up to its brace');
+  eq(of(simple.all, 'SubscribeStudentToCourse').hint, '‹reads 6 types, 2 tags›', 'types and tags are distinct counts');
+
+  const schedules = at('course-schedules');
+  const reschedule = of(schedules.all, 'RescheduleCourse');
+  eq(reschedule.hint, '‹reads 5 types, 3 tags, in 3 queries›', 'a chain is read in as many queries as it is deep');
+  eq(reschedule.queries.map((query) => query.map((item) => item.alias)).length, 3, 'and they are laid out in order');
+  eq(of(schedules.all, 'DefineCourse').hint, '‹reads 1 type, no tag›', 'a global numbering');
+
+  // Unused, a read queries every event under its tag; with none at all,
+  // the append is unconditional.
+  const bare = (body) => sandbox.boundarySummary(build(0).model(), body).words;
+  eq(bare({ boundary: [{ alias: 'course', entity: 'Course', id: { parameterName: 'courseId' } }] }),
+    'reads any type, 1 tag', 'nothing used: any type');
+  eq(bare({ boundary: [] }), 'reads nothing', 'no reads');
 });
 
 check('a fanned-out read is marked, a projection read lists its events', () => {
@@ -799,13 +830,13 @@ check('a fanned-out read is marked, a projection read lists its events', () => {
     eq(all.length, reads, `${entry.slug}: every read has a query`);
     for (const q of all) {
       eq(q.hint.includes('unused'), false, `${entry.slug} ${q.command} ${q.alias} is used`);
-      eq(q.hint.startsWith('‹each · '), q.fannedOut, `${entry.slug} ${q.command} ${q.alias} fan-out`);
+      eq(q.hint.includes(', one per element'), q.fannedOut, `${entry.slug} ${q.command} ${q.alias} fan-out`);
     }
   });
   const { model } = build(PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-sequence'));
   const numbering = sandbox.sourceReadQueries(model(), parseModelSource(modelToSource(model())))
     .find((q) => q.alias === 'courseNumbering');
-  eq([numbering.hint, numbering.tags, numbering.unread], ['‹CourseDefined›', [], []], 'a projection read');
+  eq([numbering.hint, numbering.tags, numbering.unread], ['‹reads 1 type›', [], []], 'a projection read');
 });
 
 finish();

@@ -1800,8 +1800,10 @@ function build(index) {
     eq(text.includes('course · '), true, 'each line names the read it came from');
     eq(text.includes('student · '), true, 'both of them');
     eq(text.includes('or '), true, 'ORed between items');
-    eq(text.includes('trip'), false, 'no trips — this boundary is one query');
-    eq(textOf(step).includes('2 items, one query'), true, 'the card itself only summarises');
+    eq(text.includes('query 1'), false, 'not numbered — this boundary is one query');
+    eq(text.includes('append condition'), false, 'and that one query is the append condition');
+    eq(textOf(step).includes('reads 6 types, 2 tags'), true, 'the card itself only summarises');
+    eq(textOf(step).includes('in '), false, 'one query, so no count of them');
   });
 
   check('a watched projection shows the query it actually runs', () => {
@@ -1893,14 +1895,15 @@ function build(index) {
   store.set('dcb-playground:model', id);
   store.set('dcb-playground:mode', 'advanced');
 
-  check('a chained boundary shows one combined query per trip', () => {
+  check('a chained boundary shows one combined query per level of the chain', () => {
     sandbox.state.slice = 'RescheduleCourse';
     const step = sandbox.stepConsistency(model(), sandbox.sliceOf(model(), 'RescheduleCourse'));
     const panel = findAll(step, (n) => /\bqpanel\b/.test(n.className || ''))[0];
     const text = textOf(panel);
-    eq(text.includes('trip 1') && text.includes('trip 2') && text.includes('trip 3'), true,
-      'three trips, because each round\'s tags are answers from the one before');
-    eq(textOf(step).includes('in 3 trips'), true, 'and the summary says so');
+    eq(text.includes('query 1') && text.includes('query 2') && text.includes('query 3'), true,
+      'three queries, because each one\'s tags are answers from the ones before');
+    eq(text.includes('append condition: all of the above, ORed'), true, 'and the append condition is all of them');
+    eq(/reads \d+ types, \d+ tags, in 3 queries/.test(textOf(step)), true, 'and the summary says so');
   });
 
   store.set('dcb-playground:mode', 'simple');
