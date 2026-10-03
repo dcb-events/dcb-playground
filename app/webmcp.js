@@ -133,8 +133,9 @@
   register({
     name: 'get_model_source',
     description: 'The open model as code — the playground\'s own model language, the text its '
-      + 'Code view edits: types, events, entities, projections and commands, without scenarios. '
-      + 'Usually far shorter than get_model. Edit it and send it back with apply_model_source.',
+      + 'Code view edits: types, events, entities, projections and commands, each command\'s and '
+      + 'projection\'s scenarios inside its block. Usually far shorter than get_model. Edit it and '
+      + 'send it back with apply_model_source.',
     inputSchema: { type: 'object', properties: {} },
     run: (model) => ({
       summary: `read model "${model.name}" as code`,
@@ -328,9 +329,11 @@
     name: 'apply_model_source',
     description: 'Replace the open model\'s definitions with the ones a whole model text declares '
       + '(the text get_model_source returns, edited). Only what differs is written, as one undoable '
-      + 'step; a definition left out of the text is removed, and scenarios are left as they are. A '
-      + 'renamed definition is a removal plus an addition here — use rename_definition to move '
-      + 'references with it. A text with any error is refused whole, with every error and its line.',
+      + 'step; a definition or scenario left out of the text is removed. A scenario written without '
+      + 'a then is recorded with what the model does; one with a then asserts it, and a drift is '
+      + 'reported by list_problems, never accepted silently. A renamed definition is a removal plus '
+      + 'an addition — references to it in the text move only if the text moves them. A text with '
+      + 'any error is refused whole, with every error and its line.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -340,7 +343,8 @@
     },
     mutates: true,
     run: (model, { source }) => {
-      const errors = parseModelSource(source).diagnostics;
+      const parsed = parseModelSource(source);
+      const errors = parsed.diagnostics.length ? parsed.diagnostics : sourceScenarioReport(model, parsed).errors;
       if (errors.length) {
         throw new DomainError('Nothing was applied — the text has '
           + `${errors.length} error${errors.length === 1 ? '' : 's'}:\n`

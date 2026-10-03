@@ -4143,9 +4143,8 @@ function sameDefinition(a, b) {
 //
 // The code view is the writer this exists for, and it is why this is
 // a replacement and not a merge: a definition missing from the text is
-// one the author deleted. Scenarios are left alone because the text
-// does not carry them — a scenario whose command was renamed away is
-// broken and says so, the same as after a rename-by-delete anywhere.
+// one the author deleted. The scenario kinds are replaced the same way
+// when `next.collections` carries them, and left alone when it does not.
 //
 // Only structure is refused, the same as every other writer (see
 // `assertStorableBody`); a body arriving whole keeps every read it came
@@ -4164,7 +4163,10 @@ function replaceDefinitions(modelId, next) {
       summary.renamed = name;
     }
   }
-  for (const kind of ADVISORY_KINDS) {
+  // The two scenario kinds are written only when asked for — a caller
+  // that says nothing about them leaves them as they are.
+  const kinds = [...ADVISORY_KINDS, ...ID_KEYED_KINDS.filter((kind) => next.collections[kind] !== undefined)];
+  for (const kind of kinds) {
     const current = model[DEF_COLLECTIONS[kind]];
     const wanted = {};
     for (const [key, body] of Object.entries(next.collections[kind] || {})) {

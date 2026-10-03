@@ -78,13 +78,34 @@
 // saying why. So the text always says everything the model does, and
 // an untouched text applies as no change at all.
 //
-// **Scenarios are not in the text.** Their Then is derived and frozen
-// rather than written, and their ids are never shown; both would be
-// noise in a file meant to be edited. They are left as they are by an
-// apply, and one whose command was renamed away reports itself broken
-// the ordinary way. Comments are not stored either — the model has
-// nowhere to keep them — so they survive as long as the text in the
-// editor does and no longer.
+// **Scenarios sit in the block of what they exercise**, after its
+// definition — a command's runs it, a projection's asserts its value:
+//
+//   scenario "a second definition is refused" {
+//     given CourseDefined { courseId: "c1", capacity: 123 }
+//     when DefineCourse { courseId: "c1", capacity: 123 }
+//     then rejected by course.status == NonExistent saw Existent, NonExistent
+//   }
+//   scenario {
+//     given CourseDefined { courseId: "c1", capacity: 1 }
+//     then CourseStatus("c1") == Existent
+//   }
+//
+// The subject is named (`when DefineCourse`, `then CourseStatus(…)`)
+// and must be the block's — a scenario moved into the wrong block is an
+// error, not a reassignment; one whose subject is gone sits at the top
+// level. A Then is the scenario's assertion and is stored as written;
+// leave it out and an apply records what the text's definitions make
+// of it, the way the page's save does — and a refusal written without
+// `saw` takes the values it was refused on. A Then that disagrees with
+// the text is drift: shown, with a fix that accepts it, and never
+// accepted by applying. Payload values are JSON, an enum member bare.
+// The id a scenario is keyed by is not in the text: an apply matches
+// blocks to stored scenarios by content, then by place, so an edited or
+// renamed-along scenario keeps its id (`sourceScenarioCollections`).
+//
+// Comments are not stored — the model has nowhere to keep them — so
+// they survive as long as the text in the editor does and no longer.
 // ============================================================
 
 const SOURCE_EXTENSION = '.dcb';
@@ -258,11 +279,11 @@ function describeToken(token) {
 // Errors never stop the read: a declaration that fails is reported
 // and skipped to the next line that starts one, so a typo in one
 // command does not hide every other problem below it.
-function parseModelSource(text) {
+function parseModelSource(text, options = {}) {
   const { tokens, diagnostics } = lexSource(String(text));
   const collections = {};
   for (const kind of SOURCE_KINDS) collections[kind] = {};
-  const result = { name: null, collections, spans: [], diagnostics, implicit: [] };
+  const result = { name: null, collections, spans: [], diagnostics, implicit: [], scenarios: [] };
   let at = 0;
 
   const peek = (k = 0) => tokens[Math.min(at + k, tokens.length - 1)];
@@ -688,8 +709,10 @@ function parseModelSource(text) {
           scriptField('initialState', jsonValue());
         } else if (accept('exposes')) {
           scriptField('exposes', ident('the exposed field').v);
+        } else if (is('scenario')) {
+          scenarioDecl(peek(), { kind: 'projection-definition', name: nameToken.v });
         } else {
-          fail(`Expected "on", or one of script, tagFilter, initialState, exposes, found ${describeToken(peek())}.`);
+          fail(`Expected "on", scenario, or one of script, tagFilter, initialState, exposes, found ${describeToken(peek())}.`);
         }
       }
       expect('}');
@@ -742,8 +765,10 @@ function parseModelSource(text) {
           while (accept('and')) emission.when.push(condition(commandOperand));
         }
         body.publishes.push(emission);
+      } else if (is('scenario')) {
+        scenarioDecl(peek(), { kind: 'command-definition', name: nameToken.v });
       } else {
-        fail(`Expected read, require or emit, found ${describeToken(peek())}.`);
+        fail(`Expected read, require, emit or scenario, found ${describeToken(peek())}.`);
       }
     }
     expect('}');
@@ -770,6 +795,201 @@ function parseModelSource(text) {
     for (const key of ['boundary', 'conditions', 'publishes']) body[key] = resolve(body[key]);
   };
 
+  // ---------- scenarios ----------
+
+  // A payload value: JSON, except that a bare capitalised word is an
+  // enum member and reads as the string it is stored as.
+  const scenarioValue = () => {
+    const token = peek();
+    if (token.t === 'ident' && SOURCE_MEMBER_RE.test(token.v)) return next().v;
+    if (accept('{')) {
+      const out = {};
+      while (!is('}')) {
+        const key = peek().t === 'string' || peek().t === 'ident'
+          ? next().v : fail(`Expected a property name, found ${describeToken(peek())}.`);
+        expect(':');
+        sourcePut(out, key, scenarioValue());
+        if (!accept(',')) break;
+      }
+      expect('}', '"}" or ","');
+      return out;
+    }
+    if (accept('[')) {
+      const out = [];
+      while (!is(']')) {
+        out.push(scenarioValue());
+        if (!accept(',')) break;
+      }
+      expect(']', '"]" or ","');
+      return out;
+    }
+    return jsonValue();
+  };
+  const payload = (what) => (is('{') ? scenarioValue() : fail(`Expected "{" and ${what}, found ${describeToken(peek())}.`));
+
+  // A rule as its stored text — what a refusal records. The text does
+  // not tell a read from a payload property apart (both print as
+  // `a.b`), so names need no resolving to produce it.
+  const ruleText = () => {
+    const rule = condition(commandOperand);
+    const plain = (value) => {
+      if (Array.isArray(value)) return value.map(plain);
+      if (value === null || typeof value !== 'object') return value;
+      if (value['%ref']) {
+        const [parameterName, property] = value['%ref'];
+        return property === undefined ? { parameterName } : { parameterName, property };
+      }
+      const out = {};
+      for (const key of Object.keys(value)) sourcePut(out, key, plain(value[key]));
+      return out;
+    };
+    return conditionText(plain(rule));
+  };
+
+  const thenItem = () => {
+    if (accept('nothing')) return { nothing: true };
+    if (accept('rejected')) {
+      expect('by', '"by" and the rule that refused');
+      const text = peek().t === 'string' ? next().v : ruleText();
+      const item = { rejected: { text } };
+      if (accept('saw')) {
+        item.rejected.leftValue = scenarioValue();
+        item.rejected.rightValue = accept(',') ? scenarioValue() : null;
+        item.saw = true;
+      }
+      if (accept('at')) {
+        if (peek().t !== 'number') fail(`Expected which instance refused, a number, found ${describeToken(peek())}.`);
+        item.rejected.atInstance = next().v;
+        item.at = true;
+      }
+      return item;
+    }
+    const name = ident('an event, a projection, nothing or rejected');
+    if (is('{')) return { event: name.v, data: scenarioValue() };
+    const item = { projection: name.v, arguments: {}, positional: null, argsToken: peek(), subjectToken: name };
+    if (accept('(')) {
+      const named = {};
+      const values = [];
+      while (!is(')')) {
+        if (peek().t === 'ident' && is(':', 1)) {
+          const key = next().v;
+          next();
+          sourcePut(named, key, scenarioValue());
+        } else values.push(scenarioValue());
+        if (!accept(',')) break;
+      }
+      expect(')', '")" or ","');
+      if (values.length && Object.keys(named).length) fail('Name every argument, or none of them.', item.argsToken);
+      if (values.length) item.positional = values;
+      else item.arguments = named;
+    }
+    if (accept('==')) item.value = scenarioValue();
+    return item;
+  };
+
+  // `scenario ["name"] { given … when … then … }` — see the header. The
+  // record keeps what an apply needs beyond the body: where it sits,
+  // where its then lines are, and which parts were left to evaluation.
+  const scenarioDecl = (start, block) => {
+    next();
+    const nameToken = peek().t === 'string' ? next() : null;
+    const record = {
+      block, head: start, thenRange: null, positional: null, argsToken: null,
+      valuesMissing: false, atWritten: false,
+    };
+    let subjectToken = nameToken || start;
+    if (is('json')) {
+      const body = jsonBody();
+      if (nameToken) body.name = nameToken.v;
+      record.kind = body.projection !== undefined && body.command === undefined
+        ? 'projection-scenario-definition' : 'scenario-definition';
+      record.subject = record.kind === 'scenario-definition' ? body.command : body.projection;
+      record.body = body;
+    } else {
+      expect('{');
+      const given = [];
+      let when = null;
+      const thens = [];
+      while (!is('}')) {
+        guardBlock('}');
+        if (accept('given')) {
+          const event = ident('the event it was given').v;
+          given.push({ event, data: payload('the event\'s payload') });
+        } else if (is('when')) {
+          const token = next();
+          if (when) fail('A scenario runs one command — one when.', token);
+          const command = ident('the command it runs');
+          when = { command: command.v, arguments: payload('the command\'s arguments'), token: command };
+        } else if (is('then')) {
+          const token = next();
+          const item = thenItem();
+          thens.push({ ...item, token, end: last() });
+        } else {
+          fail(`Expected given, when or then, found ${describeToken(peek())}.`);
+        }
+      }
+      expect('}');
+      if (thens.length) {
+        const first = thens[0].token;
+        const end = thens[thens.length - 1].end;
+        record.thenRange = { line: first.line, col: first.col, endLine: end.endLine, endCol: end.endCol };
+      }
+      const body = {};
+      if (nameToken) body.name = nameToken.v;
+      const projections = thens.filter((t) => t.projection !== undefined);
+      if (when) {
+        if (projections.length) fail('A scenario that runs a command ends in events, nothing or a rejection — not in a projection\'s value.', projections[0].token);
+        record.kind = 'scenario-definition';
+        record.subject = when.command;
+        subjectToken = when.token;
+        Object.assign(body, { command: when.command, given, when: { arguments: when.arguments } });
+        const rejections = thens.filter((t) => t.rejected);
+        if (rejections.length && thens.length > 1) fail('A rejection is the whole outcome — it stands alone.', rejections[0].token);
+        if (thens.some((t) => t.nothing) && thens.length > 1) fail('"then nothing" is the whole outcome — it stands alone.', thens[1].token);
+        if (rejections.length) {
+          const { rejected, saw, at: atWritten } = rejections[0];
+          body.then = { outcome: 'rejected', events: [], failedRule: { ...rejected } };
+          if (!atWritten) body.then.failedRule.atInstance = null;
+          record.valuesMissing = !saw;
+          record.atWritten = !!atWritten;
+        } else if (thens.length) {
+          body.then = {
+            outcome: 'published',
+            events: thens.filter((t) => t.event !== undefined).map((t) => ({ type: t.event, data: t.data })),
+          };
+        }
+      } else {
+        if (thens.length > 1) fail('A projection scenario asserts one value — one then.', thens[1].token);
+        if (thens.length && !projections.length) fail('A scenario ending in events, nothing or a rejection needs a when — the command it runs.', thens[0].token);
+        record.kind = 'projection-scenario-definition';
+        if (projections.length) {
+          const item = projections[0];
+          record.subject = item.projection;
+          subjectToken = item.subjectToken;
+          record.positional = item.positional;
+          record.argsToken = item.argsToken;
+          Object.assign(body, { projection: item.projection, arguments: item.arguments, given });
+          if ('value' in item) body.then = item.value;
+        } else if (block && block.kind === 'projection-definition') {
+          record.subject = block.name;
+          Object.assign(body, { projection: block.name, arguments: {}, given });
+        } else {
+          fail('Say what this scenario runs (when …) or what it asserts (then …).', start);
+        }
+      }
+      record.body = body;
+    }
+    if (block) {
+      const wanted = block.kind === 'command-definition' ? 'scenario-definition' : 'projection-scenario-definition';
+      if (record.kind !== wanted || record.subject !== block.name) {
+        fail(`This scenario sits in ${block.name} but is about ${record.subject} — move it there, or make it about ${block.name}.`, subjectToken);
+      }
+    }
+    const end = last();
+    record.span = { line: start.line, col: start.col, endLine: end.endLine, endCol: end.endCol };
+    result.scenarios.push(record);
+  };
+
   const declaration = () => {
     const start = peek();
     const annotations = [];
@@ -785,6 +1005,10 @@ function parseModelSource(text) {
       if (result.name !== null) fail('The model is named once.', last());
       result.name = string('the model\'s name, in quotes');
       return;
+    }
+    if (is('scenario')) {
+      if (annotations.length) fail('A scenario carries no annotations.', annotations[0].token);
+      return scenarioDecl(start, null);
     }
     const isTag = !!accept('tag');
     if (isTag && !is('type') && !is('enum') && !is('record')) {
@@ -811,8 +1035,37 @@ function parseModelSource(text) {
         line: token.line, col: token.col, endLine: token.endLine, endCol: Math.max(token.endCol, token.col + 1),
       });
       if (at === from) next();
-      while (peek().t !== 'eof' && !startsDeclaration()) next();
+      while (peek().t !== 'eof' && !startsDeclaration() && !(peek().first && is('scenario'))) next();
     }
+  }
+
+  // Positional projection arguments take their names from the
+  // projection — declared in this text, or (for a fragment) handed in.
+  for (const record of result.scenarios) {
+    if (!record.positional) continue;
+    const name = record.subject;
+    const own = Object.prototype.hasOwnProperty.call(collections['projection-definition'], name)
+      ? collections['projection-definition'][name]
+      : options.projections && Object.prototype.hasOwnProperty.call(options.projections, name)
+        ? options.projections[name] : null;
+    const declared = own && (own.script ? own.script.arguments : own.parameters);
+    const names = Array.isArray(declared) ? declared.map((p) => p && p.name) : null;
+    const token = record.argsToken;
+    const problem = !names
+      ? `${name} is not defined here, so its arguments have to be named — ${name}(argument: …).`
+      : names.length !== record.positional.length
+        ? `${name} takes ${names.length} argument${names.length === 1 ? '' : 's'} (${names.join(', ') || 'none'}), not ${record.positional.length}.`
+        : null;
+    if (problem) {
+      diagnostics.push({
+        severity: 'error', message: problem,
+        line: token.line, col: token.col, endLine: token.endLine, endCol: Math.max(token.endCol, token.col + 1),
+      });
+      continue;
+    }
+    const args = {};
+    names.forEach((key, index) => sourcePut(args, key, record.positional[index]));
+    record.body.arguments = args;
   }
 
   // Every entity's identifier type, declared or not — see above.
@@ -1071,15 +1324,12 @@ function printProjection(name, body) {
   return lines.join('\n');
 }
 
-function printCommand(name, body) {
-  const properties = body.properties || [];
-  const boundary = body.boundary || [];
-  const aliases = new Set(boundary.map((b) => b && b.alias));
-  const parameters = new Set(properties.map((p) => p && p.name));
-
-  // The inverse of `resolveCommandNames`, refusing whatever it would
-  // resolve differently.
-  const operand = (value) => {
+// How a command writes an operand — the inverse of `resolveCommandNames`,
+// refusing whatever it would resolve differently.
+function sourceCommandOperand(body) {
+  const aliases = new Set((body.boundary || []).map((b) => b && b.alias));
+  const parameters = new Set((body.properties || []).map((p) => p && p.name));
+  return (value) => {
     if (value && typeof value === 'object' && !Array.isArray(value)) {
       if (value.parameterName !== undefined) {
         const head = sourceRef(value.parameterName, 'parameter');
@@ -1101,6 +1351,12 @@ function printCommand(name, body) {
     }
     return sourceLiteral(value);
   };
+}
+
+function printCommand(name, body) {
+  const properties = body.properties || [];
+  const boundary = body.boundary || [];
+  const operand = sourceCommandOperand(body);
 
   const signature = properties.map(sourceProperty);
   const flat = `command ${sourceDeclName(name)}(${signature.join(', ')})`;
@@ -1184,10 +1440,218 @@ function printDefinitionSource(kind, name, body) {
   return `// Written as JSON: ${reason}.\n${printJsonDefinition(kind, name, body)}`;
 }
 
+// ---------- scenarios ----------
+
+// A payload value, written the way its type reads: an enum member bare,
+// anything else as JSON. The parser reads a bare capitalised word back
+// as the same string, so the type only decides the look, never what
+// comes back.
+function sourceScenarioValue(model, value, type) {
+  if (Array.isArray(value)) {
+    const element = type ? { typeName: type.typeName, isList: false } : null;
+    return `[${value.map((v) => sourceScenarioValue(model, v, element)).join(', ')}]`;
+  }
+  if (value !== null && typeof value === 'object') {
+    const fields = type && !type.isList ? compositeFieldsOf(model, type.typeName) : null;
+    const keys = Object.keys(value);
+    if (!keys.length) return '{}';
+    return `{ ${keys.map((key) => {
+      const field = fields && fields.find((f) => f && f.name === key);
+      const fieldType = field ? { typeName: field.propertyType, isList: false } : null;
+      return `${sourceJsonKey(key)}: ${sourceScenarioValue(model, value[key], fieldType)}`;
+    }).join(', ')} }`;
+  }
+  if (typeof value === 'string' && type && SOURCE_MEMBER_RE.test(value) && !['true', 'false', 'null'].includes(value)) {
+    const members = enumMembersFor(model, type.typeName);
+    if (members && members.includes(value)) return value;
+  }
+  return sourceJsonFlat(value);
+}
+
+// `{ key: value, … }` against the properties that type it.
+function sourceScenarioPayload(model, properties, data) {
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) unprintable('a payload is not an object');
+  const typeOf = (key) => {
+    const property = (properties || []).find((p) => p && p.name === key);
+    return property ? { typeName: property.propertyType, isList: !!property.isList } : null;
+  };
+  const keys = Object.keys(data);
+  if (!keys.length) return '{}';
+  return `{ ${keys.map((key) => `${sourceJsonKey(key)}: ${sourceScenarioValue(model, data[key], typeOf(key))}`).join(', ')} }`;
+}
+
+function sourceEventPayload(model, eventName, data) {
+  const event = model['event-definitions'][eventName];
+  return sourceScenarioPayload(model, event && event.properties, data);
+}
+
+// A command scenario's outcome as `then` lines. A refusal names its rule
+// in the rule's own syntax when the command still has a rule reading
+// that way, and as the stored text in quotes when it does not — the
+// scenario that drifted because its rule changed has to print too.
+function sourceCommandThen(model, commandName, then) {
+  if (!then || typeof then !== 'object' || Array.isArray(then)) unprintable('its outcome is not an object');
+  if (then.outcome === 'published') {
+    const events = then.events || [];
+    if (!events.length) return ['then nothing'];
+    return events.map((e) => {
+      if (!e || typeof e !== 'object' || Object.keys(e).some((k) => k !== 'type' && k !== 'data')) unprintable('an event of its outcome is not { type, data }');
+      return `then ${sourceRef(e.type, 'event')} ${sourceEventPayload(model, e.type, e.data)}`;
+    });
+  }
+  if (then.outcome !== 'rejected') unprintable(`its outcome ${JSON.stringify(then.outcome)} is not one the code form knows`);
+  const failed = then.failedRule;
+  if (!failed || typeof failed.text !== 'string') unprintable('its refusal names no rule');
+  const command = model['command-definitions'][commandName];
+  const rule = command && (command.conditions || []).find((c) => {
+    try { return conditionText(c) === failed.text; } catch { return false; }
+  });
+  let ruleText = JSON.stringify(failed.text);
+  let types = [null, null];
+  if (rule) {
+    try {
+      ruleText = sourceCondition(rule, sourceCommandOperand(command));
+      types = [rule.leftHandSide, rule.rightHandSide].map((operand) => {
+        const type = operand === undefined ? null : conditionOperandType(model, command, rule, operand);
+        return type ? { typeName: type.propertyType, isList: !!type.isList } : null;
+      });
+      // A literal has no type of its own; it is compared with the left.
+      if (!types[1] && types[0]) types[1] = rule.predicate === 'equalsAny' ? { ...types[0], isList: true } : types[0];
+    } catch { /* a rule the grammar cannot say is named by its text */ }
+  }
+  let text = `then rejected by ${ruleText}`;
+  if (failed.leftValue !== undefined || failed.rightValue !== undefined) {
+    text += ` saw ${sourceScenarioValue(model, failed.leftValue, types[0])}`;
+    if (failed.rightValue !== null && failed.rightValue !== undefined) {
+      text += `, ${sourceScenarioValue(model, failed.rightValue, types[1])}`;
+    }
+  }
+  if (failed.atInstance !== null && failed.atInstance !== undefined) text += ` at ${sourceJsonFlat(failed.atInstance)}`;
+  return [text];
+}
+
+// A projection scenario's `then`: the projection, read at its
+// arguments — positional where the projection is right there to give
+// their order, named where it is not — and the value it folds to.
+function sourceProjectionThen(model, body, { positional }) {
+  const name = sourceRef(body.projection, 'projection');
+  const projection = model['projection-definitions'][body.projection];
+  const args = body.arguments === undefined ? {} : body.arguments;
+  if (args === null || typeof args !== 'object' || Array.isArray(args)) unprintable('its arguments are not an object');
+  const keys = Object.keys(args);
+  const declared = projection && (projection.script ? projection.script.arguments : projection.parameters);
+  const parameters = Array.isArray(declared) ? declared : null;
+  const typeOf = (key) => {
+    const parameter = (parameters || []).find((p) => p && p.name === key);
+    return parameter ? { typeName: parameter.propertyType, isList: false } : null;
+  };
+  let call;
+  if (positional && parameters && keys.length === parameters.length && parameters.every((p) => p && keys.includes(p.name))) {
+    call = parameters.length
+      ? `${name}(${parameters.map((p) => sourceScenarioValue(model, args[p.name], typeOf(p.name))).join(', ')})`
+      : name;
+  } else {
+    call = `${name}(${keys.map((key) => `${sourceRef(key, 'argument')}: ${sourceScenarioValue(model, args[key], typeOf(key))}`).join(', ')})`;
+  }
+  if (!('then' in body)) return `then ${call}`;
+  const valueType = projection ? { typeName: projection.valueType, isList: !!projection.isList } : null;
+  return `then ${call} == ${sourceScenarioValue(model, body.then, valueType)}`;
+}
+
+function printScenario(model, kind, body, { positional }) {
+  const known = ['name', 'given', kind === 'scenario-definition' ? 'command' : 'projection',
+    kind === 'scenario-definition' ? 'when' : 'arguments', 'then'];
+  if (Object.keys(body).some((key) => !known.includes(key))) unprintable('it carries fields the code form does not know');
+  if (body.name !== undefined && typeof body.name !== 'string') unprintable('its name is not a string');
+  const lines = (body.given || []).map((step) => {
+    if (!step || typeof step !== 'object' || Object.keys(step).some((k) => k !== 'event' && k !== 'data')) {
+      unprintable('a Given step is not { event, data }');
+    }
+    return `given ${sourceRef(step.event, 'event')} ${sourceEventPayload(model, step.event, step.data)}`;
+  });
+  let label = '';
+  if (kind === 'scenario-definition') {
+    if (!body.when || typeof body.when !== 'object' || Object.keys(body.when).some((k) => k !== 'arguments')) {
+      unprintable('its When is not { arguments }');
+    }
+    const command = model['command-definitions'][body.command];
+    lines.push(`when ${sourceRef(body.command, 'command')} `
+      + sourceScenarioPayload(model, command && command.properties, body.when.arguments));
+    if (body.then !== undefined) lines.push(...sourceCommandThen(model, body.command, body.then));
+    if (body.name === undefined && body.then !== undefined) label = `  // ${scenarioName(body)}`;
+  } else {
+    lines.push(sourceProjectionThen(model, body, { positional }));
+  }
+  const head = body.name === undefined ? 'scenario' : `scenario ${JSON.stringify(body.name)}`;
+  return `${head} {${label}\n${lines.map((line) => '  ' + line).join('\n')}\n}`;
+}
+
+// What the scenario says once read back — the index a refusal stores is
+// not in the text (it is re-derived on apply, see `completeScenario`),
+// so it is no part of the comparison.
+function sameScenario(a, b) {
+  const strip = (body) => {
+    const copy = deepClone(body);
+    if (copy && copy.then && copy.then.failedRule) delete copy.then.failedRule.index;
+    return copy;
+  };
+  return sameDefinition(strip(a), strip(b));
+}
+
+// One scenario, in the grammar when it survives the trip back and as
+// JSON under a comment when it does not — `printDefinitionSource`'s
+// contract, for a definition keyed by an id the text never shows.
+function printScenarioSource(model, kind, body, { positional }) {
+  let reason;
+  try {
+    const text = printScenario(model, kind, body, { positional });
+    const back = parseModelSource(text, { projections: model['projection-definitions'] });
+    const [record] = back.scenarios;
+    if (!back.diagnostics.length && back.scenarios.length === 1 && record.kind === kind && sameScenario(record.body, body)) {
+      return text;
+    }
+    reason = 'it holds something the code form does not say exactly';
+  } catch (error) {
+    reason = error instanceof SourceUnprintable ? error.message : 'it is not shaped the way the code form expects';
+  }
+  return `// Written as JSON: ${reason}.\nscenario json ${JSON.stringify(body, null, 2)}`;
+}
+
+// A block's text with scenarios added at its end, opening the block if
+// the definition printed without one (a derived projection).
+function sourceNest(text, scenarios) {
+  if (!scenarios.length) return text;
+  const inner = scenarios.map((t) => t.split('\n').map((line) => (line ? '  ' + line : line)).join('\n')).join('\n\n');
+  if (text.endsWith(' {}')) return `${text.slice(0, -1)}\n${inner}\n}`;
+  if (text.endsWith('\n}')) return `${text.slice(0, -1)}\n${inner}\n}`;
+  return `${text} {\n${inner}\n}`;
+}
+
 // The whole model. Definitions of one kind sit in their stored order —
 // the text's order *is* the order an apply stores — and consecutive
 // one-liners stay together, so twenty value types read as a table.
+// Scenarios sit at the end of their command's or projection's block;
+// one whose subject is gone, or printed as JSON, sits at the end of the
+// text instead.
 function modelToSource(model) {
+  const SUBJECT = {
+    'scenario-definition': ['command-definition', 'command'],
+    'projection-scenario-definition': ['projection-definition', 'projection'],
+  };
+  const nested = { 'command-definition': new Map(), 'projection-definition': new Map() };
+  const loose = [];
+  for (const kind of ID_KEYED_KINDS) {
+    const [subjectKind, field] = SUBJECT[kind];
+    for (const body of Object.values(model[DEF_COLLECTIONS[kind]] || {})) {
+      const subject = body && body[field];
+      const owner = typeof subject === 'string'
+        && Object.prototype.hasOwnProperty.call(model[DEF_COLLECTIONS[subjectKind]], subject);
+      if (!owner) { loose.push([kind, body]); continue; }
+      const list = nested[subjectKind].get(subject) || [];
+      list.push([kind, body]);
+      nested[subjectKind].set(subject, list);
+    }
+  }
   const out = [`model ${JSON.stringify(model.name)}`];
   for (const kind of SOURCE_KINDS) {
     const entries = Object.entries(model[DEF_COLLECTIONS[kind]] || {});
@@ -1195,12 +1659,19 @@ function modelToSource(model) {
     out.push('', `// ${SOURCE_SECTION[kind]}`);
     let previousWasLine = false;
     entries.forEach(([name, body], index) => {
-      const text = printDefinitionSource(kind, name, body);
+      let text = printDefinitionSource(kind, name, body);
+      const own = (nested[kind] && nested[kind].get(name)) || [];
+      if (text.startsWith('// Written as JSON')) loose.push(...own);
+      else text = sourceNest(text, own.map(([k, b]) => printScenarioSource(model, k, b, { positional: true })));
       const oneLine = !text.includes('\n');
       if (index > 0 && !(oneLine && previousWasLine)) out.push('');
       out.push(text);
       previousWasLine = oneLine;
     });
+  }
+  if (loose.length) {
+    out.push('', '// Scenarios');
+    for (const [kind, body] of loose) out.push('', printScenarioSource(model, kind, body, { positional: false }));
   }
   return out.join('\n') + '\n';
 }
@@ -1252,6 +1723,185 @@ function sourceSpanOf(parsed, kind, name) {
   return parsed.spans.find((span) => span.kind === kind && span.name === name) || null;
 }
 
+// ---------- scenarios, against the text ----------
+
+// What an apply stores for one written scenario, and what the editor
+// says about it while it is still a draft: optional properties left
+// out are written as null (as the page's save does), an omitted Then is
+// what the text's definitions make of the scenario, and a refusal
+// written without `saw` takes the values the evaluation saw — when it
+// was refused by the rule the text names; otherwise the values are null
+// and the scenario reports drift.
+function completeScenario(draft, record) {
+  const body = deepClone(record.body);
+  const has = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
+  const fill = (properties, data) => {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return;
+    for (const property of properties || []) {
+      if (property && property.isOptional && !has(data, property.name)) data[property.name] = null;
+    }
+  };
+  const eventProperties = (name) => {
+    const event = draft['event-definitions'][name];
+    return event && event.properties;
+  };
+  for (const step of body.given || []) if (step) fill(eventProperties(step.event), step.data);
+  const command = record.kind === 'scenario-definition' && draft['command-definitions'][body.command];
+  if (command && body.when) fill(command.properties, body.when.arguments);
+  if (body.then && body.then.outcome === 'published') {
+    for (const event of body.then.events || []) if (event) fill(eventProperties(event.type), event.data);
+  }
+
+  let actual = null;
+  let reason = null;
+  try {
+    actual = record.kind === 'scenario-definition' ? deriveThen(draft, body) : deriveProjectionScenarioThen(draft, body);
+  } catch (error) {
+    reason = error && error.message ? error.message : String(error);
+  }
+  if (!('then' in body)) {
+    if (reason) return { body, error: `This scenario cannot run, so there is no outcome to record: ${reason}` };
+    body.then = actual;
+    return { body, status: 'recorded', actual };
+  }
+  if (record.valuesMissing && body.then && body.then.failedRule) {
+    const failed = body.then.failedRule;
+    const seen = actual && actual.outcome === 'rejected' && actual.failedRule
+      && actual.failedRule.text === failed.text ? actual.failedRule : null;
+    failed.leftValue = seen ? seen.leftValue : null;
+    failed.rightValue = seen ? seen.rightValue : null;
+    if (!record.atWritten) failed.atInstance = seen ? seen.atInstance : null;
+  }
+  if (reason) return { body, status: 'broken', reason };
+  return { body, status: evSameOutcome(actual, body.then) ? 'current' : 'drifted', actual };
+}
+
+const SCENARIO_SUBJECT = { 'scenario-definition': 'command', 'projection-scenario-definition': 'projection' };
+
+// The scenario collections the text describes, keyed by the ids they
+// already have. A scenario carries no id in the text, so which stored
+// one a block *is* is matched: an unchanged block by its content, an
+// edited one by its place among its subject's scenarios, one whose
+// subject was renamed by its place among the leftovers — and whatever
+// is still unmatched is new. A refusal's index is not in the text
+// either: it is kept where the stored scenario names the same rule, and
+// otherwise derived from where that rule sits now.
+//
+// The collection order keeps the stored interleaving of subjects and
+// takes each subject's own order from the text, so an untouched text
+// reorders nothing.
+function sourceScenarioCollections(model, parsed) {
+  const draft = sourceDraftModel(model, parsed);
+  const errors = [];
+  const collections = {};
+  for (const kind of ID_KEYED_KINDS) {
+    const field = SCENARIO_SUBJECT[kind];
+    const stored = model[DEF_COLLECTIONS[kind]] || {};
+    const written = parsed.scenarios.filter((r) => r.kind === kind).map((record) => {
+      const done = completeScenario(draft, record);
+      if (done.error) errors.push({ record, message: done.error });
+      return { record, body: done.body };
+    });
+    const free = new Set(Object.keys(stored));
+    const ids = new Array(written.length).fill(null);
+    const claim = (index, id) => { ids[index] = id; free.delete(id); };
+    written.forEach((w, i) => {
+      const hit = [...free].find((id) => sameScenario(stored[id], w.body));
+      if (hit) claim(i, hit);
+    });
+    const textSubjects = new Set(written.map((w) => w.body[field]));
+    const pair = (eligible) => {
+      written.forEach((w, i) => {
+        if (ids[i]) return;
+        const hit = [...free].find((id) => eligible(stored[id], w));
+        if (hit) claim(i, hit);
+      });
+    };
+    pair((body, w) => body && body[field] === w.body[field]);
+    pair((body) => body && !textSubjects.has(body[field]));
+    written.forEach((w, i) => { if (!ids[i]) ids[i] = generateId(); });
+
+    written.forEach((w, i) => {
+      const failed = w.body.then && w.body.then.failedRule;
+      if (!failed || failed.index !== undefined) return;
+      const before = stored[ids[i]];
+      const was = before && before.then && before.then.failedRule;
+      if (was && was.text === failed.text && was.index !== undefined) { failed.index = was.index; return; }
+      const command = draft['command-definitions'][w.body.command];
+      const at = command ? (command.conditions || []).findIndex((c) => {
+        try { return conditionText(c) === failed.text; } catch { return false; }
+      }) : -1;
+      failed.index = at >= 0 ? at : 0;
+    });
+    // Restore the `index`-first key order the evaluator writes, so a
+    // completed refusal reads like a recorded one.
+    written.forEach((w) => {
+      const failed = w.body.then && w.body.then.failedRule;
+      if (!failed) return;
+      const { index, text, leftValue, rightValue, atInstance, ...rest } = failed;
+      w.body.then.failedRule = { index, text, leftValue, rightValue, atInstance, ...rest };
+    });
+
+    const queues = new Map();
+    written.forEach((w, i) => {
+      const queue = queues.get(w.body[field]) || [];
+      queue.push(i);
+      queues.set(w.body[field], queue);
+    });
+    const order = [];
+    const placed = new Set();
+    for (const id of Object.keys(stored)) {
+      const index = ids.indexOf(id);
+      if (index < 0) continue;
+      const queue = queues.get(written[index].body[field]);
+      const nextIndex = queue && queue.shift();
+      if (nextIndex === undefined) continue;
+      order.push(nextIndex);
+      placed.add(nextIndex);
+    }
+    written.forEach((w, i) => { if (!placed.has(i)) order.push(i); });
+    const out = {};
+    for (const i of order) sourcePut(out, ids[i], written[i].body);
+    collections[kind] = out;
+  }
+  return { collections, errors };
+}
+
+// What the editor says about each scenario of a draft: an error where
+// one cannot be recorded, a warning where it is broken or drifted, and
+// for a drift the `then` lines that would accept what the model now
+// does — the quick fix.
+function sourceScenarioReport(model, parsed) {
+  const draft = sourceDraftModel(model, parsed);
+  const errors = [];
+  const warnings = [];
+  for (const record of parsed.scenarios) {
+    const done = completeScenario(draft, record);
+    const at = { line: record.head.line, col: record.head.col, endLine: record.head.endLine, endCol: record.head.endCol };
+    if (done.error) { errors.push({ severity: 'error', message: done.error, ...at }); continue; }
+    if (done.status === 'broken') {
+      warnings.push({ message: `Broken — ${done.reason}`, ...at });
+      continue;
+    }
+    if (done.status !== 'drifted') continue;
+    let lines = null;
+    try {
+      lines = record.kind === 'scenario-definition'
+        ? sourceCommandThen(draft, done.body.command, done.actual)
+        : [sourceProjectionThen(draft, { ...done.body, then: done.actual }, { positional: !!record.positional || !!record.block })];
+    } catch { /* no fix to offer when the outcome cannot be written */ }
+    const warning = { message: 'Drifted — the model now does:\n' + (lines ? lines.join('\n') : JSON.stringify(done.actual)), ...at };
+    if (lines && record.thenRange) {
+      warning.fix = {
+        ...record.thenRange,
+        text: lines.join('\n' + ' '.repeat(record.thenRange.col - 1)),
+      };
+    }
+    warnings.push(warning);
+  }
+  return { errors, warnings };
+}
+
 // Parses, refuses on any error, and writes the difference — one
 // append, one undo step, nothing at all when nothing changed. An
 // identifier type the text left implicit keeps whatever the model
@@ -1295,15 +1945,27 @@ function applyModelSource(modelId, text) {
     for (const name of order) sourcePut(merged, name, implicit.has(name) ? current[name] : types[name]);
     parsed.collections['custom-type-definition'] = merged;
   }
-  return replaceDefinitions(modelId, { name: parsed.name, collections: parsed.collections });
+  const scenarios = sourceScenarioCollections(model, parsed);
+  if (scenarios.errors.length) {
+    const [first] = scenarios.errors;
+    throw new DomainError(`${scenarios.errors.length} scenario${scenarios.errors.length === 1 ? '' : 's'} cannot be `
+      + `recorded — nothing was applied. Line ${first.record.head.line}: ${first.message}`);
+  }
+  return replaceDefinitions(modelId, {
+    name: parsed.name,
+    collections: { ...parsed.collections, ...scenarios.collections },
+  });
 }
 
 // What an apply did, in a line.
 function sourceApplySummary(summary) {
   const parts = [];
   const count = (list, verb) => {
-    if (!list.length) return;
-    parts.push(list.length === 1 ? `${verb} ${SOURCE_KEYWORD[list[0].kind]} ${list[0].name}` : `${verb} ${list.length}`);
+    const definitions = list.filter((item) => !isIdKeyed(item.kind));
+    const scenarios = list.length - definitions.length;
+    if (definitions.length === 1) parts.push(`${verb} ${SOURCE_KEYWORD[definitions[0].kind]} ${definitions[0].name}`);
+    else if (definitions.length) parts.push(`${verb} ${definitions.length}`);
+    if (scenarios) parts.push(`${verb} ${scenarios} scenario${scenarios === 1 ? '' : 's'}`);
   };
   count(summary.added, 'added');
   count(summary.updated, 'updated');
@@ -1323,13 +1985,14 @@ const SOURCE_KEYWORDS = [
   'script', 'tagFilter', 'initialState', 'exposes', 'on', 'set', 'increment', 'decrement', 'append',
   'remove', 'command', 'read', 'excluding', 'with', 'require', 'emit', 'when', 'and', 'not', 'is',
   'empty', 'in', 'contains', 'containsAny', 'startsWith', 'endsWith', 'count', 'successor',
-  'currentValue', 'json', 'true', 'false', 'null',
+  'currentValue', 'json', 'true', 'false', 'null', 'scenario', 'given', 'then', 'nothing', 'rejected',
+  'by', 'saw', 'at',
 ];
 
 // The words a block's statements start with, coloured apart so the
 // shape of a command — what it reads, requires, emits — shows at a
 // glance.
-const SOURCE_STATEMENTS = ['read', 'require', 'emit', 'when', 'on', 'derived'];
+const SOURCE_STATEMENTS = ['read', 'require', 'emit', 'when', 'on', 'derived', 'scenario', 'given', 'then'];
 
 const SOURCE_MONARCH = {
   keywords: SOURCE_KEYWORDS,

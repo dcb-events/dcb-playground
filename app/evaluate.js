@@ -1174,9 +1174,7 @@ if (typeof module !== 'undefined' && module.exports) {
     deriveThen,
     runScenario,
     scenarioLog,
-    scenarioTouchesScript,
     deriveProjectionScenarioThen,
     runProjectionScenario,
-    projectionScenarioTouchesScript,
   };
 }

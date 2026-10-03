@@ -88,10 +88,6 @@ tests hold every shipped model and example free of fallbacks.
 - **Decider blocks, Weltenwanderer-style.** An entity is deliberately *not*
   a consistency boundary in DCB; grouping commands under one would reintroduce
   the aggregate the schema dissolves.
-- **Scenarios in the text** (heklang's `test` blocks are the obvious model).
-  A scenario's Then is derived and frozen, and its id is never shown; both
-  would be noise in an editable file. Left out, and an apply leaves them as
-  they are.
 - **Implicit aliases** (`read Course[courseId]` meaning `course`). The
   schema stores the alias; a default would be a second source of truth.
 - **Rename detection** in the diff. A rename in the text is a removal plus
@@ -136,5 +132,34 @@ I did not find.
 
 - An `else "message"` on `require` (Weltenwanderer's spelling) would need a
   schema change — conditions carry no message today.
-- Scenarios as `test` blocks, if a way is found to show the frozen Then
-  without making every apply a diff of it.
+
+## Addendum, same day: scenarios in the text
+
+First left out (a frozen, derived Then and a hidden id looked like noise),
+then added after a design round with the maintainer. Decisions:
+
+- **Both kinds, nested** in the block of the command or projection they are
+  about, and naming it: `when DefineCourse { … }` for a command,
+  `then CourseStatus("c1") == Existent` for a projection (positional
+  arguments in declared order; no parentheses without parameters; named
+  only where the projection is gone). The name must match the block —
+  moving a scenario into the wrong block is an error, not a reassignment.
+- **The Then is optional.** Written, it is an assertion stored as written,
+  as heklang's `expect` is; left out, an apply records what the model does,
+  which is the page's save. A refusal is `then rejected by <rule> saw L, R
+  [at n]`, the rule in the language's own syntax while the command still
+  has it (quoted stored text otherwise), `saw …` optional on the same
+  terms.
+- **Drift is a warning with a quick fix** ("Accept actual outcome"),
+  computed against the unapplied text; applying never accepts it.
+- **No ids in the text.** Blocks are matched to stored scenarios by
+  content, then by place within their subject, then by place among the
+  leftovers — so an edited scenario, and every scenario of a command
+  renamed in the text, keeps its id. Scenario order is display only; an
+  apply keeps the stored interleaving and takes each subject's order from
+  the text.
+- **One `then` per projection scenario**, because the format stores one
+  assertion each; grouping several over one Given was left for later, as
+  it would make text and storage stop being one-to-one.
+- **Enum members print bare** where the type says enum; they are stored as
+  strings either way.

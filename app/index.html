@@ -1305,6 +1305,7 @@
   }
   .code-problems { margin-top: 10px; }
   .code-problems .issue .mono { color: var(--muted); font-size: 11px; }
+  .code-problems .issue .why { flex: 1; white-space: pre-line; }
   .diag-mark.err { color: var(--danger); }
 </style>
 </head>
@@ -12114,12 +12115,22 @@ function syncCodeView(model) {
   writeCodeEditor(printed);
 }
 
+// Errors block an apply: what does not parse, and a scenario that
+// cannot be recorded. Warnings do not: advisories, and scenarios that
+// are broken or drifted against the text as written.
 function analyseCode(model) {
   if (codeView.analysis && codeView.analysis.text === codeView.text) return codeView.analysis;
   const parsed = parseModelSource(codeView.text);
-  const errors = parsed.diagnostics;
-  const advisories = errors.length ? [] : sourceAdvisories(model, parsed);
-  codeView.analysis = { text: codeView.text, parsed, errors, advisories };
+  let errors = parsed.diagnostics;
+  let advisories = [];
+  let scenarios = [];
+  if (!errors.length) {
+    advisories = sourceAdvisories(model, parsed);
+    const report = sourceScenarioReport(model, parsed);
+    errors = report.errors;
+    scenarios = report.warnings;
+  }
+  codeView.analysis = { text: codeView.text, parsed, errors, advisories, scenarios };
   return codeView.analysis;
 }
 
@@ -12140,6 +12151,8 @@ function refreshCodeChrome() {
     const toMarker = (severity) => (d) => ({
       severity, message: d.message,
       startLineNumber: d.line, startColumn: d.col, endLineNumber: d.endLine, endColumn: d.endCol,
+      // What the quick fix finds its replacement by.
+      code: d.fix ? 'accept:' + d.scenario : undefined,
     });
     const markers = [
       ...analysis.errors.map(toMarker(monaco.MarkerSeverity.Error)),
@@ -12153,16 +12166,18 @@ function refreshCodeChrome() {
   if (toggle) toggle.replaceWith(surfaceToggle(model));
 }
 
-// Advisories, placed on the name of the definition they are about.
+// Advisories, placed on the name of the definition they are about, and
+// scenario warnings, placed on their `scenario`.
 function codeAdvisoryAt(analysis) {
-  return analysis.advisories.map((a) => {
+  const scenarios = analysis.scenarios.map((w, index) => ({ ...w, scenario: index }));
+  return [...scenarios, ...analysis.advisories.map((a) => {
     const span = sourceSpanOf(analysis.parsed, a.kind, a.name);
     return {
       message: a.message, kind: a.kind, name: a.name,
       line: span ? span.nameLine : 1, col: span ? span.nameCol : 1,
       endLine: span ? span.nameLine : 1, endCol: span ? span.nameEndCol : 2,
     };
-  });
+  })];
 }
 
 function codeStatus() {
@@ -12181,6 +12196,10 @@ function codeStatus() {
     parts.push(h('span', { class: 'muted' }, 'In step with the model'));
   }
   if (!errors && advisories) parts.push(h('span', { class: 'muted' }, ` · ${advisories} advisor${advisories === 1 ? 'y' : 'ies'}`));
+  const scenarios = analysis ? analysis.scenarios.length : 0;
+  if (!errors && scenarios) {
+    parts.push(h('span', { class: 'code-dirty' }, ` · ${scenarios} scenario${scenarios === 1 ? '' : 's'} broken or drifted`));
+  }
   return h('span', { class: 'code-status small' }, parts);
 }
 
@@ -12205,12 +12224,35 @@ function codeProblemList(analysis) {
     ...codeAdvisoryAt(analysis),
   ];
   if (!rows.length) return h('div', { class: 'code-problems' });
-  return h('div', { class: 'code-problems' }, rows.map((d) => h('button', {
-    class: 'issue', type: 'button',
+  return h('div', { class: 'code-problems' }, rows.map((d) => h('div', {
+    class: 'issue', role: 'button', tabindex: '0',
     onclick: () => revealCodeAt(d.line, d.col),
   }, h('span', { class: 'diag-mark' + (d.error ? ' err' : '') }, d.error ? '✕' : '⚠'),
     h('span', { class: 'mono' }, `${d.line}:${d.col}`),
-    h('span', { class: 'why' }, d.name ? `${readable(d.name)} — ${d.message}` : d.message))));
+    h('span', { class: 'why' }, d.name ? `${readable(d.name)} — ${d.message}` : d.message),
+    d.fix ? h('button', {
+      class: 'btn tiny', type: 'button', title: 'Rewrite the then lines to what the model now does',
+      onclick: (e) => { e.stopPropagation(); acceptCodeFix(d.fix); },
+    }, 'Accept') : null)));
+}
+
+// The drift quick fix: the scenario's then lines become what the model
+// now does. An edit like any other — it still has to be applied.
+function acceptCodeFix(fix) {
+  if (codeView.editor) {
+    const { editor } = codeView.editor;
+    editor.executeEdits('accept', [{
+      range: new monaco.Range(fix.line, fix.col, fix.endLine, fix.endCol), text: fix.text,
+    }]);
+    editor.focus();
+    return;
+  }
+  const lines = codeView.text.split('\n');
+  const offset = (line, col) => lines.slice(0, line - 1).reduce((sum, l) => sum + l.length + 1, 0) + col - 1;
+  const text = codeView.text.slice(0, offset(fix.line, fix.col)) + fix.text
+    + codeView.text.slice(offset(fix.endLine, fix.endCol));
+  onCodeInput(text);
+  render();
 }
 
 function applyCode() {
@@ -12275,6 +12317,8 @@ function leaveCode() {
     const analysis = analyseCode(model);
     const line = codeCursorLine();
     at = line ? sourceSpanAt(analysis.parsed, line) : null;
+    const inScenario = line && analysis.parsed.scenarios.some((r) => r.block && line >= r.span.line && line <= r.span.endLine);
+    if (at && inScenario) at = { ...at, scenarios: true };
     if (codeDirty() && !codeView.stale) {
       if (analysis.errors.length) {
         toast(`The code has ${analysis.errors.length} error${analysis.errors.length === 1 ? '' : 's'} and was not `
@@ -12289,12 +12333,21 @@ function leaveCode() {
   setCodeSurface(false);
   const current = activeModel();
   if (at && current && current[DEF_COLLECTIONS[at.kind]][at.name] !== undefined) {
-    return openDefinition(at.kind, at.name);
+    return openDefinition(at.kind, at.name, { scenarios: at.scenarios });
   }
   render();
 }
 
-function openDefinition(kind, name) {
+function openDefinition(kind, name, { scenarios } = {}) {
+  if (scenarios && kind === 'command-definition') {
+    closeForms();
+    Object.assign(state, { view: 'slice', slice: name, tab: 'scenarios' });
+    return render();
+  }
+  if (scenarios && kind === 'projection-definition') {
+    openProjection(activeModel(), name, { tab: 'checks' });
+    return render();
+  }
   if (kind === 'command-definition') return goToCommand(name);
   if (kind === 'entity-definition') return openEntity(name);
   if (kind === 'event-definition') return goToEvent(name);
@@ -12422,6 +12475,29 @@ function registerSourceLanguage() {
       })) : [];
     },
   });
+  L.registerCodeActionProvider('dcb', {
+    provideCodeActions: (textModel, range, context) => {
+      const model = activeModel();
+      if (!model) return { actions: [], dispose() {} };
+      const analysis = analyseCode(model);
+      const actions = context.markers
+        .filter((m) => typeof m.code === 'string' && m.code.startsWith('accept:'))
+        .map((m) => {
+          const warning = analysis.scenarios[Number(m.code.slice('accept:'.length))];
+          if (!warning || !warning.fix) return null;
+          const { fix } = warning;
+          return {
+            title: 'Accept actual outcome', kind: 'quickfix', diagnostics: [m], isPreferred: true,
+            edit: { edits: [{
+              resource: textModel.uri, versionId: textModel.getVersionId(),
+              textEdit: { range: new monaco.Range(fix.line, fix.col, fix.endLine, fix.endCol), text: fix.text },
+            }] },
+          };
+        })
+        .filter(Boolean);
+      return { actions, dispose() {} };
+    },
+  });
   // A command's derived boundary, on its name — the question the tool
   // exists to answer, asked of the text before it is applied.
   L.registerHoverProvider('dcb', {
@@ -12519,8 +12595,9 @@ function renderCode(model, main) {
       hint('code', 'The model as code', [
         'Every type, event, entity, projection and command on the other pages, as one text. '
           + 'Edit it and apply with ⌘S; going back to the pages applies it too. An apply is one undo step.',
-        'Scenarios are not part of the text and are left as they are. Comments are not stored — '
-          + 'they last as long as the text in this editor.',
+        'Scenarios sit at the end of the command or projection they exercise. Leave a then out and '
+          + 'applying records what the model does; a drifted one is marked, with a fix that accepts it. '
+          + 'Comments are not stored — they last as long as the text in this editor.',
         'Hover a command\'s name for the consistency boundary it derives; ⌘-click a name to go to it; '
           + '⇧⌘O lists every definition.',
       ])),

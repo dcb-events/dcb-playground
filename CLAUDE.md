@@ -427,8 +427,14 @@ it never works from `file:`.
   the parser**, or that test fails the moment a predefined model uses
   it. Applying writes only the difference, through `replaceDefinitions`
   (one append, one undo step, nothing for an untouched text); like an
-  import it never prunes reads. Scenarios are not in the text and an
-  apply leaves them alone; a rename in the text is a remove plus an add.
+  import it never prunes reads. A rename in the text is a remove plus
+  an add — except for scenarios, which carry no id in the text and are
+  matched to stored ones by content, then by place in their block, so
+  a command renamed in the text keeps them. Scenarios nest in the block
+  of their subject (a mismatch is an error); a written Then is an
+  assertion stored as written, an omitted one is recorded at apply
+  (`completeScenario`), and drift is reported with a fix but never
+  accepted by applying — the pages' rules, in text.
   Operand names resolve per command — a read when a `read` declares
   the name, a payload property otherwise — so a parameter and a read
   sharing a name is the one ordinary case that falls back to JSON.

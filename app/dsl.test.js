@@ -74,18 +74,37 @@ check('every predefined model prints without a JSON fallback and parses back equ
   });
 });
 
-check('every example file round-trips, the hand-edited one included', () => {
-  const dir = path.join(APP, 'examples');
-  for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.json'))) {
-    fresh();
-    const { modelId, skipped } = importModelFromEnvelope(JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8')));
-    eq(skipped, [], `${file} imported whole`);
-    const model = projectState()[modelId];
-    const text = modelToSource(model);
+function importExample(slug) {
+  fresh();
+  const { modelId, skipped } = importModelFromEnvelope(
+    JSON.parse(fs.readFileSync(path.join(APP, 'examples', slug + '.json'), 'utf8'))
+  );
+  eq(skipped, [], `${slug} imported whole`);
+  return { id: modelId, model: () => projectState()[modelId] };
+}
+
+check('every example file round-trips, scenarios and the hand-edited one included', () => {
+  for (const file of fs.readdirSync(path.join(APP, 'examples')).filter((f) => f.endsWith('.json'))) {
+    const { id, model } = importExample(file.replace(/\.json$/, ''));
+    const text = modelToSource(model());
     eq(text.includes(' json {'), false, `${file} falls back to JSON`);
     const parsed = parseModelSource(text);
     eq(parsed.diagnostics, [], `${file} diagnostics`);
-    assertSameModel(model, parsed, file);
+    assertSameModel(model(), parsed, file);
+    for (const kind of ['scenario-definition', 'projection-scenario-definition']) {
+      const stored = Object.values(model()[DEF_COLLECTIONS[kind]]);
+      const read = parsed.scenarios.filter((r) => r.kind === kind);
+      eq(read.length, stored.length, `${file}: ${kind} count`);
+      eq(read.every((r) => r.block !== null), true, `${file}: every ${kind} nested`);
+      for (const body of stored) {
+        eq(read.some((r) => sandbox.sameScenario(r.body, body)), true, `${file}: ${JSON.stringify(body).slice(0, 120)}`);
+      }
+    }
+    const report = sandbox.sourceScenarioReport(model(), parsed);
+    eq([report.errors.length, report.warnings.length], [0, 0], `${file}: scenarios as stored`);
+    const before = loadEvents().length;
+    applyModelSource(id, text);
+    eq(loadEvents().length, before, `${file}: an untouched text, scenarios and all, applies as nothing`);
   }
 });
 
@@ -388,6 +407,130 @@ check('the model name is compared trimmed, and a rename is reported', () => {
   eq(loadEvents().length, before, 'padding is no rename');
   const summary = applyModelSource(id, modelToSource(model()).replace('model "Course Example (simple)"', 'model "Courses"'));
   eq(sandbox.sourceApplySummary(summary), 'renamed the model to "Courses"', 'reported');
+});
+
+// ---------------------------------------------------------------
+// Scenarios.
+// ---------------------------------------------------------------
+
+check('a scenario reads as given, when and then, nested in its command', () => {
+  const { model } = importExample('course-simple');
+  const text = modelToSource(model());
+  eq(text.includes([
+    '  scenario {  // is refused by course.status == Existent',
+    '    when SubscribeStudentToCourse { courseId: "c1", studentId: "s1" }',
+    '    then rejected by course.status == Existent saw NonExistent, Existent',
+    '  }',
+  ].join('\n')), true, 'a refusal, enum members bare');
+  eq(text.includes([
+    '  scenario {  // records StudentSubscribedToCourse',
+    '    given CourseDefined { courseId: "c1", capacity: 123 }',
+    '    when SubscribeStudentToCourse { courseId: "c1", studentId: "s1" }',
+    '    then StudentSubscribedToCourse { courseId: "c1", studentId: "s1" }',
+    '  }',
+  ].join('\n')), true, 'a publish');
+  const sequence = modelToSource(importExample('course-sequence').model());
+  eq(sequence.includes('scenario "issues c1 before anything has happened" {\n    then CourseNumbering == "c1"\n  }'), true,
+    'a projection without parameters, without parentheses');
+  const guarded = modelToSource(importExample('content-decisions-guarded').model());
+  eq(guarded.includes('then DocumentStatus("d1") == NonExistent'), true, 'positional arguments');
+});
+
+check('a scenario written without a then is recorded with what the model does', () => {
+  const { id, model } = importExample('course-simple');
+  const text = modelToSource(model()).replace('  emit CourseArchived { courseId }\n', [
+    '  emit CourseArchived { courseId }',
+    '',
+    '  scenario "archiving a defined course" {',
+    '    given CourseDefined { courseId: "c9", capacity: 3 }',
+    '    when ArchiveCourse { courseId: "c9" }',
+    '  }',
+    '',
+    '  scenario "archiving nothing" {',
+    '    when ArchiveCourse { courseId: "c8" }',
+    '    then rejected by course.status == Existent',
+    '  }',
+    '',
+  ].join('\n'));
+  const before = appends;
+  const summary = applyModelSource(id, text);
+  eq(appends - before, 1, 'one append');
+  // Written ahead of the command's other scenarios, so they move up.
+  eq(sandbox.sourceApplySummary(summary), 'added 2 scenarios, reordered', 'reported');
+  const stored = Object.values(model()['scenario-definitions']);
+  const recorded = stored.find((b) => b.name === 'archiving a defined course');
+  eq(recorded.then, { outcome: 'published', events: [{ type: 'CourseArchived', data: { courseId: 'c9' } }] }, 'recorded');
+  const refused = stored.find((b) => b.name === 'archiving nothing');
+  eq(refused.then.failedRule, {
+    index: 0, text: 'course.status == Existent', leftValue: 'NonExistent', rightValue: 'Existent', atInstance: null,
+  }, 'the values it saw, filled in');
+  const back = modelToSource(model());
+  eq(back.includes('  scenario "archiving nothing" {\n    when ArchiveCourse { courseId: "c8" }\n'
+    + '    then rejected by course.status == Existent saw NonExistent, Existent\n  }'), true, 'and printed back whole');
+});
+
+check('a written then is asserted: a drift is reported with its fix, and applying does not accept it', () => {
+  const { id, model } = importExample('course-simple');
+  const text = modelToSource(model()).replace(
+    'when SubscribeStudentToCourse { courseId: "c1", studentId: "s1" }\n    then rejected by course.status == Existent saw NonExistent, Existent',
+    'when SubscribeStudentToCourse { courseId: "c1", studentId: "s1" }\n    then rejected by course.status == Existent saw Archived, Existent',
+  );
+  const parsed = parseModelSource(text);
+  const { warnings } = sandbox.sourceScenarioReport(model(), parsed);
+  eq(warnings.length, 1, 'one drift');
+  const archived = () => Object.values(model()['scenario-definitions'])
+    .filter((b) => b.then.failedRule && b.then.failedRule.leftValue === 'Archived').length;
+  const already = archived();
+  eq(warnings[0].message, 'Drifted — the model now does:\nthen rejected by course.status == Existent saw NonExistent, Existent', 'what it does');
+  applyModelSource(id, text);
+  eq(archived(), already + 1, 'stored as written — drifted, as on the pages');
+  const { fix } = warnings[0];
+  const lines = text.split('\n');
+  const offset = (line, col) => lines.slice(0, line - 1).reduce((sum, l) => sum + l.length + 1, 0) + col - 1;
+  const fixed = text.slice(0, offset(fix.line, fix.col)) + fix.text + text.slice(offset(fix.endLine, fix.endCol));
+  eq(sandbox.sourceScenarioReport(model(), parseModelSource(fixed)).warnings, [], 'the fix accepts it');
+});
+
+check('an edited scenario keeps its id and place; a renamed command takes its scenarios along', () => {
+  const { id, model } = importExample('course-simple');
+  const ids = Object.keys(model()['scenario-definitions']);
+  const text = modelToSource(model()).replace('given CourseDefined { courseId: "c11", capacity: 123 }',
+    'given CourseDefined { courseId: "c11", capacity: 124 }');
+  let summary = applyModelSource(id, text);
+  eq(sandbox.sourceApplySummary(summary), 'updated 1 scenario', 'one scenario');
+  eq(Object.keys(model()['scenario-definitions']), ids, 'same ids, same order');
+  summary = applyModelSource(id, modelToSource(model()).split('SubscribeStudentToCourse').join('EnrolStudent'));
+  eq(Object.keys(model()['scenario-definitions']), ids, 'the rename kept every id');
+  eq(Object.values(model()['scenario-definitions']).filter((b) => b.command === 'EnrolStudent').length, 5, 'and moved them');
+});
+
+check('a scenario left out of the text is removed', () => {
+  const { id, model } = importExample('course-sequence');
+  const text = modelToSource(model()).replace(/\n  scenario "issues c3[\s\S]*?\n  }\n/, '\n');
+  applyModelSource(id, text);
+  eq(Object.values(model()['projection-scenario-definitions']).map((b) => b.name), ['issues c1 before anything has happened'], 'one left');
+});
+
+check('scenarios refuse what they cannot mean', () => {
+  const errors = (text) => parseModelSource(text).diagnostics.map((d) => d.message);
+  eq(errors('command A() {\n  scenario {\n    when B {}\n  }\n}')[0],
+    'This scenario sits in A but is about B — move it there, or make it about A.', 'in the wrong block');
+  eq(errors('scenario {\n  then Ghost("x") == 1\n}')[0],
+    'Ghost is not defined here, so its arguments have to be named — Ghost(argument: …).', 'positional with no order to take');
+  eq(errors('scenario {\n  when A {}\n  then nothing\n  then E {}\n}')[0], '"then nothing" is the whole outcome — it stands alone.', 'nothing and more');
+  eq(errors('scenario {\n  then E {}\n}')[0], 'A scenario ending in events, nothing or a rejection needs a when — the command it runs.', 'no when');
+  eq(errors('scenario {\n  then Ghost(x: "1") == 1\n}'), [], 'an orphan, named');
+  const { id, model } = importExample('course-simple');
+  const text = modelToSource(model()).replace('  emit CourseArchived { courseId }\n',
+    '  emit CourseArchived { courseId }\n\n  scenario {\n    given CourseBurnt { courseId: "c1" }\n    when ArchiveCourse { courseId: "c1" }\n  }\n');
+  const report = sandbox.sourceScenarioReport(model(), parseModelSource(text));
+  eq(report.errors.length, 1, 'a scenario with nothing to record');
+  eq(report.errors[0].message.startsWith('This scenario cannot run, so there is no outcome to record'), true, report.errors[0].message);
+  const before = loadEvents().length;
+  let refused = null;
+  try { applyModelSource(id, text); } catch (error) { refused = error; }
+  eq(refused instanceof sandbox.DomainError, true, 'refused');
+  eq(loadEvents().length, before, 'nothing appended');
 });
 
 check('the draft is advised on before it is applied', () => {
