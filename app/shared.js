@@ -543,7 +543,7 @@ function setMode(next) { localStorage.setItem(MODE_KEY, next); if (typeof render
 // ---------- light / dark ----------
 //
 // Defaults to whatever the system says, same as any other well-behaved
-// page; Settings can override that per browser. `isDark` is the one
+// page; the sun/moon button in the bar overrides that per browser. `isDark` is the one
 // question the rest of the page asks — nothing downstream needs to know
 // whether that answer came from the system or from a stored choice.
 //
@@ -573,6 +573,9 @@ function setTheme(next) {
   else localStorage.setItem(THEME_KEY, next);
   if (typeof render === 'function') render();
 }
+// The bar's button flips whatever is on screen, so the first click
+// away from "system" always changes something.
+function toggleTheme() { setTheme(isDark() ? 'light' : 'dark'); }
 if (hostTheme() && typeof hostTheme().onChange === 'function') {
   hostTheme().onChange(() => { if (typeof render === 'function') render(); });
 }

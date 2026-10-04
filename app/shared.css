@@ -152,7 +152,7 @@ body.f-dark .disclaimer { background: #2d2408; color: #fcd34d; border-bottom-col
   text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom;
 }
 
-/* Import/export and Settings — icon only, same footprint as the
+/* Import/export, theme and Settings — icon only, same footprint as the
    undo/redo buttons they sit next to. */
 .app-bar .icon-btn {
   display: inline-flex; align-items: center; justify-content: center;
