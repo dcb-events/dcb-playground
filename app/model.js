@@ -3165,6 +3165,32 @@ function validateCommandBody(model, body) {
       }
     }
   }
+  // What an emission writes into a field has to be what the event
+  // declares there. Nothing converts on the way: an emission copies the
+  // value it reads, so a `CartLine[]` mapped into an `Item[]` field
+  // publishes cart lines under the item type's name, and every reader of
+  // the event folds a shape it was never told about. Operands whose type
+  // cannot be worked out (literals, dangling references) are left alone.
+  for (const emission of body.publishes || []) {
+    if (!emission) continue;
+    const event = model['event-definitions'][emission.name];
+    if (!event) continue;
+    for (const property of event.properties || []) {
+      const operand = (emission.parameters || {})[property.name];
+      if (operand === undefined) continue;
+      const resolved = resolveOperandType(operand, {
+        boundary, commandProperties: body.properties || [], model,
+      });
+      if (!resolved) continue;
+      if (resolved.propertyType !== property.propertyType || resolved.isList !== !!property.isList) {
+        throw new DomainError(
+          `"${emission.name}.${property.name}" is declared ` +
+          `${property.propertyType}${property.isList ? '[]' : ''}, but takes its value from ` +
+          `"${operandText(operand)}", which is ${resolved.propertyType}${resolved.isList ? '[]' : ''}.`
+        );
+      }
+    }
+  }
   // Entity-binding arguments are deliberately exempt: they reach a
   // script as ordinary values, and null is one. An identifier, an
   // exclusion or a partition argument becomes a tag, and null has no

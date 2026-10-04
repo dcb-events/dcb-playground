@@ -986,6 +986,31 @@ function drive(model, log, command, args) {
     removeDefinition('entity-definition', id, 'Bolt');
     eq('Bolt' in model()['entity-definitions'], false, 'entity removed');
   });
+
+  check('an emission copying a differently typed value into an event field is an advisory', () => {
+    const { id, model } = openBlank();
+    addDefinition('custom-type-definition', id, 'ProductId', { schema: { type: 'string' }, isTag: true });
+    addDefinition('custom-type-definition', id, 'Money', { schema: { type: 'number' } });
+    const fields = (price) => [
+      { name: 'productId', propertyType: 'ProductId' }, { name: price, propertyType: 'Money' },
+    ];
+    addDefinition('custom-type-definition', id, 'CartLine', { properties: fields('displayedPrice') });
+    addDefinition('custom-type-definition', id, 'Item', { properties: fields('price') });
+    addDefinition('event-definition', id, 'ProductsOrdered', {
+      properties: [{ name: 'items', propertyType: 'Item', isOptional: false, isList: true }],
+    });
+    const command = (propertyType) => ({
+      properties: [{ name: 'items', propertyType, isOptional: false, isList: true }],
+      boundary: [], conditions: [],
+      publishes: [{ name: 'ProductsOrdered', parameters: { items: { parameterName: 'items' } } }],
+    });
+    addDefinition('command-definition', id, 'OrderProducts', command('CartLine'));
+    eq(sandbox.modelAdvisories(model()).some(
+      (a) => a.name === 'OrderProducts' && /ProductsOrdered\.items" is declared Item\[\].*CartLine\[\]/.test(a.message)
+    ), true, 'the mismatch is reported, not refused');
+    updateDefinition('command-definition', id, 'OrderProducts', command('Item'));
+    eq(sandbox.modelAdvisories(model()).filter((a) => a.name === 'OrderProducts'), [], 'matching types are clean');
+  });
 }
 
 // ---------------------------------------------------------------
