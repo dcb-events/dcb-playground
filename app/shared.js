@@ -546,13 +546,36 @@ function setMode(next) { localStorage.setItem(MODE_KEY, next); if (typeof render
 // page; Settings can override that per browser. `isDark` is the one
 // question the rest of the page asks — nothing downstream needs to know
 // whether that answer came from the system or from a stored choice.
+//
+// A page hosting the playground can own the choice instead, so that one
+// switch serves both (dcb.events shares its own light/dark setting this
+// way): it defines `window.DCB_PLAYGROUND_HOST.theme` before these
+// scripts run, with `get()` answering 'system' | 'light' | 'dark' (or
+// null for "no opinion"), `set(value)`, and optionally `onChange(fn)`
+// for a choice made elsewhere, e.g. in another tab. How the host stores
+// it is the host's business — nothing here knows it.
 
 const THEME_KEY = 'dcb-playground:theme';
+function hostTheme() {
+  const host = window.DCB_PLAYGROUND_HOST;
+  return host && host.theme && typeof host.theme.get === 'function' ? host.theme : null;
+}
 function theme() {
+  const host = hostTheme();
+  const hosted = host ? host.get() : null;
+  if (hosted === 'system' || hosted === 'light' || hosted === 'dark') return hosted;
   const stored = localStorage.getItem(THEME_KEY);
   return stored === 'light' || stored === 'dark' ? stored : 'system';
 }
-function setTheme(next) { localStorage.setItem(THEME_KEY, next); if (typeof render === 'function') render(); }
+function setTheme(next) {
+  const host = hostTheme();
+  if (host) host.set(next);
+  else localStorage.setItem(THEME_KEY, next);
+  if (typeof render === 'function') render();
+}
+if (hostTheme() && typeof hostTheme().onChange === 'function') {
+  hostTheme().onChange(() => { if (typeof render === 'function') render(); });
+}
 function isDark() {
   const t = theme();
   if (t !== 'system') return t === 'dark';

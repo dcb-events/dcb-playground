@@ -487,6 +487,17 @@ it never works from `file:`.
   `increment`, …): the vocabulary is closed because it is analysed,
   `script` is the expression door, and the reasoning is in the
   `dsl.js` header — read it before adding `=> state + 1`.
+- **Kind colours mean kinds; chrome is `--accent`.** `--command`,
+  `--event`, `--entity`/`--projection` and `--rule` colour only the thing
+  they name (chips, cards, lanes, marks). Buttons, focus rings, hover,
+  selected tabs and pickers use `--accent` (dcb.events teal) — painting
+  chrome command blue made every control read as "about a command".
+- **Hosted on dcb.events** at `/playground/`, copied there from a pinned
+  submodule by the website's build; every path stays relative so any
+  sub-path works. The host may define `window.DCB_PLAYGROUND_HOST.theme`
+  (`get`/`set`/`onChange`, see `shared.js`) to own the light/dark choice;
+  the website injects that to share its own setting. Nothing in `app/`
+  may know how the host stores it.
 - **Comment style**: file headers and block comments carry design rationale,
   not line-by-line narration. Match that register; keep headers truthful when
   behaviour changes.

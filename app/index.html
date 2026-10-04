@@ -43,8 +43,8 @@
     display: block; padding: 6px 16px; font-size: 13px;
     color: var(--text); text-decoration: none; border-left: 3px solid transparent;
   }
-  .rail a:hover { background: var(--command-soft); }
-  .rail a.on { border-left-color: var(--command); background: var(--command-soft); font-weight: 600; }
+  .rail a:hover { background: var(--accent-soft); }
+  .rail a.on { border-left-color: var(--accent); background: var(--accent-soft); font-weight: 600; }
   /* Quiet until wanted, like the in-page adders below: pointing at the
      rail is the "I am about to change this list" gesture. On a touch
      screen the drawer being open is that gesture — see the hover:none
@@ -65,7 +65,7 @@
   }
   .group .caret { cursor: pointer; color: var(--muted); font-size: 10px; width: 10px; }
   .group .gname { cursor: pointer; flex: 1; }
-  .group .gname:hover { color: var(--command); }
+  .group .gname:hover { color: var(--accent); }
   .group .gcount {
     font-weight: 400; font-size: 10px; color: var(--muted);
     background: var(--bg); border-radius: 999px; padding: 0 6px;
@@ -74,8 +74,8 @@
      heading or any command row in it. Filled, not an edge line like the
      scenario cards': the command lands *in* the group, never against a
      neighbour (within a group the order is alphabetical, not chosen). */
-  .group.drop-into { background: var(--command-soft); border-radius: 6px; }
-  .rail a.cmd.drop-into { background: var(--command-soft); }
+  .group.drop-into { background: var(--accent-soft); border-radius: 6px; }
+  .rail a.cmd.drop-into { background: var(--accent-soft); }
   /* The way out of a feature, shown only while a command is in the air
      and no real Ungrouped group is on screen to receive it. */
   .rail .drop-stub { display: none; color: var(--muted); font-style: italic; font-weight: 400; }
@@ -107,8 +107,8 @@
 
   /* Inline forms, everywhere a name is needed — never a browser dialog. */
   .inline-form {
-    border: 1px dashed var(--command); border-radius: 6px;
-    padding: 8px 10px; margin: 6px 0; background: var(--command-soft);
+    border: 1px dashed var(--accent); border-radius: 6px;
+    padding: 8px 10px; margin: 6px 0; background: var(--accent-soft);
   }
   .inline-form .q { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
   /* Choosing a mark is not naming something — it belongs to the thing
@@ -211,9 +211,9 @@
      .reveal until the row is clicked. */
   .qrow > .reveal { display: none; align-items: center; gap: 8px; }
   .qrow.open > .reveal { display: inline-flex; }
-  .qrow:focus { outline: 1px solid var(--command); outline-offset: 1px; }
+  .qrow:focus { outline: 1px solid var(--accent); outline-offset: 1px; }
   .qrow { cursor: pointer; }
-  .qrow:hover, .qrow.open { background: var(--command-soft); }
+  .qrow:hover, .qrow.open { background: var(--accent-soft); }
   /* The collapsed adder: one quiet button where a row of empty controls
      used to sit — and quieter still since the hover-reveal round: the
      folded button is invisible until the pointer is over the step (or
@@ -227,7 +227,7 @@
   /* The dashed line beside the revealed button: where the new row will go. */
   .adder.quiet .slot { flex: 1; height: 1px; border-bottom: 1px dashed var(--border-strong); }
   .adder .btn.ghost { color: var(--muted); }
-  .adder .btn.ghost:hover { color: var(--command); }
+  .adder .btn.ghost:hover { color: var(--accent); }
 
   /* ---------- touch screens ----------
      No hover means no reveal, so wherever hover cannot happen — a
@@ -277,7 +277,7 @@
     font-family: var(--mono); font-size: 11px; line-height: 1.5; padding: 7px 9px;
   }
   .script textarea:focus, .script-handler textarea:focus {
-    outline: none; border-color: var(--command);
+    outline: none; border-color: var(--accent);
   }
   /* Queries. The header carries the cost — how many times this command
      goes to the log — and the note under a card carries the reason it
@@ -291,11 +291,11 @@
   .waits { font-size: 11px; color: var(--muted); padding: 2px 0 0 12px; }
   .waits .op { font-family: var(--mono); font-size: 10px; }
   /* A member opened for editing: the row it replaces, expanded. */
-  .member-editor { padding: 4px 0 4px 8px; border-left: 2px solid var(--command);
+  .member-editor { padding: 4px 0 4px 8px; border-left: 2px solid var(--accent);
                    margin: 2px 0; background: var(--surface); }
   .member-editor .adder { flex-wrap: wrap; }
   .chip.editable { cursor: pointer; }
-  .chip.editable:hover { border-color: var(--command); color: var(--command); }
+  .chip.editable:hover { border-color: var(--accent); color: var(--accent); }
   /* A field offered rather than authored — dashed, like the adders it
      sits beside, so it reads as "not here yet" rather than as one more
      fact about the event. */
@@ -303,7 +303,7 @@
     font: inherit; font-size: 11px; cursor: pointer; color: var(--muted);
     border-style: dashed; background: transparent;
   }
-  .chip.suggest:hover { border-color: var(--command); color: var(--command); background: var(--command-soft); }
+  .chip.suggest:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
   .copy-missing { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
   .row { display: flex; align-items: center; gap: 8px; }
   .row + .row { margin-top: 6px; }
@@ -315,9 +315,9 @@
   /* A reference, and the row it refers to. */
   .op.ref { cursor: pointer; }
   .op.ref:hover, .op.ref:focus, .op.ref.pinned {
-    border-color: var(--command); color: var(--command); outline: none;
+    border-color: var(--accent); color: var(--accent); outline: none;
   }
-  .lit { box-shadow: 0 0 0 2px var(--command); border-radius: 5px; }
+  .lit { box-shadow: 0 0 0 2px var(--accent); border-radius: 5px; }
   .fields { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); }
   .field { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 2px 0; }
   .field .nm { min-width: 170px; }
@@ -329,7 +329,7 @@
     background: var(--type-soft); border: 1px solid var(--border);
     border-radius: 4px; padding: 0 4px; cursor: pointer;
   }
-  .field .type-tag:hover { border-color: var(--command); color: var(--command); }
+  .field .type-tag:hover { border-color: var(--accent); color: var(--accent); }
   .adder { display: flex; gap: 9px; align-items: center; margin-top: 7px; flex-wrap: wrap; }
   .dcb { font-family: var(--mono); font-size: 11.5px; line-height: 1.75; }
   .dcb .k { color: var(--muted); }
@@ -341,7 +341,7 @@
   .qpop { position: relative; display: inline-flex; vertical-align: middle; }
   .qbtn { background: none; border: none; padding: 0 3px; cursor: pointer;
           color: var(--muted); display: inline-flex; align-items: center; }
-  .qbtn:hover, .qbtn:focus-visible, .qpop.on .qbtn { color: var(--command); }
+  .qbtn:hover, .qbtn:focus-visible, .qpop.on .qbtn { color: var(--accent); }
   .qbtn .qico { display: inline-flex; }
   .qbtn .qico svg { width: 13px; height: 13px; }
   .qpop .qpanel { display: none; position: absolute; top: calc(100% + 5px); left: -10px;
@@ -365,7 +365,7 @@
           color: var(--muted); font-size: inherit; line-height: 1;
           display: inline-flex; align-items: center; }
   .hbtn .imark, .hbtn .imark svg { display: block; width: 1em; height: 1em; }
-  .hbtn:hover, .hbtn:focus-visible, .hint.on .hbtn { color: var(--command); }
+  .hbtn:hover, .hbtn:focus-visible, .hint.on .hbtn { color: var(--accent); }
   .hint .hpanel { display: none; position: absolute; top: calc(100% + 5px); left: -10px;
                   z-index: 60; background: var(--surface);
                   border: 1px solid var(--border-strong); border-radius: 8px;
@@ -380,7 +380,7 @@
   .hpanel .hlink { font-size: 11px; }
   .xref {
     font: inherit; padding: 0; border: 0; background: none; cursor: pointer;
-    color: var(--command); text-decoration: underline; text-underline-offset: 2px;
+    color: var(--accent); text-decoration: underline; text-underline-offset: 2px;
   }
 
   /* An entity chip is a way in: click it anywhere and the thing itself
@@ -416,7 +416,7 @@
     min-height: 42px; border-bottom: 1px solid var(--border); cursor: pointer;
     border-left: 3px solid transparent; padding-left: 9px;
   }
-  .lrow:hover { background: var(--command-soft); }
+  .lrow:hover { background: var(--accent-soft); }
   .lrow.on { background: var(--entity-soft); border-left-color: var(--entity); }
   .lrow.dead { opacity: .6; }
   .lrow .nm {
@@ -468,13 +468,13 @@
     font-weight: 600; cursor: pointer;
     display: inline-flex; align-items: center; gap: 6px; min-width: 130px;
   }
-  .index-row .ent:hover { color: var(--command); }
+  .index-row .ent:hover { color: var(--accent); }
   .index-row .props { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .lnk {
     font: inherit; font-family: var(--mono); font-size: 12px;
     border: 0; background: none; padding: 0; color: var(--muted); cursor: pointer;
   }
-  .lnk:hover { color: var(--command); }
+  .lnk:hover { color: var(--accent); }
 
   /* Identity. Set apart from the properties below it because it is a
      different kind of statement: what makes one of these one of these,
@@ -581,7 +581,7 @@
     font: inherit; font-size: 12px; padding: 6px 10px;
     border: 0; border-radius: 5px; background: none; color: var(--text); cursor: pointer;
   }
-  .lcitem:hover, .lcitem:focus-visible { background: var(--command-soft); color: var(--command); }
+  .lcitem:hover, .lcitem:focus-visible { background: var(--accent-soft); color: var(--accent); }
 
   .esection { margin-bottom: 18px; }
   .esection > h4 { margin-bottom: 8px; }
@@ -644,13 +644,13 @@
     border: 1px solid var(--border); border-radius: 7px;
     background: var(--surface); padding: 8px 11px; margin-bottom: 6px;
   }
-  .opt:hover { border-color: var(--command); }
-  .opt.on { border-color: var(--command); background: var(--command-soft); }
+  .opt:hover { border-color: var(--accent); }
+  .opt.on { border-color: var(--accent); background: var(--accent-soft); }
   .opt .mark {
     flex: none; width: 13px; height: 13px; margin-top: 3px;
     border-radius: 50%; border: 1px solid var(--border-strong); background: var(--surface);
   }
-  .opt.on .mark { border: 4px solid var(--command); }
+  .opt.on .mark { border: 4px solid var(--accent); }
   .opt .label { font-size: 13px; font-weight: 600; }
   .opt .desc { font-size: 11.5px; color: var(--muted); }
 
@@ -667,7 +667,7 @@
     border-bottom: 2px solid transparent; margin-bottom: -1px;
   }
   .ie-tab:hover { color: var(--text); }
-  .ie-tab.on { color: var(--command); border-bottom-color: var(--command); }
+  .ie-tab.on { color: var(--accent); border-bottom-color: var(--accent); }
 
   .ie-subtoggle {
     display: inline-flex; border: 1px solid var(--border-strong); border-radius: 7px;
@@ -678,7 +678,7 @@
     background: var(--surface); color: var(--muted); cursor: pointer;
   }
   .ie-pill + .ie-pill { border-left: 1px solid var(--border-strong); }
-  .ie-pill.on { background: var(--command-soft); color: var(--command); font-weight: 600; }
+  .ie-pill.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
   .ie-pill:hover:not(.on) { color: var(--text); }
 
   .ie-check-row { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; font-size: 12.5px; color: var(--muted); }
@@ -695,7 +695,7 @@
     border: 1px solid var(--border-strong); border-radius: 6px;
     background: var(--surface); color: var(--text); resize: vertical;
   }
-  .ie-field input:focus, .ie-field textarea:focus { outline: none; border-color: var(--command); }
+  .ie-field input:focus, .ie-field textarea:focus { outline: none; border-color: var(--accent); }
   .ie-field textarea.mono, .ie-field input.mono { font-family: var(--mono); font-size: 11.5px; }
   .ie-field textarea[readonly], .ie-field input[readonly] { background: #fbfcfe; color: var(--muted); }
   body.f-dark .ie-field textarea[readonly], body.f-dark .ie-field input[readonly] { background: #101827; }
@@ -721,7 +721,7 @@
     display: flex; align-items: center; gap: 9px;
     padding: 6px 9px; border-radius: 6px; cursor: pointer; font-size: 13px;
   }
-  .palette .hit.on { background: var(--command-soft); }
+  .palette .hit.on { background: var(--accent-soft); }
   .palette .hit .what {
     flex: none; font-size: 9px; text-transform: uppercase; letter-spacing: .06em;
     color: var(--muted); width: 74px;
@@ -755,7 +755,7 @@
     padding: 4px 6px; cursor: pointer;
   }
   .help-toc button:hover { background: var(--bg); }
-  .help-toc button.on { background: var(--command-soft); color: var(--command); font-weight: 600; }
+  .help-toc button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
   .help-pages { position: relative; overflow: auto; padding: 4px 24px 40vh; outline: none; }
   .help-topic { padding-top: 18px; }
   .help-topic + .help-topic { border-top: 1px solid var(--border); margin-top: 22px; }
@@ -833,7 +833,7 @@
     border: 1px solid var(--border); border-radius: 7px;
     background: var(--surface); padding: 8px 11px; margin-bottom: 6px;
   }
-  .choice:hover { border-color: var(--command); }
+  .choice:hover { border-color: var(--accent); }
   .choice .why { font-size: 11px; color: var(--muted); }
   .badge {
     font-size: 10px; border-radius: 999px; padding: 0 6px; margin-left: 5px;
@@ -889,7 +889,7 @@
     border: 1px solid var(--border); border-radius: var(--radius);
     background: var(--surface); padding: 14px 16px; cursor: pointer;
   }
-  .splash-example:hover { border-color: var(--command); }
+  .splash-example:hover { border-color: var(--accent); }
   .splash-example .name { font-size: 13.5px; font-weight: 600; margin-bottom: 4px; }
   .splash-example .desc { font-size: 12px; color: var(--muted); line-height: 1.5; }
 
@@ -912,7 +912,7 @@
     font: inherit; font-size: 14px; font-weight: 600; background: none; border: 0;
     padding: 14px 2px; cursor: pointer; color: var(--text);
   }
-  .splash-faq-q:hover { color: var(--command); }
+  .splash-faq-q:hover { color: var(--accent); }
   .splash-faq-q .chev { flex: none; color: var(--muted); transition: transform .15s; display: flex; }
   .splash-faq-a { padding: 0 2px 16px; font-size: 13px; color: var(--muted); line-height: 1.6; max-width: 620px; }
 
@@ -929,7 +929,7 @@
   /* A row the interface just moved you to. Long enough to find it,
      short enough not to become part of the page. */
   @keyframes landed {
-    from { background: var(--command-soft); }
+    from { background: var(--accent-soft); }
     to { background: transparent; }
   }
   .landed { animation: landed 1.1s ease-out; }
@@ -945,7 +945,7 @@
     padding: 7px 12px; margin-bottom: -1px; display: flex; align-items: center; gap: 6px;
   }
   .tab:hover { color: var(--text); }
-  .tab.on { color: var(--command); border-bottom-color: var(--command); }
+  .tab.on { color: var(--accent); border-bottom-color: var(--accent); }
 
   .scenarios { display: flex; flex-direction: column; gap: 7px; }
   .scenario {
@@ -954,7 +954,7 @@
   }
   .scenario.open { border-color: var(--border-strong); }
   .scenario-row { display: flex; align-items: center; gap: 9px; font-size: 13px; cursor: pointer; }
-  .scenario-row:hover .sc-name { color: var(--command); }
+  .scenario-row:hover .sc-name { color: var(--accent); }
   .sc-name {
     background: none; border: none; font: inherit; color: inherit;
     cursor: pointer; text-align: left; padding: 0;
@@ -985,8 +985,8 @@
   /* The drop target while dragging a scenario by its grip — a line on
      the edge the dragged one would land against, not a filled highlight,
      so it reads as "here" rather than "this one". */
-  .scenario.drop-before { box-shadow: inset 0 2px 0 var(--command); }
-  .scenario.drop-after { box-shadow: inset 0 -2px 0 var(--command); }
+  .scenario.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+  .scenario.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
   .scenario.dragging { opacity: .4; }
   /* The one grip everything draggable wears — scenario rows and rail
      commands alike. touch-action: none is what lets `gripDrag` own the
@@ -1029,7 +1029,7 @@
     border: 1px solid var(--border); border-radius: 5px;
     background: var(--surface); color: var(--text); min-width: 110px;
   }
-  .vin:focus { outline: none; border-color: var(--command); }
+  .vin:focus { outline: none; border-color: var(--accent); }
   .vin.tiny-in { min-width: 70px; width: 70px; }
   .vlist { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
   .vrow { display: flex; gap: 5px; align-items: flex-start; }
@@ -1052,7 +1052,7 @@
     cursor: grab; touch-action: none; -webkit-user-select: none; user-select: none;
   }
   .escrub:active { cursor: grabbing; }
-  .escrub:focus-visible { outline: 2px solid var(--command); outline-offset: 2px; }
+  .escrub:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .estep {
     flex: none; width: 28px; height: 28px; border-radius: 8px;
     display: inline-flex; align-items: center; justify-content: center;
@@ -1073,7 +1073,7 @@
   /* Still on the timeline — scrubbing back does not shorten the run,
      it only looks away from the rest of it. */
   .estep.upcoming { opacity: .38; }
-  .eplayhead { flex: none; width: 2px; align-self: stretch; min-height: 26px; background: var(--command); border-radius: 2px; }
+  .eplayhead { flex: none; width: 2px; align-self: stretch; min-height: 26px; background: var(--accent); border-radius: 2px; }
 
   .pin {
     background: none; border: none; cursor: pointer; padding: 0 5px 0 0;
@@ -1132,7 +1132,7 @@
     border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
     background: var(--surface); min-height: 40px; cursor: pointer;
   }
-  .coupling-rowlabel:hover { color: var(--command); background: var(--command-soft); }
+  .coupling-rowlabel:hover { color: var(--accent); background: var(--accent-soft); }
   .coupling-cell {
     position: relative; display: flex; align-items: center; justify-content: center;
     border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
@@ -1268,7 +1268,7 @@
   .lc-hot:hover .lc-node, .lc-hot:focus-within .lc-node, .lc-hot.on .lc-node {
     background: var(--entity-soft);
   }
-  .lc-node:focus-visible { outline: 2px solid var(--command); outline-offset: 2px; }
+  .lc-node:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .lc-node .st {
     font-size: 13px; font-weight: 600; white-space: nowrap;
     max-width: 100%; overflow: hidden; text-overflow: ellipsis;
@@ -1278,7 +1278,7 @@
     color: var(--muted); white-space: nowrap;
   }
   .lc-hot.terminal .lc-node { outline: 1.5px solid var(--entity); outline-offset: 3px; }
-  .lc-hot.terminal .lc-node:focus-visible { outline: 2px solid var(--command); outline-offset: 5px; }
+  .lc-hot.terminal .lc-node:focus-visible { outline: 2px solid var(--accent); outline-offset: 5px; }
   .lc-badge {
     position: absolute; top: -8px; right: -6px; z-index: 1;
     min-width: 17px; height: 17px; padding: 0 4px; border-radius: 999px;
@@ -1360,7 +1360,7 @@
     font: inherit; font-size: 12.5px; border: 0; background: transparent; color: var(--muted); cursor: pointer;
   }
   .surface button + button { border-left: 1px solid var(--border); }
-  .surface button.on { background: var(--command-soft); color: var(--command); font-weight: 600; }
+  .surface button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
   .surface button:not(.on):hover { color: var(--text); background: var(--bg); }
   .surface-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--event); }
   @media (max-width: 760px) {
@@ -1394,6 +1394,7 @@
   <div class="disclaimer">Experimental — everything here is subject to change.</div>
   <div class="app-bar">
     <span id="menu-toggle"></span>
+    <a class="home" href="https://dcb.events/" title="Back to dcb.events">← dcb.events</a>
     <button type="button" class="brand-link" title="Home — examples, FAQ, and starting a new model"
             onclick="closeForms(); state.splash = true; render();">
       <img class="brand-mark" src="logo-mark.png" alt="" aria-hidden="true">
