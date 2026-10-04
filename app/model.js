@@ -4468,6 +4468,21 @@ function buildShareEnvelope(model, sandboxSteps) {
   return envelope;
 }
 
+// The stored model a shared envelope would import as again, if there
+// is one: the same example opened twice from dcb.events, a link pasted
+// a second time. Compared as the envelope that model would share now,
+// so a copy edited since is not mistaken for the original — an export
+// is stable once imported, which a test holds. A sandbox session rides
+// along only with a link that carries one, and such a link is always
+// imported, so its steps replay.
+function modelMatchingEnvelope(envelope) {
+  if (!envelope || typeof envelope !== 'object') return null;
+  if (envelope.sandbox && envelope.sandbox.steps && envelope.sandbox.steps.length) return null;
+  const wanted = JSON.stringify({ ...envelope, sandbox: undefined });
+  const models = projectState();
+  return Object.keys(models).find((id) => JSON.stringify(buildShareEnvelope(models[id])) === wanted) || null;
+}
+
 // Whether importing this envelope would run authored code the moment
 // anything touches it — a property or a projection carrying a `script`
 // both compile through the same unsandboxed path (see `evCompileHandler`

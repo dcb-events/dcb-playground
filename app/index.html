@@ -13302,6 +13302,17 @@ async function boot() {
     toast('That share link could not be read: ' + error.message, true);
     return;
   }
+  // Opened before and unchanged since: back to that copy rather than a
+  // second one beside it (`modelMatchingEnvelope`). The script gate is
+  // not asked again for code it already let in.
+  const existing = modelMatchingEnvelope(envelope);
+  if (existing) {
+    switchToModel(existing);
+    state.models = false;
+    render();
+    toast('This model was opened before — switched to it.');
+    return;
+  }
   beginImport(envelope);
 }
 

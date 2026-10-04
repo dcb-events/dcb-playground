@@ -51,7 +51,7 @@ const {
   createDcbModel,
   generateId, scenarioName, deepClone, evSuccessor,
   definitionsToSchema, buildShareEnvelope, importModelFromEnvelope, envelopeHasScript,
-  envelopeVersionWarning,
+  envelopeVersionWarning, modelMatchingEnvelope,
 } = sandbox;
 
 // A fresh, empty model — for the ad-hoc identifier-type fixtures
@@ -1075,6 +1075,30 @@ function drive(model, log, command, args) {
     const log = [];
     drive(imported, log, 'Tick', { counterId: 'x1' });
     eq(foldEntityProperty(imported, log, 'Counter', 'total', 'x1'), 1, 'one tick folded');
+  });
+}
+
+{
+  // Opening a link twice finds the model the first opening made — which
+  // only works if an imported model shares exactly what it was imported
+  // from, for every shipped model.
+  const envelopes = [0, 1, 2, 3, 4].map((index) => buildShareEnvelope(build(index), []));
+  const imported = envelopes.map((envelope) => importModelFromEnvelope(envelope).modelId);
+
+  check('an imported model is found again by the envelope it came from', () => {
+    envelopes.forEach((envelope, i) => {
+      const shared = JSON.parse(JSON.stringify(envelope));
+      eq(JSON.stringify(buildShareEnvelope(sandbox.projectState()[imported[i]], [])), JSON.stringify(shared), `model ${i} exports what it imported`);
+      eq(modelMatchingEnvelope(shared) !== null, true, `model ${i} is matched`);
+    });
+  });
+
+  check('an edited copy, or a link carrying a sandbox session, is not matched', () => {
+    const edited = JSON.parse(JSON.stringify(envelopes[4]));
+    edited.name += ' (edited)';
+    eq(modelMatchingEnvelope(edited), null, 'a renamed envelope');
+    const withSteps = { ...JSON.parse(JSON.stringify(envelopes[4])), sandbox: { steps: [{ command: 'DefineProduct', args: {} }] } };
+    eq(modelMatchingEnvelope(withSteps), null, 'an envelope with sandbox steps');
   });
 }
 
