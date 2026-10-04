@@ -418,7 +418,7 @@ tag type CourseId = string
     syntax: [
       ['a == b   a != b   <   <=   >   >=', 'Comparison.'],
       ['x in [Draft, Published]   x not in […]', 'One of a list of literals.'],
-      ['xs contains x   xs containsAny ys', 'List membership.'],
+      ['xs contains x   x in xs   xs containsAny ys', 'List membership; `x in xs` is read as `xs contains x`.'],
       ['s startsWith "c"   s endsWith "1"', 'Strings.'],
       ['count(xs) < 10   ==   >', 'A list\'s length.'],
       ['x is empty   x is not empty', 'An empty string or list, or `null`.'],

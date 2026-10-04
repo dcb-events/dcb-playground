@@ -3454,6 +3454,31 @@ function draftFromOperand(draft, key, operand) {
   return draft;
 }
 
+// The draft a stored rule or guard opens as. An `equalsAny` right-hand
+// side is a literal list; its entries seed the membership widget, not
+// the picker. And a `contains` whose list is the payload's and whose
+// one value is read is opened the way the wizard writes it — "is one
+// of" that list — because a payload value is never what a rule is
+// about, so opened as stored its left side would have nowhere to show.
+function draftFromCondition(condition) {
+  const { leftHandSide: left, rightHandSide: right } = condition;
+  const swapped = condition.predicate === 'contains'
+    && left !== null && typeof left === 'object' && 'parameterName' in left
+    && right !== null && typeof right === 'object' && 'alias' in right;
+  if (swapped) {
+    return { ...draftFromOperand({ predicate: 'equalsAny', negate: !!condition.negate }, 'left', right),
+      right: '', rightList: JSON.stringify(left) };
+  }
+  const opened = draftFromOperand({ predicate: condition.predicate, negate: !!condition.negate }, 'left', left);
+  if (Array.isArray(right)) {
+    opened.right = '';
+    opened.rightEntries = right.map((entry) => (entry !== null && typeof entry === 'object' ? entry : String(entry)));
+  } else {
+    draftFromOperand(opened, 'right', right);
+  }
+  return opened;
+}
+
 // `selected` and `intercept` are for a caller whose rows are not all
 // operands — the rule editor's existence rows, which answer the
 // predicate as well as the operand: it says which row is showing, and
@@ -5306,19 +5331,7 @@ function ruleRow(model, slice, condition, i, dragAlias) {
           onclick: () => {
             closeForms();
             state.editRule = i;
-            const opened = draftFromOperand(
-              { predicate: condition.predicate, negate: !!condition.negate },
-              'left', condition.leftHandSide);
-            // An `equalsAny` right-hand side is a literal list; its
-            // entries seed the membership widget, not the picker.
-            if (Array.isArray(condition.rightHandSide)) {
-              opened.right = '';
-              opened.rightEntries = condition.rightHandSide.map((entry) =>
-                entry !== null && typeof entry === 'object' ? entry : String(entry));
-            } else {
-              draftFromOperand(opened, 'right', condition.rightHandSide);
-            }
-            state.ruleDraft = opened;
+            state.ruleDraft = draftFromCondition(condition);
             render();
           },
         }, 'Edit'),
@@ -5802,6 +5815,20 @@ function ruleEditor(model, slice, index, target) {
   if (draft.right && draft.right !== LITERAL && !rightRows.some(([v]) => v === draft.right)) {
     draft.right = '';
   }
+  // "Is one of" also takes a list held in data — the project's required
+  // seniorities, not only values typed here. The rule stays about the
+  // one value, so that is how it is asked; it is stored as `contains`
+  // with the sides swapped, the code view's `x in xs`, since the schema
+  // has one shape for membership in data.
+  const listRows = membership && leftType && !leftType.isList
+    ? scope.filter(([v]) => {
+        if (v === draft.left) return false;
+        const resolved = resolveOperandType(JSON.parse(v), typeScope);
+        return resolved && resolved.isList && resolved.propertyType === leftType.propertyType;
+      })
+    : [];
+  if (draft.rightList && !listRows.some(([v]) => v === draft.rightList)) draft.rightList = '';
+  const fromData = !!draft.rightList;
 
   const close = () => {
     state.editRule = null;
@@ -5815,8 +5842,10 @@ function ruleEditor(model, slice, index, target) {
   // commit. The toasts stay in `submit`: a silent commit only runs on
   // a row `ready()` already vouched for.
   const record = () => {
-    const condition = { leftHandSide: draftOperand(draft, 'left'), predicate: draft.predicate };
-    if (!unary) {
+    const condition = fromData
+      ? { leftHandSide: JSON.parse(draft.rightList), predicate: 'contains', rightHandSide: draftOperand(draft, 'left') }
+      : { leftHandSide: draftOperand(draft, 'left'), predicate: draft.predicate };
+    if (!unary && !fromData) {
       condition.rightHandSide = membership ? entryOperands() : draftOperand(draft, 'right');
     }
     if (draft.negate) condition.negate = true;
@@ -5844,7 +5873,7 @@ function ruleEditor(model, slice, index, target) {
   draft.ready = () => !!draft.touched
     && (!draft.newRead || !!pending)
     && draftOperand(draft, 'left') !== undefined
-    && (unary || (membership ? entryOperands().length > 0 : draftOperand(draft, 'right') !== undefined));
+    && (unary || fromData || (membership ? entryOperands().length > 0 : draftOperand(draft, 'right') !== undefined));
   draft.commit = record;
 
   // Once both sides are chosen, Enter anywhere in the row submits it —
@@ -6007,7 +6036,14 @@ function ruleEditor(model, slice, index, target) {
             draft.predicate = v; draft.predicateChosen = true; draft.touched = true; render();
           }),
         ...(unary ? [] : membership
-          ? membershipControls(draft, enumMembers)
+          ? [
+              ...(listRows.length
+                ? [pick(listRows, draft.rightList || '', (v) => {
+                    draft.rightList = v; draft.touched = true; render();
+                  }, 'listed values')]
+                : []),
+              ...(fromData ? [] : membershipControls(draft, enumMembers)),
+            ]
           : operandPicker(rightRows, draft, 'right',
             { placeholder: '— what? —', allowLiteral: !enums.length })));
 
@@ -6079,17 +6115,7 @@ function emissionGuardRows(model, slice, emission, emissionIndex) {
             onclick: () => {
               closeForms();
               state.editGuard = { at: emissionIndex, index: j };
-              const opened = draftFromOperand(
-                { predicate: condition.predicate, negate: !!condition.negate },
-                'left', condition.leftHandSide);
-              if (Array.isArray(condition.rightHandSide)) {
-                opened.right = '';
-                opened.rightEntries = condition.rightHandSide.map((entry) =>
-                  entry !== null && typeof entry === 'object' ? entry : String(entry));
-              } else {
-                draftFromOperand(opened, 'right', condition.rightHandSide);
-              }
-              state.ruleDraft = opened;
+              state.ruleDraft = draftFromCondition(condition);
               render();
             },
           }, 'Edit'),

@@ -438,7 +438,14 @@ it never works from `file:`.
 - **The code view's language is a spelling of the wire format** (`dsl.js`,
   research in `docs/research/2026-10-03-code-view-language.md`): every
   construct is one schema shape, so print and parse are each other's
-  inverse and nothing is inferred. Printing is **lossless by contract**:
+  inverse and nothing is inferred. The one spelling read but never
+  printed is `x in xs` against a list in data (not a literal `[…]`):
+  it is `xs contains x`, sides swapped, and prints back that way. The
+  rule wizard's "is one of" offers the same — a list in scope beside
+  the listed values — and writes the same `contains`; a payload list
+  containing a read value reopens as "is one of" (`draftFromCondition`),
+  since a payload value can never be a rule's subject there.
+  Printing is **lossless by contract**:
   each definition is printed, parsed back and compared
   (`sameDefinition`), and one that does not survive is written as its
   stored JSON (`command Foo json { … }`) under a comment saying why. A

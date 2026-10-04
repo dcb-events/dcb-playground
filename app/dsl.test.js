@@ -202,6 +202,37 @@ check('every rule shape reads back as the rule it was', () => {
   }
 });
 
+check('membership in data reads either way round, and prints as contains', () => {
+  const source = (rule) => `command C(a: integer, b: integer[]) {\n  require ${rule}\n}`;
+  const ruleOf = (rule) => {
+    const parsed = parseModelSource(source(rule));
+    eq(parsed.diagnostics, [], rule);
+    return parsed.collections['command-definition'].C.conditions[0];
+  };
+  const contains = { leftHandSide: { parameterName: 'b' }, predicate: 'contains', rightHandSide: { parameterName: 'a' } };
+  eq(sameDefinition(ruleOf('a in b'), contains), true, 'a in b');
+  eq(sameDefinition(ruleOf('a not in b'), { ...contains, negate: true }), true, 'a not in b');
+  eq(sameDefinition(ruleOf('not a in b'), { ...contains, negate: true }), true, 'not a in b');
+  eq(sameDefinition(ruleOf('3 in b'), { ...contains, rightHandSide: 3 }), true, 'a literal in b');
+  const printed = modelToSource({ name: 'm', ...emptyCollections({ 'command-definition': { C: { properties: [], conditions: [ruleOf('a not in b')] } } }) });
+  eq(printed.includes('require b not contains a'), true, `printed as\n${printed}`);
+
+  // A rule written the other way round still resolves and renames: the
+  // marks travel with the operands, whichever side they land on.
+  const text = modelToSource(build(0).model());
+  const swapped = text.replace('course.subscribedStudentIds not contains studentId', 'studentId not in course.subscribedStudentIds');
+  eq(swapped === text, false, 'the course model states membership');
+  const parsed = parseModelSource(swapped);
+  eq(parsed.diagnostics, [], 'swapped parses');
+  const model = build(0).model();
+  const stored = { name: model.name };
+  for (const kind of SOURCE_KINDS) stored[DEF_COLLECTIONS[kind]] = model[DEF_COLLECTIONS[kind]];
+  assertSameModel(stored, parsed, 'x in xs');
+  const renamed = renameAt(swapped, 'studentId not in', 0, 'learnerId');
+  eq(renamed.error, undefined, 'renamed from the swapped side');
+  eq(renamed.text.includes('learnerId not in course.subscribedStudentIds'), true, 'the rule follows the rename');
+});
+
 function emptyCollections(overrides) {
   const out = {};
   for (const kind of SOURCE_KINDS) out[DEF_COLLECTIONS[kind]] = overrides[kind] || {};
@@ -737,6 +768,7 @@ check('completion knows a command\'s reads and payload', () => {
   eq(rule('require course.status == |').labels.slice(0, 3), ['NonExistent', 'Existent', 'Archived'], 'members first');
   eq(rule('require course.status in [|]').labels, ['NonExistent', 'Existent', 'Archived'], 'in a list');
   eq(rule('require course.status |').labels, ['==', '!=', 'in', 'not in'], 'what an enum admits');
+  eq(rule('require courseId in |').labels, ['[…]', 'course', 'courseId', 'newCapacity'], 'a literal list or data');
   eq(rule('read other = |').items.find((i) => i.label === 'Course').insert, 'Course[$1]', 'an entity read');
   eq(rule('read other = Course[|]').labels.includes('other'), false, 'not the read being written');
   eq(rule('emit CourseCapacityChanged { courseId, |}').labels, ['newCapacity'], 'an event\'s remaining properties');

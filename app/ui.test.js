@@ -3429,6 +3429,91 @@ function build(index) {
   });
 }
 
+// ---------------------------------------------------------------
+// Membership in data, asked about the one value: "seniority is one of
+// the project's required seniorities". The schema has one shape for it
+// — the list `contains` the value — so the wizard writes that, sides
+// swapped, the way the code view reads `x in xs`, and opens it again
+// as it was asked.
+// ---------------------------------------------------------------
+{
+  const id = sandbox.createDcbModel('Membership Probe');
+  store.set('dcb-playground:model', id);
+  sandbox.applyModelSource(id, [
+    'model "Membership Probe"',
+    'tag type ProjectId = string',
+    'tag type EmployeeId = string',
+    'enum Seniority { Junior, Senior }',
+    'event ProjectDefined { projectId: ProjectId, requiredSeniority: Seniority[] }',
+    'event EmployeeHired { employeeId: EmployeeId, seniority: Seniority }',
+    'event Assigned { projectId: ProjectId, employeeId: EmployeeId }',
+    'entity Project {',
+    '  requiredSeniority = RequiredSeniority',
+    '}',
+    'entity Employee {',
+    '  seniority = EmployeeSeniority',
+    '}',
+    'projection RequiredSeniority(projectId: ProjectId): Seniority[] = [] {',
+    '  on ProjectDefined => set event.data.requiredSeniority',
+    '}',
+    'projection EmployeeSeniority(employeeId: EmployeeId): Seniority = Junior {',
+    '  on EmployeeHired => set event.data.seniority',
+    '}',
+    'command Assign(projectId: ProjectId, employeeId: EmployeeId, wanted: Seniority[]) {',
+    '  read project = Project[projectId]',
+    '  read employee = Employee[employeeId]',
+    '  require employee.seniority in project.requiredSeniority',
+    '  emit Assigned { projectId, employeeId }',
+    '}',
+  ].join('\n'));
+  const model = () => projectState()[id];
+  const cmd = () => model()['command-definitions'].Assign;
+  const slice = () => sandbox.sliceOf(model(), 'Assign');
+  const paint = () => sandbox.stepDecision(model(), slice());
+  const A = (alias, property) => JSON.stringify({ alias, property });
+  const P = (parameterName) => JSON.stringify({ parameterName });
+
+  check('"is one of" takes a list held in data, and stores it as contains', () => {
+    eq(cmd().conditions, [{ leftHandSide: { alias: 'project', property: 'requiredSeniority' }, predicate: 'contains',
+      rightHandSide: { alias: 'employee', property: 'seniority' } }], 'the code view\'s `x in xs`');
+    sandbox.state.slice = 'Assign';
+    sandbox.state.adder = 'rule';
+    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '', onAlias: 'employee' };
+    const draft = () => sandbox.state.ruleDraft;
+    draft().left = A('employee', 'seniority');
+    draft().predicate = 'equalsAny';
+    draft().negate = true;
+    const lists = () => findAll(paint(), (n) => n.tag === 'select').pop();
+    const offered = findAll(lists(), (n) => n.tag === 'option').map((n) => n.value);
+    eq(offered, ['', P('wanted'), A('project', 'requiredSeniority')], 'the lists of seniorities in scope');
+    eq(/Junior/.test(textOf(paint())), true, 'members to tick until a list is picked');
+    lists().onchange({ target: { value: P('wanted') } });
+    eq(/Junior/.test(textOf(paint())), false, 'a list picked: nothing to tick');
+    findAll(paint(), (n) => n.tag === 'button' && textOf(n) === 'Add rule')[0].onclick();
+    eq(cmd().conditions[1], { leftHandSide: { parameterName: 'wanted' }, predicate: 'contains',
+      rightHandSide: { alias: 'employee', property: 'seniority' }, negate: true }, 'stored with the sides swapped');
+  });
+
+  check('a payload list containing a read value opens as it was asked', () => {
+    const opened = sandbox.draftFromCondition(cmd().conditions[1]);
+    eq([opened.left, opened.predicate, opened.negate, opened.rightList],
+      [A('employee', 'seniority'), 'equalsAny', true, P('wanted')], 'is not one of wanted');
+    const asStored = sandbox.draftFromCondition(cmd().conditions[0]);
+    eq([asStored.left, asStored.predicate, asStored.right],
+      [A('project', 'requiredSeniority'), 'contains', A('employee', 'seniority')],
+      'a read list is a rule\'s subject already, and opens as stored');
+
+    // Saved unchanged, the reopened rule is the rule it was.
+    sandbox.state.slice = 'Assign';
+    sandbox.state.editRule = 1;
+    sandbox.state.ruleDraft = opened;
+    findAll(paint(), (n) => n.tag === 'button' && textOf(n) === 'Save')[0].onclick();
+    eq(cmd().conditions[1], { leftHandSide: { parameterName: 'wanted' }, predicate: 'contains',
+      rightHandSide: { alias: 'employee', property: 'seniority' }, negate: true }, 'saved back as stored');
+  });
+}
+
+
 {
   const { id, model } = build(0);   // its own copy: this one strips an entity down
   store.set('dcb-playground:model', id);

@@ -42,6 +42,14 @@
 // operand's type, as in the schema), and a read's alias is always
 // written, since the schema stores it.
 //
+// One spelling is read but never printed: `x in xs`, where `xs` is a
+// list held in data rather than a literal `[..]`, is `xs contains x`
+// with its sides swapped. Membership is said both ways round, and a
+// rule about one value reads with that value first — but the schema
+// has one shape for it, so the text comes back as `contains`. Nothing
+// is inferred: which predicate it is follows from the token after
+// `in`, never from a type.
+//
 // **Borrowed, deliberately.** heklang (git.tqwewe.com/tephra/heklang)
 // is DCB-native, and its `emit Event { field }` shorthand and `on
 // Event => …` fold arms are taken as they are. Weltenwanderer
@@ -57,7 +65,7 @@
 // `event.data.x` (the path a scripted handler writes), the predicate
 // words `contains` / `containsAny` / `startsWith` / `endsWith`, and the
 // script fields `tagFilter` / `initialState` / `exposes`. The rest are
-// what a developer would type: `==`, `<`, `in [..]`, `count(x)`,
+// what a developer would type: `==`, `<`, `in [..]` / `in xs`, `count(x)`,
 // `is empty`, `X[]` for a list, `name?:` for an optional property, and
 // `Course[courseId]` for an entity instance — brackets for "look one
 // up by identifier", parentheses for a projection's arguments.
@@ -566,8 +574,11 @@ function parseModelSource(text, options = {}) {
     }
     if (accept('not')) negate = !negate;
     if (accept('in')) {
-      if (!is('[')) fail(`Expected a list after "in", found ${describeToken(peek())}.`);
-      return finish({ leftHandSide, predicate: 'equalsAny', rightHandSide: literalValue() }, negate);
+      if (is('[')) return finish({ leftHandSide, predicate: 'equalsAny', rightHandSide: literalValue() }, negate);
+      // `x in xs` against data is `xs contains x`, sides swapped — the
+      // way membership reads when the one value is what the rule is
+      // about. It stores, and so prints, as `contains`.
+      return finish({ leftHandSide: operand(), predicate: 'contains', rightHandSide: leftHandSide }, negate);
     }
     const word = peek();
     if (word.t === 'ident' && SOURCE_WORD_PREDICATES.includes(word.v)) {
@@ -3112,7 +3123,14 @@ function sourceCompletions(text, line, col, { model = null } = {}) {
       if (kinds.includes('isFalse')) push('false', 'keyword');
       return done();
     }
-    if (last === 'in' || last === '[') return done();
+    if (last === 'in') {
+      // A literal list, or a list held in data (`x in xs`, stored as
+      // `xs contains x`).
+      push('[…]', 'keyword', 'listed values', { insert: '[$1]', snippet: true, sort: 0 });
+      operandItems(scope, { sort: 1 });
+      return done();
+    }
+    if (last === '[') return done();
     // A whole operand: what may be said of it.
     const complete = cond[cond.length - 1].t === 'ident' || last === ')';
     if (!complete) return done();
