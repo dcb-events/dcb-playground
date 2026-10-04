@@ -376,7 +376,12 @@
   .hint:hover .hpanel, .hint:focus-within .hpanel, .hint.on .hpanel { display: block; }
   .hpanel .qtitle { color: var(--text); margin-bottom: 3px; }
   .hpanel .hline + .hline { margin-top: 5px; }
-  .hpanel .hlink { display: inline-block; margin-top: 6px; font-size: 11px; }
+  .hpanel .hlinks { display: flex; gap: 14px; margin-top: 6px; }
+  .hpanel .hlink { font-size: 11px; }
+  .xref {
+    font: inherit; padding: 0; border: 0; background: none; cursor: pointer;
+    color: var(--command); text-decoration: underline; text-underline-offset: 2px;
+  }
 
   /* An entity chip is a way in: click it anywhere and the thing itself
      slides in beside what you were reading, rather than replacing it. */
@@ -727,6 +732,81 @@
     border-top: 1px solid var(--border); padding: 6px 12px;
     font-size: 10.5px; color: var(--muted); display: flex; gap: 12px;
   }
+
+  /* ---------- help ----------
+     Read rather than passed through, so it is the widest panel and the
+     only one that scrolls inside itself: the contents stay put beside
+     the topic, which is what makes landing on one from elsewhere work. */
+  .modal.help {
+    width: 900px; height: calc(100vh - 100px); padding: 0;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .modal.help > header { padding: 14px 20px 12px; margin: 0; border-bottom: 1px solid var(--border); }
+  .help-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 190px 1fr; }
+  .help-toc { overflow: auto; padding: 12px 8px 16px 14px; border-right: 1px solid var(--border); }
+  .help-toc h5 {
+    margin: 12px 0 4px 6px; font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--muted);
+  }
+  .help-toc h5:first-child { margin-top: 0; }
+  .help-toc button {
+    display: block; width: 100%; text-align: left; font: inherit; font-size: 12.5px;
+    color: var(--text); background: none; border: 0; border-radius: 6px;
+    padding: 4px 6px; cursor: pointer;
+  }
+  .help-toc button:hover { background: var(--bg); }
+  .help-toc button.on { background: var(--command-soft); color: var(--command); font-weight: 600; }
+  .help-pages { position: relative; overflow: auto; padding: 4px 24px 40vh; outline: none; }
+  .help-topic { padding-top: 18px; }
+  .help-topic + .help-topic { border-top: 1px solid var(--border); margin-top: 22px; }
+  .help-topic h3 { display: flex; align-items: baseline; gap: 10px; margin: 0 0 8px; font-size: 16px; }
+  .help-topic h3 a { font-size: 11px; font-weight: 400; }
+  .help-topic p { font-size: 13px; line-height: 1.55; margin: 0 0 8px; max-width: 68ch; }
+  .help-topic code { font-size: 11.5px; padding: 0 3px; border-radius: 3px; background: var(--bg); }
+  .help-code {
+    margin: 12px 0; padding: 10px 12px; overflow: auto;
+    font-family: var(--mono); font-size: 11.5px; line-height: 1.55;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 7px;
+  }
+  .help-syntax { width: 100%; border-collapse: collapse; margin: 4px 0 4px; font-size: 12.5px; }
+  .help-syntax td { padding: 5px 10px 5px 0; vertical-align: baseline; border-top: 1px solid var(--border); }
+  .help-syntax td:first-child { width: 46%; font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap; }
+  .help-syntax td:last-child { line-height: 1.45; }
+  .help-boundary { margin: 12px 0; font-size: 12px; }
+  .help-boundary > div { padding: 7px 0; border-top: 1px solid var(--border); }
+  .help-boundary .cmdline { display: flex; gap: 10px; align-items: baseline; margin-bottom: 3px; }
+  .help-boundary .cmdline b { font-family: var(--mono); font-size: 11.5px; }
+  .help-boundary .hq { padding-left: 14px; font-family: var(--mono); font-size: 11px; }
+  @media (max-width: 720px) {
+    .help-body { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+    .help-toc {
+      display: flex; gap: 4px; overflow-x: auto; padding: 8px 12px;
+      border-right: 0; border-bottom: 1px solid var(--border);
+    }
+    .help-toc h5 { display: none; }
+    .help-toc button { width: auto; white-space: nowrap; }
+    .help-pages { padding: 4px 16px 40vh; }
+    .help-syntax td:first-child { width: auto; }
+  }
+
+  /* The code view's colours, for a text that is only shown: Monaco's
+     own `vs` / `vs-dark` palette for the classes `sourceHighlight`
+     gives, so a snippet in the help and the same line in the editor
+     look alike. */
+  .hl-keyword { color: #0000ff; }
+  .hl-flow { color: #af00db; }
+  .hl-type { color: #267f99; }
+  .hl-string, .hl-code { color: #a31515; }
+  .hl-number { color: #098658; }
+  .hl-comment { color: #008000; }
+  .hl-annotation { color: #795e26; }
+  body.f-dark .hl-keyword { color: #569cd6; }
+  body.f-dark .hl-flow { color: #c586c0; }
+  body.f-dark .hl-type { color: #4ec9b0; }
+  body.f-dark .hl-string, body.f-dark .hl-code { color: #ce9178; }
+  body.f-dark .hl-number { color: #b5cea8; }
+  body.f-dark .hl-comment { color: #6a9955; }
+  body.f-dark .hl-annotation { color: #dcdcaa; }
 
   /* ---------- problems: one diagnostic dress ----------
      The Problems panel's rows and the in-page advisory banner are the
@@ -1344,6 +1424,7 @@
 <script src="model.js"></script>
 <script src="evaluate.js"></script>
 <script src="dsl.js"></script>
+<script src="help.js"></script>
 <script src="shared.js"></script>
 <script src="webmcp-schemas.js"></script>
 <script src="webmcp.js"></script>
@@ -1418,7 +1499,8 @@ const state = {
   splashFaqOpen: { 0: true }, // which FAQ entries are expanded, on the first-run splash
   pendingImport: null,      // a decoded share envelope waiting on the scripted-code confirm
   settings: false,          // the settings modal
-  problems: false,          // the loose-ends-and-drifted-scenarios panel
+  help: null,               // the help modal: { topic, land, scroll } while it is up — see `openHelp`
+  problems: false,         // the loose-ends-and-drifted-scenarios panel
   railOpen: false,          // the rail, as an off-canvas drawer on a narrow screen
   importExport: false,      // the Import & Export modal
   ieTab: 'import',          // within it: 'import' | 'export'
@@ -1911,6 +1993,7 @@ function renderModals() {
   // comes last, and only when someone asked for it — while nothing is
   // loaded, `renderSplash` is the page rather than a panel over it.
   if (state.pendingImport) { host.appendChild(renderImportGate()); return; }
+  if (state.help) { host.appendChild(helpModal()); placeHelpScroll(); return; }
   if (state.problems) { host.appendChild(problemsPanel()); return; }
   if (state.settings) { renderSettingsModal(host); return; }
   if (state.importExport) { host.appendChild(renderImportExportModal()); return; }
@@ -1953,6 +2036,178 @@ function overlayAround(modal, close) {
     class: 'overlay',
     onclick: (e) => { if (e.target === e.currentTarget) close(); },
   }, modal);
+}
+
+// ---------- help ----------
+//
+// The concepts, and how each is written in DCB notation. What it says
+// is help.js; this is the panel. It opens at a topic from wherever a
+// concept is in front of the reader — the bar's button at the page's
+// own (`helpTopicHere`), a hint panel at its section's, `?` from the
+// keyboard — and anything else that wants to point at an explanation
+// calls `openHelp(id)`. A modal on purpose: the page behind keeps its
+// place, and Escape is the way back to it.
+//
+// The topics scroll inside the panel, and every repaint rebuilds it,
+// so where the reader is has to outlive one: the offset is kept in
+// `state.help` as they scroll, and `land` asks for the one jump to a
+// topic that opening it, or a link inside it, means.
+const HELP_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+  + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>'
+  + '<line x1="12" y1="17" x2="12.01" y2="17"></line></svg>';
+
+function openHelp(topic) {
+  if (state.palette) closePalette();
+  state.hintPop = null;
+  state.queryPop = null;
+  state.help = { topic: helpTopic(topic) ? topic : null, land: true, scroll: 0 };
+  render();
+}
+
+// The topic of whatever the page is about: the definition under the
+// cursor in the code view, the page's own kind of thing elsewhere, and
+// the top of the help where a page is about no one concept.
+function helpTopicHere() {
+  if (!activeModel() || state.splash) return null;
+  if (state.code) {
+    const parsed = codeView.analysis && codeView.analysis.parsed;
+    const line = parsed ? codeCursorLine() : null;
+    const span = line ? sourceSpanAt(parsed, line) : null;
+    return span ? helpTopicFor(span.kind, parsed.collections[span.kind][span.name]) : 'notation';
+  }
+  if (state.view === 'slice') return state.tab === 'scenarios' ? 'scenario' : 'command';
+  return {
+    entity: 'entity', types: 'custom-type', projections: 'projection', events: 'event', lifecycles: 'lifecycle',
+  }[state.view] || null;
+}
+
+function helpButton() {
+  return h('button', {
+    class: 'icon-btn', type: 'button', title: 'Help — the concepts, and how each is written (?)',
+    'aria-label': 'Help', onclick: () => openHelp(helpTopicHere()),
+  }, h('span', { html: HELP_ICON_SVG }));
+}
+
+// A link into the help, for prose elsewhere that names a concept.
+function helpLink(topic, label) {
+  return h('button', {
+    type: 'button', class: 'xref',
+    onclick: (e) => { e.stopPropagation(); openHelp(topic); },
+  }, label);
+}
+
+function goToHelpTopic(topic) {
+  state.help.topic = topic;
+  state.help.land = true;
+  placeHelpScroll();
+}
+
+// After the panel is in the document: the jump `land` asked for, or
+// back to where the reader had scrolled to before this repaint.
+function placeHelpScroll() {
+  const pages = document.querySelector('.help-pages');
+  if (!pages || !state.help) return;
+  const target = state.help.land && state.help.topic
+    ? document.getElementById('help-' + state.help.topic) : null;
+  pages.scrollTop = target ? target.offsetTop : state.help.land ? 0 : state.help.scroll;
+  state.help.land = false;
+  state.help.scroll = pages.scrollTop;
+  markHelpTopic(pages);
+}
+
+// The contents follow the reading: the topic marked is the last one
+// whose heading has scrolled past the top. Done on the elements, since
+// a repaint per scroll event would be one per frame.
+function markHelpTopic(pages) {
+  let current = HELP_TOPICS[0].id;
+  for (const section of pages.querySelectorAll('.help-topic')) {
+    if (section.offsetTop - pages.scrollTop > 24) break;
+    current = section.dataset.topic;
+  }
+  if (pages.scrollTop + pages.clientHeight >= pages.scrollHeight - 2) current = HELP_TOPICS[HELP_TOPICS.length - 1].id;
+  state.help.topic = current;
+  for (const button of document.querySelectorAll('.help-toc button')) {
+    button.classList.toggle('on', button.dataset.topic === current);
+  }
+}
+
+function helpProse(text) {
+  return helpRuns(text).map((run) => {
+    if (run.code !== undefined) return h('code', {}, run.code);
+    if (run.link !== undefined) {
+      // An anchor, not a button: a button is an atomic box, and the
+      // full stop after it would wrap onto a line of its own.
+      return h('a', {
+        href: '#help-' + run.link, class: 'xref',
+        onclick: (e) => { e.preventDefault(); goToHelpTopic(run.link); },
+      }, run.text);
+    }
+    return run.text;
+  });
+}
+
+function helpCode(text) {
+  return h('pre', { class: 'help-code' },
+    sourceHighlight(text).map(([cls, part]) => (cls ? h('span', { class: 'hl-' + cls }, part) : part)));
+}
+
+function helpBoundaryList(topic) {
+  return h('div', { class: 'help-boundary' }, helpBoundaries(topic).map((summary) =>
+    h('div', {},
+      h('div', { class: 'cmdline' }, h('b', {}, summary.command), h('span', { class: 'muted' }, summary.words)),
+      summary.queries.map((query, round) => query.map((item) => h('div', { class: 'hq dcb' },
+        summary.queries.length > 1 ? h('span', { class: 'muted' }, `${round + 1}. `) : null,
+        h('span', { class: 'muted' }, item.alias + ': '),
+        dcbQueryWords(item)))))));
+}
+
+function helpSection(topic) {
+  const example = helpExcerpt(topic);
+  return h('section', { class: 'help-topic', id: 'help-' + topic.id, 'data-topic': topic.id },
+    h('h3', {}, topic.title,
+      topic.href ? h('a', { href: topic.href, target: '_blank', rel: 'noopener' }, 'dcb.events ↗') : null),
+    topic.prose.map((text) => h('p', {}, helpProse(text))),
+    example ? helpCode(example) : null,
+    topic.boundaryOf ? helpBoundaryList(topic) : null,
+    topic.syntax ? h('table', { class: 'help-syntax' }, h('tbody', {},
+      topic.syntax.map(([spelling, meaning]) => h('tr', {},
+        h('td', {}, spelling), h('td', {}, helpProse(meaning)))))) : null);
+}
+
+function helpModal() {
+  const close = () => { state.help = null; render(); };
+  const toc = h('nav', { class: 'help-toc', 'aria-label': 'Topics' });
+  let group = null;
+  for (const topic of HELP_TOPICS) {
+    if (topic.group !== group) {
+      group = topic.group;
+      toc.appendChild(h('h5', {}, group));
+    }
+    toc.appendChild(h('button', {
+      type: 'button', 'data-topic': topic.id, class: topic.id === state.help.topic ? 'on' : '',
+      onclick: () => goToHelpTopic(topic.id),
+    }, topic.title));
+  }
+  const pages = h('div', {
+    class: 'help-pages', tabindex: '-1',
+    onscroll: (e) => {
+      if (!state.help) return;
+      state.help.scroll = e.target.scrollTop;
+      markHelpTopic(e.target);
+    },
+  }, HELP_TOPICS.map(helpSection));
+  const modal = h('div', { class: 'modal help', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Help' },
+    h('header', {},
+      h('h2', {}, 'Help'),
+      h('span', { class: 'muted small' }, 'The concepts, and how each is written in DCB notation'),
+      h('span', { class: 'grow' }),
+      h('button', { class: 'btn ghost', onclick: close, title: 'Close' }, '×')),
+    h('div', { class: 'help-body' }, toc, pages));
+  // The pages, not the panel, take the focus: they are what the arrow
+  // and page keys should scroll.
+  setTimeout(() => pages.focus({ preventScroll: true }), 0);
+  return overlayAround(modal, close);
 }
 
 // The one confirmation an import can force: the model it would build
@@ -2479,7 +2734,7 @@ function closePalette() {
 
 function openPalette() {
   closeForms();
-  state.settings = false; state.problems = false; state.models = false;
+  state.settings = false; state.problems = false; state.models = false; state.help = null;
   state.palette = true;
   render();
 }
@@ -4338,6 +4593,7 @@ function paintPage() {
   if (showSplash) {
     // Nothing to search, share, or report a problem with while it's
     // up, and no rail to open — the splash is the entire page.
+    actions.appendChild(helpButton());
     actions.appendChild(settingsButton());
     document.getElementById('rail').innerHTML = '';
     const main = document.getElementById('main');
@@ -4374,6 +4630,7 @@ function paintPage() {
     class: 'icon-btn', type: 'button', title: 'Import & export — ⌘S copies a link',
     'aria-label': 'Import and export', onclick: openImportExport,
   }, importExportIcon()));
+  actions.appendChild(helpButton());
   actions.appendChild(settingsButton());
 
   renderModals();
@@ -4649,6 +4906,8 @@ function stepTrigger(model, slice) {
 // `href` is passed only where dcb.events has a page for the concept:
 // tags, projections, aggregates. Linking every panel at the spec's front
 // door would teach nothing and train the reader to ignore the link.
+// `topic` is the help's section on it — the longer explanation, and how
+// the thing is written as code.
 // The mark itself, drawn rather than typed. The ⓘ glyph sat on the
 // font's math axis — centred on the lowercase letters — so beside an
 // all-caps heading it rode low, and by how much depended on the font.
@@ -4662,7 +4921,7 @@ function infoMark() {
   return h('span', { class: 'imark', html: INFO_MARK });
 }
 
-function hint(key, title, lines, href) {
+function hint(key, title, lines, href, topic) {
   const on = state.hintPop === key;
   return h('span', { class: 'hint' + (on ? ' on' : '') },
     h('button', {
@@ -4677,9 +4936,9 @@ function hint(key, title, lines, href) {
     h('span', { class: 'hpanel', onclick: (e) => e.stopPropagation() },
       h('div', { class: 'k qtitle' }, title),
       ...(Array.isArray(lines) ? lines : [lines]).map((line) => h('div', { class: 'hline' }, line)),
-      href ? h('a', {
-        class: 'hlink', href, target: '_blank', rel: 'noopener',
-      }, 'dcb.events ↗') : null));
+      href || topic ? h('div', { class: 'hlinks' },
+        href ? h('a', { class: 'hlink', href, target: '_blank', rel: 'noopener' }, 'dcb.events ↗') : null,
+        topic ? h('span', { class: 'hlink' }, helpLink(topic, 'In the help →')) : null) : null));
 }
 
 // A query is one hover away rather than one more line on the page:
@@ -5233,7 +5492,7 @@ function mergePrompt(model, merge) {
         + 'absorbed properties is rewritten over the enum — a boolean that held from '
         + 'stage i onward becomes equalsAny over stages i..n, not equals stage i.',
         'Non-monotone booleans are refused: collapsing them would destroy a dimension.',
-      ])),
+      ], null, 'lifecycle')),
     h('button', {
       class: 'btn tiny',
       onclick: () => {
@@ -7050,7 +7309,7 @@ function renderEntity(model, main) {
         + 'what these folds say when read together for one id.',
         'A command binds the entity by id and reads these; which of them a condition names is '
         + 'what puts the fold in the derived consistency boundary.',
-      ], 'https://dcb.events/topics/projections/')),
+      ], 'https://dcb.events/topics/projections/', 'entity')),
       h('span', { class: 'grow' }),
       adding ? null : h('button', {
         class: 'btn tiny',
@@ -7112,7 +7371,7 @@ function identityBlock(model, name, entity) {
       + 'until one is asked for.',
       'A lifecycle nothing publishes into stays at its initial value, so every existence '
       + 'condition over it answers false.',
-    ], 'https://dcb.events/topics/tags/')));
+    ], 'https://dcb.events/topics/tags/', 'lifecycle')));
 
   const idRow = h('div', { class: 'irow' },
     h('span', { class: 'nm' }, 'identified by'),
@@ -7244,7 +7503,7 @@ function lifecycleRow(model, name, entity) {
           + 'absorbed properties is rewritten over the enum — a boolean that held from '
           + 'stage i onward becomes equalsAny over stages i..n, not equals stage i.',
           'Non-monotone booleans are refused: collapsing them would destroy a dimension.',
-        ])),
+        ], null, 'lifecycle')),
       h('span', { class: 'grow' }),
       h('button', {
         class: 'btn tiny',
@@ -7551,7 +7810,7 @@ function promoteLifecycleForm(model, entityName) {
         'Every condition over an absorbed property is rewritten over the enum in the same '
         + 'append, undoable in one step: a model whose conditions still say isTrue while the '
         + 'fold has become an enum is a state the log has no migration for.',
-      ])),
+      ], null, 'lifecycle')),
     field('property', 'the property', 'what the states are held in from now on'),
     field('typeName', 'the type', 'the enum these states belong to'),
     field('initialState', 'at first', 'before anything has happened', 'a state'),
@@ -12823,7 +13082,7 @@ function renderCode(model, main) {
         'Hover a command\'s name for the consistency boundary it derives; ⌘-click a name to go to it; '
           + '⇧⌘O lists every definition. ⌃Space suggests what fits where the cursor is; F2 renames a name '
           + 'everywhere it means the same thing, and ⇧F12 lists where it is used.',
-      ])),
+      ], null, 'notation')),
     h('div', { class: 'muted small' }, 'The same definitions as the pages, written out.')));
 
   codeView.statusEl = codeControls();
@@ -12879,6 +13138,7 @@ window.addEventListener('keydown', (e) => {
   if (state.hintPop) { state.hintPop = null; return render(); }
   if (state.lcMenu) { state.lcMenu = null; return render(); }
   if (state.pendingImport) { state.pendingImport = null; return render(); }
+  if (state.help) { state.help = null; return render(); }
   if (state.problems) { state.problems = false; return render(); }
   if (state.settings) { state.settings = false; return render(); }
   if (state.models) {
@@ -12964,6 +13224,18 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
+// `?` opens the help at what the page is about, and closes it again —
+// the convention, and the one key a field never needs to give up,
+// since inside one it is only ever typed.
+window.addEventListener('keydown', (e) => {
+  if (e.defaultPrevented || e.key !== '?' || e.metaKey || e.ctrlKey || e.altKey) return;
+  const inField = e.target instanceof Element
+    && e.target.closest('input, textarea, select, [contenteditable]');
+  if (inField || state.palette || state.pendingImport) return;
+  e.preventDefault();
+  if (state.help) { state.help = null; render(); } else openHelp(helpTopicHere());
+});
+
 // Arrow keys move between rows. Reading a command is walking down its
 // rows — Tab visits every button on the way, the arrows visit only the
 // rows.
@@ -12971,7 +13243,7 @@ window.addEventListener('keydown', (e) => {
   if (e.defaultPrevented) return;
   const inField = e.target instanceof Element
     && e.target.closest('input, textarea, select');
-  if (!inField && !state.palette && !state.settings && !state.problems && !state.models
+  if (!inField && !state.palette && !state.settings && !state.problems && !state.models && !state.help
       && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
     if (moveRow(e.key === 'ArrowDown' ? 1 : -1)) e.preventDefault();
   }

@@ -39,6 +39,13 @@ documentation; read it before editing the file:
   language, parses it back with positioned diagnostics, and applies a text
   as the difference (`replaceDefinitions`, model.js — one append). Also the
   Monaco grammar, as data. No DOM. The Code view in index.html is its UI.
+- `help.js` — the help modal's content, as data: one topic per concept,
+  each with a DCB-notation snippet *cut from one example model*
+  (`HELP_MODEL_SOURCE`, by declaration name), never a second copy. A test
+  holds that model canonical, advisory-clean and its scenarios passing,
+  so a grammar change that breaks a help snippet fails the suite.
+  `openHelp(topicId)` (index.html) opens the modal at a topic;
+  `helpTopicFor(kind, body)` maps a definition to its topic. No DOM.
 - `shared.js` — DOM helpers (`h(...)`), simple/advanced mode, the scripted-
   handler editor (Monaco behind a synthesized per-handler TypeScript preamble
   — the synthesis is pure and tested, the widget is not), and the _slice_

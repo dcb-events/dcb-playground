@@ -3501,3 +3501,53 @@ const SOURCE_MONARCH = {
     ],
   },
 };
+
+// The same colours for a text that is only shown, not edited — the
+// help's snippets, where loading Monaco to colour forty lines would be
+// the editor's weight for none of its use. It classes the lexer's own
+// tokens by the lists above, so it cannot read a word differently from
+// the parser; the comments the lexer skips are the gaps between them.
+// Returns `[class, text]` runs that concatenate back to `text`; class
+// is null for what Monaco leaves uncoloured.
+function sourceHighlight(text) {
+  const starts = [0];
+  for (let i = 0; i < text.length; i++) if (text[i] === '\n') starts.push(i + 1);
+  const offset = (line, col) => starts[line - 1] + col - 1;
+  const tokens = lexSource(text).tokens.filter((token) => token.t !== 'eof');
+  const runs = [];
+  const gap = (from, to) => {
+    const between = text.slice(from, to);
+    let at = 0;
+    for (const match of between.matchAll(/\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$)/g)) {
+      if (match.index > at) runs.push([null, between.slice(at, match.index)]);
+      runs.push(['comment', match[0]]);
+      at = match.index + match[0].length;
+    }
+    if (at < between.length) runs.push([null, between.slice(at)]);
+  };
+  let at = 0;
+  tokens.forEach((token, i) => {
+    const from = offset(token.line, token.col);
+    const to = offset(token.endLine, token.endCol);
+    gap(at, from);
+    const following = tokens[i + 1];
+    let cls = null;
+    if (token.t === 'string') cls = 'string';
+    else if (token.t === 'number') cls = 'number';
+    else if (token.t === 'code') cls = 'code';
+    else if (token.t === 'punct' && token.v === '@' && following && following.t === 'ident') cls = 'annotation';
+    else if (token.t === 'ident') {
+      const previous = tokens[i - 1];
+      if (previous && previous.t === 'punct' && previous.v === '@') cls = 'annotation';
+      else if (token.v === 'event' && following && following.v === '.') cls = 'keyword';
+      else if (/^[A-Z]/.test(token.v)) cls = 'type';
+      else if (SOURCE_STATEMENTS.includes(token.v)) cls = 'flow';
+      else if (SOURCE_KEYWORDS.includes(token.v)) cls = 'keyword';
+      else if (SOURCE_BASE_TYPES.includes(token.v)) cls = 'type';
+    }
+    runs.push([cls, text.slice(from, to)]);
+    at = to;
+  });
+  gap(at, text.length);
+  return runs;
+}

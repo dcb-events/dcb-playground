@@ -28,10 +28,11 @@ const { sandbox, store } = createSandbox();
 // scope, not as properties of the context object — the same as they
 // would on `window` in a browser. The trailer hands out the few this
 // drives, the way `generate-examples.js` reaches `PREDEFINED_MODELS`.
-loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js', 'shared.js'], {
+loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js', 'help.js', 'shared.js'], {
   withPage: true,
   trailer: 'globalThis.state = state; globalThis.render = render; globalThis.session = session;'
-    + ' globalThis.closeForms = closeForms; globalThis.codeView = codeView;',
+    + ' globalThis.closeForms = closeForms; globalThis.codeView = codeView;'
+    + ' globalThis.HELP_TOPICS = HELP_TOPICS;',
 });
 const { check, eq, finish } = makeChecker();
 
@@ -4069,5 +4070,31 @@ function build(index) {
     eq(text.includes('2 rules · 2 guards'), true, 'UpdateText counts both');
   });
 }
+
+// The help: every topic in one panel, opened at the concept the page
+// is about.
+check('the help shows every topic, and opens at the page\'s own concept', () => {
+  const id = loadPredefinedModel(0);
+  sandbox.localStorage.setItem('dcb-playground:model', id);
+  sandbox.state.code = false;
+  sandbox.state.splash = false;
+  const here = (view, extra = {}) => {
+    sandbox.state.view = view;
+    Object.assign(sandbox.state, extra);
+    return sandbox.helpTopicHere();
+  };
+  eq(here('slice', { tab: 'definition' }), 'command', 'a command page');
+  eq(here('slice', { tab: 'scenarios' }), 'scenario', 'its scenarios');
+  eq([here('entity'), here('types'), here('projections'), here('events'), here('lifecycles')],
+    ['entity', 'custom-type', 'projection', 'event', 'lifecycle'], 'the other pages');
+  eq(here('overview'), null, 'a page about no one concept opens at the top');
+
+  sandbox.state.help = { topic: 'rule', land: true, scroll: 0 };
+  const text = textOf(sandbox.helpModal());
+  for (const topic of sandbox.HELP_TOPICS) eq(text.includes(topic.title), true, `${topic.id} is in it`);
+  eq(text.includes('require count(student.subscribedCourseIds) < 10'), true, 'snippets are shown whole');
+  eq(text.includes('reads 4 types, 3 tags, in 3 queries'), true, 'the boundary topic derives');
+  sandbox.state.help = null;
+});
 
 finish();
