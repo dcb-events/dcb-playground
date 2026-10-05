@@ -28,7 +28,7 @@
 //
 //   @feature("Course management")
 //   command ChangeCourseCapacity(courseId: CourseId, newCapacity: integer) {
-//     read course = Course[courseId]
+//     alias course = Course[courseId]
 //     require course.status == Existent
 //       else reject "Course does not exist"
 //     require course.capacity != newCapacity
@@ -41,8 +41,13 @@
 // two directions be each other's inverse; nothing is inferred that the
 // JSON does not store. Where a convenience would have needed inference
 // it was left out: a fan-out is not marked (it follows from the
-// operand's type, as in the schema), and a read's alias is always
-// written, since the schema stores it.
+// operand's type, as in the schema), and an alias is always written,
+// since the schema stores it.
+//
+// **`alias`, not `read`.** The statement names an instance for the
+// rules below it; it reads nothing at that line — the query is derived
+// from what the rules use (`deriveDcb`). `read` suggested the opposite,
+// and `alias` is the wire format's own word for the name.
 //
 // One spelling is read but never printed: `x in xs`, where `xs` is a
 // list held in data rather than a literal `[..]`, is `xs contains x`
@@ -92,11 +97,11 @@
 // duplicate-free append are the candidates in sight.
 //
 // **Operand names resolve per command.** A bare or dotted lowercase
-// name is a read when some `read` in the same command declares it and
-// a payload property otherwise — the schema keeps the two apart, a
+// name is an alias when some `alias` in the same command declares it
+// and a payload property otherwise — the schema keeps the two apart, a
 // text can only do so by scope. A name that is neither (a dangling
 // reference, which the model allows and advises about) reads as a
-// property when bare and as a read when dotted, the common case of
+// property when bare and as an alias when dotted, the common case of
 // each.
 //
 // **Nothing is ever lost by printing.** Each definition is printed and
@@ -159,9 +164,9 @@
 // tell, or a result that would not read back the same. Completion
 // (`sourceCompletions`) reads the cursor's place off the tokens before
 // it, since a text being typed rarely parses there. And beside every
-// `read` it says how many event types that read adds to the append
+// `alias` it says how many event types that alias adds to the append
 // condition, and names them on hover (`sourceReadQueries`) — only the
-// used properties' — since `read course = Course[courseId]` otherwise
+// used properties' — since `alias course = Course[courseId]` otherwise
 // reads as the whole entity; and beside each command, what it reads in
 // all (`sourceCommandQueries`), in the same words.
 // ============================================================
@@ -476,7 +481,7 @@ function parseModelSource(text, options = {}) {
   };
 
   // A name in a command, resolved once the whole command is read —
-  // which `read` declares it is not known until then.
+  // which `alias` declares it is not known until then.
   const nameRef = () => {
     const headToken = next();
     const ref = { '%ref': [headToken.v] };
@@ -888,9 +893,9 @@ function parseModelSource(text, options = {}) {
     while (!is('}')) {
       guardBlock('}');
       if (group && !is('scenarios')) fail('The scenarios group comes last — nothing follows it in the block.');
-      const readToken = accept('read');
+      const readToken = accept('alias');
       if (readToken) {
-        const aliasToken = ident('the name it is read as');
+        const aliasToken = ident('the name of the alias');
         const alias = aliasToken.v;
         const isOptional = !!accept('?');
         expect('=');
@@ -942,7 +947,7 @@ function parseModelSource(text, options = {}) {
       } else if (is('scenario')) {
         bare.push(scenarioDecl(peek(), owner));
       } else {
-        fail(`Expected read, require, emit or scenarios, found ${describeToken(peek())}.`);
+        fail(`Expected alias, require, emit or scenarios, found ${describeToken(peek())}.`);
       }
     }
     const endAt = at;
@@ -1585,17 +1590,17 @@ function sourceCommandOperand(body) {
     if (value && typeof value === 'object' && !Array.isArray(value)) {
       if (value.parameterName !== undefined) {
         const head = sourceRef(value.parameterName, 'parameter');
-        if (aliases.has(head)) unprintable(`"${head}" names both a payload property and a read`);
+        if (aliases.has(head)) unprintable(`"${head}" names both a payload property and an alias`);
         if (value.property === undefined) return head;
         if (!parameters.has(head)) unprintable(`it reads "${head}.${value.property}" from a payload property it does not declare`);
         return `${head}.${sourceRef(value.property, 'property')}`;
       }
       if (value.alias !== undefined) {
-        const head = sourceRef(value.alias, 'read');
+        const head = sourceRef(value.alias, 'alias');
         const declared = aliases.has(head);
-        if (!declared && parameters.has(head)) unprintable(`"${head}" names both a payload property and a read`);
+        if (!declared && parameters.has(head)) unprintable(`"${head}" names both a payload property and an alias`);
         if (value.property === undefined) {
-          if (!declared) unprintable(`it reads "${head}", which no read here declares`);
+          if (!declared) unprintable(`it reads "${head}", which no alias here declares`);
           return head;
         }
         return `${head}.${sourceRef(value.property, 'property')}`;
@@ -1616,11 +1621,11 @@ function printCommand(name, body) {
     : `command ${sourceDeclName(name)}(\n${signature.map((s) => '  ' + s + ',').join('\n')}\n)`;
 
   const reads = boundary.map((binding) => {
-    if (!binding || typeof binding !== 'object') unprintable('a read is not an object');
-    const alias = sourceRef(binding.alias, 'read alias') + (binding.isOptional === true ? '?' : '');
+    if (!binding || typeof binding !== 'object') unprintable('an alias is not an object');
+    const alias = sourceRef(binding.alias, 'alias') + (binding.isOptional === true ? '?' : '');
     if (binding.entity !== undefined && binding.projection === undefined) {
-      if (binding.id === undefined) unprintable(`the read "${binding.alias}" has no identifier`);
-      let text = `read ${alias} = ${sourceRef(binding.entity, 'entity')}[${operand(binding.id)}]`;
+      if (binding.id === undefined) unprintable(`the alias "${binding.alias}" has no identifier`);
+      let text = `alias ${alias} = ${sourceRef(binding.entity, 'entity')}[${operand(binding.id)}]`;
       if (binding.excluding !== undefined) text += ` excluding ${operand(binding.excluding)}`;
       if (binding.arguments !== undefined && Object.keys(binding.arguments).length) {
         text += ` with (${sourceArguments(binding.arguments, operand)})`;
@@ -1628,9 +1633,9 @@ function printCommand(name, body) {
       return text;
     }
     if (binding.projection !== undefined && binding.entity === undefined) {
-      return `read ${alias} = ${sourceRef(binding.projection, 'projection')}(${sourceArguments(binding.arguments, operand)})`;
+      return `alias ${alias} = ${sourceRef(binding.projection, 'projection')}(${sourceArguments(binding.arguments, operand)})`;
     }
-    return unprintable(`the read "${binding.alias}" is neither an entity nor a projection`);
+    return unprintable(`the alias "${binding.alias}" is neither an entity nor a projection`);
   });
   const rules = (body.conditions || []).map((c) => {
     if (!c || typeof c.rejection !== 'string') unprintable('a rule has no rejection message');
@@ -1938,8 +1943,8 @@ function sourceAdvisories(model, parsed) {
   return found;
 }
 
-// What each `read` adds to its command's append condition, as the text
-// stands. `read course = Course[courseId]` names an instance, not what
+// What each `alias` adds to its command's append condition, as the text
+// stands. `alias course = Course[courseId]` names an instance, not what
 // is queried of it: only the properties a rule, guard or emission
 // actually uses put their projections' events in the query
 // (`deriveDcb`), so a command testing `course.status` never conflicts
@@ -2254,7 +2259,7 @@ function sourceApplySummary(summary) {
 const SOURCE_SYMBOL_WORDS = {
   type: 'type', event: 'event', entity: 'entity', projection: 'projection', command: 'command',
   member: 'enum member', field: 'record field', eventProperty: 'event property',
-  entityProperty: 'entity property', commandProperty: 'command property', alias: 'read',
+  entityProperty: 'entity property', commandProperty: 'command property', alias: 'alias',
   projectionParameter: 'projection parameter',
 };
 
@@ -2694,7 +2699,7 @@ function sourceRenameSymbol(text, parsed, symbol, newName) {
   const word = SOURCE_SYMBOL_WORDS[kind];
   newName = String(newName).trim();
   if (newName === name) return { edits: [] };
-  const [rule, why] = SOURCE_RENAME_RULES[kind] || [SOURCE_LOWER_NAME_RE, `a ${word} starts with a lowercase letter`];
+  const [rule, why] = SOURCE_RENAME_RULES[kind] || [SOURCE_LOWER_NAME_RE, `${sourceArticle(word)} ${word} starts with a lowercase letter`];
   if (!rule.test(newName)) return { error: `"${newName}" cannot name ${sourceArticle(word)} ${word}: ${why}.` };
   if (SOURCE_RESERVED_NAMES.includes(newName) || SOURCE_BASE_TYPES.includes(newName)) {
     return { error: `"${newName}" is a word of the language.` };
@@ -2899,13 +2904,13 @@ function sourceCompletions(text, line, col, { model = null } = {}) {
       if (opener === '{' && v(s[0]) === 'emit' && s.length === 2) return own('emitArgs', { event: v(s[1]) });
       if (opener === '{' && v(s[0]) === 'scenarios') return own('scenarios', { block: { kind: 'command', name: frame.command } });
       if (opener === '{' && v(s[0]) === 'scenario') return own('scenario', { block: { kind: 'command', name: frame.command } });
-      if (opener === '[' && v(s[0]) === 'read' && prev && /^[A-Za-z_]/.test(prev) && v(s[s.length - 2]) === '=') return own('readId', { entity: prev });
+      if (opener === '[' && v(s[0]) === 'alias' && prev && /^[A-Za-z_]/.test(prev) && v(s[s.length - 2]) === '=') return own('readId', { entity: prev });
       if (opener === '(' && prev === 'count') return own('count');
       if (opener === '(' && prev === 'with') {
         const target = s[s.indexOf(s.find((t) => t.v === '=')) + 1];
         return own('withArgs', { entity: v(target) });
       }
-      if (opener === '(' && v(s[0]) === 'read') return own('projArgs', { callee: prev });
+      if (opener === '(' && v(s[0]) === 'alias') return own('projArgs', { callee: prev });
       if (opener === '[' && prev === 'in') return own('list', { left: conditionLeft(s.slice(0, -1)) });
       return own('json');
     }
@@ -3084,7 +3089,7 @@ function sourceCompletions(text, line, col, { model = null } = {}) {
       for (; i < d.length; i += 1) {
         if (v(d[i]) === 'emit' && d[i + 1] && d[i + 1].t === 'ident') emits.push(d[i + 1].v);
         // The read being written is not in scope of itself.
-        if (v(d[i]) !== 'read' || (tokens.includes(d[i]) && d[i].line === line) || !d[i + 1] || d[i + 1].t !== 'ident') continue;
+        if (v(d[i]) !== 'alias' || (tokens.includes(d[i]) && d[i].line === line) || !d[i + 1] || d[i + 1].t !== 'ident') continue;
         const eq = v(d[i + 2]) === '?' ? i + 3 : i + 2;
         if (v(d[eq]) !== '=' || !d[eq + 1]) continue;
         const target = d[eq + 1].v;
@@ -3106,7 +3111,7 @@ function sourceCompletions(text, line, col, { model = null } = {}) {
   };
   const operandItems = (scope, { sort = 0, prefer } = {}) => {
     for (const b of scope.boundary) {
-      push(b.alias, 'alias', b.entity ? `read ${b.entity}[…]` : `read ${b.projection}(…)`, { sort: prefer && !prefer(b) ? sort + 1 : sort });
+      push(b.alias, 'alias', b.entity ? `alias ${b.entity}[…]` : `alias ${b.projection}(…)`, { sort: prefer && !prefer(b) ? sort + 1 : sort });
     }
     for (const p of scope.properties) push(p.name, 'commandProperty', typeText(p), { sort: prefer && !prefer(p) ? sort + 1 : sort });
   };
@@ -3348,12 +3353,12 @@ function sourceCompletions(text, line, col, { model = null } = {}) {
   if (k === 'command') {
     const scope = commandScope(commandName);
     if (!s.length) {
-      keywords([['read', 'read ${1:name} = ', true], ['require', 'require '], ['emit', 'emit '],
+      keywords([['alias', 'alias ${1:name} = ', true], ['require', 'require '], ['emit', 'emit '],
         ['scenarios', SOURCE_GROUP_SNIPPET, true]]);
       return done(false);
     }
     const first = v(s[0]);
-    if (first === 'read') {
+    if (first === 'alias') {
       if (prev === '=' && s.length <= 4) {
         definitionItems('entity-definition', { sort: 0, call: (n) => `${n}[$1]` });
         definitionItems('projection-definition', { sort: 1, call: projectionCall, detail: (n, b) => `${b.valueType}${b.isList ? '[]' : ''}` });
@@ -3534,7 +3539,7 @@ function sourceFoldingRanges(text) {
 const SOURCE_KEYWORDS = [
   'model', 'type', 'tag', 'enum', 'record', 'event', 'entity', 'lifecycle', 'projection', 'derived',
   'script', 'tagFilter', 'initialState', 'exposes', 'on', 'set', 'increment', 'decrement', 'append',
-  'remove', 'command', 'read', 'excluding', 'with', 'require', 'emit', 'when', 'and', 'not', 'is',
+  'remove', 'command', 'alias', 'excluding', 'with', 'require', 'emit', 'when', 'and', 'not', 'is',
   'empty', 'in', 'contains', 'containsAny', 'startsWith', 'endsWith', 'count', 'successor',
   'currentValue', 'json', 'true', 'false', 'null', 'scenarios', 'scenario', 'given', 'then', 'nothing', 'rejected',
   'else', 'reject',
@@ -3543,7 +3548,7 @@ const SOURCE_KEYWORDS = [
 // The words a block's statements start with, coloured apart so the
 // shape of a command — what it reads, requires, emits — shows at a
 // glance.
-const SOURCE_STATEMENTS = ['read', 'require', 'emit', 'when', 'on', 'derived', 'scenarios', 'scenario', 'given', 'then'];
+const SOURCE_STATEMENTS = ['alias', 'require', 'emit', 'when', 'on', 'derived', 'scenarios', 'scenario', 'given', 'then'];
 
 const SOURCE_MONARCH = {
   keywords: SOURCE_KEYWORDS,

@@ -133,8 +133,8 @@ check('a command reads as reads, rules and emissions', () => {
   const expected = [
     '@feature("Enrolment")',
     'command SubscribeStudentToCourse(courseId: CourseId, studentId: StudentId) {',
-    '  read course = Course[courseId]',
-    '  read student = Student[studentId]',
+    '  alias course = Course[courseId]',
+    '  alias student = Student[studentId]',
     '',
     '  require course.status == Existent',
     '    else reject "Course is not active"',
@@ -155,13 +155,13 @@ check('a command reads as reads, rules and emissions', () => {
 
 check('fan-out, exclusion, numbering, membership, guards and derived values have spellings', () => {
   const schedules = modelToSource(build(3).model());
-  eq(schedules.includes('read theirs = Course[students.subscribedCourseIds] excluding courseId'), true, 'excluding');
-  eq(schedules.includes('read courseNumbering = CourseNumbering()'), true, 'projection read');
+  eq(schedules.includes('alias theirs = Course[students.subscribedCourseIds] excluding courseId'), true, 'excluding');
+  eq(schedules.includes('alias courseNumbering = CourseNumbering()'), true, 'projection read');
   eq(schedules.includes('emit CourseDefined { courseId: courseNumbering, capacity, slots }'), true, 'minted id');
   eq(schedules.includes('on CourseDefined => set successor(event.data.courseId)'), true, 'successor');
   eq(schedules.includes('require theirs.slots not containsAny slots'), true, 'containsAny');
   const tenant = modelToSource(build(2).model());
-  eq(tenant.includes('read tenantCourseNumbering = TenantCourseNumbering(tenantId)'), true, 'argument shorthand');
+  eq(tenant.includes('alias tenantCourseNumbering = TenantCourseNumbering(tenantId)'), true, 'argument shorthand');
   const guarded = modelToSource(build(8).model());
   eq(guarded.includes('require document.status in [Draft, Published, PendingChanges]'), true, 'equalsAny');
   eq(guarded.includes('emit TextChanged { docId, text }\n    when text != document.publishedText'), true, 'when');
@@ -276,8 +276,8 @@ function emptyCollections(overrides) {
 check('a name resolves to a read when one declares it, and to the payload otherwise', () => {
   const parsed = parseModelSource([
     'command C(courseId: CourseId, items: Item[]) {',
-    '  read course = Course[courseId]',
-    '  read numbering = CourseNumbering()',
+    '  alias course = Course[courseId]',
+    '  alias numbering = CourseNumbering()',
     '  require course.status == items.price else reject "a"',
     '  require numbering == gone else reject "b"',
     '  require ghost.status is true else reject "c"',
@@ -307,7 +307,7 @@ check('what the grammar cannot say is written as JSON, says why, and still round
   const text = modelToSource(model());
   eq(text.includes('// Written as JSON: a rule\'s predicate "resemblesStrongly" is not one the code form knows.\n'
     + 'command ArchiveCourse json {'), true, 'unknown predicate');
-  eq(text.includes('// Written as JSON: "courseId" names both a payload property and a read.\n'
+  eq(text.includes('// Written as JSON: "courseId" names both a payload property and an alias.\n'
     + 'command DefineCourse json {'), true, 'a parameter and a read sharing a name');
   const parsed = parseModelSource(text);
   eq(parsed.diagnostics, [], 'diagnostics');
@@ -811,7 +811,7 @@ check('an entity takes its tracking identifier type along, and a type renamed un
   const text = modelToSource(build(0).model());
   const entity = renameAt(text, 'entity Course {', 'entity '.length, 'Class').text;
   eq(entity.includes('tag type ClassId = string'), true, 'the type moved');
-  eq(entity.includes('read course = Class[courseId]'), true, 'the reads moved');
+  eq(entity.includes('alias course = Class[courseId]'), true, 'the reads moved');
   eq(/\bCourseId\b/.test(entity), false, 'nothing left on the old type');
   const type = renameAt(text, 'tag type CourseId', 'tag type '.length, 'CourseKey').text;
   eq(type.includes('entity Course[CourseKey] {'), true, 'pinned');
@@ -822,14 +822,14 @@ check('an entity takes its tracking identifier type along, and a type renamed un
 
 check('a rename refuses what it cannot do exactly', () => {
   const text = modelToSource(build(0).model());
-  eq(renameAt(text, 'read course = Course', 'read '.length, 'courseId').error,
-    'There already is a command property named courseId in DefineCourse.', 'a read and a parameter share a namespace');
+  eq(renameAt(text, 'alias course = Course', 'alias '.length, 'courseId').error,
+    'There already is a command property named courseId in DefineCourse.', 'an alias and a parameter share a namespace');
   eq(renameAt(text, 'NonExistent, Existent', 'NonExistent, '.length, 'Archived').error,
     'There already is an enum member named Archived in CourseStatus.', 'a member collision');
   eq(renameAt(text, 'NonExistent, Existent', 'NonExistent, '.length, 'active').error,
     '"active" cannot name an enum member: an enum member starts with a capital letter.', 'a member is capitalised');
-  eq(renameAt(text, 'read course = Course', 'read '.length, 'Course').error,
-    '"Course" cannot name a read: a read starts with a lowercase letter.', 'a name is not');
+  eq(renameAt(text, 'alias course = Course', 'alias '.length, 'Course').error,
+    '"Course" cannot name an alias: an alias starts with a lowercase letter.', 'a name is not');
   eq(renameAt(text, '// Types', 3, 'X').error, 'There is nothing here to rename.', 'a comment');
   const scripted = modelToSource(build(5).model());
   eq(/also appears in the script or JSON at line \d+/.test(renameAt(scripted, 'Draft, Published', 0, 'Concept').error), true,
@@ -851,7 +851,7 @@ check('a rename reaches into scenarios', () => {
   const out = renameAt(text, 'event CourseDefined', 'event '.length, 'CourseCreated').text;
   eq(/given CourseDefined\b/.test(out), false, 'a given event');
   eq(out.includes('given CourseCreated {'), true, 'renamed there');
-  const alias = renameAt(text, 'read course = Course[courseId]', 'read '.length, 'c').text;
+  const alias = renameAt(text, 'alias course = Course[courseId]', 'alias '.length, 'c').text;
   eq(alias.includes('require c.status == NonExistent'), true, 'the rule');
   eq(alias.includes('then rejected "Course already exists"'), true, 'a refusal names its message, which no rename touches');
 });
@@ -880,13 +880,13 @@ check('completion knows a command\'s reads and payload', () => {
   eq(rule('require course.status in [|]').labels, ['NonExistent', 'Existent', 'Archived'], 'in a list');
   eq(rule('require course.status |').labels, ['==', '!=', 'in', 'not in'], 'what an enum admits');
   eq(rule('require courseId in |').labels, ['[…]', 'course', 'courseId', 'newCapacity'], 'a literal list or data');
-  eq(rule('read other = |').items.find((i) => i.label === 'Course').insert, 'Course[$1]', 'an entity read');
-  eq(rule('read other = Course[|]').labels.includes('other'), false, 'not the read being written');
+  eq(rule('alias other = |').items.find((i) => i.label === 'Course').insert, 'Course[$1]', 'an entity read');
+  eq(rule('alias other = Course[|]').labels.includes('other'), false, 'not the read being written');
   eq(rule('emit CourseCapacityChanged { courseId, |}').labels, ['newCapacity'], 'an event\'s remaining properties');
   eq(rule('emit CourseCapacityChanged { |}').items.map((i) => i.insert), ['courseId', 'newCapacity'], 'as shorthands');
   eq(rule('emit CourseArchived { courseId } when |').labels.slice(0, 3), ['course', 'courseId', 'newCapacity'], 'a guard');
   const start = rule('|');
-  eq([start.labels, start.slot], [['read', 'require', 'emit', 'scenarios'], false], 'a statement, not on a space');
+  eq([start.labels, start.slot], [['alias', 'require', 'emit', 'scenarios'], false], 'a statement, not on a space');
 });
 
 check('completion knows scenarios, declarations, and when to stay quiet', () => {
@@ -927,7 +927,7 @@ check('a read says which events it adds — only those of the properties used', 
   eq(archive.unread, ['capacity', 'subscriptionCount', 'subscribedStudentIds'], 'what it leaves out');
   eq(archive.reasons, ['rule'], 'why it is read');
   const line = text.split('\n')[archive.start.line - 1];
-  eq(line.slice(archive.start.col - 1, archive.end.endCol - 1), 'read course = Course[courseId]', 'the statement');
+  eq(line.slice(archive.start.col - 1, archive.end.endCol - 1), 'alias course = Course[courseId]', 'the statement');
 
   eq(of(queries(text), 'SubscribeStudentToCourse').types.includes('CourseCapacityChanged'), true,
     'a rule on capacity brings its events in');
@@ -973,8 +973,8 @@ check('a fanned-out read is marked, a projection read lists its events', () => {
     const { model } = build(index);
     const text = modelToSource(model());
     const all = sandbox.sourceReadQueries(model(), parseModelSource(text));
-    const reads = (text.match(/^\s+read /gm) || []).length;
-    eq(all.length, reads, `${entry.slug}: every read has a query`);
+    const reads = (text.match(/^\s+alias /gm) || []).length;
+    eq(all.length, reads, `${entry.slug}: every alias has a query`);
     for (const q of all) {
       eq(q.hint.includes('unused'), false, `${entry.slug} ${q.command} ${q.alias} is used`);
       eq(q.hint.includes(', one per element'), q.fannedOut, `${entry.slug} ${q.command} ${q.alias} fan-out`);
@@ -1068,7 +1068,7 @@ check('a shown snippet is coloured by the parser\'s own words', () => {
     eq(sandbox.sourceHighlight(text).map(([, part]) => part).join('') === text, true, 'the runs are the text');
   }
   const runs = sandbox.sourceHighlight('// Commands\n@feature("A")\ncommand C(n: integer) {\n'
-    + '  read c = Course[n] /* x */\n  require c.status == Existent\n  emit E { courseId: event }\n}');
+    + '  alias c = Course[n] /* x */\n  require c.status == Existent\n  emit E { courseId: event }\n}');
   const classOf = (part) => (runs.find(([, p]) => p === part) || [])[0];
   eq(classOf('// Commands'), 'comment', 'line comment');
   eq(classOf('/* x */'), 'comment', 'block comment');

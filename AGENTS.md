@@ -187,7 +187,7 @@ it never works from `file:`.
   (`course.capacity`), and offering it bare too would make one fact
   reachable as two different reads. The others are what lets a model
   without entities or lifecycles state its rules on the pages, not
-  only in the code view (`read label = Label(documentId)`).
+  only in the code view (`alias label = Label(documentId)`).
 - **Reads split by their reason** (`decisionAliases`, model.js): a read
   a rule or guard names, and every hop it was reached through, belongs
   to the decide step; everything else is read in order to *record*
@@ -516,9 +516,9 @@ it never works from `file:`.
   The stripe beside a group is `--scenario-stripe`, deliberately not a
   kind colour; a tint behind the lines was tried and dropped — faint
   enough not to distract, it was invisible.
-  Operand names resolve per command — a read when a `read` declares
-  the name, a payload property otherwise — so a parameter and a read
-  sharing a name is the one ordinary case that falls back to JSON.
+  Operand names resolve per command — an alias when an `alias`
+  declares the name, a payload property otherwise — so a parameter and
+  an alias sharing a name is the one ordinary case that falls back to JSON.
   The **language service** (end of `dsl.js`) sits on parser *marks* —
   which token each part of a body came from, kept in a `WeakMap` beside
   the bodies so the parse result is still exactly the stored shape —
@@ -533,9 +533,10 @@ it never works from `file:`.
   marks and a case in `sourceSymbols`**. Completion reads the cursor's
   context off the tokens, not the parse — the block being typed rarely
   parses.
-  A `read` names an instance, not what is queried of it — only the
-  properties something uses contribute events (`deriveDcb`) — so the
-  editor says beside each read how many types it adds, naming them
+  An `alias` names an instance, not what is queried of it — only the
+  properties something uses contribute events (`deriveDcb`), which is
+  why the keyword is `alias` and not `read` — so the editor says
+  beside each alias how many types it adds, naming them
   on hover (`sourceReadQueries`: "reads 2 types"), and beside each
   command's `{` what it reads in all (`sourceCommandQueries`: "reads
   5 types, 2 tags, in 2 queries"),

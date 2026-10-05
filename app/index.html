@@ -5142,7 +5142,7 @@ function readCard(model, slice, binding, index, waitsFor, ruleIndices) {
         // narrow the boundary behind their back. It dangles, and says
         // so, until they deal with it.
         h('button', {
-          class: 'btn tiny danger', title: 'Remove this read, and the rules about it',
+          class: 'btn tiny danger', title: 'Remove this alias, and the rules about it',
           onclick: () => patchSlice((b) => {
             const names = (condition) => conditionOperands(condition)
               .some((operand) => operandSource(operand) === 'alias-property'
@@ -5689,7 +5689,7 @@ function ruleEditor(model, slice, index, target) {
   // finish picking, and offering it is offering a dead end.
   //
   // A projection is offered on the same terms, so a model can state its
-  // rules without an entity at all: `read label = Label(documentId)`
+  // rules without an entity at all: `alias label = Label(documentId)`
   // and a rule about `label`. Except one an entity property binds —
   // that value is read through the entity (`course.capacity`), and
   // offering it here as well would be the same fact reachable as two
@@ -12737,7 +12737,7 @@ function codeScenarioMarks(analysis, textModel) {
 }
 
 // What each `read` adds to the append condition, for the text as it
-// stands: `read course = Course[courseId]` looks like the whole entity
+// stands: `alias course = Course[courseId]` looks like the whole entity
 // and is only the properties something uses (sourceReadQueries, dsl.js).
 // Cached on the analysis, so it moves with the text.
 function codeReadQueries(model) {
@@ -13189,7 +13189,7 @@ function registerSourceLanguage() {
     return {
       range: new monaco.Range(q.start.line, q.start.col, q.end.endLine, q.end.endCol),
       contents: [
-        { value: `**Read \`${q.alias}\`** — what it adds to the append condition` },
+        { value: `**Alias \`${q.alias}\`** — what it adds to the append condition` },
         { value: (q.tags.length ? `${code(q.tags)} ∧ ${types}` : `${types} (no tag — the whole log)`)
           + (q.fannedOut ? ' — one per element' : '') },
         ...(q.properties.length ? [{ value: q.properties

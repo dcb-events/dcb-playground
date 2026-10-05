@@ -122,14 +122,14 @@ projection CoursePeakSubscriptions: integer {
 // Commands
 @feature("Course management")
 command DefineCourse(capacity: Capacity) {
-  read numbering = CourseNumbering()
+  alias numbering = CourseNumbering()
 
   emit CourseDefined { courseId: numbering, capacity }
 }
 
 @feature("Course management")
 command ChangeCourseCapacity(courseId: CourseId, newCapacity: Capacity) {
-  read course = Course[courseId]
+  alias course = Course[courseId]
 
   require course.status == Existent
     else reject "Course is not active"
@@ -141,7 +141,7 @@ command ChangeCourseCapacity(courseId: CourseId, newCapacity: Capacity) {
 
 @feature("Course management")
 command ArchiveCourse(courseId: CourseId) {
-  read course = Course[courseId]
+  alias course = Course[courseId]
 
   require course.status == Existent
     else reject "Course is not active"
@@ -166,9 +166,9 @@ command ArchiveCourse(courseId: CourseId) {
 
 @feature("Course management")
 command RescheduleCourse(courseId: CourseId, slots: TimeSlot[]) {
-  read course = Course[courseId]
-  read students = Student[course.subscribedStudentIds]
-  read theirs = Course[students.subscribedCourseIds] excluding courseId
+  alias course = Course[courseId]
+  alias students = Student[course.subscribedStudentIds]
+  alias theirs = Course[students.subscribedCourseIds] excluding courseId
 
   require course.status == Existent
     else reject "Course is not active"
@@ -180,7 +180,7 @@ command RescheduleCourse(courseId: CourseId, slots: TimeSlot[]) {
 
 @feature("Students")
 command RegisterStudent(studentId: StudentId, name: PersonName, email?: string) {
-  read student = Student[studentId]
+  alias student = Student[studentId]
 
   require student.exists is false
     else reject "Student is already registered"
@@ -190,8 +190,8 @@ command RegisterStudent(studentId: StudentId, name: PersonName, email?: string) 
 
 @feature("Enrolment")
 command SubscribeStudentToCourse(courseId: CourseId, studentId: StudentId) {
-  read course = Course[courseId]
-  read student = Student[studentId]
+  alias course = Course[courseId]
+  alias student = Student[studentId]
 
   require course.status == Existent
     else reject "Course is not active"
@@ -396,11 +396,11 @@ tag type CourseId = string
     ],
     example: ['command:RescheduleCourse'],
     syntax: [
-      ['read numbering = CourseNumbering()', 'A projection, with an argument per parameter.', 'read'],
-      ['read course = Course[courseId]', 'One entity instance, by identifier.', 'read-entity'],
-      ['read others = Course[student.subscribedCourseIds]', 'Fan-out: one instance per element of a list.', 'fan-out'],
+      ['alias numbering = CourseNumbering()', 'A projection, with an argument per parameter.', 'read'],
+      ['alias course = Course[courseId]', 'One entity instance, by identifier.', 'read-entity'],
+      ['alias others = Course[student.subscribedCourseIds]', 'Fan-out: one instance per element of a list.', 'fan-out'],
       ['… excluding courseId', 'One identifier dropped from a fan-out.', 'fan-out'],
-      ['read tutor? = Student[tutorId]', 'May be absent: a null identifier binds nothing, and rules over it hold.', 'optional-read'],
+      ['alias tutor? = Student[tutorId]', 'May be absent: a null identifier binds nothing, and rules over it hold.', 'optional-read'],
       ['… with (key: value)', 'Arguments for scripted projections read through an entity.', 'with'],
     ],
   },

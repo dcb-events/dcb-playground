@@ -3221,7 +3221,7 @@ function build(index) {
 // ---------------------------------------------------------------
 // A model with no entity at all states its rules over projections: the
 // first question offers one this command can supply the arguments of,
-// and the read it brings is the plain `read label = Label(documentId)`.
+// and the read it brings is the plain `alias label = Label(documentId)`.
 // ---------------------------------------------------------------
 {
   const id = sandbox.createDcbModel('Entity Free Probe');
@@ -3415,8 +3415,8 @@ function build(index) {
     '  on EmployeeHired => set event.data.seniority',
     '}',
     'command Assign(projectId: ProjectId, employeeId: EmployeeId, wanted: Seniority[]) {',
-    '  read project = Project[projectId]',
-    '  read employee = Employee[employeeId]',
+    '  alias project = Project[projectId]',
+    '  alias employee = Employee[employeeId]',
     '  require employee.seniority in project.requiredSeniority',
     '    else reject "Project does not need that seniority"',
     '  emit Assigned { projectId, employeeId }',
@@ -4170,7 +4170,7 @@ check('the help shows every topic, and opens at the page\'s own concept', () => 
       '  on Labelled => set event.data.label',
       '}',
       'command Relabel(documentId: DocumentId, label: string) {',
-      '  read current = Label(documentId)',
+      '  alias current = Label(documentId)',
       '  require current != label',
       '    else reject "Label is unchanged"',
       '  emit Labelled { documentId, label }',
