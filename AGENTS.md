@@ -46,6 +46,11 @@ documentation; read it before editing the file:
   so a grammar change that breaks a help snippet fails the suite.
   `openHelp(topicId)` (index.html) opens the modal at a topic;
   `helpTopicFor(kind, body)` maps a definition to its topic. No DOM.
+  The help is the short version: the notation is explained in full on
+  dcb.events (`/notation/`, a guide and a reference), and every topic
+  and syntax row links its reference entry by anchor. The website's
+  build fails on a link `helpReferenceLinks()` lists that it does not
+  define, so renaming an anchor is a change on both sides.
 - `shared.js` — DOM helpers (`h(...)`), simple/advanced mode, the scripted-
   handler editor (Monaco behind a synthesized per-handler TypeScript preamble
   — the synthesis is pure and tested, the widget is not), and the _slice_

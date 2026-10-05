@@ -23,7 +23,8 @@ loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js', 'help.js'], {
   trailer: 'globalThis.PREDEFINED_MODELS = PREDEFINED_MODELS; globalThis.SOURCE_KINDS = SOURCE_KINDS;'
     + ' globalThis.DEF_COLLECTIONS = DEF_COLLECTIONS; globalThis.DomainError = DomainError;'
     + ' globalThis.SOURCE_KEYWORDS = SOURCE_KEYWORDS; globalThis.SOURCE_BASE_TYPES = SOURCE_BASE_TYPES;'
-    + ' globalThis.HELP_TOPICS = HELP_TOPICS; globalThis.HELP_MODEL_SOURCE = HELP_MODEL_SOURCE;',
+    + ' globalThis.HELP_TOPICS = HELP_TOPICS; globalThis.HELP_MODEL_SOURCE = HELP_MODEL_SOURCE;'
+    + ' globalThis.NOTATION_GUIDE_URL = NOTATION_GUIDE_URL; globalThis.NOTATION_REFERENCE_URL = NOTATION_REFERENCE_URL;',
 });
 const { check, eq, finish } = makeChecker();
 const {
@@ -922,6 +923,18 @@ check('every help topic resolves: its snippet, its links, its commands', () => {
   eq(sandbox.helpTopicFor('projection-definition', model['projection-definitions'].CourseIsFull), 'derived-projection', 'derived');
   eq(sandbox.helpTopicFor('projection-definition', model['projection-definitions'].CoursePeakSubscriptions),
     'scripted-projection', 'scripted');
+});
+
+// Which anchors exist is the site's to say — its build checks every
+// link `helpReferenceLinks` lists. Here: that there is one everywhere.
+check('every help topic and syntax row links into the notation pages on dcb.events', () => {
+  for (const topic of HELP_TOPICS) {
+    eq(typeof topic.href === 'string' && topic.href.startsWith(sandbox.NOTATION_GUIDE_URL), true, `${topic.id}: links the notation`);
+    for (const row of topic.syntax || []) eq(typeof row[2], 'string', `${topic.id}: ${row[0]} names its reference entry`);
+  }
+  const links = sandbox.helpReferenceLinks();
+  eq(links.every((link) => link.startsWith(sandbox.NOTATION_GUIDE_URL)), true, 'only the notation pages');
+  eq(links.includes(sandbox.NOTATION_REFERENCE_URL + '#saw'), true, 'rows included');
 });
 
 // The boundary topic's prose makes claims about the example; these are

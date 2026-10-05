@@ -771,7 +771,9 @@
   .help-syntax { width: 100%; border-collapse: collapse; margin: 4px 0 4px; font-size: 12.5px; }
   .help-syntax td { padding: 5px 10px 5px 0; vertical-align: baseline; border-top: 1px solid var(--border); }
   .help-syntax td:first-child { width: 46%; font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap; }
-  .help-syntax td:last-child { line-height: 1.45; }
+  .help-syntax td:nth-child(2) { line-height: 1.45; }
+  .help-syntax td:last-child { width: 1em; padding-right: 0; text-align: right; }
+  .help-syntax td:last-child a { text-decoration: none; }
   .help-boundary { margin: 12px 0; font-size: 12px; }
   .help-boundary > div { padding: 7px 0; border-top: 1px solid var(--border); }
   .help-boundary .cmdline { display: flex; gap: 10px; align-items: baseline; margin-bottom: 3px; }
@@ -2182,13 +2184,16 @@ function helpSection(topic) {
   const example = helpExcerpt(topic);
   return h('section', { class: 'help-topic', id: 'help-' + topic.id, 'data-topic': topic.id },
     h('h3', {}, topic.title,
-      topic.href ? h('a', { href: topic.href, target: '_blank', rel: 'noopener' }, 'dcb.events ↗') : null),
+      topic.href ? h('a', { href: topic.href, target: '_blank', rel: 'noopener' }, topic.hrefLabel || 'Reference ↗') : null),
     topic.prose.map((text) => h('p', {}, helpProse(text))),
     example ? helpCode(example) : null,
     topic.boundaryOf ? helpBoundaryList(topic) : null,
     topic.syntax ? h('table', { class: 'help-syntax' }, h('tbody', {},
-      topic.syntax.map(([spelling, meaning]) => h('tr', {},
-        h('td', {}, spelling), h('td', {}, helpProse(meaning)))))) : null);
+      topic.syntax.map(([spelling, meaning, anchor]) => h('tr', {},
+        h('td', {}, spelling), h('td', {}, helpProse(meaning)),
+        h('td', {}, h('a', {
+          href: notationReference(anchor), target: '_blank', rel: 'noopener', title: 'In the reference on dcb.events',
+        }, '↗')))))) : null);
 }
 
 function helpModal() {
@@ -13127,13 +13132,14 @@ function renderCode(model, main) {
         'Hover a command\'s name for the consistency boundary it derives; ⌘-click a name to go to it; '
           + '⇧⌘O lists every definition. ⌃Space suggests what fits where the cursor is; F2 renames a name '
           + 'everywhere it means the same thing, and ⇧F12 lists where it is used.',
-      ], null, 'notation')),
+      ], NOTATION_GUIDE_URL, 'notation')),
     h('div', { class: 'muted small' }, 'The same definitions as the pages, written out.')));
 
   codeView.statusEl = codeControls();
   main.appendChild(h('div', { class: 'code-bar' },
     codeView.statusEl,
     h('span', { class: 'grow' }),
+    h('a', { class: 'small', href: NOTATION_REFERENCE_URL, target: '_blank', rel: 'noopener' }, 'Notation reference ↗'),
     h('button', {
       class: 'btn ghost tiny', type: 'button',
       onclick: () => runAsync(async () => { await navigator.clipboard.writeText(codeView.text); toast('Copied.'); }),
