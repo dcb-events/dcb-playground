@@ -773,6 +773,12 @@
     font-family: var(--mono); font-size: 11.5px; line-height: 1.55;
     background: var(--bg); border: 1px solid var(--border); border-radius: 7px;
   }
+  /* Each line a block, so a scenarios group's lines can carry the
+     editor's stripe at the snippet's edge. Blocks are what separates the
+     lines; an empty one holds a space, which keeps its height and keeps
+     it in a copied snippet. */
+  .help-code .hl-line { display: block; }
+  .help-code .hl-scenarios { margin: 0 -12px; padding: 0 12px; box-shadow: inset 2px 0 var(--scenario-stripe); }
   .help-syntax { width: 100%; border-collapse: collapse; margin: 4px 0 4px; font-size: 12.5px; }
   .help-syntax td { padding: 5px 10px 5px 0; vertical-align: baseline; border-top: 1px solid var(--border); }
   .help-syntax td:first-child { width: 46%; font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap; }
@@ -1385,6 +1391,11 @@
   }
   .code-editor { overflow: hidden; }
   .code-editor .code-read-hint { color: var(--muted); }
+  /* A scenarios group: a gutter stripe (see `codeScenarioMarks`), the
+     same at the edge of the help's snippets. */
+  .code-editor .code-scenarios-stripe { border-left: 2px solid var(--scenario-stripe); margin-left: 3px; }
+  .code-editor .code-scenarios-hint { color: var(--muted); }
+  .code-editor .code-scenarios-hint.bad { color: var(--danger); }
   .code-text {
     display: block; resize: vertical; padding: 10px 12px; color: var(--text);
     font-size: 12.5px; line-height: 19px; tab-size: 2; white-space: pre; overflow: auto;
@@ -2170,9 +2181,21 @@ function helpProse(text) {
   });
 }
 
+// Line by line, so a scenarios group's lines can carry the stripe the
+// editor gives them.
 function helpCode(text) {
-  return h('pre', { class: 'help-code' },
-    sourceHighlight(text).map(([cls, part]) => (cls ? h('span', { class: 'hl-' + cls }, part) : part)));
+  const grouped = new Set();
+  for (const r of sourceFoldingRanges(text)) if (r.scenarios) for (let l = r.start; l <= r.end; l += 1) grouped.add(l);
+  const lines = [[]];
+  for (const [cls, part] of sourceHighlight(text)) {
+    part.split('\n').forEach((piece, i) => {
+      if (i) lines.push([]);
+      if (piece) lines[lines.length - 1].push(cls ? h('span', { class: 'hl-' + cls }, piece) : piece);
+    });
+  }
+  return h('pre', { class: 'help-code' }, lines.map((parts, i) => h('span', {
+    class: grouped.has(i + 1) ? 'hl-line hl-scenarios' : 'hl-line',
+  }, parts.length ? parts : ' ')));
 }
 
 function helpBoundaryList(topic) {
@@ -12542,6 +12565,10 @@ function setCodeSurface(on) {
   localStorage.setItem(SURFACE_KEY, on ? 'code' : 'visual');
 }
 
+// Whether a model's text opens with its scenarios groups folded —
+// remembered per browser, like the surface, and folded unless asked.
+const SCENARIO_FOLD_KEY = 'dcb-playground:code-scenarios';
+
 // The pages that are one definition each — what the code follows.
 const CODE_FOLLOWS = ['slice', 'entity', 'events', 'projections', 'types'];
 
@@ -12561,6 +12588,7 @@ const codeView = {
   statusEl: null,
   listEl: null,
   drafts: new Map(),    // model id → a text left unapplied on another model
+  scenariosFolded: localStorage.getItem(SCENARIO_FOLD_KEY) !== 'open',
 };
 
 function codeDirty() { return codeView.text !== codeView.base; }
@@ -12628,16 +12656,12 @@ function refreshCodeChrome() {
   if (!model || !state.code) return;
   const analysis = analyseCode(model);
   if (codeView.editor) {
-    const toMarker = (severity) => (d) => ({
-      severity, message: d.message,
+    const markers = codeDiagnostics(analysis).map((d, index) => ({
+      severity: d.error ? monaco.MarkerSeverity.Error : monaco.MarkerSeverity.Warning, message: d.message,
       startLineNumber: d.line, startColumn: d.col, endLineNumber: d.endLine, endColumn: d.endCol,
       // What the quick fix finds its replacement by.
-      code: d.fix ? 'accept:' + d.scenario : undefined,
-    });
-    const markers = [
-      ...analysis.errors.map(toMarker(monaco.MarkerSeverity.Error)),
-      ...codeAdvisoryAt(analysis).map(toMarker(monaco.MarkerSeverity.Warning)),
-    ];
+      code: d.fix ? 'fix:' + index : undefined,
+    }));
     monaco.editor.setModelMarkers(codeView.editor.model, 'dcb', markers);
     // What each read queries, after it. A decoration, not an inlay
     // hint: this Monaco cuts those at 43 characters, and a list of
@@ -12648,11 +12672,47 @@ function refreshCodeChrome() {
       range: new monaco.Range(q.end.endLine, q.end.endCol, q.end.endLine, q.end.endCol),
       options: { showIfCollapsed: true, after: { content: '\u00a0\u00a0' + q.hint, inlineClassName: 'code-read-hint' } },
     })));
+    if (!codeView.editor.scenarioMarks) codeView.editor.scenarioMarks = editor.createDecorationsCollection();
+    codeView.editor.scenarioMarks.set(codeScenarioMarks(analysis, codeView.editor.model));
   }
   if (codeView.statusEl) codeView.statusEl.replaceWith(codeView.statusEl = codeControls());
   if (codeView.listEl) codeView.listEl.replaceWith(codeView.listEl = codeProblemList(analysis));
   const toggle = document.querySelector('#tools .surface');
   if (toggle) toggle.replaceWith(surfaceToggle(model));
+}
+
+// The scenarios groups, set apart from the definitions they exercise:
+// a stripe in the gutter — a region, not a kind, so not a kind colour;
+// a tint behind the lines was tried and was either invisible or noise —
+// and on the group's first line,
+// which is all a folded group shows, how many it holds and how many are
+// not passing. Placed off the tokens like the folds, counted off the
+// parse where the block parsed.
+function codeScenarioMarks(analysis, textModel) {
+  const faults = codeDiagnostics(analysis).filter((d) => d.error || d.scenario);
+  return sourceFoldingRanges(textModel.getValue()).filter((r) => r.scenarios).flatMap((r) => {
+    const band = {
+      range: new monaco.Range(r.start, 1, r.end, 1),
+      options: { isWholeLine: true, linesDecorationsClassName: 'code-scenarios-stripe' },
+    };
+    const group = analysis.parsed.groups.find((g) => g.span.line === r.start);
+    if (!group) return [band];
+    const within = faults.filter((d) => d.line >= r.start && d.line <= r.end);
+    const count = (prefix) => within.filter((d) => d.scenario && d.message.startsWith(prefix)).length;
+    const words = [`${group.records.length} scenario${group.records.length === 1 ? '' : 's'}`];
+    if (count('Drifted')) words.push(`${count('Drifted')} drifted`);
+    if (count('Broken')) words.push(`${count('Broken')} broken`);
+    const errors = within.filter((d) => d.error).length;
+    if (errors) words.push(`${errors} error${errors === 1 ? '' : 's'}`);
+    const end = textModel.getLineMaxColumn(r.start);
+    return [band, {
+      range: new monaco.Range(r.start, end, r.start, end),
+      options: {
+        showIfCollapsed: true,
+        after: { content: '\u00a0\u00a0' + words.join(' · '), inlineClassName: within.length ? 'code-scenarios-hint bad' : 'code-scenarios-hint' },
+      },
+    }];
+  });
 }
 
 // What each `read` adds to the append condition, for the text as it
@@ -12678,18 +12738,28 @@ function codeCommandQueries(model) {
   return analysis.commandQueries;
 }
 
-// Advisories, placed on the name of the definition they are about, and
-// scenario warnings, placed on their `scenario`.
+// Everything the editor marks, in one list the markers, the quick fixes
+// and the problem list index alike: errors, then scenario warnings on
+// their `scenario`, then advisories on the name of the definition they
+// are about. A diagnostic with a `fix` carries the edit that resolves it
+// — a drift's actual outcome, an ungrouped scenario's group.
+function codeDiagnostics(analysis) {
+  return [
+    ...analysis.errors.map((d) => ({ ...d, error: true })),
+    ...analysis.scenarios.map((w) => ({ ...w, scenario: true })),
+    ...codeAdvisoryAt(analysis),
+  ];
+}
+
 function codeAdvisoryAt(analysis) {
-  const scenarios = analysis.scenarios.map((w, index) => ({ ...w, scenario: index }));
-  return [...scenarios, ...analysis.advisories.map((a) => {
+  return analysis.advisories.map((a) => {
     const span = sourceSpanOf(analysis.parsed, a.kind, a.name);
     return {
       message: a.message, kind: a.kind, name: a.name,
       line: span ? span.nameLine : 1, col: span ? span.nameCol : 1,
       endLine: span ? span.nameLine : 1, endCol: span ? span.nameEndCol : 2,
     };
-  })];
+  });
 }
 
 function codeStatus() {
@@ -12731,10 +12801,7 @@ function codeControls() {
 }
 
 function codeProblemList(analysis) {
-  const rows = [
-    ...analysis.errors.map((d) => ({ ...d, error: true })),
-    ...codeAdvisoryAt(analysis),
-  ];
+  const rows = codeDiagnostics(analysis);
   if (!rows.length) return h('div', { class: 'code-problems' });
   return h('div', { class: 'code-problems' }, rows.map((d) => h('div', {
     class: 'issue', role: 'button', tabindex: '0',
@@ -12743,17 +12810,18 @@ function codeProblemList(analysis) {
     h('span', { class: 'mono' }, `${d.line}:${d.col}`),
     h('span', { class: 'why' }, d.name ? `${readable(d.name)} — ${d.message}` : d.message),
     d.fix ? h('button', {
-      class: 'btn tiny', type: 'button', title: 'Rewrite the then lines to what the model now does',
-      onclick: (e) => { e.stopPropagation(); acceptCodeFix(d.fix); },
-    }, 'Accept') : null)));
+      class: 'btn tiny', type: 'button', title: d.fix.title,
+      onclick: (e) => { e.stopPropagation(); applyCodeFix(d.fix); },
+    }, d.fix.label) : null)));
 }
 
-// The drift quick fix: the scenario's then lines become what the model
-// now does. An edit like any other — it still has to be applied.
-function acceptCodeFix(fix) {
+// A quick fix — a drift's then lines rewritten to what the model now
+// does, an ungrouped scenario wrapped in its group. An edit like any
+// other — it still has to be applied.
+function applyCodeFix(fix) {
   if (codeView.editor) {
     const { editor } = codeView.editor;
-    editor.executeEdits('accept', [{
+    editor.executeEdits('fix', [{
       range: new monaco.Range(fix.line, fix.col, fix.endLine, fix.endCol), text: fix.text,
     }]);
     editor.focus();
@@ -12917,14 +12985,19 @@ function revealCodeAt(line, col, from) {
 // the editor could step back to another model's text, or to one from
 // before an agent's change, and that would read as ordinary typing:
 // dirty, not stale, and applied on the way back to the pages.
+//
+// Its view state — scroll, cursor, folds — is kept across a reprint of
+// the same model and dropped for another model's text, where the folds
+// would land, by line, on whatever stands there now.
 function writeCodeEditor(text) {
   if (!codeView.editor) return;
   const { editor, model } = codeView.editor;
   if (model.getValue() === text) return;
-  const view = editor.saveViewState();
+  const view = codeView.editor.textFor === codeView.modelId ? editor.saveViewState() : null;
   codeView.loading = true;
   model.setValue(text);
   codeView.loading = false;
+  codeView.editor.textFor = codeView.modelId;
   if (view) editor.restoreViewState(view);
 }
 
@@ -13057,19 +13130,28 @@ function registerSourceLanguage() {
       })) : [];
     },
   });
+  // Folding off the tokens (sourceFoldingRanges, dsl.js), so it holds
+  // while the text does not parse. Registering any provider replaces
+  // Monaco's indentation folding, so it covers every block, not only
+  // the scenarios groups.
+  L.registerFoldingRangeProvider('dcb', {
+    provideFoldingRanges: (textModel) => sourceFoldingRanges(textModel.getValue())
+      .map((r) => ({ start: r.start, end: r.end })),
+  });
   L.registerCodeActionProvider('dcb', {
     provideCodeActions: (textModel, range, context) => {
       const model = activeModel();
       if (!model) return { actions: [], dispose() {} };
       const analysis = analyseCode(model);
+      const diagnostics = codeDiagnostics(analysis);
       const actions = context.markers
-        .filter((m) => typeof m.code === 'string' && m.code.startsWith('accept:'))
+        .filter((m) => typeof m.code === 'string' && m.code.startsWith('fix:'))
         .map((m) => {
-          const warning = analysis.scenarios[Number(m.code.slice('accept:'.length))];
-          if (!warning || !warning.fix) return null;
-          const { fix } = warning;
+          const diagnostic = diagnostics[Number(m.code.slice('fix:'.length))];
+          if (!diagnostic || !diagnostic.fix) return null;
+          const { fix } = diagnostic;
           return {
-            title: 'Accept actual outcome', kind: 'quickfix', diagnostics: [m], isPreferred: true,
+            title: fix.title, kind: 'quickfix', diagnostics: [m], isPreferred: true,
             edit: { edits: [{
               resource: textModel.uri, versionId: textModel.getVersionId(),
               textEdit: { range: new monaco.Range(fix.line, fix.col, fix.endLine, fix.endCol), text: fix.text },
@@ -13167,7 +13249,7 @@ function createCodeEditor() {
   model.onDidChangeContent(() => { if (!codeView.loading) onCodeInput(model.getValue()); });
   // Escape belongs to the editor's own widgets, never to the page.
   root.addEventListener('keydown', (e) => { if (e.key === 'Escape') e.stopPropagation(); });
-  return { root, editor, model };
+  return { root, editor, model, textFor: codeView.modelId };
 }
 
 function codeEditorElement() {
@@ -13190,7 +13272,46 @@ function codeEditorElement() {
   if (!codeView.editor) codeView.editor = createCodeEditor();
   writeCodeEditor(codeView.text);
   monaco.editor.setTheme(isDark() ? 'vs-dark' : 'vs');
+  // A model's text opens the way the toggle says; after that, what the
+  // author folds by hand stays folded across repaints and applies.
+  if (codeView.editor.foldedFor !== codeView.modelId) {
+    codeView.editor.foldedFor = codeView.modelId;
+    codeView.editor.editor.trigger('scenarios', 'editor.unfoldAll', null);
+    foldScenarioGroups(codeView.scenariosFolded);
+  }
   return codeView.editor.root;
+}
+
+// Every scenarios group folded, or every one open. A group holding a
+// fault — an error, a broken or drifted scenario — is left open when
+// folding: a fault is not folded away, though a hand may still fold it.
+// The fold action waits for the folding ranges of the text just loaded.
+function foldScenarioGroups(fold) {
+  if (!codeView.editor) return;
+  const { editor, model: textModel } = codeView.editor;
+  const model = activeModel();
+  const faults = model
+    ? codeDiagnostics(analyseCode(model)).filter((d) => d.error || d.scenario).map((d) => d.line)
+    : [];
+  const lines = sourceFoldingRanges(textModel.getValue())
+    .filter((r) => r.scenarios && !(fold && faults.some((line) => line >= r.start && line <= r.end)))
+    .map((r) => r.start - 1);
+  if (!lines.length) return;
+  editor.trigger('scenarios', fold ? 'editor.fold' : 'editor.unfold', { selectionLines: lines, levels: 1, direction: 'up' });
+}
+
+function scenarioFoldToggle() {
+  const folded = codeView.scenariosFolded;
+  return h('button', {
+    class: 'btn ghost tiny', type: 'button',
+    title: folded ? 'Open every scenarios group' : 'Fold every scenarios group to one line',
+    onclick: (e) => {
+      codeView.scenariosFolded = !folded;
+      localStorage.setItem(SCENARIO_FOLD_KEY, folded ? 'open' : 'folded');
+      foldScenarioGroups(!folded);
+      e.currentTarget.replaceWith(scenarioFoldToggle());
+    },
+  }, folded ? 'Unfold scenarios' : 'Fold scenarios');
 }
 
 function downloadCode(model) {
@@ -13210,7 +13331,8 @@ function renderCode(model, main) {
       hint('code', 'The model as code', [
         'Every type, event, entity, projection and command on the other pages, as one text. '
           + 'Edit it and apply with ⌘S; going back to the pages applies it too. An apply is one undo step.',
-        'Scenarios sit at the end of the command or projection they exercise. Leave a then out and '
+        'Scenarios sit in a scenarios group at the end of the command or projection they exercise, '
+          + 'folded to one line until opened — Unfold scenarios opens them all. Leave a then out and '
           + 'applying records what the model does; a drifted one is marked, with a fix that accepts it. '
           + 'Comments are not stored — they last as long as the text in this editor.',
         'Hover a command\'s name for the consistency boundary it derives; ⌘-click a name to go to it; '
@@ -13220,9 +13342,12 @@ function renderCode(model, main) {
     h('div', { class: 'muted small' }, 'The same definitions as the pages, written out.')));
 
   codeView.statusEl = codeControls();
+  const editorElement = codeEditorElement();
   main.appendChild(h('div', { class: 'code-bar' },
     codeView.statusEl,
     h('span', { class: 'grow' }),
+    // Monaco folds; the textarea it falls back to cannot.
+    codeView.editor && editorElement === codeView.editor.root ? scenarioFoldToggle() : null,
     h('a', { class: 'small', href: NOTATION_REFERENCE_URL, target: '_blank', rel: 'noopener' }, 'Notation reference ↗'),
     h('button', {
       class: 'btn ghost tiny', type: 'button',
@@ -13231,7 +13356,7 @@ function renderCode(model, main) {
     h('button', { class: 'btn ghost tiny', type: 'button', onclick: () => downloadCode(model) },
       'Download ' + SOURCE_EXTENSION)));
 
-  main.appendChild(codeEditorElement());
+  main.appendChild(editorElement);
   const analysis = analyseCode(model);
   codeView.listEl = codeProblemList(analysis);
   main.appendChild(codeView.listEl);

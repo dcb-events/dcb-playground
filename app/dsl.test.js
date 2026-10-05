@@ -223,11 +223,11 @@ check('every rule says what it is refused with, on its line or the next', () => 
   eq(ruleOf('  require a > 1 else reject Small').diagnostics,
     ['Expected the message the command is refused with, in quotes, found "Small".'], 'and it is text');
   const scenario = parseModelSource('command C(a: integer) {\n  require a > 1 else reject "No"\n'
-    + '  scenario {\n    when C { a: 0 }\n    then rejected by a > 1\n  }\n}');
+    + '  scenarios {\n    scenario {\n      when C { a: 0 }\n      then rejected by a > 1\n    }\n  }\n}');
   eq(scenario.diagnostics.map((d) => d.message),
     ['A refusal is named by the message it was refused with: then rejected "…".'], 'a refusal names the message');
   eq(parseModelSource('command C(a: integer) {\n  require a > 1 else reject "No"\n'
-    + '  scenario {\n    when C { a: 0 }\n    then rejected "No" saw 0, 1\n  }\n}').diagnostics.map((d) => d.message),
+    + '  scenarios {\n    scenario {\n      when C { a: 0 }\n      then rejected "No" saw 0, 1\n    }\n  }\n}').diagnostics.map((d) => d.message),
     ['A refusal is named by its message alone — what the rule read is not asserted.'], 'and by nothing else');
   const bare = { name: 'm', ...emptyCollections({ 'command-definition': { C: {
     properties: [], boundary: [], publishes: [], conditions: [{ leftHandSide: { parameterName: 'a' }, predicate: 'isTrue' }],
@@ -486,20 +486,24 @@ check('a scenario reads as given, when and then, nested in its command', () => {
   const { model } = importExample('course-simple');
   const text = modelToSource(model());
   eq(text.includes([
-    '  scenario {  // is refused: Course is not active',
-    '    when SubscribeStudentToCourse { courseId: "c1", studentId: "s1" }',
-    '    then rejected "Course is not active"',
-    '  }',
+    '    scenario {  // is refused: Course is not active',
+    '      when SubscribeStudentToCourse { courseId: "c1", studentId: "s1" }',
+    '      then rejected "Course is not active"',
+    '    }',
   ].join('\n')), true, 'a refusal, enum members bare');
   eq(text.includes([
-    '  scenario {  // records StudentSubscribedToCourse',
-    '    given CourseDefined { courseId: "c1", capacity: 123 }',
-    '    when SubscribeStudentToCourse { courseId: "c1", studentId: "s1" }',
-    '    then StudentSubscribedToCourse { courseId: "c1", studentId: "s1" }',
-    '  }',
+    '    scenario {  // records StudentSubscribedToCourse',
+    '      given CourseDefined { courseId: "c1", capacity: 123 }',
+    '      when SubscribeStudentToCourse { courseId: "c1", studentId: "s1" }',
+    '      then StudentSubscribedToCourse { courseId: "c1", studentId: "s1" }',
+    '    }',
   ].join('\n')), true, 'a publish');
+  eq(/\n  emit CourseArchived \{ courseId \}\n\n  scenarios \{\n    scenario /.test(text), true, 'in one group, ending the block');
+  const subjects = new Set([...Object.values(model()['scenario-definitions']).map((b) => b.command),
+    ...Object.values(model()['projection-scenario-definitions']).map((b) => b.projection)]);
+  eq(text.split('\n  scenarios {\n').length - 1, subjects.size, 'one per block with scenarios');
   const sequence = modelToSource(importExample('course-sequence').model());
-  eq(sequence.includes('scenario "issues c1 before anything has happened" {\n    then CourseNumbering == "c1"\n  }'), true,
+  eq(sequence.includes('scenario "issues c1 before anything has happened" {\n      then CourseNumbering == "c1"\n    }'), true,
     'a projection without parameters, without parentheses');
   const guarded = modelToSource(importExample('content-decisions-guarded').model());
   eq(guarded.includes('then DocumentStatus("d1") == NonExistent'), true, 'positional arguments');
@@ -507,18 +511,19 @@ check('a scenario reads as given, when and then, nested in its command', () => {
 
 check('a scenario written without a then is recorded with what the model does', () => {
   const { id, model } = importExample('course-simple');
-  const text = modelToSource(model()).replace('  emit CourseArchived { courseId }\n', [
+  const text = modelToSource(model()).replace('  emit CourseArchived { courseId }\n\n  scenarios {\n', [
     '  emit CourseArchived { courseId }',
     '',
-    '  scenario "archiving a defined course" {',
-    '    given CourseDefined { courseId: "c9", capacity: 3 }',
-    '    when ArchiveCourse { courseId: "c9" }',
-    '  }',
+    '  scenarios {',
+    '    scenario "archiving a defined course" {',
+    '      given CourseDefined { courseId: "c9", capacity: 3 }',
+    '      when ArchiveCourse { courseId: "c9" }',
+    '    }',
     '',
-    '  scenario "archiving nothing" {',
-    '    when ArchiveCourse { courseId: "c8" }',
-    '    then rejected "Course is not active"',
-    '  }',
+    '    scenario "archiving nothing" {',
+    '      when ArchiveCourse { courseId: "c8" }',
+    '      then rejected "Course is not active"',
+    '    }',
     '',
   ].join('\n'));
   const before = appends;
@@ -532,15 +537,15 @@ check('a scenario written without a then is recorded with what the model does', 
   const refused = stored.find((b) => b.name === 'archiving nothing');
   eq(refused.then, { outcome: 'rejected', events: [], rejection: 'Course is not active' }, 'the message, and nothing else');
   const back = modelToSource(model());
-  eq(back.includes('  scenario "archiving nothing" {\n    when ArchiveCourse { courseId: "c8" }\n'
-    + '    then rejected "Course is not active"\n  }'), true, 'and printed back whole');
+  eq(back.includes('    scenario "archiving nothing" {\n      when ArchiveCourse { courseId: "c8" }\n'
+    + '      then rejected "Course is not active"\n    }'), true, 'and printed back whole');
 });
 
 check('a written then is asserted: a drift is reported with its fix, and applying does not accept it', () => {
   const { id, model } = importExample('course-simple');
   const text = modelToSource(model()).replace(
-    'when SubscribeStudentToCourse { courseId: "c1", studentId: "s1" }\n    then rejected "Course is not active"',
-    'when SubscribeStudentToCourse { courseId: "c1", studentId: "s1" }\n    then rejected "Course is closed"',
+    'when SubscribeStudentToCourse { courseId: "c1", studentId: "s1" }\n      then rejected "Course is not active"',
+    'when SubscribeStudentToCourse { courseId: "c1", studentId: "s1" }\n      then rejected "Course is closed"',
   );
   const parsed = parseModelSource(text);
   const { warnings } = sandbox.sourceScenarioReport(model(), parsed);
@@ -573,23 +578,96 @@ check('an edited scenario keeps its id and place; a renamed command takes its sc
 
 check('a scenario left out of the text is removed', () => {
   const { id, model } = importExample('course-sequence');
-  const text = modelToSource(model()).replace(/\n  scenario "issues c3[\s\S]*?\n  }\n/, '\n');
+  const text = modelToSource(model()).replace(/\n    scenario "issues c3[\s\S]*?\n    }\n/, '\n');
   applyModelSource(id, text);
   eq(Object.values(model()['projection-scenario-definitions']).map((b) => b.name), ['issues c1 before anything has happened'], 'one left');
 });
 
+// A text as it was written before groups: each group's lines lifted
+// out, its scenarios moved back up to the block's own indentation.
+function ungroup(text) {
+  const out = [];
+  let indent = null;
+  for (const line of text.split('\n')) {
+    const head = /^(\s*)scenarios \{$/.exec(line);
+    if (indent === null && head) { indent = head[1]; continue; }
+    if (indent !== null && line === indent + '}') { indent = null; continue; }
+    out.push(indent !== null && line.startsWith(indent + '  ') ? indent + line.slice(indent.length + 2) : line);
+  }
+  return out.join('\n');
+}
+
+function applyFixes(text) {
+  for (;;) {
+    const fixes = parseModelSource(text).diagnostics.filter((d) => d.fix).map((d) => d.fix);
+    if (!fixes.length) return text;
+    const fix = fixes[fixes.length - 1];
+    text = text.slice(0, sandbox.sourceOffset(text, fix.line, fix.col)) + fix.text
+      + text.slice(sandbox.sourceOffset(text, fix.endLine, fix.endCol));
+  }
+}
+
+check('scenarios sit in one group per block, and a text from before groups is one fix away', () => {
+  for (const file of fs.readdirSync(path.join(APP, 'examples')).filter((f) => f.endsWith('.json'))) {
+    const text = modelToSource(importExample(file.replace(/\.json$/, '')).model());
+    const old = ungroup(text);
+    if (old === text) continue; // no scenarios
+    const diagnostics = parseModelSource(old).diagnostics;
+    eq(diagnostics.length > 0 && diagnostics.every((d) => d.message === 'A scenario sits in a "scenarios { … }" group.' && d.fix),
+      true, `${file}: the old spelling is refused, with a fix`);
+    eq(applyFixes(old), text, `${file}: the fix writes it as printed`);
+  }
+  const messages = (text) => parseModelSource(text).diagnostics.map((d) => d.message);
+  const command = (inner) => `command A() {\n  emit E\n${inner}\n}\nevent E {}`;
+  const group = '  scenarios {\n    scenario {\n      when A {}\n    }\n  }';
+  eq(messages(command(group)), [], 'a group');
+  eq(messages(command(`${group}\n${group}`)), ['A block has one scenarios group — move these scenarios into the first.'], 'one group');
+  eq(messages(command(`${group}\n  emit E`)), ['The scenarios group comes last — nothing follows it in the block.'], 'and last');
+  eq(messages(command('  scenarios {\n    emit E\n  }')), ['Expected scenario, found "emit".'], 'holding scenarios only');
+  eq(messages(command('  scenarios {}')), [], 'empty is no error');
+  const early = parseModelSource('command A() {\n  scenario {\n    when A {}\n  }\n  emit E\n}\nevent E {}').diagnostics;
+  eq([early.length, early[0].fix], [1, undefined], 'a scenario before a statement is refused without a wrap that would not read');
+  const looseOnes = parseModelSource('scenario {\n  when A {}\n}\n\n// between\nscenario {\n  when A {}\n}\ncommand A() {}\nscenario {\n  when A {}\n}');
+  eq(looseOnes.diagnostics.length, 2, 'a run at the top level is one error, and the next run another');
+  eq(looseOnes.scenarios.length, 3, 'and every one of them is still read');
+});
+
+check('the editor folds a scenarios group whole, every other block to its closing line', () => {
+  const ranges = sandbox.sourceFoldingRanges([
+    'command A(', //            1
+    '  a: integer', //          2
+    ') {', //                   3
+    '  emit E { a }', //        4
+    '', //                      5
+    '  scenarios {', //         6
+    '    scenario {', //        7
+    '      when A { a: 1 }', // 8
+    '    }', //                 9
+    '  }', //                   10
+    '}', //                     11
+  ].join('\n'));
+  eq(ranges, [
+    { start: 1, end: 2, scenarios: false },
+    { start: 3, end: 10, scenarios: false },
+    { start: 6, end: 10, scenarios: true },
+    { start: 7, end: 8, scenarios: false },
+  ], 'ranges');
+  eq(sandbox.sourceFoldingRanges('command A() {\n  scenarios {\n    scenario { when A {').length, 0, 'an unclosed text folds nothing it cannot close');
+});
+
 check('scenarios refuse what they cannot mean', () => {
   const errors = (text) => parseModelSource(text).diagnostics.map((d) => d.message);
-  eq(errors('command A() {\n  scenario {\n    when B {}\n  }\n}')[0],
+  const loose = (scenario) => errors(`scenarios {\n${scenario}\n}`);
+  eq(errors('command A() {\n  scenarios {\n    scenario {\n      when B {}\n    }\n  }\n}')[0],
     'This scenario sits in A but is about B — move it there, or make it about A.', 'in the wrong block');
-  eq(errors('scenario {\n  then Ghost("x") == 1\n}')[0],
+  eq(loose('scenario {\n  then Ghost("x") == 1\n}')[0],
     'Ghost is not defined here, so its arguments have to be named — Ghost(argument: …).', 'positional with no order to take');
-  eq(errors('scenario {\n  when A {}\n  then nothing\n  then E {}\n}')[0], '"then nothing" is the whole outcome — it stands alone.', 'nothing and more');
-  eq(errors('scenario {\n  then E {}\n}')[0], 'A scenario ending in events, nothing or a rejection needs a when — the command it runs.', 'no when');
-  eq(errors('scenario {\n  then Ghost(x: "1") == 1\n}'), [], 'an orphan, named');
+  eq(loose('scenario {\n  when A {}\n  then nothing\n  then E {}\n}')[0], '"then nothing" is the whole outcome — it stands alone.', 'nothing and more');
+  eq(loose('scenario {\n  then E {}\n}')[0], 'A scenario ending in events, nothing or a rejection needs a when — the command it runs.', 'no when');
+  eq(loose('scenario {\n  then Ghost(x: "1") == 1\n}'), [], 'an orphan, named');
   const { id, model } = importExample('course-simple');
-  const text = modelToSource(model()).replace('  emit CourseArchived { courseId }\n',
-    '  emit CourseArchived { courseId }\n\n  scenario {\n    given CourseBurnt { courseId: "c1" }\n    when ArchiveCourse { courseId: "c1" }\n  }\n');
+  const text = modelToSource(model()).replace('  emit CourseArchived { courseId }\n\n  scenarios {\n',
+    '  emit CourseArchived { courseId }\n\n  scenarios {\n    scenario {\n      given CourseBurnt { courseId: "c1" }\n      when ArchiveCourse { courseId: "c1" }\n    }\n\n');
   const report = sandbox.sourceScenarioReport(model(), parseModelSource(text));
   eq(report.errors.length, 1, 'a scenario with nothing to record');
   eq(report.errors[0].message.startsWith('This scenario cannot run, so there is no outcome to record'), true, report.errors[0].message);
@@ -808,14 +886,17 @@ check('completion knows a command\'s reads and payload', () => {
   eq(rule('emit CourseCapacityChanged { |}').items.map((i) => i.insert), ['courseId', 'newCapacity'], 'as shorthands');
   eq(rule('emit CourseArchived { courseId } when |').labels.slice(0, 3), ['course', 'courseId', 'newCapacity'], 'a guard');
   const start = rule('|');
-  eq([start.labels, start.slot], [['read', 'require', 'emit', 'scenario'], false], 'a statement, not on a space');
+  eq([start.labels, start.slot], [['read', 'require', 'emit', 'scenarios'], false], 'a statement, not on a space');
 });
 
 check('completion knows scenarios, declarations, and when to stay quiet', () => {
   const { model } = importExample('course-simple');
   const text = modelToSource(model());
-  const block = (insert) => completeAt(text.replace('  emit CourseArchived { courseId }\n',
-    `  emit CourseArchived { courseId }\n\n  scenario {\n    ${insert}\n  }\n`));
+  const block = (insert) => completeAt(text.replace('  emit CourseArchived { courseId }\n\n  scenarios {\n',
+    `  emit CourseArchived { courseId }\n\n  scenarios {\n    scenario {\n      ${insert}\n    }\n\n`));
+  const group = completeAt(text.replace('  emit CourseArchived { courseId }\n\n  scenarios {\n',
+    '  emit CourseArchived { courseId }\n\n  scenarios {\n    |\n'));
+  eq(group.labels, ['scenario'], 'a group holds scenarios, nothing else');
   eq(block('given CourseDefined { |}').labels, ['courseId', 'capacity'], 'a payload\'s keys');
   eq(block('when |').labels[0], 'ArchiveCourse', 'the block\'s command first');
   eq(block('then |').items.filter((i) => i.sort === '0').map((i) => i.label), ['CourseArchived'], 'what it emits, first');

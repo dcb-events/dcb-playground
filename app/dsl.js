@@ -107,23 +107,34 @@
 // saying why. So the text always says everything the model does, and
 // an untouched text applies as no change at all.
 //
-// **Scenarios sit in the block of what they exercise**, after its
-// definition — a command's runs it, a projection's asserts its value:
+// **Scenarios sit in the block of what they exercise**, in one
+// `scenarios` group that ends it — a command's run it, a projection's
+// assert its value:
 //
-//   scenario "a second definition is refused" {
-//     given CourseDefined { courseId: "c1", capacity: 123 }
-//     when DefineCourse { courseId: "c1", capacity: 123 }
-//     then rejected "Course already exists"
+//   scenarios {
+//     scenario "a second definition is refused" {
+//       given CourseDefined { courseId: "c1", capacity: 123 }
+//       when DefineCourse { courseId: "c1", capacity: 123 }
+//       then rejected "Course already exists"
+//     }
+//
+//     scenario {
+//       when DefineCourse { courseId: "c1", capacity: 1 }
+//       then CourseDefined { courseId: "c1", capacity: 1 }
+//     }
 //   }
-//   scenario {
-//     given CourseDefined { courseId: "c1", capacity: 1 }
-//     then CourseStatus("c1") == Existent
-//   }
+//
+// The group is syntax only — the wire format has no such thing — and
+// it is required, because it is what the editor folds: a model's
+// examples can outweigh its definitions many times over, and one fold
+// per block puts them away as one line. A scenario outside a group is
+// an error whose fix wraps it (`ungrouped`), so a text from before
+// groups is one click from reading.
 //
 // The subject is named (`when DefineCourse`, `then CourseStatus(…)`)
 // and must be the block's — a scenario moved into the wrong block is an
-// error, not a reassignment; one whose subject is gone sits at the top
-// level. A Then is the scenario's assertion and is stored as written;
+// error, not a reassignment; one whose subject is gone sits in a group
+// at the top level. A Then is the scenario's assertion and is stored as written;
 // leave it out and an apply records what the text's definitions make
 // of it, the way the page's save does. A refusal is named by its
 // rule's message and by nothing else — not the condition, not what it
@@ -330,7 +341,9 @@ function parseModelSource(text, options = {}) {
   const { tokens, diagnostics } = lexSource(String(text));
   const collections = {};
   for (const kind of SOURCE_KINDS) collections[kind] = {};
-  const result = { name: null, collections, spans: [], diagnostics, implicit: [], scenarios: [], marks: new WeakMap() };
+  const result = {
+    name: null, collections, spans: [], diagnostics, implicit: [], scenarios: [], groups: [], marks: new WeakMap(),
+  };
   let at = 0;
 
   // Which token each part of a body was read from, keyed by the object
@@ -799,8 +812,12 @@ function parseModelSource(text, options = {}) {
         if (script[key] !== undefined) fail(`${key} is given twice.`, last());
         script[key] = value;
       };
+      const owner = { kind: 'projection-definition', name: nameToken.v };
+      let group = null;
+      const bare = [];
       while (!is('}')) {
         guardBlock('}');
+        if (group && !is('scenarios')) fail('The scenarios group comes last — nothing follows it in the block.');
         if (accept('on')) {
           const eventToken = ident('an event name');
           const event = eventToken.v;
@@ -835,13 +852,17 @@ function parseModelSource(text, options = {}) {
           const exposed = ident('the exposed field');
           mark(body, 'exposes', exposed);
           scriptField('exposes', exposed.v);
+        } else if (is('scenarios')) {
+          group = scenariosGroup(owner, group);
         } else if (is('scenario')) {
-          scenarioDecl(peek(), { kind: 'projection-definition', name: nameToken.v });
+          bare.push(scenarioDecl(peek(), owner));
         } else {
-          fail(`Expected "on", scenario, or one of script, tagFilter, initialState, exposes, found ${describeToken(peek())}.`);
+          fail(`Expected "on", scenarios, or one of script, tagFilter, initialState, exposes, found ${describeToken(peek())}.`);
         }
       }
+      const endAt = at;
       expect('}');
+      ungrouped(bare, endAt);
       body.handlers = handlers;
       if (script) body.script = script;
     }
@@ -861,8 +882,12 @@ function parseModelSource(text, options = {}) {
     body.boundary = [];
     body.conditions = [];
     body.publishes = [];
+    const owner = { kind: 'command-definition', name: nameToken.v };
+    let group = null;
+    const bare = [];
     while (!is('}')) {
       guardBlock('}');
+      if (group && !is('scenarios')) fail('The scenarios group comes last — nothing follows it in the block.');
       const readToken = accept('read');
       if (readToken) {
         const aliasToken = ident('the name it is read as');
@@ -912,13 +937,17 @@ function parseModelSource(text, options = {}) {
           while (accept('and')) emission.when.push(condition(commandOperand));
         }
         body.publishes.push(emission);
+      } else if (is('scenarios')) {
+        group = scenariosGroup(owner, group);
       } else if (is('scenario')) {
-        scenarioDecl(peek(), { kind: 'command-definition', name: nameToken.v });
+        bare.push(scenarioDecl(peek(), owner));
       } else {
-        fail(`Expected read, require, emit or scenario, found ${describeToken(peek())}.`);
+        fail(`Expected read, require, emit or scenarios, found ${describeToken(peek())}.`);
       }
     }
+    const endAt = at;
     expect('}');
+    ungrouped(bare, endAt);
     resolveCommandNames(body);
     return define('command-definition', nameToken, body, start);
   };
@@ -1032,10 +1061,11 @@ function parseModelSource(text, options = {}) {
   // record keeps what an apply needs beyond the body: where it sits,
   // where its then lines are, and which parts were left to evaluation.
   const scenarioDecl = (start, block) => {
+    const from = at;
     next();
     const nameToken = peek().t === 'string' ? next() : null;
     const record = {
-      block, head: start, thenRange: null, positional: null, argsToken: null,
+      block, head: start, thenRange: null, positional: null, argsToken: null, from, to: null,
     };
     let subjectToken = nameToken || start;
     if (is('json')) {
@@ -1134,7 +1164,66 @@ function parseModelSource(text, options = {}) {
     }
     const end = last();
     record.span = { line: start.line, col: start.col, endLine: end.endLine, endCol: end.endCol };
+    record.to = at;
     result.scenarios.push(record);
+    return record;
+  };
+
+  // `scenarios { scenario … scenario … }` — a block's scenarios, held
+  // together so the editor can fold them as one. A block has at most
+  // one group, and it is the block's last statement.
+  const scenariosGroup = (block, previous = null) => {
+    const head = next();
+    // Read rather than refused, so the block's other statements and the
+    // scenarios in it are not lost to the error.
+    if (previous) {
+      diagnostics.push({
+        severity: 'error', message: 'A block has one scenarios group — move these scenarios into the first.',
+        line: head.line, col: head.col, endLine: head.endLine, endCol: head.endCol,
+      });
+    }
+    expect('{', '"{" and the scenarios');
+    const records = [];
+    while (!is('}')) {
+      guardBlock('}');
+      if (!is('scenario')) fail(`Expected scenario, found ${describeToken(peek())}.`);
+      records.push(scenarioDecl(peek(), block));
+    }
+    const end = expect('}');
+    const group = { block, head, records, span: { line: head.line, col: head.col, endLine: end.endLine, endCol: end.endCol } };
+    result.groups.push(group);
+    return group;
+  };
+
+  // A scenario written outside a group is read anyway, so that what it
+  // says is not lost to the error, and the error carries the fix: the
+  // run it belongs to, wrapped. Offered only for a run that stands
+  // where a group may — one scenario after another, and at a block's
+  // end — which is how every text printed before groups reads.
+  const source = String(text);
+  const ungrouped = (records, endAt) => {
+    const runs = [];
+    for (const record of records) {
+      const run = runs[runs.length - 1];
+      if (run && run[run.length - 1].to === record.from) run.push(record);
+      else runs.push([record]);
+    }
+    for (const run of runs) {
+      const first = run[0].head;
+      const end = run[run.length - 1].span;
+      const indent = source.split('\n')[first.line - 1].slice(0, first.col - 1);
+      const fits = !/\S/.test(indent) && (endAt === undefined || run[run.length - 1].to === endAt);
+      const body = source.slice(sourceOffset(source, first.line, 1), sourceOffset(source, end.endLine, end.endCol));
+      diagnostics.push({
+        severity: 'error', message: 'A scenario sits in a "scenarios { … }" group.',
+        line: first.line, col: first.col, endLine: first.endLine, endCol: first.endCol,
+        fix: fits ? {
+          line: first.line, col: 1, endLine: end.endLine, endCol: end.endCol,
+          text: `${indent}scenarios {\n${body.split('\n').map((l) => (l ? '  ' + l : l)).join('\n')}\n${indent}}`,
+          title: 'Wrap in scenarios { }', label: 'Wrap',
+        } : undefined,
+      });
+    }
   };
 
   const declaration = () => {
@@ -1153,9 +1242,13 @@ function parseModelSource(text, options = {}) {
       result.name = string('the model\'s name, in quotes');
       return;
     }
+    if (is('scenarios')) {
+      if (annotations.length) fail('Scenarios carry no annotations.', annotations[0].token);
+      return scenariosGroup(null);
+    }
     if (is('scenario')) {
       if (annotations.length) fail('A scenario carries no annotations.', annotations[0].token);
-      return scenarioDecl(start, null);
+      return topLevelBare.push(scenarioDecl(start, null));
     }
     const isTag = !!accept('tag');
     if (isTag && !is('type') && !is('enum') && !is('record')) {
@@ -1170,6 +1263,7 @@ function parseModelSource(text, options = {}) {
       + `found ${describeToken(peek())}.`);
   };
 
+  const topLevelBare = [];
   while (peek().t !== 'eof') {
     const from = at;
     try {
@@ -1182,9 +1276,10 @@ function parseModelSource(text, options = {}) {
         line: token.line, col: token.col, endLine: token.endLine, endCol: Math.max(token.endCol, token.col + 1),
       });
       if (at === from) next();
-      while (peek().t !== 'eof' && !startsDeclaration() && !(peek().first && is('scenario'))) next();
+      while (peek().t !== 'eof' && !startsDeclaration() && !(peek().first && (is('scenario') || is('scenarios')))) next();
     }
   }
+  ungrouped(topLevelBare);
 
   // Positional projection arguments take their names from the
   // projection — declared in this text, or (for a fragment) handed in.
@@ -1727,7 +1822,7 @@ function printScenarioSource(model, kind, body, { positional }) {
   let reason;
   try {
     const text = printScenario(model, kind, body, { positional });
-    const back = parseModelSource(text, { projections: model['projection-definitions'] });
+    const back = parseModelSource(sourceScenarioGroup([text]), { projections: model['projection-definitions'] });
     const [record] = back.scenarios;
     if (!back.diagnostics.length && back.scenarios.length === 1 && record.kind === kind && sameDefinition(record.body, body)) {
       return text;
@@ -1739,11 +1834,18 @@ function printScenarioSource(model, kind, body, { positional }) {
   return `// Written as JSON: ${reason}.\nscenario json ${JSON.stringify(body, null, 2)}`;
 }
 
-// A block's text with scenarios added at its end, opening the block if
-// the definition printed without one (a derived projection).
+const sourceIndent = (text) => text.split('\n').map((line) => (line ? '  ' + line : line)).join('\n');
+
+// Printed scenarios as the one group they are written in.
+function sourceScenarioGroup(scenarios) {
+  return `scenarios {\n${scenarios.map(sourceIndent).join('\n\n')}\n}`;
+}
+
+// A block's text with its scenarios' group added at its end, opening
+// the block if the definition printed without one (a derived projection).
 function sourceNest(text, scenarios) {
   if (!scenarios.length) return text;
-  const inner = scenarios.map((t) => t.split('\n').map((line) => (line ? '  ' + line : line)).join('\n')).join('\n\n');
+  const inner = sourceIndent(sourceScenarioGroup(scenarios));
   if (text.endsWith(' {}')) return `${text.slice(0, -1)}\n${inner}\n}`;
   if (text.endsWith('\n}')) return `${text.slice(0, -1)}\n${inner}\n}`;
   return `${text} {\n${inner}\n}`;
@@ -1752,9 +1854,9 @@ function sourceNest(text, scenarios) {
 // The whole model. Definitions of one kind sit in their stored order —
 // the text's order *is* the order an apply stores — and consecutive
 // one-liners stay together, so twenty value types read as a table.
-// Scenarios sit at the end of their command's or projection's block;
-// one whose subject is gone, or printed as JSON, sits at the end of the
-// text instead.
+// Scenarios sit in a group at the end of their command's or
+// projection's block; one whose subject is gone, or whose subject is
+// printed as JSON, sits in a group at the end of the text instead.
 function modelToSource(model) {
   const SUBJECT = {
     'scenario-definition': ['command-definition', 'command'],
@@ -1792,8 +1894,8 @@ function modelToSource(model) {
     });
   }
   if (loose.length) {
-    out.push('', '// Scenarios');
-    for (const [kind, body] of loose) out.push('', printScenarioSource(model, kind, body, { positional: false }));
+    out.push('', '// Scenarios', '',
+      sourceScenarioGroup(loose.map(([kind, body]) => printScenarioSource(model, kind, body, { positional: false }))));
   }
   return out.join('\n') + '\n';
 }
@@ -2054,6 +2156,7 @@ function sourceScenarioReport(model, parsed) {
       warning.fix = {
         ...record.thenRange,
         text: lines.join('\n' + ' '.repeat(record.thenRange.col - 1)),
+        title: 'Accept actual outcome', label: 'Accept',
       };
     }
     warnings.push(warning);
@@ -2695,6 +2798,10 @@ const SOURCE_PREDICATE_SPELLINGS = {
   isEmpty: ['is empty'], isNotEmpty: ['is not empty'], isTrue: ['is true'], isFalse: ['is false'],
 };
 
+// A group opens with its first scenario, since a group holds nothing else.
+const SOURCE_SCENARIO_SNIPPET = 'scenario "${1}" {\n\t$0\n}';
+const SOURCE_GROUP_SNIPPET = 'scenarios {\n\tscenario "${1}" {\n\t\t$0\n\t}\n}';
+
 const SOURCE_DECLARATION_SNIPPETS = [
   ['command', 'command ${1:Name}(${2}) {\n\t$0\n}'],
   ['event', 'event ${1:Name} { $0 }'],
@@ -2704,7 +2811,7 @@ const SOURCE_DECLARATION_SNIPPETS = [
   ['tag type', 'tag type ${1:Name} = string'],
   ['type', 'type ${1:Name} = ${2:string}'],
   ['record', 'record ${1:Name} {\n\t$0\n}'],
-  ['scenario', 'scenario "${1}" {\n\t$0\n}'],
+  ['scenarios', SOURCE_GROUP_SNIPPET],
 ];
 
 function sourceOffset(text, line, col) {
@@ -2744,7 +2851,7 @@ function sourceCompletions(text, line, col, { model = null } = {}) {
   const atLineStart = !tokens.length || tokens[tokens.length - 1].endLine < line;
 
   // ---------- where the cursor is ----------
-  const DECL_WORDS = ['model', 'type', 'tag', 'enum', 'record', 'event', 'entity', 'projection', 'command', 'scenario', '@'];
+  const DECL_WORDS = ['model', 'type', 'tag', 'enum', 'record', 'event', 'entity', 'projection', 'command', 'scenarios', 'scenario', '@'];
   const v = (t) => (t ? t.v : undefined);
   const frames = [{ kind: 'top', level: 0, open: -1, stmt: 0 }];
   const level = [];
@@ -2766,13 +2873,16 @@ function sourceCompletions(text, line, col, { model = null } = {}) {
       const kw = decl.keyword;
       if (opener === '{') {
         if (prev === 'json' || kw === 'type' || kw === 'model') return own('json');
-        const kinds = { enum: 'enum', record: 'fields', event: 'fields', entity: 'entity', projection: 'projection', command: 'command', scenario: 'scenario' };
+        const kinds = {
+          enum: 'enum', record: 'fields', event: 'fields', entity: 'entity', projection: 'projection', command: 'command',
+          scenarios: 'scenarios', scenario: 'scenario',
+        };
         return own(kinds[kw] || 'json', {
           entity: kw === 'entity' ? decl.name : undefined,
           command: kw === 'command' ? decl.name : undefined,
           projection: kw === 'projection' ? decl.name : undefined,
           event: kw === 'event' ? decl.name : undefined,
-          block: kw === 'scenario' ? null : undefined,
+          block: kw === 'scenario' || kw === 'scenarios' ? null : undefined,
         });
       }
       if (opener === '(') {
@@ -2787,6 +2897,7 @@ function sourceCompletions(text, line, col, { model = null } = {}) {
     }
     if (k === 'command') {
       if (opener === '{' && v(s[0]) === 'emit' && s.length === 2) return own('emitArgs', { event: v(s[1]) });
+      if (opener === '{' && v(s[0]) === 'scenarios') return own('scenarios', { block: { kind: 'command', name: frame.command } });
       if (opener === '{' && v(s[0]) === 'scenario') return own('scenario', { block: { kind: 'command', name: frame.command } });
       if (opener === '[' && v(s[0]) === 'read' && prev && /^[A-Za-z_]/.test(prev) && v(s[s.length - 2]) === '=') return own('readId', { entity: prev });
       if (opener === '(' && prev === 'count') return own('count');
@@ -2799,9 +2910,14 @@ function sourceCompletions(text, line, col, { model = null } = {}) {
       return own('json');
     }
     if (k === 'projection') {
+      if (opener === '{' && v(s[0]) === 'scenarios') return own('scenarios', { block: { kind: 'projection', name: frame.projection } });
       if (opener === '{' && v(s[0]) === 'scenario') return own('scenario', { block: { kind: 'projection', name: frame.projection } });
       if (opener === '(' && prev === 'successor') return own('successor', { event: v(s[1]) });
       if (opener === '(' && prev === 'script') return own('params');
+      return own('json');
+    }
+    if (k === 'scenarios') {
+      if (opener === '{' && v(s[0]) === 'scenario' && prev !== 'json') return own('scenario', { block: frame.block });
       return own('json');
     }
     if (k === 'scenario') {
@@ -3203,7 +3319,7 @@ function sourceCompletions(text, line, col, { model = null } = {}) {
     };
     if (k === 'successor') return handlerOperands();
     if (!s.length) {
-      keywords([['on', 'on '], ['scenario', 'scenario "${1}" {\n\t$0\n}', true]]);
+      keywords([['on', 'on '], ['scenarios', SOURCE_GROUP_SNIPPET, true]]);
       keywords([['script', 'script($1)', true], ['tagFilter'], ['initialState'], ['exposes']], 2);
       return done(false);
     }
@@ -3233,7 +3349,7 @@ function sourceCompletions(text, line, col, { model = null } = {}) {
     const scope = commandScope(commandName);
     if (!s.length) {
       keywords([['read', 'read ${1:name} = ', true], ['require', 'require '], ['emit', 'emit '],
-        ['scenario', 'scenario "${1}" {\n\t$0\n}', true]]);
+        ['scenarios', SOURCE_GROUP_SNIPPET, true]]);
       return done(false);
     }
     const first = v(s[0]);
@@ -3330,6 +3446,10 @@ function sourceCompletions(text, line, col, { model = null } = {}) {
       },
     });
   }
+  if (k === 'scenarios') {
+    if (!s.length) keywords([['scenario', SOURCE_SCENARIO_SNIPPET, true]]);
+    return done(false);
+  }
   if (k === 'scenario') {
     const block = frame.block;
     if (!s.length) {
@@ -3377,6 +3497,36 @@ function sourceCompletions(text, line, col, { model = null } = {}) {
 }
 
 // ============================================================
+// Folding — off the tokens alone, since a text being edited rarely
+// parses and what folds should not come and go with it.
+// ============================================================
+
+// Every bracket pair that spans lines, as `{ start, end, scenarios }`
+// in 1-based lines. A block folds to the line before its closing
+// bracket, which stays in view the way an editor shows one; a
+// `scenarios` group folds whole, closing brace included, so a block's
+// examples put away cost one line rather than two.
+function sourceFoldingRanges(text) {
+  const { tokens } = lexSource(String(text));
+  const ranges = [];
+  const open = [];
+  tokens.forEach((token, i) => {
+    if (token.t !== 'punct') return;
+    if (['{', '[', '('].includes(token.v)) {
+      const previous = tokens[i - 1];
+      const group = token.v === '{' && !!previous && previous.t === 'ident' && previous.v === 'scenarios'
+        && previous.first && previous.line === token.line;
+      open.push({ start: token.line, group });
+    } else if (['}', ']', ')'].includes(token.v) && open.length) {
+      const pair = open.pop();
+      const end = pair.group ? token.endLine : token.line - 1;
+      if (end > pair.start) ranges.push({ start: pair.start, end, scenarios: pair.group });
+    }
+  });
+  return ranges.sort((a, b) => a.start - b.start || b.end - a.end);
+}
+
+// ============================================================
 // The grammar as Monaco reads it (a Monarch definition). Data, so the
 // keyword list sits next to the parser that gives the words meaning.
 // ============================================================
@@ -3386,14 +3536,14 @@ const SOURCE_KEYWORDS = [
   'script', 'tagFilter', 'initialState', 'exposes', 'on', 'set', 'increment', 'decrement', 'append',
   'remove', 'command', 'read', 'excluding', 'with', 'require', 'emit', 'when', 'and', 'not', 'is',
   'empty', 'in', 'contains', 'containsAny', 'startsWith', 'endsWith', 'count', 'successor',
-  'currentValue', 'json', 'true', 'false', 'null', 'scenario', 'given', 'then', 'nothing', 'rejected',
+  'currentValue', 'json', 'true', 'false', 'null', 'scenarios', 'scenario', 'given', 'then', 'nothing', 'rejected',
   'else', 'reject',
 ];
 
 // The words a block's statements start with, coloured apart so the
 // shape of a command — what it reads, requires, emits — shows at a
 // glance.
-const SOURCE_STATEMENTS = ['read', 'require', 'emit', 'when', 'on', 'derived', 'scenario', 'given', 'then'];
+const SOURCE_STATEMENTS = ['read', 'require', 'emit', 'when', 'on', 'derived', 'scenarios', 'scenario', 'given', 'then'];
 
 const SOURCE_MONARCH = {
   keywords: SOURCE_KEYWORDS,

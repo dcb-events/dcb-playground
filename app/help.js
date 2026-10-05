@@ -71,9 +71,11 @@ projection CourseStatus(courseId: CourseId): CourseStatus = NonExistent {
   on CourseDefined => set Existent
   on CourseArchived => set Archived
 
-  scenario "a defined course exists" {
-    given CourseDefined { courseId: "c1", capacity: 10 }
-    then CourseStatus("c1") == Existent
+  scenarios {
+    scenario "a defined course exists" {
+      given CourseDefined { courseId: "c1", capacity: 10 }
+      then CourseStatus("c1") == Existent
+    }
   }
 }
 
@@ -146,17 +148,19 @@ command ArchiveCourse(courseId: CourseId) {
 
   emit CourseArchived { courseId }
 
-  scenario "an archived course cannot be archived again" {
-    given CourseDefined { courseId: "c1", capacity: 10 }
-    given CourseArchived { courseId: "c1" }
-    when ArchiveCourse { courseId: "c1" }
-    then rejected "Course is not active"
-  }
+  scenarios {
+    scenario "an archived course cannot be archived again" {
+      given CourseDefined { courseId: "c1", capacity: 10 }
+      given CourseArchived { courseId: "c1" }
+      when ArchiveCourse { courseId: "c1" }
+      then rejected "Course is not active"
+    }
 
-  scenario "an existing course is archived" {
-    given CourseDefined { courseId: "c1", capacity: 10 }
-    when ArchiveCourse { courseId: "c1" }
-    then CourseArchived { courseId: "c1" }
+    scenario "an existing course is archived" {
+      given CourseDefined { courseId: "c1", capacity: 10 }
+      when ArchiveCourse { courseId: "c1" }
+      then CourseArchived { courseId: "c1" }
+    }
   }
 }
 
@@ -231,8 +235,8 @@ const HELP_TOPICS = [
     hrefLabel: 'Guide ↗',
     prose: [
       'The model as text — what the Code view shows and applies. Every construct is one stored shape, '
-        + 'so nothing is inferred; declarations may come in any order, and scenarios sit in the block of '
-        + 'what they exercise.',
+        + 'so nothing is inferred; declarations may come in any order, and scenarios sit in a `scenarios` '
+        + 'group that ends the block of what they exercise.',
     ],
     text: `model "Course Example"
 
@@ -464,6 +468,7 @@ tag type CourseId = string
     ],
     example: ['command:ArchiveCourse'],
     syntax: [
+      ['scenarios { … }', 'A block\'s scenarios, together and last in it — what the editor folds.', 'scenario'],
       ['scenario "name" { … }', 'The name is optional.', 'scenario'],
       ['given E { courseId: "c1" }', 'An event already in the log. Values are JSON, enum members bare.', 'scenario'],
       ['when C { … }', 'The command, with every payload property.', 'scenario'],

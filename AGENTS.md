@@ -488,6 +488,19 @@ it never works from `file:`.
   assertion stored as written, an omitted one is recorded at apply
   (`completeScenario`), and drift is reported with a fix but never
   accepted by applying — the pages' rules, in text.
+  **Scenarios sit in one `scenarios { … }` group**, the block's last
+  statement (at the top level too, for those whose subject is gone).
+  The group is syntax only, not wire format, and it is required
+  because it is what the editor folds: folding comes off the tokens
+  (`sourceFoldingRanges`, so it survives a text that does not parse),
+  a group folds whole to one line, and the code bar's toggle, remembered
+  per browser and folded by default, applies when a model's text opens.
+  A group holding an error or a drift is left open by that fold — a
+  fault is not folded away. A bare `scenario` is an error whose fix
+  wraps its run (`ungrouped`), which is how a pre-group text reads.
+  The stripe beside a group is `--scenario-stripe`, deliberately not a
+  kind colour; a tint behind the lines was tried and dropped — faint
+  enough not to distract, it was invisible.
   Operand names resolve per command — a read when a `read` declares
   the name, a payload property otherwise — so a parameter and a read
   sharing a name is the one ordinary case that falls back to JSON.
