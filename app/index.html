@@ -13328,7 +13328,9 @@ document.getElementById('rail').addEventListener('click', (e) => {
 // A `#model=…` fragment never reaches the server (there is none), so
 // this is the only place it is read. Cleared as soon as it is read,
 // successfully or not — a bad or already-consumed link should not keep
-// re-triggering on every reload.
+// re-triggering on every reload. A link may add `&surface=code` (or
+// `visual`) to say which surface the model opens on — dcb.events does
+// on the pages explaining the notation, whose reader came for the text.
 async function boot() {
   // Safe mode — the way back into a model whose script hangs the page
   // on load, now that scripts run unprompted like everything else.
@@ -13345,9 +13347,12 @@ async function boot() {
   const hash = location.hash;
   if (!hash.startsWith('#model=')) return;
   history.replaceState(null, '', location.pathname + location.search);
+  const [encoded, ...options] = hash.slice('#model='.length).split('&');
+  const surface = new URLSearchParams(options.join('&')).get('surface');
+  if (surface === 'code' || surface === 'visual') setCodeSurface(surface === 'code');
   let envelope;
   try {
-    envelope = await decodeShareLink(hash.slice('#model='.length));
+    envelope = await decodeShareLink(encoded);
   } catch (error) {
     toast('That share link could not be read: ' + error.message, true);
     return;
