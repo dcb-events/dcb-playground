@@ -1,6 +1,6 @@
 {
-  "$schema": "https://dcb.events/schemas/model/v6.json",
-  "dcbModelVersion": "6.1",
+  "$schema": "https://dcb.events/schemas/model/v7.json",
+  "dcbModelVersion": "7.0",
   "name": "Dynamic Product Price (simple)",
   "customTypeDefinitions": [
     {
@@ -220,7 +220,8 @@
             "alias": "product",
             "property": "exists"
           },
-          "predicate": "isFalse"
+          "predicate": "isFalse",
+          "rejection": "Product already exists"
         }
       ],
       "publishes": [
@@ -269,7 +270,8 @@
             "alias": "product",
             "property": "exists"
           },
-          "predicate": "isTrue"
+          "predicate": "isTrue",
+          "rejection": "Product does not exist"
         },
         {
           "leftHandSide": {
@@ -280,7 +282,8 @@
           "rightHandSide": {
             "parameterName": "newPrice"
           },
-          "negate": true
+          "negate": true,
+          "rejection": "Price is unchanged"
         }
       ],
       "publishes": [
@@ -337,14 +340,16 @@
             "alias": "order",
             "property": "exists"
           },
-          "predicate": "isFalse"
+          "predicate": "isFalse",
+          "rejection": "Order was already placed"
         },
         {
           "leftHandSide": {
             "alias": "product",
             "property": "exists"
           },
-          "predicate": "isTrue"
+          "predicate": "isTrue",
+          "rejection": "Product does not exist"
         },
         {
           "leftHandSide": {
@@ -355,7 +360,8 @@
           "rightHandSide": {
             "parameterName": "items",
             "property": "price"
-          }
+          },
+          "rejection": "Price has changed"
         }
       ],
       "publishes": [

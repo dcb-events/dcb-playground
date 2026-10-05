@@ -201,6 +201,11 @@
   .rule-stage > .q { font-size: 10px; text-transform: uppercase;
     letter-spacing: .06em; color: var(--muted); padding: 2px 0 0 2px; }
   .rule-stage > .adder { padding-top: 0; }
+  /* What a command can be refused with: the messages its rules add up to. */
+  .rejection-list { margin-top: 8px; padding: 4px 2px; }
+  .rejection-list > .q { font-size: 10px; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--muted); padding-bottom: 2px; }
+  .rejection-msg { font-style: italic; }
   .card > .adder.quiet { margin-left: 12px; }
   .step.emits > .dot { background: var(--event); }
   .step > .shead { display: flex; align-items: baseline; gap: 8px; margin-bottom: 7px; }
@@ -3487,10 +3492,13 @@ function draftFromCondition(condition) {
     && left !== null && typeof left === 'object' && 'parameterName' in left
     && right !== null && typeof right === 'object' && 'alias' in right;
   if (swapped) {
-    return { ...draftFromOperand({ predicate: 'equalsAny', negate: !!condition.negate }, 'left', right),
+    const opened = { ...draftFromOperand({ predicate: 'equalsAny', negate: !!condition.negate }, 'left', right),
       right: '', rightList: JSON.stringify(left) };
+    if (typeof condition.rejection === 'string') opened.rejection = condition.rejection;
+    return opened;
   }
   const opened = draftFromOperand({ predicate: condition.predicate, negate: !!condition.negate }, 'left', left);
+  if (typeof condition.rejection === 'string') opened.rejection = condition.rejection;
   if (Array.isArray(right)) {
     opened.right = '';
     opened.rightEntries = right.map((entry) => (entry !== null && typeof entry === 'object' ? entry : String(entry)));
@@ -5322,6 +5330,35 @@ function beginReadAdder() {
 // Extracted from the old rules step unchanged in substance: what moved
 // is where it is painted, not what it says. `dragAlias` names the card
 // it may be reordered within, when it shares that card with another.
+// A rule's message, quoted, as it is shown wherever a refusal is:
+// verbatim, since it is what the author wrote for people to read.
+function rejectionQuote(rejection) {
+  return h('span', { class: 'rejection-msg' }, '\u201c' + rejection + '\u201d');
+}
+
+// Beside a rule's sentence: what it is refused with — or that it says
+// nothing, which the Problems panel explains.
+function rejectionMark(condition) {
+  if (condition && !rejectionProblem(condition.rejection)) {
+    return h('span', { class: 'tiny' }, h('span', { class: 'muted' }, ' — refused with '),
+      rejectionQuote(condition.rejection));
+  }
+  return h('span', { class: 'muted tiny' }, ' — no rejection message');
+}
+
+// The messages this command can be refused with, each once, with the
+// rules that lead to it — the fixed set of outcomes the rules add up
+// to. Derived, never declared: the rules already say it.
+function rejectionList(model, slice) {
+  const outcomes = commandRejections(slice.body);
+  if (!outcomes.length) return null;
+  return h('div', { class: 'rejection-list' },
+    h('div', { class: 'q' }, 'Can be refused with'),
+    ...outcomes.map(({ rejection, rules }) => h('div', { class: 'row' },
+      rejectionQuote(rejection),
+      rules.length > 1 ? h('span', { class: 'muted tiny' }, ` — ${rules.length} rules`) : null)));
+}
+
 function ruleRow(model, slice, condition, i, dragAlias) {
   if (state.editRule === i) return h('div', { class: 'card rule' }, ruleEditor(model, slice, i));
   const p = conditionParts(condition, model, slice.body);
@@ -5347,6 +5384,7 @@ function ruleRow(model, slice, condition, i, dragAlias) {
           ? h('span', { class: 'muted tiny' },
               ' — skipped when ' + optionalAliases.map(propertyWords).join(' or ') + ' is absent')
           : null),
+      rejectionMark(condition),
       h('span', { class: 'grow' }),
       reveal(
         h('button', {
@@ -5498,6 +5536,9 @@ function stepDecision(model, slice) {
   const merge = lifecycleMergeSuggestion(model, slice.body);
   if (merge) body.push(mergePrompt(model, merge));
 
+  const refusals = rejectionList(model, slice);
+  if (refusals) body.push(refusals);
+
   // Nothing tested is nothing decided. `DefineCourse` really is always
   // allowed: the numbering it reads is read in order to *record* the
   // course's id, which is said beside the event that records it.
@@ -5592,6 +5633,8 @@ function pendingBinding(model, slice, draft) {
 function ruleEditor(model, slice, index, target) {
   const targetList = target ? target.list : (b) => b.conditions;
   const addLabel = target && target.addLabel ? target.addLabel : 'Add rule';
+  // A rule refuses, a guard skips: only a rule carries a message.
+  const refuses = !target;
   // A rule being edited always has a draft; a rule about to be created
   // grows one the first time it is painted, and keeps it across every
   // repaint a keystroke causes from then on.
@@ -5872,6 +5915,7 @@ function ruleEditor(model, slice, index, target) {
       condition.rightHandSide = membership ? entryOperands() : draftOperand(draft, 'right');
     }
     if (draft.negate) condition.negate = true;
+    if (refuses) condition.rejection = (draft.rejection || '').trim();
     state.editRule = null;
     state.editGuard = null;
     state.adder = null;
@@ -5894,6 +5938,7 @@ function ruleEditor(model, slice, index, target) {
   // silent leave-commit holds out for at least one entry, while an
   // explicit save is taken at its word.
   draft.ready = () => !!draft.touched
+    && (!refuses || !rejectionProblem((draft.rejection || '').trim()))
     && (!draft.newRead || !!pending)
     && draftOperand(draft, 'left') !== undefined
     && (unary || fromData || (membership ? entryOperands().length > 0 : draftOperand(draft, 'right') !== undefined));
@@ -5911,6 +5956,12 @@ function ruleEditor(model, slice, index, target) {
     if (draftOperand(draft, 'left') === undefined) return toast('Pick what the rule is about.', true);
     if (!unary && !membership && draftOperand(draft, 'right') === undefined) {
       return toast('Pick a value to compare it with.', true);
+    }
+    const problem = refuses && rejectionProblem((draft.rejection || '').trim());
+    if (problem) {
+      return toast(problem === 'is empty'
+        ? 'Say what the command is refused with when this does not hold.'
+        : `That message ${problem}.`, true);
     }
     state.ruleDraft = null;
     record();
@@ -6070,6 +6121,29 @@ function ruleEditor(model, slice, index, target) {
           : operandPicker(rightRows, draft, 'right',
             { placeholder: '— what? —', allowLiteral: !enums.length })));
 
+  // ---------- and what is it refused with? ----------
+  //
+  // A rule's message is what the command is refused with: what a person
+  // reads, and what a scenario names the refusal by. Required, and not
+  // pre-filled — the condition's own text is exactly what the message
+  // is there to replace. The messages the command already has are
+  // offered, so two rules can be one outcome. A guard never refuses,
+  // so it is never asked.
+  const knownMessages = uniq((slice.body.conditions || [])
+    .map((c) => c && c.rejection).filter((m) => typeof m === 'string' && m));
+  const messageList = 'rejections-' + slice.name;
+  const rejectionStage = !refuses || stage < TEST_STAGE ? null
+    : stageRow('Refused with',
+        h('input', {
+          type: 'text', class: 'rejection', style: 'min-width:260px',
+          placeholder: 'e.g. Course is full', maxlength: REJECTION_MAX_LENGTH,
+          value: draft.rejection || '', list: knownMessages.length ? messageList : null,
+          oninput: (e) => { draft.rejection = e.target.value; draft.touched = true; },
+        }),
+        knownMessages.length
+          ? h('datalist', { id: messageList }, ...knownMessages.map((m) => h('option', { value: m })))
+          : null);
+
   const row = h('div', {
     class: 'rule-wizard',
     // Enter answers the question on screen and moves to the next, and
@@ -6082,7 +6156,7 @@ function ruleEditor(model, slice, index, target) {
       submit();
     },
   },
-    readStage, valueStage, testStage,
+    readStage, valueStage, testStage, rejectionStage,
     h('div', { class: 'adder' },
       // Only once there is a rule to write. Until then the row is a
       // question waiting for an answer, and a button that could only
@@ -10908,21 +10982,18 @@ function currentScenarioThens(model, commandName) {
     .filter(Boolean);
 }
 
-// A rule this command declares that no scenario currently demonstrates
-// *refusing* — the gap between a condition being present and a condition
-// being proven to matter. A condition only ever seen holding true could
-// be removed tomorrow and nothing here would notice.
-function uncoveredRules(model, commandName) {
-  const body = model['command-definitions'][commandName];
-  const conditions = (body && body.conditions) || [];
-  if (!conditions.length) return [];
+// A message this command can be refused with that no scenario currently
+// demonstrates — the gap between a rule being present and a rule being
+// proven to matter. A rule only ever seen holding true could be removed
+// tomorrow and nothing here would notice. Counted by message, the way a
+// refusal is known: rules sharing one are one outcome, covered together.
+function uncoveredRejections(model, commandName) {
   const covered = new Set();
   for (const then of currentScenarioThens(model, commandName)) {
-    if (then.outcome === 'rejected' && then.failedRule) covered.add(then.failedRule.index);
+    if (then.outcome === 'rejected') covered.add(then.rejection);
   }
-  return conditions
-    .map((condition, index) => ({ index, condition }))
-    .filter(({ index }) => !covered.has(index));
+  return commandRejections(model['command-definitions'][commandName])
+    .filter(({ rejection }) => !covered.has(rejection));
 }
 
 // Whether any scenario currently shows this command succeeding — every
@@ -11151,22 +11222,34 @@ function payloadText(values) {
   return entries.map(([k, v]) => `${propertyWords(k)} ${JSON.stringify(v)}`).join(', ');
 }
 
-function outcomeCard(model, outcome, title) {
+// Which rule refused a scenario's command, and what it read — from a
+// run, since a scenario keeps only the message. Null when the command
+// is not refused, or the scenario cannot run.
+function liveRefusal(model, scenario) {
+  try {
+    const run = evaluateCommand(model, scenarioLog(scenario), scenario.command, (scenario.when || {}).arguments);
+    return run.outcome === 'rejected' ? run.failedRule : null;
+  } catch {
+    return null;
+  }
+}
+
+// `run`, when given, is a live refusal (`liveRefusal`): shown as detail
+// under the message it refused with, never as part of the outcome.
+function outcomeCard(model, outcome, title, run) {
   if (!outcome) return h('div', { class: 'card' }, h('div', { class: 'empty' }, 'nothing'));
-  const rule = outcome.failedRule;
+  const rule = run && run.rejection === outcome.rejection ? run : null;
   const cls = 'card ' + (outcome.outcome === 'rejected' ? 'outcome-rejected' : 'outcome-published');
   return h('div', { class: cls },
     title ? h('div', { class: 'muted tiny' }, title) : null,
     outcome.outcome === 'rejected'
       ? h('div', {},
-          h('span', { class: 'k' }, 'refused by '),
-          h('span', { class: 't' }, (rule || {}).text || 'a rule'),
-          rule && rule.rightValue !== null
-            ? h('span', { class: 'k' }, `  — read ${JSON.stringify(rule.leftValue)}`
-                + ` against ${JSON.stringify(rule.rightValue)}`)
-            : (rule ? h('span', { class: 'k' }, `  — read ${JSON.stringify(rule.leftValue)}`) : null),
-          rule && rule.atInstance !== null && rule.atInstance !== undefined
-            ? h('span', { class: 'k' }, `  (at ${ordinal(rule.atInstance + 1)})`) : null)
+          h('span', { class: 'k' }, 'refused: '),
+          h('span', { class: 't' }, outcome.rejection || 'by a rule'),
+          rule ? h('span', { class: 'k' }, `  — ${rule.text}, read ${JSON.stringify(rule.leftValue)}`
+            + (rule.rightValue !== null ? ` against ${JSON.stringify(rule.rightValue)}` : '')
+            + (rule.atInstance !== null && rule.atInstance !== undefined ? ` (at ${ordinal(rule.atInstance + 1)})` : ''))
+            : null)
       : (outcome.events || []).length
         ? outcome.events.map((event) => h('div', {},
             h('span', { class: 'y' }, readable(event.type)),
@@ -11260,7 +11343,7 @@ function scenarioRow(model, entry) {
       : result.status === 'drifted'
         ? h('div', { class: 'drift' },
             outcomeCard(model, result.expected, 'this scenario says'),
-            outcomeCard(model, result.actual, 'the model now does'),
+            outcomeCard(model, result.actual, 'the model now does', liveRefusal(model, body)),
             h('div', { class: 'adder' },
               h('button', {
                 class: 'btn primary',
@@ -11272,7 +11355,7 @@ function scenarioRow(model, entry) {
               }, 'Accept this'),
               h('span', { class: 'muted tiny' },
                 'Nothing changes in the model — only what this scenario expects of it.')))
-        : outcomeCard(model, result.expected, null)));
+        : outcomeCard(model, result.expected, null, liveRefusal(model, body))));
   return card;
 }
 
@@ -11391,25 +11474,24 @@ function saveScenario(model) {
 
 // What this command's scenarios leave untested — an untested happy path
 // (see `happyPathUntested`) plus the rules no scenario demonstrates
-// refusing (see `uncoveredRules`). Shown ahead of the scenarios
+// refusing (see `uncoveredRejections`). Shown ahead of the scenarios
 // themselves, since it is read before writing the scenario that would
 // close a gap.
 function coverageGapsCard(model, commandName) {
-  const missingRules = uncoveredRules(model, commandName);
+  const missing = uncoveredRejections(model, commandName);
   const noHappyPath = happyPathUntested(model, commandName);
-  if (!missingRules.length && !noHappyPath) return null;
+  if (!missing.length && !noHappyPath) return null;
   return h('div', { class: 'card uncovered-rules' },
     noHappyPath
       ? h('div', { class: 'muted tiny' }, 'No scenario here shows this command succeeding')
       : null,
-    missingRules.length
+    missing.length
       ? h('div', { class: 'muted tiny' },
-          missingRules.length === 1
-            ? 'One rule no scenario here refuses yet'
-            : missingRules.length + ' rules no scenario here refuses yet')
+          missing.length === 1
+            ? 'One refusal no scenario here shows yet'
+            : missing.length + ' refusals no scenario here shows yet')
       : null,
-    missingRules.map(({ condition }) =>
-      h('div', { class: 'rulemap-rule' }, ruleSentence(model, model['command-definitions'][commandName], condition))));
+    missing.map(({ rejection }) => h('div', { class: 'rulemap-rule' }, rejectionQuote(rejection))));
 }
 
 function scenarioPanel(model, commandName) {
@@ -11906,7 +11988,7 @@ function sessionRun(model, commandName, args) {
   }
   if (result.outcome === 'rejected') {
     const rule = result.failedRule;
-    return toast(`${readable(commandName)} was refused: ${rule.text}`, true);
+    return toast(`${readable(commandName)} was refused: ${rule.rejection || rule.text}`, true);
   }
   state.sandboxDraft = null;
   render();
@@ -12095,8 +12177,10 @@ function sandboxDecision(model) {
   const stale = result.outcome === 'rejected'
     ? h('div', { class: 'card', style: 'border-color:var(--danger);margin-bottom:8px' },
         h('div', { class: 'small' },
-          'This went through when it was done, and would be refused now — by '
-          + result.failedRule.text + '. Everything after it on the timeline followed from it.'))
+          'This went through when it was done, and would be refused now: '
+          + (result.failedRule.rejection ? `\u201c${result.failedRule.rejection}\u201d (${result.failedRule.text})`
+            : result.failedRule.text)
+          + '. Everything after it on the timeline followed from it.'))
     : null;
 
   const reads = Object.entries(result.reads || {});

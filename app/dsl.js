@@ -30,7 +30,9 @@
 //   command ChangeCourseCapacity(courseId: CourseId, newCapacity: integer) {
 //     read course = Course[courseId]
 //     require course.status == Existent
+//       else reject "Course does not exist"
 //     require course.capacity != newCapacity
+//       else reject "Capacity is unchanged"
 //     emit CourseCapacityChanged { courseId, newCapacity }
 //   }
 //
@@ -53,7 +55,9 @@
 // **Borrowed, deliberately.** heklang (git.tqwewe.com/tephra/heklang)
 // is DCB-native, and its `emit Event { field }` shorthand and `on
 // Event => …` fold arms are taken as they are. Weltenwanderer
-// (weltenwanderer.dev) contributes `require` and `type X = string`.
+// (weltenwanderer.dev) contributes `require … else reject "…"` and
+// `type X = string` — and with the first, that every rule says what it
+// is refused with: the message is required, as it is there.
 // Where both disagree with the wire format, the wire format wins:
 // heklang's `fold` is a read *and* its accumulator in one place, here
 // the accumulator is a named projection the read points at, because
@@ -109,7 +113,7 @@
 //   scenario "a second definition is refused" {
 //     given CourseDefined { courseId: "c1", capacity: 123 }
 //     when DefineCourse { courseId: "c1", capacity: 123 }
-//     then rejected by course.status == NonExistent saw Existent, NonExistent
+//     then rejected "Course already exists"
 //   }
 //   scenario {
 //     given CourseDefined { courseId: "c1", capacity: 1 }
@@ -121,8 +125,10 @@
 // error, not a reassignment; one whose subject is gone sits at the top
 // level. A Then is the scenario's assertion and is stored as written;
 // leave it out and an apply records what the text's definitions make
-// of it, the way the page's save does — and a refusal written without
-// `saw` takes the values it was refused on. A Then that disagrees with
+// of it, the way the page's save does. A refusal is named by its
+// rule's message and by nothing else — not the condition, not what it
+// read: rules sharing a message are one outcome, and the message is
+// what the command is refused with. A Then that disagrees with
 // the text is drift: shown, with a fix that accepts it, and never
 // accepted by applying. Payload values are JSON, an enum member bare.
 // The id a scenario is keyed by is not in the text: an apply matches
@@ -888,7 +894,14 @@ function parseModelSource(text, options = {}) {
         if (isOptional) binding.isOptional = true;
         body.boundary.push(binding);
       } else if (accept('require')) {
-        body.conditions.push(condition(commandOperand));
+        // The message is required, as in Weltenwanderer: it is what the
+        // command is refused with, and what a scenario names the refusal by.
+        const rule = condition(commandOperand);
+        expect('else', '"else reject" and the message the command is refused with');
+        expect('reject', '"reject" and the message the command is refused with');
+        mark(rule, 'rejection', peek());
+        rule.rejection = string('the message the command is refused with, in quotes');
+        body.conditions.push(rule);
       } else if (accept('emit')) {
         const eventToken = ident('an event name');
         const emission = { name: eventToken.v };
@@ -973,45 +986,16 @@ function parseModelSource(text, options = {}) {
   };
   const payload = (what) => (is('{') ? scenarioValue() : fail(`Expected "{" and ${what}, found ${describeToken(peek())}.`));
 
-  // A rule as its stored text — what a refusal records. The text does
-  // not tell a read from a payload property apart (both print as
-  // `a.b`), so names need no resolving to produce it.
-  const ruleText = (item) => {
-    const rule = condition(commandOperand);
-    item.rule = rule;
-    const plain = (value) => {
-      if (Array.isArray(value)) return value.map(plain);
-      if (value === null || typeof value !== 'object') return value;
-      if (value['%ref']) {
-        const [parameterName, property] = value['%ref'];
-        return property === undefined ? { parameterName } : { parameterName, property };
-      }
-      const out = {};
-      for (const key of Object.keys(value)) sourcePut(out, key, plain(value[key]));
-      return out;
-    };
-    return conditionText(plain(rule));
-  };
-
   const thenItem = () => {
     if (accept('nothing')) return { nothing: true };
     if (accept('rejected')) {
-      expect('by', '"by" and the rule that refused');
-      const item = {};
-      item.rejected = { text: peek().t === 'string' ? next().v : ruleText(item) };
-      if (accept('saw')) {
-        item.rejected.leftValue = scenarioValue();
-        item.sawTokens = [memberToken];
-        item.rejected.rightValue = accept(',') ? scenarioValue() : null;
-        item.sawTokens.push(memberToken);
-        item.saw = true;
-      }
-      if (accept('at')) {
-        if (peek().t !== 'number') fail(`Expected which instance refused, a number, found ${describeToken(peek())}.`);
-        item.rejected.atInstance = next().v;
-        item.at = true;
-      }
-      return item;
+      // Named by the rule's message, never by the condition.
+      if (is('by')) fail('A refusal is named by the message it was refused with: then rejected "…".');
+      // The message is the whole assertion: what the rule read is how
+      // the decision was made, not what it was.
+      const rejected = string('the message the command was refused with, in quotes');
+      if (is('saw') || is('at')) fail('A refusal is named by its message alone — what the rule read is not asserted.');
+      return { rejected };
     }
     const name = ident('an event, a projection, nothing or rejected');
     if (is('{')) return { event: name.v, data: scenarioValue(), subjectToken: name };
@@ -1052,7 +1036,6 @@ function parseModelSource(text, options = {}) {
     const nameToken = peek().t === 'string' ? next() : null;
     const record = {
       block, head: start, thenRange: null, positional: null, argsToken: null,
-      valuesMissing: false, atWritten: false,
     };
     let subjectToken = nameToken || start;
     if (is('json')) {
@@ -1106,11 +1089,7 @@ function parseModelSource(text, options = {}) {
         if (rejections.length && thens.length > 1) fail('A rejection is the whole outcome — it stands alone.', rejections[0].token);
         if (thens.some((t) => t.nothing) && thens.length > 1) fail('"then nothing" is the whole outcome — it stands alone.', thens[1].token);
         if (rejections.length) {
-          const { rejected, saw, at: atWritten } = rejections[0];
-          body.then = { outcome: 'rejected', events: [], failedRule: { ...rejected } };
-          if (!atWritten) body.then.failedRule.atInstance = null;
-          record.valuesMissing = !saw;
-          record.atWritten = !!atWritten;
+          body.then = { outcome: 'rejected', events: [], rejection: rejections[0].rejected };
         } else if (thens.length) {
           body.then = {
             outcome: 'published',
@@ -1141,8 +1120,6 @@ function parseModelSource(text, options = {}) {
       if (body.then && body.then.events) {
         thens.filter((t) => t.event !== undefined).forEach((t, i) => mark(body.then.events[i], 'type', t.subjectToken));
       }
-      const rejection = thens.find((t) => t.rejected);
-      if (rejection) Object.assign(record, { rule: rejection.rule || null, sawTokens: rejection.sawTokens || null });
       if (projections.length) {
         mark(body, 'projection', projections[0].subjectToken);
         if ('value' in projections[0]) mark(body, 'then', projections[0].valueToken);
@@ -1560,7 +1537,10 @@ function printCommand(name, body) {
     }
     return unprintable(`the read "${binding.alias}" is neither an entity nor a projection`);
   });
-  const rules = (body.conditions || []).map((c) => `require ${sourceCondition(c, operand)}`);
+  const rules = (body.conditions || []).map((c) => {
+    if (!c || typeof c.rejection !== 'string') unprintable('a rule has no rejection message');
+    return `require ${sourceCondition(c, operand)}\n  else reject ${JSON.stringify(c.rejection)}`;
+  });
   const emits = (body.publishes || []).map((emission) => {
     const event = sourceRef(emission.name, 'event');
     let text = `emit ${event}`;
@@ -1680,34 +1660,8 @@ function sourceCommandThen(model, commandName, then) {
     });
   }
   if (then.outcome !== 'rejected') unprintable(`its outcome ${JSON.stringify(then.outcome)} is not one the code form knows`);
-  const failed = then.failedRule;
-  if (!failed || typeof failed.text !== 'string') unprintable('its refusal names no rule');
-  const command = model['command-definitions'][commandName];
-  const rule = command && (command.conditions || []).find((c) => {
-    try { return conditionText(c) === failed.text; } catch { return false; }
-  });
-  let ruleText = JSON.stringify(failed.text);
-  let types = [null, null];
-  if (rule) {
-    try {
-      ruleText = sourceCondition(rule, sourceCommandOperand(command));
-      types = [rule.leftHandSide, rule.rightHandSide].map((operand) => {
-        const type = operand === undefined ? null : conditionOperandType(model, command, rule, operand);
-        return type ? { typeName: type.propertyType, isList: !!type.isList } : null;
-      });
-      // A literal has no type of its own; it is compared with the left.
-      if (!types[1] && types[0]) types[1] = rule.predicate === 'equalsAny' ? { ...types[0], isList: true } : types[0];
-    } catch { /* a rule the grammar cannot say is named by its text */ }
-  }
-  let text = `then rejected by ${ruleText}`;
-  if (failed.leftValue !== undefined || failed.rightValue !== undefined) {
-    text += ` saw ${sourceScenarioValue(model, failed.leftValue, types[0])}`;
-    if (failed.rightValue !== null && failed.rightValue !== undefined) {
-      text += `, ${sourceScenarioValue(model, failed.rightValue, types[1])}`;
-    }
-  }
-  if (failed.atInstance !== null && failed.atInstance !== undefined) text += ` at ${sourceJsonFlat(failed.atInstance)}`;
-  return [text];
+  if (typeof then.rejection !== 'string') unprintable('its refusal names no message');
+  return [`then rejected ${JSON.stringify(then.rejection)}`];
 }
 
 // A projection scenario's `then`: the projection, read at its
@@ -1766,18 +1720,6 @@ function printScenario(model, kind, body, { positional }) {
   return `${head} {${label}\n${lines.map((line) => '  ' + line).join('\n')}\n}`;
 }
 
-// What the scenario says once read back — the index a refusal stores is
-// not in the text (it is re-derived on apply, see `completeScenario`),
-// so it is no part of the comparison.
-function sameScenario(a, b) {
-  const strip = (body) => {
-    const copy = deepClone(body);
-    if (copy && copy.then && copy.then.failedRule) delete copy.then.failedRule.index;
-    return copy;
-  };
-  return sameDefinition(strip(a), strip(b));
-}
-
 // One scenario, in the grammar when it survives the trip back and as
 // JSON under a comment when it does not — `printDefinitionSource`'s
 // contract, for a definition keyed by an id the text never shows.
@@ -1787,7 +1729,7 @@ function printScenarioSource(model, kind, body, { positional }) {
     const text = printScenario(model, kind, body, { positional });
     const back = parseModelSource(text, { projections: model['projection-definitions'] });
     const [record] = back.scenarios;
-    if (!back.diagnostics.length && back.scenarios.length === 1 && record.kind === kind && sameScenario(record.body, body)) {
+    if (!back.diagnostics.length && back.scenarios.length === 1 && record.kind === kind && sameDefinition(record.body, body)) {
       return text;
     }
     reason = 'it holds something the code form does not say exactly';
@@ -1978,11 +1920,8 @@ function sourceSpanOf(parsed, kind, name) {
 
 // What an apply stores for one written scenario, and what the editor
 // says about it while it is still a draft: optional properties left
-// out are written as null (as the page's save does), an omitted Then is
-// what the text's definitions make of the scenario, and a refusal
-// written without `saw` takes the values the evaluation saw — when it
-// was refused by the rule the text names; otherwise the values are null
-// and the scenario reports drift.
+// out are written as null (as the page's save does), and an omitted
+// Then is what the text's definitions make of the scenario.
 function completeScenario(draft, record) {
   const body = deepClone(record.body);
   const has = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
@@ -2015,14 +1954,6 @@ function completeScenario(draft, record) {
     body.then = actual;
     return { body, status: 'recorded', actual };
   }
-  if (record.valuesMissing && body.then && body.then.failedRule) {
-    const failed = body.then.failedRule;
-    const seen = actual && actual.outcome === 'rejected' && actual.failedRule
-      && actual.failedRule.text === failed.text ? actual.failedRule : null;
-    failed.leftValue = seen ? seen.leftValue : null;
-    failed.rightValue = seen ? seen.rightValue : null;
-    if (!record.atWritten) failed.atInstance = seen ? seen.atInstance : null;
-  }
   if (reason) return { body, status: 'broken', reason };
   return { body, status: evSameOutcome(actual, body.then) ? 'current' : 'drifted', actual };
 }
@@ -2034,9 +1965,7 @@ const SCENARIO_SUBJECT = { 'scenario-definition': 'command', 'projection-scenari
 // one a block *is* is matched: an unchanged block by its content, an
 // edited one by its place among its subject's scenarios, one whose
 // subject was renamed by its place among the leftovers — and whatever
-// is still unmatched is new. A refusal's index is not in the text
-// either: it is kept where the stored scenario names the same rule, and
-// otherwise derived from where that rule sits now.
+// is still unmatched is new.
 //
 // The collection order keeps the stored interleaving of subjects and
 // takes each subject's own order from the text, so an untouched text
@@ -2057,7 +1986,7 @@ function sourceScenarioCollections(model, parsed) {
     const ids = new Array(written.length).fill(null);
     const claim = (index, id) => { ids[index] = id; free.delete(id); };
     written.forEach((w, i) => {
-      const hit = [...free].find((id) => sameScenario(stored[id], w.body));
+      const hit = [...free].find((id) => sameDefinition(stored[id], w.body));
       if (hit) claim(i, hit);
     });
     const textSubjects = new Set(written.map((w) => w.body[field]));
@@ -2071,27 +2000,6 @@ function sourceScenarioCollections(model, parsed) {
     pair((body, w) => body && body[field] === w.body[field]);
     pair((body) => body && !textSubjects.has(body[field]));
     written.forEach((w, i) => { if (!ids[i]) ids[i] = generateId(); });
-
-    written.forEach((w, i) => {
-      const failed = w.body.then && w.body.then.failedRule;
-      if (!failed || failed.index !== undefined) return;
-      const before = stored[ids[i]];
-      const was = before && before.then && before.then.failedRule;
-      if (was && was.text === failed.text && was.index !== undefined) { failed.index = was.index; return; }
-      const command = draft['command-definitions'][w.body.command];
-      const at = command ? (command.conditions || []).findIndex((c) => {
-        try { return conditionText(c) === failed.text; } catch { return false; }
-      }) : -1;
-      failed.index = at >= 0 ? at : 0;
-    });
-    // Restore the `index`-first key order the evaluator writes, so a
-    // completed refusal reads like a recorded one.
-    written.forEach((w) => {
-      const failed = w.body.then && w.body.then.failedRule;
-      if (!failed) return;
-      const { index, text, leftValue, rightValue, atInstance, ...rest } = failed;
-      w.body.then.failedRule = { index, text, leftValue, rightValue, atInstance, ...rest };
-    });
 
     const queues = new Map();
     written.forEach((w, i) => {
@@ -2577,16 +2485,6 @@ function sourceSymbols(parsed) {
         add(sourceSymbol('event', event.type), slotsOf(event).type);
         eventPayload(event.type, event.data);
       }
-      if (record.rule) {
-        const left = condition(commandName, command, record.rule);
-        for (const token of record.sawTokens || []) member(token, token && token.v, left);
-        const failed = body.then && body.then.failedRule;
-        for (const seen of failed ? [failed.leftValue, failed.rightValue] : []) {
-          if (!Array.isArray(seen)) continue;
-          const items = slotsOf(seen);
-          seen.forEach((v, i) => member(items['i:' + i], v, left));
-        }
-      }
     } else {
       const projection = own(projections, body.projection);
       add(sourceSymbol('projection', body.projection), slots.projection);
@@ -2786,7 +2684,7 @@ function sourceApplyEdits(text, edits) {
 
 // ---------- completion ----------
 
-const SOURCE_CONDITION_STARTS = ['require', 'when', 'and', 'by'];
+const SOURCE_CONDITION_STARTS = ['require', 'when', 'and'];
 const SOURCE_COMPARISONS = ['==', '!=', '<', '<=', '>', '>=', ...SOURCE_WORD_PREDICATES];
 // How each predicate is written after an operand, in the order a rule
 // editor offers them.
@@ -2952,7 +2850,7 @@ function sourceCompletions(text, line, col, { model = null } = {}) {
         decl = { keyword: tagged ? v(tokens[i + 1]) : token.v, name: v(tokens[i + (tagged ? 2 : 1)]), start: i };
         frame.stmt = i;
       }
-    } else if (token.first) frame.stmt = i;
+    } else if (token.first && token.v !== 'else') frame.stmt = i;
     if (token.t === 'punct' && ['{', '(', '['].includes(token.v)) {
       const next = classify(frame, statement(frame, i), token.v);
       if (next.kind === 'scenario') next.scenarioCommand = next.block && next.block.kind === 'command' ? next.block.name : null;
@@ -3033,6 +2931,20 @@ function sourceCompletions(text, line, col, { model = null } = {}) {
   const keywords = (words, sort = 0) => words.forEach(([label, insert, snippet]) => push(label, 'keyword', '', {
     sort, insert: insert || label, snippet: !!snippet,
   }));
+  // The messages a command already refuses with — offered where a rule
+  // states one, so two rules can share it, and where a scenario names one.
+  // Read off the tokens where the cursor is inside the command, since
+  // a block being typed rarely parses.
+  const rejectionItems = (name) => {
+    const offer = (message) => push(JSON.stringify(message), 'text', 'rejection', { sort: 0 });
+    const decl_ = frame.decl || decl;
+    if (decl_ && decl_.keyword === 'command' && decl_.name === name) {
+      declared.forEach((t, i) => { if (t.t === 'string' && v(declared[i - 1]) === 'reject') offer(t.v); });
+    }
+    for (const rule of list((def('command-definition', name) || {}).conditions)) {
+      if (rule && typeof rule.rejection === 'string') offer(rule.rejection);
+    }
+  };
 
   // A command's names — its payload and its reads — from the text
   // before the cursor, with whatever its parsed body adds (a read
@@ -3344,7 +3256,12 @@ function sourceCompletions(text, line, col, { model = null } = {}) {
       if (prev === '}' || s.length === 2) { keywords([['when', 'when ']]); return done(false); }
       return done(false);
     }
-    if (first === 'require') return conditionItems(scope, conditionTail(s));
+    if (first === 'require') {
+      const at = s.findIndex((t) => t.v === 'else');
+      if (at < 0) return conditionItems(scope, conditionTail(s));
+      if (s.length === at + 1) { keywords([['reject', 'reject "${1}"', true]]); return done(); }
+      if (v(s[at + 1]) === 'reject' && s.length === at + 2) { rejectionItems(commandName); return done(); }
+    }
     return done(false);
   }
   if (k === 'list') {
@@ -3433,12 +3350,11 @@ function sourceCompletions(text, line, col, { model = null } = {}) {
       }
       const emits = commandName ? commandScope(commandName).emits : [];
       definitionItems('event-definition', { sort: (n) => (emits.includes(n) ? 0 : 2), call: (n) => `${n} { $1 }` });
-      keywords([['nothing'], ['rejected by', 'rejected by ']], 1);
+      keywords([['nothing'], ['rejected', 'rejected "${1}"', true]], 1);
       return done();
     }
     if (first === 'then' && v(s[1]) === 'rejected') {
-      if (s.length === 2) { keywords([['by', 'by ']]); return done(); }
-      if (commandName) return conditionItems(commandScope(commandName), conditionTail(s));
+      if (s.length === 2 && commandName) { rejectionItems(commandName); return done(); }
     }
     return done(false);
   }
@@ -3471,7 +3387,7 @@ const SOURCE_KEYWORDS = [
   'remove', 'command', 'read', 'excluding', 'with', 'require', 'emit', 'when', 'and', 'not', 'is',
   'empty', 'in', 'contains', 'containsAny', 'startsWith', 'endsWith', 'count', 'successor',
   'currentValue', 'json', 'true', 'false', 'null', 'scenario', 'given', 'then', 'nothing', 'rejected',
-  'by', 'saw', 'at',
+  'else', 'reject',
 ];
 
 // The words a block's statements start with, coloured apart so the

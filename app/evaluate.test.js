@@ -51,7 +51,7 @@ const {
   createDcbModel,
   generateId, scenarioName, deepClone, evSuccessor,
   definitionsToSchema, buildShareEnvelope, importModelFromEnvelope, envelopeHasScript,
-  envelopeVersionWarning, modelMatchingEnvelope,
+  envelopeVersionWarning, modelMatchingEnvelope, commandRejections,
 } = sandbox;
 
 // A fresh, empty model — for the ad-hoc identifier-type fixtures
@@ -499,8 +499,8 @@ function drive(model, log, command, args) {
     const key = store_(id, model(), scenarioBody());
     eq(scenarioName(model()['scenario-definitions'][key]), 'records StudentSubscribedToCourse', 'derived');
     eq(scenarioName({ name: 'the happy path', then: { outcome: 'published', events: [] } }), 'the happy path', 'override');
-    eq(scenarioName({ then: { outcome: 'rejected', failedRule: { text: 'course.status == Existent' } } }),
-      'is refused by course.status == Existent', 'rejected');
+    eq(scenarioName({ then: { outcome: 'rejected', rejection: 'Course is not active' } }),
+      'is refused: Course is not active', 'rejected');
   });
 
   check('changing a rule the command checks is reported as drift', () => {
@@ -518,7 +518,8 @@ function drive(model, log, command, args) {
     eq(result.status, 'drifted', 'status');
     eq(result.expected.outcome, 'published', 'expected');
     eq(result.actual.outcome, 'rejected', 'actual');
-    eq(result.actual.failedRule.text, 'student.subscriptionCount < 0', 'the rule that now refuses it');
+    eq(result.actual, { outcome: 'rejected', events: [], rejection: 'Student is subscribed to too many courses' },
+      'the message it is refused with now, and nothing else');
   });
 
   // Nothing has happened, so the course rule refuses first; the
@@ -535,24 +536,73 @@ function drive(model, log, command, args) {
   check('moving rules is not drift while the same rule refuses', () => {
     const { id, model } = open_(0);
     const key = store_(id, model(), refused());
-    const before = model()['scenario-definitions'][key].then.failedRule;
+    const before = model()['scenario-definitions'][key].then;
     moveToFront(model, id, (c) => c.leftHandSide.alias === 'student'
       && c.leftHandSide.property === 'subscriptionCount');
     const result = runScenario(model(), model()['scenario-definitions'][key]);
-    eq(result.actual.failedRule.text, before.text, 'the same rule still refuses');
-    eq(result.actual.failedRule.index, before.index + 1, 'from one place further down');
+    eq(result.actual.rejection, before.rejection, 'the same rule still refuses');
     eq(result.status, 'current', 'and that is not a change in behaviour');
   });
 
   check('moving rules so another refuses first is drift', () => {
     const { id, model } = open_(0);
     const key = store_(id, model(), refused());
-    const before = model()['scenario-definitions'][key].then.failedRule;
+    const before = model()['scenario-definitions'][key].then;
     moveToFront(model, id, (c) => c.leftHandSide.alias === 'student'
       && c.leftHandSide.property !== 'subscriptionCount');
     const result = runScenario(model(), model()['scenario-definitions'][key]);
-    eq(result.actual.failedRule.text === before.text, false, 'a different rule refuses now');
+    eq(result.actual.rejection === before.rejection, false, 'a different message refuses now');
     eq(result.status, 'drifted', 'which is what a refusal names, so it drifts');
+  });
+
+  check('rules sharing a message are one outcome, whichever of them refuses', () => {
+    const { id, model } = open_(0);
+    const key = store_(id, model(), refused());
+    eq(model()['scenario-definitions'][key].then.rejection, 'Course is not active', 'the course rule refuses');
+    // The student rule now says the same thing, and is moved ahead, so
+    // it refuses first — but the outcome is the one the scenario names.
+    const command = deepClone(model()['command-definitions'].SubscribeStudentToCourse);
+    command.conditions.find((c) => c.leftHandSide.alias === 'student' && c.predicate === 'isTrue')
+      .rejection = 'Course is not active';
+    updateDefinition('command-definition', id, 'SubscribeStudentToCourse', command);
+    moveToFront(model, id, (c) => c.leftHandSide.alias === 'student' && c.predicate === 'isTrue');
+    const run = evaluateCommand(model(), [], 'SubscribeStudentToCourse', { courseId: 'c1', studentId: 's1' });
+    eq(run.failedRule.text, 'student.exists isTrue', 'another rule refuses now');
+    const result = runScenario(model(), model()['scenario-definitions'][key]);
+    eq(result.actual.rejection, 'Course is not active', 'with the same message');
+    eq(result.status, 'current', 'so the outcome is the same, whatever that rule read');
+    eq(commandRejections(model()['command-definitions'].SubscribeStudentToCourse)
+      .find((o) => o.rejection === 'Course is not active').rules.length, 2, 'listed once, with both rules');
+  });
+
+  check('a refusal by a rule without a message is not an outcome a scenario can name', () => {
+    const { id, model } = open_(0);
+    const command = deepClone(model()['command-definitions'].SubscribeStudentToCourse);
+    delete command.conditions[0].rejection;
+    updateDefinition('command-definition', id, 'SubscribeStudentToCourse', command);
+    const result = runScenario(model(), { ...refused(), then: { outcome: 'rejected', events: [],
+      rejection: 'Course is not active' } });
+    eq(result.status, 'broken', 'broken, since the repair is the rule\'s');
+    eq(/has no rejection message/.test(result.reason), true, result.reason);
+    const run = evaluateCommand(model(), [], 'SubscribeStudentToCourse', { courseId: 'c1', studentId: 's1' });
+    eq([run.failedRule.rejection, run.failedRule.text], [null, 'course.status == Existent'],
+      'a run still says which rule it was');
+    eq(sandbox.modelAdvisories(model()).some((a) => /has no rejection message/.test(a.message)), true, 'and it is advised');
+  });
+
+  check('a rejection message is advised where it is missing, malformed, or on a guard', () => {
+    const { id, model } = open_(0);
+    const command = deepClone(model()['command-definitions'].SubscribeStudentToCourse);
+    command.conditions[1].rejection = '';
+    command.conditions[2].rejection = 'two\nlines';
+    command.publishes[0].when = [{ leftHandSide: { alias: 'course', property: 'subscriptionCount' },
+      predicate: 'lessThan', rightHandSide: 5, rejection: 'Never shown' }];
+    updateDefinition('command-definition', id, 'SubscribeStudentToCourse', command);
+    const found = sandbox.modelAdvisories(model()).filter((a) => a.name === 'SubscribeStudentToCourse')
+      .map((a) => a.message);
+    eq(found.some((m) => /rejection message of "student.exists isTrue" is empty/.test(m)), true, 'empty: ' + found);
+    eq(found.some((m) => /spans several lines/.test(m)), true, 'several lines');
+    eq(found.some((m) => /a guard never rejects/.test(m)), true, 'on a guard');
   });
 
   check('a scenario never stops you deleting what it tests', () => {
@@ -1377,8 +1427,8 @@ check('an import missing the definition arrays is refused, not silently accepted
   // from: these two strings are the published contract, and a test that
   // derived them from the source could not notice one of them changing.
   check('an export carries both markers', () => {
-    eq(good.$schema, 'https://dcb.events/schemas/model/v6.json', '$schema');
-    eq(/^6\.\d+$/.test(good.dcbModelVersion), true, 'dcbModelVersion is a 6.x');
+    eq(good.$schema, 'https://dcb.events/schemas/model/v7.json', '$schema');
+    eq(/^7\.\d+$/.test(good.dcbModelVersion), true, 'dcbModelVersion is a 7.x');
   });
 
   check('the definition arrays sit at the top level, under no wrapper', () => {
@@ -1401,19 +1451,13 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('an import from an unknown major is refused', () => {
-    refuses({ ...good, dcbModelVersion: '7.0' }, 'a newer major');
+    refuses({ ...good, dcbModelVersion: '8.0' }, 'a newer major');
+    // 6.x has no rejection messages, and none can be invented for it.
+    refuses({ ...good, dcbModelVersion: '6.1' }, 'the last major before messages');
     // 2.x is where a projection scenario read several projections under
     // aliases — readable as JSON, and misread as a model.
     refuses({ ...good, dcbModelVersion: '2.0' }, 'the last unreadable major');
     refuses({ ...good, dcbModelVersion: '1.0' }, 'and the one before that');
-  });
-
-  check('older readable majors still import whole — 6.0 only added what they never say', () => {
-    for (const raw of ['3.0', '4.1', '5.0']) {
-      const older = { ...good, dcbModelVersion: raw };
-      eq(typeof importModelFromEnvelope(older).modelId, 'string', `${raw} imported`);
-      eq(envelopeVersionWarning(older), '', 'nothing dropped, so nothing to warn about');
-    }
   });
 
   check('$schema is required but never read, so a repointed one still imports', () => {
@@ -1422,7 +1466,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('a newer minor imports, and says what it is dropping', () => {
-    const newer = { ...good, dcbModelVersion: '6.99' };
+    const newer = { ...good, dcbModelVersion: '7.99' };
     eq(typeof importModelFromEnvelope(newer).modelId, 'string', 'imported');
     eq(envelopeVersionWarning(newer).length > 0, true, 'warned');
     eq(envelopeVersionWarning(good), '', 'nothing to warn about at the current version');
@@ -2337,7 +2381,8 @@ check('every predefined model ships advisory-clean', () => {
       ],
       conditions: [
         { leftHandSide: { alias: 'previousInstructor', property: 'instructedCourses' },
-          predicate: 'contains', rightHandSide: { parameterName: 'courseId' } },
+          predicate: 'contains', rightHandSide: { parameterName: 'courseId' },
+          rejection: 'Previous instructor does not teach this course' },
       ],
       publishes: [
         { name: 'Assigned', parameters: {

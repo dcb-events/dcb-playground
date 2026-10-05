@@ -1,6 +1,6 @@
 {
-  "$schema": "https://dcb.events/schemas/model/v6.json",
-  "dcbModelVersion": "6.1",
+  "$schema": "https://dcb.events/schemas/model/v7.json",
+  "dcbModelVersion": "7.0",
   "name": "Content based decisions (client-verified)",
   "customTypeDefinitions": [
     {
@@ -219,7 +219,8 @@
           "predicate": "equals",
           "rightHandSide": {
             "enumMember": "NonExistent"
-          }
+          },
+          "rejection": "Document already exists"
         }
       ],
       "publishes": [
@@ -274,7 +275,8 @@
             {
               "enumMember": "Published"
             }
-          ]
+          ],
+          "rejection": "Document is not editable"
         },
         {
           "leftHandSide": {
@@ -285,7 +287,8 @@
           "rightHandSide": {
             "parameterName": "text"
           },
-          "negate": true
+          "negate": true,
+          "rejection": "Text is unchanged"
         }
       ],
       "publishes": [
@@ -343,7 +346,8 @@
             {
               "enumMember": "Published"
             }
-          ]
+          ],
+          "rejection": "Document cannot be published"
         },
         {
           "leftHandSide": {
@@ -353,7 +357,8 @@
           "predicate": "equals",
           "rightHandSide": {
             "parameterName": "text"
-          }
+          },
+          "rejection": "Text is not the current one"
         },
         {
           "leftHandSide": {
@@ -364,7 +369,8 @@
             "alias": "document",
             "property": "publishedText"
           },
-          "negate": true
+          "negate": true,
+          "rejection": "No changes to publish"
         }
       ],
       "publishes": [
@@ -416,7 +422,8 @@
             {
               "enumMember": "Published"
             }
-          ]
+          ],
+          "rejection": "Document cannot be archived"
         }
       ],
       "publishes": [
@@ -446,16 +453,7 @@
       "then": {
         "outcome": "rejected",
         "events": [],
-        "failedRule": {
-          "index": 0,
-          "text": "document.status equalsAny [Draft, Published]",
-          "leftValue": "NonExistent",
-          "rightValue": [
-            "Draft",
-            "Published"
-          ],
-          "atInstance": null
-        }
+        "rejection": "Document is not editable"
       }
     },
     {
@@ -531,13 +529,7 @@
       "then": {
         "outcome": "rejected",
         "events": [],
-        "failedRule": {
-          "index": 1,
-          "text": "document.currentText == text",
-          "leftValue": "newer",
-          "rightValue": "test",
-          "atInstance": null
-        }
+        "rejection": "Text is not the current one"
       }
     },
     {
@@ -575,13 +567,7 @@
       "then": {
         "outcome": "rejected",
         "events": [],
-        "failedRule": {
-          "index": 2,
-          "text": "not(text == document.publishedText)",
-          "leftValue": "test",
-          "rightValue": "test",
-          "atInstance": null
-        }
+        "rejection": "No changes to publish"
       }
     },
     {
@@ -633,13 +619,7 @@
       "then": {
         "outcome": "rejected",
         "events": [],
-        "failedRule": {
-          "index": 2,
-          "text": "not(text == document.publishedText)",
-          "leftValue": "test",
-          "rightValue": "test",
-          "atInstance": null
-        }
+        "rejection": "No changes to publish"
       }
     },
     {

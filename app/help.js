@@ -130,7 +130,9 @@ command ChangeCourseCapacity(courseId: CourseId, newCapacity: Capacity) {
   read course = Course[courseId]
 
   require course.status == Existent
+    else reject "Course is not active"
   require course.subscriptionCount <= newCapacity
+    else reject "Course has more subscriptions than that"
 
   emit CourseCapacityChanged { courseId, newCapacity }
 }
@@ -140,6 +142,7 @@ command ArchiveCourse(courseId: CourseId) {
   read course = Course[courseId]
 
   require course.status == Existent
+    else reject "Course is not active"
 
   emit CourseArchived { courseId }
 
@@ -147,7 +150,7 @@ command ArchiveCourse(courseId: CourseId) {
     given CourseDefined { courseId: "c1", capacity: 10 }
     given CourseArchived { courseId: "c1" }
     when ArchiveCourse { courseId: "c1" }
-    then rejected by course.status == Existent saw Archived, Existent
+    then rejected "Course is not active"
   }
 
   scenario "an existing course is archived" {
@@ -164,7 +167,9 @@ command RescheduleCourse(courseId: CourseId, slots: TimeSlot[]) {
   read theirs = Course[students.subscribedCourseIds] excluding courseId
 
   require course.status == Existent
+    else reject "Course is not active"
   require theirs.slots not containsAny slots
+    else reject "Slots clash with a subscriber's other course"
 
   emit CourseRescheduled { courseId, slots }
 }
@@ -174,6 +179,7 @@ command RegisterStudent(studentId: StudentId, name: PersonName, email?: string) 
   read student = Student[studentId]
 
   require student.exists is false
+    else reject "Student is already registered"
 
   emit StudentRegistered { studentId, name, email }
 }
@@ -184,9 +190,13 @@ command SubscribeStudentToCourse(courseId: CourseId, studentId: StudentId) {
   read student = Student[studentId]
 
   require course.status == Existent
+    else reject "Course is not active"
   require student.exists is true
+    else reject "Student is not registered"
   require course.subscribedStudentIds not contains studentId
+    else reject "Student is already subscribed"
   require count(student.subscribedCourseIds) < 10
+    else reject "Student is subscribed to too many courses"
 
   emit StudentSubscribedToCourse { courseId, studentId }
     when course.isFull is false
@@ -396,11 +406,13 @@ tag type CourseId = string
     title: 'Rules',
     href: notationReference('require'),
     prose: [
-      'A condition that must hold, or the command is rejected. Over a fan-out read, it must hold for every '
-        + 'instance.',
+      'A condition that must hold, or the command is rejected with the rule\'s message. Over a fan-out '
+        + 'read, it must hold for every instance. Rules may share a message: the messages are what a command '
+        + 'can be refused with, and what a scenario names a refusal by.',
     ],
     example: ['command:SubscribeStudentToCourse'],
     syntax: [
+      ['require a == b\n  else reject "Message"', 'A rule and the message it rejects with. The message is required.', 'require'],
       ['a == b   a != b   <   <=   >   >=', 'Comparison.', 'require'],
       ['x in [Draft, Published]   x not in […]', 'One of a list of literals.', 'require'],
       ['xs contains x   xs containsAny ys', 'List membership.', 'require'],
@@ -456,7 +468,7 @@ tag type CourseId = string
       ['given E { courseId: "c1" }', 'An event already in the log. Values are JSON, enum members bare.', 'scenario'],
       ['when C { … }', 'The command, with every payload property.', 'scenario'],
       ['then E { … }   then nothing', 'What was appended.', 'scenario'],
-      ['then rejected by <rule> saw L, R', 'The refusal; `saw` is optional, `at 1` names a fan-out\'s instance by position.', 'saw'],
+      ['then rejected "Message"', 'The refusal, by the message the command was rejected with.', 'scenario'],
       ['then P("c1") == Existent', 'A projection\'s value at arguments, in declared order.', 'projection-scenario'],
     ],
   },

@@ -907,8 +907,12 @@ function evaluateCommand(model, events, commandName, args) {
     return {
       outcome: 'rejected',
       events: [],
+      // `rejection` is what the refusal is known by; `index` and `text`
+      // say which rule it was, for the interface — a scenario keeps
+      // neither (`deriveThen`).
       failedRule: {
         index,
+        rejection: condition.rejection === undefined ? null : condition.rejection,
         text: conditionText(condition),
         leftValue: outcome.left === undefined ? null : outcome.left,
         rightValue: outcome.right === undefined ? null : outcome.right,
@@ -1021,20 +1025,11 @@ function evCanonical(value) {
   return value === undefined ? null : value;
 }
 
-// Nor is where the refusing rule sits in `conditions`. Rules are
-// reordered by hand, and a rule that moved is still the rule the
-// scenario named — its text says which one it is. If the move made a
-// *different* rule refuse first, the text differs and that is drift.
-// The index stays in the stored Then (the wire format requires it);
-// everything that reads one reads a freshly derived Then, never this.
-function evComparableOutcome(then) {
-  const canonical = evCanonical(then);
-  if (canonical && canonical.failedRule) delete canonical.failedRule.index;
-  return canonical;
-}
-
+// A refusal is compared by its message alone (`deriveThen`): a rule
+// moved by hand still refuses with what the scenario named. If the move
+// made a rule with a *different* message refuse first, that is drift.
 function evSameOutcome(a, b) {
-  return JSON.stringify(evComparableOutcome(a)) === JSON.stringify(evComparableOutcome(b));
+  return JSON.stringify(evCanonical(a)) === JSON.stringify(evCanonical(b));
 }
 
 // The Given, as the evaluator reads a log.
@@ -1074,9 +1069,20 @@ function deriveThen(model, scenario) {
   const result = evaluateCommand(
     model, scenarioLog(scenario), scenario.command, (scenario.when || {}).arguments
   );
-  return result.outcome === 'published'
-    ? { outcome: 'published', events: result.events.map((e) => ({ type: e.type, data: e.data })) }
-    : { outcome: 'rejected', events: [], failedRule: result.failedRule };
+  if (result.outcome === 'published') {
+    return { outcome: 'published', events: result.events.map((e) => ({ type: e.type, data: e.data })) };
+  }
+  // A refusal is its message and nothing else: which rule refused, and
+  // what it read, are how the decision was made, not what it was — so
+  // rules sharing a message are one outcome, and a projection storing
+  // its state differently is no change in behaviour. A refusal a
+  // scenario cannot name is not an outcome it can assert: the rule has
+  // no message, and the repair is the rule's, so the scenario is broken.
+  const { rejection, text } = result.failedRule;
+  if (rejectionProblem(rejection)) {
+    fail(`"${scenario.command}" was refused by "${text}", which has no rejection message to test against.`);
+  }
+  return { outcome: 'rejected', events: [], rejection };
 }
 
 // `{ status, expected, actual, reason }`. `reason` is set only when the

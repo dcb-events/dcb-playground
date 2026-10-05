@@ -61,7 +61,7 @@ node app/dsl.test.js
 - [`app/`](app/) — the application: plain classic scripts, one HTML page,
   one stylesheet. Each file's header comment documents its role.
 - [`dcb-model.schema.json`](dcb-model.schema.json) — JSON Schema of the
-  model interchange format (`https://dcb.events/schemas/model/v6.json`).
+  model interchange format (`https://dcb.events/schemas/model/v7.json`).
 - [`docs/research/`](docs/research/) — dated notes behind design decisions.
 - [`design/`](design/) — artboards from UI explorations; not used by the app.
 - [`AGENTS.md`](AGENTS.md) — architecture, conventions and pitfalls in
