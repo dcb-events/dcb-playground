@@ -226,12 +226,6 @@
   "projectionDefinitions": [
     {
       "name": "StudentExists",
-      "parameters": [
-        {
-          "name": "studentId",
-          "propertyType": "StudentId"
-        }
-      ],
       "valueType": "boolean",
       "isList": false,
       "initialValue": false,
@@ -245,12 +239,6 @@
     },
     {
       "name": "StudentSubscriptionCount",
-      "parameters": [
-        {
-          "name": "studentId",
-          "propertyType": "StudentId"
-        }
-      ],
       "valueType": "integer",
       "isList": false,
       "initialValue": 0,
@@ -269,12 +257,6 @@
     },
     {
       "name": "CourseStatus",
-      "parameters": [
-        {
-          "name": "courseId",
-          "propertyType": "CourseId"
-        }
-      ],
       "valueType": "CourseStatus",
       "isList": false,
       "initialValue": {
@@ -299,12 +281,6 @@
     },
     {
       "name": "CourseCapacity",
-      "parameters": [
-        {
-          "name": "courseId",
-          "propertyType": "CourseId"
-        }
-      ],
       "valueType": "integer",
       "isList": false,
       "initialValue": 0,
@@ -327,12 +303,6 @@
     },
     {
       "name": "CourseSubscriptionCount",
-      "parameters": [
-        {
-          "name": "courseId",
-          "propertyType": "CourseId"
-        }
-      ],
       "valueType": "integer",
       "isList": false,
       "initialValue": 0,
@@ -351,12 +321,6 @@
     },
     {
       "name": "CourseSubscribedStudentIds",
-      "parameters": [
-        {
-          "name": "courseId",
-          "propertyType": "CourseId"
-        }
-      ],
       "valueType": "StudentId",
       "isList": true,
       "initialValue": [],
@@ -379,7 +343,6 @@
     },
     {
       "name": "CourseNumbering",
-      "parameters": [],
       "valueType": "CourseId",
       "isList": false,
       "initialValue": "c1",
@@ -397,12 +360,6 @@
     },
     {
       "name": "CourseSlots",
-      "parameters": [
-        {
-          "name": "courseId",
-          "propertyType": "CourseId"
-        }
-      ],
       "valueType": "TimeSlot",
       "isList": true,
       "initialValue": [],
@@ -425,12 +382,6 @@
     },
     {
       "name": "StudentSubscribedCourseIds",
-      "parameters": [
-        {
-          "name": "studentId",
-          "propertyType": "StudentId"
-        }
-      ],
       "valueType": "CourseId",
       "isList": true,
       "initialValue": [],
@@ -474,7 +425,7 @@
         {
           "alias": "courseNumbering",
           "projection": "CourseNumbering",
-          "arguments": {}
+          "tags": []
         }
       ],
       "conditions": [],

@@ -117,12 +117,6 @@
   "projectionDefinitions": [
     {
       "name": "DocumentLifecycle",
-      "parameters": [
-        {
-          "name": "documentId",
-          "propertyType": "DocumentId"
-        }
-      ],
       "valueType": "DocumentLifecycle",
       "isList": false,
       "initialValue": {
@@ -154,12 +148,6 @@
     },
     {
       "name": "DocumentCurrentText",
-      "parameters": [
-        {
-          "name": "documentId",
-          "propertyType": "DocumentId"
-        }
-      ],
       "valueType": "string",
       "isList": false,
       "initialValue": null,
@@ -180,12 +168,6 @@
     },
     {
       "name": "DocumentPublishedText",
-      "parameters": [
-        {
-          "name": "documentId",
-          "propertyType": "DocumentId"
-        }
-      ],
       "valueType": "string",
       "isList": false,
       "initialValue": null,
@@ -771,9 +753,12 @@
       "id": "094dd668-865a-48a1-aeef-00852fc75c9b",
       "name": "starts NonExistent",
       "projection": "DocumentLifecycle",
-      "arguments": {
-        "documentId": "d1"
-      },
+      "tags": [
+        {
+          "tagType": "DocumentId",
+          "tagValue": "d1"
+        }
+      ],
       "given": [],
       "then": "NonExistent"
     },
@@ -781,9 +766,12 @@
       "id": "7097c1d3-19a6-418c-ac32-ef2d907e1599",
       "name": "is a Draft once added",
       "projection": "DocumentLifecycle",
-      "arguments": {
-        "documentId": "d1"
-      },
+      "tags": [
+        {
+          "tagType": "DocumentId",
+          "tagValue": "d1"
+        }
+      ],
       "given": [
         {
           "event": "DocumentAdded",
@@ -798,9 +786,12 @@
       "id": "55244260-b48b-4a54-ae88-294a1e27cff2",
       "name": "is Published once published, whatever the texts say",
       "projection": "DocumentLifecycle",
-      "arguments": {
-        "documentId": "d1"
-      },
+      "tags": [
+        {
+          "tagType": "DocumentId",
+          "tagValue": "d1"
+        }
+      ],
       "given": [
         {
           "event": "DocumentAdded",
@@ -836,9 +827,12 @@
       "id": "65cc4149-58bc-4860-ac87-05e8209e196b",
       "name": "holds the re-typed text",
       "projection": "DocumentCurrentText",
-      "arguments": {
-        "documentId": "d1"
-      },
+      "tags": [
+        {
+          "tagType": "DocumentId",
+          "tagValue": "d1"
+        }
+      ],
       "given": [
         {
           "event": "DocumentAdded",
@@ -881,9 +875,12 @@
       "id": "382482cf-a328-41d5-a8f0-0f98cf1d4f07",
       "name": "still holds the once-published text",
       "projection": "DocumentPublishedText",
-      "arguments": {
-        "documentId": "d1"
-      },
+      "tags": [
+        {
+          "tagType": "DocumentId",
+          "tagValue": "d1"
+        }
+      ],
       "given": [
         {
           "event": "DocumentAdded",

@@ -132,12 +132,6 @@
   "projectionDefinitions": [
     {
       "name": "ProductExists",
-      "parameters": [
-        {
-          "name": "productId",
-          "propertyType": "ProductId"
-        }
-      ],
       "valueType": "boolean",
       "isList": false,
       "initialValue": false,
@@ -151,12 +145,6 @@
     },
     {
       "name": "ProductCurrentPrice",
-      "parameters": [
-        {
-          "name": "productId",
-          "propertyType": "ProductId"
-        }
-      ],
       "valueType": "Money",
       "isList": false,
       "initialValue": null,
@@ -179,12 +167,6 @@
     },
     {
       "name": "OrderExists",
-      "parameters": [
-        {
-          "name": "orderId",
-          "propertyType": "OrderId"
-        }
-      ],
       "valueType": "boolean",
       "isList": false,
       "initialValue": false,

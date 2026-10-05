@@ -49,7 +49,7 @@ event StudentWaitlistedForCourse { courseId: CourseId, studentId: StudentId } ta
 
 // Entities
 @icon("📚")
-entity Course {
+entity Course tagged CourseId {
   lifecycle status
   status = CourseStatus
   capacity = CourseCapacity
@@ -60,47 +60,47 @@ entity Course {
 }
 
 @icon("🧑‍🎓")
-entity Student {
+entity Student tagged StudentId {
   lifecycle exists
   exists = StudentExists
   subscribedCourseIds = StudentSubscribedCourseIds
 }
 
 // Projections
-projection CourseStatus(courseId: CourseId): CourseStatus = NonExistent {
+projection CourseStatus: CourseStatus = NonExistent {
   on CourseDefined => set Existent
   on CourseArchived => set Archived
 
   scenarios {
     scenario "a defined course exists" {
       given CourseDefined { courseId: "c1", capacity: 10 }
-      then CourseStatus("c1") == Existent
+      then CourseStatus tagged CourseId("c1") == Existent
     }
   }
 }
 
-projection StudentExists(studentId: StudentId): boolean = false {
+projection StudentExists: boolean = false {
   on StudentRegistered => set true
 }
 
-projection CourseCapacity(courseId: CourseId): integer = 0 {
+projection CourseCapacity: integer = 0 {
   on CourseDefined => set event.data.capacity
   on CourseCapacityChanged => set event.data.newCapacity
 }
 
-projection CourseSubscriptionCount(courseId: CourseId): integer = 0 {
+projection CourseSubscriptionCount: integer = 0 {
   on StudentSubscribedToCourse => increment 1
 }
 
-projection CourseSubscribedStudentIds(courseId: CourseId): StudentId[] = [] {
+projection CourseSubscribedStudentIds: StudentId[] = [] {
   on StudentSubscribedToCourse => append event.data.studentId
 }
 
-projection StudentSubscribedCourseIds(studentId: StudentId): CourseId[] = [] {
+projection StudentSubscribedCourseIds: CourseId[] = [] {
   on StudentSubscribedToCourse => append event.data.courseId
 }
 
-projection CourseSlots(courseId: CourseId): TimeSlot[] = [] {
+projection CourseSlots: TimeSlot[] = [] {
   on CourseRescheduled => set event.data.slots
 }
 
@@ -108,12 +108,11 @@ projection CourseNumbering: CourseId = "c1" {
   on CourseDefined => set successor(event.data.courseId)
 }
 
-projection CourseIsFull(courseId: CourseId): boolean
-  derived CourseSubscriptionCount(courseId) >= CourseCapacity(courseId)
+projection CourseIsFull: boolean
+  derived CourseSubscriptionCount >= CourseCapacity
 
 projection CoursePeakSubscriptions: integer {
-  script(courseId: CourseId)
-  tagFilter ["CourseId:{courseId}"]
+  script()
   initialState { current: 0, peak: 0 }
   exposes peak
   on StudentSubscribedToCourse => \`\`\`({ current: state.current + 1, peak: Math.max(state.peak, state.current + 1) })\`\`\`
@@ -122,14 +121,14 @@ projection CoursePeakSubscriptions: integer {
 // Commands
 @feature("Course management")
 command DefineCourse(capacity: Capacity) {
-  alias numbering = CourseNumbering()
+  alias numbering = CourseNumbering
 
   emit CourseDefined { courseId: numbering, capacity }
 }
 
 @feature("Course management")
 command ChangeCourseCapacity(courseId: CourseId, newCapacity: Capacity) {
-  alias course = Course[courseId]
+  alias course = Course tagged courseId
 
   require course.status == Existent
     else reject "Course is not active"
@@ -141,7 +140,7 @@ command ChangeCourseCapacity(courseId: CourseId, newCapacity: Capacity) {
 
 @feature("Course management")
 command ArchiveCourse(courseId: CourseId) {
-  alias course = Course[courseId]
+  alias course = Course tagged courseId
 
   require course.status == Existent
     else reject "Course is not active"
@@ -166,9 +165,9 @@ command ArchiveCourse(courseId: CourseId) {
 
 @feature("Course management")
 command RescheduleCourse(courseId: CourseId, slots: TimeSlot[]) {
-  alias course = Course[courseId]
-  alias students = Student[course.subscribedStudentIds]
-  alias theirs = Course[students.subscribedCourseIds] excluding courseId
+  alias course = Course tagged courseId
+  alias students = Student tagged course.subscribedStudentIds
+  alias theirs = Course tagged students.subscribedCourseIds excluding courseId
 
   require course.status == Existent
     else reject "Course is not active"
@@ -180,7 +179,7 @@ command RescheduleCourse(courseId: CourseId, slots: TimeSlot[]) {
 
 @feature("Students")
 command RegisterStudent(studentId: StudentId, name: PersonName, email?: string) {
-  alias student = Student[studentId]
+  alias student = Student tagged studentId
 
   require student.exists is false
     else reject "Student is already registered"
@@ -190,8 +189,8 @@ command RegisterStudent(studentId: StudentId, name: PersonName, email?: string) 
 
 @feature("Enrolment")
 command SubscribeStudentToCourse(courseId: CourseId, studentId: StudentId) {
-  alias course = Course[courseId]
-  alias student = Student[studentId]
+  alias course = Course tagged courseId
+  alias student = Student tagged studentId
 
   require course.status == Existent
     else reject "Course is not active"
@@ -297,7 +296,7 @@ tag type CourseId = string
     ],
     example: ['projection:CourseCapacity'],
     syntax: [
-      ['projection P(courseId: CourseId): integer = 0', 'Parameters, value type, initial value.', 'projection'],
+      ['projection P: integer = 0', 'Value type and initial value. No partition: each read names its tags.', 'projection'],
       ['on E => set v', 'Replace the value.', 'on'],
       ['on E => increment 1   decrement 1', 'Integers.', 'on'],
       ['on E => append v   remove v', 'Lists.', 'on'],
@@ -319,7 +318,7 @@ tag type CourseId = string
     syntax: [
       ['capacity = CourseCapacity', 'A property: a projection partitioned by the identifier.', 'entity'],
       ['lifecycle status', 'The property holding the instance\'s state: its [[lifecycle]]', 'lifecycle'],
-      ['entity Course[CourseKey] { … }', 'An identifier type not named `<Name>Id`.', 'entity'],
+      ['entity Course tagged CourseKey { … }', 'The tag type an instance is read by.', 'entity'],
     ],
   },
   {
@@ -349,7 +348,7 @@ tag type CourseId = string
     ],
     example: ['projection:CourseIsFull'],
     syntax: [
-      ['derived A(x) >= B(x)', 'A predicate, spelled as in [[rule|rules]].', 'derived'],
+      ['derived A >= B', 'A predicate, spelled as in [[rule|rules]]; A and B are read by its reader\'s tags.', 'derived'],
     ],
   },
   {
@@ -363,11 +362,10 @@ tag type CourseId = string
     ],
     example: ['projection:CoursePeakSubscriptions'],
     syntax: [
-      ['script(courseId: CourseId)', 'Arguments the reading command supplies, as `args`. Not tags.', 'script'],
-      ['tagFilter ["CourseId:{courseId}"]', 'The query\'s tags, ANDed; `{name}` is an argument. `[]` is the whole log.', 'script'],
+      ['script(today: Day)', 'Arguments the reader supplies `with (…)`, as `args`; the tags it is read by are `tags`.', 'script'],
       ['initialState { … }', 'The state before the first event.', 'script'],
       ['exposes peak', 'The field of the state rules read. Without it, the state is the value.', 'script'],
-      ['on E => ```expr```', 'A handler: an expression over `state`, `event` and `args` giving the next state.', 'script'],
+      ['on E => ```expr```', 'A handler: an expression over `state`, `event`, `args` and `tags` giving the next state.', 'script'],
     ],
   },
   {
@@ -396,11 +394,12 @@ tag type CourseId = string
     ],
     example: ['command:RescheduleCourse'],
     syntax: [
-      ['alias numbering = CourseNumbering()', 'A projection, with an argument per parameter.', 'read'],
-      ['alias course = Course[courseId]', 'One entity instance, by identifier.', 'read-entity'],
-      ['alias others = Course[student.subscribedCourseIds]', 'Fan-out: one instance per element of a list.', 'fan-out'],
+      ['alias numbering = CourseNumbering', 'A projection, read by no tag: the whole log.', 'read'],
+      ['alias count = SubscriptionCount tagged (courseId, studentId)', 'Read by tags, ANDed; a literal states its type, `CourseId("c1")`.', 'read'],
+      ['alias course = Course tagged courseId', 'One entity instance, by identifier.', 'read-entity'],
+      ['alias others = Course tagged student.subscribedCourseIds', 'Fan-out: one instance per element of a list.', 'fan-out'],
       ['… excluding courseId', 'One identifier dropped from a fan-out.', 'fan-out'],
-      ['alias tutor? = Student[tutorId]', 'May be absent: a null identifier binds nothing, and rules over it hold.', 'optional-read'],
+      ['alias tutor? = Student tagged tutorId', 'May be absent: a null identifier binds nothing, and rules over it hold.', 'optional-read'],
       ['… with (key: value)', 'Arguments for scripted projections read through an entity.', 'with'],
     ],
   },
@@ -474,7 +473,7 @@ tag type CourseId = string
       ['when C { … }', 'The command, with every payload property.', 'scenario'],
       ['then E { … }   then nothing', 'What was appended.', 'scenario'],
       ['then rejected "Message"', 'The refusal, by the message the command was rejected with.', 'scenario'],
-      ['then P("c1") == Existent', 'A projection\'s value at arguments, in declared order.', 'projection-scenario'],
+      ['then P tagged CourseId("c1") == Existent', 'A projection\'s value, read by the tags given.', 'projection-scenario'],
     ],
   },
 ];

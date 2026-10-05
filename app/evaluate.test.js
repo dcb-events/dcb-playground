@@ -78,9 +78,8 @@ function openBlank(name) {
 // PREDEFINED_MODELS example carries. `Tick` reads the script through
 // its boundary.
 //
-// The script scopes itself the way every scripted projection does: an
-// identifier-typed argument interpolated into its tag filter. Binding it
-// as `Counter.total` is what supplies that argument.
+// The script declares no partition, like every projection: binding it
+// as `Counter.total` reads it tagged by the counter's identifier.
 function openScripted() {
   const { id, model } = openBlank('Scripted');
   addDefinition('entity-definition', id, 'Counter', { properties: [] });
@@ -90,11 +89,7 @@ function openScripted() {
   addDefinition('projection-definition', id, 'CounterTotal', {
     valueType: 'integer',
     isList: false,
-    script: {
-      initialState: 0,
-      tagFilter: ['CounterId:{counterId}'],
-      arguments: [{ name: 'counterId', propertyType: 'CounterId' }],
-    },
+    script: { initialState: 0 },
     handlers: [{ event: 'Ticked', code: '(state || 0) + 1' }],
   });
   updateDefinition('entity-definition', id, 'Counter', {
@@ -217,7 +212,7 @@ function drive(model, log, command, args) {
     const result = evaluateCommand(model, log, 'DefineCourse', { capacity: 1 });
     eq(result.outcome, 'published', 'outcome');
     eq(result.reads.courseNumbering,
-      { kind: 'projection', projection: 'CourseNumbering', arguments: {}, value: 'c1' }, 'reads');
+      { kind: 'projection', projection: 'CourseNumbering', tags: [], arguments: {}, value: 'c1' }, 'reads');
   });
 }
 
@@ -238,8 +233,8 @@ function drive(model, log, command, args) {
     const defined = log.filter((e) => e.type === 'CourseDefined');
     eq(defined.map((e) => e.data.courseId), ['c1', 'c2', 'c3'], 'ids stay global');
     eq(defined.map((e) => e.data.courseNumber), ['1', '2', '1'], 'numbers restart');
-    eq(foldProjection(model, log, 'TenantCourseNumbering', { tenantId: 't1' }), '3', 't1 next');
-    eq(foldProjection(model, log, 'TenantCourseNumbering', { tenantId: 't2' }), '2', 't2 next');
+    eq(foldProjection(model, log, 'TenantCourseNumbering', { tags: [{ type: 'TenantId', value: 't1' }] }), '3', 't1 next');
+    eq(foldProjection(model, log, 'TenantCourseNumbering', { tags: [{ type: 'TenantId', value: 't2' }] }), '2', 't2 next');
   });
 
   check('a course cannot be defined for an unregistered tenant', () => {
@@ -381,8 +376,8 @@ function drive(model, log, command, args) {
     () => evaluateCommand(model, [], 'NoSuchCommand', {}));
   broken('an unknown entity property is broken',
     () => foldEntityProperty(model, [], 'Course', 'nope', 'c1'));
-  broken('a projection read without its parameter is broken',
-    () => foldProjection(build(2), [], 'TenantCourseNumbering', {}));
+  broken('a projection read tagged by no value is broken',
+    () => foldProjection(build(2), [], 'TenantCourseNumbering', { tags: [{ type: 'TenantId', value: null }] }));
 }
 
 // ---------------------------------------------------------------
@@ -800,7 +795,7 @@ function drive(model, log, command, args) {
     eq(result.reads.courseNumbering, {
       // The arguments ride along with the value: a partition is half of
       // what a read was, and a reader following it needs both.
-      kind: 'projection', projection: 'CourseNumbering', arguments: {}, value: 'c1',
+      kind: 'projection', projection: 'CourseNumbering', tags: [], arguments: {}, value: 'c1',
     }, 'the numbering');
   });
 }
@@ -818,7 +813,6 @@ function drive(model, log, command, args) {
     properties: [{ name: 'widgetId', propertyType: 'WidgetId', isOptional: false, isList: false }],
   });
   addDefinition('projection-definition', id, 'WidgetIsDefined', {
-    parameters: [{ name: 'widgetId', propertyType: 'WidgetId' }],
     valueType: 'boolean',
     isList: false,
     initialValue: false,
@@ -1073,13 +1067,10 @@ function drive(model, log, command, args) {
 }
 
 // ---------------------------------------------------------------
-// 17. A scripted standalone projection's `tagFilter` names an
-// identifier type, not a literal tag string. Its `:` is authoring
-// syntax splitting "which identifier" from "what value" — the actual
-// tag is rendered through that identifier type's own `tagSchema`,
-// which need not use `:` at all. A filter that just interpolated its
-// placeholder into the written template verbatim would silently match
-// nothing once a `tagSchema` diverges from the default.
+// 17. A read's tag is rendered through its tag type's own `tagSchema`,
+// which need not use `:` at all. A read that spelled the tag
+// `Type:value` verbatim would silently match nothing once a
+// `tagSchema` diverges from the default.
 // ---------------------------------------------------------------
 {
   const { id, model } = openBlank();
@@ -1098,21 +1089,21 @@ function drive(model, log, command, args) {
   addDefinition('projection-definition', id, 'OpenRegionCount', {
     valueType: 'integer',
     isList: false,
-    script: {
-      initialState: 0,
-      tagFilter: ['RegionCode:{region}'],
-      arguments: [{ name: 'region', propertyType: 'RegionCode' }],
-    },
+    script: { initialState: 0 },
     handlers: [{ event: 'RegionOpened', code: '(state || 0) + 1' }],
   });
 
-  check("a scripted projection's tagFilter resolves through a non-default tagSchema", () => {
+  check('a read\'s tag resolves through a non-default tagSchema', () => {
     const log = [];
     drive(model(), log, 'OpenRegion', { regionCode: 'eu' });
     drive(model(), log, 'OpenRegion', { regionCode: 'us' });
-    eq(foldProjection(model(), log, 'OpenRegionCount', { region: 'eu' }), 1,
+    const eu = { tags: [{ type: 'RegionCode', value: 'eu' }] };
+    eq(sandbox.projectionQueryTags(model(), 'OpenRegionCount', eu), ['RegionCode=eu'], 'rendered through "="');
+    eq(foldProjection(model(), log, 'OpenRegionCount', eu), 1,
       'matched through RegionCode\'s "=" tagSchema, not a hardcoded "RegionCode:eu"');
-    eq(foldProjection(model(), log, 'OpenRegionCount', { region: 'us' }), 1, 'us counted separately');
+    eq(foldProjection(model(), log, 'OpenRegionCount', { tags: [{ type: 'RegionCode', value: 'us' }] }), 1,
+      'us counted separately');
+    eq(foldProjection(model(), log, 'OpenRegionCount', {}), 2, 'and read by no tag, every region');
   });
 }
 
@@ -1208,7 +1199,7 @@ function drive(model, log, command, args) {
   addDefinition('projection-definition', id, 'OpenRegionCount', {
     valueType: 'integer',
     isList: false,
-    script: { initialState: 0, tagFilter: ['RegionCode:{region}'], arguments: [{ name: 'region', propertyType: 'RegionCode' }] },
+    script: { initialState: 0 },
     handlers: [{ event: 'RegionOpened', code: '(state || 0) + 1' }],
   });
   check('envelopeHasScript is true for a scripted (standalone) projection', () => {
@@ -1517,7 +1508,7 @@ check('an import missing the definition arrays is refused, not silently accepted
     // Through the entity, and through the projection it binds. Same
     // fold, reached two ways.
     eq(foldEntityProperty(model, log, 'Course', 'capacity', 'c1'), 7, 'as a property');
-    eq(foldProjection(model, log, 'CourseCapacity', { courseId: 'c1' }), 7, 'as a projection');
+    eq(foldProjection(model, log, 'CourseCapacity', { tags: [{ type: 'CourseId', value: 'c1' }] }), 7, 'as a projection');
   });
 
   check('one projection may be bound by two entities that share an identifier', () => {
@@ -1527,7 +1518,6 @@ check('an import missing the definition arrays is refused, not silently accepted
       properties: [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false }],
     });
     addDefinition('projection-definition', id, 'CourseExists', {
-      parameters: [{ name: 'courseId', propertyType: 'CourseId' }],
       valueType: 'boolean', isList: false, initialValue: false,
       handlers: [{ event: 'CourseDefined', operation: 'set', value: true }],
     });
@@ -1563,22 +1553,25 @@ check('an import missing the definition arrays is refused, not silently accepted
     eq(foldEntityProperty(model(), log, 'Course', 'capacity', 'c1'), 4, 'still folds');
   });
 
-  advises('Course', /exactly one parameter typed CourseId/,
-    'a projection partitioned by nothing binds as a property, with an advisory', () => {
-      const { id, model } = open_(1);
-      // CourseNumbering is global — there is no instance for a
-      // property binding to name, and the entity now says so instead
-      // of the update refusing.
+  advises('Course', /reads "TenantExists" by CourseId, but "TenantRegistered", which it handles, is tagged by no CourseId/,
+    'a property whose events no instance can see binds, with an advisory', () => {
+      const { id, model } = open_(2);
+      // A course reads its properties tagged by its CourseId; a
+      // tenant's registration lists only a TenantId, so no course would
+      // ever see it — the entity says so instead of the update refusing.
       updateDefinition('entity-definition', id, 'Course', {
-        icon: '📚', properties: [{ name: 'numbering', projection: 'CourseNumbering' }],
+        icon: '📚', properties: [{ name: 'tenantExists', projection: 'TenantExists' }],
       });
       return model;
     });
 
-  advises('Course', /exactly one parameter typed CourseId/,
-    'reshaping a partition under a bound property saves, and the entity says what broke', () => {
+  advises('CourseCapacity', /declares parameters/,
+    'a projection that declares a partition of its own saves, with an advisory', () => {
       const { id, model } = open_(0);
-      const body = { ...deepClone(model()['projection-definitions'].CourseCapacity), parameters: [] };
+      const body = {
+        ...deepClone(model()['projection-definitions'].CourseCapacity),
+        parameters: [{ name: 'courseId', propertyType: 'CourseId' }],
+      };
       updateDefinition('projection-definition', id, 'CourseCapacity', body);
       return model;
     });
@@ -1604,11 +1597,7 @@ check('an import missing the definition arrays is refused, not silently accepted
     });
     addDefinition('projection-definition', id, 'CounterStatsView', {
       valueType: 'CounterStats', isList: false,
-      script: {
-        initialState: null,
-        tagFilter: ['CounterId:{counterId}'],
-        arguments: [{ name: 'counterId', propertyType: 'CounterId' }],
-      },
+      script: { initialState: null },
       handlers: [{
         event: 'Ticked',
         code: '{ count: ((state && state.count) || 0) + 1, odd: !(state && state.odd) }',
@@ -1656,8 +1645,6 @@ check('an import missing the definition arrays is refused, not silently accepted
       script: {
         initialState: { total: 0, last: null },
         exposes: 'total',
-        tagFilter: ['CounterId:{counterId}'],
-        arguments: [{ name: 'counterId', propertyType: 'CounterId' }],
       },
       handlers: [{
         event: 'Ticked',
@@ -1670,34 +1657,39 @@ check('an import missing the definition arrays is refused, not silently accepted
       { type: 'Ticked', data: { counterId: 'x2' } },
       { type: 'Ticked', data: { counterId: 'x1' } },
     ];
-    eq(foldProjection(model(), log, 'CounterAudit', { counterId: 'x1' }),
+    eq(foldProjection(model(), log, 'CounterAudit', { tags: [{ type: 'CounterId', value: 'x1' }] }),
       2, 'a reader sees the exposed field');
-    eq(foldProjectionState(model(), log, 'CounterAudit', { counterId: 'x1' }),
+    eq(foldProjectionState(model(), log, 'CounterAudit', { tags: [{ type: 'CounterId', value: 'x1' }] }),
       { total: 2, last: 'x1' }, 'the state fold keeps the bookkeeping');
-    eq(foldProjectionState(model(), [], 'CounterAudit', { counterId: 'x1' }),
+    eq(foldProjectionState(model(), [], 'CounterAudit', { tags: [{ type: 'CounterId', value: 'x1' }] }),
       { total: 0, last: null }, 'before anything happens, it is the initial state');
-    eq(foldProjectionState(model(), log, 'CounterTotal', { counterId: 'x1' }),
-      foldProjection(model(), log, 'CounterTotal', { counterId: 'x1' }),
+    eq(foldProjectionState(model(), log, 'CounterTotal', { tags: [{ type: 'CounterId', value: 'x1' }] }),
+      foldProjection(model(), log, 'CounterTotal', { tags: [{ type: 'CounterId', value: 'x1' }] }),
       'without `exposes` the two readings coincide');
   });
 
-  advises('Counter', /never interpolates "\{counterId\}"/,
-    'a scripted projection that ignores the instance binds, with an advisory', () => {
+  advises('GlobalTicks', /states a tag filter/,
+    'a script with a tag filter of its own saves, with an advisory', () => {
       const { id, model } = openScripted();
-      const body = {
+      addDefinition('projection-definition', id, 'GlobalTicks', {
         valueType: 'integer', isList: false,
-        script: {
-          initialState: 0, tagFilter: [],
-          arguments: [{ name: 'counterId', propertyType: 'CounterId' }],
-        },
+        script: { initialState: 0, tagFilter: [] },
         handlers: [{ event: 'Ticked', code: '(state || 0) + 1' }],
-      };
-      addDefinition('projection-definition', id, 'GlobalTicks', body);
-      updateDefinition('entity-definition', id, 'Counter', {
-        properties: [{ name: 'ticks', projection: 'GlobalTicks' }],
       });
       return model;
     });
+
+  check('a script sees the tags it is read by, and the arguments it is given', () => {
+    const { id, model } = openScripted();
+    addDefinition('projection-definition', id, 'TicksSeen', {
+      valueType: 'string', isList: false,
+      script: { initialState: '', arguments: [{ name: 'prefix', propertyType: 'string' }] },
+      handlers: [{ event: 'Ticked', code: 'args.prefix + tags.CounterId' }],
+    });
+    const log = [{ type: 'Ticked', data: { counterId: 'x1' } }];
+    eq(foldProjection(model(), log, 'TicksSeen', { tags: [{ type: 'CounterId', value: 'x1' }], args: { prefix: '#' } }),
+      '#x1', 'tags.CounterId and args.prefix');
+  });
 }
 
 // ---------------------------------------------------------------
@@ -1796,7 +1788,6 @@ check('an import missing the definition arrays is refused, not silently accepted
     const { id, model } = open_(1);
     const key = store_(id, model(), {
       projection: 'CourseNumbering',
-      arguments: {},
       given: [
         { event: 'CourseDefined', data: { courseId: 'c1', capacity: 5 } },
         { event: 'CourseDefined', data: { courseId: 'c2', capacity: 5 } },
@@ -1817,7 +1808,9 @@ check('an import missing the definition arrays is refused, not silently accepted
     // Three scenarios rather than three reads: the same Given, asked
     // three questions, each of which can drift without the others.
     const at = (tenantId) => {
-      const key = store_(id, model(), { projection: 'TenantCourseNumbering', arguments: { tenantId }, given });
+      const key = store_(id, model(), {
+        projection: 'TenantCourseNumbering', tags: [{ tagType: 'TenantId', tagValue: tenantId }], given,
+      });
       // Read the model *after* the write: a member expression evaluates
       // its object before its key, so indexing model() inline would
       // look in the snapshot taken before this scenario was added.
@@ -1830,10 +1823,10 @@ check('an import missing the definition arrays is refused, not silently accepted
     const { id, model } = open_(1);
     const given = [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 9 } }];
     const capacity = store_(id, model(), {
-      projection: 'CourseCapacity', arguments: { courseId: 'c1' }, given,
+      projection: 'CourseCapacity', tags: [{ tagType: 'CourseId', tagValue: 'c1' }], given,
     });
     const numbering = store_(id, model(), {
-      projection: 'CourseNumbering', arguments: {}, given,
+      projection: 'CourseNumbering', given,
     });
     eq(model()['projection-scenario-definitions'][capacity].then, 9, 'the bound one');
     eq(model()['projection-scenario-definitions'][numbering].then, 'c2',
@@ -1845,7 +1838,7 @@ check('an import missing the definition arrays is refused, not silently accepted
     // `null`, `0` and `[]` are answers. A Then read by truthiness would
     // call all three "not run yet".
     const key = store_(id, model(), {
-      projection: 'CourseSubscribedStudentIds', arguments: { courseId: 'c1' }, given: [],
+      projection: 'CourseSubscribedStudentIds', tags: [{ tagType: 'CourseId', tagValue: 'c1' }], given: [],
     });
     const stored = model()['projection-scenario-definitions'][key];
     eq(stored.then, [], 'an empty list is what it folds to');
@@ -1855,7 +1848,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   check('changing what a projection does is reported as drift', () => {
     const { id, model } = open_(1);
     const key = store_(id, model(), {
-      projection: 'CourseNumbering', arguments: {},
+      projection: 'CourseNumbering',
       given: [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 5 } }],
     });
     // Stop it advancing at all, so the fold is its initial value again
@@ -1871,7 +1864,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   check('a scenario never stops you deleting the projection it is about', () => {
     const { id, model } = open_(1);
     const key = store_(id, model(), {
-      projection: 'CourseNumbering', arguments: {}, given: [],
+      projection: 'CourseNumbering', given: [],
     });
     // Only the scenario and the command read it; drop the command first,
     // and the scenario must not be what refuses.
@@ -1892,7 +1885,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   check('renaming a projection carries every scenario about it', () => {
     const { id, model } = open_(1);
     const key = store_(id, model(), {
-      projection: 'CourseNumbering', arguments: {},
+      projection: 'CourseNumbering',
       given: [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 5 } }],
     });
     renameDefinition('projection-definition', id, 'CourseNumbering', 'CourseIds');
@@ -1904,7 +1897,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   check('renaming an event moves a projection scenario Given with it', () => {
     const { id, model } = open_(1);
     const key = store_(id, model(), {
-      projection: 'CourseNumbering', arguments: {},
+      projection: 'CourseNumbering',
       given: [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 5 } }],
     });
     renameDefinition('event-definition', id, 'CourseDefined', 'CourseOpened');
@@ -1920,9 +1913,10 @@ check('an import missing the definition arrays is refused, not silently accepted
       addDefinition('projection-scenario-definition', id, key, { given: [], then: null, ...body });
       return model()['projection-scenario-definitions'][key];
     };
-    eq(runProjectionScenario(model(), stored({ projection: 'TenantCourseNumbering', arguments: {} })).status,
-      'broken', 'read without a parameter it declares');
-    eq(runProjectionScenario(model(), stored({ projection: 'NoSuchThing', arguments: {} })).status,
+    eq(runProjectionScenario(model(), stored({
+      projection: 'TenantCourseNumbering', tags: [{ tagType: 'TenantId', tagValue: null }],
+    })).status, 'broken', 'read tagged by no value');
+    eq(runProjectionScenario(model(), stored({ projection: 'NoSuchThing' })).status,
       'broken', 'a projection this model does not define');
     // An extra argument is inert — the fold never reads it — so that
     // scenario stores as written and is judged only on its Then.
@@ -1960,7 +1954,9 @@ check('an import missing the definition arrays is refused, not silently accepted
       { event: 'Ticked', data: { counterId: 'x1' } },
     ];
     const at = (counterId) => {
-      const key = store_(id, model(), { projection: 'CounterTotal', arguments: { counterId }, given });
+      const key = store_(id, model(), {
+        projection: 'CounterTotal', tags: [{ tagType: 'CounterId', tagValue: counterId }], given,
+      });
       return model()['projection-scenario-definitions'][key].then;
     };
     eq([at('x1'), at('x2')], [2, 1], 'each counter counted its own');
@@ -1969,7 +1965,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   check('a projection scenario round-trips through an export', () => {
     const { id, model } = open_(1);
     store_(id, model(), {
-      projection: 'CourseNumbering', arguments: {},
+      projection: 'CourseNumbering',
       given: [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 5 } }],
     });
     const envelope = buildShareEnvelope(model(), []);
@@ -2231,7 +2227,6 @@ check('an import missing the definition arrays is refused, not silently accepted
   // it out or left the key off.
   addDefinition('projection-definition', id, 'AnordnungNotiz', {
     valueType: 'string', isList: false,
-    parameters: [{ name: 'anordnungId', propertyType: 'AnordnungId' }],
     initialValue: null,
     handlers: [{ event: 'AnordnungErzeugt', operation: 'set', value: { eventProperty: 'notiz' } }],
   });
@@ -2357,12 +2352,10 @@ check('every predefined model ships advisory-clean', () => {
       ],
     });
     addDefinition('projection-definition', id, 'CourseInstructorId', {
-      parameters: [{ name: 'courseId', propertyType: 'CourseId' }],
       valueType: 'InstructorId', isList: false, initialValue: null,
       handlers: [{ event: 'Assigned', operation: 'set', value: { eventProperty: 'instructorId' } }],
     });
     addDefinition('projection-definition', id, 'InstructedCourses', {
-      parameters: [{ name: 'instructorId', propertyType: 'InstructorId' }],
       valueType: 'CourseId', isList: true, initialValue: [],
       handlers: [
         { event: 'Assigned', operation: 'append', value: { eventProperty: 'courseId' } },
@@ -2592,7 +2585,7 @@ check('every predefined model ships advisory-clean', () => {
 
   check('a derived projection is its predicate, at every point in the log', () => {
     const model = build(DERIVED);
-    const pending = (log) => foldProjection(model, log, 'DocumentHasPendingChanges', { documentId: 'd1' });
+    const pending = (log) => foldProjection(model, log, 'DocumentHasPendingChanges', { tags: [{ type: 'DocumentId', value: 'd1' }] });
     eq(pending([]), false, 'null equals null before anything happened');
     eq(pending([added]), true, 'a fresh draft: "" differs from never-published');
     eq(pending([added, updated('a'), published('a')]), false, 'published, nothing since');
@@ -2651,22 +2644,6 @@ check('every predefined model ships advisory-clean', () => {
     renameDefinition('projection-definition', id, 'DocumentCurrentText', 'DocumentDraftText');
     const derived = model()['projection-definitions'].DocumentHasPendingChanges.derived;
     eq(derived.leftHandSide.projection, 'DocumentDraftText', 'the operand moved with the rename');
-  });
-
-  check('renaming parameters rewrites both halves of an operand\'s argument map', () => {
-    const { id, model } = open_(DERIVED);
-    // The operand's own `{parameterName}` values name the *owning*
-    // projection's parameters…
-    renameMember('projection-definition', id, 'DocumentHasPendingChanges', 'parameter',
-      'documentId', 'docId');
-    let derived = model()['projection-definitions'].DocumentHasPendingChanges.derived;
-    eq(derived.leftHandSide.arguments.documentId.parameterName, 'docId', 'the value half moved');
-    // …while its argument *keys* name the target's.
-    renameMember('projection-definition', id, 'DocumentCurrentText', 'parameter',
-      'documentId', 'docKey');
-    derived = model()['projection-definitions'].DocumentHasPendingChanges.derived;
-    eq('docKey' in derived.leftHandSide.arguments, true, 'the key half moved');
-    eq(derived.leftHandSide.arguments.docKey.parameterName, 'docId', 'carrying its value along');
   });
 
   check('derived is data, not code — the import gate stays closed', () => {
@@ -2759,6 +2736,63 @@ check('every predefined model ships advisory-clean', () => {
     eq(sandbox.withEditedTags(model(), tagged, { properties: [], tags: ['courseId'] }).tags, [], 'removed with its property');
     eq(sandbox.withEditedTags(model(), tagged, { properties: [prop('courseId', 'string')], tags: ['courseId'] }).tags,
       [], 'and with its tag type');
+  });
+}
+
+// ---------------------------------------------------------------
+// A projection declares no partition (8.0): the read names its tags,
+// so one fold is read per course and per student alike, and a read's
+// tags are keyed by the type of the value it is read by.
+// ---------------------------------------------------------------
+{
+  check('one fold, read by two different tags', () => {
+    const model = build(0);
+    const log = [];
+    drive(model, log, 'DefineCourse', { courseId: 'c1', capacity: 5 });
+    drive(model, log, 'DefineCourse', { courseId: 'c2', capacity: 5 });
+    drive(model, log, 'RegisterStudent', { studentId: 's1' });
+    drive(model, log, 'SubscribeStudentToCourse', { courseId: 'c1', studentId: 's1' });
+    drive(model, log, 'SubscribeStudentToCourse', { courseId: 'c2', studentId: 's1' });
+    const count = (type, value) => foldProjection(model, log, 'CourseSubscriptionCount', { tags: [{ type, value }] });
+    eq(count('CourseId', 'c1'), 1, 'per course');
+    eq(count('StudentId', 's1'), 2, 'per student — the same fold');
+    eq(foldProjection(model, log, 'CourseSubscriptionCount', {
+      tags: [{ type: 'CourseId', value: 'c2' }, { type: 'StudentId', value: 's1' }],
+    }), 1, 'and by both, ANDed');
+    eq(foldProjection(model, log, 'CourseSubscriptionCount', {}), 2, 'and by none, the whole log');
+  });
+
+  check('a read by a tag literal folds what the literal names', () => {
+    const { id, model } = open_(1);
+    const body = deepClone(model()['command-definitions'].ChangeCourseCapacity);
+    body.boundary.push({ alias: 'first', projection: 'CourseCapacity', tags: [{ tagType: 'CourseId', tagValue: 'c1' }] });
+    body.conditions.push({ leftHandSide: { alias: 'first' }, predicate: 'greaterThan', rightHandSide: 0, rejection: 'The first course has no seats' });
+    updateDefinition('command-definition', id, 'ChangeCourseCapacity', body);
+    const log = [];
+    drive(model(), log, 'DefineCourse', { capacity: 5 });
+    drive(model(), log, 'DefineCourse', { capacity: 7 });
+    const result = evaluateCommand(model(), log, 'ChangeCourseCapacity', { courseId: 'c2', newCapacity: 9 });
+    eq(result.outcome, 'published', 'it ran');
+    eq(result.reads.first, {
+      kind: 'projection', projection: 'CourseCapacity',
+      tags: [{ type: 'CourseId', value: 'c1' }], arguments: {}, value: 5,
+    }, 'the course the literal names, and the tag it was read by');
+    eq(sandbox.deriveDcb(model(), body).items.find((i) => i.alias === 'first').tags, ['CourseId:c1'],
+      'and the query says so');
+  });
+
+  check('a read by a value of no tag type, or by an untyped literal, is advised', () => {
+    const { id, model } = open_(0);
+    const body = deepClone(model()['command-definitions'].ChangeCourseCapacity);
+    body.boundary.push({ alias: 'odd', projection: 'CourseCapacity', tags: [{ parameterName: 'newCapacity' }] });
+    body.conditions.push({ leftHandSide: { alias: 'odd' }, predicate: 'greaterThan', rightHandSide: 0, rejection: 'Odd' });
+    updateDefinition('command-definition', id, 'ChangeCourseCapacity', body);
+    let found = sandbox.modelAdvisories(model()).filter((a) => a.name === 'ChangeCourseCapacity').map((a) => a.message);
+    eq(found.some((m) => /an integer — which is no tag type/.test(m)), true, found.join('; '));
+    body.boundary[body.boundary.length - 1].tags = ['c1'];
+    updateDefinition('command-definition', id, 'ChangeCourseCapacity', body);
+    found = sandbox.modelAdvisories(model()).filter((a) => a.name === 'ChangeCourseCapacity').map((a) => a.message);
+    eq(found.some((m) => /which says no tag type — write the literal with its type/.test(m)), true, found.join('; '));
   });
 }
 

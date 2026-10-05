@@ -1851,15 +1851,17 @@ function readParts(model, body, binding) {
       alias: binding.alias,
       projection: binding.projection,
       plural: false,
-      // One entry per name the projection declares, in its order. For
-      // a declared projection these arguments *are* the tags of its
-      // query; for a scripted one they are values its code reads, and
-      // the tags are stated in the script itself.
-      arguments: ((projection.script ? projection.script.arguments : projection.parameters) || [])
-        .map((p) => ({
-          name: p.name,
-          words: operandWords((binding.arguments || {})[p.name]),
-        })),
+      // What it is read by — the tags of its query, each a value in the
+      // command's scope or a literal with its type — and the values a
+      // script's code reads besides.
+      tags: (binding.tags || []).map((operand) => ({
+        operand,
+        words: operandSource(operand) === 'tag-literal' ? operandText(operand) : operandWords(operand),
+      })),
+      arguments: projectionSlots(projection).map((p) => ({
+        name: p.name,
+        words: operandWords((binding.arguments || {})[p.name]),
+      })),
     };
   }
   return {

@@ -209,7 +209,10 @@ function evCompileHandlerOperand(operand) {
 let evScriptsDisabled = false;
 function setScriptsDisabled(disabled) { evScriptsDisabled = !!disabled; }
 
-// One handler, as `(state, event, args) => nextState`.
+// One handler, as `(state, event, args, tags) => nextState`. `args` are
+// the read's `with (…)` values, `tags` the values it is tagged by, keyed
+// by tag type (`tags.Username`) — a script sees what it is read by, but
+// cannot change it.
 function evCompileHandler(handler, label) {
   if (handler.code !== undefined) {
     if (evScriptsDisabled) {
@@ -222,13 +225,13 @@ function evCompileHandler(handler, label) {
     // where authored JavaScript runs.
     let body;
     try {
-      body = new Function('state', 'event', 'args', `return (${handler.code}\n);`);
+      body = new Function('state', 'event', 'args', 'tags', `return (${handler.code}\n);`);
     } catch (error) {
       fail(`The script for "${handler.event}" on ${label} does not parse: ${error.message}`);
     }
-    return (state, event, args) => {
+    return (state, event, args, tags) => {
       try {
-        return body(state, event, args);
+        return body(state, event, args, tags);
       } catch (error) {
         return fail(`The script for "${handler.event}" on ${label} threw: ${error.message}`);
       }
@@ -293,34 +296,35 @@ function evCompileTarget(model, target, label) {
     ? (state) => (state === null || state === undefined ? state : state[script.exposes])
     : (state) => state;
 
-  const run = (events, args) => {
+  const run = (events, args, tags) => {
     let state = initial;
     for (const event of events) {
       const step = steps.get(event.type);
-      if (step) state = step(state, event, args || {});
+      if (step) state = step(state, event, args || {}, tags || {});
     }
     return state;
   };
 
   return {
     types: [...steps.keys()],
-    fold: (events, args) => evNormalize(expose(run(events, args))),
+    fold: (events, args, tags) => evNormalize(expose(run(events, args, tags))),
     // The same fold read before `exposes` trims it: the whole state,
     // bookkeeping included. Hidden from conditions — a statement about
     // the boundary, not about the person watching the script work.
-    foldState: (events, args) => evNormalize(run(events, args)),
+    foldState: (events, args, tags) => evNormalize(run(events, args, tags)),
   };
 }
 
 // ============================================================
 // Folding.
 //
-// There is one fold, `foldProjection`, and one way into it. Reading an
-// entity's property used to be a second entry with a partition of its
-// own — derived from the entity rather than supplied — and the two
-// agreeing was a thing that had to keep being true. Now the property is
-// a binding, so it fills in an argument and calls the same function:
-// nothing left to disagree.
+// There is one fold, `foldProjection`, and one way into it: a *read* —
+// `{ tags: [{ type, value }], args }`, the tags it is read by (each a
+// value and the tag type that is its key) and the values `with (…)`
+// feeds a script. A projection declares no partition (8.0), so the read
+// is the whole story of which events it folds. Reading an entity's
+// property is the same read, tagged by the instance's identifier:
+// nothing left for two paths to disagree about.
 //
 // `foldProjectionState` is not a second fold but a second reading of
 // the same one: the state before `exposes` trims it to the exposed
@@ -333,116 +337,60 @@ function evCompileTarget(model, target, label) {
 // a replay does not need.
 // ============================================================
 
-// One property of one entity instance — which is one projection, read
-// at the partition this instance names. The binding supplies the
-// instance as the projection's identifier-typed parameter (or, for a
-// scripted one, its identifier-typed argument), so this is
-// `foldProjection` with that one argument filled in and nothing else
-// different. There is no second fold path: an entity property and a
-// standalone read reach the same code by the same route.
+// One property of one entity instance — the projection it binds, read
+// tagged by the instance's identifier.
 function foldEntityProperty(model, events, entityName, propertyName, instanceId, args) {
   const entity = model['entity-definitions'][entityName];
   if (!entity) fail(`This model has no entity "${entityName}".`);
   const binding = (entity.properties || []).find((p) => p && p.name === propertyName);
   if (!binding) fail(`"${entityName}" has no property "${propertyName}".`);
-
-  const projection = model['projection-definitions'][binding.projection];
-  if (!projection) {
+  if (!model['projection-definitions'][binding.projection]) {
     fail(`"${entityName}.${propertyName}" binds projection "${binding.projection}", which this model no longer defines.`);
   }
-  const slot = entityIdSlotOf(model, entityName, projection);
-  if (!slot) {
-    fail(
-      `"${entityName}.${propertyName}" binds "${binding.projection}", which has no ` +
-      `${idTypeOf(model, entityName)}-typed slot for the instance.`
-    );
-  }
   return foldProjection(model, events, binding.projection, {
-    ...(args || {}),
-    [slot.name]: instanceId,
+    tags: [{ type: idTypeOf(model, entityName), value: instanceId }],
+    args: args || {},
   });
 }
 
-// One standalone projection, at one partition. A declared projection's
-// parameters *are* its tags, so the arguments a command supplied for
-// them select the events; a scripted one states its tags itself, with
-// those same arguments interpolated. Declare no parameters and there is
-// no tag, which is what a global numbering is.
-// The tags a projection's query carries for one concrete set of
-// argument values. Extracted from `foldProjection` so the interface
-// can *say* what a fold will read — a watched projection's query, with
-// the actual values in it — without running the fold to find out.
-function projectionQueryTags(model, projectionName, argumentValues, seen = []) {
-  const projection = model['projection-definitions'][projectionName];
-  if (!projection) fail(`This model has no projection "${projectionName}".`);
-
-  const values = argumentValues || {};
-
-  // A derived projection reads nothing itself: its query is the union
-  // of its operands', each read with this read's values resolved
-  // through the operand's own argument map.
-  const derived = derivedOf(projection);
-  if (derived) {
-    if (seen.includes(projectionName)) {
-      fail(`Projection "${projectionName}" derives from itself — a cycle has no value to start from.`);
-    }
-    const tags = new Set();
-    for (const operand of derivedOperands(derived)) {
-      if (operandSource(operand) !== 'projection-read') continue;
-      const resolved = evResolveDerivedArguments(model, projectionName, operand, values);
-      for (const tag of projectionQueryTags(model, operand.projection, resolved, [...seen, projectionName])) {
-        tags.add(tag);
-      }
-    }
-    return [...tags];
+// One tag value of a read, as the leaves it renders to — a scalar tag
+// type renders one tag, a record one per tag-marked field — paired with
+// the type each leaf is keyed by.
+function evReadTagLeaves(model, projectionName, tag) {
+  const normalized = evNormalize(tag.value);
+  // null has no tag — "Type:null" would be one phantom read every unset
+  // value shares.
+  if (normalized === null || normalized === undefined) {
+    fail(`Projection "${projectionName}" was read tagged by no value (null) for ${tag.type}.`);
   }
+  const leaves = idLeavesOfType(model, tag.type);
+  if (!leaves.length) fail(`Projection "${projectionName}" was read tagged by a ${tag.type}, which is no tag type.`);
+  return leaves.map((leaf) => ({
+    type: leaf.identifierType,
+    value: leaf.field === null ? normalized : (normalized || {})[leaf.field],
+  }));
+}
 
-  const script = scriptOf(projection);
-  // A tag filter's `:` is authoring syntax splitting "which identifier"
-  // from "what value" — not the tag's actual separator, which is that
-  // identifier type's own `tagSchema` and may differ. So the value half
-  // is interpolated first, then rendered through `renderTag`, the same
-  // path a declared parameter's tag takes below.
-  return script
-    ? (script.tagFilter || []).map((template) => {
-      const match = TAG_FILTER_RE.exec(String(template || ''));
-      if (!match) return String(template);
-      // A placeholder names an argument, optionally reaching one field
-      // into it — `{courseId.tenant}` for a composite identifier whose
-      // tag comes from one of its leaves.
-      const valueText = match[2].replace(TAG_PLACEHOLDER_RE, (whole, path) => {
-        const [root, ...fields] = path.split('.');
-        if (values[root] === undefined) return whole;
-        const held = fields.reduce(
-          (value, field) => (value === null || value === undefined ? value : value[field]),
-          evNormalize(values[root])
-        );
-        return String(evNormalize(held));
-      });
-      const identifierType = identifierTypeOf(model, match[1]);
-      return identifierType ? renderTag(identifierType, valueText) : `${match[1]}:${valueText}`;
-    })
-    : (projection.parameters || []).flatMap((parameter) => {
-      const value = values[parameter.name];
-      if (value === undefined) {
-        fail(`Projection "${projectionName}" was read without its parameter "${parameter.name}".`);
-      }
-      const normalized = evNormalize(value);
-      // A parameter is a tag, and null has no tag — "Type:null" would
-      // be one phantom partition every unset value shares.
-      if (normalized === null) {
-        fail(`Projection "${projectionName}" was read with no value (null) for its parameter "${parameter.name}".`);
-      }
-      const leaves = idLeavesOfType(model, parameter.propertyType);
-      if (!leaves.length) return [`${parameter.propertyType}:${normalized}`];
-      // A composite parameter contributes the union of its components'
-      // own tags — one per leaf, each rendered through that leaf's own
-      // tagSchema, never renamespaced under the parameter's type.
-      return leaves.map((leaf) => {
-        const leafValue = leaf.field === null ? normalized : (normalized || {})[leaf.field];
-        return renderTag(identifierTypeOf(model, leaf.identifierType), String(leafValue));
-      });
-    });
+// The tags a read's query carries, rendered. Extracted so the interface
+// can *say* what a fold will read — a watched projection's query, with
+// the actual values in it — without running the fold to find out. A
+// derived projection's operands are read by the same tags, so its query
+// is theirs.
+function projectionQueryTags(model, projectionName, read) {
+  if (!model['projection-definitions'][projectionName]) fail(`This model has no projection "${projectionName}".`);
+  return [...new Set(((read && read.tags) || [])
+    .flatMap((tag) => evReadTagLeaves(model, projectionName, tag))
+    .map((leaf) => renderTag(identifierTypeOf(model, leaf.type), String(leaf.value))))];
+}
+
+// What a script sees of the tags it is read by: one value per tag type,
+// `tags.CourseId`.
+function evScriptTags(model, projectionName, read) {
+  const out = {};
+  for (const tag of (read && read.tags) || []) {
+    for (const leaf of evReadTagLeaves(model, projectionName, tag)) out[leaf.type] = leaf.value;
+  }
+  return out;
 }
 
 // Events reach a fold carrying an explicit key for every optional
@@ -462,66 +410,45 @@ function evWithExplicitOptionals(model, event) {
   return data === event.data ? event : { ...event, data };
 }
 
-function foldProjection(model, events, projectionName, argumentValues, seen = []) {
+function foldProjection(model, events, projectionName, read, seen = []) {
   const projection = model['projection-definitions'][projectionName];
   if (projection && derivedOf(projection)) {
-    return evDeriveProjection(model, events, projectionName, argumentValues, seen);
+    return evDeriveProjection(model, events, projectionName, read, seen);
   }
-  const { compiled, selected, values } = evProjectionFold(model, events, projectionName, argumentValues);
-  return compiled.fold(selected, values);
+  const { compiled, selected, args, tags } = evProjectionFold(model, events, projectionName, read);
+  return compiled.fold(selected, args, tags);
 }
 
-function foldProjectionState(model, events, projectionName, argumentValues) {
+function foldProjectionState(model, events, projectionName, read) {
   const projection = model['projection-definitions'][projectionName];
   if (projection && derivedOf(projection)) {
     // A derived projection keeps no bookkeeping: its whole state is
     // the one boolean its predicate yields.
-    return evDeriveProjection(model, events, projectionName, argumentValues);
+    return evDeriveProjection(model, events, projectionName, read);
   }
-  const { compiled, selected, values } = evProjectionFold(model, events, projectionName, argumentValues);
-  return compiled.foldState(selected, values);
-}
-
-// One argument map of a derived operand, resolved to values: each
-// `{parameterName}` names one of the derived projection's own
-// parameters — supplied by whoever read it — and anything else is a
-// literal.
-function evResolveDerivedArguments(model, projectionName, operand, values) {
-  const resolved = {};
-  for (const [name, argument] of Object.entries(operand.arguments || {})) {
-    if (operandSource(argument) === 'parameter') {
-      const held = values[argument.parameterName];
-      if (held === undefined) {
-        fail(`Projection "${projectionName}" was read without its parameter "${argument.parameterName}".`);
-      }
-      resolved[name] = argument.property
-        ? (evNormalize(held) || {})[argument.property]
-        : held;
-      continue;
-    }
-    resolved[name] = evNormalize(argument);
-  }
-  return resolved;
+  const { compiled, selected, args, tags } = evProjectionFold(model, events, projectionName, read);
+  return compiled.foldState(selected, args, tags);
 }
 
 // A derived projection is not folded but computed: each operand that
-// reads a projection folds it (at the partition this read's values
-// name), and the predicate decides. `seen` is the cycle guard — a
-// value derived through itself has nowhere to start, and the advisory
-// said so before this error does.
-function evDeriveProjection(model, events, projectionName, argumentValues, seen = []) {
+// reads a projection folds it — tagged by whatever this read is tagged
+// by, with the operand's own literal arguments — and the predicate
+// decides. `seen` is the cycle guard — a value derived through itself
+// has nowhere to start, and the advisory said so before this error does.
+function evDeriveProjection(model, events, projectionName, read, seen = []) {
   if (seen.includes(projectionName)) {
     fail(`Projection "${projectionName}" derives from itself — a cycle has no value to start from.`);
   }
   const projection = model['projection-definitions'][projectionName];
   const derived = derivedOf(projection);
-  const values = argumentValues || {};
 
   const readOperand = (operand) => {
     if (operandSource(operand) !== 'projection-read') return evNormalize(operand);
+    const args = {};
+    for (const [name, argument] of Object.entries(operand.arguments || {})) args[name] = evNormalize(argument);
     return foldProjection(
       model, events, operand.projection,
-      evResolveDerivedArguments(model, projectionName, operand, values),
+      { tags: (read && read.tags) || [], args },
       [...seen, projectionName]
     );
   };
@@ -531,17 +458,20 @@ function evDeriveProjection(model, events, projectionName, argumentValues, seen 
   return evApplyPredicate(derived, left, right);
 }
 
-function evProjectionFold(model, events, projectionName, argumentValues) {
+function evProjectionFold(model, events, projectionName, read) {
   const projection = model['projection-definitions'][projectionName];
   if (!projection) fail(`This model has no projection "${projectionName}".`);
 
-  const values = argumentValues || {};
-  const tags = projectionQueryTags(model, projectionName, values);
-
+  const queryTags = projectionQueryTags(model, projectionName, read);
   const compiled = evCompileTarget(model, projection, `projection "${projectionName}"`);
-  const selected = events.filter((event) => evMatchesTags(model, event, tags))
+  const selected = events.filter((event) => evMatchesTags(model, event, queryTags))
     .map((event) => evWithExplicitOptionals(model, event));
-  return { compiled, selected, values };
+  return {
+    compiled,
+    selected,
+    args: (read && read.args) || {},
+    tags: evScriptTags(model, projectionName, read),
+  };
 }
 
 // ============================================================
@@ -623,19 +553,32 @@ function evReadOperand(operand, scope) {
 
 function evResolveBinding(model, events, body, binding, scope) {
   if (binding.projection) {
-    const values = {};
+    // Each tag is a value and the type it is read by — the type comes
+    // from the operand (`tagOperandType`), which is what makes it the
+    // tag's key.
+    const tags = (binding.tags || []).map((operand, index) => {
+      const resolved = tagOperandType(model, body, operand);
+      if (!resolved) fail(`Binding "${binding.alias}" is tagged by ${operandText(operand)}, whose type cannot be worked out.`);
+      const value = operandSource(operand) === 'tag-literal' ? operand.tagValue : evReadOperand(operand, scope);
+      if (resolved.isList || Array.isArray(value)) {
+        fail(`Binding "${binding.alias}" is tagged by ${operandText(operand)}, a list — tag ${index + 1} takes one value.`);
+      }
+      return { type: resolved.propertyType, value };
+    });
+    const args = {};
     for (const [name, operand] of Object.entries(binding.arguments || {})) {
-      values[name] = evReadOperand(operand, scope);
+      args[name] = evReadOperand(operand, scope);
     }
     scope.bound[binding.alias] = {
       kind: 'projection',
       projection: binding.projection,
       // Kept beside the value because they are what makes it
-      // reproducible: the value alone says what was read, and the
-      // arguments say at which partition, which is the half a reader
-      // needs to go and look at it themselves.
-      arguments: values,
-      value: foldProjection(model, events, binding.projection, values),
+      // reproducible: the value alone says what was read, and the tags
+      // and arguments say how, which is the half a reader needs to go
+      // and look at it themselves.
+      tags,
+      arguments: args,
+      value: foldProjection(model, events, binding.projection, { tags, args }),
     };
     return;
   }
@@ -967,6 +910,7 @@ function evDescribeReads(scope) {
       out[alias] = {
         kind: 'projection',
         projection: binding.projection,
+        tags: binding.tags || [],
         arguments: binding.arguments || {},
         value: binding.value,
       };
@@ -1137,7 +1081,10 @@ function deriveProjectionScenarioThen(model, spec) {
   if (!model['projection-definitions'][spec.projection]) {
     fail(`This scenario is about "${spec.projection}", which this model no longer defines.`);
   }
-  return foldProjection(model, scenarioLog(spec), spec.projection, spec.arguments || {});
+  return foldProjection(model, scenarioLog(spec), spec.projection, {
+    tags: (spec.tags || []).map((tag) => ({ type: tag.tagType, value: tag.tagValue })),
+    args: spec.arguments || {},
+  });
 }
 
 // `{ status, expected, actual, reason }` — the projection analogue of

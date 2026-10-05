@@ -117,12 +117,6 @@
   "projectionDefinitions": [
     {
       "name": "DocumentLifecycle",
-      "parameters": [
-        {
-          "name": "documentId",
-          "propertyType": "DocumentId"
-        }
-      ],
       "valueType": "DocumentLifecycle",
       "isList": false,
       "initialValue": {
@@ -154,12 +148,6 @@
     },
     {
       "name": "DocumentCurrentText",
-      "parameters": [
-        {
-          "name": "documentId",
-          "propertyType": "DocumentId"
-        }
-      ],
       "valueType": "string",
       "isList": false,
       "initialValue": null,
@@ -180,12 +168,6 @@
     },
     {
       "name": "DocumentPublishedText",
-      "parameters": [
-        {
-          "name": "documentId",
-          "propertyType": "DocumentId"
-        }
-      ],
       "valueType": "string",
       "isList": false,
       "initialValue": null,
@@ -683,9 +665,12 @@
       "id": "92754bc8-d112-4520-acf8-f8502a99a83a",
       "name": "holds the proven text after publishing",
       "projection": "DocumentPublishedText",
-      "arguments": {
-        "documentId": "d1"
-      },
+      "tags": [
+        {
+          "tagType": "DocumentId",
+          "tagValue": "d1"
+        }
+      ],
       "given": [
         {
           "event": "DocumentAdded",

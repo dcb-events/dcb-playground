@@ -185,12 +185,6 @@
   "projectionDefinitions": [
     {
       "name": "StudentExists",
-      "parameters": [
-        {
-          "name": "studentId",
-          "propertyType": "StudentId"
-        }
-      ],
       "valueType": "boolean",
       "isList": false,
       "initialValue": false,
@@ -204,12 +198,6 @@
     },
     {
       "name": "StudentSubscriptionCount",
-      "parameters": [
-        {
-          "name": "studentId",
-          "propertyType": "StudentId"
-        }
-      ],
       "valueType": "integer",
       "isList": false,
       "initialValue": 0,
@@ -228,12 +216,6 @@
     },
     {
       "name": "CourseStatus",
-      "parameters": [
-        {
-          "name": "courseId",
-          "propertyType": "CourseId"
-        }
-      ],
       "valueType": "CourseStatus",
       "isList": false,
       "initialValue": {
@@ -258,12 +240,6 @@
     },
     {
       "name": "CourseCapacity",
-      "parameters": [
-        {
-          "name": "courseId",
-          "propertyType": "CourseId"
-        }
-      ],
       "valueType": "integer",
       "isList": false,
       "initialValue": 0,
@@ -286,12 +262,6 @@
     },
     {
       "name": "CourseSubscriptionCount",
-      "parameters": [
-        {
-          "name": "courseId",
-          "propertyType": "CourseId"
-        }
-      ],
       "valueType": "integer",
       "isList": false,
       "initialValue": 0,
@@ -310,12 +280,6 @@
     },
     {
       "name": "CourseSubscribedStudentIds",
-      "parameters": [
-        {
-          "name": "courseId",
-          "propertyType": "CourseId"
-        }
-      ],
       "valueType": "StudentId",
       "isList": true,
       "initialValue": [],
@@ -338,7 +302,6 @@
     },
     {
       "name": "CourseNumbering",
-      "parameters": [],
       "valueType": "CourseId",
       "isList": false,
       "initialValue": "c1",
@@ -371,7 +334,7 @@
         {
           "alias": "courseNumbering",
           "projection": "CourseNumbering",
-          "arguments": {}
+          "tags": []
         }
       ],
       "conditions": [],
@@ -710,7 +673,6 @@
       "id": "a29c2e1f-6b04-4f5a-9d13-5f0a2d7c8e41",
       "name": "issues c1 before anything has happened",
       "projection": "CourseNumbering",
-      "arguments": {},
       "given": [],
       "then": "c1"
     },
@@ -718,7 +680,6 @@
       "id": "f47b9c30-2a8d-4e16-b5c7-9e3a1d604f28",
       "name": "issues c3 once two courses exist",
       "projection": "CourseNumbering",
-      "arguments": {},
       "given": [
         {
           "event": "CourseDefined",

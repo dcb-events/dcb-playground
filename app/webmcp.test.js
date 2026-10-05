@@ -355,7 +355,7 @@ async function call(name, args) {
       'event ProbeHappened { probeId: ProbeId } tags probeId',
       'entity Probe {}',
       'command Probe2(probeId: ProbeId) {',
-      '  alias probe = Probe[probeId]',
+      '  alias probe = Probe tagged probeId',
       '  emit ProbeHappened { probeId }',
       '}',
     ].join('\n');

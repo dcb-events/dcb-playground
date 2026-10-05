@@ -121,12 +121,6 @@
   "projectionDefinitions": [
     {
       "name": "DocumentLifecycle",
-      "parameters": [
-        {
-          "name": "documentId",
-          "propertyType": "DocumentId"
-        }
-      ],
       "valueType": "DocumentLifecycle",
       "isList": false,
       "initialValue": {
@@ -158,12 +152,6 @@
     },
     {
       "name": "DocumentCurrentText",
-      "parameters": [
-        {
-          "name": "documentId",
-          "propertyType": "DocumentId"
-        }
-      ],
       "valueType": "string",
       "isList": false,
       "initialValue": null,
@@ -184,12 +172,6 @@
     },
     {
       "name": "DocumentPublishedText",
-      "parameters": [
-        {
-          "name": "documentId",
-          "propertyType": "DocumentId"
-        }
-      ],
       "valueType": "string",
       "isList": false,
       "initialValue": null,
@@ -205,31 +187,15 @@
     },
     {
       "name": "DocumentHasPendingChanges",
-      "parameters": [
-        {
-          "name": "documentId",
-          "propertyType": "DocumentId"
-        }
-      ],
       "valueType": "boolean",
       "isList": false,
       "derived": {
         "leftHandSide": {
-          "projection": "DocumentCurrentText",
-          "arguments": {
-            "documentId": {
-              "parameterName": "documentId"
-            }
-          }
+          "projection": "DocumentCurrentText"
         },
         "predicate": "equals",
         "rightHandSide": {
-          "projection": "DocumentPublishedText",
-          "arguments": {
-            "documentId": {
-              "parameterName": "documentId"
-            }
-          }
+          "projection": "DocumentPublishedText"
         },
         "negate": true
       }
@@ -694,9 +660,12 @@
       "id": "2b0bdd3f-2ad4-4250-a3cb-f2c8d48ec542",
       "name": "a fresh draft has pending changes — nothing was ever published",
       "projection": "DocumentHasPendingChanges",
-      "arguments": {
-        "documentId": "d1"
-      },
+      "tags": [
+        {
+          "tagType": "DocumentId",
+          "tagValue": "d1"
+        }
+      ],
       "given": [
         {
           "event": "DocumentAdded",
@@ -711,9 +680,12 @@
       "id": "6b17dd6b-fdf3-462b-ad34-7992e0f85a91",
       "name": "nothing pending right after publishing",
       "projection": "DocumentHasPendingChanges",
-      "arguments": {
-        "documentId": "d1"
-      },
+      "tags": [
+        {
+          "tagType": "DocumentId",
+          "tagValue": "d1"
+        }
+      ],
       "given": [
         {
           "event": "DocumentAdded",
@@ -742,9 +714,12 @@
       "id": "8b05db3c-82fd-401a-ad72-cdbe6a762bd4",
       "name": "a change makes it pending",
       "projection": "DocumentHasPendingChanges",
-      "arguments": {
-        "documentId": "d1"
-      },
+      "tags": [
+        {
+          "tagType": "DocumentId",
+          "tagValue": "d1"
+        }
+      ],
       "given": [
         {
           "event": "DocumentAdded",
@@ -780,9 +755,12 @@
       "id": "27e92137-69c8-4ab2-adfe-0ca4fad3892d",
       "name": "re-typing the published text clears it — no event says so",
       "projection": "DocumentHasPendingChanges",
-      "arguments": {
-        "documentId": "d1"
-      },
+      "tags": [
+        {
+          "tagType": "DocumentId",
+          "tagValue": "d1"
+        }
+      ],
       "given": [
         {
           "event": "DocumentAdded",

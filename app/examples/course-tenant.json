@@ -237,12 +237,6 @@
   "projectionDefinitions": [
     {
       "name": "StudentExists",
-      "parameters": [
-        {
-          "name": "studentId",
-          "propertyType": "StudentId"
-        }
-      ],
       "valueType": "boolean",
       "isList": false,
       "initialValue": false,
@@ -256,12 +250,6 @@
     },
     {
       "name": "StudentSubscriptionCount",
-      "parameters": [
-        {
-          "name": "studentId",
-          "propertyType": "StudentId"
-        }
-      ],
       "valueType": "integer",
       "isList": false,
       "initialValue": 0,
@@ -280,12 +268,6 @@
     },
     {
       "name": "CourseStatus",
-      "parameters": [
-        {
-          "name": "courseId",
-          "propertyType": "CourseId"
-        }
-      ],
       "valueType": "CourseStatus",
       "isList": false,
       "initialValue": {
@@ -310,12 +292,6 @@
     },
     {
       "name": "CourseCapacity",
-      "parameters": [
-        {
-          "name": "courseId",
-          "propertyType": "CourseId"
-        }
-      ],
       "valueType": "integer",
       "isList": false,
       "initialValue": 0,
@@ -338,12 +314,6 @@
     },
     {
       "name": "CourseSubscriptionCount",
-      "parameters": [
-        {
-          "name": "courseId",
-          "propertyType": "CourseId"
-        }
-      ],
       "valueType": "integer",
       "isList": false,
       "initialValue": 0,
@@ -362,12 +332,6 @@
     },
     {
       "name": "CourseSubscribedStudentIds",
-      "parameters": [
-        {
-          "name": "courseId",
-          "propertyType": "CourseId"
-        }
-      ],
       "valueType": "StudentId",
       "isList": true,
       "initialValue": [],
@@ -390,7 +354,6 @@
     },
     {
       "name": "CourseNumbering",
-      "parameters": [],
       "valueType": "CourseId",
       "isList": false,
       "initialValue": "c1",
@@ -408,12 +371,6 @@
     },
     {
       "name": "TenantExists",
-      "parameters": [
-        {
-          "name": "tenantId",
-          "propertyType": "TenantId"
-        }
-      ],
       "valueType": "boolean",
       "isList": false,
       "initialValue": false,
@@ -427,12 +384,6 @@
     },
     {
       "name": "TenantCourseNumbering",
-      "parameters": [
-        {
-          "name": "tenantId",
-          "propertyType": "TenantId"
-        }
-      ],
       "valueType": "CourseNumber",
       "isList": false,
       "initialValue": "1",
@@ -478,16 +429,16 @@
         {
           "alias": "courseNumbering",
           "projection": "CourseNumbering",
-          "arguments": {}
+          "tags": []
         },
         {
           "alias": "tenantCourseNumbering",
           "projection": "TenantCourseNumbering",
-          "arguments": {
-            "tenantId": {
+          "tags": [
+            {
               "parameterName": "tenantId"
             }
-          }
+          ]
         }
       ],
       "conditions": [

@@ -257,9 +257,9 @@ function build(index) {
     eq(model()['projection-definitions'].Untouched.handlers, [], 'nothing moves it yet');
   });
 
-  check("a blank entity property's draft is partitioned by that entity", () => {
+  check("a blank entity property's draft declares no partition — the entity reads it by its id", () => {
     const draft = blankProjectionDraft(model(), 'Course');
-    eq(draft.parameters, [{ name: 'courseId', propertyType: 'CourseId' }], 'the instance it is kept for');
+    eq('parameters' in draft, false, 'nothing to declare');
   });
 
   check('a blank draft starts where its type starts, explicitly', () => {
@@ -295,18 +295,18 @@ function build(index) {
       'a record a scripted projection folded to, as the JSON it is');
   });
 
-  check('a row says what a projection is kept per, as the tag it is', () => {
-    const cells = partitionCells(model(), model()['projection-definitions'].ProductCurrentPrice);
-    eq(cells.length, 1, 'one parameter, one tag');
-    eq(textOf(cells[0]).includes('product id'), true, `got: ${textOf(cells[0])}`);
+  check('a row says what a projection is read by, as the tag it is', () => {
+    const cells = partitionCells(model(), 'ProductCurrentPrice');
+    eq(cells.length, 1, 'one way it is read, one tag');
+    eq(textOf(cells[0]).includes('Product id'), true, `got: ${textOf(cells[0])}`);
     eq(cells[0].className, 'chip tag', 'drawn as a tag');
   });
 
-  check('a projection kept once says so as an absence, not as a tag', () => {
-    const cells = partitionCells(model(), { valueType: 'string', parameters: [], handlers: [] });
+  check('a projection nothing reads says so as an absence, not as a tag', () => {
+    const cells = partitionCells(model(), 'NoSuchProjection');
     eq(cells.length, 1, 'one cell');
     eq(cells[0].className, 'chip unset', 'dashed and unfilled, like every other nothing here');
-    eq(textOf(cells[0]), 'kept once', 'and says what it is');
+    eq(textOf(cells[0]), 'not read', 'and says what it is');
   });
 
   check('a type reads the same whether it is a member or a projection', () => {
@@ -498,9 +498,6 @@ function build(index) {
       }
       for (const projection of envelope.projectionDefinitions) {
         conforms(projection, 'ProjectionDefinition', `projection ${projection.name}`, report);
-        for (const parameter of projection.parameters || []) {
-          conforms(parameter, 'ProjectionParameter', `${projection.name}(${parameter.name})`, report);
-        }
         if (projection.script) {
           conforms(projection.script, 'ProjectionScript', `${projection.name}'s script`, report);
         }
@@ -588,8 +585,12 @@ function build(index) {
       if (problems.length) throw new Error(problems.join('; '));
     });
 
+    // An instance reads its properties tagged by its identifier, so a
+    // property fits when every event its projection handles is tagged
+    // by one.
     check(`${slug} binds every property to a projection that exists and fits`, () => {
       const projections = new Map(envelope.projectionDefinitions.map((p) => [p.name, p]));
+      const events = new Map(envelope.eventDefinitions.map((e) => [e.name, e]));
       const problems = [];
       for (const entity of envelope.entityDefinitions) {
         const idType = entity.identifierType || (entity.name + 'Id');
@@ -599,9 +600,13 @@ function build(index) {
             problems.push(`${entity.name}.${binding.name} binds the unknown ${binding.projection}`);
             continue;
           }
-          const slots = projection.script ? projection.script.arguments : projection.parameters;
-          if (!(slots || []).some((s) => s.propertyType === idType)) {
-            problems.push(`${entity.name}.${binding.name} binds ${binding.projection}, which has no ${idType}`);
+          for (const handler of projection.handlers || []) {
+            const event = events.get(handler.event) || { properties: [], tags: [] };
+            const tagged = (event.tags || []).some((path) => {
+              const property = (event.properties || []).find((p) => p.name === path);
+              return property && property.propertyType === idType;
+            });
+            if (!tagged) problems.push(`${entity.name}.${binding.name}: ${handler.event} is tagged by no ${idType}`);
           }
         }
       }
@@ -650,7 +655,7 @@ function build(index) {
     eq(after['entity-definitions'].Course.properties.slice(-1),
       [{ name: 'seatCount', projection: 'CourseSeatCount' }], 'the binding');
     const projection = after['projection-definitions'].CourseSeatCount;
-    eq(projection.parameters, [{ name: 'courseId', propertyType: 'CourseId' }], 'partitioned by the instance');
+    eq('parameters' in projection, false, 'no partition — the entity reads it tagged by the instance');
     eq(projection.initialValue, 0, 'starting where an integer starts');
     eq(projection.handlers, [], 'nothing moves it yet');
   });
@@ -665,7 +670,7 @@ function build(index) {
     });
     const log = [{ type: 'CourseDefined', data: { courseId: 'c1', capacity: 12 } }];
     eq(sandbox.foldEntityProperty(model(), log, 'Course', 'seatCount', 'c1'), 12, 'folded through the binding');
-    eq(sandbox.foldProjection(model(), log, 'CourseSeatCount', { courseId: 'c1' }), 12, 'and read directly');
+    eq(sandbox.foldProjection(model(), log, 'CourseSeatCount', { tags: [{ type: 'CourseId', value: 'c1' }] }), 12, 'and read directly');
   });
 
   check('renaming a property moves what reads it, not the projection', () => {
@@ -712,7 +717,7 @@ function build(index) {
     const projection = after['projection-definitions'].VenueExists;
     eq(projection.valueType, 'boolean', 'a boolean — no enum, no custom type');
     eq(after['custom-type-definitions'].VenueStatus, undefined, 'nothing named VenueStatus exists');
-    eq(projection.parameters, [{ name: 'venueId', propertyType: 'VenueId' }], 'kept per venue');
+    eq('parameters' in projection, false, 'read per venue by the venue, not declared per venue');
     eq(sandbox.foldEntityProperty(after, [], 'Venue', 'exists', 'v1'), false, 'and folds');
   });
 
@@ -768,7 +773,6 @@ function build(index) {
     const id = active().id;
     sandbox.createEntity(active(), 'stage');
     sandbox.addDefinition('projection-definition', id, 'StageExistsCount', {
-      parameters: [{ name: 'stageId', propertyType: 'StageId' }],
       valueType: 'integer', isList: false, initialValue: 0, handlers: [],
     });
     sandbox.updateDefinition('entity-definition', id, 'Stage', {
@@ -832,8 +836,7 @@ function build(index) {
       // the editor writes it back in.
       script: {
         initialState: 0,
-        arguments: [{ name: 'courseId', propertyType: 'CourseId' }],
-        tagFilter: ['CourseId:{courseId}'],
+        arguments: [{ name: 'since', propertyType: 'integer' }],
       },
       handlers: [{ event: 'CourseDefined', code: '(state || 0) + 1' }],
     });
@@ -877,7 +880,7 @@ function build(index) {
   });
 
   check('a watched projection folds at the position being looked at', () => {
-    const watch = sandbox.projectionWatch('CourseNumbering', {});
+    const watch = sandbox.projectionWatch('CourseNumbering', []);
     session.at = null;
     eq(sandbox.foldWatch(active(), watch), { value: 'c3' }, 'at the end, the next to issue');
     session.at = 1;
@@ -888,12 +891,12 @@ function build(index) {
   });
 
   check('watching is toggled by one identity, arguments included', () => {
-    const global_ = sandbox.projectionWatch('CourseNumbering', {});
+    const global_ = sandbox.projectionWatch('CourseNumbering', []);
     eq(sandbox.isPinned(global_), false, 'not watched to begin with');
     sandbox.togglePinned(global_);
     eq(sandbox.isPinned(global_), true, 'watched');
     // The same projection at a different partition is a different watch.
-    eq(sandbox.isPinned(sandbox.projectionWatch('CourseNumbering', { tenantId: 't1' })), false,
+    eq(sandbox.isPinned(sandbox.projectionWatch('CourseNumbering', [{ tagType: 'TenantId', tagValue: 't1' }])), false,
       'another partition is another thing to watch');
     sandbox.togglePinned(global_);
     eq(sandbox.isPinned(global_), false, 'unwatched');
@@ -901,7 +904,7 @@ function build(index) {
 
   check('an entity instance and a projection are both watchable, side by side', () => {
     sandbox.togglePinned(sandbox.entityWatch('CourseId:c1'));
-    sandbox.togglePinned(sandbox.projectionWatch('CourseNumbering', {}));
+    sandbox.togglePinned(sandbox.projectionWatch('CourseNumbering', []));
     eq(session.pinned.map((w) => w.kind), ['entity', 'projection'], 'one of each');
     sandbox.render();
   });
@@ -913,7 +916,7 @@ function build(index) {
 
   check('a projection can be watched before anything has happened', () => {
     sandbox.sessionReset();
-    eq(sandbox.foldWatch(active(), sandbox.projectionWatch('CourseNumbering', {})), { value: 'c1' },
+    eq(sandbox.foldWatch(active(), sandbox.projectionWatch('CourseNumbering', [])), { value: 'c1' },
       'its initial value, which is the whole of what it states');
     sandbox.state.view = 'sandbox';
     sandbox.render();
@@ -922,12 +925,12 @@ function build(index) {
 
   check('the sandbox renders with things watched', () => {
     store.set('dcb-playground:experimental', 'on');
-    sandbox.togglePinned(sandbox.projectionWatch('CourseNumbering', {}));
+    sandbox.togglePinned(sandbox.projectionWatch('CourseNumbering', []));
     sandbox.state.view = 'sandbox';
     sandbox.render();
     // And with the watch picker open, which is the path a projection
     // nothing read is added through.
-    sandbox.state.watchDraft = { projection: 'CourseNumbering', arguments: {} };
+    sandbox.state.watchDraft = { projection: 'CourseNumbering', tags: [], arguments: {} };
     sandbox.render();
     sandbox.state.watchDraft = null;
     sandbox.sessionReset();
@@ -947,18 +950,18 @@ function build(index) {
     sandbox.render = () => { screen = sandbox.watchProjectionAdder(active(), names); };
     try {
       const watchAt = (id) => {
-        sandbox.state.watchDraft = { projection: 'CourseCapacity', arguments: {} };
+        sandbox.state.watchDraft = { projection: 'CourseCapacity', tags: [{ tagType: 'CourseId', tagValue: '' }], arguments: {} };
         sandbox.render();
         findAll(screen, (n) => n.tag === 'input')[0].onchange({ target: { value: id } });
         findAll(screen, (n) => n.tag === 'button' && textOf(n) === 'Watch it')[0].onclick();
       };
+      const tags = (w) => w.tags.map((t) => t.tagValue);
       watchAt('c1');
-      eq(session.pinned.map((w) => w.arguments), [{ courseId: 'c1' }], 'the first is watched');
+      eq(session.pinned.map(tags), [['c1']], 'the first is watched');
       eq(findAll(screen, (n) => n.tag === 'input').length, 0,
         'and the paint the pin triggered no longer shows the form');
       watchAt('c2');
-      eq(session.pinned.map((w) => w.arguments), [{ courseId: 'c1' }, { courseId: 'c2' }],
-        'both partitions stay watched');
+      eq(session.pinned.map(tags), [['c1'], ['c2']], 'both reads stay watched');
     } finally {
       sandbox.render = realRender;
       sandbox.sessionReset();
@@ -983,7 +986,7 @@ function build(index) {
 
   check('a scenario is listed under the one projection it is about', () => {
     const given = [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 4 } }];
-    const key = add({ projection: 'CourseCapacity', arguments: { courseId: 'c1' }, given });
+    const key = add({ projection: 'CourseCapacity', tags: [{ tagType: 'CourseId', tagValue: 'c1' }], given });
     eq(projectionScenariosFor(model(), 'CourseCapacity').map((e) => e.key).includes(key), true,
       'under the projection it names');
     eq(projectionScenariosFor(model(), 'CourseStatus').map((e) => e.key).includes(key), false,
@@ -992,8 +995,8 @@ function build(index) {
 
   check('several projections over one Given are several scenarios', () => {
     const given = [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 4 } }];
-    const capacity = add({ projection: 'CourseCapacity', arguments: { courseId: 'c1' }, given });
-    const status = add({ projection: 'CourseStatus', arguments: { courseId: 'c1' }, given });
+    const capacity = add({ projection: 'CourseCapacity', tags: [{ tagType: 'CourseId', tagValue: 'c1' }], given });
+    const status = add({ projection: 'CourseStatus', tags: [{ tagType: 'CourseId', tagValue: 'c1' }], given });
     const stored = (k) => model()['projection-scenario-definitions'][k];
     eq(stored(capacity).then, 4, 'each holds its own projection\'s value');
     eq(stored(status).then, 'Existent', 'and nothing else\'s');
@@ -1003,7 +1006,7 @@ function build(index) {
   });
 
   check('a scenario over a standalone projection lands on Projections', () => {
-    const key = add({ projection: 'CourseNumbering', arguments: {}, given: [] });
+    const key = add({ projection: 'CourseNumbering', given: [] });
     eq(projectionScenariosFor(model(), 'CourseNumbering').map((e) => e.key).includes(key), true,
       'listed on the projection');
     sandbox.goToProjectionScenario(model(), key);
@@ -1024,18 +1027,19 @@ function build(index) {
     sandbox.render();
   });
 
-  check('a fresh scenario asks only for the partition it is about', () => {
-    eq(sandbox.blankScenarioArguments(model(), 'CourseCapacity'), { courseId: '' },
-      'one blank per parameter');
-    eq(sandbox.blankScenarioArguments(model(), 'CourseNumbering'), {},
-      'and none at all for one that reads the whole log');
+  check('a fresh scenario reads the projection the way the model does', () => {
+    eq(sandbox.blankScenarioTags(model(), 'CourseCapacity'), [{ tagType: 'CourseId', tagValue: '' }],
+      'one blank per tag the model reads it by');
+    eq(sandbox.blankScenarioTags(model(), 'CourseNumbering'), [],
+      'and none at all for one read of the whole log');
+    eq(sandbox.blankScenarioArguments(model(), 'CourseCapacity'), {}, 'and no arguments for a declared fold');
   });
 
   check('copying a scenario leaves the row it was copied in open', () => {
     // `+ copy` is drawn inside an open ledger row. It used to go through
     // closeForms(), which folded that row away under the cursor — so the
     // button vanished mid-click and the focus on it went with it.
-    const key = add({ projection: 'CourseNumbering', arguments: {}, given: [] });
+    const key = add({ projection: 'CourseNumbering', given: [] });
     sandbox.goToProjectionScenario(model(), key);
     eq(sandbox.state.projDraft && sandbox.state.projDraft.name, 'CourseNumbering', 'the row is open');
     const before = Object.keys(model()['projection-scenario-definitions']).length;
@@ -1053,32 +1057,32 @@ function build(index) {
     sandbox.state.projDraft = null;
   });
 
-  check('an argument field holds the value, not the object holding it', () => {
+  check('a tag field holds the value, not the object holding it', () => {
     // `valueEditor` reads and writes exactly where it is pointed. Aimed
-    // at ['arguments'] instead of ['arguments', name] it read the whole
-    // object — rendering "[object Object]" into the field, and writing
-    // a scalar over every argument at once on the way back out.
+    // at the tag instead of its value it would read the whole object —
+    // rendering "[object Object]" into the field, and writing a scalar
+    // over the tag on the way back out.
     sandbox.startProjectionScenario(model(), { projection: 'CourseCapacity' });
-    sandbox.state.projectionScenarioDraft.body.arguments.courseId = 'c1';
+    sandbox.state.projectionScenarioDraft.body.tags[0].tagValue = 'c1';
     const main = sandbox.document.createElement('div');
     sandbox.state.view = 'entity';
     sandbox.state.entity = 'Course';
     sandbox.renderEntity(model(), main);
 
     const fields = findAll(main, (n) => n.tag === 'input' && n.className === 'vin');
-    eq(fields.length, 1, 'one field, for the one parameter it is partitioned by');
+    eq(fields.length, 1, 'one field, for the one tag it is read by');
     eq(fields[0].value, 'c1', 'showing the identifier it was given');
 
-    // And writing back lands on that argument alone.
-    sandbox.setAtPath(sandbox.state.projectionScenarioDraft.body, ['arguments', 'courseId'], 'c2');
-    eq(sandbox.state.projectionScenarioDraft.body.arguments, { courseId: 'c2' },
-      'the arguments object survives the write');
+    // And writing back lands on that tag's value alone.
+    sandbox.setAtPath(sandbox.state.projectionScenarioDraft.body, ['tags', 0, 'tagValue'], 'c2');
+    eq(sandbox.state.projectionScenarioDraft.body.tags, [{ tagType: 'CourseId', tagValue: 'c2' }],
+      'the tag survives the write');
     sandbox.state.projectionScenarioDraft = null;
     sandbox.state.projDraft = null;
   });
 
-  check('a watched projection asks for its arguments the same way', () => {
-    sandbox.state.watchDraft = { projection: 'CourseCapacity', arguments: { courseId: 'c1' } };
+  check('a watched projection asks for its tags the same way', () => {
+    sandbox.state.watchDraft = { projection: 'CourseCapacity', tags: [{ tagType: 'CourseId', tagValue: 'c1' }], arguments: {} };
     const card = sandbox.watchProjectionAdder(model(), ['CourseCapacity', 'CourseNumbering']);
     const fields = findAll(card, (n) => n.tag === 'input' && n.className === 'vin');
     eq(fields.length, 1, 'one field');
@@ -1137,7 +1141,7 @@ function build(index) {
     const owned = sandbox.projectionLedger(model(), {
       owner: 'Course', nameHead: 'property', entries: [], add: null,
     });
-    eq(textOf(free.children[0]), 'projectionone perholdsstarts at', 'Projections says what each is kept per');
+    eq(textOf(free.children[0]), 'projectionread byholdsstarts at', 'Projections says what each is read by');
     eq(textOf(owned.children[0]), 'propertyholdsstarts at',
       'an entity does not, because Identity above it already has');
   });
@@ -1847,9 +1851,10 @@ function build(index) {
 
   check('a watched projection shows the query it actually runs', () => {
     const card = sandbox.projectionWatchCard(model(),
-      { kind: 'projection', projection: 'CourseCapacity', arguments: { courseId: 'c1' } });
+      sandbox.projectionWatch('CourseCapacity', [{ tagType: 'CourseId', tagValue: 'c1' }]));
     const text = textOf(card);
     eq(text.includes('CourseId:c1'), true, 'the concrete tag, not a placeholder');
+    eq(text.includes('tagged CourseId("c1")'), true, 'said in the spelling the code uses');
     eq(text.includes('CourseDefined'), true, 'and the events the fold handles');
   });
 
@@ -1900,7 +1905,6 @@ function build(index) {
 
   check('a valueless handler stores, and the advisory says what is missing', () => {
     updateDefinition('projection-definition', id, 'CourseStartingWeek', {
-      parameters: [{ name: 'courseId', propertyType: 'CourseId' }],
       valueType: 'integer', isList: false, initialValue: 0,
       handlers: [{ event: 'CourseDefined', operation: 'set' }],
     });
@@ -2485,7 +2489,6 @@ function build(index) {
       properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
     });
     addDefinition('projection-definition', id, 'StudentExpulsion', {
-      parameters: [{ name: 'studentId', propertyType: 'StudentId' }],
       valueType: 'boolean', isList: false, initialValue: false,
       handlers: [{ event: 'StudentExpelled', operation: 'set', value: true }],
     });
@@ -2541,7 +2544,6 @@ function build(index) {
     // Both set by StudentRegistered, so the merged fold would need two
     // handlers for one event — refused before anything is written.
     addDefinition('projection-definition', id, 'StudentGreeted', {
-      parameters: [{ name: 'studentId', propertyType: 'StudentId' }],
       valueType: 'boolean', isList: false, initialValue: false,
       handlers: [{ event: 'StudentRegistered', operation: 'set', value: true }],
     });
@@ -2567,7 +2569,6 @@ function build(index) {
       properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
     });
     addDefinition('projection-definition', id, 'StudentPause', {
-      parameters: [{ name: 'studentId', propertyType: 'StudentId' }],
       valueType: 'boolean', isList: false, initialValue: false,
       handlers: [
         { event: 'StudentPaused', operation: 'set', value: true },
@@ -2619,7 +2620,6 @@ function build(index) {
       properties: [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false }],
     });
     addDefinition('projection-definition', id, 'StudentFlag', {
-      parameters: [{ name: 'studentId', propertyType: 'StudentId' }],
       valueType: 'boolean', isList: false, initialValue: false, handlers,
     });
     const student = sandbox.deepClone(model()['entity-definitions'].Student);
@@ -2853,7 +2853,6 @@ function build(index) {
     let refused = null;
     try {
       sandbox.updateDefinition('projection-definition', id, 'StudentExists', {
-        parameters: [{ name: 'studentId', propertyType: 'StudentId' }],
         valueType: 'boolean', isList: false, initialValue: false,
         handlers: [{ event: 'StudentRegistered', operation: 'set',
           value: { successor: { eventProperty: 'studentId' } } }],
@@ -3230,7 +3229,7 @@ function build(index) {
 // ---------------------------------------------------------------
 // A model with no entity at all states its rules over projections: the
 // first question offers one this command can supply the arguments of,
-// and the read it brings is the plain `alias label = Label(documentId)`.
+// and the read it brings is the plain `alias label = Label tagged documentId`.
 // ---------------------------------------------------------------
 {
   const id = sandbox.createDcbModel('Entity Free Probe');
@@ -3241,13 +3240,13 @@ function build(index) {
     'tag type FolderId = string',
     'event Labelled { documentId: DocumentId, label: string } tags documentId',
     'event Done { documentId: DocumentId } tags documentId',
-    'projection Label(documentId: DocumentId): string = "" {',
+    'projection Label: string = "" {',
     '  on Labelled => set event.data.label',
     '}',
     'projection DoneCount: integer = 0 {',
     '  on Done => increment 1',
     '}',
-    'projection FolderSize(folderId: FolderId): integer = 0 {}',
+    'projection FolderSize: integer = 0 {}',
     'command Finish(documentId: DocumentId) {',
     '  emit Done { documentId }',
     '}',
@@ -3262,9 +3261,11 @@ function build(index) {
     sandbox.state.adder = 'rule';
     sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' };
     const values = findAll(selects()[0], (n) => n.tag === 'option').map((n) => n.value);
-    eq(values.includes('projection:Label'), true, 'its argument is the payload\'s document id');
-    eq(values.includes('projection:DoneCount'), true, 'no parameters: the whole log');
-    eq(values.includes('projection:FolderSize'), false, 'nothing here carries a FolderId');
+    // A projection declares no partition, so every one is reachable —
+    // what it is tagged by is asked beside it.
+    eq(values.includes('projection:Label'), true, 'Label');
+    eq(values.includes('projection:DoneCount'), true, 'DoneCount');
+    eq(values.includes('projection:FolderSize'), true, 'even one nothing moves');
     sandbox.closeForms();
   });
 
@@ -3283,8 +3284,8 @@ function build(index) {
     const button = findAll(paint(), (n) => n.tag === 'button' && textOf(n) === 'Add rule')[0];
     button.onclick();
     const body = model()['command-definitions'].Finish;
-    eq(body.boundary, [{ alias: 'label', projection: 'Label', arguments: { documentId: { parameterName: 'documentId' } } }],
-      'the read it brought');
+    eq(body.boundary, [{ alias: 'label', projection: 'Label', tags: [{ parameterName: 'documentId' }] }],
+      'the read it brought, tagged by the first value its events are tagged by');
     eq(body.conditions, [{ leftHandSide: { alias: 'label' }, predicate: 'equals', rightHandSide: 'foo',
       rejection: 'Label is not foo' }], 'and the rule about it');
     eq(sandbox.modelAdvisories(model()).length, 0, 'advisory-clean');
@@ -3335,8 +3336,8 @@ function build(index) {
     findAll(changes(), (n) => n.tag === 'button' && textOf(n) === '+ Record a change')[0].onclick();
     eq(model()['projection-definitions'].Label.handlers.find((x) => x.event === 'Done'),
       { event: 'Done', operation: 'set', value: 'done' }, 'the handler it wrote');
-    eq(/Label for document id becomes "done"/.test(textOf(changes())), true,
-      'said with the instance it moves — the document id this command was given');
+    eq(/Label tagged document id becomes "done"/.test(textOf(changes())), true,
+      'said with the read it moves — the document id this command was given');
 
     const editOf = (row) => findAll(row, (n) => n.tag === 'button' && textOf(n) === 'Edit');
     const rows = findAll(changes(), (n) => n.tag === 'div' && editOf(n).length === 1 && /^Label/.test(textOf(n)));
@@ -3346,9 +3347,16 @@ function build(index) {
     sandbox.closeForms();
   });
 
-  // FolderSize is kept per FolderId, and no event here carries one: no
-  // event can reach an instance of it, so none is offered to move it.
-  check('an event that reaches no instance of a projection is not offered to move it', () => {
+  // FolderSize is read tagged by a FolderId, and no event here carries
+  // one: no event can reach that read, so none is offered to move it.
+  const readFolder = () => {
+    const body = sandbox.deepClone(model()['command-definitions'].Finish);
+    body.boundary.push({ alias: 'folder', projection: 'FolderSize', tags: [{ tagType: 'FolderId', tagValue: 'f1' }] });
+    body.conditions.push({ leftHandSide: { alias: 'folder' }, predicate: 'lessThan', rightHandSide: 100, rejection: 'Folder is full' });
+    sandbox.updateDefinition('command-definition', id, 'Finish', body);
+  };
+  check('an event that reaches none of a projection\'s reads is not offered to move it', () => {
+    readFolder();
     sandbox.state.slice = 'Finish';
     sandbox.state.adder = 'chg:Done';
     sandbox.state.changeDraft = null;
@@ -3356,11 +3364,11 @@ function build(index) {
     eq(options.some((n) => n.value === JSON.stringify({ projection: 'FolderSize' })), false,
       'Done carries no folder id');
     eq(options.filter((n) => n.value === JSON.stringify({ projection: 'Label' })).map(textOf),
-      ['Label for document id'], 'and a target says which instance');
+      ['Label tagged document id'], 'and a target says which read');
     sandbox.closeForms();
 
-    // The projection's own editor, the other door: a new handler row
-    // offers only events that carry what it is kept separately by.
+    // The projection's own editor offers every event: which events a
+    // read reaches is the read's business, and an advisory says it.
     store.set('dcb-playground:experimental', 'on');
     const offered = (name) => {
       const body = sandbox.projectionDraftFrom(model()['projection-definitions'][name]);
@@ -3375,20 +3383,21 @@ function build(index) {
           + findAll(n, (o) => o.tag === 'option' && o.value === 'Labelled').length > 0);
       return select.length;
     };
-    eq(offered('Label') > 0, true, 'both events carry a document id');
-    eq(offered('FolderSize'), 0, 'neither carries a folder id');
+    eq(offered('Label') > 0, true, 'Label');
+    eq(offered('FolderSize') > 0, true, 'and FolderSize — no partition to filter by');
     sandbox.state.projDraft = null;
   });
 
-  check('a handler that reaches no instance is an advisory, not a silent no-op', () => {
+  check('a handler a read never reaches is an advisory on the read, not a silent no-op', () => {
     const before = model()['projection-definitions'].FolderSize;
     sandbox.updateDefinition('projection-definition', id, 'FolderSize',
       { ...before, handlers: [{ event: 'Done', operation: 'increment', value: 1 }] });
-    const found = sandbox.modelAdvisories(model()).filter((a) => a.name === 'FolderSize');
-    eq(found.length, 1, 'reported once');
-    eq(/never fires/.test(found[0].message) && /FolderId/.test(found[0].message), true, found[0].message);
-    eq(/Folder size goes up by 1 — never fires: carries no folder id/.test(textOf(changes())), true,
-      'and the row says so where it sits');
+    const found = sandbox.modelAdvisories(model()).filter((a) => a.name === 'Finish');
+    eq(found.length, 1, 'reported once, on the command that reads it');
+    eq(/reads "FolderSize" by FolderId, but "Done", which it handles, is tagged by no FolderId/.test(found[0].message),
+      true, found[0].message);
+    eq(/Folder size goes up by 1 — not for reads tagged Folder id: Done is tagged by none/.test(textOf(changes())), true,
+      'and the change row says so where it sits');
     sandbox.updateDefinition('projection-definition', id, 'FolderSize', before);
   });
 }
@@ -3417,15 +3426,15 @@ function build(index) {
     'entity Employee {',
     '  seniority = EmployeeSeniority',
     '}',
-    'projection RequiredSeniority(projectId: ProjectId): Seniority[] = [] {',
+    'projection RequiredSeniority: Seniority[] = [] {',
     '  on ProjectDefined => set event.data.requiredSeniority',
     '}',
-    'projection EmployeeSeniority(employeeId: EmployeeId): Seniority = Junior {',
+    'projection EmployeeSeniority: Seniority = Junior {',
     '  on EmployeeHired => set event.data.seniority',
     '}',
     'command Assign(projectId: ProjectId, employeeId: EmployeeId, wanted: Seniority[]) {',
-    '  alias project = Project[projectId]',
-    '  alias employee = Employee[employeeId]',
+    '  alias project = Project tagged projectId',
+    '  alias employee = Employee tagged employeeId',
     '  require employee.seniority in project.requiredSeniority',
     '    else reject "Project does not need that seniority"',
     '  emit Assigned { projectId, employeeId }',
@@ -3715,7 +3724,6 @@ function build(index) {
         properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
       });
       addDefinition('projection-definition', id, fold, {
-        parameters: [{ name: 'studentId', propertyType: 'StudentId' }],
         valueType: 'boolean', isList: false, initialValue: false,
         handlers: [{ event, operation: 'set', value: true }],
       });
@@ -3766,7 +3774,6 @@ function build(index) {
     addDefinition('custom-type-definition', id, 'Standing',
       { schema: { type: 'string', enum: ['Unknown', 'Good', 'Poor'] } });
     addDefinition('projection-definition', id, 'StudentStanding', {
-      parameters: [{ name: 'studentId', propertyType: 'StudentId' }],
       valueType: 'Standing', isList: false, initialValue: { enumMember: 'Unknown' },
       handlers: [{ event: 'StudentRegistered', operation: 'set', value: { enumMember: 'Good' } }],
     });
@@ -3812,7 +3819,6 @@ function build(index) {
       properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
     });
     addDefinition('projection-definition', id, 'StudentExpelled2Fold', {
-      parameters: [{ name: 'studentId', propertyType: 'StudentId' }],
       valueType: 'boolean', isList: false, initialValue: false,
       handlers: [{ event: 'StudentExpelled2', operation: 'set', value: true }],
     });
@@ -3833,7 +3839,6 @@ function build(index) {
       properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
     });
     addDefinition('projection-definition', id, 'StudentSuspension', {
-      parameters: [{ name: 'studentId', propertyType: 'StudentId' }],
       valueType: 'boolean', isList: false, initialValue: false,
       handlers: [{ event: 'StudentSuspended', operation: 'set', value: true }],
     });
@@ -4175,11 +4180,11 @@ check('the help shows every topic, and opens at the page\'s own concept', () => 
       'model "Core Probe"',
       'tag type DocumentId = string',
       'event Labelled { documentId: DocumentId, label: string } tags documentId',
-      'projection Label(documentId: DocumentId): string = "" {',
+      'projection Label: string = "" {',
       '  on Labelled => set event.data.label',
       '}',
       'command Relabel(documentId: DocumentId, label: string) {',
-      '  alias current = Label(documentId)',
+      '  alias current = Label tagged documentId',
       '  require current != label',
       '    else reject "Label is unchanged"',
       '  emit Labelled { documentId, label }',

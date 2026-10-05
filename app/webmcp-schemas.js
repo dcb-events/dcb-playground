@@ -196,7 +196,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
     ]
   },
   "projection-definition": {
-    "description": "One folded value — the only kind of fold in this document.\n\nIt declares `parameters`, and whoever reads it supplies the\narguments, which *are* its tags:\n\n  `tag IN (arguments) AND type IN (handled events)`\n\nWith no parameters there is no tag, and the query is scoped by\nevent type alone — which is what a global numbering is. With one\nparameter typed with an entity's own identifier, the projection\ncan additionally be bound as a property of that entity, and the\nbinding supplies the instance. Nothing in this definition says\nwhich of the two it is: the partition is the same shape either\nway, which is why there is one kind here and not two.\n\n**Numbering is not a special case.** `CourseNumbering` is a\nprojection whose value is set to the `successor` of the id each\n`CourseDefined` carried, so the value *is* the next number to\nissue at every point in its life — `initialValue` before anything\nhas happened, `successor(last)` after. There is no separate\ngenerator concept and no read-side operator: a command binds the\nprojection and reads it like anything else.\n\nAn implementation may still answer such a projection with a single\nbackwards lookup (`ORDER BY position DESC LIMIT 1`) instead of a\nscan — a fold whose every handler `set`s from event properties\nalone depends only on the last matching event. That is derived\nfrom the handlers rather than declared, so it holds for any\nprojection written that way.\n\n**The guard.** A command binding a projection contributes that\nprojection's query to its append condition, exactly as an entity\nbinding does. For a numbering this is what keeps it monotonic: a\nconcurrent command that minted from the same projection\ninvalidates the append.\n\n**Successor.** On an integer, `n + 1`. On a string, the trailing\nrun of digits is incremented and both the prefix and any\nzero-padding are preserved: `\"c1\"` → `\"c2\"`, `\"c9\"` → `\"c10\"`,\n`\"c007\"` → `\"c008\"`. The prefix is never declared — it rides on\n`initialValue`.\n",
+    "description": "One folded value — the only kind of fold in this document.\n\nIt declares **no partition** (8.0). Whoever reads it says which tags\nit is read by — a command's `ProjectionBinding.tags`, an entity's\nidentifier for a property, a scenario's `tags` — and the query is\n\n  `tag IN (the read's tags) AND type IN (handled events)`\n\nA read by no tag is scoped by event type alone — which is what a\nglobal numbering is. One fold may therefore be read per course and\nper student alike (`SubscriptionCount tagged courseId`, `… tagged\nstudentId`): which events reach it is the read's to say, and an\nevent reaches a read only by listing a tag of every type the read\nnames (`EventDefinition.tags`).\n\n**Numbering is not a special case.** `CourseNumbering` is a\nprojection whose value is set to the `successor` of the id each\n`CourseDefined` carried, so the value *is* the next number to\nissue at every point in its life — `initialValue` before anything\nhas happened, `successor(last)` after. There is no separate\ngenerator concept and no read-side operator: a command binds the\nprojection and reads it like anything else.\n\nAn implementation may still answer such a projection with a single\nbackwards lookup (`ORDER BY position DESC LIMIT 1`) instead of a\nscan — a fold whose every handler `set`s from event properties\nalone depends only on the last matching event. That is derived\nfrom the handlers rather than declared, so it holds for any\nprojection written that way.\n\n**The guard.** A command binding a projection contributes that\nprojection's query to its append condition, exactly as an entity\nbinding does. For a numbering this is what keeps it monotonic: a\nconcurrent command that minted from the same projection\ninvalidates the append.\n\n**Successor.** On an integer, `n + 1`. On a string, the trailing\nrun of digits is incremented and both the prefix and any\nzero-padding are preserved: `\"c1\"` → `\"c2\"`, `\"c9\"` → `\"c10\"`,\n`\"c007\"` → `\"c008\"`. The prefix is never declared — it rides on\n`initialValue`.\n",
     "type": "object",
     "additionalProperties": false,
     "properties": {
@@ -210,53 +210,6 @@ const WEBMCP_DEFINITION_SCHEMAS = {
           "TenantCourseNumbering"
         ],
         "description": "What this projection is called — PascalCase, unique among\nprojections. Entity properties, command bindings and projection\nscenarios refer to it by this name.\n"
-      },
-      "parameters": {
-        "description": "What partitions this projection. Every parameter is typed\nwith a tag-bearing value type — one whose leaves resolve to\nat least one `isTag` type, scalar or through a composite's\nfields — and contributes the tag(s) those types' `tagSchema`\nrender: one for a tag-marked scalar, one per tag-marked field\nfor a composite. Whoever binds the projection supplies one\nargument per parameter: a command states them outright, and\nan entity property binding supplies the instance it was read\nfor.\n\n**Tag-bearing types only.** A tag is the only thing that can\nnarrow a query, and only a tag-marked type is a tag. A parameter\ntyped `integer` could not restrict what the store returns —\nit could only discard events after reading them, which is a\npredicate, and predicates live in conditions. So \"numbering\nper year\" needs a `Year` entity; that requirement is what\nkeeps the read cheap.\n\nAn empty list is the ordinary case for a global numbering,\nand is what makes its query the only kind in this document\nthat carries no tag.\n\nA **scripted** projection has no parameters. Discarding after\nreading is exactly what its code does, so the values it needs\narrive as `script.arguments` instead, and the partition it\nwould otherwise have derived from parameters is stated\noutright in `script.tagFilter`.\n\nA **derived** projection declares parameters exactly as a\ndeclared one does — they are what its operands' own arguments\ndraw from, so its partition is theirs.\n",
-        "type": "array",
-        "items": {
-          "description": "One or more tags of a projection's query, named so a command can\nsupply it. `propertyType` must be a tag-bearing value type — an\nentity's derived identifier or a standalone one, scalar and\n`isTag: true` or composite with tag-marked fields.\n",
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "name": {
-              "type": "string",
-              "minLength": 2,
-              "maxLength": 100,
-              "pattern": "^[a-z][A-Za-z0-9]+$",
-              "examples": [
-                "someProperty"
-              ]
-            },
-            "propertyType": {
-              "description": "A simple type, or a declared value type — scalar (which includes\nan enum and a tag-marked identifier) or composite, including an\nentity's own derived identifier (`<name>Id` unless overridden,\nitself an ordinary `customTypeDefinition`). Every declared value\ntype shares one namespace, so a name resolves against it.\n",
-              "type": "string",
-              "anyOf": [
-                {
-                  "enum": [
-                    "boolean",
-                    "integer",
-                    "string"
-                  ]
-                },
-                {
-                  "type": "string",
-                  "minLength": 2,
-                  "maxLength": 100,
-                  "pattern": "^[A-Z][A-Za-z0-9]+$",
-                  "examples": [
-                    "EmailAddress"
-                  ]
-                }
-              ]
-            }
-          },
-          "required": [
-            "name",
-            "propertyType"
-          ]
-        },
-        "default": []
       },
       "valueType": {
         "description": "The type of the value held.\n\nA composite value type is legal only on a *scripted*\nprojection (4.1): the operations that advance a declared one\nact on a single value, and a record of fields has none — but\ncode has no such limit, so a script may hold the record\noutright, and a condition against it gets identity predicates\nonly, as against any composite. A script that keeps a record\nas private bookkeeping instead names the one field a reader\nsees in `script.exposes`, which is of this type like anything\nelse.\n",
@@ -377,10 +330,10 @@ const WEBMCP_DEFINITION_SCHEMAS = {
             "description": "Which field of the state a condition reads, when the state is\na record. Absent means the state *is* the value.\n\nThis is what keeps an accumulator out of the boundary. The\ndeclared `valueType`/`isList` describe this exposed value, so\nconditions type-check exactly as they do over a declared\nprojection, and the bookkeeping the code needs stays private\nto it.\n"
           },
           "arguments": {
-            "description": "Values the reading command supplies, one entry per name, in\n`args` when the code runs. A binding that reads this\nprojection must supply exactly these — the same \"required\nhere, rejected there\" rule `excluding` follows.\n\nAn argument is **not a tag** and can never narrow a query:\nthe store returns the same events either way and the code\ndiscards what it does not want. That is the whole difference\nbetween an argument and a `ProjectionParameter`, and it is\nwhy a parameter must still be tag-bearing.\n",
+            "description": "Values the reader supplies besides its tags, one entry per name,\nin `args` when the code runs (`with (…)` in the notation). A read of\nthis projection must supply exactly these — the same \"required\nhere, rejected there\" rule `excluding` follows.\n\nAn argument is **not a tag** and can never narrow a query: the\nstore returns the same events either way and the code discards\nwhat it does not want. Tags come from the read.\n",
             "type": "array",
             "items": {
-              "description": "One value a scripted projection asks its reader for. Any type —\nan argument reaches the code rather than the query, so the\nidentifier restriction that governs `ProjectionParameter` does\nnot apply.\n",
+              "description": "One value a scripted projection asks its reader for, besides the\ntags it is read by. Any type — an argument reaches the code rather\nthan the query.\n",
               "type": "object",
               "additionalProperties": false,
               "properties": {
@@ -422,24 +375,10 @@ const WEBMCP_DEFINITION_SCHEMAS = {
               ]
             },
             "default": []
-          },
-          "tagFilter": {
-            "description": "The tags of this projection's query, one entry each, ANDed.\nWritten as `TagType:value`, naming a scalar, `isTag: true`\nvalue type — a composite has no tag of its own to name; name\nits tag-marked fields' own types individually instead. The\nvalue may interpolate a declared argument as `{name}`, or one\nfield of a composite one as `{name.field}`.\n\nRequired on every script, and empty means the whole log —\nthe same thing declaring no parameters means. A scripted\nprojection bound as an entity property scopes itself by\ninterpolating the identifier-typed argument the binding\nsupplies; one that never did would fold the same events for\nevery instance and call them different.\n",
-            "type": "array",
-            "items": {
-              "type": "string",
-              "pattern": "^[A-Z][A-Za-z0-9]*:.+$"
-            },
-            "examples": [
-              [
-                "ProductId:{productId}"
-              ]
-            ]
           }
         },
         "required": [
-          "initialState",
-          "tagFilter"
+          "initialState"
         ]
       },
       "derived": {
@@ -451,7 +390,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
             "description": "One side of a derived projection's predicate: another\nprojection's value, read at the partition the arguments name, or\na literal / enum-member reference to compare against.\n",
             "oneOf": [
               {
-                "description": "Another projection's value, as a derived projection's operand.\n`arguments` supplies one entry per parameter of the named\nprojection (or per script argument, when it is scripted), each a\n`{parameterName}` reference to the owning projection's own\nparameters or a literal — the same \"required here, rejected\nthere\" rule every other argument map follows.\n",
+                "description": "Another projection's value, as a derived projection's operand. It\nnames no tags: it is read by whatever the derived projection's own\nreader is tagged by. `arguments` supplies one literal per argument\nof a scripted projection — the same \"required here, rejected there\"\nrule every other argument map follows.\n",
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
@@ -469,35 +408,6 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                     "type": "object",
                     "additionalProperties": {
                       "oneOf": [
-                        {
-                          "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it —\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n",
-                          "type": "object",
-                          "additionalProperties": false,
-                          "properties": {
-                            "parameterName": {
-                              "type": "string",
-                              "minLength": 2,
-                              "maxLength": 100,
-                              "pattern": "^[a-z][A-Za-z0-9]+$",
-                              "examples": [
-                                "someProperty"
-                              ]
-                            },
-                            "property": {
-                              "type": "string",
-                              "minLength": 2,
-                              "maxLength": 100,
-                              "pattern": "^[a-z][A-Za-z0-9]+$",
-                              "examples": [
-                                "someProperty"
-                              ],
-                              "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
-                            }
-                          },
-                          "required": [
-                            "parameterName"
-                          ]
-                        },
                         {
                           "description": "A member of an enum type — a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains — a plain string is by far the\ncommon case, but nothing here requires it.\n",
                           "type": "object",
@@ -579,7 +489,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
             "description": "One side of a derived projection's predicate: another\nprojection's value, read at the partition the arguments name, or\na literal / enum-member reference to compare against.\n",
             "oneOf": [
               {
-                "description": "Another projection's value, as a derived projection's operand.\n`arguments` supplies one entry per parameter of the named\nprojection (or per script argument, when it is scripted), each a\n`{parameterName}` reference to the owning projection's own\nparameters or a literal — the same \"required here, rejected\nthere\" rule every other argument map follows.\n",
+                "description": "Another projection's value, as a derived projection's operand. It\nnames no tags: it is read by whatever the derived projection's own\nreader is tagged by. `arguments` supplies one literal per argument\nof a scripted projection — the same \"required here, rejected there\"\nrule every other argument map follows.\n",
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
@@ -597,35 +507,6 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                     "type": "object",
                     "additionalProperties": {
                       "oneOf": [
-                        {
-                          "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it —\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n",
-                          "type": "object",
-                          "additionalProperties": false,
-                          "properties": {
-                            "parameterName": {
-                              "type": "string",
-                              "minLength": 2,
-                              "maxLength": 100,
-                              "pattern": "^[a-z][A-Za-z0-9]+$",
-                              "examples": [
-                                "someProperty"
-                              ]
-                            },
-                            "property": {
-                              "type": "string",
-                              "minLength": 2,
-                              "maxLength": 100,
-                              "pattern": "^[a-z][A-Za-z0-9]+$",
-                              "examples": [
-                                "someProperty"
-                              ],
-                              "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
-                            }
-                          },
-                          "required": [
-                            "parameterName"
-                          ]
-                        },
                         {
                           "description": "A member of an enum type — a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains — a plain string is by far the\ncommon case, but nothing here requires it.\n",
                           "type": "object",
@@ -1241,8 +1122,117 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                     "TenantCourseNumbering"
                   ]
                 },
+                "tags": {
+                  "description": "The tags this read is read by, ANDed — the values its query\nis narrowed by. Each is keyed by its own type, which must be a\ntag type, so a literal states it (`TagLiteral`). None means the\nwhole log. A tag may name a binding above this one, which is\nwhat puts a projection into the chain; it may not resolve to a\nlist.\n",
+                  "type": "array",
+                  "items": {
+                    "description": "One tag a read is read by: a value in the command's scope whose\ntype is a tag-marked value type (directly, or a record with\ntag-marked fields — one tag per field), or a `TagLiteral`.\n",
+                    "oneOf": [
+                      {
+                        "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it —\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n",
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "parameterName": {
+                            "type": "string",
+                            "minLength": 2,
+                            "maxLength": 100,
+                            "pattern": "^[a-z][A-Za-z0-9]+$",
+                            "examples": [
+                              "someProperty"
+                            ]
+                          },
+                          "property": {
+                            "type": "string",
+                            "minLength": 2,
+                            "maxLength": 100,
+                            "pattern": "^[a-z][A-Za-z0-9]+$",
+                            "examples": [
+                              "someProperty"
+                            ],
+                            "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
+                          }
+                        },
+                        "required": [
+                          "parameterName"
+                        ]
+                      },
+                      {
+                        "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` is a projected property of\na bound entity instance. `{alias: courseNumbering}` — no\n`property` — is a bound projection's value.\n\n`property` is therefore **required on an entity alias** and\n**rejected on a projection alias**: an entity has many values and\nno single one to mean, a projection has exactly one and no name\nfor it. That is the same shape of rule `excluding` and\n`arguments` already follow — a field that means nothing in its\nposition is a mistake, not a no-op.\n",
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "alias": {
+                            "type": "string",
+                            "minLength": 2,
+                            "maxLength": 100,
+                            "pattern": "^[a-z][A-Za-z0-9]*$",
+                            "examples": [
+                              "course",
+                              "sourceCourse"
+                            ]
+                          },
+                          "property": {
+                            "type": "string",
+                            "minLength": 2,
+                            "maxLength": 100,
+                            "pattern": "^[a-z][A-Za-z0-9]+$",
+                            "examples": [
+                              "someProperty"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "alias"
+                        ]
+                      },
+                      {
+                        "description": "A literal tag value with the tag type that is its key —\n`CourseId(\"c1\")` in the notation. A read's tag is keyed by the type\nof the value it is read by; a bare literal has none, so it states\nit. Allowed only where a tag is.\n",
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "tagType": {
+                            "description": "A simple type, or a declared value type — scalar (which includes\nan enum and a tag-marked identifier) or composite, including an\nentity's own derived identifier (`<name>Id` unless overridden,\nitself an ordinary `customTypeDefinition`). Every declared value\ntype shares one namespace, so a name resolves against it.\n",
+                            "type": "string",
+                            "anyOf": [
+                              {
+                                "enum": [
+                                  "boolean",
+                                  "integer",
+                                  "string"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "minLength": 2,
+                                "maxLength": 100,
+                                "pattern": "^[A-Z][A-Za-z0-9]+$",
+                                "examples": [
+                                  "EmailAddress"
+                                ]
+                              }
+                            ]
+                          },
+                          "tagValue": {
+                            "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
+                            "type": [
+                              "string",
+                              "number",
+                              "boolean"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "tagType",
+                          "tagValue"
+                        ]
+                      }
+                    ]
+                  },
+                  "default": []
+                },
                 "arguments": {
-                  "description": "One entry per parameter of the projection, keyed by parameter\nname; each value is the operand supplying that tag. A\nprojection with no parameters takes no arguments, and its\nquery carries no tag.\n\nAn argument operand may name a binding above this one, which\nis what puts a projection into the chain. It may not resolve\nto a list: a projection binding reads one partition, so there\nis no fan-out here.\n",
+                  "description": "The values a scripted projection's code takes besides its\ntags, keyed by argument name — exactly its `script.arguments`.\nA declared or derived projection takes none.\n",
                   "type": "object",
                   "additionalProperties": {
                     "description": "Where a value comes from inside a command — its boundary, its\nconditions and its event emissions.\n",
@@ -2492,8 +2482,54 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         ],
         "description": "The projection this scenario is about, and the only one it asserts.\n"
       },
+      "tags": {
+        "description": "The tags the projection is read by in this scenario, as\n`TagLiteral`s — a scenario has no payload to draw a value from,\nso it states the value and its type outright. None reads the\nwhole log.\n",
+        "type": "array",
+        "items": {
+          "description": "A literal tag value with the tag type that is its key —\n`CourseId(\"c1\")` in the notation. A read's tag is keyed by the type\nof the value it is read by; a bare literal has none, so it states\nit. Allowed only where a tag is.\n",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "tagType": {
+              "description": "A simple type, or a declared value type — scalar (which includes\nan enum and a tag-marked identifier) or composite, including an\nentity's own derived identifier (`<name>Id` unless overridden,\nitself an ordinary `customTypeDefinition`). Every declared value\ntype shares one namespace, so a name resolves against it.\n",
+              "type": "string",
+              "anyOf": [
+                {
+                  "enum": [
+                    "boolean",
+                    "integer",
+                    "string"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "minLength": 2,
+                  "maxLength": 100,
+                  "pattern": "^[A-Z][A-Za-z0-9]+$",
+                  "examples": [
+                    "EmailAddress"
+                  ]
+                }
+              ]
+            },
+            "tagValue": {
+              "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ]
+            }
+          },
+          "required": [
+            "tagType",
+            "tagValue"
+          ]
+        },
+        "default": []
+      },
       "arguments": {
-        "description": "One entry per parameter the projection declares (or per script\nargument, for a scripted one), keyed by name. A projection with no\nparameters takes none, and reads the whole log.\n\nUnlike a command's `ProjectionBinding`, these are *values* rather\nthan operands: a scenario has no payload and no boundary to draw\none from, so it states the identifier outright, the same way\n`ScenarioGivenEvent.data` states a payload.\n",
+        "description": "The values a scripted projection's code takes, keyed by argument\nname. A declared projection takes none.\n",
         "type": "object",
         "default": {}
       },

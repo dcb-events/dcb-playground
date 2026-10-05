@@ -179,15 +179,17 @@ it never works from `file:`.
   `SubscribeStudentToCourse` through the three questions and compares
   the result to the shipped definition. Its first question offers only
   what the command can reach — entities some operand already in scope
-  could identify, and projections whose every parameter something in
-  scope can supply — and inventing an entity there also gives the
+  could identify, and every projection (none declares a partition;
+  "tagged by which value" is asked beside it, offering values whose
+  tag type every handled event lists, defaulting to how the model
+  already reads it) — and inventing an entity there also gives the
   command the input that says *which* one, since a fresh identifier
   type is reachable from nothing. A projection an entity property
   binds is not offered: it is read through the entity
   (`course.capacity`), and offering it bare too would make one fact
   reachable as two different reads. The others are what lets a model
   without entities or lifecycles state its rules on the pages, not
-  only in the code view (`alias label = Label(documentId)`).
+  only in the code view (`alias label = Label tagged documentId`).
 - **Reads split by their reason** (`decisionAliases`, model.js): a read
   a rule or guard names, and every hop it was reached through, belongs
   to the decide step; everything else is read in order to *record*
@@ -258,8 +260,8 @@ it never works from `file:`.
   event property publishes it); readers are lenient (an absent key on an
   optional property reads as null). Downstream it is an ordinary value —
   equality and emptiness work — except where it would become a tag or an
-  ordering: a null exclusion or projection parameter is an evaluation
-  _error_, and so is a null boundary identifier _unless the binding is
+  ordering: a null exclusion or tag of a projection read is an
+  evaluation _error_, and so is a null boundary identifier _unless the binding is
   marked `isOptional`_ — then it binds zero instances, conditions over
   the alias hold vacuously, and reading a property of it yields null.
   The optional-parameter and derived-null advisories say all of this
@@ -276,22 +278,37 @@ it never works from `file:`.
   file, the code view, an agent — is stored as it says. Seeds and test
   fixtures write their lists with `tagPathsOf`, which is a convenience
   for stating them, not an inference at read time.
+- **A projection declares no partition; the read names its tags**
+  (8.0). A command's read is `{alias, projection, tags, arguments}` —
+  `tags` the values it is read by (operands in scope, or a typed
+  literal `{tagType, tagValue}`, `CourseId("c1")`), each keyed by its
+  own type; `arguments` only what a script takes besides (`with`). An
+  entity reads its properties tagged by its identifier, a projection
+  scenario by literals, and a derived projection's operands by their
+  reader's tags. So one fold is read per course and per student alike;
+  a read by no tag is the whole log. Scripts see the tags as `tags`
+  and have no `tagFilter`. Evaluation takes a *read* —
+  `foldProjection(model, events, name, { tags: [{type, value}], args })`.
+  What the model reads a projection by is derived
+  (`projectionReads` / `projectionReadTagSets`), and is what the
+  ledger row, the editor's "read by" and the State changes step say.
 - **One handler per event type, per projection** — and it is a real
   constraint, not a convenience: tag matching is by _value_, whichever
   listed property carries it, so an event listing one identifier type
-  in two properties reaches both partitions and a handler fires for
-  both. A declarative handler cannot tell them apart; the fix is to
+  in two properties reaches both reads by that type and a handler fires
+  for both. A declarative handler cannot tell them apart; the fix is to
   list only one, split the event (one fact each) or script the
-  projection, and an advisory points at the ambiguity. The editors
-  offer only unhandled events.
-  The opposite case is zero carriers: an event listing no tag of a
-  type the projection is kept separately by reaches no instance, and
-  its handler never fires (`partitionTagsMissing`). Neither the
-  projection's handler editor nor the State changes adder offers such
-  an event; one stored anyway is an advisory and is marked on its row.
-  A State changes row about a standalone projection names the instance
-  it moves in the command's terms (`changeArguments`: `Book exists`
-  for `isbn`).
+  projection, and an advisory on the read points at the ambiguity
+  (`readTagProblem`). The editors offer only unhandled events.
+  The opposite case is zero carriers: a handled event listing no tag of
+  a type a read is by never reaches that read. That is an advisory on
+  the *read* (`readTagProblem`, via `readTagsMissing`) — on the command,
+  entity or scenario that reads it — since the projection itself has
+  no partition to be wrong about. The State changes adder does not
+  offer a projection whose every read the event misses; a State
+  changes row about a standalone projection names the reads it moves
+  in the command's terms (`changeArguments`: `Book exists tagged isbn`)
+  and says which ones it misses.
 - **Wire format majors**: a new member of a closed vocabulary is a
   _major_, judged from the reader's side (see the versioning notes in
   `dcb-model.schema.json` and `model.js`). 4.0 added binding

@@ -165,12 +165,6 @@
   "projectionDefinitions": [
     {
       "name": "StudentSubscriptionCount",
-      "parameters": [
-        {
-          "name": "studentId",
-          "propertyType": "StudentId"
-        }
-      ],
       "valueType": "integer",
       "isList": false,
       "initialValue": 0,
@@ -189,12 +183,6 @@
     },
     {
       "name": "CourseStatus",
-      "parameters": [
-        {
-          "name": "courseId",
-          "propertyType": "CourseId"
-        }
-      ],
       "valueType": "CourseStatus",
       "isList": false,
       "initialValue": {
@@ -219,12 +207,6 @@
     },
     {
       "name": "CourseCapacity",
-      "parameters": [
-        {
-          "name": "courseId",
-          "propertyType": "CourseId"
-        }
-      ],
       "valueType": "integer",
       "isList": false,
       "initialValue": 0,
@@ -247,12 +229,6 @@
     },
     {
       "name": "CourseSubscriptionCount",
-      "parameters": [
-        {
-          "name": "courseId",
-          "propertyType": "CourseId"
-        }
-      ],
       "valueType": "integer",
       "isList": false,
       "initialValue": 0,
@@ -271,12 +247,6 @@
     },
     {
       "name": "CourseSubscribedStudentIds",
-      "parameters": [
-        {
-          "name": "courseId",
-          "propertyType": "CourseId"
-        }
-      ],
       "valueType": "StudentId",
       "isList": true,
       "initialValue": [],
@@ -1285,45 +1255,60 @@
     {
       "id": "e281e4cd-1be9-19a9-8817-7da08a1f7532",
       "projection": "CourseStatus",
-      "arguments": {
-        "courseId": "c1"
-      },
+      "tags": [
+        {
+          "tagType": "CourseId",
+          "tagValue": "c1"
+        }
+      ],
       "given": [],
       "then": "NonExistent"
     },
     {
       "id": "fbd1f8cb-ac1c-fe02-b926-2b20c585e406",
       "projection": "CourseCapacity",
-      "arguments": {
-        "courseId": "c1"
-      },
+      "tags": [
+        {
+          "tagType": "CourseId",
+          "tagValue": "c1"
+        }
+      ],
       "given": [],
       "then": 0
     },
     {
       "id": "232b59bc-f685-9af3-3556-72c5e8af32f0",
       "projection": "CourseSubscriptionCount",
-      "arguments": {
-        "courseId": "c1"
-      },
+      "tags": [
+        {
+          "tagType": "CourseId",
+          "tagValue": "c1"
+        }
+      ],
       "given": [],
       "then": 0
     },
     {
       "id": "0c491928-51a6-f3cc-3b98-18eb8c964a96",
       "projection": "CourseSubscribedStudentIds",
-      "arguments": {
-        "courseId": "c1"
-      },
+      "tags": [
+        {
+          "tagType": "CourseId",
+          "tagValue": "c1"
+        }
+      ],
       "given": [],
       "then": []
     },
     {
       "id": "242308c4-56d7-7948-46c6-6dc5005aa8e4",
       "projection": "CourseStatus",
-      "arguments": {
-        "courseId": "c1"
-      },
+      "tags": [
+        {
+          "tagType": "CourseId",
+          "tagValue": "c1"
+        }
+      ],
       "given": [
         {
           "event": "CourseDefined",
@@ -1338,9 +1323,12 @@
     {
       "id": "2d7c9440-7fcc-878a-e633-3907d7568887",
       "projection": "CourseCapacity",
-      "arguments": {
-        "courseId": "c1"
-      },
+      "tags": [
+        {
+          "tagType": "CourseId",
+          "tagValue": "c1"
+        }
+      ],
       "given": [
         {
           "event": "CourseDefined",
@@ -1355,9 +1343,12 @@
     {
       "id": "665765f2-7c79-46ce-d68e-ec02c248c5ea",
       "projection": "CourseSubscriptionCount",
-      "arguments": {
-        "courseId": "c1"
-      },
+      "tags": [
+        {
+          "tagType": "CourseId",
+          "tagValue": "c1"
+        }
+      ],
       "given": [
         {
           "event": "CourseDefined",
@@ -1372,9 +1363,12 @@
     {
       "id": "65f58455-b091-00d6-42d6-d0a4172423cd",
       "projection": "CourseSubscribedStudentIds",
-      "arguments": {
-        "courseId": "c1"
-      },
+      "tags": [
+        {
+          "tagType": "CourseId",
+          "tagValue": "c1"
+        }
+      ],
       "given": [
         {
           "event": "CourseDefined",
@@ -1389,9 +1383,12 @@
     {
       "id": "773da23c-9a87-bfd4-2e2b-345819b903a6",
       "projection": "CourseStatus",
-      "arguments": {
-        "courseId": "c1"
-      },
+      "tags": [
+        {
+          "tagType": "CourseId",
+          "tagValue": "c1"
+        }
+      ],
       "given": [
         {
           "event": "CourseArchived",
@@ -1405,9 +1402,12 @@
     {
       "id": "100f466d-87c5-cffc-f4b6-eff034beaed9",
       "projection": "CourseStatus",
-      "arguments": {
-        "courseId": "c1"
-      },
+      "tags": [
+        {
+          "tagType": "CourseId",
+          "tagValue": "c1"
+        }
+      ],
       "given": [
         {
           "event": "CourseDefined",
@@ -1443,9 +1443,12 @@
     {
       "id": "f5f72b17-8e3b-8dc1-df8b-577f1e879516",
       "projection": "CourseCapacity",
-      "arguments": {
-        "courseId": "c1"
-      },
+      "tags": [
+        {
+          "tagType": "CourseId",
+          "tagValue": "c1"
+        }
+      ],
       "given": [
         {
           "event": "CourseDefined",
@@ -1481,9 +1484,12 @@
     {
       "id": "76a87201-51ff-da61-b1ce-7852f71982c0",
       "projection": "CourseSubscriptionCount",
-      "arguments": {
-        "courseId": "c1"
-      },
+      "tags": [
+        {
+          "tagType": "CourseId",
+          "tagValue": "c1"
+        }
+      ],
       "given": [
         {
           "event": "CourseDefined",
@@ -1519,9 +1525,12 @@
     {
       "id": "def50f18-63a8-6524-e1ab-b8ee522b4b1a",
       "projection": "CourseSubscribedStudentIds",
-      "arguments": {
-        "courseId": "c1"
-      },
+      "tags": [
+        {
+          "tagType": "CourseId",
+          "tagValue": "c1"
+        }
+      ],
       "given": [
         {
           "event": "CourseDefined",
@@ -1559,18 +1568,24 @@
     {
       "id": "6855d6ad-ab98-5684-0992-18d16fa5e9b1",
       "projection": "StudentSubscriptionCount",
-      "arguments": {
-        "studentId": "s1"
-      },
+      "tags": [
+        {
+          "tagType": "StudentId",
+          "tagValue": "s1"
+        }
+      ],
       "given": [],
       "then": 0
     },
     {
       "id": "7647ef77-6908-6602-aa17-39b63f6f9700",
       "projection": "StudentSubscriptionCount",
-      "arguments": {
-        "studentId": "s1"
-      },
+      "tags": [
+        {
+          "tagType": "StudentId",
+          "tagValue": "s1"
+        }
+      ],
       "given": [
         {
           "event": "StudentSubscribedToCourse",
