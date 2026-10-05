@@ -57,9 +57,10 @@
 // construct maps to exactly one schema shape, which is what lets the
 // two directions be each other's inverse; nothing is inferred that the
 // JSON does not store. Where a convenience would have needed inference
-// it was left out: a fan-out is not marked (it follows from the
-// operand's type, as in the schema), and an alias is always written,
-// since the schema stores it.
+// it was left out: an alias is always written, since the schema stores
+// it. A fan-out is marked where the schema marks it: a projection read
+// says `tagged each items.productId` (stored as `{each: …}`), while an
+// experimental entity read still fans out by its identifier's type.
 //
 // **`alias`, not `read`.** The statement names an instance for the
 // rules below it; it reads nothing at that line — the query is derived
@@ -550,6 +551,12 @@ function parseModelSource(text, options = {}) {
   // keyed by — `CourseId("c1")`, since a bare "c1" says no type.
   const tagOperand = () => {
     const token = peek();
+    // `each items.productId`: the read is made once per element.
+    if (accept('each')) {
+      const fan = { each: tagOperand() };
+      mark(fan, 'each', token);
+      return fan;
+    }
     if (token.t === 'ident' && SOURCE_MEMBER_RE.test(token.v) && is('(', 1)) {
       next(); next();
       const tag = { tagType: token.v, tagValue: literalValue() };
@@ -1639,7 +1646,11 @@ function sourceTagged(tags, operand) {
   if (tags === undefined) return '';
   if (!Array.isArray(tags)) unprintable('its tags are not a list');
   if (!tags.length) return '';
-  const texts = tags.map((tag) => {
+  const one = (tag) => {
+    if (tag && typeof tag === 'object' && !Array.isArray(tag) && tag.each !== undefined) {
+      if (Object.keys(tag).length !== 1) unprintable('an each carries extra fields');
+      return `each ${one(tag.each)}`;
+    }
     if (tag && typeof tag === 'object' && !Array.isArray(tag) && tag.tagType !== undefined) {
       if (Object.keys(tag).some((k) => k !== 'tagType' && k !== 'tagValue')) unprintable('a tag literal carries extra fields');
       if (!SOURCE_MEMBER_RE.test(sourceRef(tag.tagType, 'tag type'))) unprintable('a tag type does not start with a capital');
@@ -1647,7 +1658,8 @@ function sourceTagged(tags, operand) {
       return `${tag.tagType}(${sourceLiteral(tag.tagValue)})`;
     }
     return operand(tag);
-  });
+  };
+  const texts = tags.map(one);
   // One primary after `tagged`: a nested read is parenthesised.
   const bare = texts.length === 1 && !(tags[0] && typeof tags[0] === 'object' && tags[0].projection !== undefined);
   return ` tagged ${bare ? texts[0] : `(${texts.join(', ')})`}`;
@@ -2565,8 +2577,9 @@ function sourceSymbols(parsed) {
   const parameters = (projection) => list(projection && projection.script && projection.script.arguments);
   // A read's tags: a literal names its tag type, anything else is an
   // operand in the command's scope.
-  const tagOperands = (tags, operandOf) => list(Array.isArray(tags) ? tags : []).forEach((tag) => {
-    if (has(tag, 'tagType')) typeRef(slotsOf(tag).tagType);
+  const tagOperands = (tags, operandOf) => list(Array.isArray(tags) ? tags : []).forEach(function one(tag) {
+    if (has(tag, 'each')) one(tag.each);
+    else if (has(tag, 'tagType')) typeRef(slotsOf(tag).tagType);
     else if (operandOf) operandOf(tag);
   });
   const parameterType = (projectionName, key) => {
@@ -3760,7 +3773,7 @@ function sourceFoldingRanges(text) {
 const SOURCE_KEYWORDS = [
   'model', 'type', 'tag', 'tags', 'enum', 'record', 'event', 'entity', 'lifecycle', 'projection', 'derived',
   'script', 'initialState', 'exposes', 'on', 'set', 'increment', 'decrement', 'append',
-  'remove', 'command', 'alias', 'tagged', 'excluding', 'with', 'require', 'emit', 'when', 'and', 'not', 'is',
+  'remove', 'command', 'alias', 'tagged', 'each', 'excluding', 'with', 'require', 'emit', 'when', 'and', 'not', 'is',
   'empty', 'in', 'contains', 'containsAny', 'startsWith', 'endsWith', 'count', 'successor',
   'currentValue', 'json', 'true', 'false', 'null', 'scenarios', 'scenario', 'given', 'then', 'nothing', 'rejected',
   'else', 'reject',

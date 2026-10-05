@@ -1753,6 +1753,7 @@ function operandWords(operand) {
       return readable(operand.projection || '?') + (said.length ? ' tagged ' + said.join(' and ') : '');
     }
     case 'tag-literal': return operandText(operand);
+    case 'each': return 'each ' + operandWords(operand.each);
     default:
       if (typeof operand === 'string') return `"${operand}"`;
       // A record a scripted projection folded to is a static value

@@ -867,6 +867,62 @@ check('a rule reads a projection in place — no alias needed', () => {
   eq(renamed.includes('tagged (CourseHolder tagged courseId)'), true, 'renamed in place');
 });
 
+check('a read fans out where it says so — each, paired by index with its list', () => {
+  const text = [
+    'model "Fan"',
+    'type Money = number { minimum: 0 }',
+    'tag type ProductId = string',
+    'tag type OrderId = string',
+    'record Item { productId: ProductId, price: Money }',
+    'event ProductDefined { productId: ProductId, price: Money } tags productId',
+    'event ProductsOrdered { orderId: OrderId, items: Item[] } tags orderId, items.productId',
+    'projection ProductExists: boolean = false {',
+    '  on ProductDefined => set true',
+    '}',
+    'projection ProductPrice: Money = null {',
+    '  on ProductDefined => set event.data.price',
+    '}',
+    'command OrderProducts(orderId: OrderId, items: Item[]) {',
+    '  alias exists = ProductExists tagged each items.productId',
+    '  require exists is true',
+    '    else reject "Product does not exist"',
+    '  require ProductPrice tagged each items.productId == items.price',
+    '    else reject "Price has changed"',
+    '  emit ProductsOrdered { orderId, items }',
+    '}',
+    '',
+  ].join('\n');
+  const parsed = parseModelSource(text);
+  eq(parsed.diagnostics, [], 'it reads');
+  const body = parsed.collections['command-definition'].OrderProducts;
+  eq(body.boundary[0].tags, [{ each: { parameterName: 'items', property: 'productId' } }], 'each, stored on the tag');
+  const id = sandbox.createDcbModel('Fan');
+  applyModelSource(id, text);
+  const model = () => projectState()[id];
+  eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+  const printed = modelToSource(model());
+  eq(printed.includes('alias exists = ProductExists tagged each items.productId'), true, 'printed as written');
+  eq(printed.includes('require ProductPrice tagged each items.productId == items.price'), true, 'in place too');
+  const log = [
+    { type: 'ProductDefined', data: { productId: 'p1', price: 10 } },
+    { type: 'ProductDefined', data: { productId: 'p2', price: 20 } },
+  ];
+  const order = (items) => sandbox.evaluateCommand(model(), log, 'OrderProducts', { orderId: 'o1', items });
+  eq(order([{ productId: 'p1', price: 10 }, { productId: 'p2', price: 20 }]).outcome, 'published', 'every price holds');
+  eq(order([{ productId: 'p1', price: 10 }, { productId: 'p2', price: 25 }]).failedRule.rejection, 'Price has changed',
+    'one wrong price refuses — paired with its own line');
+  eq(order([{ productId: 'p1', price: 10 }, { productId: 'p9', price: 1 }]).failedRule.rejection, 'Product does not exist',
+    'one unknown product refuses');
+  eq(order([]).outcome, 'published', 'and over no lines, it holds vacuously');
+  const items = sandbox.deriveDcb(model(), model()['command-definitions'].OrderProducts).items;
+  eq(items.every((item) => item.fannedOut && item.tags[0] === 'ProductId:each(items.productId)'), true,
+    'the query says it fans out');
+  const bad = sandbox.createDcbModel('Bad');
+  applyModelSource(bad, text.replace('require ProductPrice tagged each items.productId', 'require ProductPrice tagged each orderId'));
+  eq(sandbox.modelAdvisories(projectState()[bad]).some((a) => /orderId is one value — "each" fans out over a list/.test(a.message)),
+    true, 'each over one value is advised: ' + sandbox.modelAdvisories(projectState()[bad]).map((a) => a.message).join('; '));
+});
+
 check('every name in every shipped text resolves to a symbol', () => {
   // JSON Schema keywords and a script's own state are not model names.
   const notNames = new Set([...sandbox.SOURCE_KEYWORDS, ...sandbox.SOURCE_BASE_TYPES, 'number', 'icon', 'feature', 'tagSchema',

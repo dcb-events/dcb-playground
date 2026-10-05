@@ -1260,7 +1260,7 @@
       ]
     },
     "TagOperand": {
-      "description": "One tag a read is read by: a value in the command's scope whose\ntype is a tag-marked value type (directly, or a record with\ntag-marked fields — one tag per field), or a `TagLiteral`.\n",
+      "description": "One tag a read is read by: a value in the command's scope whose\ntype is a tag-marked value type (directly, or a record with\ntag-marked fields — one tag per field), or a `TagLiteral`.\nOr a `TagEach`, reading once per element of a list.\n",
       "oneOf": [
         {
           "$ref": "#/$defs/ParameterValue"
@@ -1270,7 +1270,30 @@
         },
         {
           "$ref": "#/$defs/TagLiteral"
+        },
+        {
+          "$ref": "#/$defs/TagEach"
         }
+      ]
+    },
+    "TagEach": {
+      "description": "The fan-out, said where it happens: the read is made once per\nelement of a list, each element the tag, and a rule over the read\nholds for every one — paired by index with values read from the\nsame list (`tagged each items.productId`). A read fans out over one\nlist at most. An entity read still fans out by its identifier's\ntype, unmarked.\n",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "each": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ParameterValue"
+            },
+            {
+              "$ref": "#/$defs/AliasPropertyValue"
+            }
+          ]
+        }
+      },
+      "required": [
+        "each"
       ]
     }
   }

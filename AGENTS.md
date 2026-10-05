@@ -297,6 +297,11 @@ it never works from `file:`.
   a read by no tag is the whole log. Scripts see the tags as `tags`
   and have no `tagFilter`. Evaluation takes a *read* —
   `foldProjection(model, events, name, { tags: [{type, value}], args })`.
+  A read fans out where it says so, `tagged each items.productId`
+  (`{each: operand}` on the tag): it is made once per element, and a
+  rule over it holds for every one, paired by index with values read
+  from the same list (`fanRootOf` / `isZipped`, the same machinery an
+  entity fan-out uses). An emission cannot take a fanned read.
   What the model reads a projection by is derived
   (`projectionReads` / `projectionReadTagSets`), and is what the
   ledger row, the editor's "read by" and the State changes step say.

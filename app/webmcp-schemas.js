@@ -1126,7 +1126,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                   "description": "The tags this read is read by, ANDed — the values its query\nis narrowed by. Each is keyed by its own type, which must be a\ntag type, so a literal states it (`TagLiteral`). None means the\nwhole log. A tag may name a binding above this one, which is\nwhat puts a projection into the chain; it may not resolve to a\nlist.\n",
                   "type": "array",
                   "items": {
-                    "description": "One tag a read is read by: a value in the command's scope whose\ntype is a tag-marked value type (directly, or a record with\ntag-marked fields — one tag per field), or a `TagLiteral`.\n",
+                    "description": "One tag a read is read by: a value in the command's scope whose\ntype is a tag-marked value type (directly, or a record with\ntag-marked fields — one tag per field), or a `TagLiteral`.\nOr a `TagEach`, reading once per element of a list.\n",
                     "oneOf": [
                       {
                         "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it —\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n",
@@ -1225,6 +1225,78 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                         "required": [
                           "tagType",
                           "tagValue"
+                        ]
+                      },
+                      {
+                        "description": "The fan-out, said where it happens: the read is made once per\nelement of a list, each element the tag, and a rule over the read\nholds for every one — paired by index with values read from the\nsame list (`tagged each items.productId`). A read fans out over one\nlist at most. An entity read still fans out by its identifier's\ntype, unmarked.\n",
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "each": {
+                            "oneOf": [
+                              {
+                                "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it —\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n",
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "parameterName": {
+                                    "type": "string",
+                                    "minLength": 2,
+                                    "maxLength": 100,
+                                    "pattern": "^[a-z][A-Za-z0-9]+$",
+                                    "examples": [
+                                      "someProperty"
+                                    ]
+                                  },
+                                  "property": {
+                                    "type": "string",
+                                    "minLength": 2,
+                                    "maxLength": 100,
+                                    "pattern": "^[a-z][A-Za-z0-9]+$",
+                                    "examples": [
+                                      "someProperty"
+                                    ],
+                                    "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
+                                  }
+                                },
+                                "required": [
+                                  "parameterName"
+                                ]
+                              },
+                              {
+                                "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` is a projected property of\na bound entity instance. `{alias: courseNumbering}` — no\n`property` — is a bound projection's value.\n\n`property` is therefore **required on an entity alias** and\n**rejected on a projection alias**: an entity has many values and\nno single one to mean, a projection has exactly one and no name\nfor it. That is the same shape of rule `excluding` and\n`arguments` already follow — a field that means nothing in its\nposition is a mistake, not a no-op.\n",
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "alias": {
+                                    "type": "string",
+                                    "minLength": 2,
+                                    "maxLength": 100,
+                                    "pattern": "^[a-z][A-Za-z0-9]*$",
+                                    "examples": [
+                                      "course",
+                                      "sourceCourse"
+                                    ]
+                                  },
+                                  "property": {
+                                    "type": "string",
+                                    "minLength": 2,
+                                    "maxLength": 100,
+                                    "pattern": "^[a-z][A-Za-z0-9]+$",
+                                    "examples": [
+                                      "someProperty"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "alias"
+                                ]
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "each"
                         ]
                       }
                     ]

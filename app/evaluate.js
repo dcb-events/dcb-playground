@@ -526,6 +526,9 @@ function evReadOperand(operand, scope) {
         if (operand.property) {
           fail(`"${operand.alias}" reads a projection, which holds one value and has no properties.`);
         }
+        // Fanned out, it is one value per element; read whole, a list
+        // of lists flattens, as a fanned entity property's does.
+        if (binding.fanned) return binding.value.some(Array.isArray) ? binding.value.flat() : binding.value;
         return binding.value;
       }
       if (!operand.property) {
@@ -569,10 +572,20 @@ function evReadOperand(operand, scope) {
 // tags and arguments are kept beside the value because they are what
 // makes it reproducible: the value alone says what was read, and they
 // say how, which is the half a reader needs to go and look at it.
+//
+// A read fanned out (`tagged each items.productId`) is made once per
+// element of that list — `instances`, each with its tags and value, in
+// the list's order so a zipped parameter pairs by index — and `value`
+// is then every one of them, in order.
 function evProjectionRead(model, events, body, read, scope, label) {
+  let fanned = null;
   const tags = (read.tags || []).map((operand, index) => {
     const resolved = tagOperandType(model, body, operand);
     if (!resolved) fail(`${label} is tagged by ${operandText(operand)}, whose type cannot be worked out.`);
+    if (operandSource(operand) === 'each') {
+      fanned = { index, values: evAsList(evReadOperand(operand.each, scope)) };
+      return { type: resolved.propertyType, value: null };
+    }
     const value = operandSource(operand) === 'tag-literal' ? operand.tagValue : evReadOperand(operand, scope);
     if (resolved.isList || Array.isArray(value)) {
       fail(`${label} is tagged by ${operandText(operand)}, a list — tag ${index + 1} takes one value.`);
@@ -583,12 +596,28 @@ function evProjectionRead(model, events, body, read, scope, label) {
   for (const [name, operand] of Object.entries(read.arguments || {})) {
     args[name] = evReadOperand(operand, scope);
   }
+  if (!fanned) {
+    return {
+      kind: 'projection',
+      projection: read.projection,
+      tags,
+      arguments: args,
+      value: foldProjection(model, events, read.projection, { tags, args }),
+    };
+  }
+  const instances = fanned.values.map((element) => {
+    const own = tags.map((tag, i) => (i === fanned.index ? { ...tag, value: element } : tag));
+    return { tags: own, value: foldProjection(model, events, read.projection, { tags: own, args }) };
+  });
   return {
     kind: 'projection',
     projection: read.projection,
+    fanned: true,
     tags,
     arguments: args,
-    value: foldProjection(model, events, read.projection, { tags, args }),
+    instances,
+    sourceIndexes: instances.map((_, i) => i),
+    value: instances.map((instance) => instance.value),
   };
 }
 
@@ -735,9 +764,7 @@ function evFannedAliasesOf(condition, scope) {
   for (const operand of conditionOperands(condition)) {
     if (operandSource(operand) !== 'alias-property') continue;
     const binding = scope.bound[operand.alias];
-    if (binding && binding.kind === 'entity' && binding.fanned && !out.includes(operand.alias)) {
-      out.push(operand.alias);
-    }
+    if (binding && binding.fanned && !out.includes(operand.alias)) out.push(operand.alias);
   }
   return out;
 }
@@ -756,12 +783,22 @@ function evCheckCondition(model, body, condition, scope) {
   }
 
   const fannedAliases = evFannedAliasesOf(condition, scope);
+  // A read in place that fans out quantifies the same way an alias
+  // does: folded once (`scope.inline`), then read at the index.
+  const fannedReads = conditionOperands(condition)
+    .filter((operand) => operandSource(operand) === 'projection-read' && readFanTag(operand));
+  for (const read of fannedReads) evReadOperand(read, scope);
+  const inlineOf = (read) => scope.inline.get(JSON.stringify(canonicalOperand(read)));
+  const fannedSources = [
+    ...fannedAliases.map((alias) => scope.bound[alias]),
+    ...fannedReads.map(inlineOf),
+  ];
 
   // The instance list may be compacted by `excluding`, so a zipped
   // parameter is read at the instance's original fan-out index, never
   // at its position in the compacted list.
   const sourceIndexAt = (index) => {
-    const indexes = scope.bound[fannedAliases[0]].sourceIndexes;
+    const indexes = fannedSources[0].sourceIndexes;
     return indexes && indexes[index] !== undefined ? indexes[index] : index;
   };
 
@@ -769,7 +806,11 @@ function evCheckCondition(model, body, condition, scope) {
     if (index === null) return evReadOperand(operand, scope);
     const source = operandSource(operand);
     if (source === 'alias-property' && fannedAliases.includes(operand.alias)) {
-      return scope.bound[operand.alias].instances[index].read(operand.property);
+      const bound = scope.bound[operand.alias];
+      return bound.kind === 'projection' ? bound.instances[index].value : bound.instances[index].read(operand.property);
+    }
+    if (source === 'projection-read' && fannedReads.includes(operand)) {
+      return inlineOf(operand).instances[index].value;
     }
     if (source === 'parameter' && isZipped(model, body, condition, operand)) {
       return evAsList(evReadOperand(operand, scope))[sourceIndexAt(index)];
@@ -785,13 +826,13 @@ function evCheckCondition(model, body, condition, scope) {
     return { held: evApplyPredicate(condition, left, right), left, right, index };
   };
 
-  if (!fannedAliases.length) return check(null);
+  if (!fannedSources.length) return check(null);
 
-  const lengths = fannedAliases.map((alias) => scope.bound[alias].instances.length);
+  const lengths = fannedSources.map((source) => source.instances.length);
   if (uniq(lengths).length > 1) {
     fail(
-      `Condition "${conditionText(condition)}" reads ${fannedAliases.join(' and ')} together, ` +
-      'but they hold different numbers of instances, so there is no pairing to check.'
+      `Condition "${conditionText(condition)}" reads ${[...fannedAliases, ...fannedReads.map(operandText)].join(' and ')} ` +
+      'together, but they hold different numbers of instances, so there is no pairing to check.'
     );
   }
   // Quantified over nothing is vacuously true — a course with no

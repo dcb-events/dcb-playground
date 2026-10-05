@@ -5577,11 +5577,18 @@ function ruleEditor(model, slice, index, target) {
   // to how the model already reads it (or the whole log when nothing
   // does); a pick of nothing drops the tag.
   const projectionName = chosenProjection ? choice.entity.slice('projection:'.length) : null;
+  // A list of such values is on offer too, as `each` — the read made
+  // once per element, which a rule over it then holds for every one of.
   const tagSources = chosenProjection
     ? partitionTypeOptions(model)
       .filter(([type]) => !readTagsMissing(model, projectionName,
         idLeavesOfType(model, type).map((leaf) => leaf.identifierType)).length)
-      .flatMap(([type]) => choicesOfType(model, slice, baseScope, type))
+      .flatMap(([type]) => choicesOfType(model, slice, baseScope, type, { list: true }).map(([v, label, ...rest]) => {
+        const resolved = resolveOperandType(JSON.parse(v), { boundary: slice.reads, commandProperties: slice.payload, model });
+        return resolved && resolved.isList
+          ? [JSON.stringify({ each: JSON.parse(v) }), 'each ' + label, ...rest]
+          : [v, label, ...rest];
+      }))
     : [];
   if (chosenProjection && choice.tags === null) {
     // How the model already reads it; for a projection nothing reads

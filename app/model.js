@@ -795,7 +795,7 @@ function findReferencers(model, targetKind, targetName) {
 // Command operands:  {parameterName} | {alias, property?} | {enumMember} | literal
 // Handler operands:  {eventProperty} | {currentValue} | {successor} | {enumMember} | literal
 // Derived operands:  {projection, arguments?} | {enumMember} | literal
-// Tag operands:      a command operand | {tagType, tagValue}
+// Tag operands:      a command operand | {tagType, tagValue} | {each: operand}
 //
 // `{alias}` with no `property` reads a bound projection's value: a
 // projection holds exactly one value and has no name for it. On an
@@ -805,7 +805,9 @@ function findReferencers(model, targetKind, targetName) {
 // value whose type says nothing — a literal — states it: `{tagType,
 // tagValue}`, spelled `CourseId("c1")`. It is allowed only where a tag
 // is (a read's `tags`, a projection scenario's), and its two keys keep
-// it apart from any record literal.
+// it apart from any record literal. `{each: operand}` is the fan-out,
+// said where it happens: the read is made once per element of a list,
+// and a rule over it holds for every one (`tagged each items.productId`).
 // ============================================================
 
 function operandSource(operand) {
@@ -819,6 +821,7 @@ function operandSource(operand) {
   if (operand.successor !== undefined) return 'successor';
   if (operand.projection !== undefined) return 'projection-read';
   if (operand.tagType !== undefined) return 'tag-literal';
+  if (operand.each !== undefined) return 'each';
   return 'static';
 }
 
@@ -848,6 +851,7 @@ function operandText(operand) {
         + (args.length ? ` with (${args.join(', ')})` : '');
     }
     case 'tag-literal': return `${operand.tagType || '?'}(${JSON.stringify(operand.tagValue)})`;
+    case 'each': return `each ${operandText(operand.each)}`;
     default:
       if (operand === null || operand === undefined) return 'null';
       if (Array.isArray(operand)) return `[${operand.map(operandText).join(', ')}]`;
@@ -869,6 +873,7 @@ function operandIncomplete(operand) {
     case 'successor': return operandIncomplete(operand.successor);
     case 'projection-read': return !operand.projection;
     case 'tag-literal': return !operand.tagType;
+    case 'each': return operandIncomplete(operand.each);
     default: return false;
   }
 }
@@ -1203,6 +1208,7 @@ function offersSuccessor(model, valueType) {
 function forEachCommandOperand(body, outerVisit) {
   const visit = (operand, meta) => {
     outerVisit(operand, meta);
+    if (operandSource(operand) === 'each') { visit(operand.each, meta); return; }
     if (operandSource(operand) !== 'projection-read') return;
     (Array.isArray(operand.tags) ? operand.tags : []).forEach((tag, index) => {
       visit(tag, { ...meta, where: `${meta.where} (${operand.projection} tag ${index + 1})`, tag: true });
@@ -1300,6 +1306,11 @@ function resolveOperandType(operand, { boundary, commandProperties, model }) {
   if (source === 'tag-literal') {
     return operand.tagType ? { propertyType: operand.tagType, isList: false } : null;
   }
+  // One element of the list it fans out over.
+  if (source === 'each') {
+    const inner = resolveOperandType(operand.each, { boundary, commandProperties, model });
+    return inner ? { propertyType: inner.propertyType, isList: false } : null;
+  }
   // An inline read holds its projection's value, the same as an alias
   // bound to it does.
   if (source === 'projection-read') {
@@ -1370,11 +1381,15 @@ function rightHandExpectedType(predicate, leftType) {
 // element — nothing declares it, it follows from the operand's type. A
 // list read off an already-fanned-out alias is a list of lists, which
 // flattens; either way the binding is plural.
+// The tag a projection read fans out over — its `{each: …}` — or null.
+function readFanTag(read) {
+  return ((read && Array.isArray(read.tags) && read.tags) || []).find((tag) => operandSource(tag) === 'each') || null;
+}
+
 function isFannedOut(model, body, binding) {
   if (!binding) return false;
-  // A projection read is tagged by single values, so there is nothing
-  // for it to fan over.
-  if (binding.projection) return false;
+  // A projection read fans out where it says so, `tagged each …`.
+  if (binding.projection) return !!readFanTag(binding);
   const resolved = resolveOperandType(binding.id, {
     boundary: body.boundary || [],
     commandProperties: body.properties || [],
@@ -1398,11 +1413,14 @@ function isFannedOut(model, body, binding) {
 function bindingFanRoot(model, body, binding, seen = []) {
   if (!binding || !isFannedOut(model, body, binding)) return null;
   if (seen.includes(binding.alias)) return null;
-  if (operandSource(binding.id) === 'parameter') {
-    return `parameter:${binding.id.parameterName}`;
+  // What it fans over: an entity's identifier, or a projection read's
+  // `each` tag.
+  const over = binding.projection ? readFanTag(binding).each : binding.id;
+  if (operandSource(over) === 'parameter') {
+    return `parameter:${over.parameterName}`;
   }
-  if (operandSource(binding.id) === 'alias-property') {
-    const source = (body.boundary || []).find((b) => b && b.alias === binding.id.alias);
+  if (operandSource(over) === 'alias-property') {
+    const source = (body.boundary || []).find((b) => b && b.alias === over.alias);
     // A binding fanned from a plural *projection* has no list
     // parameter behind it, so it is its own root.
     const inherited = source && source !== binding
@@ -1419,14 +1437,28 @@ function fanRootOf(model, body, operand) {
     return bindingFanRoot(model, body,
       (body.boundary || []).find((b) => b && b.alias === operand.alias));
   }
+  // A read in place that fans out has the root of what it fans over —
+  // a payload list, or a list read off a binding.
+  if (source === 'projection-read') {
+    const fan = readFanTag(operand);
+    if (!fan) return null;
+    const over = resolveOperandType(fan.each, { boundary: body.boundary || [], commandProperties: body.properties || [], model });
+    if (over && !over.isList && operandSource(fan.each) !== 'alias-property') return null;
+    if (operandSource(fan.each) === 'parameter') return `parameter:${fan.each.parameterName}`;
+    if (operandSource(fan.each) === 'alias-property') {
+      return bindingFanRoot(model, body, (body.boundary || []).find((b) => b && b.alias === fan.each.alias))
+        || `binding:${fan.each.alias}`;
+    }
+    return null;
+  }
   if (source === 'parameter') {
     // A list parameter is a fan root only when something actually fans
     // out over it. A list nobody iterates — the new schedule handed to
     // a reschedule command, say — is an ordinary list value, and
     // reading it alongside a fanned alias is not a second quantifier.
     const root = `parameter:${operand.parameterName}`;
-    const iterated = (body.boundary || []).some(
-      (b) => bindingFanRoot(model, body, b) === root);
+    const iterated = (body.boundary || []).some((b) => bindingFanRoot(model, body, b) === root)
+      || inlineReads(body).some(({ read }) => fanRootOf(model, body, read) === root);
     return iterated ? root : null;
   }
   return null;
@@ -1461,7 +1493,7 @@ function isZipped(model, body, condition, operand) {
   if (!root || operandSource(operand) !== 'parameter') return false;
   return conditionOperands(condition).some((other) =>
     other !== operand
-    && operandSource(other) === 'alias-property'
+    && (operandSource(other) === 'alias-property' || operandSource(other) === 'projection-read')
     && fanRootOf(model, body, other) === root);
 }
 
@@ -1536,6 +1568,7 @@ function tagsForIdentifierValue(model, identifierTypeName, operand, { each } = {
 // key is this type: a read names values, and their types say which tag
 // each one is.
 function tagOperandType(model, body, operand) {
+  // `each` is resolved through `resolveOperandType` too: one element.
   return resolveOperandType(operand, {
     boundary: (body && body.boundary) || [],
     commandProperties: (body && body.properties) || [],
@@ -1559,6 +1592,9 @@ function readTagTexts(model, body, tags) {
   return uniq((tags || []).flatMap((operand) => {
     const resolved = tagOperandType(model, body, operand);
     if (!resolved) return [`?:${operandText(operand)}`];
+    if (operandSource(operand) === 'each') {
+      return tagsForIdentifierValue(model, resolved.propertyType, operand.each, { each: true });
+    }
     return tagsForIdentifierValue(model, resolved.propertyType, operand);
   }));
 }
@@ -1698,6 +1734,7 @@ function deriveDcb(model, body) {
       items.push({
         projection: binding.projection,
         alias: binding.alias,
+        fannedOut: !!readFanTag(binding),
         tags: readTagTexts(model, body, binding.tags),
         types: projectionHandledTypes(model, binding.projection).sort(),
         readProperties: [],
@@ -1739,6 +1776,7 @@ function deriveDcb(model, body) {
       projection: read.projection,
       alias: null,
       inline: key,
+      fannedOut: !!readFanTag(read),
       tags: readTagTexts(model, body, read.tags),
       types: projectionHandledTypes(model, read.projection).sort(),
       readProperties: [],
@@ -1794,6 +1832,8 @@ function bindingOperands(binding) {
 function operandAliases(operand, out = []) {
   if (operandSource(operand) === 'alias-property') {
     if (!out.includes(operand.alias)) out.push(operand.alias);
+  } else if (operandSource(operand) === 'each') {
+    operandAliases(operand.each, out);
   } else if (operandSource(operand) === 'projection-read') {
     for (const inner of [...(operand.tags || []), ...Object.values(operand.arguments || {})]) operandAliases(inner, out);
   }
@@ -1817,6 +1857,7 @@ function bindingDependsOn(body, binding) {
 function operandDepth(operand, roundOf) {
   switch (operandSource(operand)) {
     case 'alias-property': return roundOf.get(operand.alias) || 0;
+    case 'each': return operandDepth(operand.each, roundOf);
     case 'projection-read': {
       const inner = [...(operand.tags || []), ...Object.values(operand.arguments || {})];
       return 1 + Math.max(0, ...inner.map((o) => operandDepth(o, roundOf)));
@@ -2380,15 +2421,38 @@ function tagOperandProblem(model, body, operand) {
   if (source === 'static' || source === 'enum-member') {
     return `is tagged ${operandText(operand)}, which says no tag type — write the literal with its type, CourseId("c1").`;
   }
+  // `each` fans out over a list; over one value there is nothing to fan.
+  if (source === 'each') {
+    const over = tagOperandType(model, body, operand.each);
+    if (over && !over.isList) {
+      return `is tagged ${operandText(operand)}, but ${operandText(operand.each)} is one value — ` +
+        `"each" fans out over a list; drop it.`;
+    }
+    const problem = operandSource(operand.each) === 'each' ? 'is tagged each of each' : null;
+    if (problem) return problem;
+    const element = tagOperandType(model, body, operand);
+    if (element && !isTagBearing(model, element.propertyType)) {
+      return `is tagged ${operandText(operand)}, a list of ${element.propertyType} — which is no tag type, so nothing is tagged by it.`;
+    }
+    return null;
+  }
   const resolved = tagOperandType(model, body, operand);
   if (resolved && !isTagBearing(model, resolved.propertyType)) {
     return `is tagged ${operandText(operand)}, ${/^[aeiou]/i.test(resolved.propertyType) ? 'an' : 'a'} ` +
       `${resolved.propertyType} — which is no tag type, so nothing is tagged by it.`;
   }
   if (resolved && resolved.isList) {
-    return `is tagged ${operandText(operand)}, which is a list — a projection read is tagged by one value each.`;
+    return `is tagged ${operandText(operand)}, which is a list — a read is tagged by one value; ` +
+      `"tagged each ${operandText(operand)}" reads it once per element.`;
   }
   return null;
+}
+
+// Why a read's tags cannot all fan out — or null: it fans over one list
+// at most, since two would be read as a cross product nothing pairs.
+function readFanProblem(read) {
+  const fans = ((read && Array.isArray(read.tags) && read.tags) || []).filter((tag) => operandSource(tag) === 'each');
+  return fans.length > 1 ? `fans out over ${fans.length} lists — a read fans out over one.` : null;
 }
 
 // Why an inline read in a command cannot be read as written — or null:
@@ -2399,6 +2463,8 @@ function inlineReadProblem(model, body, read, where) {
   const projection = model['projection-definitions'][read.projection];
   if (!projection) return `${where} reads "${read.projection}", which this model does not define.`;
   if (read.tags !== undefined && !Array.isArray(read.tags)) return `${where} reads "${read.projection}" with tags that are not a list.`;
+  const fanProblem = readFanProblem(read);
+  if (fanProblem) return `${where} reads "${read.projection}", which ${fanProblem}`;
   for (const tag of read.tags || []) {
     if (tag === undefined || tag === null || operandIncomplete(tag)) return `${label} has a tag with no value.`;
     const problem = tagOperandProblem(model, body, tag);
@@ -3090,6 +3156,8 @@ function validateCommandBody(model, body) {
           }
         }
       };
+      const fanProblem = readFanProblem(binding);
+      if (fanProblem) throw new DomainError(`Boundary binding "${binding.alias}" ${fanProblem}`);
       (binding.tags || []).forEach((operand, index) => {
         const what = `tag ${index + 1}`;
         if (operand === undefined || operand === null || operandIncomplete(operand)) {
@@ -3181,10 +3249,17 @@ function validateCommandBody(model, body) {
   ];
 
   // A plural alias cannot supply a single value, so it may be read by a
-  // condition — which quantifies over it — but never emitted.
+  // condition — which quantifies over it — but never emitted. Nor may a
+  // read in place that fans out.
   for (const emission of body.publishes || []) {
     if (!emission || !emission.parameters) continue;
     for (const [key, operand] of Object.entries(emission.parameters)) {
+      if (operandSource(operand) === 'projection-read' && readFanTag(operand)) {
+        throw new DomainError(
+          `"${emission.name}.${key}" takes its value from "${operandText(operand)}", which reads many. ` +
+          `A fanned-out read can be checked, not emitted.`
+        );
+      }
       if (operandSource(operand) !== 'alias-property') continue;
       const binding = boundary.find((b) => b.alias === operand.alias);
       if (binding && isFannedOut(model, body, binding)) {
