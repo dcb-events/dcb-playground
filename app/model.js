@@ -722,6 +722,13 @@ function forEachReferenceSlot(kind, name, body, slot) {
         at(binding, 'projection', 'projection-definition', 'name');
         tagLiteralSlots(binding && binding.tags);
       }
+      // An inline read names its projection, and its literals their tag
+      // types, wherever an operand sits.
+      forEachCommandOperand(body, (operand) => {
+        if (operandSource(operand) !== 'projection-read') return;
+        at(operand, 'projection', 'projection-definition', 'name');
+        tagLiteralSlots(operand.tags);
+      });
       for (const emission of body.publishes || []) at(emission, 'name', 'event-definition', 'name');
       break;
     case 'scenario-definition':
@@ -830,11 +837,14 @@ function operandText(operand) {
     case 'current-value': return 'current';
     case 'successor': return `successor(${operandText(operand.successor)})`;
     case 'projection-read': {
-      const tags = (operand.tags || []).map(operandText);
+      const tagList = Array.isArray(operand.tags) ? operand.tags : [];
+      const tags = tagList.map(operandText);
       const args = Object.entries(operand.arguments || {})
         .map(([name, value]) => `${name}: ${operandText(value)}`);
+      // One primary after `tagged`: a nested read is parenthesised.
+      const bare = tags.length === 1 && operandSource(tagList[0]) !== 'projection-read';
       return `${operand.projection || '?'}`
-        + (tags.length ? ` tagged ${tags.length === 1 ? tags[0] : `(${tags.join(', ')})`}` : '')
+        + (tags.length ? ` tagged ${bare ? tags[0] : `(${tags.join(', ')})`}` : '')
         + (args.length ? ` with (${args.join(', ')})` : '');
     }
     case 'tag-literal': return `${operand.tagType || '?'}(${JSON.stringify(operand.tagValue)})`;
@@ -1186,8 +1196,21 @@ function offersSuccessor(model, valueType) {
   return cls.kind === 'value' && !cls.composite;
 }
 
-// Walks every operand inside a command body.
-function forEachCommandOperand(body, visit) {
+// Walks every operand inside a command body — and into every inline
+// projection read (8.0), whose tags and arguments are operands in the
+// same scope: `CourseStatus tagged course.id` names `course` exactly as
+// a rule does. A walker sees the read first, then what is inside it.
+function forEachCommandOperand(body, outerVisit) {
+  const visit = (operand, meta) => {
+    outerVisit(operand, meta);
+    if (operandSource(operand) !== 'projection-read') return;
+    (Array.isArray(operand.tags) ? operand.tags : []).forEach((tag, index) => {
+      visit(tag, { ...meta, where: `${meta.where} (${operand.projection} tag ${index + 1})`, tag: true });
+    });
+    for (const [key, argument] of Object.entries(operand.arguments || {})) {
+      visit(argument, { ...meta, where: `${meta.where} (${operand.projection} argument ${key})`, tag: false });
+    }
+  };
   for (const binding of body.boundary || []) {
     if (!binding) continue;
     if (binding.projection) {
@@ -1276,6 +1299,12 @@ function resolveOperandType(operand, { boundary, commandProperties, model }) {
   }
   if (source === 'tag-literal') {
     return operand.tagType ? { propertyType: operand.tagType, isList: false } : null;
+  }
+  // An inline read holds its projection's value, the same as an alias
+  // bound to it does.
+  if (source === 'projection-read') {
+    const projection = model['projection-definitions'][operand.projection];
+    return projection ? { propertyType: projection.valueType, isList: !!projection.isList } : null;
   }
   if (source === 'parameter') {
     const property = (commandProperties || []).find((p) => p.name === operand.parameterName);
@@ -1547,9 +1576,15 @@ function projectionReads(model, projectionName, seen = []) {
   const leafTypes = (typeName) => idLeavesOfType(model, typeName).map((leaf) => leaf.identifierType);
   const push = (by, where) => out.push({ by: uniq(by).sort(), where });
   for (const [name, body] of Object.entries(model['command-definitions'] || {})) {
-    for (const binding of (body && body.boundary) || []) {
+    if (!body) continue;
+    for (const binding of body.boundary || []) {
       if (binding && binding.projection === projectionName) {
         push(readTagTypes(model, body, binding.tags), { kind: 'command-definition', name, alias: binding.alias });
+      }
+    }
+    for (const { read } of inlineReads(body)) {
+      if (read.projection === projectionName) {
+        push(readTagTypes(model, body, read.tags), { kind: 'command-definition', name, inline: true });
       }
     }
   }
@@ -1696,6 +1731,20 @@ function deriveDcb(model, body) {
     });
   }
 
+  // Every inline read (8.0) is a query item too, once however often it
+  // is written: two rules about `CourseStatus tagged courseId` read it
+  // once. It has no alias, so its item is known by its spelling.
+  for (const { key, read } of inlineReads(body)) {
+    items.push({
+      projection: read.projection,
+      alias: null,
+      inline: key,
+      tags: readTagTexts(model, body, read.tags),
+      types: projectionHandledTypes(model, read.projection).sort(),
+      readProperties: [],
+    });
+  }
+
   const writes = [];
   for (const emission of body.publishes || []) {
     if (!emission) continue;
@@ -1715,21 +1764,65 @@ function deriveDcb(model, body) {
   return { items, writes: uniq(writes) };
 }
 
-// The aliases a binding waits for — every binding its own operands
-// name. A graph, not a tree: `id` and `excluding` may point somewhere
-// different, and arguments may point at several bindings at once.
-function bindingDependsOn(body, binding) {
+// Every inline projection read in a command, once per distinct
+// spelling — `{ key, read }`, `key` the read's canonical JSON — in the
+// order first written. Two rules reading `CourseStatus tagged
+// courseId` read it once.
+function inlineReads(body) {
+  const out = [];
+  const seen = new Set();
+  forEachCommandOperand(body, (operand) => {
+    if (operandSource(operand) !== 'projection-read') return;
+    const key = JSON.stringify(canonicalOperand(operand));
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ key, read: operand });
+  });
+  return out;
+}
+
+// The operands one binding is read with — its identifier, exclusion,
+// tags and arguments.
+function bindingOperands(binding) {
   if (!binding) return [];
-  const operands = binding.projection
+  return binding.projection
     ? [...(binding.tags || []), ...Object.values(binding.arguments || {})]
     : [binding.id, binding.excluding, ...Object.values(binding.arguments || {})];
-  const aliases = [];
-  for (const operand of operands) {
-    if (operandSource(operand) !== 'alias-property') continue;
-    if (operand.alias === binding.alias) continue;
-    if (!aliases.includes(operand.alias)) aliases.push(operand.alias);
+}
+
+// The aliases an operand names, looking into inline reads.
+function operandAliases(operand, out = []) {
+  if (operandSource(operand) === 'alias-property') {
+    if (!out.includes(operand.alias)) out.push(operand.alias);
+  } else if (operandSource(operand) === 'projection-read') {
+    for (const inner of [...(operand.tags || []), ...Object.values(operand.arguments || {})]) operandAliases(inner, out);
   }
-  return aliases;
+  return out;
+}
+
+// The aliases a binding waits for — every binding its own operands
+// name, inline reads included. A graph, not a tree: `id` and
+// `excluding` may point somewhere different, and arguments may point at
+// several bindings at once.
+function bindingDependsOn(body, binding) {
+  if (!binding) return [];
+  const aliases = [];
+  for (const operand of bindingOperands(binding)) operandAliases(operand, aliases);
+  return aliases.filter((alias) => alias !== binding.alias);
+}
+
+// The query an operand waits for, as a depth: a bound alias waits for
+// its binding's round, an inline read is one query after whatever its
+// own tags wait for, and anything else waits for nothing.
+function operandDepth(operand, roundOf) {
+  switch (operandSource(operand)) {
+    case 'alias-property': return roundOf.get(operand.alias) || 0;
+    case 'projection-read': {
+      const inner = [...(operand.tags || []), ...Object.values(operand.arguments || {})];
+      return 1 + Math.max(0, ...inner.map((o) => operandDepth(o, roundOf)));
+    }
+    default: return 0;
+  }
 }
 
 // Groups the boundary into the queries it actually resolves in — one
@@ -1753,7 +1846,9 @@ function deriveRounds(body) {
 
   for (const binding of boundary) {
     const waitsFor = bindingDependsOn(body, binding).filter((a) => roundOf.has(a));
-    const round = waitsFor.reduce((max, alias) => Math.max(max, roundOf.get(alias)), 0) + 1;
+    // An inline read among its operands is a query of its own, so the
+    // binding waits for it as it would for an alias.
+    const round = Math.max(0, ...bindingOperands(binding).map((o) => operandDepth(o, roundOf))) + 1;
     roundOf.set(binding.alias, round);
     while (rounds.length < round) rounds.push([]);
     rounds[round - 1].push({ binding, waitsFor });
@@ -1773,10 +1868,19 @@ function deriveRounds(body) {
 // cannot disagree.
 function boundarySummary(model, body) {
   const dcb = deriveDcb(model, body);
-  const byAlias = new Map(dcb.items.map((item) => [item.alias, item]));
-  const queries = deriveRounds(body)
-    .map((round) => round.map((entry) => byAlias.get(entry.binding.alias)).filter(Boolean))
-    .filter((query) => query.length);
+  const byAlias = new Map(dcb.items.filter((item) => item.alias).map((item) => [item.alias, item]));
+  const rounds = deriveRounds(body);
+  const queries = rounds.map((round) => round.map((entry) => byAlias.get(entry.binding.alias)).filter(Boolean));
+  // An inline read sits in the query its depth says: one after the
+  // aliases and reads its tags wait for.
+  const roundOf = new Map(rounds.flatMap((round, r) => round.map((entry) => [entry.binding.alias, r + 1])));
+  for (const { key, read } of inlineReads(body)) {
+    const item = dcb.items.find((i) => i.inline === key);
+    const depth = operandDepth(read, roundOf);
+    while (queries.length < depth) queries.push([]);
+    if (item) queries[depth - 1].push(item);
+  }
+  for (let i = queries.length - 1; i >= 0; i--) if (!queries[i].length) queries.splice(i, 1);
   const items = dcb.items;
   const types = uniq(items.flatMap((item) => item.types)).sort();
   const anyType = items.some((item) => !item.types.length);
@@ -1801,10 +1905,13 @@ function boundarySummary(model, body) {
 // modelling error of the same class as handling the wrong event, and
 // catching it is not this check's job.
 function mintsFromProjection(model, body, operand, eventName) {
-  if (operandSource(operand) !== 'alias-property' || operand.property) return false;
-  const binding = (body.boundary || []).find((b) => b && b.alias === operand.alias);
-  if (!binding || !binding.projection) return false;
-  const projection = model['projection-definitions'][binding.projection];
+  let projectionName = null;
+  if (operandSource(operand) === 'projection-read') projectionName = operand.projection;
+  else if (operandSource(operand) === 'alias-property' && !operand.property) {
+    const binding = (body.boundary || []).find((b) => b && b.alias === operand.alias);
+    projectionName = binding && binding.projection;
+  }
+  const projection = projectionName && model['projection-definitions'][projectionName];
   return !!projection && (projection.handlers || []).some((h) => h && h.event === eventName);
 }
 
@@ -1914,7 +2021,7 @@ function bindingReferences(model, body) {
   // An operand naming an alias consults it whatever else it does, so
   // the walk is over operand *shape*, not over the position it sits in.
   const noteOperand = (operand, reason) => {
-    if (operandSource(operand) === 'alias-property') note(operand.alias, reason);
+    for (const alias of operandAliases(operand)) note(alias, reason);
   };
   const noteCondition = (condition, reason) => {
     if (!condition) return;
@@ -2005,13 +2112,8 @@ function decisionAliases(model, body) {
     if (!alias || kept.has(alias) || !byAlias.has(alias)) return;
     kept.add(alias);
     const binding = byAlias.get(alias);
-    const walk = (operand) => {
-      if (operandSource(operand) === 'alias-property') visit(operand.alias);
-    };
-    walk(binding.id);
-    walk(binding.excluding);
-    for (const operand of binding.tags || []) walk(operand);
-    for (const operand of Object.values(binding.arguments || {})) walk(operand);
+    const walk = (operand) => { for (const alias of operandAliases(operand)) visit(alias); };
+    for (const operand of bindingOperands(binding)) walk(operand);
   };
   for (const [alias, reasons] of references) {
     if (reasons.has('rule') || reasons.has('guard')) visit(alias);
@@ -2268,6 +2370,47 @@ function modelAdvisories(model) {
   }
   advisoriesCache = { revision: logRevisionNow(), model, found };
   return found;
+}
+
+// Why a tag operand cannot tag a read — or null. It must say its tag
+// type (a literal states one, `CourseId("c1")`), that type must be a
+// tag type, and it must be one value.
+function tagOperandProblem(model, body, operand) {
+  const source = operandSource(operand);
+  if (source === 'static' || source === 'enum-member') {
+    return `is tagged ${operandText(operand)}, which says no tag type — write the literal with its type, CourseId("c1").`;
+  }
+  const resolved = tagOperandType(model, body, operand);
+  if (resolved && !isTagBearing(model, resolved.propertyType)) {
+    return `is tagged ${operandText(operand)}, ${/^[aeiou]/i.test(resolved.propertyType) ? 'an' : 'a'} ` +
+      `${resolved.propertyType} — which is no tag type, so nothing is tagged by it.`;
+  }
+  if (resolved && resolved.isList) {
+    return `is tagged ${operandText(operand)}, which is a list — a projection read is tagged by one value each.`;
+  }
+  return null;
+}
+
+// Why an inline read in a command cannot be read as written — or null:
+// a projection that exists, tags that tag, the arguments its script
+// takes and no others, and handled events its tags reach.
+function inlineReadProblem(model, body, read, where) {
+  const label = `${where} reads ${operandText(read)}, which`;
+  const projection = model['projection-definitions'][read.projection];
+  if (!projection) return `${where} reads "${read.projection}", which this model does not define.`;
+  if (read.tags !== undefined && !Array.isArray(read.tags)) return `${where} reads "${read.projection}" with tags that are not a list.`;
+  for (const tag of read.tags || []) {
+    if (tag === undefined || tag === null || operandIncomplete(tag)) return `${label} has a tag with no value.`;
+    const problem = tagOperandProblem(model, body, tag);
+    if (problem) return `${where} reads "${read.projection}", which ${problem}`;
+  }
+  const slots = projectionSlots(projection);
+  const supplied = Object.keys(read.arguments || {});
+  const missing = slots.find((slot) => !supplied.includes(slot.name));
+  if (missing) return `${where} reads "${read.projection}" without "${missing.name}", which it takes as an argument.`;
+  const extra = supplied.find((key) => !slots.some((slot) => slot.name === key));
+  if (extra) return `${where} reads "${read.projection}" with "${extra}", which it does not take as an argument.`;
+  return readTagProblem(model, read.projection, readTagTypes(model, body, read.tags), where);
 }
 
 // What a read by `tagTypes` cannot do, as the advisory that says so —
@@ -2935,15 +3078,16 @@ function validateCommandBody(model, body) {
         throw new DomainError(`Boundary binding "${binding.alias}"'s tags must be a list.`);
       }
       const chained = (operand, what) => {
-        if (operandSource(operand) !== 'alias-property') return;
-        if (operand.alias === binding.alias) {
-          throw new DomainError(`Boundary binding "${binding.alias}" takes ${what} from itself.`);
-        }
-        if (!declaredAbove.includes(operand.alias)) {
-          throw new DomainError(
-            `Boundary binding "${binding.alias}" takes ${what} from "${operandText(operand)}", ` +
-            `but "${operand.alias}" is not bound above it — a binding may only read what is declared earlier.`
-          );
+        for (const alias of operandAliases(operand)) {
+          if (alias === binding.alias) {
+            throw new DomainError(`Boundary binding "${binding.alias}" takes ${what} from itself.`);
+          }
+          if (!declaredAbove.includes(alias)) {
+            throw new DomainError(
+              `Boundary binding "${binding.alias}" takes ${what} from "${operandText(operand)}", ` +
+              `but "${alias}" is not bound above it — a binding may only read what is declared earlier.`
+            );
+          }
         }
       };
       (binding.tags || []).forEach((operand, index) => {
@@ -2952,26 +3096,8 @@ function validateCommandBody(model, body) {
           throw new DomainError(`Boundary binding "${binding.alias}" has no value for ${what}.`);
         }
         chained(operand, what);
-        if (operandSource(operand) === 'static' || operandSource(operand) === 'enum-member') {
-          throw new DomainError(
-            `Boundary binding "${binding.alias}" is tagged ${operandText(operand)}, which says no tag ` +
-            'type — write the literal with its type, CourseId("c1").'
-          );
-        }
-        const resolved = tagOperandType(model, body, operand);
-        if (resolved && !isTagBearing(model, resolved.propertyType)) {
-          throw new DomainError(
-            `Boundary binding "${binding.alias}" is tagged ${operandText(operand)}, ` +
-            `${/^[aeiou]/i.test(resolved.propertyType) ? 'an' : 'a'} ${resolved.propertyType} — which is no tag type, ` +
-            'so nothing is tagged by it.'
-          );
-        }
-        if (resolved && resolved.isList) {
-          throw new DomainError(
-            `Boundary binding "${binding.alias}" is tagged ${operandText(operand)}, which is a list — ` +
-            'a projection read is tagged by one value each.'
-          );
-        }
+        const problem = tagOperandProblem(model, body, operand);
+        if (problem) throw new DomainError(`Boundary binding "${binding.alias}" ${problem}`);
       });
       const parameters = projectionSlots(projection);
       const supplied = Object.keys(binding.arguments || {});
@@ -3211,6 +3337,10 @@ function validateCommandBody(model, body) {
         return;
       }
     }
+    if (source === 'projection-read') {
+      failure = inlineReadProblem(model, body, operand, meta.where);
+      return;
+    }
     if (source === 'alias-property') {
       const binding = boundary.find((b) => b.alias === operand.alias);
       if (!binding) {
@@ -3295,6 +3425,16 @@ function validateCommandBody(model, body) {
       : [[condition.leftHandSide, condition.rightHandSide], [condition.rightHandSide, condition.leftHandSide]];
     for (const [maybeEnum, other] of sides) {
       if (operandSource(maybeEnum) !== 'enum-member') continue;
+      if (operandSource(other) === 'projection-read') {
+        const read = model['projection-definitions'][other.projection];
+        const members = read && enumMembersFor(model, read.valueType);
+        if (members && !members.includes(maybeEnum.enumMember)) {
+          throw new DomainError(
+            `"${maybeEnum.enumMember}" is not a member of ${read.valueType} (condition "${conditionText(condition)}").`
+          );
+        }
+        continue;
+      }
       if (operandSource(other) !== 'alias-property') continue;
       const binding = boundary.find((b) => b.alias === other.alias);
       if (!binding) continue;
@@ -4032,7 +4172,7 @@ const MEMBER_REWRITES = {
           ];
         for (const [maybeEnum, other] of sides) {
           if (operandSource(maybeEnum) !== 'enum-member' || maybeEnum.enumMember !== previous) continue;
-          if (operandSource(other) !== 'alias-property') continue;
+          if (operandSource(other) !== 'alias-property' && operandSource(other) !== 'projection-read') continue;
           const resolved = resolveOperandType(other, {
             boundary: command.boundary || [],
             commandProperties: command.properties || [],

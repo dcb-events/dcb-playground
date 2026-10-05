@@ -141,7 +141,16 @@ it never works from `file:`.
 - **A read is never authored** — the merged step ("Rules")
   is one step where there were two, because a boundary binding is not a
   thing anyone wants to declare: it is what a rule, a guard, an emission
-  field, an emitted tag or another read *needs*. So the rule adder
+  field, an emitted tag or another read *needs*. Since 8.0 a projection
+  read need not be a binding at all: an operand may be a read in place
+  (`{projection, tags, arguments}`, `require CourseStatus tagged
+  courseId == …`), and the rule adder writes a rule about a projection
+  that way — it never invents an alias, which is the author's to write
+  in the code view (`inlineReadOf`, swapped in at commit). Entity reads
+  are still bindings. Inline reads are walked by `forEachCommandOperand`
+  (it descends into their tags), counted once per spelling
+  (`inlineReads`), placed in the query their tags wait for
+  (`operandDepth`), and folded once per evaluation (`scope.inline`). So the rule adder
   carries the read with it (`pendingBinding` in index.html builds the
   provisional binding; `record` appends binding and rule in one
   `patchSlice`, because a binding stored without its rule would be

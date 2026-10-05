@@ -1685,10 +1685,15 @@ function operandWords(operand) {
     // the tokens they are rather than as descriptions of themselves.
     case 'current-value': return 'currentValue';
     case 'successor': return `successor(${operandWords(operand.successor)})`;
-    // A derived predicate's read of another projection. The arguments
-    // are not said — the partition is shared, and the editor is where
-    // it is spelled out.
-    case 'projection-read': return readable(operand.projection || '?');
+    // A projection read in place — what it is tagged by said the way a
+    // read card says it. A derived predicate's operand names no tags:
+    // it is read by its reader's.
+    case 'projection-read': {
+      const tags = Array.isArray(operand.tags) ? operand.tags : [];
+      const said = tags.map((tag) => (operandSource(tag) === 'tag-literal' ? operandText(tag) : operandWords(tag)));
+      return readable(operand.projection || '?') + (said.length ? ' tagged ' + said.join(' and ') : '');
+    }
+    case 'tag-literal': return operandText(operand);
     default:
       if (typeof operand === 'string') return `"${operand}"`;
       // A record a scripted projection folded to is a static value

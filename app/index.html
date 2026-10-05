@@ -3655,6 +3655,15 @@ function membershipControls(draft, enumMembers) {
 // rule visible instead of only enforced.
 function operandChoicesAbove(model, slice, index) {
   const out = [...payloadChoices(model, slice.payload)];
+  // The projections this command already reads in place (8.0) — a rule
+  // about one is opened again with it on offer, and a second rule may
+  // read the same thing. A binding's own operands come only from above
+  // it, so these stay out of that scope.
+  if (index === undefined) {
+    for (const { read } of inlineReads(slice.body)) {
+      out.push([JSON.stringify(read), operandWords(read)]);
+    }
+  }
   slice.reads.slice(0, index === undefined ? undefined : index).forEach((b) => {
     if (b.projection) {
       out.push([JSON.stringify({ alias: b.alias }), propertyWords(b.alias)]);
@@ -5482,9 +5491,10 @@ function stepDecision(model, slice) {
 
   // A rule belongs to the read its left side is about — the left side
   // is always something read, which is what the rule editor already
-  // enforced by filtering its own picker. A rule arriving from a
-  // hand-written file may name none, and is shown after the cards
-  // rather than dropped.
+  // enforced by filtering its own picker. A rule that reads its
+  // projection in place has no alias to sit under, and neither has one
+  // arriving from a hand-written file that names none: both are shown
+  // after the cards, each a card of its own.
   const rulesByAlias = new Map();
   const loose = [];
   slice.rules.forEach((condition, i) => {
@@ -5661,6 +5671,15 @@ function pendingBinding(model, slice, draft) {
     entity: choice.entity,
     id: JSON.parse(choice.source),
   };
+}
+
+// A projection binding, as the read it stands for in place — the same
+// projection, tags and arguments, without the alias.
+function inlineReadOf(binding) {
+  const read = { projection: binding.projection };
+  if ((binding.tags || []).length) read.tags = deepClone(binding.tags);
+  if (binding.arguments && Object.keys(binding.arguments).length) read.arguments = deepClone(binding.arguments);
+  return read;
 }
 
 // One condition, open for editing — the same form whether it already
@@ -5994,13 +6013,24 @@ function ruleEditor(model, slice, index, target) {
     state.editRule = null;
     state.editGuard = null;
     state.adder = null;
+    // A projection the rule brought is read in place (8.0): the
+    // provisional alias the wizard worked with is swapped for the read
+    // itself, and no binding is stored — an alias is the author's to
+    // write, in the code view, never one the pages invent.
+    const inline = pending && pending.projection ? inlineReadOf(pending) : null;
+    const swap = (operand) => (inline && operandSource(operand) === 'alias-property'
+      && operand.alias === pending.alias && operand.property === undefined ? deepClone(inline) : operand);
+    condition.leftHandSide = swap(condition.leftHandSide);
+    if (condition.rightHandSide !== undefined && !Array.isArray(condition.rightHandSide)) {
+      condition.rightHandSide = swap(condition.rightHandSide);
+    }
     patchSlice((b) => {
       // One append, both writes. A binding stored without its rule
       // would be pruned by the very write that stored it, and a rule
       // stored without its binding would dangle — so the read a rule
       // brought into being lands in the same gesture, above the rule
       // that names it.
-      if (pending) (b.boundary = b.boundary || []).push(deepClone(pending));
+      if (pending && !inline) (b.boundary = b.boundary || []).push(deepClone(pending));
       const list = targetList(b);
       if (index === null) list.push(condition);
       else list[index] = condition;
@@ -6156,9 +6186,13 @@ function ruleEditor(model, slice, index, target) {
   // unset keeps the question on screen rather than strand the row.
   const isProjectionRead = (alias) => reads.some((b) => b && b.alias === alias && b.projection);
   const storedLeft = editingExisting ? ((targetList(slice.body) || [])[index] || {}).leftHandSide : null;
+  // A read in place is one value too, stored or being edited.
+  const leftNow = draft.left ? (() => { try { return JSON.parse(draft.left); } catch { return null; } })() : null;
   const oneValue = (aboutAlias && isProjectionRead(aboutAlias))
     || (operandSource(storedLeft) === 'alias-property' && storedLeft.property === undefined
-      && isProjectionRead(storedLeft.alias));
+      && isProjectionRead(storedLeft.alias))
+    || operandSource(storedLeft) === 'projection-read'
+    || (!!editingExisting && operandSource(leftNow) === 'projection-read');
   const valueStage = stage < VALUE_STAGE || (oneValue && valueSettled) ? null
     : stageRow('Which of its values?',
         ...operandPicker(leftRows, draft, 'left',

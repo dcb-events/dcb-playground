@@ -797,6 +797,77 @@ check('the spelling before tags is an error with its fix', () => {
     true, 'a declared partition is refused without a guessed fix');
 });
 
+check('a rule reads a projection in place — no alias needed', () => {
+  const text = [
+    'model "Inline"',
+    'enum CourseStatus { NonExistent, Existent }',
+    'tag type CourseId = string',
+    'tag type OwnerId = string',
+    'event CourseDefined { courseId: CourseId, ownerId: OwnerId } tags courseId, ownerId',
+    'projection CourseStatus: CourseStatus = NonExistent {',
+    '  on CourseDefined => set Existent',
+    '}',
+    'projection CourseOwner: OwnerId = null {',
+    '  on CourseDefined => set event.data.ownerId',
+    '}',
+    'projection OwnedCourses: integer = 0 {',
+    '  on CourseDefined => increment 1',
+    '}',
+    'projection CourseNumbering: CourseId = "c1" {',
+    '  on CourseDefined => set successor(event.data.courseId)',
+    '}',
+    'command Define(ownerId: OwnerId) {',
+    '  require OwnedCourses tagged ownerId < 3',
+    '    else reject "Too many"',
+    '  emit CourseDefined { courseId: CourseNumbering, ownerId }',
+    '}',
+    'command Check(courseId: CourseId) {',
+    '  require CourseStatus tagged courseId == Existent',
+    '    else reject "No such course"',
+    '  require OwnedCourses tagged (CourseOwner tagged courseId) < 3',
+    '    else reject "Its owner has too many"',
+    '  emit CourseDefined { courseId, ownerId: CourseOwner tagged courseId }',
+    '}',
+    '',
+  ].join('\n');
+  const parsed = parseModelSource(text);
+  eq(parsed.diagnostics, [], 'it reads');
+  const check = parsed.collections['command-definition'].Check;
+  eq(check.conditions[0].leftHandSide, { projection: 'CourseStatus', tags: [{ parameterName: 'courseId' }] }, 'a read in place');
+  eq(check.conditions[0].rightHandSide, { enumMember: 'Existent' }, 'beside an enum member, which is not a projection');
+  eq(check.conditions[1].leftHandSide.tags[0], { projection: 'CourseOwner', tags: [{ parameterName: 'courseId' }] }, 'nested');
+  eq(parsed.collections['command-definition'].Define.publishes[0].parameters.courseId, { projection: 'CourseNumbering' },
+    'a bare projection name, read by no tag');
+  // Round trip: printed as it was written.
+  const { id, model } = (() => {
+    const modelId = sandbox.createDcbModel('Inline');
+    applyModelSource(modelId, text);
+    return { id: modelId, model: () => projectState()[modelId] };
+  })();
+  const printed = modelToSource(model());
+  eq(printed.includes(' json {'), false, 'no fallback');
+  eq(printed.includes('require OwnedCourses tagged (CourseOwner tagged courseId) < 3'), true, 'nested, parenthesised');
+  eq(printed.includes('emit CourseDefined { courseId: CourseNumbering, ownerId }'), true, 'in an emission');
+  // Evaluated: the rules read what they name.
+  let log = [];
+  const run = (command, args) => {
+    const result = sandbox.evaluateCommand(model(), log, command, args);
+    if (result.outcome === 'published') log = [...log, ...result.events];
+    return result;
+  };
+  eq(run('Define', { ownerId: 'o1' }).events[0].data.courseId, 'c1', 'minted inline');
+  eq(run('Check', { courseId: 'c1' }).outcome, 'published', 'the course exists, its owner has one');
+  eq(run('Check', { courseId: 'c9' }).failedRule.rejection, 'No such course', 'and refused by the inline read');
+  // The boundary: the nested read is a query after the one it waits for.
+  const summary = sandbox.boundarySummary(model(), model()['command-definitions'].Check);
+  eq(summary.queries.length, 2, 'two queries: the owner, then what it owns');
+  eq(summary.queries[0].map((i) => i.projection).sort(), ['CourseOwner', 'CourseStatus'], 'the first');
+  eq(summary.queries[1].map((i) => i.projection), ['OwnedCourses'], 'the second');
+  // A rename reaches into it.
+  const renamed = renameAt(printed, 'projection CourseOwner', 'projection '.length, 'CourseHolder').text;
+  eq(renamed.includes('tagged (CourseHolder tagged courseId)'), true, 'renamed in place');
+});
+
 check('every name in every shipped text resolves to a symbol', () => {
   // JSON Schema keywords and a script's own state are not model names.
   const notNames = new Set([...sandbox.SOURCE_KEYWORDS, ...sandbox.SOURCE_BASE_TYPES, 'number', 'icon', 'feature', 'tagSchema',
@@ -947,7 +1018,9 @@ check('completion knows a command\'s reads and payload', () => {
   const text = modelToSource(build(0).model());
   const rule = (insert) => completeAt(text.replace('    else reject "Course has more subscriptions than that"',
     `    else reject "Course has more subscriptions than that"\n  ${insert}`));
-  eq(rule('require |').labels, ['course', 'courseId', 'newCapacity', 'count', 'not'], 'what a rule can be about');
+  eq(rule('require |').labels, ['course', 'courseId', 'newCapacity', 'StudentExists', 'StudentSubscriptionCount',
+    'CourseStatus', 'CourseCapacity', 'CourseSubscriptionCount', 'CourseSubscribedStudentIds', 'count', 'not'],
+  'what a rule can be about — its reads and payload, then any projection, read in place');
   eq(rule('require course.|').labels, ['status', 'capacity', 'subscriptionCount', 'subscribedStudentIds'], 'the read\'s properties');
   eq(rule('require course.status == |').labels.slice(0, 3), ['NonExistent', 'Existent', 'Archived'], 'members first');
   eq(rule('require course.status in [|]').labels, ['NonExistent', 'Existent', 'Archived'], 'in a list');

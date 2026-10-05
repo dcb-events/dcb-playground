@@ -542,6 +542,17 @@ function evReadOperand(operand, scope) {
     }
     case 'enum-member':
       return operand.enumMember;
+    // An inline read is folded where it is first needed and once per
+    // spelling — the same read written in two rules is one query — and
+    // reported beside the aliases, under how it reads.
+    case 'projection-read': {
+      const key = JSON.stringify(canonicalOperand(operand));
+      if (!scope.inline.has(key)) {
+        scope.inline.set(key, evProjectionRead(scope.model, scope.events, scope.body, operand, scope,
+          `"${operandText(operand)}"`));
+      }
+      return scope.inline.get(key).value;
+    }
     default:
       return evNormalize(operand);
   }
@@ -551,35 +562,39 @@ function evReadOperand(operand, scope) {
 // The boundary.
 // ============================================================
 
+// One projection read — an alias's or an inline one — resolved in the
+// command's scope: each tag a value and the type it is read by (from
+// the operand, `tagOperandType`, which is what makes it the tag's key),
+// the arguments a script takes, and the value folded from them. The
+// tags and arguments are kept beside the value because they are what
+// makes it reproducible: the value alone says what was read, and they
+// say how, which is the half a reader needs to go and look at it.
+function evProjectionRead(model, events, body, read, scope, label) {
+  const tags = (read.tags || []).map((operand, index) => {
+    const resolved = tagOperandType(model, body, operand);
+    if (!resolved) fail(`${label} is tagged by ${operandText(operand)}, whose type cannot be worked out.`);
+    const value = operandSource(operand) === 'tag-literal' ? operand.tagValue : evReadOperand(operand, scope);
+    if (resolved.isList || Array.isArray(value)) {
+      fail(`${label} is tagged by ${operandText(operand)}, a list — tag ${index + 1} takes one value.`);
+    }
+    return { type: resolved.propertyType, value };
+  });
+  const args = {};
+  for (const [name, operand] of Object.entries(read.arguments || {})) {
+    args[name] = evReadOperand(operand, scope);
+  }
+  return {
+    kind: 'projection',
+    projection: read.projection,
+    tags,
+    arguments: args,
+    value: foldProjection(model, events, read.projection, { tags, args }),
+  };
+}
+
 function evResolveBinding(model, events, body, binding, scope) {
   if (binding.projection) {
-    // Each tag is a value and the type it is read by — the type comes
-    // from the operand (`tagOperandType`), which is what makes it the
-    // tag's key.
-    const tags = (binding.tags || []).map((operand, index) => {
-      const resolved = tagOperandType(model, body, operand);
-      if (!resolved) fail(`Binding "${binding.alias}" is tagged by ${operandText(operand)}, whose type cannot be worked out.`);
-      const value = operandSource(operand) === 'tag-literal' ? operand.tagValue : evReadOperand(operand, scope);
-      if (resolved.isList || Array.isArray(value)) {
-        fail(`Binding "${binding.alias}" is tagged by ${operandText(operand)}, a list — tag ${index + 1} takes one value.`);
-      }
-      return { type: resolved.propertyType, value };
-    });
-    const args = {};
-    for (const [name, operand] of Object.entries(binding.arguments || {})) {
-      args[name] = evReadOperand(operand, scope);
-    }
-    scope.bound[binding.alias] = {
-      kind: 'projection',
-      projection: binding.projection,
-      // Kept beside the value because they are what makes it
-      // reproducible: the value alone says what was read, and the tags
-      // and arguments say how, which is the half a reader needs to go
-      // and look at it themselves.
-      tags,
-      arguments: args,
-      value: foldProjection(model, events, binding.projection, { tags, args }),
-    };
+    scope.bound[binding.alias] = evProjectionRead(model, events, body, binding, scope, `Binding "${binding.alias}"`);
     return;
   }
 
@@ -811,7 +826,10 @@ function evaluateCommand(model, events, commandName, args) {
   if (!body) fail(`This model has no command "${commandName}".`);
 
   const supplied = args || {};
-  const scope = { args: {}, bound: {} };
+  const log = events || [];
+  // `model`, `body` and `events` ride along for an inline read, which is
+  // folded from inside an operand; `inline` holds what it folded.
+  const scope = { args: {}, bound: {}, inline: new Map(), model, body, events: log };
   for (const property of body.properties || []) {
     if (supplied[property.name] === undefined) {
       // An optional property may be unset. `null` is the one spelling
@@ -828,7 +846,6 @@ function evaluateCommand(model, events, commandName, args) {
     scope.args[property.name] = evNormalize(supplied[property.name]);
   }
 
-  const log = events || [];
   for (const round of deriveRounds(body)) {
     for (const { binding } of round) evResolveBinding(model, log, body, binding, scope);
   }
@@ -931,6 +948,17 @@ function evDescribeReads(scope) {
         for (const [name, value] of instance.cache || []) properties[name] = value;
         return { id: instance.id, properties };
       }),
+    };
+  }
+  // An inline read has no alias; it is reported under how it reads.
+  for (const read of scope.inline.values()) {
+    out[operandText({ projection: read.projection, tags: read.tags.map((t) => ({ tagType: t.type, tagValue: t.value })) })] = {
+      kind: 'projection',
+      projection: read.projection,
+      inline: true,
+      tags: read.tags,
+      arguments: read.arguments,
+      value: read.value,
     };
   }
   return out;

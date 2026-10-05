@@ -24,9 +24,8 @@
 //   }
 //
 //   command ChangeCourseCapacity(courseId: CourseId, newCapacity: integer) {
-//     alias status = CourseStatus tagged courseId
 //     alias capacity = CourseCapacity tagged courseId
-//     require status == Existent
+//     require CourseStatus tagged courseId == Existent
 //       else reject "Course does not exist"
 //     require capacity != newCapacity
 //       else reject "Capacity is unchanged"
@@ -40,7 +39,15 @@
 // CourseId("c1")` for a literal, which has to state its type since the
 // type is the tag's key. `with (…)` is what a script takes besides.
 // `tagged` binds tighter than any comparison and takes one primary,
-// so a read sits inside a rule unbracketed. An entity (experimental) is
+// so a read sits inside a rule unbracketed — and a read *is* allowed
+// there: an `alias` only names one, and is optional. A projection read
+// in place (`require CourseStatus tagged courseId == Existent`, an
+// emission's `courseId: CourseNumbering`, a tag `tagged (CourseOwner
+// tagged courseId)`) is the same read, stored as an operand rather
+// than a binding; written twice, it is one query. A capitalised name
+// in an operand is that projection when one is declared by it, and an
+// enum member otherwise — resolved by name, like an operand's alias or
+// payload property. An entity (experimental) is
 // declared `entity Course tagged CourseId` and read `Course tagged
 // courseId`, the same word. The spelling before — `X(arg)`, and the
 // `X for arg` a newcomer might write — is an error that carries its
@@ -504,10 +511,39 @@ function parseModelSource(text, options = {}) {
     return ref;
   };
 
+  // An operand in a command. A capitalised name is a projection read
+  // when `tagged`, `with` or the old `(…)` / `for` follows it — and,
+  // bare, a projection or an enum member by whichever is declared by
+  // that name, which is settled once every declaration is known
+  // (`resolvePascal`, after the parse).
   const commandOperand = () => {
     const token = peek();
+    if (token.t === 'ident' && SOURCE_MEMBER_RE.test(token.v)
+        && !['true', 'false', 'null', 'enum'].includes(token.v)) {
+      if (is('tagged', 1) || is('with', 1) || is('(', 1) || is('for', 1)) return inlineRead();
+      next();
+      const ref = { '%pascal': token.v };
+      mark(ref, 'pascal', token);
+      return ref;
+    }
     if (token.t === 'ident' && !startsLiteral()) return nameRef();
     return literalValue();
+  };
+
+  // `CourseStatus tagged courseId with (…)` — a projection read in
+  // place, the same read an alias names but without the name.
+  const inlineRead = () => {
+    const token = next();
+    const read = { projection: token.v };
+    mark(read, 'projection', token);
+    const old = oldReadSpelling(token);
+    if (old) read.tags = old;
+    else if (accept('tagged')) read.tags = taggedList();
+    if (accept('with')) {
+      expect('(');
+      read.arguments = argumentList(')', commandOperand);
+    }
+    return read;
   };
 
   // A tag value: a name in scope, or a literal with the tag type it is
@@ -1419,6 +1455,27 @@ function parseModelSource(text, options = {}) {
       return out;
     });
   }
+  const resolvePascal = (value) => {
+    if (Array.isArray(value)) return value.map(resolvePascal);
+    if (!value || typeof value !== 'object') return value;
+    if (value['%pascal'] !== undefined) {
+      const name = value['%pascal'];
+      const token = (marksOf(value) || {}).pascal;
+      const out = declares('projection-definition', 'projectionNames', name) ? { projection: name } : { enumMember: name };
+      mark(out, out.projection !== undefined ? 'projection' : 'enumMember', token);
+      return out;
+    }
+    for (const key of Object.keys(value)) value[key] = resolvePascal(value[key]);
+    return value;
+  };
+  for (const body of Object.values(collections['command-definition'])) {
+    if (!body || typeof body !== 'object') continue;
+    for (const key of ['boundary', 'conditions', 'publishes']) {
+      if (Array.isArray(body[key])) body[key] = resolvePascal(body[key]);
+    }
+  }
+  for (const record of result.scenarios) resolvePascal(record.body);
+
   const resolveDerived = (operand) => {
     if (!operand || typeof operand !== 'object' || operand['%derived'] === undefined) return operand;
     const name = operand['%derived'];
@@ -1591,7 +1648,9 @@ function sourceTagged(tags, operand) {
     }
     return operand(tag);
   });
-  return ` tagged ${texts.length === 1 ? texts[0] : `(${texts.join(', ')})`}`;
+  // One primary after `tagged`: a nested read is parenthesised.
+  const bare = texts.length === 1 && !(tags[0] && typeof tags[0] === 'object' && tags[0].projection !== undefined);
+  return ` tagged ${bare ? texts[0] : `(${texts.join(', ')})`}`;
 }
 
 function sourceArguments(args, operand) {
@@ -1743,6 +1802,15 @@ function sourceCommandOperand(body) {
           return head;
         }
         return `${head}.${sourceRef(value.property, 'property')}`;
+      }
+      if (value.projection !== undefined) {
+        if (Object.keys(value).some((k) => !['projection', 'tags', 'arguments'].includes(k))) unprintable('an inline read carries extra fields');
+        const name = sourceRef(value.projection, 'projection');
+        if (!SOURCE_MEMBER_RE.test(name)) unprintable(`the projection ${JSON.stringify(name)} does not start with a capital`);
+        const self = sourceCommandOperand(body);
+        const args = value.arguments !== undefined && Object.keys(value.arguments).length
+          ? ` with (${sourceArguments(value.arguments, self)})` : '';
+        return `${name}${sourceTagged(value.tags, self)}${args}`;
       }
     }
     return sourceLiteral(value);
@@ -2619,6 +2687,14 @@ function sourceSymbols(parsed) {
     } else if (has(value, 'parameterName')) {
       parameter = value.parameterName;
       ({ property } = value);
+    } else if (has(value, 'projection')) {
+      // An inline read: its projection, and its tags and arguments in
+      // the same scope as everything around it.
+      add(sourceSymbol('projection', value.projection), marked.projection);
+      tagOperands(value.tags, (tag) => commandOperand(commandName, body, tag, null));
+      keyed(value.arguments, (key) => sourceSymbol('projectionParameter', value.projection, key),
+        (arg, key) => commandOperand(commandName, body, arg, parameterType(value.projection, key)));
+      return;
     } else return literal(value, expected);
     if (alias !== undefined) {
       add(sourceSymbol('alias', commandName, alias), marked.head);
@@ -3244,7 +3320,7 @@ function sourceCompletions(text, line, col, { model = null } = {}) {
   };
   const operandItems = (scope, { sort = 0, prefer } = {}) => {
     for (const b of scope.boundary) {
-      push(b.alias, 'alias', b.entity ? `alias ${b.entity}[…]` : `alias ${b.projection}(…)`, { sort: prefer && !prefer(b) ? sort + 1 : sort });
+      push(b.alias, 'alias', b.entity ? `alias ${b.entity} tagged …` : `alias ${b.projection}`, { sort: prefer && !prefer(b) ? sort + 1 : sort });
     }
     for (const p of scope.properties) push(p.name, 'commandProperty', typeText(p), { sort: prefer && !prefer(p) ? sort + 1 : sort });
   };
@@ -3270,6 +3346,9 @@ function sourceCompletions(text, line, col, { model = null } = {}) {
     const last = v(cond[cond.length - 1]);
     if (!cond.length || last === 'not') {
       operandItems(scope);
+      // A rule may read a projection in place, so every projection is
+      // a way for one to start — after what the command already has.
+      definitionItems('projection-definition', { sort: 1, call: projectionCall, detail: (n, b) => `${b.valueType}${b.isList ? '[]' : ''}` });
       push('count', 'keyword', 'count(…)', { insert: 'count($1)', snippet: true, sort: 1 });
       if (!cond.length) push('not', 'keyword', '', { sort: 2 });
       return done();

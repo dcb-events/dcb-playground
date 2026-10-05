@@ -3284,26 +3284,24 @@ function build(index) {
     const button = findAll(paint(), (n) => n.tag === 'button' && textOf(n) === 'Add rule')[0];
     button.onclick();
     const body = model()['command-definitions'].Finish;
-    eq(body.boundary, [{ alias: 'label', projection: 'Label', tags: [{ parameterName: 'documentId' }] }],
-      'the read it brought, tagged by the first value its events are tagged by');
-    eq(body.conditions, [{ leftHandSide: { alias: 'label' }, predicate: 'equals', rightHandSide: 'foo',
-      rejection: 'Label is not foo' }], 'and the rule about it');
+    // Read in place (8.0): no alias is invented, the rule names the read.
+    eq(body.boundary, [], 'no binding');
+    eq(body.conditions, [{
+      leftHandSide: { projection: 'Label', tags: [{ parameterName: 'documentId' }] },
+      predicate: 'equals', rightHandSide: 'foo', rejection: 'Label is not foo',
+    }], 'the rule reads Label tagged by the first value its events are tagged by');
     eq(sandbox.modelAdvisories(model()).length, 0, 'advisory-clean');
   });
 
-  check('a projection read is never asked which of its values — from its card, or reopened', () => {
-    sandbox.state.slice = 'Finish';
-    sandbox.state.adder = 'rule';
-    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '', onAlias: 'label' };
-    eq(/Which of its values\?/.test(textOf(paint())), false, '"+ rule about label"');
-    eq(/What must be true of it\?/.test(textOf(paint())), true, 'opens on the test');
-    sandbox.closeForms();
-
+  check('a projection read in place is never asked which of its values, reopened', () => {
     // Reopened, the picker would list every read's values — the rule
     // is about the one it names.
+    sandbox.state.slice = 'Finish';
     sandbox.state.editRule = 0;
     sandbox.state.ruleDraft = {
-      predicate: 'equals', negate: false, left: JSON.stringify({ alias: 'label' }), right: ' literal', rightText: 'foo',
+      predicate: 'equals', negate: false,
+      left: JSON.stringify({ projection: 'Label', tags: [{ parameterName: 'documentId' }] }),
+      right: ' literal', rightText: 'foo',
     };
     eq(/Which of its values\?/.test(textOf(paint())), false, 'an existing rule, opened');
     eq(/What must be true of it\?/.test(textOf(paint())), true, 'opens whole otherwise');
