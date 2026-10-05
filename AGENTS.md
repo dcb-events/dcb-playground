@@ -15,7 +15,7 @@ handler's editor is on screen. The app runs from any static server —
 
 - `app/` — the application. Everything that runs.
 - `dcb-model.schema.json` — canonical JSON Schema for the interchange format
-  (`https://dcb.events/schemas/model/v6.json`). Source of truth for what a
+  (`https://dcb.events/schemas/model/v7.json`). Source of truth for what a
   DCB Model file contains; `app/webmcp-schemas.js` is generated from it.
 - `docs/research/` — dated primary-source research notes backing design
   decisions (one file per investigation, `YYYY-MM-DD-topic.md`).
@@ -272,8 +272,11 @@ it never works from `file:`.
   predicate — one scalar against a literal list, spelled as a bare
   array of literals / `{enumMember}` references in `rightHandSide`, a
   spelling only initial values had before; 6.0 added guarded emissions
-  and derived projections (below). The importer reads 3.x–6.x
-  (`READABLE_MAJORS`) and always writes the current `MODEL_VERSION`.
+  and derived projections (below); 7.0 made every rule carry a
+  rejection message and a refusal be known by it (below) — required on
+  both sides, so the importer reads 7.x only (`READABLE_MAJORS`): a
+  6.x rule has no message, and none can be invented for it. It always
+  writes the current `MODEL_VERSION`.
   **6.1 is the contrast worth knowing**: entity `lifecycle` is additive
   in shape *and* a minor, because a 6.0 reader that ignores it loses a
   derived diagram and misreads nothing — where 4.0's equally additive
@@ -353,11 +356,10 @@ it never works from `file:`.
   only single-valued boolean and enum properties, plus "none". This
   reverses an earlier "no picker" decision: it left an author who builds
   a state property by hand unable to say so, and the promotion is no
-  door to that, since it invents an enum rather than adopting one. Imports infer the designation
-  once, at the gate, from exactly `status` + enum
-  (`inferLifecycleDesignations`) — never at read time, for the same
-  reason `boundary` stays authoritative. The decisions and what was
-  rejected are in
+  door to that, since it invents an enum rather than adopting one. A
+  designation is never inferred — imports from before it existed did
+  that once, at the gate, until 7.0 stopped reading them. The
+  decisions and what was rejected are in
   `docs/research/2026-09-30-entity-lifecycle-as-boolean-existence.md`.
   **The Identity row is folded, not hidden**: with no lifecycle there
   is no row and no `not designated` — the identifier line carries
@@ -393,6 +395,25 @@ it never works from `file:`.
   `forEachCommandOperand` — anything walking a command's conditions
   must walk each emission's `when` too, see `allConditions` in
   `validateCommandBody`).
+- **Every rule says what it is refused with (7.0)**: a command's
+  conditions carry `rejection`, static one-line text (`rejectionProblem`,
+  model.js), and a refusal is known by it and nothing else — a
+  scenario's Then is `{outcome: 'rejected', events: [], rejection}`,
+  without which rule refused or what it read, so rules sharing a
+  message are one outcome, reordering them is never drift, and neither
+  is a projection that stores its state differently. A run still
+  reports the rule and its values (`failedRule`), which the sandbox
+  and an open scenario show as detail (`liveRefusal`). The notation
+  spells it `require … else reject "…"` (Weltenwanderer's, required as
+  there) and `then rejected "…"`. A rule without one is an *advisory*, not a
+  write-path refusal: it still evaluates — a run reports its condition
+  text instead — but a scenario cannot name its refusal, so `deriveThen`
+  reports it broken, and the printer falls back to JSON. A guard never
+  rejects, so a message on one is an advisory too. The set of a
+  command's messages is derived (`commandRejections`), never declared;
+  the Rules step lists it and scenario coverage counts by it
+  (`uncoveredRejections`). The rule wizard asks for the message last,
+  required and deliberately not pre-filled with the condition's text.
 - **Derived projections (6.0)**: a third projection kind — no handlers,
   no initial value, one declared predicate over other projections
   (`derived`), always a single boolean. Its query is its operands'
@@ -411,7 +432,7 @@ it never works from `file:`.
   are `Payload` / `Rules` / `Append` / `State changes` /
   `Consistency boundary` / `Scenarios` — `Rules` and not the wire's
   `conditions`, because "rule" is the item word on every page (`+ rule`,
-  the Rule map, `refused by`), and not "Decision model", a term the
+  the Rule map, `Refused with`), and not "Decision model", a term the
   literature uses without ever defining; empty steps are `—`; single-field
   forms carry noun labels (`New command`), not questions.
   Two things are deliberately *not* technicalised, and reversing either

@@ -1,6 +1,6 @@
 {
-  "$schema": "https://dcb.events/schemas/model/v6.json",
-  "dcbModelVersion": "6.1",
+  "$schema": "https://dcb.events/schemas/model/v7.json",
+  "dcbModelVersion": "7.0",
   "name": "Content based decisions (scripted projection)",
   "customTypeDefinitions": [
     {
@@ -179,7 +179,8 @@
           "predicate": "equals",
           "rightHandSide": {
             "enumMember": "NonExistent"
-          }
+          },
+          "rejection": "Document already exists"
         }
       ],
       "publishes": [
@@ -230,7 +231,8 @@
           "rightHandSide": {
             "enumMember": "NonExistent"
           },
-          "negate": true
+          "negate": true,
+          "rejection": "Document does not exist"
         },
         {
           "leftHandSide": {
@@ -241,7 +243,8 @@
           "rightHandSide": {
             "enumMember": "Archived"
           },
-          "negate": true
+          "negate": true,
+          "rejection": "Document is archived"
         }
       ],
       "publishes": [
@@ -293,7 +296,8 @@
             {
               "enumMember": "PendingChanges"
             }
-          ]
+          ],
+          "rejection": "Document cannot be published"
         }
       ],
       "publishes": [
@@ -345,7 +349,8 @@
             {
               "enumMember": "PendingChanges"
             }
-          ]
+          ],
+          "rejection": "Document cannot be archived"
         }
       ],
       "publishes": [
@@ -374,13 +379,7 @@
       "then": {
         "outcome": "rejected",
         "events": [],
-        "failedRule": {
-          "index": 0,
-          "text": "not(document.status == NonExistent)",
-          "leftValue": "NonExistent",
-          "rightValue": "NonExistent",
-          "atInstance": null
-        }
+        "rejection": "Document does not exist"
       }
     },
     {
@@ -425,17 +424,7 @@
       "then": {
         "outcome": "rejected",
         "events": [],
-        "failedRule": {
-          "index": 0,
-          "text": "document.status equalsAny [Draft, Published, PendingChanges]",
-          "leftValue": "NonExistent",
-          "rightValue": [
-            "Draft",
-            "Published",
-            "PendingChanges"
-          ],
-          "atInstance": null
-        }
+        "rejection": "Document cannot be archived"
       }
     },
     {
@@ -463,17 +452,7 @@
       "then": {
         "outcome": "rejected",
         "events": [],
-        "failedRule": {
-          "index": 0,
-          "text": "document.status equalsAny [Draft, Published, PendingChanges]",
-          "leftValue": "Archived",
-          "rightValue": [
-            "Draft",
-            "Published",
-            "PendingChanges"
-          ],
-          "atInstance": null
-        }
+        "rejection": "Document cannot be archived"
       }
     },
     {
@@ -564,16 +543,7 @@
       "then": {
         "outcome": "rejected",
         "events": [],
-        "failedRule": {
-          "index": 0,
-          "text": "document.status equalsAny [Draft, PendingChanges]",
-          "leftValue": "Published",
-          "rightValue": [
-            "Draft",
-            "PendingChanges"
-          ],
-          "atInstance": null
-        }
+        "rejection": "Document cannot be published"
       }
     },
     {
@@ -601,16 +571,7 @@
       "then": {
         "outcome": "rejected",
         "events": [],
-        "failedRule": {
-          "index": 0,
-          "text": "document.status equalsAny [Draft, PendingChanges]",
-          "leftValue": "Archived",
-          "rightValue": [
-            "Draft",
-            "PendingChanges"
-          ],
-          "atInstance": null
-        }
+        "rejection": "Document cannot be published"
       }
     },
     {
@@ -659,16 +620,7 @@
       "then": {
         "outcome": "rejected",
         "events": [],
-        "failedRule": {
-          "index": 0,
-          "text": "document.status equalsAny [Draft, PendingChanges]",
-          "leftValue": "Published",
-          "rightValue": [
-            "Draft",
-            "PendingChanges"
-          ],
-          "atInstance": null
-        }
+        "rejection": "Document cannot be published"
       }
     }
   ],

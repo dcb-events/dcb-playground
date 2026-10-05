@@ -165,8 +165,9 @@
     name: 'evaluate_command',
     description: 'Run a command of the open model against a hypothetical event log and '
       + 'report the outcome: `published` with the events it would record, or `rejected` '
-      + 'with the rule that refused it. Pure — nothing in the playground changes; to '
-      + 'stage a run the person can see and scrub through, use drive_command instead. '
+      + 'with the message it was refused with and the rule that refused it. Pure — nothing '
+      + 'in the playground changes; to stage a run the person can see and scrub through, '
+      + 'use drive_command instead. '
       + '`reads` shows what the boundary resolved to when it decided.',
     inputSchema: {
       type: 'object',
@@ -194,7 +195,7 @@
       return {
         summary: `evaluated ${commandName} — ${outcome.outcome === 'published'
           ? 'published ' + outcome.events.map((e) => e.type).join(', ')
-          : 'rejected: ' + outcome.failedRule.text}`,
+          : 'rejected: ' + (outcome.failedRule.rejection || outcome.failedRule.text)}`,
         payload: outcome,
       };
     },
@@ -456,7 +457,7 @@
       return {
         summary: `drove ${commandName} in the sandbox — ${outcome.outcome === 'published'
           ? 'published ' + outcome.events.map((e) => e.type).join(', ')
-          : 'rejected: ' + outcome.failedRule.text}`,
+          : 'rejected: ' + (outcome.failedRule.rejection || outcome.failedRule.text)}`,
         payload: outcome,
       };
     },

@@ -1,6 +1,6 @@
 {
-  "$schema": "https://dcb.events/schemas/model/v6.json",
-  "dcbModelVersion": "6.1",
+  "$schema": "https://dcb.events/schemas/model/v7.json",
+  "dcbModelVersion": "7.0",
   "name": "Course Example (with sequence and tenant)",
   "customTypeDefinitions": [
     {
@@ -472,7 +472,8 @@
             "alias": "tenant",
             "property": "exists"
           },
-          "predicate": "isTrue"
+          "predicate": "isTrue",
+          "rejection": "Tenant is not registered"
         }
       ],
       "publishes": [
@@ -530,7 +531,8 @@
           "predicate": "equals",
           "rightHandSide": {
             "enumMember": "Existent"
-          }
+          },
+          "rejection": "Course is not active"
         },
         {
           "leftHandSide": {
@@ -540,7 +542,8 @@
           "predicate": "lessThanOrEquals",
           "rightHandSide": {
             "parameterName": "newCapacity"
-          }
+          },
+          "rejection": "Course has more subscriptions than that"
         }
       ],
       "publishes": [
@@ -586,7 +589,8 @@
           "predicate": "equals",
           "rightHandSide": {
             "enumMember": "Existent"
-          }
+          },
+          "rejection": "Course is not active"
         }
       ],
       "publishes": [
@@ -626,7 +630,8 @@
             "alias": "student",
             "property": "exists"
           },
-          "predicate": "isFalse"
+          "predicate": "isFalse",
+          "rejection": "Student is already registered"
         }
       ],
       "publishes": [
@@ -682,14 +687,16 @@
           "predicate": "equals",
           "rightHandSide": {
             "enumMember": "Existent"
-          }
+          },
+          "rejection": "Course is not active"
         },
         {
           "leftHandSide": {
             "alias": "student",
             "property": "exists"
           },
-          "predicate": "isTrue"
+          "predicate": "isTrue",
+          "rejection": "Student is not registered"
         },
         {
           "leftHandSide": {
@@ -700,7 +707,8 @@
           "rightHandSide": {
             "alias": "course",
             "property": "capacity"
-          }
+          },
+          "rejection": "Course is full"
         },
         {
           "leftHandSide": {
@@ -711,7 +719,8 @@
           "rightHandSide": {
             "parameterName": "studentId"
           },
-          "negate": true
+          "negate": true,
+          "rejection": "Student is already subscribed"
         },
         {
           "leftHandSide": {
@@ -719,7 +728,8 @@
             "property": "subscriptionCount"
           },
           "predicate": "lessThan",
-          "rightHandSide": 10
+          "rightHandSide": 10,
+          "rejection": "Student is subscribed to too many courses"
         }
       ],
       "publishes": [
@@ -771,7 +781,8 @@
           "predicate": "equals",
           "rightHandSide": {
             "enumMember": "Existent"
-          }
+          },
+          "rejection": "Course is not active"
         },
         {
           "leftHandSide": {
@@ -781,7 +792,8 @@
           "predicate": "contains",
           "rightHandSide": {
             "parameterName": "studentId"
-          }
+          },
+          "rejection": "Student is not subscribed"
         }
       ],
       "publishes": [
@@ -824,7 +836,8 @@
             "alias": "tenant",
             "property": "exists"
           },
-          "predicate": "isFalse"
+          "predicate": "isFalse",
+          "rejection": "Tenant is already registered"
         }
       ],
       "publishes": [

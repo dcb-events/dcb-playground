@@ -102,7 +102,7 @@ check('every example file round-trips, scenarios and the hand-edited one include
       eq(read.length, stored.length, `${file}: ${kind} count`);
       eq(read.every((r) => r.block !== null), true, `${file}: every ${kind} nested`);
       for (const body of stored) {
-        eq(read.some((r) => sandbox.sameScenario(r.body, body)), true, `${file}: ${JSON.stringify(body).slice(0, 120)}`);
+        eq(read.some((r) => sandbox.sameDefinition(r.body, body)), true, `${file}: ${JSON.stringify(body).slice(0, 120)}`);
       }
     }
     const report = sandbox.sourceScenarioReport(model(), parsed);
@@ -137,10 +137,15 @@ check('a command reads as reads, rules and emissions', () => {
     '  read student = Student[studentId]',
     '',
     '  require course.status == Existent',
+    '    else reject "Course is not active"',
     '  require student.exists is true',
+    '    else reject "Student is not registered"',
     '  require course.subscriptionCount < course.capacity',
+    '    else reject "Course is full"',
     '  require course.subscribedStudentIds not contains studentId',
+    '    else reject "Student is already subscribed"',
     '  require student.subscriptionCount < 10',
+    '    else reject "Student is subscribed to too many courses"',
     '',
     '  emit StudentSubscribedToCourse { courseId, studentId }',
     '}',
@@ -189,28 +194,56 @@ check('every rule shape reads back as the rule it was', () => {
     ['a is false', { predicate: 'isFalse' }],
   ];
   for (const [text, expected] of rules) {
-    const source = `command C(a: integer, b: integer) {\n  require ${text}\n}`;
+    const source = `command C(a: integer, b: integer) {\n  require ${text}\n    else reject "No"\n}`;
     const parsed = parseModelSource(source);
     eq(parsed.diagnostics, [], text);
     const rule = parsed.collections['command-definition'].C.conditions[0];
-    const want = { leftHandSide: { parameterName: 'a' }, ...expected };
+    const want = { leftHandSide: { parameterName: 'a' }, ...expected, rejection: 'No' };
     if (want.rightHandSide === undefined && !['isEmpty', 'isNotEmpty', 'isTrue', 'isFalse'].includes(want.predicate)) {
       want.rightHandSide = { parameterName: 'b' };
     }
     eq(sameDefinition(rule, want), true, `${text} read as ${JSON.stringify(rule)}`);
     const printed = modelToSource({ name: 'm', ...emptyCollections({ 'command-definition': { C: parsed.collections['command-definition'].C } }) });
-    eq(printed.includes(`require ${text}`), true, `${text} printed as\n${printed}`);
+    eq(printed.includes(`require ${text}\n    else reject "No"`), true, `${text} printed as\n${printed}`);
   }
 });
 
+check('every rule says what it is refused with, on its line or the next', () => {
+  const ruleOf = (text) => {
+    const parsed = parseModelSource(`command C(a: integer) {\n${text}\n}`);
+    return { diagnostics: parsed.diagnostics.map((d) => d.message), rule: (parsed.collections['command-definition'].C || {}).conditions };
+  };
+  const next = ruleOf('  require a > 1\n    else reject "Too small"');
+  eq(next.diagnostics, [], 'on the next line');
+  eq(next.rule, [{ leftHandSide: { parameterName: 'a' }, predicate: 'greaterThan', rightHandSide: 1, rejection: 'Too small' }],
+    'the message is the rule\'s');
+  eq(ruleOf('  require a > 1 else reject "Too small"').rule, next.rule, 'or on the same one');
+  eq(ruleOf('  require a > 1').diagnostics,
+    ['Expected "else reject" and the message the command is refused with, found "}".'], 'it is required');
+  eq(ruleOf('  require a > 1 else reject Small').diagnostics,
+    ['Expected the message the command is refused with, in quotes, found "Small".'], 'and it is text');
+  const scenario = parseModelSource('command C(a: integer) {\n  require a > 1 else reject "No"\n'
+    + '  scenario {\n    when C { a: 0 }\n    then rejected by a > 1\n  }\n}');
+  eq(scenario.diagnostics.map((d) => d.message),
+    ['A refusal is named by the message it was refused with: then rejected "…".'], 'a refusal names the message');
+  eq(parseModelSource('command C(a: integer) {\n  require a > 1 else reject "No"\n'
+    + '  scenario {\n    when C { a: 0 }\n    then rejected "No" saw 0, 1\n  }\n}').diagnostics.map((d) => d.message),
+    ['A refusal is named by its message alone — what the rule read is not asserted.'], 'and by nothing else');
+  const bare = { name: 'm', ...emptyCollections({ 'command-definition': { C: {
+    properties: [], boundary: [], publishes: [], conditions: [{ leftHandSide: { parameterName: 'a' }, predicate: 'isTrue' }],
+  } } }) };
+  eq(modelToSource(bare).includes('// Written as JSON: a rule has no rejection message.\ncommand C json {'), true,
+    'a stored rule without one is written as JSON');
+});
+
 check('membership in data reads either way round, and prints as contains', () => {
-  const source = (rule) => `command C(a: integer, b: integer[]) {\n  require ${rule}\n}`;
+  const source = (rule) => `command C(a: integer, b: integer[]) {\n  require ${rule}\n    else reject "No"\n}`;
   const ruleOf = (rule) => {
     const parsed = parseModelSource(source(rule));
     eq(parsed.diagnostics, [], rule);
     return parsed.collections['command-definition'].C.conditions[0];
   };
-  const contains = { leftHandSide: { parameterName: 'b' }, predicate: 'contains', rightHandSide: { parameterName: 'a' } };
+  const contains = { leftHandSide: { parameterName: 'b' }, predicate: 'contains', rightHandSide: { parameterName: 'a' }, rejection: 'No' };
   eq(sameDefinition(ruleOf('a in b'), contains), true, 'a in b');
   eq(sameDefinition(ruleOf('a not in b'), { ...contains, negate: true }), true, 'a not in b');
   eq(sameDefinition(ruleOf('not a in b'), { ...contains, negate: true }), true, 'not a in b');
@@ -245,9 +278,9 @@ check('a name resolves to a read when one declares it, and to the payload otherw
     'command C(courseId: CourseId, items: Item[]) {',
     '  read course = Course[courseId]',
     '  read numbering = CourseNumbering()',
-    '  require course.status == items.price',
-    '  require numbering == gone',
-    '  require ghost.status is true',
+    '  require course.status == items.price else reject "a"',
+    '  require numbering == gone else reject "b"',
+    '  require ghost.status is true else reject "c"',
     '}',
   ].join('\n'));
   const body = parsed.collections['command-definition'].C;
@@ -265,7 +298,7 @@ check('a name resolves to a read when one declares it, and to the payload otherw
 check('what the grammar cannot say is written as JSON, says why, and still round-trips', () => {
   const { id, model } = build(0);
   const body = JSON.parse(JSON.stringify(model()['command-definitions'].ArchiveCourse));
-  body.conditions.push({ leftHandSide: { parameterName: 'courseId' }, predicate: 'resemblesStrongly', rightHandSide: 1 });
+  body.conditions.push({ leftHandSide: { parameterName: 'courseId' }, predicate: 'resemblesStrongly', rightHandSide: 1, rejection: 'No' });
   updateDefinition('command-definition', id, 'ArchiveCourse', body);
   const shadowed = JSON.parse(JSON.stringify(model()['command-definitions'].DefineCourse));
   shadowed.boundary[0].alias = 'courseId';
@@ -453,9 +486,9 @@ check('a scenario reads as given, when and then, nested in its command', () => {
   const { model } = importExample('course-simple');
   const text = modelToSource(model());
   eq(text.includes([
-    '  scenario {  // is refused by course.status == Existent',
+    '  scenario {  // is refused: Course is not active',
     '    when SubscribeStudentToCourse { courseId: "c1", studentId: "s1" }',
-    '    then rejected by course.status == Existent saw NonExistent, Existent',
+    '    then rejected "Course is not active"',
     '  }',
   ].join('\n')), true, 'a refusal, enum members bare');
   eq(text.includes([
@@ -484,7 +517,7 @@ check('a scenario written without a then is recorded with what the model does', 
     '',
     '  scenario "archiving nothing" {',
     '    when ArchiveCourse { courseId: "c8" }',
-    '    then rejected by course.status == Existent',
+    '    then rejected "Course is not active"',
     '  }',
     '',
   ].join('\n'));
@@ -497,27 +530,25 @@ check('a scenario written without a then is recorded with what the model does', 
   const recorded = stored.find((b) => b.name === 'archiving a defined course');
   eq(recorded.then, { outcome: 'published', events: [{ type: 'CourseArchived', data: { courseId: 'c9' } }] }, 'recorded');
   const refused = stored.find((b) => b.name === 'archiving nothing');
-  eq(refused.then.failedRule, {
-    index: 0, text: 'course.status == Existent', leftValue: 'NonExistent', rightValue: 'Existent', atInstance: null,
-  }, 'the values it saw, filled in');
+  eq(refused.then, { outcome: 'rejected', events: [], rejection: 'Course is not active' }, 'the message, and nothing else');
   const back = modelToSource(model());
   eq(back.includes('  scenario "archiving nothing" {\n    when ArchiveCourse { courseId: "c8" }\n'
-    + '    then rejected by course.status == Existent saw NonExistent, Existent\n  }'), true, 'and printed back whole');
+    + '    then rejected "Course is not active"\n  }'), true, 'and printed back whole');
 });
 
 check('a written then is asserted: a drift is reported with its fix, and applying does not accept it', () => {
   const { id, model } = importExample('course-simple');
   const text = modelToSource(model()).replace(
-    'when SubscribeStudentToCourse { courseId: "c1", studentId: "s1" }\n    then rejected by course.status == Existent saw NonExistent, Existent',
-    'when SubscribeStudentToCourse { courseId: "c1", studentId: "s1" }\n    then rejected by course.status == Existent saw Archived, Existent',
+    'when SubscribeStudentToCourse { courseId: "c1", studentId: "s1" }\n    then rejected "Course is not active"',
+    'when SubscribeStudentToCourse { courseId: "c1", studentId: "s1" }\n    then rejected "Course is closed"',
   );
   const parsed = parseModelSource(text);
   const { warnings } = sandbox.sourceScenarioReport(model(), parsed);
   eq(warnings.length, 1, 'one drift');
   const archived = () => Object.values(model()['scenario-definitions'])
-    .filter((b) => b.then.failedRule && b.then.failedRule.leftValue === 'Archived').length;
+    .filter((b) => b.then.rejection === 'Course is closed').length;
   const already = archived();
-  eq(warnings[0].message, 'Drifted — the model now does:\nthen rejected by course.status == Existent saw NonExistent, Existent', 'what it does');
+  eq(warnings[0].message, 'Drifted — the model now does:\nthen rejected "Course is not active"', 'what it does');
   applyModelSource(id, text);
   eq(archived(), already + 1, 'stored as written — drifted, as on the pages');
   const { fix } = warnings[0];
@@ -727,7 +758,7 @@ check('a rename refuses what it cannot do exactly', () => {
     'a member a script spells as a string');
   eq(renameAt(scripted, 'command UpdateText', 'command '.length, 'EditText').error, undefined, 'a script cannot name a command');
   const shared = 'enum A { Open, Closed }\nenum B { Open, Shut }\nprojection P: Unknown = Open\n'
-    + 'command C(a: A) {\n  require a == Open\n}\n';
+    + 'command C(a: A) {\n  require a == Open\n    else reject "Not open"\n}\n';
   eq(/Open at line 3 could be a member of A or B/.test(renameAt(shared, 'A { Open', 4, 'Opened').error), true,
     'a member where its enum cannot be told');
   eq(renameAt(shared, 'Unknown = Open', 'Unknown = '.length, 'X').error,
@@ -739,11 +770,12 @@ check('a rename refuses what it cannot do exactly', () => {
 check('a rename reaches into scenarios', () => {
   const { model } = importExample('course-simple');
   const text = modelToSource(model());
-  const out = renameAt(text, 'enum CourseStatus { NonExistent', 'enum CourseStatus { '.length, 'Missing').text;
-  eq(/saw NonExistent\b/.test(out), false, 'a refusal\'s values');
-  eq(out.includes('saw Missing'), true, 'renamed there');
+  const out = renameAt(text, 'event CourseDefined', 'event '.length, 'CourseCreated').text;
+  eq(/given CourseDefined\b/.test(out), false, 'a given event');
+  eq(out.includes('given CourseCreated {'), true, 'renamed there');
   const alias = renameAt(text, 'read course = Course[courseId]', 'read '.length, 'c').text;
-  eq(alias.includes('then rejected by c.status == NonExistent'), true, 'a refusal\'s rule');
+  eq(alias.includes('require c.status == NonExistent'), true, 'the rule');
+  eq(alias.includes('then rejected "Course already exists"'), true, 'a refusal names its message, which no rename touches');
 });
 
 check('completion knows an event\'s payload in a handler', () => {
@@ -762,8 +794,8 @@ check('completion knows an event\'s payload in a handler', () => {
 
 check('completion knows a command\'s reads and payload', () => {
   const text = modelToSource(build(0).model());
-  const rule = (insert) => completeAt(text.replace('  require course.subscriptionCount <= newCapacity',
-    `  require course.subscriptionCount <= newCapacity\n  ${insert}`));
+  const rule = (insert) => completeAt(text.replace('    else reject "Course has more subscriptions than that"',
+    `    else reject "Course has more subscriptions than that"\n  ${insert}`));
   eq(rule('require |').labels, ['course', 'courseId', 'newCapacity', 'count', 'not'], 'what a rule can be about');
   eq(rule('require course.|').labels, ['status', 'capacity', 'subscriptionCount', 'subscribedStudentIds'], 'the read\'s properties');
   eq(rule('require course.status == |').labels.slice(0, 3), ['NonExistent', 'Existent', 'Archived'], 'members first');
@@ -787,7 +819,7 @@ check('completion knows scenarios, declarations, and when to stay quiet', () => 
   eq(block('given CourseDefined { |}').labels, ['courseId', 'capacity'], 'a payload\'s keys');
   eq(block('when |').labels[0], 'ArchiveCourse', 'the block\'s command first');
   eq(block('then |').items.filter((i) => i.sort === '0').map((i) => i.label), ['CourseArchived'], 'what it emits, first');
-  eq(block('then rejected by course.status == |').labels.slice(0, 3), ['NonExistent', 'Existent', 'Archived'], 'a refusal');
+  eq(block('then rejected |').labels, ['"Course is not active"'], 'a refusal, by the messages the command has');
   eq(completeAt(text.replace('// Commands', '// Commands\n@|')).labels, ['icon', 'feature', 'tagSchema'], 'annotations');
   eq(completeAt(text.replace('command DefineCourse(courseId: CourseId', 'command DefineCourse(courseId: |')).labels
     .slice(0, 3), ['boolean', 'integer', 'string'], 'a type');
@@ -820,7 +852,7 @@ check('a read says which events it adds — only those of the properties used', 
     'a rule on capacity brings its events in');
 
   // Nothing uses it: queried by tag alone, every event under it.
-  const unused = of(queries(text.replace('  require course.status == Existent\n\n  emit CourseArchived',
+  const unused = of(queries(text.replace('  require course.status == Existent\n    else reject "Course is not active"\n\n  emit CourseArchived',
     '  emit CourseArchived')), 'ArchiveCourse');
   eq([unused.hint, unused.reasons, unused.properties], ['‹reads any type — unused›', [], []], 'an unused read');
 });
@@ -934,7 +966,7 @@ check('every help topic and syntax row links into the notation pages on dcb.even
   }
   const links = sandbox.helpReferenceLinks();
   eq(links.every((link) => link.startsWith(sandbox.NOTATION_GUIDE_URL)), true, 'only the notation pages');
-  eq(links.includes(sandbox.NOTATION_REFERENCE_URL + '#saw'), true, 'rows included');
+  eq(links.includes(sandbox.NOTATION_REFERENCE_URL + '#emit-when'), true, 'rows included');
 });
 
 // The boundary topic's prose makes claims about the example; these are

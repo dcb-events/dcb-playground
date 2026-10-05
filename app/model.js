@@ -87,7 +87,12 @@
 // `NonExistent`/`Existent` enum. The `status` convention is gone — no
 // reader keys off the name any more — so a v18 log replayed here would
 // produce entities whose lifecycle nothing designates.
-const EVENT_LOG_KEY = 'dcb-playground:events:v19';
+// v20 gave every rule a rejection message (`rejection` on a command's
+// conditions) and made a refusal known by it: a scenario's Then holds
+// the message as `rejection`, in place of a `failedRule` naming the
+// condition's text and index and the values it read. A v19 log has
+// neither, and there is no message to invent for it.
+const EVENT_LOG_KEY = 'dcb-playground:events:v20';
 
 const DEF_KINDS = [
   'entity-definition',
@@ -160,11 +165,6 @@ const SIMPLE_TYPES = ['boolean', 'integer', 'string'];
 // gestures rather than inferences — see
 // `docs/research/2026-09-30-entity-lifecycle-as-boolean-existence.md`.
 const LIFECYCLE_PROPERTY = 'exists';
-// The spelling the convention had before v19, recognised in exactly one
-// place: inferring a designation for a 3.x–6.0 model at the import
-// gate. Narrow on purpose — a model that called it `state` never made
-// the designation, and guessing one for it invents authorship.
-const LEGACY_LIFECYCLE_PROPERTY = 'status';
 
 const PASCAL_RE = /^[A-Z][A-Za-z0-9]+$/;
 const CAMEL_RE = /^[a-z][A-Za-z0-9]+$/;
@@ -809,7 +809,7 @@ function scenarioName(body, spell = (n) => n) {
   const then = (body || {}).then;
   if (!then) return 'an unrun scenario';
   if (then.outcome === 'rejected') {
-    return `is refused by ${(then.failedRule || {}).text || 'a rule'}`;
+    return then.rejection ? `is refused: ${then.rejection}` : 'is refused';
   }
   const types = (then.events || []).map((e) => e && e.type).filter(Boolean);
   return types.length ? `records ${types.map(spell).join(' and ')}` : 'is accepted';
@@ -1965,6 +1965,60 @@ const ADVISORY_KINDS = DEF_KINDS.filter((kind) => !isIdKeyed(kind));
 // fixing that one re-runs the rest. Anything unexpected a defective
 // body makes the checker itself throw is reported the same way: to a
 // reader an advisory is an advisory, whichever guard tripped.
+// A rule's rejection message is the outcome a refusal is known by: what
+// the person reads, and what a scenario expecting the refusal names. So
+// it is static, one line, and short enough to stand in a toast — the
+// values a refusal saw are reported beside it, never spliced into it.
+const REJECTION_MAX_LENGTH = 200;
+
+// Why `text` cannot be a rejection message, or '' when it can.
+function rejectionProblem(text) {
+  if (typeof text !== 'string' || !text.trim()) return 'is empty';
+  if (/[\r\n]/.test(text)) return 'spans several lines';
+  if (text.length > REJECTION_MAX_LENGTH) return `is longer than ${REJECTION_MAX_LENGTH} characters`;
+  return '';
+}
+
+// Required on every rule and absent from every guard — but only ever
+// advised, never refused: a rule without one still evaluates, and a
+// refusal by it is what a scenario cannot name (`deriveThen`).
+function rejectionAdvisories(body) {
+  const messages = [];
+  for (const condition of body.conditions || []) {
+    if (!condition) continue;
+    if (condition.rejection === undefined) {
+      messages.push(`The rule "${conditionText(condition)}" has no rejection message — `
+        + 'say what the command is refused with when it does not hold.');
+      continue;
+    }
+    const problem = rejectionProblem(condition.rejection);
+    if (problem) messages.push(`The rejection message of "${conditionText(condition)}" ${problem}.`);
+  }
+  for (const emission of body.publishes || []) {
+    for (const guard of (emission && emission.when) || []) {
+      if (guard && guard.rejection !== undefined) {
+        messages.push(`The guard "${conditionText(guard)}" on "${emission.name}" carries a rejection `
+          + 'message, but a guard never rejects — it skips the emission.');
+      }
+    }
+  }
+  return messages;
+}
+
+// The messages a command can be refused with, in rule order, each once,
+// with the rules that lead to it. Rules sharing a message are one
+// outcome. A rule without a message is left out — it is an advisory.
+function commandRejections(body) {
+  const outcomes = [];
+  ((body && body.conditions) || []).forEach((condition, index) => {
+    if (!condition || rejectionProblem(condition.rejection)) return;
+    let outcome = outcomes.find((o) => o.rejection === condition.rejection);
+    if (!outcome) outcomes.push(outcome = { rejection: condition.rejection, rules: [] });
+    outcome.rules.push({ index, condition });
+  });
+  return outcomes;
+}
+
 function definitionAdvisories(model, kind, name, body) {
   const messages = [];
   if (!isIdKeyed(kind) && !PASCAL_RE.test(name)) {
@@ -1982,6 +2036,7 @@ function definitionAdvisories(model, kind, name, body) {
   // never dropped behind anyone's back; it is reported here and pruned
   // by the next edit to this command, which is what the message says.
   if (kind === 'command-definition') {
+    messages.push(...rejectionAdvisories(body));
     const stranded = unreferencedBindings(model, body);
     if (stranded.length) {
       messages.push(`Reads nothing consults: ${stranded.join(', ')}. `
@@ -3360,8 +3415,8 @@ function validateScenarioBody(model, body) {
     checkScenarioPayload(event.data, (model['event-definitions'][event.type] || {}).properties,
       `Expected event ${index + 1} ("${event.type}")`);
   });
-  if (then.outcome === 'rejected' && !then.failedRule) {
-    throw new DomainError('A scenario that expects a refusal has to say which rule refused it.');
+  if (then.outcome === 'rejected' && typeof then.rejection !== 'string') {
+    throw new DomainError('A scenario that expects a refusal has to say which message it was refused with.');
   }
 }
 
@@ -4430,9 +4485,17 @@ function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
 // declared expected. So the schema URL stays at v6 and `READABLE_MAJORS`
 // is untouched. What a 6.0 reader misses is what the version warning
 // exists to say.
-const MODEL_VERSION = '6.1';
-const MODEL_SCHEMA_URL = 'https://dcb.events/schemas/model/v6.json';
-const READABLE_MAJORS = [3, 4, 5, 6];
+// 7.0 gave every rule a rejection message — `rejection` on each of a
+// command's conditions, the sentence it is refused with — and made a
+// refusal known by it: a scenario's Then carries the message as
+// `rejection`, and nothing else about the refusal — not the condition's
+// text or index, nor the values it read. Required on both sides, so a 6.x
+// reader cannot read a 7.0 document, and this build reads no earlier
+// major: a 6.x rule has no message, and inventing one would put words
+// in the author's mouth that every scenario then asserts.
+const MODEL_VERSION = '7.0';
+const MODEL_SCHEMA_URL = 'https://dcb.events/schemas/model/v7.json';
+const READABLE_MAJORS = [7];
 
 const SCHEMA_FIELD = {
   'custom-type-definition': 'customTypeDefinitions',
@@ -4529,39 +4592,6 @@ function bareEntityBody(body) {
   return { ...body, properties: [] };
 }
 
-// Gives a pre-6.1 entity the designation its author never wrote, once,
-// here at the gate — mutating the decoded bodies before anything is
-// stored, so what lands in the log is an ordinary 6.1 entity and no
-// reader downstream has to know where the designation came from.
-//
-// Inferring at read time instead was the alternative and is worse for
-// the reason `boundary` is authoritative rather than recomputed: a
-// designation that is sometimes stored and sometimes derived is two
-// sources of truth, and every reader then has to know which it has.
-//
-// Deliberately narrow — a property named exactly `status`, bound to a
-// non-scripted projection typed with an enum. That was the one spelling
-// the convention had. A model that called it `state`, or typed it
-// `boolean`, never made the designation, and inferring one for it would
-// be inventing authorship; those import with no lifecycle and the
-// Lifecycles page says so, which is honest about a file that predates
-// the idea.
-function inferLifecycleDesignations(entities, projections, customTypes) {
-  for (const body of Object.values(entities)) {
-    if (!body || typeof body !== 'object') continue;
-    if (body.lifecycle !== undefined && body.lifecycle !== null) continue;
-    const binding = (body.properties || [])
-      .find((p) => p && p.name === LEGACY_LIFECYCLE_PROPERTY);
-    if (!binding) continue;
-    const projection = projections[binding.projection];
-    if (!projection || projection.script || projection.isList) continue;
-    const valueType = customTypes[projection.valueType];
-    const members = valueType && valueType.schema && valueType.schema.enum;
-    if (!Array.isArray(members) || !members.length) continue;
-    body.lifecycle = LEGACY_LIFECYCLE_PROPERTY;
-  }
-}
-
 // Adds a mixed batch of custom types and bare entities, retrying
 // whatever fails until a full pass makes no progress. The two kinds
 // collide over an entity's derived identifier type — a standalone
@@ -4640,9 +4670,11 @@ function assertEnvelopeVersion(envelope) {
     );
   }
   // Earlier majors stay readable where the newer format only *added* —
-  // a 3.x document never says `via` or a binding's `isOptional`, so
-  // this build reads it whole. What is refused is a major this build
-  // has never heard of, in either direction.
+  // a 3.x document never said `via` or a binding's `isOptional`, so
+  // 6.x builds read it whole. 7.0 *required* something (a rule's
+  // rejection message) that no earlier document has, so this build
+  // reads 7.x only. What is refused is a major this build does not
+  // read, in either direction.
   if (!READABLE_MAJORS.includes(version.major)) {
     const readable_ = READABLE_MAJORS.map((m) => `${m}.x`).join(' and ');
     throw new DomainError(
@@ -4696,7 +4728,6 @@ function importModelFromEnvelope(envelope) {
   const propertyScenarios = schemaArrayToDefinitions(
     'projection-scenario-definition', envelope.projectionScenarioDefinitions
   );
-  inferLifecycleDesignations(entities, projections, customTypes);
 
   const modelId = createDcbModel(envelope.name);
 
@@ -4933,7 +4964,8 @@ function seedBase(modelId) {
     properties: [prop('courseId', 'CourseId'), prop('capacity', 'integer')],
     boundary: [bind('course', 'Course', 'courseId')],
     conditions: [
-      { leftHandSide: of('course', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' } },
+      { leftHandSide: of('course', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' },
+        rejection: 'Course already exists' },
     ],
     publishes: [{
       name: 'CourseDefined',
@@ -4946,8 +4978,10 @@ function seedBase(modelId) {
     properties: [prop('courseId', 'CourseId'), prop('newCapacity', 'integer')],
     boundary: [bind('course', 'Course', 'courseId')],
     conditions: [
-      { leftHandSide: of('course', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'Existent' } },
-      { leftHandSide: of('course', 'subscriptionCount'), predicate: 'lessThanOrEquals', rightHandSide: param('newCapacity') },
+      { leftHandSide: of('course', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'Existent' },
+        rejection: 'Course is not active' },
+      { leftHandSide: of('course', 'subscriptionCount'), predicate: 'lessThanOrEquals', rightHandSide: param('newCapacity'),
+        rejection: 'Course has more subscriptions than that' },
     ],
     publishes: [{
       name: 'CourseCapacityChanged',
@@ -4960,7 +4994,8 @@ function seedBase(modelId) {
     properties: [prop('courseId', 'CourseId')],
     boundary: [bind('course', 'Course', 'courseId')],
     conditions: [
-      { leftHandSide: of('course', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'Existent' } },
+      { leftHandSide: of('course', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'Existent' },
+        rejection: 'Course is not active' },
     ],
     publishes: [{ name: 'CourseArchived', parameters: { courseId: param('courseId') } }],
   });
@@ -4970,7 +5005,8 @@ function seedBase(modelId) {
     properties: [prop('studentId', 'StudentId')],
     boundary: [bind('student', 'Student', 'studentId')],
     conditions: [
-      { leftHandSide: of('student', LIFECYCLE_PROPERTY), predicate: 'isFalse' },
+      { leftHandSide: of('student', LIFECYCLE_PROPERTY), predicate: 'isFalse',
+        rejection: 'Student is already registered' },
     ],
     publishes: [{ name: 'StudentRegistered', parameters: { studentId: param('studentId') } }],
   });
@@ -4980,11 +5016,16 @@ function seedBase(modelId) {
     properties: [prop('courseId', 'CourseId'), prop('studentId', 'StudentId')],
     boundary: [bind('course', 'Course', 'courseId'), bind('student', 'Student', 'studentId')],
     conditions: [
-      { leftHandSide: of('course', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'Existent' } },
-      { leftHandSide: of('student', LIFECYCLE_PROPERTY), predicate: 'isTrue' },
-      { leftHandSide: of('course', 'subscriptionCount'), predicate: 'lessThan', rightHandSide: of('course', 'capacity') },
-      { leftHandSide: of('course', 'subscribedStudentIds'), predicate: 'contains', rightHandSide: param('studentId'), negate: true },
-      { leftHandSide: of('student', 'subscriptionCount'), predicate: 'lessThan', rightHandSide: 10 },
+      { leftHandSide: of('course', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'Existent' },
+        rejection: 'Course is not active' },
+      { leftHandSide: of('student', LIFECYCLE_PROPERTY), predicate: 'isTrue',
+        rejection: 'Student is not registered' },
+      { leftHandSide: of('course', 'subscriptionCount'), predicate: 'lessThan', rightHandSide: of('course', 'capacity'),
+        rejection: 'Course is full' },
+      { leftHandSide: of('course', 'subscribedStudentIds'), predicate: 'contains', rightHandSide: param('studentId'), negate: true,
+        rejection: 'Student is already subscribed' },
+      { leftHandSide: of('student', 'subscriptionCount'), predicate: 'lessThan', rightHandSide: 10,
+        rejection: 'Student is subscribed to too many courses' },
     ],
     publishes: [{
       name: 'StudentSubscribedToCourse',
@@ -5003,8 +5044,10 @@ function seedBase(modelId) {
     // *did* read this student conflict with it.
     boundary: [bind('course', 'Course', 'courseId')],
     conditions: [
-      { leftHandSide: of('course', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'Existent' } },
-      { leftHandSide: of('course', 'subscribedStudentIds'), predicate: 'contains', rightHandSide: param('studentId') },
+      { leftHandSide: of('course', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'Existent' },
+        rejection: 'Course is not active' },
+      { leftHandSide: of('course', 'subscribedStudentIds'), predicate: 'contains', rightHandSide: param('studentId'),
+        rejection: 'Student is not subscribed' },
     ],
     publishes: [{
       name: 'StudentUnsubscribedFromCourse',
@@ -5153,7 +5196,8 @@ function seedAddTenancy(modelId) {
     properties: [seedProp('tenantId', 'TenantId')],
     boundary: [seedBind('tenant', 'Tenant', 'tenantId')],
     conditions: [
-      { leftHandSide: seedOf('tenant', LIFECYCLE_PROPERTY), predicate: 'isFalse' },
+      { leftHandSide: seedOf('tenant', LIFECYCLE_PROPERTY), predicate: 'isFalse',
+        rejection: 'Tenant is already registered' },
     ],
     publishes: [{ name: 'TenantRegistered', parameters: { tenantId: seedParam('tenantId') } }],
   });
@@ -5170,6 +5214,7 @@ function seedAddTenancy(modelId) {
     define.conditions.push({
       leftHandSide: seedOf('tenant', LIFECYCLE_PROPERTY),
       predicate: 'isTrue',
+      rejection: 'Tenant is not registered',
     });
     define.publishes[0].parameters.tenantId = seedParam('tenantId');
     define.publishes[0].parameters.courseNumber = seedOf('tenantCourseNumbering');
@@ -5238,9 +5283,11 @@ function seedAddSchedules(modelId) {
         excluding: seedParam('courseId') },
     ],
     conditions: [
-      { leftHandSide: seedOf('course', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'Existent' } },
+      { leftHandSide: seedOf('course', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'Existent' },
+        rejection: 'Course is not active' },
       { leftHandSide: seedOf('theirs', 'slots'), predicate: 'containsAny',
-        rightHandSide: seedParam('slots'), negate: true },
+        rightHandSide: seedParam('slots'), negate: true,
+        rejection: 'Slots clash with a subscriber\'s other course' },
     ],
     publishes: [{
       name: 'CourseRescheduled',
@@ -5260,6 +5307,7 @@ function seedAddSchedules(modelId) {
       predicate: 'containsAny',
       rightHandSide: seedOf('course', 'slots'),
       negate: true,
+      rejection: 'Course clashes with the student\'s schedule',
     });
   });
 }
@@ -5361,6 +5409,7 @@ function seedProductPricing(modelId) {
     conditions: [{
       leftHandSide: of('product', LIFECYCLE_PROPERTY),
       predicate: 'isFalse',
+      rejection: 'Product already exists',
     }],
     publishes: [{
       name: 'ProductDefined',
@@ -5375,6 +5424,7 @@ function seedProductPricing(modelId) {
       {
         leftHandSide: of('product', LIFECYCLE_PROPERTY),
         predicate: 'isTrue',
+        rejection: 'Product does not exist',
       },
       // Repricing to the price already in force is a no-op, and saying
       // so does more than tidy the log: reading `currentPrice` pulls
@@ -5387,6 +5437,7 @@ function seedProductPricing(modelId) {
         predicate: 'equals',
         rightHandSide: param('newPrice'),
         negate: true,
+        rejection: 'Price is unchanged',
       },
     ],
     publishes: [{
@@ -5409,17 +5460,20 @@ function seedProductPricing(modelId) {
       {
         leftHandSide: of('order', LIFECYCLE_PROPERTY),
         predicate: 'isFalse',
+        rejection: 'Order was already placed',
       },
       // Universal over the fanned alias: every product must exist.
       {
         leftHandSide: of('product', LIFECYCLE_PROPERTY),
         predicate: 'isTrue',
+        rejection: 'Product does not exist',
       },
       // Zipped: product[i] against items[i].price.
       {
         leftHandSide: of('product', 'currentPrice'),
         predicate: 'equals',
         rightHandSide: { parameterName: 'items', property: 'price' },
+        rejection: 'Price has changed',
       },
     ],
     publishes: [{
@@ -5533,7 +5587,8 @@ function seedContentDecisionsScripted(modelId) {
     properties: [prop('id', 'DocumentId')],
     boundary: [bind('document', 'Document', 'id')],
     conditions: [
-      { leftHandSide: of('document', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' } },
+      { leftHandSide: of('document', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' },
+        rejection: 'Document already exists' },
     ],
     publishes: [{ name: 'DocumentAdded', parameters: { id: param('id') } }],
   });
@@ -5545,9 +5600,11 @@ function seedContentDecisionsScripted(modelId) {
     boundary: [bind('document', 'Document', 'docId')],
     conditions: [
       { leftHandSide: of('document', 'status'), predicate: 'equals',
-        rightHandSide: { enumMember: 'NonExistent' }, negate: true },
+        rightHandSide: { enumMember: 'NonExistent' }, negate: true,
+        rejection: 'Document does not exist' },
       { leftHandSide: of('document', 'status'), predicate: 'equals',
-        rightHandSide: { enumMember: 'Archived' }, negate: true },
+        rightHandSide: { enumMember: 'Archived' }, negate: true,
+        rejection: 'Document is archived' },
     ],
     publishes: [{
       name: 'TextUpdated',
@@ -5562,7 +5619,8 @@ function seedContentDecisionsScripted(modelId) {
     boundary: [bind('document', 'Document', 'docId')],
     conditions: [
       { leftHandSide: of('document', 'status'), predicate: 'equalsAny',
-        rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'PendingChanges' }] },
+        rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'PendingChanges' }],
+        rejection: 'Document cannot be published' },
     ],
     publishes: [{ name: 'DocumentPublished', parameters: { docId: param('docId') } }],
   });
@@ -5574,7 +5632,8 @@ function seedContentDecisionsScripted(modelId) {
     boundary: [bind('document', 'Document', 'docId')],
     conditions: [
       { leftHandSide: of('document', 'status'), predicate: 'equalsAny',
-        rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }, { enumMember: 'PendingChanges' }] },
+        rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }, { enumMember: 'PendingChanges' }],
+        rejection: 'Document cannot be archived' },
     ],
     publishes: [{ name: 'DocumentArchived', parameters: { docId: param('docId') } }],
   });
@@ -5646,7 +5705,8 @@ function seedDocumentAuthoring(modelId) {
     properties: [prop('id', 'DocumentId')],
     boundary: [bind('document', 'Document', 'id')],
     conditions: [
-      { leftHandSide: of('document', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' } },
+      { leftHandSide: of('document', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' },
+        rejection: 'Document already exists' },
     ],
     publishes: [{ name: 'DocumentAdded', parameters: { id: param('id') } }],
   });
@@ -5658,12 +5718,14 @@ function seedDocumentAuthoring(modelId) {
     boundary: [bind('document', 'Document', 'docId')],
     conditions: [
       { leftHandSide: of('document', 'status'), predicate: 'equalsAny',
-        rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }] },
+        rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }],
+        rejection: 'Document is not editable' },
       // Recording an unchanged text is a no-op, and saying so pulls
       // TextUpdated into this command's query — the same move
       // ChangeProductPrice documents in the pricing example.
       { leftHandSide: of('document', 'currentText'), predicate: 'equals',
-        rightHandSide: param('text'), negate: true },
+        rightHandSide: param('text'), negate: true,
+        rejection: 'Text is unchanged' },
     ],
     publishes: [{
       name: 'TextUpdated',
@@ -5678,14 +5740,16 @@ function seedDocumentAuthoring(modelId) {
     boundary: [bind('document', 'Document', 'docId')],
     conditions: [
       { leftHandSide: of('document', 'status'), predicate: 'equalsAny',
-        rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }] },
+        rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }],
+        rejection: 'Document cannot be published' },
       // The content-based decision, in the boundary: publishing is
       // refused exactly while nothing differs — a fresh Draft ("" vs
       // null) differs, a republish does not, and re-typing the
       // published text makes the two equal again, so the revert needs
       // no event and no stored status to hold.
       { leftHandSide: of('document', 'currentText'), predicate: 'equals',
-        rightHandSide: of('document', 'publishedText'), negate: true },
+        rightHandSide: of('document', 'publishedText'), negate: true,
+        rejection: 'No changes to publish' },
     ],
     publishes: [{
       name: 'DocumentPublished',
@@ -5700,7 +5764,8 @@ function seedDocumentAuthoring(modelId) {
     boundary: [bind('document', 'Document', 'docId')],
     conditions: [
       { leftHandSide: of('document', 'status'), predicate: 'equalsAny',
-        rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }] },
+        rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }],
+        rejection: 'Document cannot be archived' },
     ],
     publishes: [{ name: 'DocumentArchived', parameters: { docId: param('docId') } }],
   });
@@ -5721,14 +5786,17 @@ function seedVerifiedPublish(modelId) {
     boundary: [seedBind('document', 'Document', 'docId')],
     conditions: [
       { leftHandSide: seedOf('document', 'status'), predicate: 'equalsAny',
-        rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }] },
+        rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }],
+        rejection: 'Document cannot be published' },
       // The proof: what the caller believes it is publishing must be
       // the current text — a stale echo is rejected, which is the
       // optimistic check made a domain rule.
       { leftHandSide: seedOf('document', 'currentText'), predicate: 'equals',
-        rightHandSide: seedParam('text') },
+        rightHandSide: seedParam('text'),
+        rejection: 'Text is not the current one' },
       { leftHandSide: seedParam('text'), predicate: 'equals',
-        rightHandSide: seedOf('document', 'publishedText'), negate: true },
+        rightHandSide: seedOf('document', 'publishedText'), negate: true,
+        rejection: 'No changes to publish' },
     ],
     publishes: [{
       name: 'DocumentPublished',
@@ -5770,7 +5838,8 @@ function seedDerivedPending(modelId) {
   seedPatch('command-definition', modelId, 'PublishDocument', (publish) => {
     publish.conditions = [
       publish.conditions[0],
-      { leftHandSide: seedOf('document', 'hasPendingChanges'), predicate: 'isTrue' },
+      { leftHandSide: seedOf('document', 'hasPendingChanges'), predicate: 'isTrue',
+        rejection: 'No changes to publish' },
     ];
   });
 }
@@ -5842,7 +5911,8 @@ function seedGuardedAuthoring(modelId) {
     properties: [prop('id', 'DocumentId')],
     boundary: [bind('document', 'Document', 'id')],
     conditions: [
-      { leftHandSide: of('document', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' } },
+      { leftHandSide: of('document', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' },
+        rejection: 'Document already exists' },
     ],
     publishes: [{ name: 'DocumentAdded', parameters: { id: param('id') } }],
   });
@@ -5854,9 +5924,11 @@ function seedGuardedAuthoring(modelId) {
     boundary: [bind('document', 'Document', 'docId')],
     conditions: [
       { leftHandSide: of('document', 'status'), predicate: 'equalsAny',
-        rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }, { enumMember: 'PendingChanges' }] },
+        rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }, { enumMember: 'PendingChanges' }],
+        rejection: 'Document is not editable' },
       { leftHandSide: of('document', 'currentText'), predicate: 'equals',
-        rightHandSide: param('text'), negate: true },
+        rightHandSide: param('text'), negate: true,
+        rejection: 'Text is unchanged' },
     ],
     // The guards are complements, so exactly one emission fires and
     // the accepted command always records which fact it was. Guard
@@ -5887,7 +5959,8 @@ function seedGuardedAuthoring(modelId) {
       // The stored status is trustworthy again, so the five-state
       // guard the scripted baseline used works verbatim.
       { leftHandSide: of('document', 'status'), predicate: 'equalsAny',
-        rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'PendingChanges' }] },
+        rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'PendingChanges' }],
+        rejection: 'Document cannot be published' },
     ],
     publishes: [{
       name: 'DocumentPublished',
@@ -5902,7 +5975,8 @@ function seedGuardedAuthoring(modelId) {
     boundary: [bind('document', 'Document', 'docId')],
     conditions: [
       { leftHandSide: of('document', 'status'), predicate: 'equalsAny',
-        rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }, { enumMember: 'PendingChanges' }] },
+        rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }, { enumMember: 'PendingChanges' }],
+        rejection: 'Document cannot be archived' },
     ],
     publishes: [{ name: 'DocumentArchived', parameters: { docId: param('docId') } }],
   });

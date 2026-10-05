@@ -1,6 +1,6 @@
 {
-  "$schema": "https://dcb.events/schemas/model/v6.json",
-  "dcbModelVersion": "6.1",
+  "$schema": "https://dcb.events/schemas/model/v7.json",
+  "dcbModelVersion": "7.0",
   "name": "Course Example (simple)",
   "customTypeDefinitions": [
     {
@@ -317,7 +317,8 @@
           "predicate": "equals",
           "rightHandSide": {
             "enumMember": "NonExistent"
-          }
+          },
+          "rejection": "Course already exists"
         }
       ],
       "publishes": [
@@ -370,7 +371,8 @@
           "predicate": "equals",
           "rightHandSide": {
             "enumMember": "Existent"
-          }
+          },
+          "rejection": "Course is not active"
         },
         {
           "leftHandSide": {
@@ -380,7 +382,8 @@
           "predicate": "lessThanOrEquals",
           "rightHandSide": {
             "parameterName": "newCapacity"
-          }
+          },
+          "rejection": "Course has more subscriptions than that"
         },
         {
           "leftHandSide": {
@@ -391,7 +394,8 @@
           "rightHandSide": {
             "parameterName": "newCapacity"
           },
-          "negate": true
+          "negate": true,
+          "rejection": "Capacity is unchanged"
         }
       ],
       "publishes": [
@@ -438,7 +442,8 @@
           "predicate": "equals",
           "rightHandSide": {
             "enumMember": "Existent"
-          }
+          },
+          "rejection": "Course is not active"
         }
       ],
       "publishes": [
@@ -495,7 +500,8 @@
           "predicate": "equals",
           "rightHandSide": {
             "enumMember": "Existent"
-          }
+          },
+          "rejection": "Course is not active"
         },
         {
           "leftHandSide": {
@@ -506,7 +512,8 @@
           "rightHandSide": {
             "alias": "course",
             "property": "capacity"
-          }
+          },
+          "rejection": "Course is full"
         },
         {
           "leftHandSide": {
@@ -517,7 +524,8 @@
           "rightHandSide": {
             "parameterName": "studentId"
           },
-          "negate": true
+          "negate": true,
+          "rejection": "Student is already subscribed"
         },
         {
           "leftHandSide": {
@@ -525,7 +533,8 @@
             "property": "subscriptionCount"
           },
           "predicate": "lessThan",
-          "rightHandSide": 10
+          "rightHandSide": 10,
+          "rejection": "Student is subscribed to too many courses"
         }
       ],
       "publishes": [
@@ -578,7 +587,8 @@
           "predicate": "equals",
           "rightHandSide": {
             "enumMember": "Existent"
-          }
+          },
+          "rejection": "Course is not active"
         },
         {
           "leftHandSide": {
@@ -588,7 +598,8 @@
           "predicate": "contains",
           "rightHandSide": {
             "parameterName": "studentId"
-          }
+          },
+          "rejection": "Student is not subscribed"
         }
       ],
       "publishes": [
@@ -629,13 +640,7 @@
       "then": {
         "outcome": "rejected",
         "events": [],
-        "failedRule": {
-          "index": 0,
-          "text": "course.status == NonExistent",
-          "leftValue": "Existent",
-          "rightValue": "NonExistent",
-          "atInstance": null
-        }
+        "rejection": "Course already exists"
       }
     },
     {
@@ -665,13 +670,7 @@
       "then": {
         "outcome": "rejected",
         "events": [],
-        "failedRule": {
-          "index": 0,
-          "text": "course.status == NonExistent",
-          "leftValue": "Archived",
-          "rightValue": "NonExistent",
-          "atInstance": null
-        }
+        "rejection": "Course already exists"
       }
     },
     {
@@ -710,13 +709,7 @@
       "then": {
         "outcome": "rejected",
         "events": [],
-        "failedRule": {
-          "index": 0,
-          "text": "course.status == Existent",
-          "leftValue": "NonExistent",
-          "rightValue": "Existent",
-          "atInstance": null
-        }
+        "rejection": "Course is not active"
       }
     },
     {
@@ -740,13 +733,7 @@
       "then": {
         "outcome": "rejected",
         "events": [],
-        "failedRule": {
-          "index": 2,
-          "text": "not(course.capacity == newCapacity)",
-          "leftValue": 123,
-          "rightValue": 123,
-          "atInstance": null
-        }
+        "rejection": "Capacity is unchanged"
       }
     },
     {
@@ -784,13 +771,7 @@
       "then": {
         "outcome": "rejected",
         "events": [],
-        "failedRule": {
-          "index": 1,
-          "text": "course.subscriptionCount <= newCapacity",
-          "leftValue": 2,
-          "rightValue": 1,
-          "atInstance": null
-        }
+        "rejection": "Course has more subscriptions than that"
       }
     },
     {
@@ -836,13 +817,7 @@
       "then": {
         "outcome": "rejected",
         "events": [],
-        "failedRule": {
-          "index": 0,
-          "text": "course.status == Existent",
-          "leftValue": "NonExistent",
-          "rightValue": "Existent",
-          "atInstance": null
-        }
+        "rejection": "Course is not active"
       }
     },
     {
@@ -871,13 +846,7 @@
       "then": {
         "outcome": "rejected",
         "events": [],
-        "failedRule": {
-          "index": 0,
-          "text": "course.status == Existent",
-          "leftValue": "Archived",
-          "rightValue": "Existent",
-          "atInstance": null
-        }
+        "rejection": "Course is not active"
       }
     },
     {
@@ -922,13 +891,7 @@
       "then": {
         "outcome": "rejected",
         "events": [],
-        "failedRule": {
-          "index": 0,
-          "text": "course.status == Existent",
-          "leftValue": "NonExistent",
-          "rightValue": "Existent",
-          "atInstance": null
-        }
+        "rejection": "Course is not active"
       }
     },
     {
@@ -966,13 +929,7 @@
       "then": {
         "outcome": "rejected",
         "events": [],
-        "failedRule": {
-          "index": 1,
-          "text": "course.subscriptionCount < course.capacity",
-          "leftValue": 2,
-          "rightValue": 2,
-          "atInstance": null
-        }
+        "rejection": "Course is full"
       }
     },
     {
@@ -1003,15 +960,7 @@
       "then": {
         "outcome": "rejected",
         "events": [],
-        "failedRule": {
-          "index": 2,
-          "text": "not(course.subscribedStudentIds contains studentId)",
-          "leftValue": [
-            "s1"
-          ],
-          "rightValue": "s1",
-          "atInstance": null
-        }
+        "rejection": "Student is already subscribed"
       }
     },
     {
@@ -1105,13 +1054,7 @@
       "then": {
         "outcome": "rejected",
         "events": [],
-        "failedRule": {
-          "index": 3,
-          "text": "student.subscriptionCount < 10",
-          "leftValue": 10,
-          "rightValue": 10,
-          "atInstance": null
-        }
+        "rejection": "Student is subscribed to too many courses"
       }
     },
     {
@@ -1158,13 +1101,7 @@
       "then": {
         "outcome": "rejected",
         "events": [],
-        "failedRule": {
-          "index": 0,
-          "text": "course.status == Existent",
-          "leftValue": "NonExistent",
-          "rightValue": "Existent",
-          "atInstance": null
-        }
+        "rejection": "Course is not active"
       }
     },
     {
@@ -1188,13 +1125,7 @@
       "then": {
         "outcome": "rejected",
         "events": [],
-        "failedRule": {
-          "index": 1,
-          "text": "course.subscribedStudentIds contains studentId",
-          "leftValue": [],
-          "rightValue": "s1",
-          "atInstance": null
-        }
+        "rejection": "Student is not subscribed"
       }
     },
     {
@@ -1270,13 +1201,7 @@
       "then": {
         "outcome": "rejected",
         "events": [],
-        "failedRule": {
-          "index": 1,
-          "text": "course.subscribedStudentIds contains studentId",
-          "leftValue": [],
-          "rightValue": "s1",
-          "atInstance": null
-        }
+        "rejection": "Student is not subscribed"
       }
     }
   ],

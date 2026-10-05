@@ -1568,6 +1568,7 @@ function build(index) {
       predicate: 'equals', negate: true,
       left: JSON.stringify({ alias: 'course', property: 'status' }),
       right: JSON.stringify({ enumMember: 'Archived' }),
+      rejection: 'Course was archived',
       touched: true,
     };
     sandbox.ruleEditor(model(), sandbox.sliceOf(model(), 'DefineCourse'), null);
@@ -1579,7 +1580,24 @@ function build(index) {
       predicate: 'equals',
       rightHandSide: { enumMember: 'Archived' },
       negate: true,
+      rejection: 'Course was archived',
     }, 'exactly as picked');
+  });
+
+  check('a touched rule without its message is not added by leaving it', () => {
+    sandbox.state.slice = 'DefineCourse';
+    sandbox.state.adder = 'rule';
+    const count = model()['command-definitions'].DefineCourse.conditions.length;
+    sandbox.state.ruleDraft = {
+      predicate: 'equals', negate: true,
+      left: JSON.stringify({ alias: 'course', property: 'status' }),
+      right: JSON.stringify({ enumMember: 'Archived' }),
+      rejection: '  ',
+      touched: true,
+    };
+    sandbox.ruleEditor(model(), sandbox.sliceOf(model(), 'DefineCourse'), null);
+    sandbox.closeForms();
+    eq(model()['command-definitions'].DefineCourse.conditions.length, count, 'a rule says what it refuses with');
   });
 
   // The read half of the merged row narrows exactly as the old read
@@ -2435,8 +2453,9 @@ function build(index) {
     const register = model()['command-definitions'].RegisterStudent.conditions[0];
     eq(register, {
       leftHandSide: { alias: 'student', property: 'status' },
-      predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' },
-    }, 'isFalse became equals NonExistent');
+      predicate: 'equals', rejection: 'Student is already registered',
+      rightHandSide: { enumMember: 'NonExistent' },
+    }, 'isFalse became equals NonExistent, and kept its message');
     // The part worth being exact about: a graduated student still
     // exists, so "student exists" is every state the boolean was
     // true in — not just the one named after it. Narrowing this to
@@ -2446,7 +2465,7 @@ function build(index) {
       .find((c) => c.leftHandSide && c.leftHandSide.alias === 'student');
     eq(subscribe, {
       leftHandSide: { alias: 'student', property: 'status' },
-      predicate: 'equalsAny',
+      predicate: 'equalsAny', rejection: 'Student is not registered',
       rightHandSide: [{ enumMember: 'Existent' }, { enumMember: 'Graduated' }],
     }, 'isTrue became every state it held in');
   });
@@ -2470,6 +2489,7 @@ function build(index) {
     const body = sandbox.deepClone(model()['command-definitions'].SubscribeStudentToCourse);
     body.conditions.push({
       leftHandSide: { alias: 'student', property: 'expelled' }, predicate: 'isFalse',
+      rejection: 'Student was expelled',
     });
     updateDefinition('command-definition', id, 'SubscribeStudentToCourse', body);
 
@@ -2499,8 +2519,10 @@ function build(index) {
         && c.leftHandSide.property === 'status');
     eq(rules, [
       { leftHandSide: { alias: 'student', property: 'status' }, predicate: 'equalsAny',
+        rejection: 'Student is not registered',
         rightHandSide: [{ enumMember: 'Registered' }, { enumMember: 'Expelled' }] },
       { leftHandSide: { alias: 'student', property: 'status' }, predicate: 'equalsAny',
+        rejection: 'Student was expelled',
         rightHandSide: [{ enumMember: 'NonExistent' }, { enumMember: 'Registered' }] },
     ], 'exists became both later states; not-expelled became both earlier ones');
     eq(sandbox.modelAdvisories(model()).filter((a) => a.name === 'SubscribeStudentToCourse'), [],
@@ -2664,8 +2686,8 @@ function build(index) {
 
   check('the sugar is rendering only — nothing is stored differently', () => {
     const stored = body().conditions.find((c) => c.leftHandSide.alias === 'student');
-    eq(stored, { leftHandSide: { alias: 'student', property: 'exists' }, predicate: 'isTrue' },
-      'an ordinary unary condition over an ordinary property');
+    eq(stored, { leftHandSide: { alias: 'student', property: 'exists' }, predicate: 'isTrue',
+      rejection: 'Student is not registered' }, 'an ordinary unary condition over an ordinary property');
     eq(sandbox.ruleSentence(model(), body(), stored), 'student exists', 'said in words');
   });
 
@@ -2691,78 +2713,6 @@ function build(index) {
     eq(sandbox.lifecycleStateWords(student, 'false'), 'does not exist', 'and the false one');
     eq(sandbox.lifecycleStateWords({ isBoolean: true, property: 'isArchived' }, 'false'),
       'is not archived', 'an is-prefixed predicate negates in place');
-  });
-}
-
-// ---------------------------------------------------------------
-// Importing a model written before the designation existed.
-// ---------------------------------------------------------------
-{
-  const envelope = (entities, projections, customTypes) => ({
-    $schema: 'https://dcb.events/schemas/model/v6.json',
-    dcbModelVersion: '6.0',
-    name: 'Imported',
-    customTypeDefinitions: customTypes,
-    eventDefinitions: [{ name: 'ThingMade', properties: [
-      { name: 'thingId', propertyType: 'ThingId', isOptional: false, isList: false }] }],
-    entityDefinitions: entities,
-    projectionDefinitions: projections,
-    commandDefinitions: [],
-  });
-  const enumType = { name: 'ThingStatus', schema: { type: 'string', enum: ['NonExistent', 'Existent'] } };
-  const statusProjection = (name) => ({
-    name, parameters: [{ name: 'thingId', propertyType: 'ThingId' }],
-    valueType: 'ThingStatus', isList: false,
-    initialValue: { enumMember: 'NonExistent' },
-    handlers: [{ event: 'ThingMade', operation: 'set', value: { enumMember: 'Existent' } }],
-  });
-
-  const imported = (doc) => {
-    store.clear();
-    sandbox.bumpLogRevision();
-    const result = sandbox.importModelFromEnvelope(doc);
-    const id = typeof result === 'string' ? result : result.modelId;
-    return projectState()[id];
-  };
-
-  check('a pre-6.1 model with a status enum gets the designation, once, at the gate', () => {
-    const model = imported(envelope(
-      [{ name: 'Thing', properties: [{ name: 'status', projection: 'ThingStatus' }] }],
-      [statusProjection('ThingStatus')], [enumType]
-    ));
-    eq(model['entity-definitions'].Thing.lifecycle, 'status', 'inferred and stored');
-    eq(sandbox.lifecycleOf(model, 'Thing').states, ['NonExistent', 'Existent'],
-      'and it resolves as the enum it already was — nothing was converted');
-  });
-
-  check('a property called something else is left alone', () => {
-    // The old convention had one spelling. Guessing past it would be
-    // inventing a designation its author never made.
-    const model = imported(envelope(
-      [{ name: 'Thing', properties: [{ name: 'state', projection: 'ThingState' }] }],
-      [statusProjection('ThingState')], [enumType]
-    ));
-    eq(model['entity-definitions'].Thing.lifecycle, undefined, 'no designation');
-    eq(sandbox.lifecycleRefusal(model, 'Thing'), 'none', 'and the page says so plainly');
-  });
-
-  check('a status that was never an enum is left alone too', () => {
-    const model = imported(envelope(
-      [{ name: 'Thing', properties: [{ name: 'status', projection: 'ThingNote' }] }],
-      [{ name: 'ThingNote', parameters: [{ name: 'thingId', propertyType: 'ThingId' }],
-        valueType: 'string', isList: false, initialValue: null, handlers: [] }],
-      []
-    ));
-    eq(model['entity-definitions'].Thing.lifecycle, undefined,
-      'a string property named status is not a lifecycle');
-  });
-
-  check('a designation already present is never overwritten', () => {
-    const model = imported(envelope(
-      [{ name: 'Thing', lifecycle: 'status', properties: [{ name: 'status', projection: 'ThingStatus' }] }],
-      [statusProjection('ThingStatus')], [enumType]
-    ));
-    eq(model['entity-definitions'].Thing.lifecycle, 'status', 'it came across as written');
   });
 }
 
@@ -2947,6 +2897,7 @@ function build(index) {
       left: JSON.stringify({ alias: 'course', property: 'status' }),
       right: '',
       rightEntries: [{ enumMember: 'NonExistent' }, { enumMember: 'Archived' }],
+      rejection: 'Course is in the way',
       touched: true,
     };
     sandbox.ruleEditor(model(), sandbox.sliceOf(model(), 'DefineCourse'), null);
@@ -2957,6 +2908,7 @@ function build(index) {
       leftHandSide: { alias: 'course', property: 'status' },
       predicate: 'equalsAny',
       rightHandSide: [{ enumMember: 'NonExistent' }, { enumMember: 'Archived' }],
+      rejection: 'Course is in the way',
     }, 'the checked members, as the list');
   });
 }
@@ -3079,7 +3031,7 @@ function build(index) {
     sandbox.state.ruleDraft = {
       predicate: 'equals', negate: false, target: 'entity:Course', touched: true,
       left: JSON.stringify({ alias: 'course2', property: 'status' }),
-      right: JSON.stringify({ enumMember: 'Existent' }),
+      right: JSON.stringify({ enumMember: 'Existent' }), rejection: 'Other course is not active',
     };
     sandbox.ruleEditor(model(), sandbox.sliceOf(model(), 'ChangeCourseCapacity'), null);
     sandbox.closeForms();
@@ -3148,7 +3100,7 @@ function build(index) {
   // "+ rule" wizard. `onAlias` is the other door: the "+ rule about …"
   // button on a read's card, which knows the first answer already and
   // opens on the second question.
-  const addRule = ({ target, onAlias, left, existence, predicate, right, rightText, negate }) => {
+  const addRule = ({ target, onAlias, left, existence, predicate, right, rightText, negate, rejection }) => {
     sandbox.state.adder = 'rule';
     sandbox.state.ruleDraft = {
       predicate: 'equals', negate: false, left: '', right: '', ...(onAlias ? { onAlias } : {}),
@@ -3188,6 +3140,9 @@ function build(index) {
     if (negate) draft().negate = true;
     if (right !== undefined) draft().right = right;
     if (rightText !== undefined) { draft().right = ' literal'; draft().rightText = rightText; }
+    // The last question, once there is a rule: what it is refused with.
+    eq(/Refused with/.test(textOf(paint())), true, 'the message is asked for');
+    draft().rejection = rejection;
     paint();
     const button = findAll(paint(), (n) => n.tag === 'button' && textOf(n) === 'Add rule')[0];
     if (!button) throw new Error('no "Add rule" button on screen');
@@ -3220,16 +3175,18 @@ function build(index) {
     // reads that already exist — including one whose two sides are the
     // same read, and one compared against a number nobody declared.
     addRule({ target: 'entity:Course', left: A('course', 'status'),
-      predicate: 'equals', right: JSON.stringify({ enumMember: 'Existent' }) });
+      predicate: 'equals', right: JSON.stringify({ enumMember: 'Existent' }), rejection: 'Course is not active' });
     // A boolean lifecycle: "exists" is a row of the second question,
-    // and picking it is the whole rule.
-    addRule({ target: 'entity:Student', left: A('student', 'exists'), existence: 'exists' });
+    // and picking it is the whole test — the message is still asked.
+    addRule({ target: 'entity:Student', left: A('student', 'exists'), existence: 'exists',
+      rejection: 'Student is not registered' });
     addRule({ onAlias: 'course', left: A('course', 'subscriptionCount'),
-      predicate: 'lessThan', right: A('course', 'capacity') });
+      predicate: 'lessThan', right: A('course', 'capacity'), rejection: 'Course is full' });
     addRule({ onAlias: 'course', left: A('course', 'subscribedStudentIds'),
-      predicate: 'contains', right: JSON.stringify({ parameterName: 'studentId' }), negate: true });
+      predicate: 'contains', right: JSON.stringify({ parameterName: 'studentId' }), negate: true,
+      rejection: 'Student is already subscribed' });
     addRule({ onAlias: 'student', left: A('student', 'subscriptionCount'),
-      predicate: 'lessThan', rightText: '10' });
+      predicate: 'lessThan', rightText: '10', rejection: 'Student is subscribed to too many courses' });
 
     eq(cmd().boundary, shipped.boundary,
       'the reads the rules brought with them are the reads the model ships');
@@ -3316,13 +3273,14 @@ function build(index) {
     eq(/Which of its values\?/.test(textOf(paint())), false, 'one value: the question is not asked');
     sandbox.state.ruleDraft.right = ' literal';
     sandbox.state.ruleDraft.rightText = 'foo';
+    sandbox.state.ruleDraft.rejection = 'Label is not foo';
     const button = findAll(paint(), (n) => n.tag === 'button' && textOf(n) === 'Add rule')[0];
     button.onclick();
     const body = model()['command-definitions'].Finish;
     eq(body.boundary, [{ alias: 'label', projection: 'Label', arguments: { documentId: { parameterName: 'documentId' } } }],
       'the read it brought');
-    eq(body.conditions, [{ leftHandSide: { alias: 'label' }, predicate: 'equals', rightHandSide: 'foo' }],
-      'and the rule about it');
+    eq(body.conditions, [{ leftHandSide: { alias: 'label' }, predicate: 'equals', rightHandSide: 'foo',
+      rejection: 'Label is not foo' }], 'and the rule about it');
     eq(sandbox.modelAdvisories(model()).length, 0, 'advisory-clean');
   });
 
@@ -3463,6 +3421,7 @@ function build(index) {
     '  read project = Project[projectId]',
     '  read employee = Employee[employeeId]',
     '  require employee.seniority in project.requiredSeniority',
+    '    else reject "Project does not need that seniority"',
     '  emit Assigned { projectId, employeeId }',
     '}',
   ].join('\n'));
@@ -3475,7 +3434,8 @@ function build(index) {
 
   check('"is one of" takes a list held in data, and stores it as contains', () => {
     eq(cmd().conditions, [{ leftHandSide: { alias: 'project', property: 'requiredSeniority' }, predicate: 'contains',
-      rightHandSide: { alias: 'employee', property: 'seniority' } }], 'the code view\'s `x in xs`');
+      rightHandSide: { alias: 'employee', property: 'seniority' }, rejection: 'Project does not need that seniority' }],
+      'the code view\'s `x in xs`');
     sandbox.state.slice = 'Assign';
     sandbox.state.adder = 'rule';
     sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '', onAlias: 'employee' };
@@ -3489,9 +3449,11 @@ function build(index) {
     eq(/Junior/.test(textOf(paint())), true, 'members to tick until a list is picked');
     lists().onchange({ target: { value: P('wanted') } });
     eq(/Junior/.test(textOf(paint())), false, 'a list picked: nothing to tick');
+    draft().rejection = 'Seniority is not wanted';
     findAll(paint(), (n) => n.tag === 'button' && textOf(n) === 'Add rule')[0].onclick();
     eq(cmd().conditions[1], { leftHandSide: { parameterName: 'wanted' }, predicate: 'contains',
-      rightHandSide: { alias: 'employee', property: 'seniority' }, negate: true }, 'stored with the sides swapped');
+      rightHandSide: { alias: 'employee', property: 'seniority' }, negate: true, rejection: 'Seniority is not wanted' },
+      'stored with the sides swapped');
   });
 
   check('a payload list containing a read value opens as it was asked', () => {
@@ -3509,7 +3471,8 @@ function build(index) {
     sandbox.state.ruleDraft = opened;
     findAll(paint(), (n) => n.tag === 'button' && textOf(n) === 'Save')[0].onclick();
     eq(cmd().conditions[1], { leftHandSide: { parameterName: 'wanted' }, predicate: 'contains',
-      rightHandSide: { alias: 'employee', property: 'seniority' }, negate: true }, 'saved back as stored');
+      rightHandSide: { alias: 'employee', property: 'seniority' }, negate: true, rejection: 'Seniority is not wanted' },
+      'saved back as stored');
   });
 }
 

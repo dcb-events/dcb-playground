@@ -1,6 +1,6 @@
 {
-  "$schema": "https://dcb.events/schemas/model/v6.json",
-  "dcbModelVersion": "6.1",
+  "$schema": "https://dcb.events/schemas/model/v7.json",
+  "dcbModelVersion": "7.0",
   "name": "Content based decisions (guarded emissions)",
   "customTypeDefinitions": [
     {
@@ -258,7 +258,8 @@
           "predicate": "equals",
           "rightHandSide": {
             "enumMember": "NonExistent"
-          }
+          },
+          "rejection": "Document already exists"
         }
       ],
       "publishes": [
@@ -316,7 +317,8 @@
             {
               "enumMember": "PendingChanges"
             }
-          ]
+          ],
+          "rejection": "Document is not editable"
         },
         {
           "leftHandSide": {
@@ -327,7 +329,8 @@
           "rightHandSide": {
             "parameterName": "text"
           },
-          "negate": true
+          "negate": true,
+          "rejection": "Text is unchanged"
         }
       ],
       "publishes": [
@@ -415,7 +418,8 @@
             {
               "enumMember": "PendingChanges"
             }
-          ]
+          ],
+          "rejection": "Document cannot be published"
         }
       ],
       "publishes": [
@@ -471,7 +475,8 @@
             {
               "enumMember": "PendingChanges"
             }
-          ]
+          ],
+          "rejection": "Document cannot be archived"
         }
       ],
       "publishes": [
@@ -501,17 +506,7 @@
       "then": {
         "outcome": "rejected",
         "events": [],
-        "failedRule": {
-          "index": 0,
-          "text": "document.status equalsAny [Draft, Published, PendingChanges]",
-          "leftValue": "NonExistent",
-          "rightValue": [
-            "Draft",
-            "Published",
-            "PendingChanges"
-          ],
-          "atInstance": null
-        }
+        "rejection": "Document is not editable"
       }
     },
     {
@@ -625,13 +620,7 @@
       "then": {
         "outcome": "rejected",
         "events": [],
-        "failedRule": {
-          "index": 1,
-          "text": "not(document.currentText == text)",
-          "leftValue": "test",
-          "rightValue": "test",
-          "atInstance": null
-        }
+        "rejection": "Text is unchanged"
       }
     },
     {
@@ -698,16 +687,7 @@
       "then": {
         "outcome": "rejected",
         "events": [],
-        "failedRule": {
-          "index": 0,
-          "text": "document.status equalsAny [Draft, PendingChanges]",
-          "leftValue": "Published",
-          "rightValue": [
-            "Draft",
-            "PendingChanges"
-          ],
-          "atInstance": null
-        }
+        "rejection": "Document cannot be published"
       }
     },
     {
@@ -758,16 +738,7 @@
       "then": {
         "outcome": "rejected",
         "events": [],
-        "failedRule": {
-          "index": 0,
-          "text": "document.status equalsAny [Draft, PendingChanges]",
-          "leftValue": "Published",
-          "rightValue": [
-            "Draft",
-            "PendingChanges"
-          ],
-          "atInstance": null
-        }
+        "rejection": "Document cannot be published"
       }
     },
     {
@@ -783,17 +754,7 @@
       "then": {
         "outcome": "rejected",
         "events": [],
-        "failedRule": {
-          "index": 0,
-          "text": "document.status equalsAny [Draft, Published, PendingChanges]",
-          "leftValue": "NonExistent",
-          "rightValue": [
-            "Draft",
-            "Published",
-            "PendingChanges"
-          ],
-          "atInstance": null
-        }
+        "rejection": "Document cannot be archived"
       }
     },
     {
