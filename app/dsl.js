@@ -3065,7 +3065,10 @@ function sourceOffset(text, line, col) {
 // statement began say where in it. What the names mean comes from the
 // whole text's parse, with `model`'s definitions filling in for any
 // that fail to parse while being typed.
-function sourceCompletions(text, line, col, { model = null } = {}) {
+// `experimental: false` leaves out what the experimental flag keeps off
+// the pages — entities, lifecycles, derived projections, guards and the
+// `@feature` / `@icon` annotations. A text using them still reads.
+function sourceCompletions(text, line, col, { model = null, experimental = true } = {}) {
   const none = { items: [], slot: false };
   const prefix = text.slice(0, sourceOffset(text, line, col));
   const lexed = lexSource(prefix);
@@ -3479,12 +3482,15 @@ function sourceCompletions(text, line, col, { model = null } = {}) {
   if (k === 'top') {
     const kw = decl.keyword;
     if (!s.length) {
-      for (const [label, insert] of SOURCE_DECLARATION_SNIPPETS) push(label, 'keyword', 'declaration', { insert, snippet: true, sort: 0 });
-      if (kw === 'projection') push('derived', 'keyword', '', { sort: 1 });
+      for (const [label, insert] of SOURCE_DECLARATION_SNIPPETS) {
+        if (experimental || label !== 'entity') push(label, 'keyword', 'declaration', { insert, snippet: true, sort: 0 });
+      }
+      if (kw === 'projection' && experimental) push('derived', 'keyword', '', { sort: 1 });
       return done(false);
     }
     if (prev === '@') {
       for (const [name, kinds] of Object.entries(SOURCE_ANNOTATIONS)) {
+        if (!experimental && (name === 'feature' || name === 'icon')) continue;
         push(name, 'keyword', kinds.map((x) => SOURCE_KEYWORD[x]).join(', '), { insert: `${name}("$1")`, snippet: true, sort: 0 });
       }
       return done();
@@ -3523,7 +3529,7 @@ function sourceCompletions(text, line, col, { model = null } = {}) {
   }
   if (k === 'idType') { typeItems({ tagsFirst: true }); return done(); }
   if (k === 'entity') {
-    if (!s.length) { keywords([['lifecycle', 'lifecycle ']]); return done(false); }
+    if (!s.length) { if (experimental) keywords([['lifecycle', 'lifecycle ']]); return done(false); }
     if (prev === 'lifecycle') {
       const names = framed.filter((t, i) => t.t === 'ident' && v(framed[i + 1]) === '=').map((t) => t.v);
       const parsedEntity = def('entity-definition', frame.entity);
@@ -3588,7 +3594,7 @@ function sourceCompletions(text, line, col, { model = null } = {}) {
     const first = v(s[0]);
     if (first === 'alias') {
       if (prev === '=' && s.length <= 4) {
-        definitionItems('entity-definition', { sort: 0, call: (n) => `${n} tagged $1` });
+        if (experimental) definitionItems('entity-definition', { sort: 0, call: (n) => `${n} tagged $1` });
         definitionItems('projection-definition', { sort: 1, call: projectionCall, detail: (n, b) => `${b.valueType}${b.isList ? '[]' : ''}` });
         return done();
       }
@@ -3608,7 +3614,7 @@ function sourceCompletions(text, line, col, { model = null } = {}) {
         return done();
       }
       if (s.some((t) => t.v === 'when')) return conditionItems(scope, conditionTail(s));
-      if (prev === '}' || s.length === 2) { keywords([['when', 'when ']]); return done(false); }
+      if ((prev === '}' || s.length === 2) && experimental) { keywords([['when', 'when ']]); return done(false); }
       return done(false);
     }
     if (first === 'require') {
@@ -3763,6 +3769,41 @@ function sourceFoldingRanges(text) {
     }
   });
   return ranges.sort((a, b) => a.start - b.start || b.end - a.end);
+}
+
+// Where a text uses what the experimental flag keeps off the pages, as
+// `{ line, col, endLine, endCol, message }` — read off the tokens, so a
+// text that does not parse is marked too. The editor shows them at
+// info level while the flag is off: the text reads and applies whole
+// either way, as a model using them loads whole.
+function sourceExperimentalMarks(text) {
+  const tokens = lexSource(text).tokens;
+  const out = [];
+  const said = (token, what) => out.push({
+    line: token.line, col: token.col, endLine: token.endLine, endCol: token.endCol,
+    message: `${what} is experimental — turn experimental features on in Settings to author it on the pages.`,
+  });
+  // Which blocks are scenarios: `when` there is a scenario's, not a guard.
+  const frames = [];
+  let scenarioNext = false;
+  tokens.forEach((token, i) => {
+    const v = token.v;
+    const prev = tokens[i - 1];
+    const next = tokens[i + 1];
+    if (token.t === 'punct' && v === '{') { frames.push(scenarioNext); scenarioNext = false; return; }
+    if (token.t === 'punct' && v === '}') { frames.pop(); return; }
+    if (token.t === 'punct' && v === '?' && tokens[i - 2] && tokens[i - 2].v === 'alias') { said(token, 'An optional read'); return; }
+    if (token.t === 'punct' && v === '@' && next && (next.v === 'feature' || next.v === 'icon')) { said(next, 'An annotation'); return; }
+    if (token.t !== 'ident') return;
+    if (v === 'scenario') { scenarioNext = true; return; }
+    if (v === 'entity' && next && next.t === 'ident') said(token, 'An entity');
+    else if (v === 'lifecycle' && next && next.t === 'ident' && !(prev && prev.v === '=')) said(token, 'A lifecycle');
+    else if (v === 'derived') said(token, 'A derived projection');
+    else if (v === 'excluding') said(token, '"excluding"');
+    else if (v === 'currentValue') said(token, 'currentValue');
+    else if (v === 'when' && !frames.includes(true)) said(token, 'A guarded emission');
+  });
+  return out;
 }
 
 // ============================================================

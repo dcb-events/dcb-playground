@@ -119,7 +119,11 @@ it never works from `file:`.
   it still loads, renders and evaluates whole; `experimentalFeatures`
   (model.js) names what it uses and `experimentalNotice` says so on
   every page. Gate an *offer* (an adder, a picker row, a tab), never
-  the display of something stored. WebMCP is not gated. A share link's
+  the display of something stored. The code view does the same: with
+  the flag off, completion leaves those constructs out
+  (`sourceCompletions(…, { experimental })`) and the editor marks the
+  ones a text uses at info level (`sourceExperimentalMarks`, read off
+  the tokens) — never an error, the text applies whole. WebMCP is not gated. A share link's
   `&experimental` turns it on for the session without storing it. The
   decisions are in
   `docs/research/2026-10-05-explicit-tags-and-aliases.md`.

@@ -12483,6 +12483,16 @@ function refreshCodeChrome() {
       // What the quick fix finds its replacement by.
       code: d.fix ? 'fix:' + index : undefined,
     }));
+    // What the experimental flag keeps off the pages, said where it is
+    // written — never an error, the text applies whole either way.
+    if (!experimental()) {
+      for (const d of sourceExperimentalMarks(codeView.text)) {
+        markers.push({
+          severity: monaco.MarkerSeverity.Info, message: d.message,
+          startLineNumber: d.line, startColumn: d.col, endLineNumber: d.endLine, endColumn: d.endCol,
+        });
+      }
+    }
     monaco.editor.setModelMarkers(codeView.editor.model, 'dcb', markers);
     // What each read queries, after it. A decoration, not an inlay
     // hint: this Monaco cuts those at 43 characters, and a list of
@@ -12864,7 +12874,7 @@ function registerSourceLanguage() {
       const word = textModel.getWordUntilPosition(position);
       const range = new monaco.Range(position.lineNumber, word.startColumn, position.lineNumber, word.endColumn);
       const { items, slot } = sourceCompletions(textModel.getValue(), position.lineNumber, position.column,
-        { model: activeModel() });
+        { model: activeModel(), experimental: experimental() });
       if (context.triggerKind === L.CompletionTriggerKind.TriggerCharacter && !slot) return { suggestions: [] };
       if (items.length) {
         return {
