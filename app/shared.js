@@ -1,6 +1,6 @@
 // ============================================================
 // Everything the interface needs that is not the model: DOM helpers,
-// the simple / advanced mode, and the *slice* view — everything one
+// the experimental-features flag, and the *slice* view — everything one
 // command touches, gathered here so the page never has to walk the
 // definition graph itself.
 //
@@ -525,20 +525,36 @@ function createScriptEditorEntry(key) {
   return entry;
 }
 
-// ---------- simple / advanced ----------
+// ---------- experimental features ----------
 //
-// Advanced hides nothing structural — it only decides whether the parts
-// a first model never needs are on screen: identifier schemas, custom
-// types, projections, and the derived consistency boundary.
+// Everything that is DCB is always on screen: types, events, projections,
+// the consistency boundary each command derives. What the examples on
+// dcb.events never need — entities and their lifecycles, derived
+// projections, guarded emissions, the overview pages, annotations
+// (`EXPERIMENTAL_FEATURES`, model.js) — waits behind this flag.
+//
+// It gates *authoring*, never reading: a model that already uses an
+// experimental feature still loads, renders and evaluates it, and the
+// page says which ones it found (`experimentalFeatures`). A share link
+// may switch it on for one session (`&experimental`) without touching
+// the stored choice — following a link never changes a setting.
 //
 // How it is offered is the page's business, not this file's: it is one
 // of the interface's own settings, and they are collected in one place
 // rather than scattered along the top of the window.
 
-const MODE_KEY = 'dcb-playground:mode';
-function mode() { return localStorage.getItem(MODE_KEY) === 'advanced' ? 'advanced' : 'simple'; }
-function advanced() { return mode() === 'advanced'; }
-function setMode(next) { localStorage.setItem(MODE_KEY, next); if (typeof render === 'function') render(); }
+const EXPERIMENTAL_KEY = 'dcb-playground:experimental';
+let experimentalThisSession = false;
+function experimental() {
+  return experimentalThisSession || localStorage.getItem(EXPERIMENTAL_KEY) === 'on';
+}
+function setExperimental(on) {
+  experimentalThisSession = false;
+  if (on) localStorage.setItem(EXPERIMENTAL_KEY, 'on');
+  else localStorage.removeItem(EXPERIMENTAL_KEY);
+  if (typeof render === 'function') render();
+}
+function enableExperimentalForSession() { experimentalThisSession = true; }
 
 // ---------- light / dark ----------
 //
@@ -1578,8 +1594,8 @@ function projectionReaders(model, projectionName) {
 //
 // A modeler types "define course"; the model stores `DefineCourse`. The
 // PascalCase is the schema's business, not the author's, so it is
-// derived on the way in and unwound on the way out. Advanced mode shows
-// the stored identifier beside the label for anyone who wants it.
+// derived on the way in and unwound on the way out. The stored
+// identifier rides beside the label, for anyone who wants it.
 
 function toPascal(label) {
   return String(label || '').split(/[^A-Za-z0-9]+/).filter(Boolean)
@@ -1937,7 +1953,7 @@ function eventIcon(model, name) {
   return '';
 }
 
-// Shown beside the type, never behind the Advanced gate: a value
+// Shown beside the type, never behind a gate: a value
 // arrived at by code, or worked out from other projections, is a
 // different kind of claim from one arrived at by a declaration, and a
 // rule reading it should say so on the page.

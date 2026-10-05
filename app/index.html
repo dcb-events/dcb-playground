@@ -863,6 +863,12 @@
     padding: 8px 11px; margin: 0 0 10px; font-size: 12px;
   }
   .advisory > div { display: flex; align-items: baseline; gap: 7px; }
+  .xnotice {
+    display: flex; align-items: baseline; gap: 10px;
+    border: 1px solid var(--accent); border-radius: 7px;
+    background: var(--accent-soft);
+    padding: 8px 11px; margin: 0 0 14px; font-size: 12px;
+  }
   .advisory .what { font-weight: 600; }
   .diag-mark { flex: none; }
   body.f-dark .issue, body.f-dark .advisory { border-color: #7f1d1d; color: #fecaca; }
@@ -1461,8 +1467,9 @@
 //     and the PascalCase the schema wants is derived, not typed;
 //   - a new command is described in the page, not in a dialog — there
 //     are no browser prompts anywhere in here;
-//   - the machinery (identifier schemas, custom types, projections, the
-//     derived boundary, the entity manager) only appears in Advanced.
+//   - what DCB is made of (types, events, projections, the derived
+//     boundary) is always on screen; what the examples on dcb.events
+//     never need waits behind the experimental flag (shared.js).
 // ============================================================
 
 const state = {
@@ -1854,16 +1861,16 @@ const NEW = ' new';         // sentinel row in a picker
 // from this list and knows nothing else about them.
 const UI_SETTINGS = [
   {
-    title: 'How much of the model',
-    why: 'Advanced hides nothing structural. It only decides whether the parts a first model '
-      + 'never needs are on screen.',
+    title: 'Experimental features',
+    why: 'What the examples on dcb.events do not need. A model that already uses one '
+      + 'shows it either way; this decides whether the pages offer to author them.',
     options: [
-      ['simple', 'Simple', 'Features, the state behind them, and the events that move it'],
-      ['advanced', 'Advanced', 'Also identifier schemas, value types, numbering, the stored '
-        + 'names and the consistency boundary each command derives'],
+      ['off', 'Off', 'Types, events, projections, commands and the consistency boundary'],
+      ['on', 'On', 'Also entities and lifecycles, derived projections, guarded emissions, '
+        + 'optional reads, annotations and the overview pages'],
     ],
-    get: mode,
-    set: setMode,
+    get: () => (experimental() ? 'on' : 'off'),
+    set: (value) => setExperimental(value === 'on'),
   },
 ];
 
@@ -2656,6 +2663,19 @@ function advisoryBanner(model, kind, name) {
       a.message)));
 }
 
+// A model may use what the flag keeps off the pages — it was imported,
+// shared, or written before the flag was turned off. It still loads and
+// renders whole (the flag gates authoring, never reading), and this is
+// what says so, on every page, with the one control that changes it.
+function experimentalNotice(model) {
+  if (experimental()) return null;
+  const used = [...new Set(experimentalFeatures(model).map((f) => EXPERIMENTAL_FEATURES[f.feature]))];
+  if (!used.length) return null;
+  return h('div', { class: 'xnotice' },
+    h('span', { class: 'grow' }, 'This model uses experimental features: ', used.join(', '), '.'),
+    h('button', { class: 'btn tiny', onclick: () => setExperimental(true) }, 'Enable'));
+}
+
 // Shown only when there is something to show — a clean model gets no
 // badge to reassure it is clean, the way "Loose ends ✓" used to.
 function problemsButton(model) {
@@ -2739,17 +2759,15 @@ function paletteEntries(model) {
       owner ? 'on ' + readable(owner.entity) : 'projections',
       () => goToProjection(name));
   }
-  if (advanced()) {
-    for (const name of Object.keys(model['custom-type-definitions'])) {
-      add('custom type', readable(name), 'custom types', () => goToCustomType(name));
-    }
+  for (const name of Object.keys(model['custom-type-definitions'])) {
+    add('custom type', readable(name), 'custom types', () => goToCustomType(name));
   }
   add('do', 'New command…', '', () => beginNewCommand(activeModel()));
   add('do', 'Models…', 'switch, load, or start a model', () => { state.models = true; });
   add('do', 'Settings', '', () => { state.settings = true; });
   add('do', isDark() ? 'Switch to light mode' : 'Switch to dark mode', '', toggleTheme);
-  add('do', advanced() ? 'Switch to Simple' : 'Switch to Advanced', '',
-    () => setMode(advanced() ? 'simple' : 'advanced'));
+  add('do', experimental() ? 'Disable experimental features' : 'Enable experimental features', '',
+    () => setExperimental(!experimental()));
   return entries;
 }
 
@@ -3704,7 +3722,7 @@ function renameDefinitionForm(model, kind, name, { stateKey, warn, after } = {})
 // once they have asked to see that sort of thing.
 function named(name, cls) {
   return h('span', { class: cls || '' }, readable(name),
-    advanced() ? h('span', { class: 'tech' }, name) : null);
+    h('span', { class: 'tech' }, name));
 }
 
 // A thing has one page, and every mention of it is the way there. It
@@ -3842,8 +3860,7 @@ function goToProjectionScenario(model, key) {
 }
 
 function typeChoices(model) {
-  if (advanced()) return allTypeNames(model);
-  return [...SIMPLE_TYPES, ...Object.keys(model['entity-definitions']).sort().map((n) => idTypeOf(model, n))];
+  return allTypeNames(model);
 }
 function typeOptions(model) {
   return typeChoices(model).map((t) => [t, readable(t)]);
@@ -4164,9 +4181,9 @@ function renderRail() {
 
   rail.appendChild(h('div', { class: 'add' },
     h('button', { class: 'btn', onclick: () => beginNewCommand(model) }, '+ Command'),
-    h('button', {
+    experimental() ? h('button', {
       class: 'btn ghost', onclick: () => { closeForms(); state.newFeature = true; render(); },
-    }, '+ Feature')));
+    }, '+ Feature') : null));
 
   if (state.namingCommand === true) rail.appendChild(newCommandForm(model));
 
@@ -4182,31 +4199,25 @@ function renderRail() {
     }));
   }
 
-  // Projections are advanced by nature, but a model that already has
-  // one has to offer a way in whatever mode you are in — otherwise the
-  // model holds something the interface refuses to show.
   const projectionNames = Object.keys(model['projection-definitions']);
   {
     rail.appendChild(h('h4', { style: 'margin-top:20px' }, 'Model'));
-    // The things themselves are not an advanced idea: a first model is
-    // mostly deciding what they are. Only what a modeler never has to
-    // state — value types, identifier schemas — waits for Advanced.
-    //
     // They are listed one by one, like the commands above: a thing has
     // a page, and the rail is where you get to it and where you see
-    // how many of them the model has grown.
-    rail.appendChild(renderEntityRail(model));
-    if (advanced()) {
-      rail.appendChild(h('a', {
-        href: '#', class: state.view === 'types' ? 'on' : '',
-        title: Object.keys(model['custom-type-definitions']).length + ' declared',
-        onclick: (e) => {
-          e.preventDefault(); closeForms();
-          state.view = 'types'; render();
-        },
-      }, 'Custom types'));
+    // how many of them the model has grown. Entities are experimental:
+    // without the flag the group shows only what a model already has.
+    if (experimental() || Object.keys(model['entity-definitions']).length) {
+      rail.appendChild(renderEntityRail(model));
     }
-    if (advanced() || projectionNames.length) rail.appendChild(h('a', {
+    rail.appendChild(h('a', {
+      href: '#', class: state.view === 'types' ? 'on' : '',
+      title: Object.keys(model['custom-type-definitions']).length + ' declared',
+      onclick: (e) => {
+        e.preventDefault(); closeForms();
+        state.view = 'types'; render();
+      },
+    }, 'Custom types'));
+    rail.appendChild(h('a', {
       href: '#', class: state.view === 'projections' ? 'on' : '',
       // A slice that binds a projection points here: the projection is
       // the source, and it lives nowhere else on that page.
@@ -4220,7 +4231,7 @@ function renderRail() {
       },
     }, 'Projections'));
     const eventNames = Object.keys(model['event-definitions']);
-    if (advanced() || eventNames.length) rail.appendChild(h('a', {
+    rail.appendChild(h('a', {
       href: '#', class: state.view === 'events' ? 'on' : '',
       'data-src': eventNames.map((n) => 'event:' + n).join(' ') || null,
       title: eventNames.length ? eventNames.map(readable).join(', ') : 'nothing recorded yet',
@@ -4233,10 +4244,9 @@ function renderRail() {
 
   // None of these is a definition of its own — each reads across
   // every command at once rather than living on any one of theirs,
-  // the way Events reads across every command that publishes one. And
-  // unlike Events, none holds anything a simple model would ever
-  // need to reach — so there is no "or it already has one" exception.
-  if (advanced() && Object.keys(model['command-definitions']).length) {
+  // the way Events reads across every command that publishes one. They
+  // are experimental: none is needed to read a model, only to survey it.
+  if (experimental() && Object.keys(model['command-definitions']).length) {
     rail.appendChild(h('h4', { style: 'margin-top:20px' }, 'Overview'));
     rail.appendChild(h('a', {
       href: '#', class: state.view === 'coupling' ? 'on' : '',
@@ -4331,7 +4341,7 @@ function renderEntityRail(model) {
       },
       onCancel: () => { state.newEntityAt = null; render(); },
     }));
-  } else {
+  } else if (experimental()) {
     box.appendChild(h('div', { class: 'add' }, h('button', {
       class: 'btn ghost',
       onclick: () => { closeForms(); state.newEntityAt = 'rail'; render(); },
@@ -4725,15 +4735,8 @@ function paintPage() {
     state.slice = names[0] || null;
     state.tab = 'definition';
   }
-  if (state.view === 'types' && !advanced()) state.view = 'slice';
-  if (state.view === 'projections' && !advanced() && !Object.keys(model['projection-definitions']).length) {
-    state.view = 'slice';
-  }
-  if (state.view === 'events' && !advanced() && !Object.keys(model['event-definitions']).length) {
-    state.view = 'slice';
-  }
   if (['coupling', 'rulemap', 'eventmodel', 'lifecycles'].includes(state.view)
-      && (!advanced() || !names.length)) {
+      && (!experimental() || !names.length)) {
     state.view = 'slice';
   }
   // A thing removed from under its own page leaves the page with
@@ -4761,6 +4764,8 @@ function paintPage() {
   }
   main.className = 'slice'
     + (['overview', 'coupling', 'rulemap', 'eventmodel', 'lifecycles'].includes(state.view) ? ' wide' : '');
+  const notice = experimentalNotice(model);
+  if (notice) main.appendChild(notice);
 
   if (state.view === 'overview') return renderOverview(model, main);
   if (state.view === 'sandbox') return renderSandbox(model, main);
@@ -4777,8 +4782,9 @@ function paintPage() {
     // With nothing to keep track of, a command has no identifier to be
     // given and every event it records is tagless — a model that cannot
     // say what any of it is *about*. So an empty model is pointed at a
-    // thing first, and only then at what someone can do to one.
-    if (!Object.keys(model['entity-definitions']).length) {
+    // thing first, and only then at what someone can do to one — when
+    // entities are on offer at all.
+    if (experimental() && !Object.keys(model['entity-definitions']).length) {
       main.appendChild(h('div', { class: 'blank' },
         h('h2', {}, 'Nothing here yet'),
         h('p', { class: 'muted small' },
@@ -4829,6 +4835,7 @@ function paintPage() {
       : qrow('div', { cls: 'row', key: 'cmd:' + slice.name },
           h('button', {
             class: 'icon-btn', title: 'Choose the mark this is shown with',
+            disabled: !experimental(),
             onclick: () => {
               const open = state.commandIconPicker === slice.name;
               closeForms();
@@ -4888,9 +4895,7 @@ function paintPage() {
     main.appendChild(stepDecision(model, slice));
     main.appendChild(stepEmits(model, slice));
     main.appendChild(stepChanges(model, slice));
-    if (advanced()) main.appendChild(stepConsistency(model, slice));
-    else main.appendChild(h('div', { class: 'muted tiny', style: 'padding-left:26px' },
-      'Switch to Advanced to see the consistency boundary this command derives.'));
+    main.appendChild(stepConsistency(model, slice));
   }
 
   // A pinned reference outlives the repaint that follows clicking it.
@@ -4938,7 +4943,7 @@ function stepTrigger(model, slice) {
         }, readable(typeLabel(p))),
         h('span', { class: 'grow', style: 'flex:1' }),
         reveal(
-          advanced() ? h('span', { class: 'tech' }, p.name) : null,
+          h('span', { class: 'tech' }, p.name),
           h('button', { class: 'btn tiny danger', onclick: () => dropProperty(i) }, '×'))),
       enumType ? h('div', { class: 'use' },
         h('span', { class: 'muted' }, 'can be '), ...enumMemberChips(model, enumType)) : null,
@@ -5111,10 +5116,10 @@ function readCard(model, slice, binding, index, waitsFor, ruleIndices) {
     qrow('div', { cls: 'row', key: 'read:' + binding.alias },
       sentence,
       // The query this read contributes, one hover away — stated on
-      // the read itself in Advanced, so "what does binding this cost?"
+      // the read itself, so "what does binding this cost?"
       // is answered where the binding is, not only in the union at the
       // foot of the page.
-      advanced() && queryItem
+      queryItem
         ? queryPopover('read:' + binding.alias, 'what this binding queries',
             h('div', {}, dcbQueryWords(queryItem)))
         : null,
@@ -5276,7 +5281,7 @@ function bindingEditor(model, slice, binding, index) {
     // it hold vacuously, and reading a property of it yields null. A
     // fanned binding is not offered the choice — an empty list already
     // binds nothing.
-    binding.projection || fanned ? null : h('div', { class: 'adder' },
+    !experimental() || binding.projection || fanned ? null : h('div', { class: 'adder' },
       h('label', { class: 'muted tiny', style: 'display:flex;align-items:center;gap:4px' },
         h('input', {
           type: 'checkbox', checked: !!binding.isOptional,
@@ -5289,7 +5294,7 @@ function bindingEditor(model, slice, binding, index) {
       h('span', { class: 'muted tiny' },
         'a null identifier binds nothing instead of erroring; conditions over the alias hold vacuously')),
 
-    binding.projection || !fanned ? null : h('div', { class: 'adder' },
+    !experimental() || binding.projection || !fanned ? null : h('div', { class: 'adder' },
       h('span', { class: 'muted tiny' }, 'except'),
       ...operandPicker(excludingChoices, draft, 'excluding', { placeholder: '— nothing —', allowLiteral: false }),
       h('button', {
@@ -5719,7 +5724,9 @@ function ruleEditor(model, slice, index, target) {
   // instance belongs, and offering it twice made the same rule
   // reachable two ways with nothing to tell them apart. "Another
   // Course…" is a different matter: it is a different instance.
-  const targetRows = [...newRows, ...projectionRows, [NEW, '+ New entity…']];
+  const targetRows = experimental()
+    ? [...newRows, ...projectionRows, [NEW, '+ New entity…']]
+    : projectionRows;
   const chooseTarget = scoped === undefined;
   // Deliberately not defaulted. The row advances when the author
   // answers a question, so the first question has to be unanswered —
@@ -6250,7 +6257,7 @@ function emissionGuardRows(model, slice, emission, emissionIndex) {
 
   if (state.editGuard && state.editGuard.at === emissionIndex && state.editGuard.index === null) {
     rows.push(h('div', { class: 'card rule' }, ruleEditor(model, slice, null, target)));
-  } else {
+  } else if (experimental()) {
     // Not an `adderSlot` — a guard opens through `state.editGuard`, not
     // `state.adder` — but it folds and reveals exactly like one.
     rows.push(h('div', { class: 'adder quiet' }, h('button', {
@@ -6279,7 +6286,7 @@ function stepEmits(model, slice) {
         h('span', { class: 'muted tiny' }, params.length + ' field' + (params.length === 1 ? '' : 's')),
         h('span', { class: 'grow' }),
         reveal(
-          advanced() ? h('span', { class: 'tech' }, emission.name) : null,
+          h('span', { class: 'tech' }, emission.name),
           h('button', {
             class: 'btn tiny',
             onclick: () => { state.openEvent = open ? null : emission.name; render(); },
@@ -6713,6 +6720,19 @@ function changeAdder(model, eventName, emission) {
       return [JSON.stringify({ projection: name }),
         'projection' + GROUP_SEP + readable(name) + (args.length ? ' for ' + args.join(' and ') : '')];
     });
+  if (!hasEntities && !standaloneTargets.length && !experimental()) {
+    return h('div', { class: 'adder' },
+      h('span', { class: 'muted tiny' }, 'no projections'),
+      h('button', {
+        class: 'btn primary',
+        onclick: () => {
+          closeForms();
+          state.view = 'projections';
+          state.newProjection = { name: '', body: blankProjectionDraft(model) };
+          render();
+        },
+      }, '+ New projection'));
+  }
   if (!hasEntities && !standaloneTargets.length) {
     return h('div', { class: 'adder' },
       h('span', { class: 'muted tiny' }, 'no entities'),
@@ -7525,13 +7545,13 @@ function identityBlock(model, name, entity) {
     h('span', {
       class: 'chip editable', title: 'Open ' + readable(idType) + ' in Custom Types',
       onclick: () => goToCustomType(idType),
-    }, readable(idType), advanced() ? h('span', { class: 'tech' }, idType) : null),
+    }, readable(idType), h('span', { class: 'tech' }, idType)),
     // No lifecycle yet: the one way to add one, and nothing else — no
     // row, no `not designated`. A folded one has no row until it is
     // opened, so its menu comes here, the one line the lifecycle is
     // always on, and stays when the row opens, so opening moves nothing.
     ...(!entity.lifecycle
-      ? [h('span', { class: 'grow' }), lifecycleAdder(model, name)]
+      ? (experimental() ? [h('span', { class: 'grow' }), lifecycleAdder(model, name)] : [])
       : lifecycleFolds(model, name)
         ? [h('span', { class: 'grow' }), lifecycleFold(model, name), lifecycleMenu(model, name)]
         : []));
@@ -7542,12 +7562,12 @@ function identityBlock(model, name, entity) {
 }
 
 // The stored spelling of a property, where it says something the words
-// do not. `exists` humanises to `exists`, and printing it twice in
-// advanced mode is the stutter this row was just rid of — the
+// do not. `exists` humanises to `exists`, and printing it twice is
+// the stutter this row was just rid of — the
 // identifier beside it (`Student id` / `StudentId`) is the case the
 // `.tech` span is actually for.
 function techSpelling(property) {
-  return advanced() && propertyWords(property) !== property
+  return propertyWords(property) !== property
     ? h('span', { class: 'tech' }, property) : null;
 }
 
@@ -7765,9 +7785,9 @@ function lifecycleMenu(model, name) {
     items.push(['Give it more than two states…',
       () => { closeForms(); state.promoting = name; render(); }]);
   }
-  // The Lifecycles page is advanced-only, like its rail link — offering
-  // it in simple mode would be a door onto `state.view = 'slice'`.
-  if (lifecycle && advanced()) {
+  // The Lifecycles page is experimental, like its rail link — offering
+  // it with the flag off would be a door onto `state.view = 'slice'`.
+  if (lifecycle && experimental()) {
     items.push(['Open in Lifecycles', () => goToLifecycles(name)]);
   }
   if (entity && entity.lifecycle) {
@@ -8108,8 +8128,8 @@ function toggleProjectionRow(model, projection) {
 function projectionDetail(model, entry, { owner }) {
   const { projection, binding } = entry;
   const draft = state.projDraft.body;
-  const tab = state.projTab === 'checks' ? 'checks' : 'definition';
   const entries = projectionScenariosFor(model, projection);
+  const tab = state.projTab === 'checks' && (experimental() || entries.length) ? 'checks' : 'definition';
   const trouble = entries.filter((e) => {
     const status = runProjectionScenario(model, e.body).status;
     return status === 'drifted' || status === 'broken';
@@ -8127,9 +8147,8 @@ function projectionDetail(model, entry, { owner }) {
   // Two names can be changed here, and they are genuinely two: what an
   // entity calls the projection (the binding, which every command
   // reading it names too) and what the projection itself is called.
-  // Renaming the second is Advanced — the name is derived from the
-  // first when the property is created, and nothing outside the stored
-  // model shows it.
+  // The second is derived from the first when the property is
+  // created.
   const renamingBinding = owner && editingMember('entity:' + owner, binding.name);
   const renamingProjection = state.renamingProjection === projection;
   const renameForm = renamingBinding
@@ -8177,9 +8196,11 @@ function projectionDetail(model, entry, { owner }) {
   },
     h('div', { class: 'tabs' },
       tabButton('definition', 'Definition'),
-      tabButton('checks', 'Checks', entries.length
+      // Projection scenarios are experimental; a projection that has
+      // some keeps its tab either way.
+      experimental() || entries.length ? tabButton('checks', 'Checks', entries.length
         ? h('span', { class: 'badge' + (trouble ? '' : ' clear') }, trouble || entries.length)
-        : null)),
+        : null) : null),
     renameForm,
     tab === 'checks' ? projectionChecks(model, projection) : definition,
     tab === 'definition' ? projectionDetailFoot(model, entry, { owner }) : null);
@@ -8265,7 +8286,7 @@ function projectionDetailFoot(model, entry, { owner }) {
   return h('div', { class: 'pfoot' },
     h('span', { class: 'muted tiny' }, 'Saves as you edit — undo takes it back.'),
     h('span', { class: 'grow' }),
-    advanced() ? h('span', { class: 'tech' }, projection) : null,
+    h('span', { class: 'tech' }, projection),
     h('button', {
       class: 'btn tiny',
       title: owner ? 'Rename what this entity calls it' : 'Rename the projection',
@@ -8275,9 +8296,8 @@ function projectionDetailFoot(model, entry, { owner }) {
     }, 'Rename'),
     // The projection's own name, on the page that does not own it.
     // Reachable, because a projection an entity binds is listed nowhere
-    // else — and Advanced, because nothing outside the stored model
-    // shows that name in the first place.
-    owner && advanced() ? h('button', {
+    // else.
+    owner ? h('button', {
       class: 'btn tiny', title: 'Rename the projection itself, not what this entity calls it',
       onclick: () => startRenameInRow(() => { state.renamingProjection = projection; }),
     }, 'Rename projection') : null,
@@ -8551,7 +8571,7 @@ function renderCustomTypes(model, main) {
                 : 'a standalone tag — every event carrying this is tagged with it') : null,
             h('span', { style: 'flex:1' }),
             reveal(
-              advanced() ? h('span', { class: 'tech' }, field.name) : null,
+              h('span', { class: 'tech' }, field.name),
               h('button', {
               class: 'btn tiny danger',
               onclick: () => {
@@ -9394,7 +9414,7 @@ function projectionFields(model, draft, { entityName } = {}) {
         (v) => { draft.derived.predicate = v; render(); })),
     h('div', { class: 'adder' }, ...derivedSideEditor(model, draft, 'rightHandSide', { allowLiteral: true })));
 
-  const derivedToggle = advanced() ? h('div', { class: 'adder', style: 'margin-top:8px' },
+  const derivedToggle = experimental() ? h('div', { class: 'adder', style: 'margin-top:8px' },
     h('label', { class: 'tiny muted' }, h('input', {
       type: 'checkbox', checked: !!draft.derived,
       title: 'Replace the handlers with one predicate over other projections — logic stated once, as data',
@@ -9426,7 +9446,7 @@ function projectionFields(model, draft, { entityName } = {}) {
       },
     }), ' derived from other projections')) : null;
 
-  const scriptToggle = advanced() ? h('div', { class: 'adder', style: 'margin-top:8px' },
+  const scriptToggle = h('div', { class: 'adder', style: 'margin-top:8px' },
     h('label', { class: 'tiny muted' }, h('input', {
       type: 'checkbox', checked: !!draft.script,
       title: 'Replace the declared handlers with code, for state no operation here can express',
@@ -9470,7 +9490,7 @@ function projectionFields(model, draft, { entityName } = {}) {
         }
         render();
       },
-    }), ' worked out by code')) : null;
+    }), ' worked out by code'));
 
   return [
     draft.derived ? derivedHeldRow : heldRow,
@@ -9481,7 +9501,7 @@ function projectionFields(model, draft, { entityName } = {}) {
     scriptBlock,
     derivedToggle,
     scriptToggle,
-    advanced() ? projectionDcbPreview(model, draft, entityName) : null,
+    projectionDcbPreview(model, draft, entityName),
   ];
 }
 
@@ -9774,6 +9794,7 @@ function eventCard(model, name) {
   card.appendChild(qrow('div', { cls: 'ehead', key: 'event:' + name },
     h('button', {
       class: 'icon-btn event', title: 'Choose the mark this is shown with',
+      disabled: !experimental(),
       onclick: () => {
         const wasOpen = pickingIcon;
         closeForms();
@@ -9788,7 +9809,7 @@ function eventCard(model, name) {
       + publishers.map((p) => readable(p.command)).join(', ') : 'recorded by nothing yet'),
     h('span', { style: 'flex:1' }),
     reveal(
-      advanced() ? h('span', { class: 'tech' }, name) : null,
+      h('span', { class: 'tech' }, name),
       h('button', {
         class: 'btn tiny',
         onclick: () => { state.openEvent = open ? null : name; render(); },
@@ -9874,8 +9895,8 @@ function renderOverview(model, main) {
     stat('Commands', 'command', bodies.length, plural(ruleCount, 'rule')),
     stat('Events', 'event', events.length, unappended ? unappended + ' not appended' : null),
     stat('Entities', 'entity', entities.length, lifecycles ? lifecycles + ' with a lifecycle' : null),
-    advanced() || standalone ? stat('Projections', 'projection', standalone, 'standalone') : null,
-    advanced() ? stat('Custom types', 'type', types) : null,
+    stat('Projections', 'projection', standalone, 'standalone'),
+    stat('Custom types', 'type', types),
     stat('Scenarios', null, scenarios, trouble ? trouble + ' not current' : null),
     stat('Problems', null, found.length, null,
       found.length ? () => { closeForms(); state.problems = true; render(); } : null)));
@@ -10741,7 +10762,7 @@ function eventFieldsEditor(model, name, event) {
             class: 'chip editable', title: 'Rename or retype this field',
             onclick: () => openMember(where, p.name),
           }, readable(typeLabel(p))),
-          advanced() ? h('span', { class: 'tech' }, p.name) : null,
+          h('span', { class: 'tech' }, p.name),
           h('button', {
             class: 'btn tiny danger', title: 'Remove this field',
             onclick: dropField,
@@ -12257,7 +12278,7 @@ function projectionWatchCard(model, watch) {
   // not `<courseId>` but `course:c1`. The sandbox is the one place the
   // arguments are concrete, so it is the one place the query can be
   // shown the way the store would receive it.
-  const queryIcon = advanced() && projection ? (() => {
+  const queryIcon = projection ? (() => {
     let tags;
     try { tags = projectionQueryTags(model, watch.projection, watch.arguments || {}); }
     catch (error) { return null; }
@@ -12932,7 +12953,7 @@ function openDefinition(kind, name, { scenarios } = {}) {
   if (kind === 'entity-definition') return openEntity(name);
   if (kind === 'event-definition') return goToEvent(name);
   if (kind === 'projection-definition') return goToProjection(name);
-  if (kind === 'custom-type-definition' && advanced()) return goToCustomType(name);
+  if (kind === 'custom-type-definition') return goToCustomType(name);
   render();
 }
 
@@ -13539,7 +13560,8 @@ document.getElementById('rail').addEventListener('click', (e) => {
 // successfully or not — a bad or already-consumed link should not keep
 // re-triggering on every reload. A link may add `&surface=code` (or
 // `visual`) to say which surface the model opens on — dcb.events does
-// on the pages explaining the notation, whose reader came for the text.
+// on the pages explaining the notation, whose reader came for the text —
+// and `&experimental` to show experimental features for this session.
 async function boot() {
   // Safe mode — the way back into a model whose script hangs the page
   // on load, now that scripts run unprompted like everything else.
@@ -13557,8 +13579,10 @@ async function boot() {
   if (!hash.startsWith('#model=')) return;
   history.replaceState(null, '', location.pathname + location.search);
   const [encoded, ...options] = hash.slice('#model='.length).split('&');
-  const surface = new URLSearchParams(options.join('&')).get('surface');
+  const linkOptions = new URLSearchParams(options.join('&'));
+  const surface = linkOptions.get('surface');
   if (surface === 'code' || surface === 'visual') setCodeSurface(surface === 'code');
+  if (linkOptions.has('experimental')) enableExperimentalForSession();
   let envelope;
   try {
     envelope = await decodeShareLink(encoded);

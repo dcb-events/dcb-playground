@@ -50,6 +50,9 @@ function build(index) {
   // projection cache is told the world moved underneath it.
   store.clear();
   sandbox.bumpLogRevision();
+  // Most of what is exercised here is entity authoring, which is
+  // experimental; the flag-off pages have their own block.
+  store.set('dcb-playground:experimental', 'on');
   const id = loadPredefinedModel(index);
   return { id, model: () => projectState()[id] };
 }
@@ -195,7 +198,7 @@ function build(index) {
   check('the guard rows and their editor render without throwing', () => {
     const { id, model } = build(8);
     store.set('dcb-playground:model', id);
-    store.set('dcb-playground:mode', 'advanced');
+    store.set('dcb-playground:experimental', 'on');
     sandbox.state.view = 'slice';
     sandbox.state.slice = 'UpdateText';
     sandbox.render();
@@ -217,7 +220,7 @@ function build(index) {
   check('the derived detail and its editor render without throwing', () => {
     const { id, model } = build(9);
     store.set('dcb-playground:model', id);
-    store.set('dcb-playground:mode', 'advanced');
+    store.set('dcb-playground:experimental', 'on');
     sandbox.state.view = 'entity';
     sandbox.state.entity = 'Document';
     sandbox.state.projDraft = {
@@ -618,11 +621,10 @@ function build(index) {
   const active = () => sandbox.activeModel();
 
   check('the page renders every view without throwing', () => {
-    // Both modes: Advanced is where the projection editor, the derived
-    // boundary and the stored names live, so a simple-mode-only render
-    // would leave most of what changed untouched.
-    for (const mode of ['simple', 'advanced']) {
-      store.set('dcb-playground:mode', mode);
+    // With the flag both ways: the overview pages and the entity
+    // affordances render only with it on, everything else either way.
+    for (const flag of ['off', 'on']) {
+      store.set('dcb-playground:experimental', flag);
       for (const view of ['overview', 'slice', 'entity', 'types', 'projections', 'events', 'eventmodel', 'map']) {
         sandbox.state.view = view;
         sandbox.state.entity = 'Course';
@@ -771,7 +773,7 @@ function build(index) {
   });
 
   check('the shared editor renders on an entity page and on the projections page', () => {
-    store.set('dcb-playground:mode', 'advanced');
+    store.set('dcb-playground:experimental', 'on');
     // The same editor mounted from both sides — the whole claim this
     // change makes. Which projection each side shows is now decided by
     // the binding: an entity's page holds the ones it calls something,
@@ -910,7 +912,7 @@ function build(index) {
   });
 
   check('the sandbox renders with things watched', () => {
-    store.set('dcb-playground:mode', 'advanced');
+    store.set('dcb-playground:experimental', 'on');
     sandbox.togglePinned(sandbox.projectionWatch('CourseNumbering', {}));
     sandbox.state.view = 'sandbox';
     sandbox.render();
@@ -1076,7 +1078,7 @@ function build(index) {
   });
 
   check('both pages render the checks tab', () => {
-    store.set('dcb-playground:mode', 'advanced');
+    store.set('dcb-playground:experimental', 'on');
     sandbox.startProjectionScenario(model(), { projection: 'CourseNumbering' });
     eq(sandbox.state.view, 'projections', 'started where the projection lives');
     sandbox.render();
@@ -1157,7 +1159,7 @@ function build(index) {
   });
 
   check('an opened row renders both of its tabs', () => {
-    store.set('dcb-playground:mode', 'advanced');
+    store.set('dcb-playground:experimental', 'on');
     const open = (name) => {
       const body = model()['projection-definitions'][name];
       sandbox.state.projDraft = { name, body: projectionDraftFrom(body) };
@@ -1184,11 +1186,11 @@ function build(index) {
       'the checks tab lists what checks it');
     sandbox.state.projDraft = null;
     sandbox.state.projTab = 'definition';
-    store.set('dcb-playground:mode', 'simple');
+    store.set('dcb-playground:experimental', 'on');
   });
 
   check('both names a bound projection has can be changed from its row', () => {
-    store.set('dcb-playground:mode', 'advanced');
+    store.set('dcb-playground:experimental', 'on');
     sandbox.state.view = 'entity';
     sandbox.state.entity = 'Course';
     sandbox.toggleProjectionRow(model(), 'CourseCapacity');
@@ -1210,7 +1212,7 @@ function build(index) {
     eq(textOf(other).includes('what this entity calls'), true, 'which is the binding');
     sandbox.state.editMember = null;
     sandbox.state.projDraft = null;
-    store.set('dcb-playground:mode', 'simple');
+    store.set('dcb-playground:experimental', 'on');
   });
 
   check('a projection knows who reads it, bound or not', () => {
@@ -1666,6 +1668,15 @@ function build(index) {
     sandbox.closeForms();
   });
 
+  check('with the flag off, entities are neither offered nor invented', () => {
+    store.set('dcb-playground:experimental', 'off');
+    const values = targetOptions('SubscribeStudentToCourse');
+    store.set('dcb-playground:experimental', 'on');
+    eq(values.some((v) => v.startsWith('entity:')), false, 'no entity read');
+    eq(values.includes(' new'), false, 'and no "+ New entity…"');
+    sandbox.closeForms();
+  });
+
   check('Escape discards a touched row instead of committing it', () => {
     sandbox.state.slice = 'DefineCourse';
     sandbox.state.adder = 'chg:CourseDefined';
@@ -1780,14 +1791,14 @@ function build(index) {
 }
 
 // ---------------------------------------------------------------
-// Advanced mode states every DCB query where the thing that runs it
+// The page states every DCB query where the thing that runs it
 // lives: on each read card, attributed in the union, and — with the
 // watched values in it — on a sandbox watch.
 // ---------------------------------------------------------------
 {
   const { id, model } = build(0);
   store.set('dcb-playground:model', id);
-  store.set('dcb-playground:mode', 'advanced');
+  store.set('dcb-playground:experimental', 'on');
 
   check('each read card carries a query popover, not a query line', () => {
     sandbox.state.slice = 'SubscribeStudentToCourse';
@@ -1833,19 +1844,6 @@ function build(index) {
     eq(text.includes('CourseDefined'), true, 'and the events the fold handles');
   });
 
-  check('in Simple mode none of these lines appear', () => {
-    store.set('dcb-playground:mode', 'simple');
-    sandbox.state.slice = 'SubscribeStudentToCourse';
-    const step = sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'SubscribeStudentToCourse'));
-    eq(findAll(step, (n) => /\bqpop\b/.test(n.className || '')).length, 0,
-      'the reads step stays plain');
-    const card = sandbox.projectionWatchCard(model(),
-      { kind: 'projection', projection: 'CourseCapacity', arguments: { courseId: 'c1' } });
-    eq(textOf(card).includes('CourseId:c1'), false, 'and so does the watch');
-    store.set('dcb-playground:mode', 'advanced');
-  });
-
-  store.set('dcb-playground:mode', 'simple');
   store.delete('dcb-playground:model');
 }
 
@@ -1912,7 +1910,7 @@ function build(index) {
 {
   const { id, model } = build(3);
   store.set('dcb-playground:model', id);
-  store.set('dcb-playground:mode', 'advanced');
+  store.set('dcb-playground:experimental', 'on');
 
   check('a chained boundary shows one combined query per level of the chain', () => {
     sandbox.state.slice = 'RescheduleCourse';
@@ -1925,7 +1923,7 @@ function build(index) {
     eq(/reads \d+ types, \d+ tags, in 3 queries/.test(textOf(step)), true, 'and the summary says so');
   });
 
-  store.set('dcb-playground:mode', 'simple');
+  store.set('dcb-playground:experimental', 'on');
   store.delete('dcb-playground:model');
 }
 
@@ -1970,12 +1968,11 @@ function build(index) {
     sandbox.state.entity = 'Course';
     paint(sandbox.renderEntity);
 
-    // The slice view of the broken command, step by step — in simple
-    // mode and in advanced mode, which additionally derives and prints
-    // each binding's DCB query.
+    // The slice view of the broken command, step by step, with the
+    // flag both ways.
     sandbox.state.slice = 'DefineCourse';
-    for (const mode of ['simple', 'advanced']) {
-      store.set('dcb-playground:mode', mode);
+    for (const flag of ['off', 'on']) {
+      store.set('dcb-playground:experimental', flag);
       const slice = sandbox.sliceOf(current, 'DefineCourse');
       textOf(sandbox.stepTrigger(current, slice));
       textOf(sandbox.stepDecision(current, slice));
@@ -1984,7 +1981,7 @@ function build(index) {
     }
     paint(sandbox.renderCoupling);
     paint(sandbox.renderRuleMap);
-    store.set('dcb-playground:mode', 'simple');
+    store.set('dcb-playground:experimental', 'on');
 
     // And the problems list still stands behind all of it.
     eq(sandbox.problems(current).length > 0, true, 'problems lists the fallout');
@@ -3355,7 +3352,7 @@ function build(index) {
 
     // The projection's own editor, the other door: a new handler row
     // offers only events that carry what it is kept separately by.
-    store.set('dcb-playground:mode', 'advanced');
+    store.set('dcb-playground:experimental', 'on');
     const offered = (name) => {
       const body = sandbox.projectionDraftFrom(model()['projection-definitions'][name]);
       body.handlers.push({ event: '', operation: 'set', value: '' });
@@ -4144,5 +4141,65 @@ check('the help shows every topic, and opens at the page\'s own concept', () => 
   eq(text.includes('reads 4 types, 3 tags, in 3 queries'), true, 'the boundary topic derives');
   sandbox.state.help = null;
 });
+
+// ---------------------------------------------------------------
+// The experimental flag gates authoring, never reading: what a model
+// uses is named, and named on the page when the flag is off.
+// ---------------------------------------------------------------
+{
+  check('experimentalFeatures names what a model uses', () => {
+    const { model } = build(0);
+    const used = [...new Set(sandbox.experimentalFeatures(model()).map((f) => f.feature))].sort();
+    eq(used, ['annotations', 'entities', 'lifecycles'], 'course-simple');
+    const guarded = build(8).model;
+    eq(sandbox.experimentalFeatures(guarded()).some((f) => f.feature === 'guards' && f.where === 'UpdateText'),
+      true, 'a guarded emission, on its command');
+    const derived = build(9).model;
+    eq(sandbox.experimentalFeatures(derived()).some((f) => f.feature === 'derived'), true, 'a derived projection');
+  });
+
+  check('a model of types, events, projections and commands uses none', () => {
+    store.clear();
+    sandbox.bumpLogRevision();
+    const id = sandbox.createDcbModel('Core Probe');
+    sandbox.applyModelSource(id, [
+      'model "Core Probe"',
+      'tag type DocumentId = string',
+      'event Labelled { documentId: DocumentId, label: string }',
+      'projection Label(documentId: DocumentId): string = "" {',
+      '  on Labelled => set event.data.label',
+      '}',
+      'command Relabel(documentId: DocumentId, label: string) {',
+      '  read current = Label(documentId)',
+      '  require current != label',
+      '    else reject "Label is unchanged"',
+      '  emit Labelled { documentId, label }',
+      '}',
+    ].join('\n'));
+    const model = projectState()[id];
+    eq(sandbox.experimentalFeatures(model), [], 'nothing experimental');
+    eq(sandbox.experimentalNotice(model), null, 'so nothing to say, flag or not');
+  });
+
+  check('the notice names the features when the flag is off, and only then', () => {
+    const { model } = build(0);
+    eq(sandbox.experimentalNotice(model()), null, 'flag on: nothing to say');
+    store.set('dcb-playground:experimental', 'off');
+    const text = textOf(sandbox.experimentalNotice(model()));
+    eq(text.includes('entities, lifecycles, annotations'), true, 'the features, by name');
+    store.set('dcb-playground:experimental', 'on');
+  });
+
+  check('a share link turns it on for the session, a setting clears that', () => {
+    store.set('dcb-playground:experimental', 'off');
+    sandbox.enableExperimentalForSession();
+    eq(sandbox.experimental(), true, 'on for this session');
+    eq(store.get('dcb-playground:experimental'), 'off', 'without touching the stored choice');
+    sandbox.setExperimental(false);
+    eq(sandbox.experimental(), false, 'turning it off in Settings wins');
+    sandbox.setExperimental(true);
+    eq(store.get('dcb-playground:experimental'), 'on', 'and turning it on is stored');
+  });
+}
 
 finish();

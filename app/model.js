@@ -838,6 +838,71 @@ function derivedOf(target) {
   return target && target.derived && !target.script ? target.derived : null;
 }
 
+// Which experimental features a model uses, as `{feature, where}`
+// pairs in a stable order — `feature` one of EXPERIMENTAL_FEATURES'
+// keys, `where` the definition it was found on. The flag (shared.js)
+// gates authoring them, never reading them: this is what lets a page
+// say "this model uses …" instead of hiding what is stored. The line
+// is drawn at what the examples on dcb.events need, see
+// docs/research/2026-10-05-explicit-tags-and-aliases.md.
+const EXPERIMENTAL_FEATURES = {
+  entities: 'entities',
+  lifecycles: 'lifecycles',
+  derived: 'derived projections',
+  guards: 'guarded emissions',
+  optional: 'optional reads',
+  excluding: 'excluding',
+  currentValue: 'currentValue',
+  projectionScenarios: 'projection scenarios',
+  annotations: 'annotations',
+};
+
+function experimentalFeatures(model) {
+  const found = [];
+  const seen = new Set();
+  const note = (feature, where) => {
+    const key = feature + '\u0000' + where;
+    if (seen.has(key)) return;
+    seen.add(key);
+    found.push({ feature, where });
+  };
+  const usesCurrentValue = (value) => {
+    if (!value || typeof value !== 'object') return false;
+    if (value.currentValue === true) return true;
+    return Object.values(value).some(usesCurrentValue);
+  };
+  for (const [name, body] of Object.entries(model['entity-definitions'] || {})) {
+    note('entities', name);
+    if (body && body.lifecycle) note('lifecycles', name);
+    if (body && body.icon) note('annotations', name);
+  }
+  for (const [name, body] of Object.entries(model['event-definitions'] || {})) {
+    if (body && body.icon) note('annotations', name);
+  }
+  for (const [name, body] of Object.entries(model['projection-definitions'] || {})) {
+    if (derivedOf(body)) note('derived', name);
+    if (!scriptOf(body) && usesCurrentValue(body && body.handlers)) note('currentValue', name);
+  }
+  for (const [name, body] of Object.entries(model['command-definitions'] || {})) {
+    if (!body) continue;
+    if (body.icon || body.feature) note('annotations', name);
+    for (const binding of body.boundary || []) {
+      if (!binding) continue;
+      if (binding.entity !== undefined) note('entities', name);
+      if (binding.isOptional) note('optional', name);
+      if (binding.excluding !== undefined && binding.excluding !== null) note('excluding', name);
+    }
+    if ((body.publishes || []).some((emission) => emission && (emission.when || []).length)) {
+      note('guards', name);
+    }
+  }
+  for (const body of Object.values(model['projection-scenario-definitions'] || {})) {
+    if (body) note('projectionScenarios', body.projection || '?');
+  }
+  const order = Object.keys(EXPERIMENTAL_FEATURES);
+  return found.sort((a, b) => order.indexOf(a.feature) - order.indexOf(b.feature));
+}
+
 // Both sides of a derived predicate, in evaluation order — the derived
 // analogue of `conditionOperands`.
 function derivedOperands(derived) {

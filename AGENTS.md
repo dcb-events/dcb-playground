@@ -51,7 +51,7 @@ documentation; read it before editing the file:
   and syntax row links its reference entry by anchor. The website's
   build fails on a link `helpReferenceLinks()` lists that it does not
   define, so renaming an anchor is a change on both sides.
-- `shared.js` — DOM helpers (`h(...)`), simple/advanced mode, the scripted-
+- `shared.js` — DOM helpers (`h(...)`), the experimental flag, the scripted-
   handler editor (Monaco behind a synthesized per-handler TypeScript preamble
   — the synthesis is pure and tested, the widget is not), and the _slice_
   view (everything one command touches, derived from the definitions — the
@@ -96,6 +96,21 @@ it never works from `file:`.
 
 ## Conventions and gotchas
 
+- **The experimental flag gates authoring, never reading**
+  (`experimental()`, shared.js; it replaced the simple/advanced mode).
+  What DCB is made of — types, events, projections, commands, the
+  derived boundary — is always on screen; what the examples on
+  dcb.events do not need is behind the flag: entities and lifecycles,
+  derived projections, guarded emissions, optional reads, `excluding`,
+  `currentValue`, projection scenarios, annotations, and the Coupling /
+  Rule map / Event model / Lifecycles views. A model that uses any of
+  it still loads, renders and evaluates whole; `experimentalFeatures`
+  (model.js) names what it uses and `experimentalNotice` says so on
+  every page. Gate an *offer* (an adder, a picker row, a tab), never
+  the display of something stored. WebMCP is not gated. A share link's
+  `&experimental` turns it on for the session without storing it. The
+  decisions are in
+  `docs/research/2026-10-05-explicit-tags-and-aliases.md`.
 - **Storage versioning**: `EVENT_LOG_KEY` in `model.js` (`dcb-playground:events:vN`)
   must be bumped whenever a stored definition changes shape. The log is the
   whole state; there are no migrations — a fresh key is the honest move. Keep
