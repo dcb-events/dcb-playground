@@ -118,7 +118,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         ]
       },
       "properties": {
-        "description": "The event's payload, in declaration order. A property typed with\na tag-marked value type also makes its value a tag on the event\n(see `eventDefinitions`).\n",
+        "description": "The event's payload, in declaration order. Which of these values are\ntags is `tags`.\n",
         "type": "array",
         "items": {
           "type": "object",
@@ -170,6 +170,24 @@ const WEBMCP_DEFINITION_SCHEMAS = {
             "propertyType"
           ]
         }
+      },
+      "tags": {
+        "description": "The values this event is tagged by, as property paths: a property\nwhose type is a tag-marked value type (`courseId`), or one tag-marked\nfield of a record-typed property (`items.productId`). A list-typed\nproperty contributes one tag per element. Absent or empty means the\nevent carries no tag, and only a query by type alone reaches it —\nwhich is legitimate, and which an authoring tool should point out,\nsince nothing is implied: a tag-marked property left off this list\nis an ordinary value.\n",
+        "type": "array",
+        "items": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)?$"
+        },
+        "examples": [
+          [
+            "courseId",
+            "studentId"
+          ],
+          [
+            "orderId",
+            "items.productId"
+          ]
+        ]
       }
     },
     "required": [

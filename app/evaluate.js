@@ -140,12 +140,11 @@ function evAsNumber(value, where) {
 // ============================================================
 // Tags.
 //
-// Which events belong to an instance. Tags are never declared: an event
-// property typed with an entity's identifier *is* a tag on that event,
-// a composite contributes one per identifier field, and a list of
-// composites one per identifier field per element. That is exactly what
-// `idLeavesOfType` already computes for the derived DCB, so the query
-// a boundary displays and the query a fold actually runs come from one
+// Which events belong to an instance. An event carries the tags it
+// lists (`eventTagLeaves`, model.js): a property typed with a tag type,
+// or one field of a record, one tag per element when the property is a
+// list. That is the same walk the derived DCB reads, so the query a
+// boundary displays and the query a fold actually runs come from one
 // place and cannot drift apart.
 // ============================================================
 
@@ -153,18 +152,14 @@ function tagsOfEvent(model, eventName, data) {
   const definition = model['event-definitions'][eventName];
   if (!definition) return [];
   const tags = new Set();
-  for (const property of definition.properties || []) {
-    const leaves = idLeavesOfType(model, property.propertyType);
-    if (!leaves.length) continue;
-    const held = (data || {})[property.name];
-    const elements = property.isList ? evAsList(held) : [held];
+  for (const leaf of eventTagLeaves(model, definition)) {
+    const held = (data || {})[leaf.property];
+    const elements = leaf.isList ? evAsList(held) : [held];
     for (const element of elements) {
       if (element === null || element === undefined) continue;
-      for (const leaf of leaves) {
-        const value = leaf.field === null ? element : (element || {})[leaf.field];
-        if (value === null || value === undefined) continue;
-        tags.add(renderTag(identifierTypeOf(model, leaf.identifierType), String(value)));
-      }
+      const value = leaf.field === null ? element : (element || {})[leaf.field];
+      if (value === null || value === undefined) continue;
+      tags.add(renderTag(identifierTypeOf(model, leaf.identifierType), String(value)));
     }
   }
   return [...tags];

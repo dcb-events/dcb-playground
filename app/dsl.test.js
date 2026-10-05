@@ -342,8 +342,8 @@ check('adding, removing, reordering and renaming the model are one append togeth
     .replace(/@feature\("Course management"\)\ncommand ArchiveCourse[\s\S]*?\n}\n/, '')
     + '\nentity Room {}\n';
   // Two events trade places.
-  text = text.replace('event CourseArchived { courseId: CourseId }\n', '')
-    .replace('event CourseDefined', 'event CourseArchived { courseId: CourseId }\nevent CourseDefined');
+  text = text.replace('event CourseArchived { courseId: CourseId } tags courseId\n', '')
+    .replace('event CourseDefined', 'event CourseArchived { courseId: CourseId } tags courseId\nevent CourseDefined');
   const before = appends;
   const summary = applyModelSource(id, text);
   eq(appends - before, 1, 'one append');
@@ -724,6 +724,27 @@ function completeAt(source) {
   const result = sandbox.sourceCompletions(text, before.split('\n').length, at - before.lastIndexOf('\n'));
   return { labels: result.items.map((i) => i.label), items: result.items, slot: result.slot };
 }
+
+check('an event lists its tags after its block, and a rename follows them', () => {
+  const text = [
+    'model "Tags"',
+    'tag type ProductId = string',
+    'record Line { productId: ProductId, qty: integer }',
+    'event Ordered { lines: Line[] } tags lines.productId',
+    '',
+  ].join('\n');
+  const parsed = parseModelSource(text);
+  eq(parsed.diagnostics, [], 'it reads');
+  eq(parsed.collections['event-definition'].Ordered.tags, ['lines.productId'], 'as a path');
+  eq(renameAt(text, 'Ordered { lines', 'Ordered { '.length, 'items').text.includes('tags items.productId'), true,
+    'the property, renamed, moves in the path');
+  eq(renameAt(text, 'Line { productId', 'Line { '.length, 'product').text.includes('tags lines.product'), true,
+    'and so does the record field');
+  eq(modelToSource({ name: 'T', 'custom-type-definitions': {}, 'event-definitions': { E: { properties: [], tags: [] } },
+    'entity-definitions': {}, 'projection-definitions': {}, 'command-definitions': {},
+    'scenario-definitions': {}, 'projection-scenario-definitions': {} }).includes('event E {}\n'), true,
+    'no list, no clause');
+});
 
 check('every name in every shipped text resolves to a symbol', () => {
   // JSON Schema keywords and a script's own state are not model names.

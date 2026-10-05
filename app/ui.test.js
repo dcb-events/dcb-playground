@@ -45,6 +45,15 @@ const {
   createDcbModel, partitionCells, projectionScenariosFor,
 } = sandbox;
 
+// An event a fixture adds, tagged by every tag-typed value it holds —
+// what an author listing them all would write. Events are tagged only
+// by what they list (8.0); fixtures that test the list itself spell
+// `tags` out, and this leaves a given list alone.
+function addTaggedEvent(id, name, body) {
+  const tags = body.tags || sandbox.tagPathsOf(sandbox.projectState()[id], body.properties);
+  return sandbox.addDefinition('event-definition', id, name, { ...body, tags });
+}
+
 function build(index) {
   // Clearing the store is a write `appendEvents` never sees, so the
   // projection cache is told the world moved underneath it.
@@ -1944,7 +1953,7 @@ function build(index) {
     sandbox.removeDefinition('projection-definition', id, 'CourseCapacity');
     sandbox.removeDefinition('event-definition', id, 'CourseDefined');
     sandbox.removeDefinition('entity-definition', id, 'Student');
-    sandbox.addDefinition('event-definition', id, 'weird_thing', { properties: [] });
+    addTaggedEvent(id, 'weird_thing', { properties: [] });
     sandbox.updateDefinition('command-definition', id, 'DefineCourse', {
       properties: [{ name: 'courseId', propertyType: 'NoSuchType', isOptional: false, isList: false }],
       boundary: [{ alias: 'ghost', entity: 'NoSuchEntity', id: { parameterName: 'courseId' } }],
@@ -2001,8 +2010,8 @@ function build(index) {
   check('one gesture with several appends is one undo step', () => {
     const before = sandbox.loadEvents().length;
     sandbox.run(() => {
-      sandbox.addDefinition('event-definition', id, 'AHappened', { properties: [] });
-      sandbox.run(() => sandbox.addDefinition('event-definition', id, 'BHappened', { properties: [] }));
+      addTaggedEvent(id, 'AHappened', { properties: [] });
+      sandbox.run(() => addTaggedEvent(id, 'BHappened', { properties: [] }));
     });
     eq(sandbox.loadEvents().length, before + 2, 'two appends');
     sandbox.undo();
@@ -2052,7 +2061,7 @@ function build(index) {
   });
 
   check('saving spells the null into whatever a draft left unset', () => {
-    sandbox.addDefinition('event-definition', id, 'NotizErfasst', {
+    addTaggedEvent(id, 'NotizErfasst', {
       properties: [
         { name: 'anordnungId', propertyType: 'string', isOptional: false, isList: false },
         property,
@@ -2472,7 +2481,7 @@ function build(index) {
     // boolean is the designated lifecycle, and both were added by hand.
     const { id, model } = build(0);
     store.set('dcb-playground:model', id);
-    addDefinition('event-definition', id, 'StudentExpelled', {
+    addTaggedEvent(id, 'StudentExpelled', {
       properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
     });
     addDefinition('projection-definition', id, 'StudentExpulsion', {
@@ -2551,10 +2560,10 @@ function build(index) {
   check('a non-monotone boolean is refused as a stage', () => {
     const { id, model } = build(0);
     store.set('dcb-playground:model', id);
-    addDefinition('event-definition', id, 'StudentPaused', {
+    addTaggedEvent(id, 'StudentPaused', {
       properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
     });
-    addDefinition('event-definition', id, 'StudentResumed', {
+    addTaggedEvent(id, 'StudentResumed', {
       properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
     });
     addDefinition('projection-definition', id, 'StudentPause', {
@@ -2603,10 +2612,10 @@ function build(index) {
   const withSecondBoolean = (handlers) => {
     const { id, model } = build(0);
     store.set('dcb-playground:model', id);
-    addDefinition('event-definition', id, 'CourseFlagged', {
+    addTaggedEvent(id, 'CourseFlagged', {
       properties: [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false }],
     });
-    addDefinition('event-definition', id, 'CourseUnflagged', {
+    addTaggedEvent(id, 'CourseUnflagged', {
       properties: [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false }],
     });
     addDefinition('projection-definition', id, 'StudentFlag', {
@@ -3230,8 +3239,8 @@ function build(index) {
     'model "Entity Free Probe"',
     'tag type DocumentId = string',
     'tag type FolderId = string',
-    'event Labelled { documentId: DocumentId, label: string }',
-    'event Done { documentId: DocumentId }',
+    'event Labelled { documentId: DocumentId, label: string } tags documentId',
+    'event Done { documentId: DocumentId } tags documentId',
     'projection Label(documentId: DocumentId): string = "" {',
     '  on Labelled => set event.data.label',
     '}',
@@ -3399,9 +3408,9 @@ function build(index) {
     'tag type ProjectId = string',
     'tag type EmployeeId = string',
     'enum Seniority { Junior, Senior }',
-    'event ProjectDefined { projectId: ProjectId, requiredSeniority: Seniority[] }',
-    'event EmployeeHired { employeeId: EmployeeId, seniority: Seniority }',
-    'event Assigned { projectId: ProjectId, employeeId: EmployeeId }',
+    'event ProjectDefined { projectId: ProjectId, requiredSeniority: Seniority[] } tags projectId',
+    'event EmployeeHired { employeeId: EmployeeId, seniority: Seniority } tags employeeId',
+    'event Assigned { projectId: ProjectId, employeeId: EmployeeId } tags projectId, employeeId',
     'entity Project {',
     '  requiredSeniority = RequiredSeniority',
     '}',
@@ -3702,7 +3711,7 @@ function build(index) {
     store.set('dcb-playground:model', id);
     for (const [prop, event, fold] of [['registered', 'DidRegister', 'DidRegisterFold'],
       ['expelled', 'WasExpelled', 'WasExpelledFold']]) {
-      addDefinition('event-definition', id, event, {
+      addTaggedEvent(id, event, {
         properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
       });
       addDefinition('projection-definition', id, fold, {
@@ -3799,7 +3808,7 @@ function build(index) {
   check('the entity page offers the merge where the booleans are', () => {
     const { id, model } = build(0);
     store.set('dcb-playground:model', id);
-    addDefinition('event-definition', id, 'StudentExpelled2', {
+    addTaggedEvent(id, 'StudentExpelled2', {
       properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
     });
     addDefinition('projection-definition', id, 'StudentExpelled2Fold', {
@@ -3820,7 +3829,7 @@ function build(index) {
   check('the merge prompt paints in the decide step', () => {
     const { id, model } = build(0);
     store.set('dcb-playground:model', id);
-    addDefinition('event-definition', id, 'StudentSuspended', {
+    addTaggedEvent(id, 'StudentSuspended', {
       properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
     });
     addDefinition('projection-definition', id, 'StudentSuspension', {
@@ -4165,7 +4174,7 @@ check('the help shows every topic, and opens at the page\'s own concept', () => 
     sandbox.applyModelSource(id, [
       'model "Core Probe"',
       'tag type DocumentId = string',
-      'event Labelled { documentId: DocumentId, label: string }',
+      'event Labelled { documentId: DocumentId, label: string } tags documentId',
       'projection Label(documentId: DocumentId): string = "" {',
       '  on Labelled => set event.data.label',
       '}',

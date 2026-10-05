@@ -1278,8 +1278,7 @@ function eventModel(model) {
   };
   const tagsOf = (eventName) => {
     const definition = model['event-definitions'][eventName];
-    const tags = (definition && definition.properties || [])
-      .flatMap((property) => idLeavesOfType(model, property.propertyType).map((leaf) => leaf.identifierType));
+    const tags = eventTagLeaves(model, definition).map((leaf) => leaf.identifierType);
     return [...new Set(tags)];
   };
 

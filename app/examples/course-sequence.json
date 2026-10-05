@@ -1,6 +1,6 @@
 {
-  "$schema": "https://dcb.events/schemas/model/v7.json",
-  "dcbModelVersion": "7.0",
+  "$schema": "https://dcb.events/schemas/model/v8.json",
+  "dcbModelVersion": "8.0",
   "name": "Course Example (with sequence)",
   "customTypeDefinitions": [
     {
@@ -46,6 +46,9 @@
           "isOptional": false,
           "isList": false
         }
+      ],
+      "tags": [
+        "courseId"
       ]
     },
     {
@@ -63,6 +66,9 @@
           "isOptional": false,
           "isList": false
         }
+      ],
+      "tags": [
+        "courseId"
       ]
     },
     {
@@ -74,6 +80,9 @@
           "isOptional": false,
           "isList": false
         }
+      ],
+      "tags": [
+        "courseId"
       ]
     },
     {
@@ -85,6 +94,9 @@
           "isOptional": false,
           "isList": false
         }
+      ],
+      "tags": [
+        "studentId"
       ]
     },
     {
@@ -102,6 +114,10 @@
           "isOptional": false,
           "isList": false
         }
+      ],
+      "tags": [
+        "courseId",
+        "studentId"
       ]
     },
     {
@@ -119,6 +135,10 @@
           "isOptional": false,
           "isList": false
         }
+      ],
+      "tags": [
+        "courseId",
+        "studentId"
       ]
     }
   ],

@@ -15,7 +15,7 @@ handler's editor is on screen. The app runs from any static server —
 
 - `app/` — the application. Everything that runs.
 - `dcb-model.schema.json` — canonical JSON Schema for the interchange format
-  (`https://dcb.events/schemas/model/v7.json`). Source of truth for what a
+  (`https://dcb.events/schemas/model/v8.json`). Source of truth for what a
   DCB Model file contains; `app/webmcp-schemas.js` is generated from it.
 - `docs/research/` — dated primary-source research notes backing design
   decisions (one file per investigation, `YYYY-MM-DD-topic.md`).
@@ -264,14 +264,27 @@ it never works from `file:`.
   the alias hold vacuously, and reading a property of it yields null.
   The optional-parameter and derived-null advisories say all of this
   ahead of time.
+- **An event carries the tags it lists, and nothing else** (8.0,
+  `tags` on the event, `eventTagLeaves` in model.js): a property of a
+  tag type, or `items.productId` into a record, one tag per element of
+  a list. Nothing is implied by a property's type — a tag-typed value
+  left off the list is an ordinary value, and an event with no list
+  carries no tag. The advisories say both (`eventTagAdvisories`): no
+  tags, and each tag-typed value left unlisted. The pages keep the
+  list in step with a field edit (`withEditedTags`, applied in
+  `patch`) and show it on the event's row; a body arriving whole — a
+  file, the code view, an agent — is stored as it says. Seeds and test
+  fixtures write their lists with `tagPathsOf`, which is a convenience
+  for stating them, not an inference at read time.
 - **One handler per event type, per projection** — and it is a real
   constraint, not a convenience: tag matching is by _value_, whichever
-  property carries it, so an event holding one identifier type in two
-  properties reaches both partitions and a handler fires for both. A
-  declarative handler cannot tell them apart; the fix is to split the
-  event (one fact each) or script the projection, and an advisory
-  points at the ambiguity. The editors offer only unhandled events.
-  The opposite case is zero carriers: an event with no property of a
+  listed property carries it, so an event listing one identifier type
+  in two properties reaches both partitions and a handler fires for
+  both. A declarative handler cannot tell them apart; the fix is to
+  list only one, split the event (one fact each) or script the
+  projection, and an advisory points at the ambiguity. The editors
+  offer only unhandled events.
+  The opposite case is zero carriers: an event listing no tag of a
   type the projection is kept separately by reaches no instance, and
   its handler never fires (`partitionTagsMissing`). Neither the
   projection's handler editor nor the State changes adder offers such

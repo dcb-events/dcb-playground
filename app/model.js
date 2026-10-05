@@ -92,7 +92,10 @@
 // the message as `rejection`, in place of a `failedRule` naming the
 // condition's text and index and the values it read. A v19 log has
 // neither, and there is no message to invent for it.
-const EVENT_LOG_KEY = 'dcb-playground:events:v20';
+// v21 made an event's tags explicit (`tags` on the event, 8.0): a v20
+// log's events list none, so replayed here every one of them would be
+// untagged.
+const EVENT_LOG_KEY = 'dcb-playground:events:v21';
 
 const DEF_KINDS = [
   'entity-definition',
@@ -458,6 +461,94 @@ function idLeavesOfType(model, typeName) {
     }
   }
   return out;
+}
+
+// The tags an event carries are the ones it lists (8.0). Each entry of
+// `tags` is a path: a property typed with a tag type, or
+// `property.field` into a record whose field is one — a list of either
+// contributing one tag per element. Nothing is implied any more: a
+// tag-typed property left off the list is an ordinary value, and an
+// event with no list carries no tag at all. The advisories say both
+// (`eventTagAdvisories`), because the author asked to be told rather
+// than guessed for.
+//
+// Resolves one path to the leaf `idLeavesOfType` would have produced
+// for it — `{ path, property, field, isList, identifierType }` — or to
+// `{ problem }` saying why it is not a tag.
+function resolveEventTagPath(model, event, path) {
+  if (typeof path !== 'string' || !path) return { problem: 'a tag entry must name a property' };
+  const [propertyName, fieldName, ...rest] = path.split('.');
+  if (rest.length) return { problem: `"${path}" reaches deeper than a record field` };
+  const property = ((event && event.properties) || []).find((p) => p && p.name === propertyName);
+  if (!property) return { problem: `"${path}" names no property of the event` };
+  const leaves = idLeavesOfType(model, property.propertyType);
+  const leaf = leaves.find((l) => l.field === (fieldName === undefined ? null : fieldName));
+  if (!leaf) {
+    if (fieldName === undefined && leaves.length) {
+      return { problem: `"${path}" is a record — name its tag field (${leaves.map((l) => `${propertyName}.${l.field}`).join(', ')})` };
+    }
+    return { problem: `"${path}" is not of a tag type` };
+  }
+  return { path, property: propertyName, field: leaf.field, isList: !!property.isList, identifierType: leaf.identifierType };
+}
+
+function eventTagLeaves(model, event) {
+  const seen = new Set();
+  const out = [];
+  for (const path of (event && event.tags) || []) {
+    const leaf = resolveEventTagPath(model, event, path);
+    if (leaf.problem || seen.has(leaf.path)) continue;
+    seen.add(leaf.path);
+    out.push(leaf);
+  }
+  return out;
+}
+
+// What the advisories say about an event's tags: an entry that is not
+// a tag, one listed twice, no tags at all, and a tag-typed value left
+// off the list — the last two because nothing is implied any more, so
+// a forgotten tag is an event no query by that tag will ever reach.
+function eventTagAdvisories(model, event) {
+  const messages = [];
+  const tags = (event && event.tags) || [];
+  const seen = new Set();
+  for (const path of tags) {
+    if (seen.has(path)) { messages.push(`Tag "${path}" is listed twice.`); continue; }
+    seen.add(path);
+    const resolved = resolveEventTagPath(model, event, path);
+    if (resolved.problem) messages.push(`Tag ${resolved.problem}.`);
+  }
+  if (!tags.length) messages.push('Carries no tags, so a query by tag never reaches it.');
+  for (const path of tagPathsOf(model, (event && event.properties) || [])) {
+    if (seen.has(path)) continue;
+    messages.push(`"${path}" is of a tag type but not one of this event's tags — a query by it does not reach this event.`);
+  }
+  return messages;
+}
+
+// Every path in `properties` that could be listed as a tag, in property
+// order. What an authoring gesture offers, and what a new event made
+// from a command's payload starts with listed — the stored list is the
+// fact, this is only a default someone can see and change.
+function tagPathsOf(model, properties) {
+  return (properties || []).flatMap((p) => (p && p.propertyType
+    ? idLeavesOfType(model, p.propertyType).map((leaf) => (leaf.field === null ? p.name : `${p.name}.${leaf.field}`))
+    : []));
+}
+
+// An event body after a page edit, with its tags kept in step: a
+// tag-typed value the edit introduced — a new property, or one retyped
+// into a tag type — is listed, and a path the edit left meaning nothing
+// (its property removed, or retyped out of a tag type) is dropped. The
+// pages' authoring default, visible and undoable like the edit itself;
+// a body arriving whole (a file, the code view, an agent) is stored as
+// it says and never passes through here.
+function withEditedTags(model, previous, next) {
+  const before = new Set(tagPathsOf(model, (previous && previous.properties) || []));
+  const kept = ((next && next.tags) || []).filter((path) => !resolveEventTagPath(model, next, path).problem);
+  const added = tagPathsOf(model, next.properties || [])
+    .filter((path) => !before.has(path) && !kept.includes(path));
+  return { ...next, tags: [...kept, ...added] };
 }
 
 function allTypeNames(model) {
@@ -1569,7 +1660,7 @@ function deriveDcb(model, body) {
       const operand = (emission.parameters || {})[property.name];
       const listed = property.isList || (operand !== undefined && operandSource(operand) === 'parameter'
         && (body.properties || []).some((p) => p.name === operand.parameterName && p.isList));
-      for (const leaf of idLeavesOfType(model, property.propertyType)) {
+      for (const leaf of eventTagLeaves(model, event).filter((l) => l.property === property.name)) {
         const shown = operand === undefined ? '?' : operandText(operandForLeaf(operand, leaf));
         writes.push(renderTag(identifierTypeOf(model, leaf.identifierType), listed ? `each(${shown})` : shown));
       }
@@ -1699,10 +1790,10 @@ function emittedTagRequirements(model, body) {
       if (operand === undefined && property.isOptional && !property.isList) continue;
       if (mintsFromProjection(model, body, operand, emission.name)) continue;
       const asserted = operand !== undefined && operandSource(operand) === 'parameter';
-      // Walked to the identifier *leaves* of the property's type, not
-      // its surface: a property typed `Item[]` writes one tag per
-      // element, and each names its own instance.
-      for (const leaf of idLeavesOfType(model, property.propertyType)) {
+      // Walked to the tag *leaves* the event lists, not the property's
+      // surface: a property typed `Item[]` writes one tag per element,
+      // and each names its own instance.
+      for (const leaf of eventTagLeaves(model, event).filter((l) => l.property === property.name)) {
         // A leaf whose identifier type is standalone — a component with
         // no entity of its own — names no entity instance, so there is
         // nothing here to consult or to keep alive.
@@ -2100,6 +2191,7 @@ function definitionAdvisories(model, kind, name, body) {
   // an agent writing a whole body. It still bounds the append, so it is
   // never dropped behind anyone's back; it is reported here and pruned
   // by the next edit to this command, which is what the message says.
+  if (kind === 'event-definition') messages.push(...eventTagAdvisories(model, body));
   if (kind === 'command-definition') {
     messages.push(...rejectionAdvisories(body));
     const stranded = unreferencedBindings(model, body);
@@ -2136,8 +2228,8 @@ function modelAdvisories(model) {
 // reaches a partition only by carrying a tag of each type the query
 // names — so an event missing one reaches no instance at all, and a
 // handler for it never fires: `CopyExists(id)` moved by a
-// `BookCatalogued` that carries an isbn and no copy id. Looked at
-// through composites, the same way `tagsOfEvent` derives the tags.
+// `BookCatalogued` that carries an isbn and no copy id. What the event
+// carries is what it lists (`eventTagLeaves`), as in `tagsOfEvent`.
 // Empty for a projection with no parameters (it reads the whole log)
 // and for a scripted one, whose tags are its own `tagFilter`.
 function partitionTagsMissing(model, projection, eventName) {
@@ -2146,7 +2238,7 @@ function partitionTagsMissing(model, projection, eventName) {
   const typesOf = (properties) => (properties || [])
     .flatMap((p) => (p && p.propertyType ? idLeavesOfType(model, p.propertyType) : []))
     .map((leaf) => leaf.identifierType);
-  const carried = new Set(typesOf(event.properties));
+  const carried = new Set(eventTagLeaves(model, event).map((leaf) => leaf.identifierType));
   return uniq(typesOf(projection.parameters)).filter((type) => !carried.has(type));
 }
 
@@ -2209,21 +2301,22 @@ function validateHandlers(model, label, target, handlers) {
         `and "${handler.event}" carries none, so it reaches no instance to change.`
       );
     }
-    // Tag matching is by value, whichever property carries it — so an
-    // event holding the partition's identifier type in two properties
-    // (an assignment naming both the new holder and the one replaced)
+    // Tag matching is by value, whichever listed property carries it —
+    // so an event tagged by the partition's identifier type twice (an
+    // assignment naming both the new holder and the one replaced)
     // reaches both partitions, and a handler fires for both: the
     // instructor being replaced would "gain" the course their
     // successor was just assigned. A declarative handler cannot tell
     // the two apart, so the honest fixes live elsewhere.
+    const listed = eventTagLeaves(model, event);
     for (const parameter of target.parameters || []) {
-      const carriers = (event.properties || []).filter((p) => p && p.propertyType === parameter.propertyType);
+      const carriers = listed.filter((leaf) => leaf.identifierType === parameter.propertyType);
       if (carriers.length > 1) {
         throw new DomainError(
-          `${where} fires for every partition "${handler.event}" names: the event carries ` +
-          `${parameter.propertyType} in ${carriers.map((p) => `"${p.name}"`).join(' and ')}, and a ` +
-          `handler cannot tell them apart. Split the event so each records one fact, or script ` +
-          `the projection.`
+          `${where} fires for every partition "${handler.event}" names: the event is tagged by ` +
+          `${parameter.propertyType} in ${carriers.map((leaf) => `"${leaf.path}"`).join(' and ')}, and a ` +
+          `handler cannot tell them apart. Tag it by one, split the event so each records one ` +
+          `fact, or script the projection.`
         );
       }
     }
@@ -3572,6 +3665,12 @@ function assertStorableBody(kind, body) {
       }
     }
   }
+  // An event's tags are paths, not objects — the one list of strings.
+  if (kind === 'event-definition' && body.tags !== undefined) {
+    if (!Array.isArray(body.tags) || body.tags.some((tag) => typeof tag !== 'string')) {
+      throw new DomainError('An event\'s "tags" must be a list of property paths.');
+    }
+  }
 }
 
 function addDefinition(kind, modelId, name, body) {
@@ -3826,6 +3925,23 @@ function setAtDottedPath(obj, path, value) {
 
 // The rewrites each member kind implies, as
 // `(model, definitionName, previous, next) => [{kind, name, body}]`.
+// An event's tag paths with `rename(property, field)` applied — it
+// returns the new `[property, field]` or null to leave a path alone.
+// Null when nothing moved, so a rewrite only lands where it changed.
+function renameTagPaths(tags, rename) {
+  if (!Array.isArray(tags)) return null;
+  let moved = false;
+  const out = tags.map((path) => {
+    if (typeof path !== 'string') return path;
+    const [property, field] = path.split('.');
+    const renamed = rename(property, field === undefined ? null : field);
+    if (!renamed) return path;
+    moved = true;
+    return renamed[1] === null ? renamed[0] : `${renamed[0]}.${renamed[1]}`;
+  });
+  return moved ? out : null;
+}
+
 const MEMBER_REWRITES = {
   // An entity property is read as `{alias, property}` by any command
   // that binds this entity under that alias — and, when it is the
@@ -3998,6 +4114,13 @@ const MEMBER_REWRITES = {
       }
       return touched;
     }));
+
+    // The event's own tags name the property by path — a local name,
+    // so it moves on the owner, the way an entity's `lifecycle` does.
+    const event = model['event-definitions'][eventName];
+    const retagged = renameTagPaths(event && event.tags, (property, field) =>
+      (property === previous ? [next, field] : null));
+    if (retagged) out.push({ kind: 'event-definition', name: eventName, body: { ...deepClone(event), tags: retagged } });
     return out;
   },
 
@@ -4027,6 +4150,14 @@ const MEMBER_REWRITES = {
   // A composite's field is reached only through a parameter typed with
   // that composite — `{parameterName: items, property: productId}`.
   'custom-type-definition:field': (model, typeName, previous, next) => [
+    // An event lists a record's tag field by path, `items.productId`.
+    ...Object.entries(model['event-definitions']).flatMap(([name, event]) => {
+      const typed = new Set((event.properties || [])
+        .filter((p) => p && p.propertyType === typeName).map((p) => p.name));
+      const retagged = renameTagPaths(event.tags, (property, field) =>
+        (typed.has(property) && field === previous ? [property, next] : null));
+      return retagged ? [{ kind: 'event-definition', name, body: { ...deepClone(event), tags: retagged } }] : [];
+    }),
     ...rewriteCommands(model, (command) => {
       const parameters = new Set((command.properties || [])
         .filter((p) => p.propertyType === typeName).map((p) => p.name));
@@ -4558,9 +4689,14 @@ function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
 // reader cannot read a 7.0 document, and this build reads no earlier
 // major: a 6.x rule has no message, and inventing one would put words
 // in the author's mouth that every scenario then asserts.
-const MODEL_VERSION = '7.0';
-const MODEL_SCHEMA_URL = 'https://dcb.events/schemas/model/v7.json';
-const READABLE_MAJORS = [7];
+// 8.0 made tags explicit: an event lists the values it is tagged by
+// (`tags`, property paths), and one without the list carries none. A
+// 7.x reader would tag what this document leaves untagged, and a 7.x
+// document read here would carry no tag at all — so this build reads
+// 8.x only. Nothing is public yet; there is no upgrader.
+const MODEL_VERSION = '8.0';
+const MODEL_SCHEMA_URL = 'https://dcb.events/schemas/model/v8.json';
+const READABLE_MAJORS = [8];
 
 const SCHEMA_FIELD = {
   'custom-type-definition': 'customTypeDefinitions',
@@ -4913,6 +5049,10 @@ const seedPropertyProjection = (entityName, valueType, initialValue, handlers, e
   parameters: [{ name: defaultAlias(entityName) + 'Id', propertyType: entityName + 'Id' }],
   valueType, isList: false, initialValue, handlers, ...extra,
 });
+// An event's tags, written out: every tag-typed value its properties
+// hold. A seed states them like any author would — nothing is implied
+// on the way in — and this only saves restating each list by hand.
+const seedTags = (modelId, properties) => tagPathsOf(getCtxOrThrow(modelId), properties);
 // The binding itself — everything else lives on the projection.
 const seedBindProp = (name, projection) => ({ name, projection });
 
@@ -4956,7 +5096,7 @@ function seedBase(modelId) {
 
   // 2. Events. Their entity-id properties are what carry the tags.
   const event = (name, properties) =>
-    addDefinition('event-definition', modelId, name, { properties });
+    addDefinition('event-definition', modelId, name, { properties, tags: seedTags(modelId, properties) });
 
   event('CourseDefined', [prop('courseId', 'CourseId'), prop('capacity', 'integer')]);
   event('CourseCapacityChanged', [prop('courseId', 'CourseId'), prop('newCapacity', 'integer')]);
@@ -5227,11 +5367,12 @@ function seedAddTenancy(modelId) {
   });
 
   addDefinition('event-definition', modelId, 'TenantRegistered', {
-    properties: [seedProp('tenantId', 'TenantId')],
+    properties: [seedProp('tenantId', 'TenantId')], tags: ['tenantId'],
   });
   seedPatch('event-definition', modelId, 'CourseDefined', (event) => {
     event.properties.unshift(seedProp('tenantId', 'TenantId'));
     event.properties.push(seedProp('courseNumber', 'CourseNumber'));
+    event.tags = ['tenantId', ...event.tags];
   });
 
   addDefinition('projection-definition', modelId, 'TenantExists',
@@ -5305,6 +5446,7 @@ function seedAddSchedules(modelId) {
   });
   addDefinition('event-definition', modelId, 'CourseRescheduled', {
     properties: [seedProp('courseId', 'CourseId'), seedListProp('slots', 'TimeSlot')],
+    tags: ['courseId'],
   });
 
   addDefinition('projection-definition', modelId, 'CourseSlots',
@@ -5427,7 +5569,7 @@ function seedProductPricing(modelId) {
 
   // 3. Events.
   const event = (name, properties) =>
-    addDefinition('event-definition', modelId, name, { properties });
+    addDefinition('event-definition', modelId, name, { properties, tags: seedTags(modelId, properties) });
 
   event('ProductDefined', [prop('productId', 'ProductId'), prop('price', 'Money')]);
   event('ProductPriceChanged', [prop('productId', 'ProductId'), prop('newPrice', 'Money')]);
@@ -5601,7 +5743,7 @@ function seedContentDecisionsScripted(modelId) {
 
   // 2. Events. The texts live here; no projection re-publishes them.
   const event = (name, properties) =>
-    addDefinition('event-definition', modelId, name, { properties });
+    addDefinition('event-definition', modelId, name, { properties, tags: seedTags(modelId, properties) });
 
   event('DocumentAdded', [prop('id', 'DocumentId')]);
   event('TextUpdated', [prop('docId', 'DocumentId'), prop('text', 'string')]);
@@ -5726,7 +5868,7 @@ function seedDocumentAuthoring(modelId) {
   addDefinition('entity-definition', modelId, 'Document', { icon: '📄', properties: [] });
 
   const event = (name, properties) =>
-    addDefinition('event-definition', modelId, name, { properties });
+    addDefinition('event-definition', modelId, name, { properties, tags: seedTags(modelId, properties) });
 
   event('DocumentAdded', [prop('id', 'DocumentId')]);
   event('TextUpdated', [prop('docId', 'DocumentId'), prop('text', 'string')]);
@@ -5929,7 +6071,7 @@ function seedGuardedAuthoring(modelId) {
   addDefinition('entity-definition', modelId, 'Document', { icon: '📄', properties: [] });
 
   const event = (name, properties) =>
-    addDefinition('event-definition', modelId, name, { properties });
+    addDefinition('event-definition', modelId, name, { properties, tags: seedTags(modelId, properties) });
 
   event('DocumentAdded', [prop('id', 'DocumentId')]);
   event('TextChanged', [prop('docId', 'DocumentId'), prop('text', 'string')]);

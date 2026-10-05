@@ -54,6 +54,15 @@ const {
   envelopeVersionWarning, modelMatchingEnvelope, commandRejections,
 } = sandbox;
 
+// An event a fixture adds, tagged by every tag-typed value it holds —
+// what an author listing them all would write. Events are tagged only
+// by what they list (8.0); fixtures that test the list itself spell
+// `tags` out, and this leaves a given list alone.
+function addTaggedEvent(id, name, body) {
+  const tags = body.tags || sandbox.tagPathsOf(sandbox.projectState()[id], body.properties);
+  return sandbox.addDefinition('event-definition', id, name, { ...body, tags });
+}
+
 // A fresh, empty model — for the ad-hoc identifier-type fixtures
 // below, which want a minimal model rather than one of the five shipped
 // models.
@@ -75,7 +84,7 @@ function openBlank(name) {
 function openScripted() {
   const { id, model } = openBlank('Scripted');
   addDefinition('entity-definition', id, 'Counter', { properties: [] });
-  addDefinition('event-definition', id, 'Ticked', {
+  addTaggedEvent(id, 'Ticked', {
     properties: [{ name: 'counterId', propertyType: 'CounterId', isOptional: false, isList: false }],
   });
   addDefinition('projection-definition', id, 'CounterTotal', {
@@ -805,7 +814,7 @@ function drive(model, log, command, args) {
 
   addDefinition('entity-definition', id, 'Widget', { properties: [] });
   updateDefinition('custom-type-definition', id, 'WidgetId', { schema: { type: 'integer' }, isTag: true });
-  addDefinition('event-definition', id, 'WidgetDefined', {
+  addTaggedEvent(id, 'WidgetDefined', {
     properties: [{ name: 'widgetId', propertyType: 'WidgetId', isOptional: false, isList: false }],
   });
   addDefinition('projection-definition', id, 'WidgetIsDefined', {
@@ -876,10 +885,10 @@ function drive(model, log, command, args) {
       { name: 'series', propertyType: 'InvoiceSeriesId' },
     ],
   });
-  addDefinition('event-definition', id, 'CourseDefined', {
+  addTaggedEvent(id, 'CourseDefined', {
     properties: [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false }],
   });
-  addDefinition('event-definition', id, 'InvoiceRaised', {
+  addTaggedEvent(id, 'InvoiceRaised', {
     properties: [{ name: 'invoiceId', propertyType: 'InvoiceId', isOptional: false, isList: false }],
   });
 
@@ -948,7 +957,7 @@ function drive(model, log, command, args) {
   check('renaming an entity that still tracks its identifier moves the derived type', () => {
     const { id, model } = openBlank();
     addDefinition('entity-definition', id, 'Gadget', { properties: [] });
-    addDefinition('event-definition', id, 'GadgetDefined', {
+    addTaggedEvent(id, 'GadgetDefined', {
       properties: [{ name: 'gadgetId', propertyType: 'GadgetId', isOptional: false, isList: false }],
     });
     renameDefinition('entity-definition', id, 'Gadget', 'Widget');
@@ -965,7 +974,7 @@ function drive(model, log, command, args) {
     addDefinition('entity-definition', id, 'Gizmo', {
       identifierType: 'GizmoRef', properties: [],
     });
-    addDefinition('event-definition', id, 'GizmoDefined', {
+    addTaggedEvent(id, 'GizmoDefined', {
       properties: [{ name: 'gizmoId', propertyType: 'GizmoRef', isOptional: false, isList: false }],
     });
     renameDefinition('entity-definition', id, 'Gizmo', 'Doohickey');
@@ -980,7 +989,7 @@ function drive(model, log, command, args) {
   check('renaming a tracking entity\'s derived value type directly pins it explicit', () => {
     const { id, model } = openBlank();
     addDefinition('entity-definition', id, 'Sprocket', { properties: [] });
-    addDefinition('event-definition', id, 'SprocketDefined', {
+    addTaggedEvent(id, 'SprocketDefined', {
       properties: [{ name: 'sprocketId', propertyType: 'SprocketId', isOptional: false, isList: false }],
     });
 
@@ -1000,7 +1009,7 @@ function drive(model, log, command, args) {
   check('renaming a standalone tag-marked custom type cascades like any other', () => {
     const { id, model } = openBlank();
     addDefinition('custom-type-definition', id, 'CourseNumber', { schema: { type: 'string' }, isTag: true });
-    addDefinition('event-definition', id, 'CourseNumberIssued', {
+    addTaggedEvent(id, 'CourseNumberIssued', {
       properties: [{ name: 'number', propertyType: 'CourseNumber', isOptional: false, isList: false }],
     });
     renameDefinition('custom-type-definition', id, 'CourseNumber', 'CourseRef');
@@ -1046,7 +1055,7 @@ function drive(model, log, command, args) {
     ];
     addDefinition('custom-type-definition', id, 'CartLine', { properties: fields('displayedPrice') });
     addDefinition('custom-type-definition', id, 'Item', { properties: fields('price') });
-    addDefinition('event-definition', id, 'ProductsOrdered', {
+    addTaggedEvent(id, 'ProductsOrdered', {
       properties: [{ name: 'items', propertyType: 'Item', isOptional: false, isList: true }],
     });
     const command = (propertyType) => ({
@@ -1078,7 +1087,7 @@ function drive(model, log, command, args) {
   addDefinition('custom-type-definition', id, 'RegionCode', {
     schema: { type: 'string' }, isTag: true, tagSchema: '{type}={value}',
   });
-  addDefinition('event-definition', id, 'RegionOpened', {
+  addTaggedEvent(id, 'RegionOpened', {
     properties: [{ name: 'regionCode', propertyType: 'RegionCode', isOptional: false, isList: false }],
   });
   addDefinition('command-definition', id, 'OpenRegion', {
@@ -1193,7 +1202,7 @@ function drive(model, log, command, args) {
   // ad-hoc one instead.
   const { id, model } = openBlank();
   addDefinition('custom-type-definition', id, 'RegionCode', { schema: { type: 'string' }, isTag: true });
-  addDefinition('event-definition', id, 'RegionOpened', {
+  addTaggedEvent(id, 'RegionOpened', {
     properties: [{ name: 'regionCode', propertyType: 'RegionCode', isOptional: false, isList: false }],
   });
   addDefinition('projection-definition', id, 'OpenRegionCount', {
@@ -1214,7 +1223,7 @@ function drive(model, log, command, args) {
   // a model that goes out and comes in is the same model and a
   // re-import can be diffed against what was sent.
   const { id, model } = openBlank();
-  addDefinition('event-definition', id, 'ThingHappened', { properties: [] });
+  addTaggedEvent(id, 'ThingHappened', { properties: [] });
   addDefinition('command-definition', id, 'DoThing', {
     properties: [], boundary: [], conditions: [],
     publishes: [{ name: 'ThingHappened', parameters: {} }],
@@ -1248,10 +1257,10 @@ function drive(model, log, command, args) {
   // only that is worth flagging.
   const { id, model } = openBlank('Lenient');
   addDefinition('entity-definition', id, 'Festlegung', { properties: [] });
-  addDefinition('event-definition', id, 'FestlegungErzeugt', {
+  addTaggedEvent(id, 'FestlegungErzeugt', {
     properties: [{ name: 'festlegungId', propertyType: 'FestlegungId', isOptional: false, isList: false }],
   });
-  addDefinition('event-definition', id, 'FestlegungVermerkt', {
+  addTaggedEvent(id, 'FestlegungVermerkt', {
     properties: [{ name: 'festlegungId', propertyType: 'FestlegungId', isOptional: false, isList: false }],
   });
   // Folds a different event, so it is not the minting exemption: this
@@ -1302,7 +1311,7 @@ function drive(model, log, command, args) {
 // ---------------------------------------------------------------
 {
   const { id, model } = openBlank('Membership');
-  addDefinition('event-definition', id, 'Filed', { properties: [] });
+  addTaggedEvent(id, 'Filed', { properties: [] });
   addDefinition('command-definition', id, 'File', {
     properties: [{ name: 'status', propertyType: 'string', isOptional: true, isList: false }],
     boundary: [],
@@ -1427,8 +1436,8 @@ check('an import missing the definition arrays is refused, not silently accepted
   // from: these two strings are the published contract, and a test that
   // derived them from the source could not notice one of them changing.
   check('an export carries both markers', () => {
-    eq(good.$schema, 'https://dcb.events/schemas/model/v7.json', '$schema');
-    eq(/^7\.\d+$/.test(good.dcbModelVersion), true, 'dcbModelVersion is a 7.x');
+    eq(good.$schema, 'https://dcb.events/schemas/model/v8.json', '$schema');
+    eq(/^8\.\d+$/.test(good.dcbModelVersion), true, 'dcbModelVersion is an 8.x');
   });
 
   check('the definition arrays sit at the top level, under no wrapper', () => {
@@ -1451,7 +1460,9 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('an import from an unknown major is refused', () => {
-    refuses({ ...good, dcbModelVersion: '8.0' }, 'a newer major');
+    refuses({ ...good, dcbModelVersion: '9.0' }, 'a newer major');
+    // 7.x tagged events by property type; read here, it would carry none.
+    refuses({ ...good, dcbModelVersion: '7.0' }, 'the last major with implied tags');
     // 6.x has no rejection messages, and none can be invented for it.
     refuses({ ...good, dcbModelVersion: '6.1' }, 'the last major before messages');
     // 2.x is where a projection scenario read several projections under
@@ -1466,7 +1477,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('a newer minor imports, and says what it is dropping', () => {
-    const newer = { ...good, dcbModelVersion: '7.99' };
+    const newer = { ...good, dcbModelVersion: '8.99' };
     eq(typeof importModelFromEnvelope(newer).modelId, 'string', 'imported');
     eq(envelopeVersionWarning(newer).length > 0, true, 'warned');
     eq(envelopeVersionWarning(good), '', 'nothing to warn about at the current version');
@@ -1512,7 +1523,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   check('one projection may be bound by two entities that share an identifier', () => {
     const { id, model } = openBlank();
     addDefinition('entity-definition', id, 'Course', { properties: [] });
-    addDefinition('event-definition', id, 'CourseDefined', {
+    addTaggedEvent(id, 'CourseDefined', {
       properties: [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false }],
     });
     addDefinition('projection-definition', id, 'CourseExists', {
@@ -1698,7 +1709,7 @@ check('an import missing the definition arrays is refused, not silently accepted
     schema: { type: 'string', enum: ['Red', 'Green'] },
   });
   addDefinition('custom-type-definition', id, 'Slot', { schema: { type: 'string' } });
-  addDefinition('event-definition', id, 'Nudged', { properties: [] });
+  addTaggedEvent(id, 'Nudged', { properties: [] });
 
   const add = (name, body) => addDefinition('projection-definition', id, name, {
     parameters: [], isList: false, handlers: [], ...body,
@@ -2144,7 +2155,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   addDefinition('entity-definition', id, 'Anordnung', { properties: [] });
-  addDefinition('event-definition', id, 'AnordnungErzeugt', {
+  addTaggedEvent(id, 'AnordnungErzeugt', {
     properties: [
       { name: 'anordnungId', propertyType: 'AnordnungId', isOptional: false, isList: false },
       { name: 'notiz', propertyType: 'string', isOptional: true, isList: false },
@@ -2247,7 +2258,7 @@ check('an import missing the definition arrays is refused, not silently accepted
 
   check('an unset optional tag-marked property writes no tag', () => {
     addDefinition('entity-definition', id, 'Festlegung', { properties: [] });
-    addDefinition('event-definition', id, 'FestlegungGeprueft', {
+    addTaggedEvent(id, 'FestlegungGeprueft', {
       properties: [{ name: 'festlegungId', propertyType: 'FestlegungId', isOptional: true, isList: false }],
     });
     eq(tagsOfEvent(model(), 'FestlegungGeprueft', { festlegungId: null }), [], 'no phantom instance');
@@ -2284,7 +2295,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('optional and list together is advised, and evaluates as a plain list', () => {
-    addDefinition('event-definition', id, 'Doppelt', {
+    addTaggedEvent(id, 'Doppelt', {
       properties: [{ name: 'notizen', propertyType: 'string', isOptional: true, isList: true }],
     });
     eq(sandbox.modelAdvisories(model()).some(
@@ -2330,7 +2341,7 @@ check('every predefined model ships advisory-clean', () => {
     const { id, model } = openBlank('Assignment');
     addDefinition('entity-definition', id, 'Course', { properties: [] });
     addDefinition('entity-definition', id, 'Instructor', { properties: [] });
-    addDefinition('event-definition', id, 'Assigned', {
+    addTaggedEvent(id, 'Assigned', {
       properties: [
         { name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false },
         { name: 'instructorId', propertyType: 'InstructorId', isOptional: false, isList: false },
@@ -2339,7 +2350,7 @@ check('every predefined model ships advisory-clean', () => {
     // The predecessor's own fact. Its identifier is optional: a first
     // assignment replaces nobody, and a null identifier carries no tag,
     // so that event reaches no partition at all — a recorded no-op.
-    addDefinition('event-definition', id, 'Unassigned', {
+    addTaggedEvent(id, 'Unassigned', {
       properties: [
         { name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false },
         { name: 'instructorId', propertyType: 'InstructorId', isOptional: true, isList: false },
@@ -2469,7 +2480,7 @@ check('every predefined model ships advisory-clean', () => {
     eq(sandbox.modelAdvisories(model()).length, 0, 'the split-event shape is clean');
     // The unsplit shape: one event carrying both the new holder and
     // the one replaced — a handler on it fires for both partitions.
-    addDefinition('event-definition', id, 'Reassigned', {
+    addTaggedEvent(id, 'Reassigned', {
       properties: [
         { name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false },
         { name: 'instructorId', propertyType: 'InstructorId', isOptional: false, isList: false },
@@ -2480,7 +2491,7 @@ check('every predefined model ships advisory-clean', () => {
     body.handlers.push({ event: 'Reassigned', operation: 'append', value: { eventProperty: 'courseId' } });
     updateDefinition('projection-definition', id, 'InstructedCourses', body);
     const found = sandbox.modelAdvisories(model()).map((a) => a.message).join('; ');
-    eq(/Split the event/.test(found), true, 'the advisory names the fix: ' + found);
+    eq(/Tag it by one, split the event/.test(found), true, 'the advisory names the fixes: ' + found);
   });
 
   check('an unflagged binding off a null-starting projection is advised ahead of time', () => {
@@ -2523,7 +2534,7 @@ check('every predefined model ships advisory-clean', () => {
 
   check('every guard failing publishes nothing — an accepted command, not a rejection', () => {
     const { id, model } = openBlank('Guarded');
-    addDefinition('event-definition', id, 'Pinged', { properties: [] });
+    addTaggedEvent(id, 'Pinged', { properties: [] });
     addDefinition('command-definition', id, 'Ping', {
       properties: [{ name: 'loud', propertyType: 'boolean', isOptional: false, isList: false }],
       boundary: [],
@@ -2661,6 +2672,93 @@ check('every predefined model ships advisory-clean', () => {
   check('derived is data, not code — the import gate stays closed', () => {
     const model = build(DERIVED);
     eq(envelopeHasScript(buildShareEnvelope(model, [])), false, 'nothing to confirm');
+  });
+}
+
+// ---------------------------------------------------------------
+// Tags are what an event lists (8.0) — a tag-typed value left off the
+// list is an ordinary value, an event with no list carries none, and
+// the advisories say both rather than anything being implied.
+// ---------------------------------------------------------------
+{
+  const blank = () => {
+    const { id, model } = openBlank('Tags');
+    addDefinition('custom-type-definition', id, 'CourseId', { schema: { type: 'string' }, isTag: true });
+    addDefinition('custom-type-definition', id, 'ProductId', { schema: { type: 'string' }, isTag: true });
+    addDefinition('custom-type-definition', id, 'Line', {
+      properties: [{ name: 'productId', propertyType: 'ProductId' }, { name: 'qty', propertyType: 'integer' }],
+    });
+    return { id, model };
+  };
+  const prop = (name, type, isList = false) => ({ name, propertyType: type, isOptional: false, isList });
+  const advised = (model, name) => sandbox.modelAdvisories(model)
+    .filter((a) => a.kind === 'event-definition' && a.name === name).map((a) => a.message);
+
+  check('an event carries the tags it lists, and only those', () => {
+    const { id, model } = blank();
+    addDefinition('event-definition', id, 'Untagged', { properties: [prop('courseId', 'CourseId')] });
+    addDefinition('event-definition', id, 'Tagged', { properties: [prop('courseId', 'CourseId')], tags: ['courseId'] });
+    eq(tagsOfEvent(model(), 'Untagged', { courseId: 'c1' }), [], 'a tag-typed value off the list is not a tag');
+    eq(tagsOfEvent(model(), 'Tagged', { courseId: 'c1' }), ['CourseId:c1'], 'one on it is');
+  });
+
+  check('a record field is listed by path, one tag per element', () => {
+    const { id, model } = blank();
+    addDefinition('event-definition', id, 'Ordered', {
+      properties: [prop('lines', 'Line', true)], tags: ['lines.productId'],
+    });
+    eq(tagsOfEvent(model(), 'Ordered', { lines: [{ productId: 'p1', qty: 1 }, { productId: 'p2', qty: 3 }] }),
+      ['ProductId:p1', 'ProductId:p2'], 'per element');
+  });
+
+  check('the advisories say what is untagged, unlisted, or not a tag', () => {
+    const { id, model } = blank();
+    addDefinition('event-definition', id, 'Bare', { properties: [prop('courseId', 'CourseId')] });
+    addDefinition('event-definition', id, 'Odd', {
+      properties: [prop('courseId', 'CourseId'), prop('note', 'string'), prop('line', 'Line')],
+      tags: ['courseId', 'courseId', 'note', 'ghost', 'line'],
+    });
+    const bare = advised(model(), 'Bare');
+    eq(bare.some((m) => /Carries no tags/.test(m)), true, 'no tags at all');
+    eq(bare.some((m) => /"courseId" is of a tag type but not one of this event's tags/.test(m)), true, 'and what it could list');
+    const odd = advised(model(), 'Odd');
+    eq(odd.some((m) => /listed twice/.test(m)), true, 'a duplicate');
+    eq(odd.some((m) => /"note" is not of a tag type/.test(m)), true, 'a plain value');
+    eq(odd.some((m) => /"ghost" names no property/.test(m)), true, 'a missing property');
+    eq(odd.some((m) => /"line" is a record — name its tag field \(line\.productId\)/.test(m)), true, 'a record, whole');
+    eq(odd.some((m) => /"line\.productId" is of a tag type but not one/.test(m)), true, 'and its field, unlisted');
+  });
+
+  check('a tags list that is not a list of paths is refused at the write path', () => {
+    const { id } = blank();
+    let refused = null;
+    try { addDefinition('event-definition', id, 'Bad', { properties: [], tags: [{ path: 'x' }] }); } catch (e) { refused = e.message; }
+    eq(/must be a list of property paths/.test(refused || ''), true, 'structure, not semantics');
+  });
+
+  check('renaming a property or a record field moves the tag path with it', () => {
+    const { id, model } = blank();
+    addDefinition('event-definition', id, 'Ordered', {
+      properties: [prop('courseId', 'CourseId'), prop('lines', 'Line', true)], tags: ['courseId', 'lines.productId'],
+    });
+    renameMember('event-definition', id, 'Ordered', 'property', 'courseId', 'course');
+    renameMember('event-definition', id, 'Ordered', 'property', 'lines', 'items');
+    renameMember('custom-type-definition', id, 'Line', 'field', 'productId', 'product');
+    eq(model()['event-definitions'].Ordered.tags, ['course', 'items.product'], 'both paths followed');
+    eq(advised(model(), 'Ordered'), [], 'and still mean what they did');
+  });
+
+  check('a page edit lists a new tag-typed value and drops a path it emptied', () => {
+    const { id, model } = blank();
+    addDefinition('event-definition', id, 'E', { properties: [prop('courseId', 'CourseId')], tags: [] });
+    const previous = model()['event-definitions'].E;
+    const added = sandbox.withEditedTags(model(), previous,
+      { ...previous, properties: [...previous.properties, prop('productId', 'ProductId')] });
+    eq(added.tags, ['productId'], 'the new one listed, the deliberately unlisted one left alone');
+    const tagged = { properties: [prop('courseId', 'CourseId')], tags: ['courseId'] };
+    eq(sandbox.withEditedTags(model(), tagged, { properties: [], tags: ['courseId'] }).tags, [], 'removed with its property');
+    eq(sandbox.withEditedTags(model(), tagged, { properties: [prop('courseId', 'string')], tags: ['courseId'] }).tags,
+      [], 'and with its tag type');
   });
 }
 

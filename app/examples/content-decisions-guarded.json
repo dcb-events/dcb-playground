@@ -1,6 +1,6 @@
 {
-  "$schema": "https://dcb.events/schemas/model/v7.json",
-  "dcbModelVersion": "7.0",
+  "$schema": "https://dcb.events/schemas/model/v8.json",
+  "dcbModelVersion": "8.0",
   "name": "Content based decisions (guarded emissions)",
   "customTypeDefinitions": [
     {
@@ -34,6 +34,9 @@
           "isOptional": false,
           "isList": false
         }
+      ],
+      "tags": [
+        "id"
       ]
     },
     {
@@ -51,6 +54,9 @@
           "isOptional": false,
           "isList": false
         }
+      ],
+      "tags": [
+        "docId"
       ]
     },
     {
@@ -68,6 +74,9 @@
           "isOptional": false,
           "isList": false
         }
+      ],
+      "tags": [
+        "docId"
       ]
     },
     {
@@ -85,6 +94,9 @@
           "isOptional": false,
           "isList": false
         }
+      ],
+      "tags": [
+        "docId"
       ]
     },
     {
@@ -96,6 +108,9 @@
           "isOptional": false,
           "isList": false
         }
+      ],
+      "tags": [
+        "docId"
       ]
     }
   ],

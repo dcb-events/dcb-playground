@@ -3686,10 +3686,15 @@ function choicesOfType(model, slice, choices, propertyType, { list } = {}) {
 
 // ---------- small helpers ----------
 
+// An event edited on the pages keeps its tags in step with its fields
+// (`withEditedTags`): what an author adds of a tag type is listed, and
+// a path the edit emptied is dropped — visibly, on the event's own row.
 function patch(kind, name, mutate) {
   const model = activeModel();
-  const body = deepClone(model[DEF_COLLECTIONS[kind]][name]);
+  const previous = model[DEF_COLLECTIONS[kind]][name];
+  let body = deepClone(previous);
   mutate(body);
+  if (kind === 'event-definition') body = withEditedTags(model, previous, body);
   run(() => updateDefinition(kind, model.id, name, body));
 }
 const patchSlice = (mutate) => patch('command-definition', state.slice, mutate);
@@ -4833,7 +4838,7 @@ function paintPage() {
           stateKey: 'renamingCommand', after: (next) => { state.slice = next; },
         })
       : qrow('div', { cls: 'row', key: 'cmd:' + slice.name },
-          h('button', {
+          !experimental() && !commandIcon(model, slice.name) ? null : h('button', {
             class: 'icon-btn', title: 'Choose the mark this is shown with',
             disabled: !experimental(),
             onclick: () => {
@@ -6422,9 +6427,10 @@ function pruneDanglingEmissionParameters(model, body) {
 // value itself be removed for a reason no longer visible anywhere.
 function removeEventField(model, eventName, index, propertyName) {
   run(() => {
-    const eventBody = deepClone(activeModel()['event-definitions'][eventName]);
+    const previous = activeModel()['event-definitions'][eventName];
+    const eventBody = deepClone(previous);
     eventBody.properties.splice(index, 1);
-    updateDefinition('event-definition', model.id, eventName, eventBody);
+    updateDefinition('event-definition', model.id, eventName, withEditedTags(activeModel(), previous, eventBody));
 
     const changes = [];
     for (const [name, body] of Object.entries(activeModel()['command-definitions'])) {
@@ -6638,12 +6644,12 @@ function changeArguments(model, emission, projectionName) {
   const typesOf = (type) => idLeavesOfType(model, type).map((leaf) => leaf.identifierType);
   return (projection.parameters || []).flatMap((parameter) => {
     const wanted = typesOf(parameter.propertyType);
-    return (event.properties || [])
-      .filter((p) => p && typesOf(p.propertyType).some((type) => wanted.includes(type)))
-      .map((p) => {
-        const operand = (emission.parameters || {})[p.name];
-        return operand !== undefined ? operand : { eventProperty: p.name };
-      });
+    const carriers = uniq(eventTagLeaves(model, event)
+      .filter((leaf) => wanted.includes(leaf.identifierType)).map((leaf) => leaf.property));
+    return carriers.map((name) => {
+      const operand = (emission.parameters || {})[name];
+      return operand !== undefined ? operand : { eventProperty: name };
+    });
   });
 }
 
@@ -6903,7 +6909,8 @@ function copyCommandPropertiesIntoEvent(model, commandName, eventName) {
     .filter((q) => !(event.properties || []).some((p) => p.name === q.name));
   if (!missing.length) return;
   run(() => {
-    const eventBody = deepClone(activeModel()['event-definitions'][eventName]);
+    const previous = activeModel()['event-definitions'][eventName];
+    const eventBody = deepClone(previous);
     eventBody.properties = eventBody.properties || [];
     for (const p of missing) {
       eventBody.properties.push({
@@ -6911,7 +6918,7 @@ function copyCommandPropertiesIntoEvent(model, commandName, eventName) {
         isOptional: p.isOptional, isList: p.isList,
       });
     }
-    updateDefinition('event-definition', model.id, eventName, eventBody);
+    updateDefinition('event-definition', model.id, eventName, withEditedTags(activeModel(), previous, eventBody));
     const commandBody = deepClone(activeModel()['command-definitions'][commandName]);
     const emission = (commandBody.publishes || []).find((x) => x.name === eventName);
     if (emission) {
@@ -9792,7 +9799,7 @@ function eventCard(model, name) {
 
   const pickingIcon = state.eventIconPicker === name;
   card.appendChild(qrow('div', { cls: 'ehead', key: 'event:' + name },
-    h('button', {
+    !experimental() && !eventIcon(model, name) ? null : h('button', {
       class: 'icon-btn event', title: 'Choose the mark this is shown with',
       disabled: !experimental(),
       onclick: () => {
@@ -9805,6 +9812,9 @@ function eventCard(model, name) {
     h('span', { class: 'chip event' }, readable(name)),
     h('span', { class: 'muted tiny' },
       (event.properties || []).length + ' field' + ((event.properties || []).length === 1 ? '' : 's')),
+    h('span', { class: 'muted tiny', title: 'What a query by tag finds this event by' },
+      (event.tags || []).length ? 'tags ' : 'no tags',
+      (event.tags || []).length ? h('code', {}, event.tags.join(', ')) : null),
     h('span', { class: 'muted tiny' }, publishers.length ? 'recorded by '
       + publishers.map((p) => readable(p.command)).join(', ') : 'recorded by nothing yet'),
     h('span', { style: 'flex:1' }),
@@ -9828,6 +9838,7 @@ function eventCard(model, name) {
   if (open) {
     card.appendChild(h('div', { class: 'card event' },
       eventFieldsEditor(model, name, event),
+      eventTagsEditor(model, name, event),
       h('div', { class: 'refs', style: 'margin-top:12px' },
         h('div', { class: 'muted tiny' }, 'Recorded by'),
         publishers.length
@@ -10733,6 +10744,32 @@ function lifecycleRowsView(model, machine, rows, unguardedNames) {
 // particular command — that mapping is `eventFields`' job, on the
 // command's own page, because it is specific to that command's payload
 // and this page is not.
+// Which of the event's values are tags — every tag-typed value it
+// holds, each a toggle, and a listed path that no longer means
+// anything kept in view until it is unticked. Nothing is implied: an
+// unticked value is an ordinary one, and the advisories say so.
+function eventTagsEditor(model, name, event) {
+  const listed = event.tags || [];
+  const candidates = tagPathsOf(model, event.properties || []);
+  const paths = [...listed, ...candidates.filter((path) => !listed.includes(path))];
+  const toggle = (path, on) => patch('event-definition', name, (b) => {
+    b.tags = on ? [...(b.tags || []), path] : (b.tags || []).filter((p) => p !== path);
+  });
+  return h('div', { class: 'refs', style: 'margin-top:12px' },
+    h('div', { class: 'muted tiny' }, 'Tags'),
+    paths.length
+      ? h('div', { class: 'row', style: 'flex-wrap:wrap;gap:10px;margin-top:4px' },
+          paths.map((path) => {
+            const problem = resolveEventTagPath(model, event, path).problem;
+            return h('label', { class: 'tiny', title: problem || null },
+              h('input', {
+                type: 'checkbox', checked: listed.includes(path),
+                onchange: (e) => toggle(path, e.target.checked),
+              }), ' ', problem ? h('span', { class: 'diag-mark' }, '⚠ ') : null, h('code', {}, path));
+          }))
+      : h('div', { class: 'empty tiny' }, 'nothing here is of a tag type'));
+}
+
 function eventFieldsEditor(model, name, event) {
   const where = 'event:' + name;
   const rows = (event.properties || []).map((p, i) => {

@@ -39,13 +39,13 @@ enum CourseStatus { NonExistent, Existent, Archived }
 record PersonName { given: string, family: string }
 
 // Events
-event CourseDefined { courseId: CourseId, capacity: Capacity }
-event CourseCapacityChanged { courseId: CourseId, newCapacity: Capacity }
-event CourseArchived { courseId: CourseId }
-event CourseRescheduled { courseId: CourseId, slots: TimeSlot[] }
-event StudentRegistered { studentId: StudentId, name: PersonName, email?: string }
-event StudentSubscribedToCourse { courseId: CourseId, studentId: StudentId }
-event StudentWaitlistedForCourse { courseId: CourseId, studentId: StudentId }
+event CourseDefined { courseId: CourseId, capacity: Capacity } tags courseId
+event CourseCapacityChanged { courseId: CourseId, newCapacity: Capacity } tags courseId
+event CourseArchived { courseId: CourseId } tags courseId
+event CourseRescheduled { courseId: CourseId, slots: TimeSlot[] } tags courseId
+event StudentRegistered { studentId: StudentId, name: PersonName, email?: string } tags studentId
+event StudentSubscribedToCourse { courseId: CourseId, studentId: StudentId } tags courseId, studentId
+event StudentWaitlistedForCourse { courseId: CourseId, studentId: StudentId } tags courseId, studentId
 
 // Entities
 @icon("📚")
@@ -257,8 +257,8 @@ tag type CourseId = string
     title: 'Custom types',
     href: notationReference('tag-type'),
     prose: [
-      'Named value types. A `tag` type is an identifier: every event carrying a value of it is tagged '
-        + '`CourseId:c1`, and those tags are what a read queries by.',
+      'Named value types. A `tag` type is an identifier: an event listing a value of it among its tags '
+        + 'is tagged `CourseId:c1`, and those tags are what a read queries by.',
     ],
     example: ['type:CourseId', 'type:Capacity', 'type:CourseStatus', 'type:PersonName'],
     syntax: [
@@ -276,8 +276,8 @@ tag type CourseId = string
     title: 'Events',
     href: notationReference('event'),
     prose: [
-      'A fact, named in the past tense, with a payload. Its tags are not declared: they are the values of '
-        + 'its `tag`-typed properties.',
+      'A fact, named in the past tense, with a payload, and the values it is tagged by: `tags` lists '
+        + 'them, and a `tag`-typed value it does not list is an ordinary one.',
     ],
     example: ['event:CourseDefined', 'event:StudentRegistered'],
     syntax: [

@@ -756,6 +756,23 @@ function parseModelSource(text, options = {}) {
     if (is('json')) return define('event-definition', nameToken, annotate('event-definition', jsonBody(), annotations), start);
     expect('{');
     const body = { properties: propertyList('}') };
+    // `tags courseId, items.productId` — the paths the event is tagged
+    // by, after its block. Each part is marked, so a rename of the
+    // property or the record field follows it.
+    if (accept('tags')) {
+      body.tags = [];
+      do {
+        const propertyToken = ident('a property to tag the event by');
+        let path = propertyToken.v;
+        mark(body, `tag:${body.tags.length}:property`, propertyToken);
+        if (accept('.')) {
+          const fieldToken = ident('a record field');
+          path += '.' + fieldToken.v;
+          mark(body, `tag:${body.tags.length}:field`, fieldToken);
+        }
+        body.tags.push(path);
+      } while (accept(','));
+    }
     return define('event-definition', nameToken, annotate('event-definition', body, annotations), start);
   };
 
@@ -1529,7 +1546,15 @@ function printCustomType(name, body) {
 
 function printEvent(name, body) {
   const properties = (body.properties || []).map(sourceProperty);
-  return sourceAnnotations(body, ['icon']) + sourceBlock(`event ${sourceDeclName(name)}`, properties);
+  const tags = body.tags || [];
+  if (!Array.isArray(tags)) unprintable('its tags are not a list');
+  for (const path of tags) {
+    if (typeof path !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/.test(path)) {
+      unprintable(`the tag ${JSON.stringify(path)} is not a property path`);
+    }
+  }
+  const clause = tags.length ? ` tags ${tags.join(', ')}` : '';
+  return sourceAnnotations(body, ['icon']) + sourceBlock(`event ${sourceDeclName(name)}`, properties) + clause;
 }
 
 function printEntity(name, body) {
@@ -2393,6 +2418,15 @@ function sourceSymbols(parsed) {
       add(sourceSymbol('eventProperty', name, property.name), slotsOf(property).name, { decl: true });
       typeRef(slotsOf(property).propertyType);
     }
+    (Array.isArray(body.tags) ? body.tags : []).forEach((path, index) => {
+      if (typeof path !== 'string') return;
+      const [propertyName, fieldName] = path.split('.');
+      add(sourceSymbol('eventProperty', name, propertyName), slotsOf(body)[`tag:${index}:property`]);
+      const property = list(body.properties).find((p) => p && p.name === propertyName);
+      if (fieldName !== undefined && property) {
+        add(sourceSymbol('field', property.propertyType, fieldName), slotsOf(body)[`tag:${index}:field`]);
+      }
+    });
   }
   for (const [name, body] of Object.entries(entities)) {
     if (!declare('entity', name, body)) continue;
@@ -3537,7 +3571,7 @@ function sourceFoldingRanges(text) {
 // ============================================================
 
 const SOURCE_KEYWORDS = [
-  'model', 'type', 'tag', 'enum', 'record', 'event', 'entity', 'lifecycle', 'projection', 'derived',
+  'model', 'type', 'tag', 'tags', 'enum', 'record', 'event', 'entity', 'lifecycle', 'projection', 'derived',
   'script', 'tagFilter', 'initialState', 'exposes', 'on', 'set', 'increment', 'decrement', 'append',
   'remove', 'command', 'alias', 'excluding', 'with', 'require', 'emit', 'when', 'and', 'not', 'is',
   'empty', 'in', 'contains', 'containsAny', 'startsWith', 'endsWith', 'count', 'successor',
