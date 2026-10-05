@@ -556,6 +556,62 @@ function setExperimental(on) {
 }
 function enableExperimentalForSession() { experimentalThisSession = true; }
 
+// ---------- the documentation ----------
+//
+// The help is the documentation itself: the notation guide and its
+// reference on dcb.events, opened in a new tab at the anchor for what
+// the reader is looking at. The page explains nothing twice — an `ⓘ`
+// says the one line a section needs and links on from there.
+//
+// The anchors are a contract with the website: its build fails on a
+// link `helpReferenceLinks` lists that it does not define, so renaming
+// one is a change on both sides. Until the website has pages for what
+// 8.0 added (`tagged`, event `tags`, `alias`, reads in place), those
+// link the nearest page it has — the list of what is owed is in
+// docs/research/2026-10-05-explicit-tags-and-aliases.md.
+
+const NOTATION_GUIDE_URL = 'https://dcb.events/notation/';
+const NOTATION_REFERENCE_URL = 'https://dcb.events/notation/reference/';
+const NOTATION_ANCHORS = [
+  'model', 'comments', 'literals', 'annotations', 'json', 'tag-type', 'type', 'enum', 'record', 'event',
+  'projection', 'on', 'event-data', 'successor', 'current-value', 'entity', 'lifecycle', 'require',
+  'derived', 'script', 'command', 'read', 'read-entity', 'fan-out', 'optional-read', 'with', 'emit',
+  'emit-when', 'consistency-boundary', 'scenario', 'projection-scenario',
+];
+
+function notationReference(anchor) {
+  return NOTATION_ANCHORS.includes(anchor) ? NOTATION_REFERENCE_URL + '#' + anchor : NOTATION_GUIDE_URL;
+}
+
+// Every page of dcb.events this page links to, with its anchor: what
+// the site's build checks against the pages it has just built.
+function helpReferenceLinks() {
+  return [NOTATION_GUIDE_URL, ...NOTATION_ANCHORS.map((anchor) => NOTATION_REFERENCE_URL + '#' + anchor)];
+}
+
+// Where the reference explains a definition. The body decides between
+// the three kinds of projection; the rest are one anchor per kind.
+function docsAnchorFor(kind, body) {
+  if (kind === 'projection-definition' && body) {
+    if (body.script) return 'script';
+    if (body.derived) return 'derived';
+  }
+  return {
+    'custom-type-definition': body && body.isTag ? 'tag-type' : 'type',
+    'event-definition': 'event',
+    'entity-definition': 'entity',
+    'projection-definition': 'projection',
+    'command-definition': 'command',
+    'scenario-definition': 'scenario',
+    'projection-scenario-definition': 'projection-scenario',
+  }[kind] || null;
+}
+
+// The documentation, in a new tab — never in place of the model.
+function openDocs(url) {
+  if (typeof window !== 'undefined' && window.open) window.open(url || NOTATION_GUIDE_URL, '_blank', 'noopener');
+}
+
 // ---------- light / dark ----------
 //
 // Defaults to whatever the system says, same as any other well-behaved
@@ -572,8 +628,11 @@ function enableExperimentalForSession() { experimentalThisSession = true; }
 // it is the host's business — nothing here knows it.
 
 const THEME_KEY = 'dcb-playground:theme';
+// Guarded, like the listeners below: dcb.events loads this file outside
+// a browser to read `helpReferenceLinks`, and nothing at load may need
+// a window there.
 function hostTheme() {
-  const host = window.DCB_PLAYGROUND_HOST;
+  const host = typeof window !== 'undefined' ? window.DCB_PLAYGROUND_HOST : null;
   return host && host.theme && typeof host.theme.get === 'function' ? host.theme : null;
 }
 function theme() {
@@ -602,7 +661,7 @@ function isDark() {
 }
 // Only "system" cares about this firing — an explicit choice already
 // repaints itself the moment it is made.
-if (window.matchMedia) {
+if (typeof window !== 'undefined' && window.matchMedia) {
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
     if (theme() === 'system' && typeof render === 'function') render();
   });

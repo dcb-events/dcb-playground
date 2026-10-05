@@ -29,7 +29,7 @@ sandbox.document.modelContext = {
 // Same order as the <script> tags in index.html — webmcp.js *before*
 // the page script — so a load-time dependency that would break in the
 // browser breaks here too.
-loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js', 'help.js', 'shared.js', 'webmcp-schemas.js', 'webmcp.js'], {
+loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js', 'shared.js', 'webmcp-schemas.js', 'webmcp.js'], {
   withPage: true,
 });
 

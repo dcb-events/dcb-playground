@@ -28,11 +28,11 @@ const { sandbox, store } = createSandbox();
 // scope, not as properties of the context object — the same as they
 // would on `window` in a browser. The trailer hands out the few this
 // drives, the way `generate-examples.js` reaches `PREDEFINED_MODELS`.
-loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js', 'help.js', 'shared.js'], {
+loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js', 'shared.js'], {
   withPage: true,
   trailer: 'globalThis.state = state; globalThis.render = render; globalThis.session = session;'
     + ' globalThis.closeForms = closeForms; globalThis.codeView = codeView;'
-    + ' globalThis.HELP_TOPICS = HELP_TOPICS;',
+    + ' globalThis.NOTATION_GUIDE_URL = NOTATION_GUIDE_URL; globalThis.NOTATION_REFERENCE_URL = NOTATION_REFERENCE_URL;',
 });
 const { check, eq, finish } = makeChecker();
 
@@ -4128,30 +4128,38 @@ function build(index) {
   });
 }
 
-// The help: every topic in one panel, opened at the concept the page
-// is about.
-check('the help shows every topic, and opens at the page\'s own concept', () => {
+// The help is the documentation, opened in a new tab at what the page
+// is about — and the anchors it links are a contract with dcb.events,
+// whose build checks every one of them exists.
+check('the help opens the reference at the page\'s own concept', () => {
   const id = loadPredefinedModel(0);
   sandbox.localStorage.setItem('dcb-playground:model', id);
   sandbox.state.code = false;
   sandbox.state.splash = false;
+  const ref = (anchor) => sandbox.NOTATION_REFERENCE_URL + '#' + anchor;
   const here = (view, extra = {}) => {
     sandbox.state.view = view;
     Object.assign(sandbox.state, extra);
-    return sandbox.helpTopicHere();
+    return sandbox.docsHere();
   };
-  eq(here('slice', { tab: 'definition' }), 'command', 'a command page');
-  eq(here('slice', { tab: 'scenarios' }), 'scenario', 'its scenarios');
+  eq(here('slice', { tab: 'definition' }), ref('command'), 'a command page');
+  eq(here('slice', { tab: 'scenarios' }), ref('scenario'), 'its scenarios');
   eq([here('entity'), here('types'), here('projections'), here('events'), here('lifecycles')],
-    ['entity', 'custom-type', 'projection', 'event', 'lifecycle'], 'the other pages');
-  eq(here('overview'), null, 'a page about no one concept opens at the top');
-
-  sandbox.state.help = { topic: 'rule', land: true, scroll: 0 };
-  const text = textOf(sandbox.helpModal());
-  for (const topic of sandbox.HELP_TOPICS) eq(text.includes(topic.title), true, `${topic.id} is in it`);
-  eq(text.includes('require count(student.subscribedCourseIds) < 10'), true, 'snippets are shown whole');
-  eq(text.includes('reads 4 types, 3 tags, in 3 queries'), true, 'the boundary topic derives');
-  sandbox.state.help = null;
+    [ref('entity'), ref('type'), ref('projection'), ref('event'), ref('lifecycle')], 'the other pages');
+  eq(here('overview'), sandbox.NOTATION_GUIDE_URL, 'a page about no one concept opens the guide');
+  eq(sandbox.docsAnchorFor('projection-definition', { script: {} }), 'script', 'a scripted projection');
+  eq(sandbox.docsAnchorFor('custom-type-definition', { isTag: true }), 'tag-type', 'a tag type');
+  eq(sandbox.notationReference('no-such-anchor'), sandbox.NOTATION_GUIDE_URL, 'an anchor it does not know is the guide');
+  const links = sandbox.helpReferenceLinks();
+  eq(links[0], sandbox.NOTATION_GUIDE_URL, 'the guide');
+  eq(links.every((link) => link.startsWith(sandbox.NOTATION_GUIDE_URL)), true, 'only the notation pages');
+  eq(links.length, 32, 'the anchors the website defines, and no new one before it does');
+  // dcb.events reads the list by loading shared.js with nothing around
+  // it — no window, no document — so loading it must need neither.
+  const bare = require('vm').createContext({});
+  require('vm').runInContext(require('fs').readFileSync(require('path').join(__dirname, 'shared.js'), 'utf8')
+    + '\n;globalThis.links = helpReferenceLinks();', bare);
+  eq(bare.links, links, 'and the same list, read without a browser');
 });
 
 // ---------------------------------------------------------------

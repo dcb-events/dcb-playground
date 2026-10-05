@@ -150,3 +150,9 @@ previous playground until it is bumped. When it is:
   list the build checks.
 - The notation guide's "Advanced" section is labelled experimental, and
   its "Open in Playground" links carry `&experimental`.
+- `scripts/dcb-render/help-links.js` reads `helpReferenceLinks()` from
+  `shared.js` now — `help.js` is gone. shared.js loads in an empty
+  context, as help.js did.
+- The playground's help button and `ⓘ` links open the reference by
+  anchor (`NOTATION_ANCHORS` in shared.js); new anchors join that list
+  only once the website defines them.

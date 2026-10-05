@@ -19,12 +19,11 @@ const { createSandbox, loadApp, makeChecker } = require('./test-harness.js');
 
 const APP = __dirname;
 const { sandbox, store } = createSandbox();
-loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js', 'help.js'], {
+loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js'], {
   trailer: 'globalThis.PREDEFINED_MODELS = PREDEFINED_MODELS; globalThis.SOURCE_KINDS = SOURCE_KINDS;'
     + ' globalThis.DEF_COLLECTIONS = DEF_COLLECTIONS; globalThis.DomainError = DomainError;'
     + ' globalThis.SOURCE_KEYWORDS = SOURCE_KEYWORDS; globalThis.SOURCE_BASE_TYPES = SOURCE_BASE_TYPES;'
-    + ' globalThis.HELP_TOPICS = HELP_TOPICS; globalThis.HELP_MODEL_SOURCE = HELP_MODEL_SOURCE;'
-    + ' globalThis.NOTATION_GUIDE_URL = NOTATION_GUIDE_URL; globalThis.NOTATION_REFERENCE_URL = NOTATION_REFERENCE_URL;',
+    + '',
 });
 const { check, eq, finish } = makeChecker();
 const {
@@ -1133,99 +1132,6 @@ check('a fanned-out read is marked, a projection read lists its events', () => {
   const numbering = sandbox.sourceReadQueries(model(), parseModelSource(modelToSource(model())))
     .find((q) => q.alias === 'courseNumbering');
   eq([numbering.hint, numbering.tags, numbering.unread], ['‹reads 1 type›', [], []], 'a projection read');
-});
-
-// ---------------------------------------------------------------
-// The help's example. Every snippet the help shows is cut from one
-// text, so holding that text to what a shipped model is held to is
-// holding every snippet to it: it parses, it is exactly what the
-// printer writes, it applies with nothing to advise, and the Thens it
-// asserts are what the model does.
-// ---------------------------------------------------------------
-
-const { HELP_TOPICS, HELP_MODEL_SOURCE } = sandbox;
-
-function helpModel() {
-  fresh();
-  const id = sandbox.createDcbModel('Help');
-  applyModelSource(id, HELP_MODEL_SOURCE);
-  return projectState()[id];
-}
-
-check('the help\'s example is a whole, clean model in its canonical spelling', () => {
-  const parsed = parseModelSource(HELP_MODEL_SOURCE);
-  eq(parsed.diagnostics, [], 'diagnostics');
-  const model = helpModel();
-  eq(modelToSource(model) === HELP_MODEL_SOURCE, true, 'printed back exactly as written');
-  eq(sandbox.modelAdvisories(model), [], 'advisories');
-  const report = sandbox.sourceScenarioReport(model, parseModelSource(HELP_MODEL_SOURCE));
-  eq([report.errors, report.warnings], [[], []], 'every written Then holds');
-  eq(Object.keys(model['scenario-definitions']).length + Object.keys(model['projection-scenario-definitions']).length,
-    3, 'and there are Thens to hold');
-});
-
-check('every help topic resolves: its snippet, its links, its commands', () => {
-  const ids = HELP_TOPICS.map((topic) => topic.id);
-  eq(new Set(ids).size, ids.length, 'ids are unique');
-  const model = helpModel();
-  for (const topic of HELP_TOPICS) {
-    sandbox.helpExcerpt(topic); // throws on a declaration the example does not have
-    if (topic.text) eq(parseModelSource(topic.text).diagnostics, [], `${topic.id}: its own text parses`);
-    const prose = [...topic.prose, ...(topic.syntax || []).map(([, meaning]) => meaning)];
-    for (const run of prose.flatMap((text) => sandbox.helpRuns(text))) {
-      if (run.link !== undefined) eq(ids.includes(run.link), true, `${topic.id}: links to ${run.link}`);
-    }
-    for (const name of topic.boundaryOf || []) {
-      eq(name in model['command-definitions'], true, `${topic.id}: ${name} is in the example`);
-    }
-  }
-  for (const kind of [...SOURCE_KINDS, 'scenario-definition', 'projection-scenario-definition']) {
-    eq(ids.includes(sandbox.helpTopicFor(kind, {})), true, `${kind} has a topic`);
-  }
-  eq(sandbox.helpTopicFor('projection-definition', model['projection-definitions'].CourseIsFull), 'derived-projection', 'derived');
-  eq(sandbox.helpTopicFor('projection-definition', model['projection-definitions'].CoursePeakSubscriptions),
-    'scripted-projection', 'scripted');
-});
-
-// Which anchors exist is the site's to say — its build checks every
-// link `helpReferenceLinks` lists. Here: that there is one everywhere.
-check('every help topic and syntax row links into the notation pages on dcb.events', () => {
-  for (const topic of HELP_TOPICS) {
-    eq(typeof topic.href === 'string' && topic.href.startsWith(sandbox.NOTATION_GUIDE_URL), true, `${topic.id}: links the notation`);
-    for (const row of topic.syntax || []) eq(typeof row[2], 'string', `${topic.id}: ${row[0]} names its reference entry`);
-  }
-  const links = sandbox.helpReferenceLinks();
-  eq(links.every((link) => link.startsWith(sandbox.NOTATION_GUIDE_URL)), true, 'only the notation pages');
-  eq(links.includes(sandbox.NOTATION_REFERENCE_URL + '#emit-when'), true, 'rows included');
-});
-
-// The boundary topic's prose makes claims about the example; these are
-// the claims, so a change to the example that falsifies one fails here
-// rather than in a reader's head.
-check('what the help says about the example\'s boundaries is what they derive', () => {
-  const topic = HELP_TOPICS.find((t) => t.id === 'consistency-boundary');
-  const derived = Object.fromEntries(sandbox.helpBoundaries(topic).map((b) => [b.command, b]));
-  eq(derived.ChangeCourseCapacity.types.includes('CourseArchived'), true, 'a capacity change minds an archive');
-  eq(derived.ArchiveCourse.types.includes('CourseCapacityChanged'), false, 'an archive does not mind a capacity change');
-  eq(derived.SubscribeStudentToCourse.types.includes('CourseCapacityChanged'), true,
-    'isFull reads what its operands read');
-  eq(derived.RescheduleCourse.queries.length, 3, 'a chain three reads deep is three queries');
-});
-
-check('a shown snippet is coloured by the parser\'s own words', () => {
-  for (const text of [HELP_MODEL_SOURCE, ...HELP_TOPICS.filter((t) => t.text).map((t) => t.text)]) {
-    eq(sandbox.sourceHighlight(text).map(([, part]) => part).join('') === text, true, 'the runs are the text');
-  }
-  const runs = sandbox.sourceHighlight('// Commands\n@feature("A")\ncommand C(n: integer) {\n'
-    + '  alias c = Course tagged n /* x */\n  require c.status == Existent\n  emit E { courseId: event }\n}');
-  const classOf = (part) => (runs.find(([, p]) => p === part) || [])[0];
-  eq(classOf('// Commands'), 'comment', 'line comment');
-  eq(classOf('/* x */'), 'comment', 'block comment');
-  eq([classOf('@'), classOf('feature')], ['annotation', 'annotation'], 'annotation');
-  eq(classOf('"A"'), 'string', 'string');
-  eq([classOf('command'), classOf('require')], ['keyword', 'flow'], 'keyword and statement');
-  eq([classOf('Course'), classOf('integer')], ['type', 'type'], 'named and base type');
-  eq([classOf('c'), classOf('status')], [null, null], 'names stay plain');
 });
 
 finish();

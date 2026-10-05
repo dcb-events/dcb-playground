@@ -39,19 +39,8 @@ documentation; read it before editing the file:
   language, parses it back with positioned diagnostics, and applies a text
   as the difference (`replaceDefinitions`, model.js — one append). Also the
   Monaco grammar, as data. No DOM. The Code view in index.html is its UI.
-- `help.js` — the help modal's content, as data: one topic per concept,
-  each with a DCB-notation snippet *cut from one example model*
-  (`HELP_MODEL_SOURCE`, by declaration name), never a second copy. A test
-  holds that model canonical, advisory-clean and its scenarios passing,
-  so a grammar change that breaks a help snippet fails the suite.
-  `openHelp(topicId)` (index.html) opens the modal at a topic;
-  `helpTopicFor(kind, body)` maps a definition to its topic. No DOM.
-  The help is the short version: the notation is explained in full on
-  dcb.events (`/notation/`, a guide and a reference), and every topic
-  and syntax row links its reference entry by anchor. The website's
-  build fails on a link `helpReferenceLinks()` lists that it does not
-  define, so renaming an anchor is a change on both sides.
-- `shared.js` — DOM helpers (`h(...)`), the experimental flag, the scripted-
+- `shared.js` — DOM helpers (`h(...)`), the experimental flag, the links
+  into the documentation, the scripted-
   handler editor (Monaco behind a synthesized per-handler TypeScript preamble
   — the synthesis is pure and tested, the widget is not), and the _slice_
   view (everything one command touches, derived from the definitions — the
@@ -96,6 +85,16 @@ it never works from `file:`.
 
 ## Conventions and gotchas
 
+- **The help is the documentation on dcb.events** — the notation guide
+  and its reference, opened in a new tab (`openDocs`, shared.js) at the
+  anchor for what the page is about (`docsHere`: the construct under the
+  cursor in the code view, the page's kind elsewhere, the guide
+  otherwise). There is no help modal any more; an `ⓘ` keeps its one
+  line and links the reference. The anchors (`NOTATION_ANCHORS`) are a
+  contract with the website: its build fails on a link
+  `helpReferenceLinks()` lists that it does not define, so an anchor is
+  added or renamed on both sides — until the website catches up with
+  8.0, new constructs link the nearest existing one.
 - **The experimental flag gates authoring, never reading**
   (`experimental()`, shared.js; it replaced the simple/advanced mode).
   What DCB is made of — types, events, projections, commands, the
