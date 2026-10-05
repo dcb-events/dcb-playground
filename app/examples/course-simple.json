@@ -127,60 +127,8 @@
       ]
     }
   ],
-  "entityDefinitions": [
-    {
-      "name": "Student",
-      "icon": "🧑‍🎓",
-      "properties": [
-        {
-          "name": "subscriptionCount",
-          "projection": "StudentSubscriptionCount"
-        }
-      ]
-    },
-    {
-      "name": "Course",
-      "icon": "📚",
-      "properties": [
-        {
-          "name": "status",
-          "projection": "CourseStatus"
-        },
-        {
-          "name": "capacity",
-          "projection": "CourseCapacity"
-        },
-        {
-          "name": "subscriptionCount",
-          "projection": "CourseSubscriptionCount"
-        },
-        {
-          "name": "subscribedStudentIds",
-          "projection": "CourseSubscribedStudentIds"
-        }
-      ],
-      "lifecycle": "status"
-    }
-  ],
+  "entityDefinitions": [],
   "projectionDefinitions": [
-    {
-      "name": "StudentSubscriptionCount",
-      "valueType": "integer",
-      "isList": false,
-      "initialValue": 0,
-      "handlers": [
-        {
-          "event": "StudentSubscribedToCourse",
-          "operation": "increment",
-          "value": 1
-        },
-        {
-          "event": "StudentUnsubscribedFromCourse",
-          "operation": "decrement",
-          "value": 1
-        }
-      ]
-    },
     {
       "name": "CourseStatus",
       "valueType": "CourseStatus",
@@ -228,24 +176,6 @@
       ]
     },
     {
-      "name": "CourseSubscriptionCount",
-      "valueType": "integer",
-      "isList": false,
-      "initialValue": 0,
-      "handlers": [
-        {
-          "event": "StudentSubscribedToCourse",
-          "operation": "increment",
-          "value": 1
-        },
-        {
-          "event": "StudentUnsubscribedFromCourse",
-          "operation": "decrement",
-          "value": 1
-        }
-      ]
-    },
-    {
       "name": "CourseSubscribedStudentIds",
       "valueType": "StudentId",
       "isList": true,
@@ -266,12 +196,29 @@
           }
         }
       ]
+    },
+    {
+      "name": "SubscriptionCount",
+      "valueType": "integer",
+      "isList": false,
+      "initialValue": 0,
+      "handlers": [
+        {
+          "event": "StudentSubscribedToCourse",
+          "operation": "increment",
+          "value": 1
+        },
+        {
+          "event": "StudentUnsubscribedFromCourse",
+          "operation": "decrement",
+          "value": 1
+        }
+      ]
     }
   ],
   "commandDefinitions": [
     {
       "name": "DefineCourse",
-      "feature": "Course management",
       "properties": [
         {
           "name": "courseId",
@@ -286,20 +233,16 @@
           "isList": false
         }
       ],
-      "boundary": [
-        {
-          "alias": "course",
-          "entity": "Course",
-          "id": {
-            "parameterName": "courseId"
-          }
-        }
-      ],
+      "boundary": [],
       "conditions": [
         {
           "leftHandSide": {
-            "alias": "course",
-            "property": "status"
+            "projection": "CourseStatus",
+            "tags": [
+              {
+                "parameterName": "courseId"
+              }
+            ]
           },
           "predicate": "equals",
           "rightHandSide": {
@@ -320,12 +263,10 @@
             }
           }
         }
-      ],
-      "icon": "📚"
+      ]
     },
     {
       "name": "ChangeCourseCapacity",
-      "feature": "Course management",
       "properties": [
         {
           "name": "courseId",
@@ -340,20 +281,16 @@
           "isList": false
         }
       ],
-      "boundary": [
-        {
-          "alias": "course",
-          "entity": "Course",
-          "id": {
-            "parameterName": "courseId"
-          }
-        }
-      ],
+      "boundary": [],
       "conditions": [
         {
           "leftHandSide": {
-            "alias": "course",
-            "property": "status"
+            "projection": "CourseStatus",
+            "tags": [
+              {
+                "parameterName": "courseId"
+              }
+            ]
           },
           "predicate": "equals",
           "rightHandSide": {
@@ -363,8 +300,12 @@
         },
         {
           "leftHandSide": {
-            "alias": "course",
-            "property": "subscriptionCount"
+            "projection": "SubscriptionCount",
+            "tags": [
+              {
+                "parameterName": "courseId"
+              }
+            ]
           },
           "predicate": "lessThanOrEquals",
           "rightHandSide": {
@@ -374,8 +315,12 @@
         },
         {
           "leftHandSide": {
-            "alias": "course",
-            "property": "capacity"
+            "projection": "CourseCapacity",
+            "tags": [
+              {
+                "parameterName": "courseId"
+              }
+            ]
           },
           "predicate": "equals",
           "rightHandSide": {
@@ -397,12 +342,10 @@
             }
           }
         }
-      ],
-      "icon": "﹟"
+      ]
     },
     {
       "name": "ArchiveCourse",
-      "feature": "Course management",
       "properties": [
         {
           "name": "courseId",
@@ -411,20 +354,16 @@
           "isList": false
         }
       ],
-      "boundary": [
-        {
-          "alias": "course",
-          "entity": "Course",
-          "id": {
-            "parameterName": "courseId"
-          }
-        }
-      ],
+      "boundary": [],
       "conditions": [
         {
           "leftHandSide": {
-            "alias": "course",
-            "property": "status"
+            "projection": "CourseStatus",
+            "tags": [
+              {
+                "parameterName": "courseId"
+              }
+            ]
           },
           "predicate": "equals",
           "rightHandSide": {
@@ -442,12 +381,10 @@
             }
           }
         }
-      ],
-      "icon": "🗑️"
+      ]
     },
     {
       "name": "SubscribeStudentToCourse",
-      "feature": "Enrolment",
       "properties": [
         {
           "name": "courseId",
@@ -462,27 +399,16 @@
           "isList": false
         }
       ],
-      "boundary": [
-        {
-          "alias": "course",
-          "entity": "Course",
-          "id": {
-            "parameterName": "courseId"
-          }
-        },
-        {
-          "alias": "student",
-          "entity": "Student",
-          "id": {
-            "parameterName": "studentId"
-          }
-        }
-      ],
+      "boundary": [],
       "conditions": [
         {
           "leftHandSide": {
-            "alias": "course",
-            "property": "status"
+            "projection": "CourseStatus",
+            "tags": [
+              {
+                "parameterName": "courseId"
+              }
+            ]
           },
           "predicate": "equals",
           "rightHandSide": {
@@ -492,20 +418,32 @@
         },
         {
           "leftHandSide": {
-            "alias": "course",
-            "property": "subscriptionCount"
+            "projection": "SubscriptionCount",
+            "tags": [
+              {
+                "parameterName": "courseId"
+              }
+            ]
           },
           "predicate": "lessThan",
           "rightHandSide": {
-            "alias": "course",
-            "property": "capacity"
+            "projection": "CourseCapacity",
+            "tags": [
+              {
+                "parameterName": "courseId"
+              }
+            ]
           },
           "rejection": "Course is full"
         },
         {
           "leftHandSide": {
-            "alias": "course",
-            "property": "subscribedStudentIds"
+            "projection": "CourseSubscribedStudentIds",
+            "tags": [
+              {
+                "parameterName": "courseId"
+              }
+            ]
           },
           "predicate": "contains",
           "rightHandSide": {
@@ -516,8 +454,12 @@
         },
         {
           "leftHandSide": {
-            "alias": "student",
-            "property": "subscriptionCount"
+            "projection": "SubscriptionCount",
+            "tags": [
+              {
+                "parameterName": "studentId"
+              }
+            ]
           },
           "predicate": "lessThan",
           "rightHandSide": 10,
@@ -536,12 +478,10 @@
             }
           }
         }
-      ],
-      "icon": "🙋"
+      ]
     },
     {
       "name": "UnsubscribeStudentFromCourse",
-      "feature": "Enrolment",
       "properties": [
         {
           "name": "courseId",
@@ -556,20 +496,16 @@
           "isList": false
         }
       ],
-      "boundary": [
-        {
-          "alias": "course",
-          "entity": "Course",
-          "id": {
-            "parameterName": "courseId"
-          }
-        }
-      ],
+      "boundary": [],
       "conditions": [
         {
           "leftHandSide": {
-            "alias": "course",
-            "property": "status"
+            "projection": "CourseStatus",
+            "tags": [
+              {
+                "parameterName": "courseId"
+              }
+            ]
           },
           "predicate": "equals",
           "rightHandSide": {
@@ -579,8 +515,12 @@
         },
         {
           "leftHandSide": {
-            "alias": "course",
-            "property": "subscribedStudentIds"
+            "projection": "CourseSubscribedStudentIds",
+            "tags": [
+              {
+                "parameterName": "courseId"
+              }
+            ]
           },
           "predicate": "contains",
           "rightHandSide": {
@@ -601,8 +541,7 @@
             }
           }
         }
-      ],
-      "icon": "🙅‍♂️"
+      ]
     }
   ],
   "scenarioDefinitions": [
@@ -1192,65 +1131,6 @@
       }
     }
   ],
-  "sandbox": {
-    "steps": [
-      {
-        "command": "DefineCourse",
-        "args": {
-          "courseId": "course1",
-          "capacity": 30
-        }
-      },
-      {
-        "command": "ChangeCourseCapacity",
-        "args": {
-          "courseId": "course1",
-          "newCapacity": 35
-        }
-      },
-      {
-        "command": "SubscribeStudentToCourse",
-        "args": {
-          "courseId": "course1",
-          "studentId": "student1"
-        }
-      },
-      {
-        "command": "SubscribeStudentToCourse",
-        "args": {
-          "courseId": "course1",
-          "studentId": "student2"
-        }
-      },
-      {
-        "command": "DefineCourse",
-        "args": {
-          "courseId": "course2",
-          "capacity": 20
-        }
-      },
-      {
-        "command": "SubscribeStudentToCourse",
-        "args": {
-          "courseId": "course2",
-          "studentId": "student1"
-        }
-      },
-      {
-        "command": "SubscribeStudentToCourse",
-        "args": {
-          "courseId": "course2",
-          "studentId": "student3"
-        }
-      },
-      {
-        "command": "ArchiveCourse",
-        "args": {
-          "courseId": "course1"
-        }
-      }
-    ]
-  },
   "projectionScenarioDefinitions": [
     {
       "id": "e281e4cd-1be9-19a9-8817-7da08a1f7532",
@@ -1278,7 +1158,7 @@
     },
     {
       "id": "232b59bc-f685-9af3-3556-72c5e8af32f0",
-      "projection": "CourseSubscriptionCount",
+      "projection": "SubscriptionCount",
       "tags": [
         {
           "tagType": "CourseId",
@@ -1342,7 +1222,7 @@
     },
     {
       "id": "665765f2-7c79-46ce-d68e-ec02c248c5ea",
-      "projection": "CourseSubscriptionCount",
+      "projection": "SubscriptionCount",
       "tags": [
         {
           "tagType": "CourseId",
@@ -1483,7 +1363,7 @@
     },
     {
       "id": "76a87201-51ff-da61-b1ce-7852f71982c0",
-      "projection": "CourseSubscriptionCount",
+      "projection": "SubscriptionCount",
       "tags": [
         {
           "tagType": "CourseId",
@@ -1567,7 +1447,7 @@
     },
     {
       "id": "6855d6ad-ab98-5684-0992-18d16fa5e9b1",
-      "projection": "StudentSubscriptionCount",
+      "projection": "SubscriptionCount",
       "tags": [
         {
           "tagType": "StudentId",
@@ -1579,7 +1459,7 @@
     },
     {
       "id": "7647ef77-6908-6602-aa17-39b63f6f9700",
-      "projection": "StudentSubscriptionCount",
+      "projection": "SubscriptionCount",
       "tags": [
         {
           "tagType": "StudentId",
@@ -1611,5 +1491,64 @@
       ],
       "then": 1
     }
-  ]
+  ],
+  "sandbox": {
+    "steps": [
+      {
+        "command": "DefineCourse",
+        "args": {
+          "courseId": "course1",
+          "capacity": 30
+        }
+      },
+      {
+        "command": "ChangeCourseCapacity",
+        "args": {
+          "courseId": "course1",
+          "newCapacity": 35
+        }
+      },
+      {
+        "command": "SubscribeStudentToCourse",
+        "args": {
+          "courseId": "course1",
+          "studentId": "student1"
+        }
+      },
+      {
+        "command": "SubscribeStudentToCourse",
+        "args": {
+          "courseId": "course1",
+          "studentId": "student2"
+        }
+      },
+      {
+        "command": "DefineCourse",
+        "args": {
+          "courseId": "course2",
+          "capacity": 20
+        }
+      },
+      {
+        "command": "SubscribeStudentToCourse",
+        "args": {
+          "courseId": "course2",
+          "studentId": "student1"
+        }
+      },
+      {
+        "command": "SubscribeStudentToCourse",
+        "args": {
+          "courseId": "course2",
+          "studentId": "student3"
+        }
+      },
+      {
+        "command": "ArchiveCourse",
+        "args": {
+          "courseId": "course1"
+        }
+      }
+    ]
+  }
 }

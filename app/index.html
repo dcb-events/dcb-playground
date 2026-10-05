@@ -1633,7 +1633,7 @@ function modelsModal() {
     h('div', { class: 'setting' }, h('h4', {}, 'Start a new one'), startNew),
     h('div', { class: 'setting' },
       h('h4', {}, 'Or try an example'),
-      PREDEFINED_MODELS.map((entry) => h('button', {
+      shippedModels().map((entry) => h('button', {
         class: 'choice',
         onclick: () => runAsync(async () =>
           beginImport(await loadModelFromUrl('examples/' + entry.slug + '.json'))),
@@ -1723,7 +1723,7 @@ function renderSplash(main) {
     h('div', { class: 'splash-section' },
       h('h2', {}, 'Examples'),
       h('div', { class: 'splash-examples' },
-        PREDEFINED_MODELS.map((entry) => h('button', {
+        shippedModels().map((entry) => h('button', {
           class: 'splash-example',
           onclick: () => runAsync(async () =>
             beginImport(await loadModelFromUrl('examples/' + entry.slug + '.json'))),
@@ -1751,6 +1751,15 @@ function renderSplash(main) {
 
     h('div', { class: 'splash-footer' }, 'Built around the Dynamic Consistency Boundary pattern — ',
       h('a', { href: 'https://dcb.events', target: '_blank', rel: 'noopener' }, 'dcb.events ↗'))));
+}
+
+// The shipped models on offer: every one with the experimental flag on,
+// and without it only those using nothing experimental. Whether one
+// does is its entry's `experimental`, which a test derives from the
+// built model's own features (`experimentalFeatures`) — so the list
+// cannot drift from the flag, though nothing is built to draw it.
+function shippedModels() {
+  return PREDEFINED_MODELS.filter((entry) => experimental() || !entry.experimental);
 }
 
 const NEW = ' new';         // sentinel row in a picker
@@ -8012,7 +8021,7 @@ function projectionDetail(model, entry, { owner }) {
   const { projection, binding } = entry;
   const draft = state.projDraft.body;
   const entries = projectionScenariosFor(model, projection);
-  const tab = state.projTab === 'checks' && (experimental() || entries.length) ? 'checks' : 'definition';
+  const tab = state.projTab === 'checks' ? 'checks' : 'definition';
   const trouble = entries.filter((e) => {
     const status = runProjectionScenario(model, e.body).status;
     return status === 'drifted' || status === 'broken';
@@ -8079,11 +8088,9 @@ function projectionDetail(model, entry, { owner }) {
   },
     h('div', { class: 'tabs' },
       tabButton('definition', 'Definition'),
-      // Projection scenarios are experimental; a projection that has
-      // some keeps its tab either way.
-      experimental() || entries.length ? tabButton('checks', 'Checks', entries.length
+      tabButton('checks', 'Checks', entries.length
         ? h('span', { class: 'badge' + (trouble ? '' : ' clear') }, trouble || entries.length)
-        : null) : null),
+        : null)),
     renameForm,
     tab === 'checks' ? projectionChecks(model, projection) : definition,
     tab === 'definition' ? projectionDetailFoot(model, entry, { owner }) : null);

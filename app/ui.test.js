@@ -32,6 +32,7 @@ loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js', 'shared.js'], {
   withPage: true,
   trailer: 'globalThis.state = state; globalThis.render = render; globalThis.session = session;'
     + ' globalThis.closeForms = closeForms; globalThis.codeView = codeView;'
+    + ' globalThis.PREDEFINED_MODELS = PREDEFINED_MODELS;'
     + ' globalThis.NOTATION_GUIDE_URL = NOTATION_GUIDE_URL; globalThis.NOTATION_REFERENCE_URL = NOTATION_REFERENCE_URL;',
 });
 const { check, eq, finish } = makeChecker();
@@ -54,6 +55,26 @@ function addTaggedEvent(id, name, body) {
   return sandbox.addDefinition('event-definition', id, name, { ...body, tags });
 }
 
+// The course example with entities — what `course-simple` was before the
+// shipped models were stated without them. Tests about entities,
+// lifecycles and entity reads build this one.
+const ENTITIES = sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-entities');
+// Entities and a numbering both: the one shipped model that still has
+// the two together.
+const SCHEDULES = sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-schedules');
+
+// A model built from seed layers alone — the entity form a shipped
+// model is stated without (`seedWithoutEntities`), for the tests about
+// entities and lifecycles that the shipped forms no longer have.
+function seeded(name, ...seeds) {
+  store.clear();
+  sandbox.bumpLogRevision();
+  store.set('dcb-playground:experimental', 'on');
+  const id = sandbox.createDcbModel(name);
+  for (const seed of seeds) sandbox[seed](id);
+  return { id, model: () => projectState()[id] };
+}
+
 function build(index) {
   // Clearing the store is a write `appendEvents` never sees, so the
   // projection cache is told the world moved underneath it.
@@ -70,7 +91,7 @@ function build(index) {
 // The draft a projection is edited as, and the body it becomes.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
 
   check('a draft round-trips a declared projection unchanged', () => {
     const stored = model()['projection-definitions'].CourseCapacity;
@@ -249,7 +270,7 @@ function build(index) {
 // A new projection's draft, and the name a new property gives one.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
 
   check('a blank draft is valid the moment it is created', () => {
     const draft = blankProjectionDraft(model());
@@ -399,7 +420,7 @@ function build(index) {
 // Properties and projections, seen from either side.
 // ---------------------------------------------------------------
 {
-  const { model } = build(0);
+  const { model } = build(ENTITIES);
 
   check('a property resolves to the projection it binds', () => {
     const { binding, projection } = entityPropertyTarget(model(), 'Course', 'capacity');
@@ -627,7 +648,7 @@ function build(index) {
 // be the worst kind of passing test.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
   // `run` repaints on success, and a repaint reads whichever model is
   // open — which is stored, not held — so a gesture cannot be driven
   // until one has been opened.
@@ -1015,14 +1036,13 @@ function build(index) {
     eq(sandbox.state.projDraft.name, 'CourseNumbering', 'and that row is the projection it reads');
   });
 
-  check('a scenario over a bound projection opens on its entity', () => {
+  check('a scenario over a projection opens where the projection is edited', () => {
     const key = add({
-      projection: 'CourseCapacity', arguments: { courseId: 'c1' },
+      projection: 'CourseCapacity', tags: [{ tagType: 'CourseId', tagValue: 'c1' }],
       given: [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 4 } }],
     });
     sandbox.goToProjectionScenario(model(), key);
-    eq(sandbox.state.view, 'entity', 'a bound projection is edited on its entity');
-    eq(sandbox.state.entity, 'Course', 'the one that binds it');
+    eq(sandbox.state.view, 'projections', 'no entity binds it, so the Projections page');
     eq(sandbox.state.projTab, 'checks', 'with the row open on its checks');
     sandbox.render();
   });
@@ -1065,9 +1085,8 @@ function build(index) {
     sandbox.startProjectionScenario(model(), { projection: 'CourseCapacity' });
     sandbox.state.projectionScenarioDraft.body.tags[0].tagValue = 'c1';
     const main = sandbox.document.createElement('div');
-    sandbox.state.view = 'entity';
-    sandbox.state.entity = 'Course';
-    sandbox.renderEntity(model(), main);
+    sandbox.state.view = 'projections';
+    sandbox.renderProjections(model(), main);
 
     const fields = findAll(main, (n) => n.tag === 'input' && n.className === 'vin');
     eq(fields.length, 1, 'one field, for the one tag it is read by');
@@ -1096,7 +1115,7 @@ function build(index) {
     eq(sandbox.state.view, 'projections', 'started where the projection lives');
     sandbox.render();
     sandbox.startProjectionScenario(model(), { projection: 'CourseCapacity' });
-    eq(sandbox.state.entity, 'Course', 'and this one on the entity that binds it');
+    eq(sandbox.state.view, 'projections', 'and this one too — no entity binds it');
     sandbox.render();
     sandbox.state.projectionScenarioDraft = null;
     sandbox.state.projDraft = null;
@@ -1108,7 +1127,9 @@ function build(index) {
 // The ledger: one component, two pages.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(1);
+  const { id, model } = build(SCHEDULES);
+  // Its numbering's scenarios, which the sequence model ships with.
+  sandbox.seedSequenceScenarios(id);
   store.set('dcb-playground:model', id);
   const page = () => {
     const main = sandbox.document.createElement('div');
@@ -1242,7 +1263,7 @@ function build(index) {
 // gesture that moves on, and a name is what makes a field real.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
   store.set('dcb-playground:model', id);
 
   const type = (adder, text) => {
@@ -1347,7 +1368,7 @@ function build(index) {
 // every step it holds back is one click from being shown.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
   store.set('dcb-playground:model', id);
 
   const slice = () => sandbox.sliceOf(model(), 'CertifyCourse');
@@ -1432,7 +1453,7 @@ function build(index) {
 // made is the thing selected, and the command never leaves the screen.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
   store.set('dcb-playground:model', id);
 
   const drive = (form, text, buttonLabel) => {
@@ -1541,7 +1562,7 @@ function build(index) {
 // and Escape discards whatever state the row was in.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
   store.set('dcb-playground:model', id);
   const LITERAL = ' literal';
 
@@ -1717,7 +1738,7 @@ function build(index) {
 // keeps it honest — and undo, not a Discard button, is the way back.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
   store.set('dcb-playground:model', id);
 
   check('an edited definition is stored without a Save press, row still open', () => {
@@ -1809,7 +1830,7 @@ function build(index) {
 // watched values in it — on a sandbox watch.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
   store.set('dcb-playground:model', id);
   store.set('dcb-playground:experimental', 'on');
 
@@ -1869,7 +1890,7 @@ function build(index) {
 // page read its effect as "undefined".
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
   store.set('dcb-playground:model', id);
 
   check('a half-picked handler is not stored, and the finished one is', () => {
@@ -1948,7 +1969,7 @@ function build(index) {
 // interface honest about what the write path now lets in.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
   store.set('dcb-playground:model', id);
 
   check('a model full of dangling references still renders every page', () => {
@@ -2135,7 +2156,7 @@ function build(index) {
 // mean "into this group", never "at this position".
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
 
   check('commands within a feature sit alphabetically, wherever they were added', () => {
     const feature = sandbox.featureOf(Object.values(model()['command-definitions'])[0]);
@@ -2262,7 +2283,7 @@ function build(index) {
   });
 
   check('the predefined models synthesize cleanly', () => {
-    const { model: projected } = build(0);
+    const { model: projected } = build(ENTITIES);
     const [eventName] = Object.keys(projected()['event-definitions']);
     const text = scriptHandlerPreamble(projected(),
       { valueType: 'integer', script: { initialState: null, arguments: [] } },
@@ -2282,7 +2303,7 @@ function build(index) {
     lifecycleMachines(model).machines.find((m) => m.entity === entity);
 
   check('the base course model derives both machines', () => {
-    const { model } = build(0);
+    const { model } = build(ENTITIES);
     const course = machineOf(model(), 'Course');
     eq(course.states, ['NonExistent', 'Existent', 'Archived'], 'the enum is the states');
     eq(course.initial, 'NonExistent', 'the projection initial value is the entry state');
@@ -2303,7 +2324,7 @@ function build(index) {
   });
 
   check('a command with no rule over a lifecycle it binds is unguarded', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     // Built for the purpose rather than borrowed from a shipped model:
     // a command that *binds* a student and never tests whether it
     // exists. The shipped Unsubscribe used to be that example, until it
@@ -2331,7 +2352,8 @@ function build(index) {
   });
 
   check('an unguarded transition is drawn from the initial state, by convention', () => {
-    const { model } = build(1); // the sequence layer drops DefineCourse's status rule
+    // The sequence layer drops DefineCourse's status rule.
+    const { model } = seeded('Sequence with entities', 'seedBase', 'seedAddSequence');
     const course = machineOf(model(), 'Course');
     const defined = course.transitions.find((t) => t.event === 'CourseDefined');
     eq(defined.unguarded, true, 'the numbering guards it, the status does not');
@@ -2341,7 +2363,7 @@ function build(index) {
   });
 
   check('the pricing model derives across both entities', () => {
-    const { model } = build(4);
+    const { model } = seeded('Pricing with entities', 'seedProductPricing');
     const order = machineOf(model(), 'Order');
     eq(order.states, ['false', 'true'], 'a boolean lifecycle is a two-state machine');
     eq(order.compact, true, 'and the page draws it as a row, not a diagram');
@@ -2354,7 +2376,7 @@ function build(index) {
   });
 
   check('an entity designating no lifecycle is excluded with its reason', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     addDefinition('entity-definition', id, 'Room', { properties: [] });
     const { machines, excluded } = lifecycleMachines(model());
     eq(machines.some((m) => m.entity === 'Room'), false, 'no machine without a designation');
@@ -2362,7 +2384,7 @@ function build(index) {
   });
 
   check('a scripted lifecycle is excluded, not advised against', () => {
-    const { model } = build(5);   // content-decisions-scripted
+    const { model } = seeded('Scripted with entities', 'seedContentDecisionsScripted');
     const { machines, excluded } = lifecycleMachines(model());
     eq(machines.some((m) => m.entity === 'Document'), false, 'no machine can be read from a script');
     eq(excluded.find((e) => e.entity === 'Document').reason, 'scripted', 'the page says why');
@@ -2374,7 +2396,7 @@ function build(index) {
   });
 
   check('a negated status rule allows the complement', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     const body = sandbox.deepClone(model()['command-definitions'].ArchiveCourse);
     body.conditions[0].negate = true;
     updateDefinition('command-definition', id, 'ArchiveCourse', body);
@@ -2387,7 +2409,7 @@ function build(index) {
   // derivation reads it — but only a list of member references; a bare
   // literal makes the rule unreadable, not guessed at.
   const archiveGuardedBy = (rightHandSide, negate) => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     const body = sandbox.deepClone(model()['command-definitions'].ArchiveCourse);
     body.conditions = [{
       leftHandSide: { alias: 'course', property: 'status' },
@@ -2432,7 +2454,7 @@ function build(index) {
   // A student is the two-state case in every shipped model, so it is
   // what a promotion is exercised against.
   const promoted = () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
     sandbox.mergeIntoLifecycle(model(), 'Student', {
       typeName: 'StudentStatus', property: 'status', initialState: 'NonExistent',
@@ -2483,7 +2505,7 @@ function build(index) {
   check('two hand-added booleans merge into one lifecycle', () => {
     // The case the first cut of the suggestion missed entirely: neither
     // boolean is the designated lifecycle, and both were added by hand.
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
     addTaggedEvent(id, 'StudentExpelled', {
       properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
@@ -2539,7 +2561,7 @@ function build(index) {
   });
 
   check('two booleans one event moves cannot become one lifecycle', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
     // Both set by StudentRegistered, so the merged fold would need two
     // handlers for one event — refused before anything is written.
@@ -2560,7 +2582,7 @@ function build(index) {
   });
 
   check('a non-monotone boolean is refused as a stage', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
     addTaggedEvent(id, 'StudentPaused', {
       properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
@@ -2611,7 +2633,7 @@ function build(index) {
   // The discriminator. A one-way boolean folds into a lifecycle; an
   // orthogonal one must not, because collapsing it destroys a dimension.
   const withSecondBoolean = (handlers) => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
     addTaggedEvent(id, 'CourseFlagged', {
       properties: [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false }],
@@ -2666,7 +2688,7 @@ function build(index) {
   });
 
   check('two rules over one lifecycle alone suggest nothing', () => {
-    const { model } = build(0);
+    const { model } = build(ENTITIES);
     eq(lifecycleMergeSuggestion(
       model(), model()['command-definitions'].SubscribeStudentToCourse
     ), null, 'the shipped command guards a lifecycle and no second boolean');
@@ -2677,7 +2699,7 @@ function build(index) {
 // Saying "the course exists" — rendering only, never storage.
 // ---------------------------------------------------------------
 {
-  const { model } = build(0);
+  const { model } = build(ENTITIES);
   const body = () => model()['command-definitions'].SubscribeStudentToCourse;
   const partsOf = (condition) => sandbox.conditionParts(condition, model(), body());
 
@@ -2730,7 +2752,7 @@ function build(index) {
   const { operationsFor, hasSuccessor, offersSuccessor, handlerValueChoices } = sandbox;
 
   check('the operations offered follow the type held', () => {
-    const { model } = build(0);
+    const { model } = build(ENTITIES);
     eq(operationsFor(model(), { valueType: 'boolean', isList: false }), ['set'],
       'a boolean only ever becomes something — it does not go up by or gain');
     eq(operationsFor(model(), { valueType: 'CourseStatus', isList: false }), ['set'],
@@ -2742,7 +2764,7 @@ function build(index) {
   });
 
   check('the change adder offers only the operations the target admits', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
     const painted = (entity, property) => {
       sandbox.state.adder = 'chg:StudentRegistered';
@@ -2770,7 +2792,7 @@ function build(index) {
   });
 
   check('a boolean target offers true and false as values', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
     sandbox.state.adder = 'chg:StudentRegistered';
     sandbox.state.changeDraft = {
@@ -2790,7 +2812,7 @@ function build(index) {
   });
 
   check('"the one after" is offered only where a next value exists', () => {
-    const { model } = build(0);
+    const { model } = build(ENTITIES);
     eq(hasSuccessor(model(), 'integer'), true, 'integers count up');
     eq(hasSuccessor(model(), 'CourseId'), true, 'and so do scalar identifiers');
     eq(hasSuccessor(model(), 'boolean'), false, 'there is no value after true');
@@ -2812,7 +2834,7 @@ function build(index) {
   // plain string, never beside another verb — and `currentValue`, which
   // only ever repeats or doubles what is held, is not offered at all.
   check('a successor is offered only to set a numbering, and currentValue never', () => {
-    const { model } = build(0);
+    const { model } = build(ENTITIES);
     eq(offersSuccessor(model(), 'integer'), true, 'an integer counts');
     eq(offersSuccessor(model(), 'CourseId'), true, 'and so does a named scalar type');
     eq(offersSuccessor(model(), 'string'), false, 'a plain string does not, digits or not');
@@ -2834,7 +2856,7 @@ function build(index) {
   });
 
   check('an event field reads as its path once picked', () => {
-    const { model } = build(0);
+    const { model } = build(ENTITIES);
     const event = { properties: [{ name: 'courseId', propertyType: 'CourseId', isList: false }] };
     const choices = handlerValueChoices(model(), { valueType: 'CourseId', isList: false }, event, 'set');
     const sel = sandbox.pick(choices, choices[1][0], () => {});
@@ -2849,7 +2871,7 @@ function build(index) {
   });
 
   check('a successor the editor no longer offers is still refused if written', () => {
-    const { id } = build(0);
+    const { id } = build(ENTITIES);
     let refused = null;
     try {
       sandbox.updateDefinition('projection-definition', id, 'StudentExists', {
@@ -2892,7 +2914,7 @@ function build(index) {
   });
 
   check('a touched, complete equalsAny rule is added by leaving it', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
     sandbox.state.slice = 'DefineCourse';
     sandbox.state.adder = 'rule';
@@ -3022,7 +3044,7 @@ function build(index) {
 }
 
 {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
   store.set('dcb-playground:model', id);
   const command = (name) => model()['command-definitions'][name];
 
@@ -3091,7 +3113,7 @@ function build(index) {
 // can still author everything the old two could.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
   store.set('dcb-playground:model', id);
   const cmd = () => model()['command-definitions'].SubscribeStudentToCourse;
   const shipped = JSON.parse(JSON.stringify(cmd()));
@@ -3491,7 +3513,7 @@ function build(index) {
 
 
 {
-  const { id, model } = build(0);   // its own copy: this one strips an entity down
+  const { id, model } = build(ENTITIES);   // its own copy: this one strips an entity down
   store.set('dcb-playground:model', id);
   const slice = () => sandbox.sliceOf(model(), 'SubscribeStudentToCourse');
 
@@ -3568,7 +3590,7 @@ function build(index) {
   }
 
   check('a boolean machine is drawn compactly and an enum one is not', () => {
-    const { model } = build(0);
+    const { model } = build(ENTITIES);
     store.set('dcb-playground:model', model().id);
     const text = paint('lifecycles', model());
     has(text, 'Existence only', 'the two weights are separated');
@@ -3576,7 +3598,7 @@ function build(index) {
   });
 
   check('an entity page paints its lifecycle in Identity, not the ledger', () => {
-    const { model } = build(0);
+    const { model } = build(ENTITIES);
     store.set('dcb-playground:model', model().id);
     sandbox.state.lcOpen = {};
     const text = paint('entity', model(), () => { sandbox.state.entity = 'Student'; });
@@ -3598,7 +3620,7 @@ function build(index) {
   });
 
   check('an enum lifecycle folds to its state count', () => {
-    const { model } = build(0);
+    const { model } = build(ENTITIES);
     store.set('dcb-playground:model', model().id);
     sandbox.state.lcOpen = {};
     const text = paint('entity', model(), () => { sandbox.state.entity = 'Course'; });
@@ -3607,7 +3629,7 @@ function build(index) {
   });
 
   check('a lifecycle nothing sets still says so, folded', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
     const fold = sandbox.lifecycleOf(model(), 'Student').projectionName;
     const body = sandbox.deepClone(model()['projection-definitions'][fold]);
@@ -3622,7 +3644,7 @@ function build(index) {
   });
 
   check('an entity with no lifecycle offers one and says nothing else about state', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
     sandbox.createEntity(model(), 'room');
     sandbox.state.lcMenu = null;
@@ -3637,7 +3659,7 @@ function build(index) {
   });
 
   check('an enum lifecycle named from nothing needs only two states', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
     sandbox.createEntity(model(), 'room');
     const text = paint('entity', model(), () => {
@@ -3665,7 +3687,7 @@ function build(index) {
   });
 
   check('an enum lifecycle cannot reuse a property name the entity has', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
     sandbox.createEntity(model(), 'room');
     sandbox.addExistenceLifecycle(model(), 'Room');
@@ -3701,7 +3723,7 @@ function build(index) {
   });
 
   check('the promotion form paints for a boolean lifecycle', () => {
-    const { model } = build(0);
+    const { model } = build(ENTITIES);
     store.set('dcb-playground:model', model().id);
     const text = paint('entity', model(), () => {
       sandbox.state.entity = 'Student';
@@ -3714,7 +3736,7 @@ function build(index) {
   });
 
   check('the merge form can drop a boolean and reorder the stages', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
     for (const [prop, event, fold] of [['registered', 'DidRegister', 'DidRegisterFold'],
       ['expelled', 'WasExpelled', 'WasExpelledFold']]) {
@@ -3749,7 +3771,7 @@ function build(index) {
   });
 
   check('the designation picker offers only properties with states', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
     eq(sandbox.lifecycleCandidates(model(), 'Student'), ['exists'],
       'a count is not a lifecycle; a boolean is');
@@ -3765,7 +3787,7 @@ function build(index) {
   });
 
   check('designating a different property moves the lifecycle', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
     // A hand-built state property, which is the case the picker exists
     // for: nothing about it came from the scaffold or a promotion.
@@ -3792,7 +3814,7 @@ function build(index) {
   });
 
   check('un-designating leaves an entity with no lifecycle, which is allowed', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
     const body = sandbox.deepClone(model()['entity-definitions'].Student);
     delete body.lifecycle;
@@ -3811,7 +3833,7 @@ function build(index) {
   });
 
   check('the entity page offers the merge where the booleans are', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
     addTaggedEvent(id, 'StudentExpelled2', {
       properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
@@ -3831,7 +3853,7 @@ function build(index) {
   });
 
   check('the merge prompt paints in the decide step', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
     addTaggedEvent(id, 'StudentSuspended', {
       properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
@@ -3876,7 +3898,7 @@ function build(index) {
     eq(move(2, 0, false), 'acbd1', 'up, after');
   });
 
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
   store.set('dcb-playground:model', id);
   const command = 'SubscribeStudentToCourse';
   const lefts = () => model()['command-definitions'][command].conditions
@@ -3945,7 +3967,7 @@ function build(index) {
 // from its name — and not from the actions at its right.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
   store.set('dcb-playground:model', id);
   // Nothing has happened, so the subscription is refused — any
   // scenario will do; what is under test is its row.
@@ -4072,7 +4094,7 @@ function build(index) {
   });
 
   check('the code view paints, and going back to the pages applies what was typed', () => {
-    const { id, model: m } = build(0);
+    const { id, model: m } = build(ENTITIES);
     store.set('dcb-playground:model', id);
     const { state } = sandbox;
     Object.assign(state, { view: 'slice', slice: 'ArchiveCourse', code: false });
@@ -4093,7 +4115,7 @@ function build(index) {
   });
 
   check('a text the model moved under stays stale through a model switch, and is never applied', () => {
-    const { id, model: m } = build(0);
+    const { id, model: m } = build(ENTITIES);
     const other = createDcbModel('Other');
     const { state, codeView } = sandbox;
     store.set('dcb-playground:model', id);
@@ -4132,7 +4154,7 @@ function build(index) {
 // is about — and the anchors it links are a contract with dcb.events,
 // whose build checks every one of them exists.
 check('the help opens the reference at the page\'s own concept', () => {
-  const id = loadPredefinedModel(0);
+  const id = loadPredefinedModel(ENTITIES);
   sandbox.localStorage.setItem('dcb-playground:model', id);
   sandbox.state.code = false;
   sandbox.state.splash = false;
@@ -4168,7 +4190,7 @@ check('the help opens the reference at the page\'s own concept', () => {
 // ---------------------------------------------------------------
 {
   check('experimentalFeatures names what a model uses', () => {
-    const { model } = build(0);
+    const { model } = build(ENTITIES);
     const used = [...new Set(sandbox.experimentalFeatures(model()).map((f) => f.feature))].sort();
     eq(used, ['annotations', 'entities', 'lifecycles'], 'course-simple');
     const guarded = build(8).model;
@@ -4176,6 +4198,18 @@ check('the help opens the reference at the page\'s own concept', () => {
       true, 'a guarded emission, on its command');
     const derived = build(9).model;
     eq(sandbox.experimentalFeatures(derived()).some((f) => f.feature === 'derived'), true, 'a derived projection');
+  });
+
+  check('a shipped model is marked experimental exactly when it uses something experimental', () => {
+    sandbox.PREDEFINED_MODELS.forEach((entry, index) => {
+      const { model } = build(index);
+      const used = sandbox.experimentalFeatures(model()).map((f) => f.feature);
+      eq(!!entry.experimental, used.length > 0, `${entry.slug}: ${[...new Set(used)].join(', ') || 'nothing experimental'}`);
+    });
+    store.set('dcb-playground:experimental', 'off');
+    eq(sandbox.shippedModels().some((entry) => entry.experimental), false, 'the flag off lists none of them');
+    store.set('dcb-playground:experimental', 'on');
+    eq(sandbox.shippedModels().length, sandbox.PREDEFINED_MODELS.length, 'the flag on lists all');
   });
 
   check('a model of types, events, projections and commands uses none', () => {
@@ -4202,7 +4236,7 @@ check('the help opens the reference at the page\'s own concept', () => {
   });
 
   check('the notice names the features when the flag is off, and only then', () => {
-    const { model } = build(0);
+    const { model } = build(ENTITIES);
     eq(sandbox.experimentalNotice(model()), null, 'flag on: nothing to say');
     store.set('dcb-playground:experimental', 'off');
     const text = textOf(sandbox.experimentalNotice(model()));

@@ -142,46 +142,7 @@
       ]
     }
   ],
-  "entityDefinitions": [
-    {
-      "name": "Student",
-      "icon": "🧑‍🎓",
-      "properties": [
-        {
-          "name": "exists",
-          "projection": "StudentExists"
-        },
-        {
-          "name": "subscriptionCount",
-          "projection": "StudentSubscriptionCount"
-        }
-      ],
-      "lifecycle": "exists"
-    },
-    {
-      "name": "Course",
-      "icon": "📚",
-      "properties": [
-        {
-          "name": "status",
-          "projection": "CourseStatus"
-        },
-        {
-          "name": "capacity",
-          "projection": "CourseCapacity"
-        },
-        {
-          "name": "subscriptionCount",
-          "projection": "CourseSubscriptionCount"
-        },
-        {
-          "name": "subscribedStudentIds",
-          "projection": "CourseSubscribedStudentIds"
-        }
-      ],
-      "lifecycle": "status"
-    }
-  ],
+  "entityDefinitions": [],
   "projectionDefinitions": [
     {
       "name": "StudentExists",
@@ -193,24 +154,6 @@
           "event": "StudentRegistered",
           "operation": "set",
           "value": true
-        }
-      ]
-    },
-    {
-      "name": "StudentSubscriptionCount",
-      "valueType": "integer",
-      "isList": false,
-      "initialValue": 0,
-      "handlers": [
-        {
-          "event": "StudentSubscribedToCourse",
-          "operation": "increment",
-          "value": 1
-        },
-        {
-          "event": "StudentUnsubscribedFromCourse",
-          "operation": "decrement",
-          "value": 1
         }
       ]
     },
@@ -261,24 +204,6 @@
       ]
     },
     {
-      "name": "CourseSubscriptionCount",
-      "valueType": "integer",
-      "isList": false,
-      "initialValue": 0,
-      "handlers": [
-        {
-          "event": "StudentSubscribedToCourse",
-          "operation": "increment",
-          "value": 1
-        },
-        {
-          "event": "StudentUnsubscribedFromCourse",
-          "operation": "decrement",
-          "value": 1
-        }
-      ]
-    },
-    {
       "name": "CourseSubscribedStudentIds",
       "valueType": "StudentId",
       "isList": true,
@@ -316,12 +241,29 @@
           }
         }
       ]
+    },
+    {
+      "name": "SubscriptionCount",
+      "valueType": "integer",
+      "isList": false,
+      "initialValue": 0,
+      "handlers": [
+        {
+          "event": "StudentSubscribedToCourse",
+          "operation": "increment",
+          "value": 1
+        },
+        {
+          "event": "StudentUnsubscribedFromCourse",
+          "operation": "decrement",
+          "value": 1
+        }
+      ]
     }
   ],
   "commandDefinitions": [
     {
       "name": "DefineCourse",
-      "feature": "Course management",
       "properties": [
         {
           "name": "capacity",
@@ -354,7 +296,6 @@
     },
     {
       "name": "ChangeCourseCapacity",
-      "feature": "Course management",
       "properties": [
         {
           "name": "courseId",
@@ -369,20 +310,16 @@
           "isList": false
         }
       ],
-      "boundary": [
-        {
-          "alias": "course",
-          "entity": "Course",
-          "id": {
-            "parameterName": "courseId"
-          }
-        }
-      ],
+      "boundary": [],
       "conditions": [
         {
           "leftHandSide": {
-            "alias": "course",
-            "property": "status"
+            "projection": "CourseStatus",
+            "tags": [
+              {
+                "parameterName": "courseId"
+              }
+            ]
           },
           "predicate": "equals",
           "rightHandSide": {
@@ -392,8 +329,12 @@
         },
         {
           "leftHandSide": {
-            "alias": "course",
-            "property": "subscriptionCount"
+            "projection": "SubscriptionCount",
+            "tags": [
+              {
+                "parameterName": "courseId"
+              }
+            ]
           },
           "predicate": "lessThanOrEquals",
           "rightHandSide": {
@@ -418,7 +359,6 @@
     },
     {
       "name": "ArchiveCourse",
-      "feature": "Course management",
       "properties": [
         {
           "name": "courseId",
@@ -427,20 +367,16 @@
           "isList": false
         }
       ],
-      "boundary": [
-        {
-          "alias": "course",
-          "entity": "Course",
-          "id": {
-            "parameterName": "courseId"
-          }
-        }
-      ],
+      "boundary": [],
       "conditions": [
         {
           "leftHandSide": {
-            "alias": "course",
-            "property": "status"
+            "projection": "CourseStatus",
+            "tags": [
+              {
+                "parameterName": "courseId"
+              }
+            ]
           },
           "predicate": "equals",
           "rightHandSide": {
@@ -462,7 +398,6 @@
     },
     {
       "name": "RegisterStudent",
-      "feature": "Student registration",
       "properties": [
         {
           "name": "studentId",
@@ -471,20 +406,16 @@
           "isList": false
         }
       ],
-      "boundary": [
-        {
-          "alias": "student",
-          "entity": "Student",
-          "id": {
-            "parameterName": "studentId"
-          }
-        }
-      ],
+      "boundary": [],
       "conditions": [
         {
           "leftHandSide": {
-            "alias": "student",
-            "property": "exists"
+            "projection": "StudentExists",
+            "tags": [
+              {
+                "parameterName": "studentId"
+              }
+            ]
           },
           "predicate": "isFalse",
           "rejection": "Student is already registered"
@@ -503,7 +434,6 @@
     },
     {
       "name": "SubscribeStudentToCourse",
-      "feature": "Enrolment",
       "properties": [
         {
           "name": "courseId",
@@ -518,27 +448,16 @@
           "isList": false
         }
       ],
-      "boundary": [
-        {
-          "alias": "course",
-          "entity": "Course",
-          "id": {
-            "parameterName": "courseId"
-          }
-        },
-        {
-          "alias": "student",
-          "entity": "Student",
-          "id": {
-            "parameterName": "studentId"
-          }
-        }
-      ],
+      "boundary": [],
       "conditions": [
         {
           "leftHandSide": {
-            "alias": "course",
-            "property": "status"
+            "projection": "CourseStatus",
+            "tags": [
+              {
+                "parameterName": "courseId"
+              }
+            ]
           },
           "predicate": "equals",
           "rightHandSide": {
@@ -548,28 +467,44 @@
         },
         {
           "leftHandSide": {
-            "alias": "student",
-            "property": "exists"
+            "projection": "StudentExists",
+            "tags": [
+              {
+                "parameterName": "studentId"
+              }
+            ]
           },
           "predicate": "isTrue",
           "rejection": "Student is not registered"
         },
         {
           "leftHandSide": {
-            "alias": "course",
-            "property": "subscriptionCount"
+            "projection": "SubscriptionCount",
+            "tags": [
+              {
+                "parameterName": "courseId"
+              }
+            ]
           },
           "predicate": "lessThan",
           "rightHandSide": {
-            "alias": "course",
-            "property": "capacity"
+            "projection": "CourseCapacity",
+            "tags": [
+              {
+                "parameterName": "courseId"
+              }
+            ]
           },
           "rejection": "Course is full"
         },
         {
           "leftHandSide": {
-            "alias": "course",
-            "property": "subscribedStudentIds"
+            "projection": "CourseSubscribedStudentIds",
+            "tags": [
+              {
+                "parameterName": "courseId"
+              }
+            ]
           },
           "predicate": "contains",
           "rightHandSide": {
@@ -580,8 +515,12 @@
         },
         {
           "leftHandSide": {
-            "alias": "student",
-            "property": "subscriptionCount"
+            "projection": "SubscriptionCount",
+            "tags": [
+              {
+                "parameterName": "studentId"
+              }
+            ]
           },
           "predicate": "lessThan",
           "rightHandSide": 10,
@@ -604,7 +543,6 @@
     },
     {
       "name": "UnsubscribeStudentFromCourse",
-      "feature": "Enrolment",
       "properties": [
         {
           "name": "courseId",
@@ -619,20 +557,16 @@
           "isList": false
         }
       ],
-      "boundary": [
-        {
-          "alias": "course",
-          "entity": "Course",
-          "id": {
-            "parameterName": "courseId"
-          }
-        }
-      ],
+      "boundary": [],
       "conditions": [
         {
           "leftHandSide": {
-            "alias": "course",
-            "property": "status"
+            "projection": "CourseStatus",
+            "tags": [
+              {
+                "parameterName": "courseId"
+              }
+            ]
           },
           "predicate": "equals",
           "rightHandSide": {
@@ -642,8 +576,12 @@
         },
         {
           "leftHandSide": {
-            "alias": "course",
-            "property": "subscribedStudentIds"
+            "projection": "CourseSubscribedStudentIds",
+            "tags": [
+              {
+                "parameterName": "courseId"
+              }
+            ]
           },
           "predicate": "contains",
           "rightHandSide": {

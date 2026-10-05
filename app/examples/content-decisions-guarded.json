@@ -114,27 +114,7 @@
       ]
     }
   ],
-  "entityDefinitions": [
-    {
-      "name": "Document",
-      "icon": "📄",
-      "properties": [
-        {
-          "name": "status",
-          "projection": "DocumentStatus"
-        },
-        {
-          "name": "currentText",
-          "projection": "DocumentCurrentText"
-        },
-        {
-          "name": "publishedText",
-          "projection": "DocumentPublishedText"
-        }
-      ],
-      "lifecycle": "status"
-    }
-  ],
+  "entityDefinitions": [],
   "projectionDefinitions": [
     {
       "name": "DocumentStatus",
@@ -227,8 +207,6 @@
   "commandDefinitions": [
     {
       "name": "AddDocument",
-      "feature": "Document Authoring",
-      "icon": "⭐",
       "properties": [
         {
           "name": "id",
@@ -237,20 +215,16 @@
           "isList": false
         }
       ],
-      "boundary": [
-        {
-          "alias": "document",
-          "entity": "Document",
-          "id": {
-            "parameterName": "id"
-          }
-        }
-      ],
+      "boundary": [],
       "conditions": [
         {
           "leftHandSide": {
-            "alias": "document",
-            "property": "status"
+            "projection": "DocumentStatus",
+            "tags": [
+              {
+                "parameterName": "id"
+              }
+            ]
           },
           "predicate": "equals",
           "rightHandSide": {
@@ -272,8 +246,6 @@
     },
     {
       "name": "UpdateText",
-      "feature": "Document Authoring",
-      "icon": "✏️",
       "properties": [
         {
           "name": "docId",
@@ -288,20 +260,16 @@
           "isList": false
         }
       ],
-      "boundary": [
-        {
-          "alias": "document",
-          "entity": "Document",
-          "id": {
-            "parameterName": "docId"
-          }
-        }
-      ],
+      "boundary": [],
       "conditions": [
         {
           "leftHandSide": {
-            "alias": "document",
-            "property": "status"
+            "projection": "DocumentStatus",
+            "tags": [
+              {
+                "parameterName": "docId"
+              }
+            ]
           },
           "predicate": "equalsAny",
           "rightHandSide": [
@@ -319,8 +287,12 @@
         },
         {
           "leftHandSide": {
-            "alias": "document",
-            "property": "currentText"
+            "projection": "DocumentCurrentText",
+            "tags": [
+              {
+                "parameterName": "docId"
+              }
+            ]
           },
           "predicate": "equals",
           "rightHandSide": {
@@ -340,8 +312,12 @@
               },
               "predicate": "equals",
               "rightHandSide": {
-                "alias": "document",
-                "property": "publishedText"
+                "projection": "DocumentPublishedText",
+                "tags": [
+                  {
+                    "parameterName": "docId"
+                  }
+                ]
               },
               "negate": true
             }
@@ -364,8 +340,12 @@
               },
               "predicate": "equals",
               "rightHandSide": {
-                "alias": "document",
-                "property": "publishedText"
+                "projection": "DocumentPublishedText",
+                "tags": [
+                  {
+                    "parameterName": "docId"
+                  }
+                ]
               }
             }
           ],
@@ -382,8 +362,6 @@
     },
     {
       "name": "PublishDocument",
-      "feature": "Document Authoring",
-      "icon": "💾",
       "properties": [
         {
           "name": "docId",
@@ -392,20 +370,16 @@
           "isList": false
         }
       ],
-      "boundary": [
-        {
-          "alias": "document",
-          "entity": "Document",
-          "id": {
-            "parameterName": "docId"
-          }
-        }
-      ],
+      "boundary": [],
       "conditions": [
         {
           "leftHandSide": {
-            "alias": "document",
-            "property": "status"
+            "projection": "DocumentStatus",
+            "tags": [
+              {
+                "parameterName": "docId"
+              }
+            ]
           },
           "predicate": "equalsAny",
           "rightHandSide": [
@@ -427,8 +401,12 @@
               "parameterName": "docId"
             },
             "text": {
-              "alias": "document",
-              "property": "currentText"
+              "projection": "DocumentCurrentText",
+              "tags": [
+                {
+                  "parameterName": "docId"
+                }
+              ]
             }
           }
         }
@@ -436,8 +414,6 @@
     },
     {
       "name": "ArchiveDocument",
-      "feature": "Document Authoring",
-      "icon": "🗑️",
       "properties": [
         {
           "name": "docId",
@@ -446,20 +422,16 @@
           "isList": false
         }
       ],
-      "boundary": [
-        {
-          "alias": "document",
-          "entity": "Document",
-          "id": {
-            "parameterName": "docId"
-          }
-        }
-      ],
+      "boundary": [],
       "conditions": [
         {
           "leftHandSide": {
-            "alias": "document",
-            "property": "status"
+            "projection": "DocumentStatus",
+            "tags": [
+              {
+                "parameterName": "docId"
+              }
+            ]
           },
           "predicate": "equalsAny",
           "rightHandSide": [

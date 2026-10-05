@@ -19,7 +19,7 @@
 const { createSandbox, loadApp, makeChecker } = require('./test-harness.js');
 
 const { sandbox, store } = createSandbox();
-loadApp(sandbox, ['model.js', 'evaluate.js']);
+loadApp(sandbox, ['model.js', 'evaluate.js'], { trailer: 'globalThis.PREDEFINED_MODELS = PREDEFINED_MODELS;' });
 const { check, eq, finish } = makeChecker();
 
 // Clearing the store is a write `appendEvents` never sees, so the
@@ -28,6 +28,11 @@ function resetStore() {
   store.clear();
   sandbox.bumpLogRevision();
 }
+
+// The course example with entities — what `course-simple` was before the
+// shipped models were stated without them. Tests about entities,
+// lifecycles and entity reads build this one.
+const ENTITIES = sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-entities');
 
 function build(index) {
   resetStore();
@@ -119,7 +124,7 @@ function drive(model, log, command, args) {
 // 1. Course example, identifiers supplied by the caller.
 // ---------------------------------------------------------------
 {
-  const model = build(0);
+  const model = build(ENTITIES);
 
   check('define a course, then a student, then subscribe', () => {
     const log = [];
@@ -240,7 +245,7 @@ function drive(model, log, command, args) {
   check('a course cannot be defined for an unregistered tenant', () => {
     const result = evaluateCommand(model, [], 'DefineCourse', { tenantId: 't9', capacity: 5 });
     eq(result.outcome, 'rejected', 'outcome');
-    eq(result.failedRule.text, 'tenant.exists isTrue', 'rule');
+    eq(result.failedRule.text, 'TenantExists tagged tenantId isTrue', 'rule');
   });
 }
 
@@ -358,7 +363,7 @@ function drive(model, log, command, args) {
 // 7. Broken inputs are not rejections.
 // ---------------------------------------------------------------
 {
-  const model = build(0);
+  const model = build(ENTITIES);
 
   const broken = (what, fn) => check(what, () => {
     try {
@@ -389,7 +394,7 @@ function drive(model, log, command, args) {
 // written, without needing a seventh example model to hold it.
 // ---------------------------------------------------------------
 {
-  const model = build(0);
+  const model = build(ENTITIES);
 
   // One course at capacity 5 with a single subscriber.
   const log = [];
@@ -490,7 +495,7 @@ function drive(model, log, command, args) {
   };
 
   check('a scenario is stored, derived and runs current', () => {
-    const { id, model } = open_(0);
+    const { id, model } = open_(ENTITIES);
     const key = store_(id, model(), scenarioBody());
     const stored = model()['scenario-definitions'][key];
     eq(stored.then.outcome, 'published', 'derived outcome');
@@ -499,7 +504,7 @@ function drive(model, log, command, args) {
   });
 
   check('a scenario is named from its outcome unless it says otherwise', () => {
-    const { id, model } = open_(0);
+    const { id, model } = open_(ENTITIES);
     const key = store_(id, model(), scenarioBody());
     eq(scenarioName(model()['scenario-definitions'][key]), 'records StudentSubscribedToCourse', 'derived');
     eq(scenarioName({ name: 'the happy path', then: { outcome: 'published', events: [] } }), 'the happy path', 'override');
@@ -508,7 +513,7 @@ function drive(model, log, command, args) {
   });
 
   check('changing a rule the command checks is reported as drift', () => {
-    const { id, model } = open_(0);
+    const { id, model } = open_(ENTITIES);
     const key = store_(id, model(), scenarioBody());
 
     // A student may now be in at most zero courses, so what published
@@ -538,7 +543,7 @@ function drive(model, log, command, args) {
   };
 
   check('moving rules is not drift while the same rule refuses', () => {
-    const { id, model } = open_(0);
+    const { id, model } = open_(ENTITIES);
     const key = store_(id, model(), refused());
     const before = model()['scenario-definitions'][key].then;
     moveToFront(model, id, (c) => c.leftHandSide.alias === 'student'
@@ -549,7 +554,7 @@ function drive(model, log, command, args) {
   });
 
   check('moving rules so another refuses first is drift', () => {
-    const { id, model } = open_(0);
+    const { id, model } = open_(ENTITIES);
     const key = store_(id, model(), refused());
     const before = model()['scenario-definitions'][key].then;
     moveToFront(model, id, (c) => c.leftHandSide.alias === 'student'
@@ -560,7 +565,7 @@ function drive(model, log, command, args) {
   });
 
   check('rules sharing a message are one outcome, whichever of them refuses', () => {
-    const { id, model } = open_(0);
+    const { id, model } = open_(ENTITIES);
     const key = store_(id, model(), refused());
     eq(model()['scenario-definitions'][key].then.rejection, 'Course is not active', 'the course rule refuses');
     // The student rule now says the same thing, and is moved ahead, so
@@ -580,7 +585,7 @@ function drive(model, log, command, args) {
   });
 
   check('a refusal by a rule without a message is not an outcome a scenario can name', () => {
-    const { id, model } = open_(0);
+    const { id, model } = open_(ENTITIES);
     const command = deepClone(model()['command-definitions'].SubscribeStudentToCourse);
     delete command.conditions[0].rejection;
     updateDefinition('command-definition', id, 'SubscribeStudentToCourse', command);
@@ -595,7 +600,7 @@ function drive(model, log, command, args) {
   });
 
   check('a rejection message is advised where it is missing, malformed, or on a guard', () => {
-    const { id, model } = open_(0);
+    const { id, model } = open_(ENTITIES);
     const command = deepClone(model()['command-definitions'].SubscribeStudentToCourse);
     command.conditions[1].rejection = '';
     command.conditions[2].rejection = 'two\nlines';
@@ -610,7 +615,7 @@ function drive(model, log, command, args) {
   });
 
   check('a scenario never stops you deleting what it tests', () => {
-    const { id, model } = open_(0);
+    const { id, model } = open_(ENTITIES);
     store_(id, model(), { ...scenarioBody(), command: 'ArchiveCourse',
       when: { arguments: { courseId: 'c1' } } });
     // Nothing but the scenario references the command, and the
@@ -620,7 +625,7 @@ function drive(model, log, command, args) {
   });
 
   check('deleting what a scenario tests leaves it broken, not passing', () => {
-    const { id, model } = open_(0);
+    const { id, model } = open_(ENTITIES);
     const key = store_(id, model(), { ...scenarioBody(), command: 'ArchiveCourse',
       when: { arguments: { courseId: 'c1' } } });
     removeDefinition('command-definition', id, 'ArchiveCourse');
@@ -630,7 +635,7 @@ function drive(model, log, command, args) {
   });
 
   check('an event gaining a property breaks the scenarios written before it', () => {
-    const { id, model } = open_(0);
+    const { id, model } = open_(ENTITIES);
     const key = store_(id, model(), scenarioBody());
     const event = deepClone(model()['event-definitions'].CourseDefined);
     event.properties.push({ name: 'title', propertyType: 'string', isOptional: false, isList: false });
@@ -639,7 +644,7 @@ function drive(model, log, command, args) {
   });
 
   check('renaming an event carries the Given and the expected outcome with it', () => {
-    const { id, model } = open_(0);
+    const { id, model } = open_(ENTITIES);
     const key = store_(id, model(), scenarioBody());
     renameDefinition('event-definition', id, 'StudentSubscribedToCourse', 'StudentEnrolled');
     renameDefinition('event-definition', id, 'CourseDefined', 'CourseOpened');
@@ -650,7 +655,7 @@ function drive(model, log, command, args) {
   });
 
   check('renaming an event property moves the key in every payload', () => {
-    const { id, model } = open_(0);
+    const { id, model } = open_(ENTITIES);
     const key = store_(id, model(), scenarioBody());
     renameMember('event-definition', id, 'CourseDefined', 'property', 'capacity', 'seats');
     const stored = model()['scenario-definitions'][key];
@@ -659,7 +664,7 @@ function drive(model, log, command, args) {
   });
 
   check('renaming a command property moves the key in the When', () => {
-    const { id, model } = open_(0);
+    const { id, model } = open_(ENTITIES);
     const key = store_(id, model(), scenarioBody());
     renameMember('command-definition', id, 'SubscribeStudentToCourse', 'property', 'studentId', 'enrolleeId');
     const stored = model()['scenario-definitions'][key];
@@ -668,7 +673,7 @@ function drive(model, log, command, args) {
   });
 
   check('renaming the command it tests carries the scenario', () => {
-    const { id, model } = open_(0);
+    const { id, model } = open_(ENTITIES);
     const key = store_(id, model(), scenarioBody());
     renameDefinition('command-definition', id, 'SubscribeStudentToCourse', 'EnrolStudent');
     const stored = model()['scenario-definitions'][key];
@@ -693,7 +698,7 @@ function drive(model, log, command, args) {
   });
 
   check('a scenario is identified by an id, so it is updated rather than renamed', () => {
-    const { id, model } = open_(0);
+    const { id, model } = open_(ENTITIES);
     const key = store_(id, model(), scenarioBody());
     try {
       renameDefinition('scenario-definition', id, key, 'SomethingElse');
@@ -709,7 +714,7 @@ function drive(model, log, command, args) {
   check('a payload with a property the event does not have is stored, not refused', () => {
     // The lenient regime: an invented payload property is inert — the
     // folds never read it — so storing it beats refusing the scenario.
-    const { id, model } = open_(0);
+    const { id, model } = open_(ENTITIES);
     const body = scenarioBody();
     body.then = deriveThen(model(), body);
     body.given[0].data.colour = 'blue';
@@ -721,7 +726,7 @@ function drive(model, log, command, args) {
   });
 
   check('duplicating a scenario is a plain copy under a new id', () => {
-    const { id, model } = open_(0);
+    const { id, model } = open_(ENTITIES);
     const key = store_(id, model(), scenarioBody());
     const original = model()['scenario-definitions'][key];
     const copyKey = generateId();
@@ -732,7 +737,7 @@ function drive(model, log, command, args) {
   });
 
   check('reordering carries the swap through to how scenarios list', () => {
-    const { id, model } = open_(0);
+    const { id, model } = open_(ENTITIES);
     const first = store_(id, model(), scenarioBody());
     const second = store_(id, model(), { ...scenarioBody(), command: 'ArchiveCourse',
       when: { arguments: { courseId: 'c1' } } });
@@ -742,7 +747,7 @@ function drive(model, log, command, args) {
   });
 
   check('reordering refuses an order that drops or invents a member', () => {
-    const { id, model } = open_(0);
+    const { id, model } = open_(ENTITIES);
     const key = store_(id, model(), scenarioBody());
     try {
       reorderDefinitions('scenario-definition', id, [key, generateId()]);
@@ -763,7 +768,7 @@ function drive(model, log, command, args) {
 // sandbox showed when it did.
 // ---------------------------------------------------------------
 {
-  const model = build(0);
+  const model = build(ENTITIES);
 
   check('a published command reports what its conditions consulted', () => {
     const log = [];
@@ -1129,7 +1134,8 @@ function drive(model, log, command, args) {
   check('the imported model is independently valid — its own commands still run', () => {
     const log = [];
     drive(imported, log, 'DefineProduct', { productId: 'p1', price: 500 });
-    eq(foldEntityProperty(imported, log, 'Product', 'currentPrice', 'p1'), 500, 'the price DefineProduct set');
+    eq(foldProjection(imported, log, 'ProductCurrentPrice', { tags: [{ type: 'ProductId', value: 'p1' }] }), 500,
+      'the price DefineProduct set');
   });
 }
 
@@ -1378,7 +1384,7 @@ function drive(model, log, command, args) {
 // resolves to, and renaming that member rewrites the entries — the same
 // promises the single-value comparison already keeps.
 {
-  const { id, model } = open_(0);
+  const { id, model } = open_(ENTITIES);
   const guardArchiveWith = (rightHandSide) => {
     const body = deepClone(model()['command-definitions'].ArchiveCourse);
     body.conditions = [{
@@ -1502,7 +1508,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('a property and a direct read of the same projection agree', () => {
-    const model = build(0);
+    const model = build(ENTITIES);
     const log = [];
     drive(model, log, 'DefineCourse', { courseId: 'c1', capacity: 7 });
     // Through the entity, and through the projection it binds. Same
@@ -1535,7 +1541,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('deleting a bound projection leaves the binding advisory-flagged, not refused', () => {
-    const { id, model } = open_(0);
+    const { id, model } = open_(ENTITIES);
     removeDefinition('projection-definition', id, 'CourseCapacity');
     eq('CourseCapacity' in model()['projection-definitions'], false, 'removed');
     eq(sandbox.modelAdvisories(model()).some(
@@ -1544,7 +1550,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('renaming a projection moves every property that binds it', () => {
-    const { id, model } = open_(0);
+    const { id, model } = open_(ENTITIES);
     renameDefinition('projection-definition', id, 'CourseCapacity', 'CourseSeats');
     const course = model()['entity-definitions'].Course;
     eq(course.properties.find((p) => p.name === 'capacity').projection, 'CourseSeats', 'the binding followed');
@@ -1553,21 +1559,22 @@ check('an import missing the definition arrays is refused, not silently accepted
     eq(foldEntityProperty(model(), log, 'Course', 'capacity', 'c1'), 4, 'still folds');
   });
 
-  advises('Course', /reads "TenantExists" by CourseId, but "TenantRegistered", which it handles, is tagged by no CourseId/,
+  advises('Course', /reads "StudentExists" by CourseId, but "StudentRegistered", which it handles, is tagged by no CourseId/,
     'a property whose events no instance can see binds, with an advisory', () => {
-      const { id, model } = open_(2);
+      const { id, model } = open_(ENTITIES);
       // A course reads its properties tagged by its CourseId; a
-      // tenant's registration lists only a TenantId, so no course would
-      // ever see it — the entity says so instead of the update refusing.
+      // student's registration lists only a StudentId, so no course
+      // would ever see it — the entity says so instead of the update
+      // refusing.
       updateDefinition('entity-definition', id, 'Course', {
-        icon: '📚', properties: [{ name: 'tenantExists', projection: 'TenantExists' }],
+        icon: '📚', properties: [{ name: 'studentExists', projection: 'StudentExists' }],
       });
       return model;
     });
 
   advises('CourseCapacity', /declares parameters/,
     'a projection that declares a partition of its own saves, with an advisory', () => {
-      const { id, model } = open_(0);
+      const { id, model } = open_(ENTITIES);
       const body = {
         ...deepClone(model()['projection-definitions'].CourseCapacity),
         parameters: [{ name: 'courseId', propertyType: 'CourseId' }],
@@ -1984,10 +1991,16 @@ check('an import missing the definition arrays is refused, not silently accepted
 // ---------------------------------------------------------------
 // `excluding` on a fanned binding compacts the instance list, but a
 // zipped parameter is still read at each instance's original fan-out
-// index — the pairing must not shift.
+// index — the pairing must not shift. `excluding` is an entity read's
+// (experimental), so this is the pricing model before it was stated
+// without entities: its seed alone.
 // ---------------------------------------------------------------
 {
-  const model = build(4);
+  const model = (() => {
+    const { id, model: current } = openBlank('Pricing with entities');
+    sandbox.seedProductPricing(id);
+    return current();
+  })();
 
   check('an excluded line does not shift the price pairing of the rest', () => {
     const log = [];
@@ -2020,7 +2033,7 @@ check('an import missing the definition arrays is refused, not silently accepted
 // where the next append would overwrite the only copy.
 // ---------------------------------------------------------------
 {
-  open_(0);
+  open_(ENTITIES);
   const logKey = [...store.keys()].find((k) => /:events:v\d+$/.test(k));
 
   check('a corrupt log is moved aside rather than erased on the next append', () => {
@@ -2108,7 +2121,7 @@ check('an import missing the definition arrays is refused, not silently accepted
 // value, while an operand missing its name is a gap however it prints.
 // ---------------------------------------------------------------
 {
-  const { id, model } = open_(0);
+  const { id, model } = open_(ENTITIES);
 
   check('a literal identifier containing "?" is a value, not a gap', () => {
     const body = deepClone(model()['command-definitions'].ChangeCourseCapacity);
@@ -2548,18 +2561,17 @@ check('every predefined model ships advisory-clean', () => {
   check('a guard read joins the derived DCB — it may hide nothing from the query', () => {
     const model = build(GUARDED);
     const dcb = sandbox.deriveDcb(model, model['command-definitions'].UpdateText);
-    const document = dcb.items.find((item) => item.alias === 'document');
-    eq(document.readProperties.includes('publishedText'), true,
-      'the property only the guards read is a read');
-    eq(document.types.includes('DocumentPublished'), true,
-      'so its projection\'s events are in the query');
+    const published = dcb.items.find((item) => item.projection === 'DocumentPublishedText');
+    eq(!!published, true, 'the projection only the guards read is a read');
+    eq(published.types.includes('DocumentPublished'), true,
+      'so its events are in the query');
   });
 
   check('renaming an enum member rewrites emission guards too', () => {
     const { id, model } = open_(GUARDED);
     const body = deepClone(model()['command-definitions'].PublishDocument);
     body.publishes[0].when = [{
-      leftHandSide: { alias: 'document', property: 'status' },
+      leftHandSide: { projection: 'DocumentStatus', tags: [{ parameterName: 'docId' }] },
       predicate: 'equals',
       rightHandSide: { enumMember: 'PendingChanges' },
     }];
@@ -2593,23 +2605,23 @@ check('every predefined model ships advisory-clean', () => {
       're-typing the published text clears it, with no event saying so');
   });
 
-  check('bound as a property and read by a guard, like any projection', () => {
+  check('read in place by a rule, like any projection', () => {
     const model = build(DERIVED);
-    eq(foldEntityProperty(model, [added], 'Document', 'hasPendingChanges', 'd1'), true,
-      'read through the entity binding');
+    eq(foldProjection(model, [added], 'DocumentHasPendingChanges', { tags: [{ type: 'DocumentId', value: 'd1' }] }), true,
+      'read by its tag');
     const refused = evaluateCommand(model, [added, updated('a'), published('a')],
       'PublishDocument', { docId: 'd1' });
     eq(refused.outcome, 'rejected', 'nothing to publish');
-    eq(refused.failedRule.text, 'document.hasPendingChanges isTrue', 'refused by the derived read');
+    eq(refused.failedRule.text, 'DocumentHasPendingChanges tagged docId isTrue', 'refused by the derived read');
     eq(refused.failedRule.leftValue, false, 'and the value it derived is reported');
   });
 
   check('its query is its operands\' union — the predicate hides nothing', () => {
     const model = build(DERIVED);
     const dcb = sandbox.deriveDcb(model, model['command-definitions'].PublishDocument);
-    const document = dcb.items.find((item) => item.alias === 'document');
+    const derived = dcb.items.find((item) => item.projection === 'DocumentHasPendingChanges');
     for (const type of ['TextUpdated', 'DocumentPublished']) {
-      eq(document.types.includes(type), true, `${type} reached the query through the derivation`);
+      eq(derived.types.includes(type), true, `${type} reached the query through the derivation`);
     }
   });
 
@@ -2746,7 +2758,7 @@ check('every predefined model ships advisory-clean', () => {
 // ---------------------------------------------------------------
 {
   check('one fold, read by two different tags', () => {
-    const model = build(0);
+    const model = build(ENTITIES);
     const log = [];
     drive(model, log, 'DefineCourse', { courseId: 'c1', capacity: 5 });
     drive(model, log, 'DefineCourse', { courseId: 'c2', capacity: 5 });
@@ -2782,7 +2794,7 @@ check('every predefined model ships advisory-clean', () => {
   });
 
   check('a read by a value of no tag type, or by an untyped literal, is advised', () => {
-    const { id, model } = open_(0);
+    const { id, model } = open_(ENTITIES);
     const body = deepClone(model()['command-definitions'].ChangeCourseCapacity);
     body.boundary.push({ alias: 'odd', projection: 'CourseCapacity', tags: [{ parameterName: 'newCapacity' }] });
     body.conditions.push({ leftHandSide: { alias: 'odd' }, predicate: 'greaterThan', rightHandSide: 0, rejection: 'Odd' });

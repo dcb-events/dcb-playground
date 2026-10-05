@@ -37,6 +37,11 @@ function fresh() {
   sandbox.bumpLogRevision();
 }
 
+// The course example with entities — what `course-simple` was before the
+// shipped models were stated without them. Tests about entities,
+// lifecycles and entity reads build this one.
+const ENTITIES = PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-entities');
+
 function build(index) {
   fresh();
   const id = loadPredefinedModel(index);
@@ -127,7 +132,7 @@ check('applying an untouched text appends nothing', () => {
 // ---------------------------------------------------------------
 
 check('a command reads as reads, rules and emissions', () => {
-  const { model } = build(0);
+  const { model } = build(ENTITIES);
   const text = modelToSource(model());
   const expected = [
     '@feature("Enrolment")',
@@ -162,8 +167,8 @@ check('fan-out, exclusion, numbering, membership, guards and derived values have
   const tenant = modelToSource(build(2).model());
   eq(tenant.includes('alias tenantCourseNumbering = TenantCourseNumbering tagged tenantId'), true, 'argument shorthand');
   const guarded = modelToSource(build(8).model());
-  eq(guarded.includes('require document.status in [Draft, Published, PendingChanges]'), true, 'equalsAny');
-  eq(guarded.includes('emit TextChanged { docId, text }\n    when text != document.publishedText'), true, 'when');
+  eq(guarded.includes('require DocumentStatus tagged docId in [Draft, Published, PendingChanges]'), true, 'equalsAny');
+  eq(guarded.includes('emit TextChanged { docId, text }\n    when text != DocumentPublishedText tagged docId'), true, 'when');
   const derived = modelToSource(build(9).model());
   eq(derived.includes('derived DocumentCurrentText != DocumentPublishedText'), true, 'derived');
   const scripted = modelToSource(build(5).model());
@@ -171,7 +176,8 @@ check('fan-out, exclusion, numbering, membership, guards and derived values have
   eq(scripted.includes('on DocumentAdded => ```{"currentText":"","publishedText":"","status":"Draft"}```'), true, 'code');
   const pricing = modelToSource(build(4).model());
   eq(pricing.includes('record Item { productId: ProductId, price: Money }'), true, 'record');
-  eq(pricing.includes('require product.currentPrice == items.price'), true, 'parameter field');
+  eq(pricing.includes('require ProductCurrentPrice tagged each items.productId == items.price'), true,
+    'a fan-out, paired with a parameter field');
   eq(pricing.includes('type Money = number { minimum: 0 }'), true, 'schema constraints');
 });
 
@@ -252,12 +258,12 @@ check('membership in data reads either way round, and prints as contains', () =>
 
   // A rule written the other way round still resolves and renames: the
   // marks travel with the operands, whichever side they land on.
-  const text = modelToSource(build(0).model());
+  const text = modelToSource(build(ENTITIES).model());
   const swapped = text.replace('course.subscribedStudentIds not contains studentId', 'studentId not in course.subscribedStudentIds');
   eq(swapped === text, false, 'the course model states membership');
   const parsed = parseModelSource(swapped);
   eq(parsed.diagnostics, [], 'swapped parses');
-  const model = build(0).model();
+  const model = build(ENTITIES).model();
   const stored = { name: model.name };
   for (const kind of SOURCE_KINDS) stored[DEF_COLLECTIONS[kind]] = model[DEF_COLLECTIONS[kind]];
   assertSameModel(stored, parsed, 'x in xs');
@@ -295,7 +301,7 @@ check('a name resolves to a read when one declares it, and to the payload otherw
 // ---------------------------------------------------------------
 
 check('what the grammar cannot say is written as JSON, says why, and still round-trips', () => {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
   const body = JSON.parse(JSON.stringify(model()['command-definitions'].ArchiveCourse));
   body.conditions.push({ leftHandSide: { parameterName: 'courseId' }, predicate: 'resemblesStrongly', rightHandSide: 1, rejection: 'No' });
   updateDefinition('command-definition', id, 'ArchiveCourse', body);
@@ -321,7 +327,7 @@ check('what the grammar cannot say is written as JSON, says why, and still round
 // ---------------------------------------------------------------
 
 check('an edit is written as exactly the definitions it changed, in one append', () => {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
   const text = modelToSource(model())
     .replace('require student.subscriptionCount < 10', 'require student.subscriptionCount < 12');
   const before = appends;
@@ -334,10 +340,10 @@ check('an edit is written as exactly the definitions it changed, in one append',
 });
 
 check('adding, removing, reordering and renaming the model are one append together', () => {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
   const scenarios = JSON.stringify(model()['scenario-definitions']);
   let text = modelToSource(model())
-    .replace('model "Course Example (simple)"', 'model "Renamed"')
+    .replace('model "Course Example (with entities)"', 'model "Renamed"')
     .replace(/@feature\("Course management"\)\ncommand ArchiveCourse[\s\S]*?\n}\n/, '')
     + '\nentity Room {}\n';
   // Two events trade places.
@@ -368,7 +374,7 @@ check('an identifier type left out of the text keeps what the model says about i
 });
 
 check('a text with an error applies nothing and says where', () => {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
   const text = modelToSource(model()).replace('require course.status == Existent', 'require course.status === Existent');
   const parsed = parseModelSource(text);
   eq(parsed.diagnostics.length, 1, 'one error');
@@ -411,7 +417,7 @@ check('annotations go only where they mean something', () => {
 // ---------------------------------------------------------------
 
 check('a body the write path stores but no printer expects shows as JSON, never as a crash', () => {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
   addDefinition('event-definition', id, 'Holey', { properties: [null] });
   addDefinition('command-definition', id, 'Hollow', { properties: [], boundary: [], conditions: [], publishes: [null] });
   addDefinition('command-definition', id, 'Mapless', {
@@ -445,7 +451,7 @@ check('false, [] and look-alike keys inside operands are content, not defaults',
 });
 
 check('a dangling identifier type stays dangling through an untouched apply', () => {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
   const course = JSON.parse(JSON.stringify(model()['entity-definitions'].Course));
   updateDefinition('entity-definition', id, 'Course', { ...course, identifierType: 'GhostId' });
   const before = loadEvents().length;
@@ -456,24 +462,24 @@ check('a dangling identifier type stays dangling through an untouched apply', ()
 
 check('names no collection can be keyed by are refused, and padded ones trimmed', () => {
   for (const name of ['constructor', '__proto__']) {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     const before = loadEvents().length;
     let refused = null;
     try { applyModelSource(id, modelToSource(model()) + `\nevent ${name} { a: string }\n`); } catch (error) { refused = error; }
     eq(refused instanceof sandbox.DomainError, true, name);
     eq(loadEvents().length, before, `${name}: nothing appended`);
   }
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
   applyModelSource(id, modelToSource(model()) + '\nevent " Padded " {}\n');
   eq(Object.keys(model()['event-definitions']).includes('Padded'), true, 'trimmed');
 });
 
 check('the model name is compared trimmed, and a rename is reported', () => {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
   const before = loadEvents().length;
-  applyModelSource(id, modelToSource(model()).replace('model "Course Example (simple)"', 'model " Course Example (simple) "'));
+  applyModelSource(id, modelToSource(model()).replace('model "Course Example (with entities)"', 'model " Course Example (with entities) "'));
   eq(loadEvents().length, before, 'padding is no rename');
-  const summary = applyModelSource(id, modelToSource(model()).replace('model "Course Example (simple)"', 'model "Courses"'));
+  const summary = applyModelSource(id, modelToSource(model()).replace('model "Course Example (with entities)"', 'model "Courses"'));
   eq(sandbox.sourceApplySummary(summary), 'renamed the model to "Courses"', 'reported');
 });
 
@@ -678,7 +684,7 @@ check('scenarios refuse what they cannot mean', () => {
 });
 
 check('the draft is advised on before it is applied', () => {
-  const { model } = build(0);
+  const { model } = build(ENTITIES);
   const text = modelToSource(model()).replace('emit CourseArchived { courseId }', 'emit CourseBurnt { courseId }');
   const parsed = parseModelSource(text);
   const found = sourceAdvisories(model(), parsed);
@@ -975,7 +981,7 @@ check('renaming any declared name and back changes nothing, or is refused over a
 });
 
 check('a rename is exact: a member, not its look-alikes', () => {
-  const text = modelToSource(build(0).model());
+  const text = modelToSource(build(ENTITIES).model());
   const { text: out } = renameAt(text, 'NonExistent, Existent', 'NonExistent, '.length, 'Active');
   eq((out.match(/\bActive\b/g) || []).length, 6, 'the declaration, a handler and four rules');
   eq((out.match(/\bNonExistent\b/g) || []).length, (text.match(/\bNonExistent\b/g) || []).length, 'NonExistent untouched');
@@ -983,7 +989,7 @@ check('a rename is exact: a member, not its look-alikes', () => {
 });
 
 check('a projection and an enum sharing a name are two names', () => {
-  const text = modelToSource(build(0).model());
+  const text = modelToSource(build(ENTITIES).model());
   const { text: out } = renameAt(text, 'status = CourseStatus', 'status = '.length, 'CourseState');
   eq(out.includes('projection CourseState: CourseStatus = NonExistent {'), true, 'the projection, not its type');
   eq(out.includes('enum CourseStatus {'), true, 'the enum kept');
@@ -996,7 +1002,7 @@ check('a projection and an enum sharing a name are two names', () => {
 });
 
 check('a shorthand splits when either of its names is renamed', () => {
-  const text = modelToSource(build(0).model());
+  const text = modelToSource(build(ENTITIES).model());
   const param = renameAt(text, 'emit CourseDefined { courseId', 'emit CourseDefined { '.length, 'id').text;
   eq(param.includes('command DefineCourse(id: CourseId, capacity: integer) {'), true, 'the parameter');
   eq(param.includes('emit CourseDefined { courseId: id, capacity }'), true, 'the shorthand, as the value');
@@ -1006,7 +1012,7 @@ check('a shorthand splits when either of its names is renamed', () => {
 });
 
 check('an entity takes its tracking identifier type along, and a type renamed under one is pinned', () => {
-  const text = modelToSource(build(0).model());
+  const text = modelToSource(build(ENTITIES).model());
   const entity = renameAt(text, 'entity Course tagged', 'entity '.length, 'Class').text;
   eq(entity.includes('tag type ClassId = string'), true, 'the type moved');
   eq(entity.includes('alias course = Class tagged courseId'), true, 'the reads moved');
@@ -1020,7 +1026,7 @@ check('an entity takes its tracking identifier type along, and a type renamed un
 });
 
 check('a rename refuses what it cannot do exactly', () => {
-  const text = modelToSource(build(0).model());
+  const text = modelToSource(build(ENTITIES).model());
   eq(renameAt(text, 'alias course = Course', 'alias '.length, 'courseId').error,
     'There already is a command property named courseId in DefineCourse.', 'an alias and a parameter share a namespace');
   eq(renameAt(text, 'NonExistent, Existent', 'NonExistent, '.length, 'Archived').error,
@@ -1050,13 +1056,14 @@ check('a rename reaches into scenarios', () => {
   const out = renameAt(text, 'event CourseDefined', 'event '.length, 'CourseCreated').text;
   eq(/given CourseDefined\b/.test(out), false, 'a given event');
   eq(out.includes('given CourseCreated {'), true, 'renamed there');
-  const alias = renameAt(text, 'alias course = Course tagged courseId', 'alias '.length, 'c').text;
-  eq(alias.includes('require c.status == NonExistent'), true, 'the rule');
-  eq(alias.includes('then rejected "Course already exists"'), true, 'a refusal names its message, which no rename touches');
+  const projection = renameAt(text, 'projection CourseStatus:', 'projection '.length, 'CourseState').text;
+  eq(projection.includes('require CourseState tagged courseId == NonExistent'), true, 'the rule reading it in place');
+  eq(/then CourseState tagged CourseId\("c1"\)/.test(projection), true, 'a projection scenario about it');
+  eq(projection.includes('then rejected "Course already exists"'), true, 'a refusal names its message, which no rename touches');
 });
 
 check('completion knows an event\'s payload in a handler', () => {
-  const text = modelToSource(build(0).model());
+  const text = modelToSource(build(ENTITIES).model());
   const handler = text.replace('on CourseDefined => set event.data.capacity', 'on CourseDefined => set event.|');
   eq(completeAt(handler).labels, ['data'], 'event.');
   eq(completeAt(handler.replace('event.|', 'event.data.|')).labels, ['courseId', 'capacity'], 'event.data.');
@@ -1070,7 +1077,7 @@ check('completion knows an event\'s payload in a handler', () => {
 });
 
 check('completion knows a command\'s reads and payload', () => {
-  const text = modelToSource(build(0).model());
+  const text = modelToSource(build(ENTITIES).model());
   const rule = (insert) => completeAt(text.replace('    else reject "Course has more subscriptions than that"',
     `    else reject "Course has more subscriptions than that"\n  ${insert}`));
   eq(rule('require |').labels, ['course', 'courseId', 'newCapacity', 'StudentExists', 'StudentSubscriptionCount',
@@ -1110,7 +1117,8 @@ check('completion knows scenarios, declarations, and when to stay quiet', () => 
     .slice(0, 3), ['boolean', 'integer', 'string'], 'a type');
   eq(completeAt(text.replace('// Commands', '// Commands |')).labels, [], 'in a comment');
   eq(completeAt(text.replace('@feature("Enrolment")', '@feature("Enrol|ment")')).labels, [], 'in a string');
-  eq(completeAt(text.replace('entity Course tagged CourseId {', 'entity Course tagged CourseId {\n  lifecycle |')).labels.includes('status'), true,
+  const entities = modelToSource(build(ENTITIES).model());
+  eq(completeAt(entities.replace('entity Course tagged CourseId {', 'entity Course tagged CourseId {\n  lifecycle |')).labels.includes('status'), true,
     'an entity\'s properties, written below');
 });
 
@@ -1119,7 +1127,7 @@ check('completion knows scenarios, declarations, and when to stay quiet', () => 
 // ---------------------------------------------------------------
 
 check('a read says which events it adds — only those of the properties used', () => {
-  const { model } = build(0);
+  const { model } = build(ENTITIES);
   const text = modelToSource(model());
   const queries = (source) => sandbox.sourceReadQueries(model(), parseModelSource(source));
   const of = (list, command) => list.find((q) => q.command === command);
@@ -1166,7 +1174,7 @@ check('a command says what it reads in all, on its header line', () => {
 
   // Unused, a read queries every event under its tag; with none at all,
   // the append is unconditional.
-  const bare = (body) => sandbox.boundarySummary(build(0).model(), body).words;
+  const bare = (body) => sandbox.boundarySummary(build(ENTITIES).model(), body).words;
   eq(bare({ boundary: [{ alias: 'course', entity: 'Course', id: { parameterName: 'courseId' } }] }),
     'reads any type, 1 tag', 'nothing used: any type');
   eq(bare({ boundary: [] }), 'reads nothing', 'no reads');

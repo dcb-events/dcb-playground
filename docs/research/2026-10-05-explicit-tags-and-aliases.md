@@ -34,12 +34,16 @@ dcb.events do not need goes behind an **experimental features** flag
 - Core: custom types (constrained, record, list), enums, events,
   declared, scripted and parameterless projections, `successor`,
   `require` / `emit`, aliases and inline references, multiple tags, fan-out,
-  `with` arguments, command scenarios, the Consistency boundary step,
-  Sandbox, the code view.
+  `with` arguments, command and projection scenarios, the Consistency
+  boundary step, Sandbox, the code view.
 - Experimental: entities, lifecycles, derived projections, guarded
   emissions (`emit … when`), optional reads, `excluding`, `currentValue`,
-  projection scenarios, annotations (`@feature`, `@icon`), and the
-  Coupling, Rule map, Event model and Lifecycles views.
+  annotations (`@feature`, `@icon`), and the Coupling, Rule map, Event
+  model and Lifecycles views.
+
+Projection scenarios were first on the experimental side and moved back:
+they are how a projection is tested, as command scenarios test a
+command, and the core examples carry thirty authored ones.
 
 Enums are not strictly needed by the examples, but status projections
 replace lifecycles in the rewritten models and a type system without them

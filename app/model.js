@@ -964,7 +964,6 @@ const EXPERIMENTAL_FEATURES = {
   optional: 'optional reads',
   excluding: 'excluding',
   currentValue: 'currentValue',
-  projectionScenarios: 'projection scenarios',
   annotations: 'annotations',
 };
 
@@ -1006,9 +1005,6 @@ function experimentalFeatures(model) {
     if ((body.publishes || []).some((emission) => emission && (emission.when || []).length)) {
       note('guards', name);
     }
-  }
-  for (const body of Object.values(model['projection-scenario-definitions'] || {})) {
-    if (body) note('projectionScenarios', body.projection || '?');
   }
   const order = Object.keys(EXPERIMENTAL_FEATURES);
   return found.sort((a, b) => order.indexOf(a.feature) - order.indexOf(b.feature));
@@ -5840,6 +5836,113 @@ function seedProductPricing(modelId) {
 }
 
 // ============================================================
+// Without entities (8.0).
+//
+// The course and content models were designed with entities, and the
+// layers above still build them that way — which is the honest record
+// of how they came about, and what the one entity example keeps. Every
+// other shipped model is then stated without them, by this last layer:
+// a property an entity read stood for becomes the projection it binds,
+// read in place, tagged by the identifier the read was tagged by — a
+// list fanned out with `each` — and the entities, their lifecycles and
+// the annotations (all experimental) go. One append, through the
+// ordinary command, like every layer.
+// ============================================================
+
+function seedWithoutEntities(modelId) {
+  const model = getCtxOrThrow(modelId);
+  const entities = model['entity-definitions'];
+  const commands = {};
+  for (const [name, stored] of Object.entries(model['command-definitions'])) {
+    const body = deepClone(stored);
+    const byAlias = new Map((body.boundary || []).filter((b) => b && b.entity).map((b) => [b.alias, b]));
+    const convert = (operand) => {
+      if (Array.isArray(operand)) return operand.map(convert);
+      if (!operand || typeof operand !== 'object') return operand;
+      if (operandSource(operand) === 'alias-property' && byAlias.has(operand.alias)) {
+        const binding = byAlias.get(operand.alias);
+        const property = (entities[binding.entity].properties || []).find((p) => p.name === operand.property);
+        const id = convert(binding.id);
+        const read = {
+          projection: property.projection,
+          tags: [isFannedOut(model, stored, binding) ? { each: id } : id],
+        };
+        if (binding.arguments && Object.keys(binding.arguments).length) read.arguments = convert(binding.arguments);
+        return read;
+      }
+      const out = {};
+      for (const [key, value] of Object.entries(operand)) out[key] = convert(value);
+      return out;
+    };
+    const rule = (condition) => {
+      const out = { ...condition, leftHandSide: convert(condition.leftHandSide) };
+      if (condition.rightHandSide !== undefined) out.rightHandSide = convert(condition.rightHandSide);
+      return out;
+    };
+    body.conditions = (body.conditions || []).map(rule);
+    body.publishes = (body.publishes || []).map((emission) => {
+      const out = { ...emission };
+      if (emission.parameters) out.parameters = convert(emission.parameters);
+      if (emission.when) out.when = emission.when.map(rule);
+      return out;
+    });
+    body.boundary = (body.boundary || []).filter((b) => !b.entity).map(convert);
+    delete body.icon;
+    delete body.feature;
+    commands[name] = body;
+  }
+  const events = {};
+  for (const [name, body] of Object.entries(model['event-definitions'])) {
+    events[name] = { ...body };
+    delete events[name].icon;
+  }
+  replaceDefinitions(modelId, {
+    collections: {
+      'custom-type-definition': model['custom-type-definitions'],
+      'event-definition': events,
+      'entity-definition': {},
+      'projection-definition': model['projection-definitions'],
+      'command-definition': commands,
+    },
+  });
+}
+
+// One subscription count, read two ways. A course's and a student's were
+// two projections with the same handlers, each partitioned its own way;
+// with no partition to declare they are one fold, read tagged by the
+// course or by the student. Folded into the first's name, then renamed,
+// so every reference moves with it.
+function seedOneSubscriptionCount(modelId) {
+  const model = getCtxOrThrow(modelId);
+  if (!model['projection-definitions'].StudentSubscriptionCount) return;
+  const commands = {};
+  const merge = (value) => {
+    if (Array.isArray(value)) return value.map(merge);
+    if (!value || typeof value !== 'object') return value;
+    if (value.projection === 'StudentSubscriptionCount') value = { ...value, projection: 'CourseSubscriptionCount' };
+    const out = {};
+    for (const [key, inner] of Object.entries(value)) out[key] = merge(inner);
+    return out;
+  };
+  for (const [name, body] of Object.entries(model['command-definitions'])) commands[name] = merge(deepClone(body));
+  const projections = { ...model['projection-definitions'] };
+  delete projections.StudentSubscriptionCount;
+  const scenarios = {};
+  for (const [key, body] of Object.entries(model['projection-scenario-definitions'] || {})) scenarios[key] = merge(deepClone(body));
+  replaceDefinitions(modelId, {
+    collections: {
+      'custom-type-definition': model['custom-type-definitions'],
+      'event-definition': model['event-definitions'],
+      'entity-definition': model['entity-definitions'],
+      'projection-definition': projections,
+      'command-definition': commands,
+      'projection-scenario-definition': scenarios,
+    },
+  });
+  renameDefinition('projection-definition', modelId, 'CourseSubscriptionCount', 'SubscriptionCount');
+}
+
+// ============================================================
 // Content based decisions — one domain, five spellings.
 //
 // A document's Published/PendingChanges distinction depends on whether
@@ -6327,20 +6430,28 @@ function seedGuardedAuthoring(modelId) {
   });
 }
 
+// `experimental` marks the entries that use what the experimental flag
+// keeps off the pages (entities, guards, derived projections…); the
+// model list shows those only with the flag on. A test holds the mark
+// to the built model's own `experimentalFeatures`.
 const PREDEFINED_MODELS = [
   {
     name: 'Course Example (simple)',
     slug: 'course-simple',
     description: 'Courses and students, capacity and subscriptions. '
-      + 'Identifiers are supplied by the caller and checked with a state condition.',
-    build: (modelId) => { seedBase(modelId); },
+      + 'Identifiers are supplied by the caller and checked with a state condition; one '
+      + 'subscription count is read per course and per student alike.',
+    build: (modelId) => { seedBase(modelId); seedWithoutEntities(modelId); seedOneSubscriptionCount(modelId); },
   },
   {
     name: 'Course Example (with sequence)',
     slug: 'course-sequence',
     description: 'Adds a projection issuing c1, c2, c3… DefineCourse loses its identifier '
-      + 'parameter and its conditions — binding the numbering guards it instead.',
-    build: (modelId) => { seedBase(modelId); seedAddSequence(modelId); seedSequenceScenarios(modelId); },
+      + 'parameter and its conditions — reading the numbering guards it instead.',
+    build: (modelId) => {
+      seedBase(modelId); seedAddSequence(modelId); seedSequenceScenarios(modelId);
+      seedWithoutEntities(modelId); seedOneSubscriptionCount(modelId);
+    },
   },
   {
     name: 'Course Example (with sequence and tenant)',
@@ -6348,22 +6459,28 @@ const PREDEFINED_MODELS = [
     description: 'The numbering restarts per tenant — the case a tagless sequence could not '
       + 'express. Identity stays globally minted; what restarts is the number, so no two '
       + 'tenants ever write the same Course tag.',
-    build: (modelId) => { seedBase(modelId); seedAddSequence(modelId); seedAddTenancy(modelId); },
+    build: (modelId) => {
+      seedBase(modelId); seedAddSequence(modelId); seedAddTenancy(modelId);
+      seedWithoutEntities(modelId); seedOneSubscriptionCount(modelId);
+    },
   },
   {
     name: 'Course Example (with schedules)',
     slug: 'course-schedules',
+    experimental: true,
     description: 'Adds hourly slots and the rule that a student is never in two courses at '
-      + 'once, checked against live schedules so courses can be rescheduled under subscribers.',
+      + 'once, checked against live schedules so courses can be rescheduled under subscribers. '
+      + 'Stated with entities — rescheduling excludes the course itself from its subscribers\' '
+      + 'other courses, which only an entity read can say.',
     build: (modelId) => { seedBase(modelId); seedAddSequence(modelId); seedAddSchedules(modelId); },
   },
-{
+  {
     name: 'Dynamic Product Price (simple)',
     slug: 'pricing-simple',
     description: 'A cart ordered in one append. Each line names a product and the price shown '
       + 'to the customer; the boundary fans out over the lines and checks each price against '
       + 'the product it belongs to.',
-    build: (modelId) => { seedProductPricing(modelId); },
+    build: (modelId) => { seedProductPricing(modelId); seedWithoutEntities(modelId); },
   },
   {
     name: 'Content based decisions (scripted projection)',
@@ -6372,7 +6489,7 @@ const PREDEFINED_MODELS = [
       + 'its current text equals the last published one — a comparison no declared handler can '
       + 'express, so the status projection is scripted, keeps both texts as hidden state and '
       + 'exposes only the status.',
-    build: (modelId) => { seedContentDecisionsScripted(modelId); },
+    build: (modelId) => { seedContentDecisionsScripted(modelId); seedWithoutEntities(modelId); },
   },
   {
     name: 'Content based decisions (boundary comparison)',
@@ -6380,7 +6497,7 @@ const PREDEFINED_MODELS = [
     description: 'The comparison moved into the boundary: two plain text projections, '
       + 'DocumentPublished carrying the text it publishes, and a publish guard comparing them. '
       + 'Nothing is scripted; pending-ness is never stored, only visible where the texts differ.',
-    build: (modelId) => { seedDocumentAuthoring(modelId); },
+    build: (modelId) => { seedDocumentAuthoring(modelId); seedWithoutEntities(modelId); },
   },
   {
     name: 'Content based decisions (client-verified)',
@@ -6388,23 +6505,33 @@ const PREDEFINED_MODELS = [
     description: 'Publishing takes the text the caller saw and verifies it against the current '
       + 'one — the optimistic check OrderProducts applies to prices, made a domain rule. A stale '
       + 'echo is rejected; the published event carries the proven text.',
-    build: (modelId) => { seedDocumentAuthoring(modelId); seedVerifiedPublish(modelId); },
+    build: (modelId) => { seedDocumentAuthoring(modelId); seedVerifiedPublish(modelId); seedWithoutEntities(modelId); },
   },
   {
     name: 'Content based decisions (guarded emissions)',
     slug: 'content-decisions-guarded',
+    experimental: true,
     description: 'The decision made at write time and recorded: UpdateText emits TextChanged or '
       + 'TextRevertedToPublished under complementary guards, so the log says a revert happened '
       + 'and the five-state status folds from plain handlers again.',
-    build: (modelId) => { seedGuardedAuthoring(modelId); },
+    build: (modelId) => { seedGuardedAuthoring(modelId); seedWithoutEntities(modelId); },
   },
   {
     name: 'Content based decisions (derived projection)',
     slug: 'content-decisions-derived',
+    experimental: true,
     description: 'The comparison declared once: hasPendingChanges is a derived projection — no '
-      + 'handlers, one predicate over the two text projections — bound as an entity property and '
-      + 'read by the publish guard, so a frontend could interpret the same declaration.',
-    build: (modelId) => { seedDocumentAuthoring(modelId); seedDerivedPending(modelId); },
+      + 'handlers, one predicate over the two text projections — read by the publish guard, so '
+      + 'a frontend could interpret the same declaration.',
+    build: (modelId) => { seedDocumentAuthoring(modelId); seedDerivedPending(modelId); seedWithoutEntities(modelId); },
+  },
+  {
+    name: 'Course Example (with entities)',
+    slug: 'course-entities',
+    experimental: true,
+    description: 'The simple course example stated with entities and lifecycles — the '
+      + 'experimental way of grouping projections under the thing they are about.',
+    build: (modelId) => { seedBase(modelId); },
   },
 ];
 

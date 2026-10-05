@@ -105,19 +105,7 @@
       ]
     }
   ],
-  "entityDefinitions": [
-    {
-      "name": "Document",
-      "icon": "📄",
-      "properties": [
-        {
-          "name": "status",
-          "projection": "DocumentStatus"
-        }
-      ],
-      "lifecycle": "status"
-    }
-  ],
+  "entityDefinitions": [],
   "projectionDefinitions": [
     {
       "name": "DocumentStatus",
@@ -154,8 +142,6 @@
   "commandDefinitions": [
     {
       "name": "AddDocument",
-      "feature": "Document Authoring",
-      "icon": "⭐",
       "properties": [
         {
           "name": "id",
@@ -164,20 +150,16 @@
           "isList": false
         }
       ],
-      "boundary": [
-        {
-          "alias": "document",
-          "entity": "Document",
-          "id": {
-            "parameterName": "id"
-          }
-        }
-      ],
+      "boundary": [],
       "conditions": [
         {
           "leftHandSide": {
-            "alias": "document",
-            "property": "status"
+            "projection": "DocumentStatus",
+            "tags": [
+              {
+                "parameterName": "id"
+              }
+            ]
           },
           "predicate": "equals",
           "rightHandSide": {
@@ -199,8 +181,6 @@
     },
     {
       "name": "UpdateText",
-      "feature": "Document Authoring",
-      "icon": "✏️",
       "properties": [
         {
           "name": "docId",
@@ -215,20 +195,16 @@
           "isList": false
         }
       ],
-      "boundary": [
-        {
-          "alias": "document",
-          "entity": "Document",
-          "id": {
-            "parameterName": "docId"
-          }
-        }
-      ],
+      "boundary": [],
       "conditions": [
         {
           "leftHandSide": {
-            "alias": "document",
-            "property": "status"
+            "projection": "DocumentStatus",
+            "tags": [
+              {
+                "parameterName": "docId"
+              }
+            ]
           },
           "predicate": "equals",
           "rightHandSide": {
@@ -239,8 +215,12 @@
         },
         {
           "leftHandSide": {
-            "alias": "document",
-            "property": "status"
+            "projection": "DocumentStatus",
+            "tags": [
+              {
+                "parameterName": "docId"
+              }
+            ]
           },
           "predicate": "equals",
           "rightHandSide": {
@@ -266,8 +246,6 @@
     },
     {
       "name": "PublishDocument",
-      "feature": "Document Authoring",
-      "icon": "💾",
       "properties": [
         {
           "name": "docId",
@@ -276,20 +254,16 @@
           "isList": false
         }
       ],
-      "boundary": [
-        {
-          "alias": "document",
-          "entity": "Document",
-          "id": {
-            "parameterName": "docId"
-          }
-        }
-      ],
+      "boundary": [],
       "conditions": [
         {
           "leftHandSide": {
-            "alias": "document",
-            "property": "status"
+            "projection": "DocumentStatus",
+            "tags": [
+              {
+                "parameterName": "docId"
+              }
+            ]
           },
           "predicate": "equalsAny",
           "rightHandSide": [
@@ -316,8 +290,6 @@
     },
     {
       "name": "ArchiveDocument",
-      "feature": "Document Authoring",
-      "icon": "🗑️",
       "properties": [
         {
           "name": "docId",
@@ -326,20 +298,16 @@
           "isList": false
         }
       ],
-      "boundary": [
-        {
-          "alias": "document",
-          "entity": "Document",
-          "id": {
-            "parameterName": "docId"
-          }
-        }
-      ],
+      "boundary": [],
       "conditions": [
         {
           "leftHandSide": {
-            "alias": "document",
-            "property": "status"
+            "projection": "DocumentStatus",
+            "tags": [
+              {
+                "parameterName": "docId"
+              }
+            ]
           },
           "predicate": "equalsAny",
           "rightHandSide": [

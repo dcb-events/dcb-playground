@@ -31,6 +31,7 @@ sandbox.document.modelContext = {
 // browser breaks here too.
 loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js', 'shared.js', 'webmcp-schemas.js', 'webmcp.js'], {
   withPage: true,
+  trailer: 'globalThis.PREDEFINED_MODELS = PREDEFINED_MODELS;',
 });
 
 const { loadPredefinedModel, projectState } = sandbox;
@@ -121,7 +122,7 @@ async function call(name, args) {
   // The rest runs against the first predefined model, opened the way
   // the page opens one — stored, not held.
   store.clear();
-  const id = loadPredefinedModel(0);
+  const id = loadPredefinedModel(sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-entities'));
   store.set('dcb-playground:model', id);
   const model = () => projectState()[id];
 

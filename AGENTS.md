@@ -85,6 +85,19 @@ it never works from `file:`.
 
 ## Conventions and gotchas
 
+- **The shipped models are stated without entities** (8.0): the seed
+  builders still build the course and content models with entities —
+  the record of how they were designed — and a last layer,
+  `seedWithoutEntities` (model.js), restates them as reads in place
+  through the ordinary commands; `seedOneSubscriptionCount` then folds
+  the course's and the student's subscription counts into the one fold
+  they always were. The entity forms live on as the experimental
+  `course-entities` and `course-schedules` (which needs `excluding`).
+  Entity tests build those, or a model from seed layers alone
+  (`seeded(...)` in ui.test.js). A `PREDEFINED_MODELS` entry's
+  `experimental` mark decides whether the model list shows it with the
+  flag off (`shippedModels`), and a test holds the mark to the built
+  model's `experimentalFeatures`.
 - **The help is the documentation on dcb.events** — the notation guide
   and its reference, opened in a new tab (`openDocs`, shared.js) at the
   anchor for what the page is about (`docsHere`: the construct under the
@@ -101,7 +114,7 @@ it never works from `file:`.
   derived boundary — is always on screen; what the examples on
   dcb.events do not need is behind the flag: entities and lifecycles,
   derived projections, guarded emissions, optional reads, `excluding`,
-  `currentValue`, projection scenarios, annotations, and the Coupling /
+  `currentValue`, annotations, and the Coupling /
   Rule map / Event model / Lifecycles views. A model that uses any of
   it still loads, renders and evaluates whole; `experimentalFeatures`
   (model.js) names what it uses and `experimentalNotice` says so on
