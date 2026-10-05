@@ -2,6 +2,9 @@
 // DCB Playground — the help: what each concept is, and how it is
 // written in DCB notation (the code view's language, dsl.js).
 //
+// The short version, in place: the notation is explained in full on
+// dcb.events, and every topic and syntax row links there.
+//
 // Data, no DOM. The modal in index.html renders it; a page that wants
 // to say "this is explained over there" opens it at a topic
 // (`openHelp(id)`), which is why every topic has a stable id and
@@ -192,271 +195,249 @@ command SubscribeStudentToCourse(courseId: CourseId, studentId: StudentId) {
 }
 `;
 
+// The notation is explained on dcb.events: a guide that introduces it
+// and a reference with one entry per keyword. The help is the short
+// version of the reference, in place — every topic links its entry and
+// every syntax row the entry that spells it out. The anchors are the
+// reference's explicit ids, and the site's build fails on a link to one
+// it does not define (`helpReferenceLinks`).
+const NOTATION_GUIDE_URL = 'https://dcb.events/notation/';
+const NOTATION_REFERENCE_URL = 'https://dcb.events/notation/reference/';
+const notationReference = (anchor) => NOTATION_REFERENCE_URL + '#' + anchor;
+
 // `example` names declarations of HELP_MODEL_SOURCE as `keyword:Name`
 // (the keyword of their kind, since `type:CourseStatus` and
 // `projection:CourseStatus` are two things); `text` is a snippet of its
 // own, for the one topic about the text rather than the model.
-// `syntax` rows are [spelling, meaning]. `boundaryOf` lists commands
+// `syntax` rows are [spelling, meaning, reference anchor]. `href` is
+// where the topic is explained in full. `boundaryOf` lists commands
 // whose derived queries the topic shows.
 const HELP_TOPICS = [
   {
     id: 'notation',
     group: 'The text',
     title: 'DCB notation',
+    href: NOTATION_GUIDE_URL,
+    hrefLabel: 'Guide ↗',
     prose: [
-      'The model as text — what the Code view shows and applies. It spells the wire format: '
-        + 'every construct is one stored shape, so printing and parsing are each other\'s inverse '
-        + 'and nothing is inferred. Applying writes only the difference, as one undo step.',
-      'Declarations may come in any order. The printer groups them as types, events, entities, '
-        + 'projections and commands, and scenarios sit inside the block of what they exercise. '
-        + 'A definition the grammar cannot say exactly is printed as its stored JSON instead, so the '
-        + 'text never drops anything.',
+      'The model as text — what the Code view shows and applies. Every construct is one stored shape, '
+        + 'so nothing is inferred; declarations may come in any order, and scenarios sit in the block of '
+        + 'what they exercise.',
     ],
     text: `model "Course Example"
 
 // Comments are for the editor only: the model has nowhere to keep them.
-/* Block comments too. */
 tag type CourseId = string
 `,
     syntax: [
-      ['model "Name"', 'The model\'s name. Once per text.'],
-      ['// …   /* … */', 'Comments. Not stored.'],
-      ['"text"  42  true  null  [ … ]  { key: … }', 'Literals are JSON; object keys may go unquoted.'],
-      ['@icon("📚")', 'The mark an entity, event or command is shown with.'],
-      ['@feature("Enrolment")', 'The feature a command is listed under.'],
-      ['command Foo json { … }', 'Any definition, as its stored JSON.'],
+      ['model "Name"', 'The model\'s name. Once per text.', 'model'],
+      ['// …   /* … */', 'Comments. Not stored.', 'comments'],
+      ['"text"  42  true  null  [ … ]  { key: … }', 'Literals are JSON; object keys may go unquoted.', 'literals'],
+      ['@icon("📚")   @feature("Enrolment")', 'How the pages show an entity, event or command.', 'annotations'],
+      ['command Foo json { … }', 'A definition the grammar cannot say, as its stored JSON.', 'json'],
     ],
   },
   {
     id: 'custom-type',
     group: 'Data',
     title: 'Custom types',
-    href: 'https://dcb.events/topics/tags/',
+    href: notationReference('tag-type'),
     prose: [
-      'Named value types. A scalar type marked `tag` is an identifier: every event carrying a value of '
-        + 'it is tagged `CourseId:c1`, and those tags are what a read queries by.',
-      'Everything else is plain data — a constrained scalar, an enum, or a record of fields. A record '
-        + 'has no identity and no tag of its own.',
+      'Named value types. A `tag` type is an identifier: every event carrying a value of it is tagged '
+        + '`CourseId:c1`, and those tags are what a read queries by.',
     ],
-    example: ['type:CourseId', 'type:StudentId', 'type:Capacity', 'type:TimeSlot', 'type:CourseStatus',
-      'type:PersonName'],
+    example: ['type:CourseId', 'type:Capacity', 'type:CourseStatus', 'type:PersonName'],
     syntax: [
-      ['tag type CourseId = string', 'An identifier, written to events as the tag `CourseId:<value>`.'],
-      ['type Capacity = integer { minimum: 1 }', 'A base type, with JSON Schema keywords after it.'],
-      ['enum CourseStatus { NonExistent, Existent }', 'String members, written bare wherever the type is known.'],
-      ['record PersonName { given: string, … }', 'Fields, each typed with a base or custom type.'],
-      ['@tagSchema("{type}={value}")', 'How a tag type spells its tag. The default is `{type}:{value}`.'],
-      ['type Point = { …schema… }', 'Any other JSON Schema, whole.'],
+      ['tag type CourseId = string', 'An identifier, written to events as the tag `CourseId:<value>`.', 'tag-type'],
+      ['type Capacity = integer { minimum: 1 }', 'A base type, with JSON Schema keywords after it.', 'type'],
+      ['enum CourseStatus { NonExistent, Existent }', 'String members, written bare wherever the type is known.', 'enum'],
+      ['record PersonName { given: string, … }', 'Fields, each typed with a base or custom type.', 'record'],
+      ['@tagSchema("{type}={value}")', 'How a tag type spells its tag. The default is `{type}:{value}`.', 'tag-type'],
+      ['type Point = { …schema… }', 'Any other JSON Schema, whole.', 'type'],
     ],
   },
   {
     id: 'event',
     group: 'Data',
     title: 'Events',
-    href: 'https://dcb.events/topics/tags/',
+    href: notationReference('event'),
     prose: [
       'A fact, named in the past tense, with a payload. Its tags are not declared: they are the values of '
-        + 'its `tag`-typed properties, so `StudentSubscribedToCourse` is tagged with its course and its '
-        + 'student alike.',
-      'Any number of commands may append an event, and any number of projections fold it.',
+        + 'its `tag`-typed properties.',
     ],
-    example: ['event:CourseDefined', 'event:CourseCapacityChanged', 'event:CourseArchived',
-      'event:CourseRescheduled', 'event:StudentRegistered', 'event:StudentSubscribedToCourse',
-      'event:StudentWaitlistedForCourse'],
+    example: ['event:CourseDefined', 'event:StudentRegistered'],
     syntax: [
-      ['courseId: CourseId', 'A property, typed with a base or custom type.'],
-      ['email?: string', 'Optional: `null` when unset.'],
-      ['slots: TimeSlot[]', 'A list.'],
+      ['courseId: CourseId', 'A property, typed with a base or custom type.', 'event'],
+      ['email?: string', 'Optional: `null` when unset.', 'event'],
+      ['slots: TimeSlot[]', 'A list.', 'event'],
     ],
   },
   {
     id: 'projection',
     group: 'State',
     title: 'Projections',
-    href: 'https://dcb.events/topics/projections/',
+    href: notationReference('projection'),
     prose: [
       'A fold over the event log: an initial value and, per event type, one operation. Its parameters are '
-        + 'its partition — each one a `tag` type — so its query is the events it handles, tagged with the '
-        + 'values it is read at.',
-      'Without parameters there is one instance, over the whole log: a numbering, say.',
-      'The operations are a closed vocabulary because they are analysed, not only run. For a fold they '
-        + 'cannot say, [[scripted-projection|script the projection]]; for a value computed from other '
-        + 'projections, [[derived-projection|derive it]].',
+        + 'tag types — its partition — and without any there is one instance over the whole log.',
     ],
-    example: ['projection:CourseCapacity', 'projection:CourseSubscriptionCount',
-      'projection:CourseSubscribedStudentIds', 'projection:CourseNumbering'],
+    example: ['projection:CourseCapacity'],
     syntax: [
-      ['projection P(courseId: CourseId): integer = 0', 'Parameters, value type, initial value.'],
-      ['…: StudentId[] = []', 'A list value.'],
-      ['on E => set v', 'Replace the value.'],
-      ['on E => increment 1   decrement 1', 'Integers.'],
-      ['on E => append v   remove v', 'Lists.'],
-      ['event.data.capacity', 'A value the event carried.'],
-      ['successor(event.data.courseId)', 'The value after it: `7` → `8`, `c1` → `c2`, `inv-009` → `inv-010`.'],
+      ['projection P(courseId: CourseId): integer = 0', 'Parameters, value type, initial value.', 'projection'],
+      ['on E => set v', 'Replace the value.', 'on'],
+      ['on E => increment 1   decrement 1', 'Integers.', 'on'],
+      ['on E => append v   remove v', 'Lists.', 'on'],
+      ['event.data.capacity', 'A value the event carried.', 'event-data'],
+      ['successor(event.data.courseId)', 'The value after it: `7` → `8`, `c1` → `c2`, `inv-009` → `inv-010`.', 'successor'],
+      ['currentValue', 'The projection\'s own value before the event.', 'current-value'],
     ],
   },
   {
     id: 'entity',
     group: 'State',
     title: 'Entities',
+    href: notationReference('entity'),
     prose: [
-      'A name for the projections kept per one identifier. An entity is not stored, and it is not a '
-        + 'consistency boundary: it is what its properties say, read together for one id. Its identifier '
-        + 'type is `<Name>Id`, implied when the text does not declare it.',
-      'A command [[read|reads]] one instance, `Course[courseId]`, but only the properties its rules, guards '
-        + 'and emissions use put events into its query.',
+      'A name for projections that share an identity. Not stored, and not a consistency boundary: only '
+        + 'the properties a command uses put events into its query.',
     ],
     example: ['entity:Course'],
     syntax: [
-      ['capacity = CourseCapacity', 'A property: a projection partitioned by the identifier.'],
-      ['lifecycle status', 'The property holding the instance\'s state: its [[lifecycle]]'],
-      ['entity Course[CourseKey] { … }', 'An identifier type not named `<Name>Id`.'],
+      ['capacity = CourseCapacity', 'A property: a projection partitioned by the identifier.', 'entity'],
+      ['lifecycle status', 'The property holding the instance\'s state: its [[lifecycle]]', 'lifecycle'],
+      ['entity Course[CourseKey] { … }', 'An identifier type not named `<Name>Id`.', 'entity'],
     ],
   },
   {
     id: 'lifecycle',
     group: 'State',
     title: 'Lifecycles',
+    href: notationReference('lifecycle'),
     prose: [
-      'The property that says which state an instance is in, designated with `lifecycle`. The playground '
-        + 'draws the machine from that projection\'s handlers — which event moves it to which state — and '
-        + 'from the rules that guard each move.',
-      'Two states are a `boolean`: `require student.exists is true` reads as "student exists". Three or '
-        + 'more are an enum, like `Course`\'s `status`. An entity needs no lifecycle at all.',
+      'The property that says which state an instance is in: a `boolean` for two states, an enum for '
+        + 'more. The playground draws the machine from its handlers and the rules that guard each move.',
     ],
     example: ['entity:Student', 'projection:StudentExists'],
     syntax: [
-      ['lifecycle exists', 'Designates a boolean or enum property of this entity.'],
-      ['require student.exists is true', 'An existence rule: "student exists".'],
-      ['require course.status in [Draft, Published]', 'A state rule over an enum lifecycle.'],
+      ['lifecycle exists', 'Designates a boolean or enum property of this entity.', 'lifecycle'],
+      ['require student.exists is true', 'An existence rule: "student exists".', 'lifecycle'],
+      ['require course.status in [Draft, Published]', 'A state rule over an enum lifecycle.', 'require'],
     ],
   },
   {
     id: 'derived-projection',
     group: 'State',
     title: 'Derived projections',
+    href: notationReference('derived'),
     prose: [
-      'A boolean declared as one predicate over other projections, with no handlers and no initial value. '
-        + 'Its query is the union of its operands\' queries.',
-      'So reading it reads them: every command that tests `course.isFull` has `CourseCapacityChanged` in '
-        + 'its [[consistency-boundary|boundary]], through `CourseCapacity`.',
+      'A boolean declared as one predicate over other projections. Its query is the union of its operands\' '
+        + 'queries, so reading it reads them.',
     ],
     example: ['projection:CourseIsFull'],
     syntax: [
-      ['derived A(x) >= B(x)', 'A predicate, spelled as in [[rule|rules]]; its operands are projections at arguments, parameters or literals.'],
+      ['derived A(x) >= B(x)', 'A predicate, spelled as in [[rule|rules]].', 'derived'],
     ],
   },
   {
     id: 'scripted-projection',
     group: 'State',
     title: 'Scripted projections',
+    href: notationReference('script'),
     prose: [
-      'A fold written in JavaScript, for what the operations cannot say. Each handler is an expression over '
-        + '`state`, `event` and `args` giving the next state. The query is declared rather than derived: '
-        + '`tagFilter` names its tags.',
-      'Scripts run unsandboxed in this page. Importing a model that carries one asks first, and `?safe` on '
-        + 'the URL loads with every script disabled.',
+      'A fold written in JavaScript, for what the operations cannot say; its query is declared, not derived. '
+        + 'Scripts run unsandboxed: importing one asks first, and `?safe` on the URL disables them.',
     ],
     example: ['projection:CoursePeakSubscriptions'],
     syntax: [
-      ['script(courseId: CourseId)', 'Arguments the reading command supplies, as `args`. Not tags.'],
-      ['tagFilter ["CourseId:{courseId}"]', 'The query\'s tags, ANDed; `{name}` is an argument. `[]` is the whole log.'],
-      ['initialState { … }', 'The state before the first event.'],
-      ['exposes peak', 'The field of the state rules read. Without it, the state is the value.'],
-      ['on E => ```expr```', 'A handler: an expression giving the next state.'],
+      ['script(courseId: CourseId)', 'Arguments the reading command supplies, as `args`. Not tags.', 'script'],
+      ['tagFilter ["CourseId:{courseId}"]', 'The query\'s tags, ANDed; `{name}` is an argument. `[]` is the whole log.', 'script'],
+      ['initialState { … }', 'The state before the first event.', 'script'],
+      ['exposes peak', 'The field of the state rules read. Without it, the state is the value.', 'script'],
+      ['on E => ```expr```', 'A handler: an expression over `state`, `event` and `args` giving the next state.', 'script'],
     ],
   },
   {
     id: 'command',
     group: 'Behaviour',
     title: 'Commands',
+    href: notationReference('command'),
     prose: [
-      'What someone can do: a payload, the [[read|reads]] it decides on, the [[rule|rules]] that must hold, '
-        + 'and the [[emit|events it appends]] — always in that order. Its reads, together, derive the '
-        + '[[consistency-boundary|append condition]].',
+      'What someone can do: a payload, then its [[read|reads]], [[rule|rules]] and [[emit|appends]], in '
+        + 'that order. Its reads derive its [[consistency-boundary|append condition]].',
     ],
-    example: ['command:ChangeCourseCapacity', 'command:RegisterStudent'],
+    example: ['command:ChangeCourseCapacity'],
     syntax: [
-      ['command C(courseId: CourseId, email?: string)', 'The payload: `?` optional, `[]` a list.'],
-      ['@feature("Course management")', 'The feature it is listed under.'],
+      ['command C(courseId: CourseId, email?: string)', 'The payload: `?` optional, `[]` a list.', 'command'],
+      ['@feature("Course management")', 'The feature it is listed under.', 'annotations'],
     ],
   },
   {
     id: 'read',
     group: 'Behaviour',
     title: 'Reads',
+    href: notationReference('read'),
     prose: [
-      'What a command consults, under an alias its rules, guards and emissions refer to. A read names an '
-        + 'instance, not what is queried of it: only the properties something uses contribute events.',
-      'Reads chain. An identifier may come from an earlier read, and the boundary is then as many queries '
-        + 'deep as the chain — `RescheduleCourse` reads the course, then each of its students, then each of '
-        + 'their other courses.',
-      'On the pages a read is never added by hand: a rule brings the read it needs. In the text it is '
-        + 'written out, because the model stores it.',
+      'What a command consults, under an alias. Only the properties something uses contribute events, and '
+        + 'reads chain: the boundary is then as many queries deep as the chain.',
     ],
-    example: ['command:RescheduleCourse', 'command:DefineCourse'],
+    example: ['command:RescheduleCourse'],
     syntax: [
-      ['read course = Course[courseId]', 'One entity instance, by identifier.'],
-      ['read others = Course[student.subscribedCourseIds]', 'Fan-out: one instance per element of a list.'],
-      ['… excluding courseId', 'One identifier dropped from a fan-out.'],
-      ['read tutor? = Student[tutorId]', 'May be absent: a null identifier binds nothing, and rules over it hold.'],
-      ['read numbering = CourseNumbering()', 'A projection, with an argument per parameter.'],
-      ['… with (key: value)', 'Arguments for scripted projections read through an entity.'],
+      ['read numbering = CourseNumbering()', 'A projection, with an argument per parameter.', 'read'],
+      ['read course = Course[courseId]', 'One entity instance, by identifier.', 'read-entity'],
+      ['read others = Course[student.subscribedCourseIds]', 'Fan-out: one instance per element of a list.', 'fan-out'],
+      ['… excluding courseId', 'One identifier dropped from a fan-out.', 'fan-out'],
+      ['read tutor? = Student[tutorId]', 'May be absent: a null identifier binds nothing, and rules over it hold.', 'optional-read'],
+      ['… with (key: value)', 'Arguments for scripted projections read through an entity.', 'with'],
     ],
   },
   {
     id: 'rule',
     group: 'Behaviour',
     title: 'Rules',
+    href: notationReference('require'),
     prose: [
-      'A condition that must hold, or the command is rejected — an ordinary outcome, reported with the '
-        + 'rule that refused. Over a fan-out read, a rule must hold for every instance.',
-      'Operands are payload properties (`studentId`), read properties (`course.status`), literals and enum '
-        + 'members.',
+      'A condition that must hold, or the command is rejected. Over a fan-out read, it must hold for every '
+        + 'instance.',
     ],
     example: ['command:SubscribeStudentToCourse'],
     syntax: [
-      ['a == b   a != b   <   <=   >   >=', 'Comparison.'],
-      ['x in [Draft, Published]   x not in […]', 'One of a list of literals.'],
-      ['xs contains x   x in xs   xs containsAny ys', 'List membership; `x in xs` is read as `xs contains x`.'],
-      ['s startsWith "c"   s endsWith "1"', 'Strings.'],
-      ['count(xs) < 10   ==   >', 'A list\'s length.'],
-      ['x is empty   x is not empty', 'An empty string or list, or `null`.'],
-      ['b is true   b is false', 'Booleans, and existence for a two-state [[lifecycle]]'],
-      ['not a < b   xs not contains x', 'Negation.'],
+      ['a == b   a != b   <   <=   >   >=', 'Comparison.', 'require'],
+      ['x in [Draft, Published]   x not in […]', 'One of a list of literals.', 'require'],
+      ['xs contains x   xs containsAny ys', 'List membership.', 'require'],
+      ['s startsWith "c"   s endsWith "1"', 'Strings.', 'require'],
+      ['count(xs) < 10   ==   >', 'A list\'s length.', 'require'],
+      ['x is empty   x is not empty', 'An empty string or list, or `null`.', 'require'],
+      ['b is true   b is false', 'Booleans, and existence for a two-state [[lifecycle]]', 'require'],
+      ['not a < b   xs not contains x', 'Negation.', 'require'],
     ],
   },
   {
     id: 'emit',
     group: 'Behaviour',
     title: 'Append',
+    href: notationReference('emit'),
     prose: [
-      'The events a command appends when its rules hold, each field taken from the payload or a read. A field '
-        + 'with the name of the payload property it takes is written once.',
-      'An emission may be guarded. A failing `when` skips that event instead of rejecting the command; if '
-        + 'every guard fails, nothing is appended and the command still succeeds. Guards read like rules and '
-        + 'count toward the boundary like rules.',
+      'The events a command appends when its rules hold. A guarded one is skipped when its `when` fails, '
+        + 'without rejecting the command.',
     ],
-    example: ['command:SubscribeStudentToCourse'],
+    example: ['command:DefineCourse'],
     syntax: [
-      ['emit E { courseId, capacity }', 'Fields taken from the payload properties of the same name.'],
-      ['emit E { courseId: numbering }', 'A field taken from a read, or any other operand.'],
-      ['  when a and b', 'A guard: the event is appended only if all of these hold.'],
+      ['emit E { courseId, capacity }', 'Fields taken from the payload properties of the same name.', 'emit'],
+      ['emit E { courseId: numbering }', 'A field taken from a read, or any other operand.', 'emit'],
+      ['  when a and b', 'A guard: the event is appended only if all of these hold.', 'emit-when'],
     ],
   },
   {
     id: 'consistency-boundary',
     group: 'Behaviour',
     title: 'Consistency boundary',
+    href: notationReference('consistency-boundary'),
     prose: [
-      'Never written: derived from a command\'s reads. Each read contributes one query — the event types its '
-        + 'used properties\' projections handle, under its tag — and the append succeeds only if no event '
-        + 'matching any of them was appended since the command read.',
-      'So two commands conflict exactly when one appends what the other\'s query matches. Here, '
-        + '`ChangeCourseCapacity` fails if a course is archived under it, since it reads `course.status`; '
-        + '`ArchiveCourse` does not mind a capacity change, since it reads nothing a capacity changes.',
-      'The Code view says this beside each command, and the Consistency boundary step of a command page '
-        + 'lists the queries.',
+      'Never written: derived from a command\'s reads. Each read contributes the event types its used '
+        + 'properties\' projections handle, under its tag, and the append fails if a matching event was '
+        + 'appended since the command read.',
+      'Here, `ChangeCourseCapacity` fails if the course is archived under it, since it reads `course.status`; '
+        + '`ArchiveCourse` does not mind a capacity change.',
     ],
     boundaryOf: ['ArchiveCourse', 'ChangeCourseCapacity', 'SubscribeStudentToCourse', 'RescheduleCourse'],
   },
@@ -464,36 +445,33 @@ tag type CourseId = string
     id: 'scenario',
     group: 'Behaviour',
     title: 'Scenarios',
+    href: notationReference('scenario'),
     prose: [
-      'Examples that pin behaviour down, inside the block of the command or projection they exercise. A '
-        + 'command scenario has Given events, a When, and a Then: the events appended, `nothing`, or the '
-        + 'rule that rejected it and the values it saw. A projection scenario has Given events and the value '
-        + 'the projection folds them to.',
-      'A written Then is an assertion. Leave it out and applying records what the model does. A Then the '
-        + 'model no longer agrees with is reported, with a fix that accepts the new outcome — applying never '
-        + 'accepts it for you.',
+      'Examples that pin behaviour down, inside the block of what they exercise. Leave the Then out and '
+        + 'applying records what the model does; a Then it no longer agrees with is reported, with a fix.',
     ],
-    example: ['command:ArchiveCourse', 'projection:CourseStatus'],
+    example: ['command:ArchiveCourse'],
     syntax: [
-      ['scenario "name" { … }', 'The name is optional.'],
-      ['given E { courseId: "c1" }', 'An event already in the log. Values are JSON, enum members bare.'],
-      ['when C { … }', 'The command, with every payload property.'],
-      ['then E { … }   then nothing', 'What was appended.'],
-      ['then rejected by <rule> saw L, R', 'The refusal; `saw` is optional, `at "c2"` names a fan-out\'s instance.'],
-      ['then P("c1") == Existent', 'A projection\'s value at arguments, in declared order.'],
+      ['scenario "name" { … }', 'The name is optional.', 'scenario'],
+      ['given E { courseId: "c1" }', 'An event already in the log. Values are JSON, enum members bare.', 'scenario'],
+      ['when C { … }', 'The command, with every payload property.', 'scenario'],
+      ['then E { … }   then nothing', 'What was appended.', 'scenario'],
+      ['then rejected by <rule> saw L, R', 'The refusal; `saw` is optional, `at 1` names a fan-out\'s instance by position.', 'saw'],
+      ['then P("c1") == Existent', 'A projection\'s value at arguments, in declared order.', 'projection-scenario'],
     ],
-  },
-  {
-    id: 'example',
-    group: 'Example',
-    title: 'The whole example',
-    prose: [
-      'Every snippet above is cut from this one model. It applies cleanly: no problems, and every scenario '
-        + 'holds.',
-    ],
-    whole: true,
   },
 ];
+
+// Every page of dcb.events the help links to, with its anchor: what the
+// site's build checks against the pages it has just built.
+function helpReferenceLinks() {
+  const links = new Set();
+  for (const topic of HELP_TOPICS) {
+    if (topic.href) links.add(topic.href);
+    for (const [, , anchor] of topic.syntax || []) links.add(notationReference(anchor));
+  }
+  return [...links];
+}
 
 // Which topic explains a definition. The body decides between the
 // three kinds of projection; the rest are one topic per kind.
@@ -529,7 +507,6 @@ function helpParsed() {
 // blank line around anything longer.
 function helpExcerpt(topic) {
   if (topic.text) return topic.text.replace(/\n$/, '');
-  if (topic.whole) return HELP_MODEL_SOURCE.replace(/\n$/, '');
   if (!topic.example) return null;
   const lines = HELP_MODEL_SOURCE.split('\n');
   const parsed = helpParsed();
