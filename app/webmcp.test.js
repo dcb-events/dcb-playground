@@ -353,10 +353,10 @@ async function call(name, args) {
     const { text: empty } = await call('get_model_source');
     eq(empty, 'model "Code Probe"\n', 'an empty model is its name');
     const source = empty + [
-      'event ProbeHappened { probeId: ProbeId } tags probeId',
-      'entity Probe {}',
+      'event ProbeHappened { tag probeId: ProbeId }',
+      'entity Probe (tag probeId: ProbeId) {}',
       'command Probe2(probeId: ProbeId) {',
-      '  alias probe = Probe tagged probeId',
+      '  alias probe = Probe(probeId)',
       '  emit ProbeHappened { probeId }',
       '}',
     ].join('\n');

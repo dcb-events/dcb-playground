@@ -278,9 +278,9 @@ function build(index) {
     eq(model()['projection-definitions'].Untouched.handlers, [], 'nothing moves it yet');
   });
 
-  check("a blank entity property's draft declares no partition — the entity reads it by its id", () => {
-    const draft = blankProjectionDraft(model(), 'Course');
-    eq('parameters' in draft, false, 'nothing to declare');
+  check("a blank entity property's draft is tagged by the entity's identifier", () => {
+    eq(blankProjectionDraft(model(), 'Course').tags, [{ name: 'courseId', tagType: 'CourseId' }], 'the one tag it binds by');
+    eq(blankProjectionDraft(model()).tags, null, 'one read on its own has not said yet');
   });
 
   check('a blank draft starts where its type starts, explicitly', () => {
@@ -323,11 +323,12 @@ function build(index) {
     eq(cells[0].className, 'chip tag', 'drawn as a tag');
   });
 
-  check('a projection nothing reads says so as an absence, not as a tag', () => {
-    const cells = partitionCells(model(), 'NoSuchProjection');
+  check('an untagged projection says so as an absence, not as a tag', () => {
+    const numbering = build(1).model();
+    const cells = partitionCells(numbering, 'CourseNumbering');
     eq(cells.length, 1, 'one cell');
     eq(cells[0].className, 'chip unset', 'dashed and unfilled, like every other nothing here');
-    eq(textOf(cells[0]), 'not read', 'and says what it is');
+    eq(textOf(cells[0]), 'untagged', 'and says what it is');
   });
 
   check('a type reads the same whether it is a member or a projection', () => {
@@ -397,7 +398,7 @@ function build(index) {
 
   check('a declared projection holding a composite is advisory-flagged', () => {
     addDefinition('projection-definition', id, 'ItemSnapshot', {
-      valueType: 'Item', isList: false, initialValue: null, parameters: [], handlers: [],
+      valueType: 'Item', isList: false, initialValue: null, tags: [], handlers: [],
     });
     eq(sandbox.modelAdvisories(model()).some(
       (a) => a.name === 'ItemSnapshot' && /composite/.test(a.message)
@@ -676,7 +677,7 @@ function build(index) {
     eq(after['entity-definitions'].Course.properties.slice(-1),
       [{ name: 'seatCount', projection: 'CourseSeatCount' }], 'the binding');
     const projection = after['projection-definitions'].CourseSeatCount;
-    eq('parameters' in projection, false, 'no partition — the entity reads it tagged by the instance');
+    eq(projection.tags, [{ name: 'courseId', tagType: 'CourseId' }], 'tagged by the entity\'s identifier');
     eq(projection.initialValue, 0, 'starting where an integer starts');
     eq(projection.handlers, [], 'nothing moves it yet');
   });
@@ -691,7 +692,7 @@ function build(index) {
     });
     const log = [{ type: 'CourseDefined', data: { courseId: 'c1', capacity: 12 } }];
     eq(sandbox.foldEntityProperty(model(), log, 'Course', 'seatCount', 'c1'), 12, 'folded through the binding');
-    eq(sandbox.foldProjection(model(), log, 'CourseSeatCount', { tags: [{ type: 'CourseId', value: 'c1' }] }), 12, 'and read directly');
+    eq(sandbox.foldProjection(model(), log, 'CourseSeatCount', { tags: { courseId: 'c1' } }), 12, 'and read directly');
   });
 
   check('renaming a property moves what reads it, not the projection', () => {
@@ -794,6 +795,7 @@ function build(index) {
     const id = active().id;
     sandbox.createEntity(active(), 'stage');
     sandbox.addDefinition('projection-definition', id, 'StageExistsCount', {
+      tags: [{ name: 'stageId', tagType: 'StageId' }],
       valueType: 'integer', isList: false, initialValue: 0, handlers: [],
     });
     sandbox.updateDefinition('entity-definition', id, 'Stage', {
@@ -830,7 +832,7 @@ function build(index) {
     // This model binds every projection it has, so the page for the
     // unbound ones needs one to show.
     sandbox.addDefinition('projection-definition', id, 'CourseNumbering', {
-      parameters: [], valueType: 'CourseId', isList: false, initialValue: 'c1',
+      tags: [], valueType: 'CourseId', isList: false, initialValue: 'c1',
       handlers: [{
         event: 'CourseDefined', operation: 'set',
         value: { successor: { eventProperty: 'courseId' } },
@@ -851,6 +853,7 @@ function build(index) {
 
   check('the editor renders a scripted projection from either side', () => {
     sandbox.addDefinition('projection-definition', id, 'CourseTouches', {
+      tags: [{ name: 'courseId', tagType: 'CourseId' }],
       valueType: 'integer',
       isList: false,
       // Written in the order the schema declares, which is the order
@@ -971,12 +974,12 @@ function build(index) {
     sandbox.render = () => { screen = sandbox.watchProjectionAdder(active(), names); };
     try {
       const watchAt = (id) => {
-        sandbox.state.watchDraft = { projection: 'CourseCapacity', tags: [{ tagType: 'CourseId', tagValue: '' }], arguments: {} };
+        sandbox.state.watchDraft = { projection: 'CourseCapacity', tags: { courseId: { tagType: 'CourseId', tagValue: '' } }, arguments: {} };
         sandbox.render();
         findAll(screen, (n) => n.tag === 'input')[0].onchange({ target: { value: id } });
         findAll(screen, (n) => n.tag === 'button' && textOf(n) === 'Watch it')[0].onclick();
       };
-      const tags = (w) => w.tags.map((t) => t.tagValue);
+      const tags = (w) => Object.values(w.tags).map((t) => t.tagValue);
       watchAt('c1');
       eq(session.pinned.map(tags), [['c1']], 'the first is watched');
       eq(findAll(screen, (n) => n.tag === 'input').length, 0,
@@ -1007,7 +1010,7 @@ function build(index) {
 
   check('a scenario is listed under the one projection it is about', () => {
     const given = [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 4 } }];
-    const key = add({ projection: 'CourseCapacity', tags: [{ tagType: 'CourseId', tagValue: 'c1' }], given });
+    const key = add({ projection: 'CourseCapacity', tags: { courseId: { tagType: 'CourseId', tagValue: 'c1' } }, given });
     eq(projectionScenariosFor(model(), 'CourseCapacity').map((e) => e.key).includes(key), true,
       'under the projection it names');
     eq(projectionScenariosFor(model(), 'CourseStatus').map((e) => e.key).includes(key), false,
@@ -1016,8 +1019,8 @@ function build(index) {
 
   check('several projections over one Given are several scenarios', () => {
     const given = [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 4 } }];
-    const capacity = add({ projection: 'CourseCapacity', tags: [{ tagType: 'CourseId', tagValue: 'c1' }], given });
-    const status = add({ projection: 'CourseStatus', tags: [{ tagType: 'CourseId', tagValue: 'c1' }], given });
+    const capacity = add({ projection: 'CourseCapacity', tags: { courseId: { tagType: 'CourseId', tagValue: 'c1' } }, given });
+    const status = add({ projection: 'CourseStatus', tags: { courseId: { tagType: 'CourseId', tagValue: 'c1' } }, given });
     const stored = (k) => model()['projection-scenario-definitions'][k];
     eq(stored(capacity).then, 4, 'each holds its own projection\'s value');
     eq(stored(status).then, 'Existent', 'and nothing else\'s');
@@ -1038,7 +1041,7 @@ function build(index) {
 
   check('a scenario over a projection opens where the projection is edited', () => {
     const key = add({
-      projection: 'CourseCapacity', tags: [{ tagType: 'CourseId', tagValue: 'c1' }],
+      projection: 'CourseCapacity', tags: { courseId: { tagType: 'CourseId', tagValue: 'c1' } },
       given: [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 4 } }],
     });
     sandbox.goToProjectionScenario(model(), key);
@@ -1047,11 +1050,11 @@ function build(index) {
     sandbox.render();
   });
 
-  check('a fresh scenario reads the projection the way the model does', () => {
-    eq(sandbox.blankScenarioTags(model(), 'CourseCapacity'), [{ tagType: 'CourseId', tagValue: '' }],
-      'one blank per tag the model reads it by');
-    eq(sandbox.blankScenarioTags(model(), 'CourseNumbering'), [],
-      'and none at all for one read of the whole log');
+  check('a fresh scenario reads the projection by the tags it declares', () => {
+    eq(sandbox.blankScenarioTags(model(), 'CourseCapacity'), { courseId: { tagType: 'CourseId', tagValue: '' } },
+      'one blank per tag it declares');
+    eq(sandbox.blankScenarioTags(model(), 'CourseNumbering'), {},
+      'and none at all for an untagged one');
     eq(sandbox.blankScenarioArguments(model(), 'CourseCapacity'), {}, 'and no arguments for a declared fold');
   });
 
@@ -1083,25 +1086,25 @@ function build(index) {
     // rendering "[object Object]" into the field, and writing a scalar
     // over the tag on the way back out.
     sandbox.startProjectionScenario(model(), { projection: 'CourseCapacity' });
-    sandbox.state.projectionScenarioDraft.body.tags[0].tagValue = 'c1';
+    sandbox.state.projectionScenarioDraft.body.tags.courseId.tagValue = 'c1';
     const main = sandbox.document.createElement('div');
     sandbox.state.view = 'projections';
     sandbox.renderProjections(model(), main);
 
     const fields = findAll(main, (n) => n.tag === 'input' && n.className === 'vin');
-    eq(fields.length, 1, 'one field, for the one tag it is read by');
+    eq(fields.length, 1, 'one field, for the one tag it declares');
     eq(fields[0].value, 'c1', 'showing the identifier it was given');
 
     // And writing back lands on that tag's value alone.
-    sandbox.setAtPath(sandbox.state.projectionScenarioDraft.body, ['tags', 0, 'tagValue'], 'c2');
-    eq(sandbox.state.projectionScenarioDraft.body.tags, [{ tagType: 'CourseId', tagValue: 'c2' }],
+    sandbox.setAtPath(sandbox.state.projectionScenarioDraft.body, ['tags', 'courseId', 'tagValue'], 'c2');
+    eq(sandbox.state.projectionScenarioDraft.body.tags, { courseId: { tagType: 'CourseId', tagValue: 'c2' } },
       'the tag survives the write');
     sandbox.state.projectionScenarioDraft = null;
     sandbox.state.projDraft = null;
   });
 
   check('a watched projection asks for its tags the same way', () => {
-    sandbox.state.watchDraft = { projection: 'CourseCapacity', tags: [{ tagType: 'CourseId', tagValue: 'c1' }], arguments: {} };
+    sandbox.state.watchDraft = { projection: 'CourseCapacity', tags: { courseId: { tagType: 'CourseId', tagValue: 'c1' } }, arguments: {} };
     const card = sandbox.watchProjectionAdder(model(), ['CourseCapacity', 'CourseNumbering']);
     const fields = findAll(card, (n) => n.tag === 'input' && n.className === 'vin');
     eq(fields.length, 1, 'one field');
@@ -1162,7 +1165,7 @@ function build(index) {
     const owned = sandbox.projectionLedger(model(), {
       owner: 'Course', nameHead: 'property', entries: [], add: null,
     });
-    eq(textOf(free.children[0]), 'projectionread byholdsstarts at', 'Projections says what each is read by');
+    eq(textOf(free.children[0]), 'projectiontagged byholdsstarts at', 'Projections says what each is tagged by');
     eq(textOf(owned.children[0]), 'propertyholdsstarts at',
       'an entity does not, because Identity above it already has');
   });
@@ -1872,7 +1875,7 @@ function build(index) {
 
   check('a watched projection shows the query it actually runs', () => {
     const card = sandbox.projectionWatchCard(model(),
-      sandbox.projectionWatch('CourseCapacity', [{ tagType: 'CourseId', tagValue: 'c1' }]));
+      sandbox.projectionWatch('CourseCapacity', { courseId: { tagType: 'CourseId', tagValue: 'c1' } }));
     const text = textOf(card);
     eq(text.includes('CourseId:c1'), true, 'the concrete tag, not a placeholder');
     eq(text.includes('tagged CourseId("c1")'), true, 'said in the spelling the code uses');
@@ -2511,6 +2514,7 @@ function build(index) {
       properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
     });
     addDefinition('projection-definition', id, 'StudentExpulsion', {
+      tags: [{ name: 'studentId', tagType: 'StudentId' }],
       valueType: 'boolean', isList: false, initialValue: false,
       handlers: [{ event: 'StudentExpelled', operation: 'set', value: true }],
     });
@@ -2566,6 +2570,7 @@ function build(index) {
     // Both set by StudentRegistered, so the merged fold would need two
     // handlers for one event — refused before anything is written.
     addDefinition('projection-definition', id, 'StudentGreeted', {
+      tags: [{ name: 'studentId', tagType: 'StudentId' }],
       valueType: 'boolean', isList: false, initialValue: false,
       handlers: [{ event: 'StudentRegistered', operation: 'set', value: true }],
     });
@@ -2591,6 +2596,7 @@ function build(index) {
       properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
     });
     addDefinition('projection-definition', id, 'StudentPause', {
+      tags: [{ name: 'studentId', tagType: 'StudentId' }],
       valueType: 'boolean', isList: false, initialValue: false,
       handlers: [
         { event: 'StudentPaused', operation: 'set', value: true },
@@ -2642,6 +2648,7 @@ function build(index) {
       properties: [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false }],
     });
     addDefinition('projection-definition', id, 'StudentFlag', {
+      tags: [{ name: 'studentId', tagType: 'StudentId' }],
       valueType: 'boolean', isList: false, initialValue: false, handlers,
     });
     const student = sandbox.deepClone(model()['entity-definitions'].Student);
@@ -3250,8 +3257,8 @@ function build(index) {
 
 // ---------------------------------------------------------------
 // A model with no entity at all states its rules over projections: the
-// first question offers one this command can supply the arguments of,
-// and the read it brings is the plain `alias label = Label tagged documentId`.
+// first question offers every one, a value for each of its tags is asked
+// beside it, and the rule reads it in place — `Label(documentId)`.
 // ---------------------------------------------------------------
 {
   const id = sandbox.createDcbModel('Entity Free Probe');
@@ -3260,15 +3267,15 @@ function build(index) {
     'model "Entity Free Probe"',
     'tag type DocumentId = string',
     'tag type FolderId = string',
-    'event Labelled { documentId: DocumentId, label: string } tags documentId',
-    'event Done { documentId: DocumentId } tags documentId',
-    'projection Label: string = "" {',
+    'event Labelled { tag documentId: DocumentId, label: string }',
+    'event Done { tag documentId: DocumentId }',
+    'projection Label (tag documentId: DocumentId): string = "" {',
     '  on Labelled => set event.data.label',
     '}',
-    'projection DoneCount: integer = 0 {',
+    'projection DoneCount (tag documentId: DocumentId): integer = 0 {',
     '  on Done => increment 1',
     '}',
-    'projection FolderSize: integer = 0 {}',
+    'projection FolderSize (tag folderId: FolderId): integer = 0 {}',
     'command Finish(documentId: DocumentId) {',
     '  emit Done { documentId }',
     '}',
@@ -3283,8 +3290,8 @@ function build(index) {
     sandbox.state.adder = 'rule';
     sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' };
     const values = findAll(selects()[0], (n) => n.tag === 'option').map((n) => n.value);
-    // A projection declares no partition, so every one is reachable —
-    // what it is tagged by is asked beside it.
+    // Every one is reachable: a value for each of its tags is asked
+    // beside it, and a new input can bring one the command lacks.
     eq(values.includes('projection:Label'), true, 'Label');
     eq(values.includes('projection:DoneCount'), true, 'DoneCount');
     eq(values.includes('projection:FolderSize'), true, 'even one nothing moves');
@@ -3309,10 +3316,34 @@ function build(index) {
     // Read in place (8.0): no alias is invented, the rule names the read.
     eq(body.boundary, [], 'no binding');
     eq(body.conditions, [{
-      leftHandSide: { projection: 'Label', tags: [{ parameterName: 'documentId' }] },
+      leftHandSide: { projection: 'Label', tags: { documentId: { parameterName: 'documentId' } } },
       predicate: 'equals', rightHandSide: 'foo', rejection: 'Label is not foo',
-    }], 'the rule reads Label tagged by the first value its events are tagged by');
+    }], 'the rule reads Label by the command\'s own document id');
     eq(sandbox.modelAdvisories(model()).length, 0, 'advisory-clean');
+  });
+
+  check('a tag nothing in scope can fill brings a new input with the rule', () => {
+    sandbox.state.slice = 'Finish';
+    sandbox.state.adder = 'rule';
+    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' };
+    selects()[0].onchange({ target: { value: 'projection:FolderSize' } });
+    const tagPicker = selects()[1];
+    eq(findAll(tagPicker, (n) => n.tag === 'option').map((n) => [n.value, textOf(n)]),
+      [[' new', '+ new input folder id']], 'Finish holds no folder id, so a new input is the offer');
+    sandbox.state.ruleDraft.right = ' literal';
+    sandbox.state.ruleDraft.rightText = '100';
+    sandbox.state.ruleDraft.predicate = 'lessThan';
+    sandbox.state.ruleDraft.rejection = 'Folder is full';
+    findAll(paint(), (n) => n.tag === 'button' && textOf(n) === 'Add rule')[0].onclick();
+    const body = model()['command-definitions'].Finish;
+    eq(body.properties.map((p) => [p.name, p.propertyType]), [['documentId', 'DocumentId'], ['folderId', 'FolderId']],
+      'the input it needed, named after the tag');
+    eq(body.conditions[body.conditions.length - 1].leftHandSide,
+      { projection: 'FolderSize', tags: { folderId: { parameterName: 'folderId' } } }, 'and the read gives it');
+    const finish = sandbox.deepClone(body);
+    finish.properties.pop();
+    finish.conditions.pop();
+    sandbox.updateDefinition('command-definition', id, 'Finish', finish);
   });
 
   check('a projection read in place is never asked which of its values, reopened', () => {
@@ -3322,7 +3353,7 @@ function build(index) {
     sandbox.state.editRule = 0;
     sandbox.state.ruleDraft = {
       predicate: 'equals', negate: false,
-      left: JSON.stringify({ projection: 'Label', tags: [{ parameterName: 'documentId' }] }),
+      left: JSON.stringify({ projection: 'Label', tags: { documentId: { parameterName: 'documentId' } } }),
       right: ' literal', rightText: 'foo',
     };
     eq(/Which of its values\?/.test(textOf(paint())), false, 'an existing rule, opened');
@@ -3367,11 +3398,11 @@ function build(index) {
     sandbox.closeForms();
   });
 
-  // FolderSize is read tagged by a FolderId, and no event here carries
-  // one: no event can reach that read, so none is offered to move it.
+  // FolderSize is tagged by a FolderId, and no event here carries one:
+  // no event can reach it, so none is offered to move it.
   const readFolder = () => {
     const body = sandbox.deepClone(model()['command-definitions'].Finish);
-    body.boundary.push({ alias: 'folder', projection: 'FolderSize', tags: [{ tagType: 'FolderId', tagValue: 'f1' }] });
+    body.boundary.push({ alias: 'folder', projection: 'FolderSize', tags: { folderId: { tagType: 'FolderId', tagValue: 'f1' } } });
     body.conditions.push({ leftHandSide: { alias: 'folder' }, predicate: 'lessThan', rightHandSide: 100, rejection: 'Folder is full' });
     sandbox.updateDefinition('command-definition', id, 'Finish', body);
   };
@@ -3387,8 +3418,8 @@ function build(index) {
       ['Label tagged document id'], 'and a target says which read');
     sandbox.closeForms();
 
-    // The projection's own editor offers every event: which events a
-    // read reaches is the read's business, and an advisory says it.
+    // The projection's own editor offers every event: one that carries
+    // none of its tags is an advisory on the projection, said there.
     store.set('dcb-playground:experimental', 'on');
     const offered = (name) => {
       const body = sandbox.projectionDraftFrom(model()['projection-definitions'][name]);
@@ -3404,17 +3435,17 @@ function build(index) {
       return select.length;
     };
     eq(offered('Label') > 0, true, 'Label');
-    eq(offered('FolderSize') > 0, true, 'and FolderSize — no partition to filter by');
+    eq(offered('FolderSize') > 0, true, 'and FolderSize — the advisory, not the picker, says Done misses it');
     sandbox.state.projDraft = null;
   });
 
-  check('a handler a read never reaches is an advisory on the read, not a silent no-op', () => {
+  check('a handler its tags never reach is an advisory on the projection, not a silent no-op', () => {
     const before = model()['projection-definitions'].FolderSize;
     sandbox.updateDefinition('projection-definition', id, 'FolderSize',
       { ...before, handlers: [{ event: 'Done', operation: 'increment', value: 1 }] });
-    const found = sandbox.modelAdvisories(model()).filter((a) => a.name === 'Finish');
-    eq(found.length, 1, 'reported once, on the command that reads it');
-    eq(/reads "FolderSize" by FolderId, but "Done", which it handles, is tagged by no FolderId/.test(found[0].message),
+    const found = sandbox.modelAdvisories(model()).filter((a) => a.name === 'FolderSize');
+    eq(found.length, 1, 'reported once, on the projection');
+    eq(/is tagged by FolderId, but "Done", which it handles, is tagged by no FolderId/.test(found[0].message),
       true, found[0].message);
     eq(/Folder size goes up by 1 — not for reads tagged Folder id: Done is tagged by none/.test(textOf(changes())), true,
       'and the change row says so where it sits');
@@ -3437,24 +3468,24 @@ function build(index) {
     'tag type ProjectId = string',
     'tag type EmployeeId = string',
     'enum Seniority { Junior, Senior }',
-    'event ProjectDefined { projectId: ProjectId, requiredSeniority: Seniority[] } tags projectId',
-    'event EmployeeHired { employeeId: EmployeeId, seniority: Seniority } tags employeeId',
-    'event Assigned { projectId: ProjectId, employeeId: EmployeeId } tags projectId, employeeId',
-    'entity Project {',
+    'event ProjectDefined { tag projectId: ProjectId, requiredSeniority: Seniority[] }',
+    'event EmployeeHired { tag employeeId: EmployeeId, seniority: Seniority }',
+    'event Assigned { tag projectId: ProjectId, tag employeeId: EmployeeId }',
+    'entity Project (tag projectId: ProjectId) {',
     '  requiredSeniority = RequiredSeniority',
     '}',
-    'entity Employee {',
+    'entity Employee (tag employeeId: EmployeeId) {',
     '  seniority = EmployeeSeniority',
     '}',
-    'projection RequiredSeniority: Seniority[] = [] {',
+    'projection RequiredSeniority (tag projectId: ProjectId): Seniority[] = [] {',
     '  on ProjectDefined => set event.data.requiredSeniority',
     '}',
-    'projection EmployeeSeniority: Seniority = Junior {',
+    'projection EmployeeSeniority (tag employeeId: EmployeeId): Seniority = Junior {',
     '  on EmployeeHired => set event.data.seniority',
     '}',
     'command Assign(projectId: ProjectId, employeeId: EmployeeId, wanted: Seniority[]) {',
-    '  alias project = Project tagged projectId',
-    '  alias employee = Employee tagged employeeId',
+    '  alias project = Project(projectId)',
+    '  alias employee = Employee(employeeId)',
     '  require employee.seniority in project.requiredSeniority',
     '    else reject "Project does not need that seniority"',
     '  emit Assigned { projectId, employeeId }',
@@ -3744,6 +3775,7 @@ function build(index) {
         properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
       });
       addDefinition('projection-definition', id, fold, {
+        tags: [{ name: 'studentId', tagType: 'StudentId' }],
         valueType: 'boolean', isList: false, initialValue: false,
         handlers: [{ event, operation: 'set', value: true }],
       });
@@ -3794,6 +3826,7 @@ function build(index) {
     addDefinition('custom-type-definition', id, 'Standing',
       { schema: { type: 'string', enum: ['Unknown', 'Good', 'Poor'] } });
     addDefinition('projection-definition', id, 'StudentStanding', {
+      tags: [{ name: 'studentId', tagType: 'StudentId' }],
       valueType: 'Standing', isList: false, initialValue: { enumMember: 'Unknown' },
       handlers: [{ event: 'StudentRegistered', operation: 'set', value: { enumMember: 'Good' } }],
     });
@@ -3839,6 +3872,7 @@ function build(index) {
       properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
     });
     addDefinition('projection-definition', id, 'StudentExpelled2Fold', {
+      tags: [{ name: 'studentId', tagType: 'StudentId' }],
       valueType: 'boolean', isList: false, initialValue: false,
       handlers: [{ event: 'StudentExpelled2', operation: 'set', value: true }],
     });
@@ -3859,6 +3893,7 @@ function build(index) {
       properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
     });
     addDefinition('projection-definition', id, 'StudentSuspension', {
+      tags: [{ name: 'studentId', tagType: 'StudentId' }],
       valueType: 'boolean', isList: false, initialValue: false,
       handlers: [{ event: 'StudentSuspended', operation: 'set', value: true }],
     });
@@ -4219,12 +4254,12 @@ check('the help opens the reference at the page\'s own concept', () => {
     sandbox.applyModelSource(id, [
       'model "Core Probe"',
       'tag type DocumentId = string',
-      'event Labelled { documentId: DocumentId, label: string } tags documentId',
-      'projection Label: string = "" {',
+      'event Labelled { tag documentId: DocumentId, label: string }',
+      'projection Label (tag documentId: DocumentId): string = "" {',
       '  on Labelled => set event.data.label',
       '}',
       'command Relabel(documentId: DocumentId, label: string) {',
-      '  alias current = Label tagged documentId',
+      '  alias current = Label(documentId)',
       '  require current != label',
       '    else reject "Label is unchanged"',
       '  emit Labelled { documentId, label }',

@@ -11,8 +11,8 @@ of it implicit, and parts of it misleading:
 
 - **Which events a projection reads was hidden.** A projection's
   parameters were its tags, and an event property typed with a `tag type`
-  silently tagged every event carrying it. Neither the reference nor the
-  event said "tag".
+  silently tagged every event carrying it. Neither the projection, the
+  reference nor the event said "tag".
 - **`read` reads as an action.** `read course = Course[courseId]` suggests
   a read happening at that line; it only names an instance for the rules
   below it.
@@ -57,57 +57,75 @@ link may carry `&experimental` to switch the flag on for that session
 only. Which shipped models are listed with the flag off is derived from
 the features each uses, never hand-picked.
 
-### Tags are declared on events and chosen at the reference
+### Tags are declared on events and on projections
 
-- An event lists its tags: `tags courseId, items.productId`. No clause,
-  no tags — with an advisory for an event carrying none, and one per
-  tag-typed property left unlisted.
-- A tag's key is still its `tag type` (`course:c1`), and `tags` may name
-  only properties of a tag type.
-- A projection declares **no partition**. The reference picks the tags:
-  `CourseStatus tagged courseId`, `X tagged (tenantId, courseId)` for
-  several (AND, as in any DCB query item). One fold can therefore be read
-  per course and per student.
-- `tagged` takes exactly one primary — a name or path, a typed literal,
-  or a parenthesised group (a tag list or a nested reference) — and binds
-  tighter than any comparison.
-- A value whose type is not a tag type needs one: `tagged CourseId("c1")`.
-  The wire stores only the operand; the key follows from it.
-- Fan-out is visible: `tagged each items.productId`.
-- "This handled event does not carry that tag" moves from the projection
-  to an advisory on each reference.
-- Non-tag arguments stay `with (…)`, and only scripted projections take
-  them. Tags select events, `with` feeds the fold.
-- Scripted projections lose `tagFilter`; a handler reads the reference's
-  tag values as `tags.<TagType>`, and `args` holds the `with` arguments only.
-- Derived projections (experimental) have operands that inherit every tag
-  of their reference.
-- Projection scenarios: `then X tagged CourseId("c1") …`; without
-  `tagged` the fold is unfiltered.
-- Entities (experimental): `entity Course tagged CourseId { … }`, used as
-  `alias course = Course tagged courseId`. Nothing uses brackets for
-  lookups any more.
+Revised on 2026-10-06, before 8.0 left its branch. The first cut moved
+the tags off the projection entirely, onto each read; that is in
+*Rejected* below.
+
+- An event marks its tags in place: `tag courseId: CourseId`, and
+  `items: Item[] tag each productId` (`tag productId` on one record) for
+  a field of a record. The wire format keeps the list of paths, `tags:
+  ["courseId", "items.productId"]`. No mark, no tag — with an advisory
+  for an event carrying none, and one per tag-typed property left
+  unmarked.
+- A tag's key is still its `tag type` (`course:c1`), and only a value
+  of a tag type can be one. `tag type` stays: the key is a name the
+  whole log shares, and saying so once is worth the word.
+- A projection names the tags it is read by, in its header:
+  `projection CourseStatus (tag courseId: CourseId): CourseStatus =
+  NonExistent`. Several are ANDed, as in a DCB query item. One with
+  none says so: `untagged projection CourseNumbering: CourseId = "c1"`.
+  Saying neither is an error with both fixes, because the partition is
+  too easy to forget for the text to assume one; the pages' new
+  projection asks the same. Wire format: `tags: [{name, tagType}]`,
+  empty for an untagged one.
+- A read gives a value per tag, in the declared order, in parentheses:
+  `CourseStatus(courseId)`, `CourseNumbering()`. Stored by name —
+  `tags: {courseId: …}` — so reordering two tags of one type can never
+  silently swap them; renaming one rewrites every read.
+- The value has to be of the declared type. A mismatch is an advisory,
+  and a run refuses to fold rather than fold the wrong instance. A
+  literal keeps its type, `CourseStatus(CourseId("c1"))`, so the text
+  shows which tag it fills.
+- Fan-out is visible: `ProductExists(each items.productId)`. An entity
+  read fans out the same way now, `Course(each student.courseIds)`.
+- A scripted projection declares what it takes besides its tags after
+  them, `(tag courseId: CourseId, days: integer)`, and a read gives
+  those after the tags; `with (…)` is gone. A handler reads
+  `tags.courseId` (by name, since two tags may share a type) and
+  `args.days`.
+- A derived projection declares its tags and passes them on by name:
+  `derived DocumentCurrentText(documentId) != DocumentPublishedText(documentId)`.
+- Projection scenarios: `then CourseStatus(CourseId("c1")) == Existent`.
+- Entities (experimental): `entity Course (tag courseId: CourseId)`,
+  read `Course(courseId)`; a property binds a projection tagged by
+  exactly that identifier.
+- The rule wizard asks for a value per declared tag; where the command
+  holds none of the type, it offers a new command input, named after
+  the tag.
 
 ### `alias`, and inline references
 
 - `read` becomes `alias`, the wire format's own word for it, in the code
   and in how the pages name a declaration. "Reads N types / queries" stays:
   that one does describe a read.
-- A projection reference may be written inline in a `require`, an emit
-  field or another reference's tag, stored as a first-class operand and
-  nestable. An alias is an optional name, stored as written, so printing
+- A projection read may be written inline in a `require`, an emit
+  field or another read's value, stored as a first-class operand and
+  nestable: `OwnedCourses(CourseOwner(courseId))`. An alias is an optional name, stored as written, so printing
   stays lossless.
 - The rule wizard writes inline references ("which projection", then
-  "tagged by which value") and never invents an alias. Unreferenced
+  a value for each of its tags) and never invents an alias. Unreferenced
   aliases are still pruned on page edits, never on import or apply.
 
 ### No migration
 
 Nothing is public yet, so v8 is a clean break: a fresh `EVENT_LOG_KEY`,
 an importer that reads 8.x only, no upgrader. Old spellings get a quick
-fix only where someone who never saw them might write them anyway —
-`X(arg)` and `X for arg` suggest `X tagged arg`; `read`, `X[id]` and
-`tagFilter` are ordinary syntax errors.
+fix only where someone who never saw them might write them anyway.
+The draft's `X tagged arg` and `with (…)` are errors that name the
+spelling that replaced them; `read`, `X[id]` and `tagFilter` are
+ordinary syntax errors.
 
 ### Help is the documentation
 
@@ -119,8 +137,9 @@ short text and link to the docs. The anchor list stays callable as
 
 ### Sandbox
 
-State cards are watched projections with their tags, in the same
-`tagged` spelling as the code; entity instance cards return with the flag.
+State cards are watched projections with a value for each of their
+tags, the literals in the spelling the code uses (`CourseId("c1")`);
+entity instance cards return with the flag.
 
 ## Rejected
 
@@ -135,8 +154,27 @@ State cards are watched projections with their tags, in the same
 - **`let` for `alias`.** Familiar, but `alias` is the wire format's word.
 - **Keeping the implicit tags of tag-typed properties as a fallback.** It
   is the implicitness being removed.
-- **An operand-level `tagged` inside derived projections.** No shipped
-  model mixes tags across operands; it can be added later without a break.
+- **Tagless projections, tags chosen at each read** (`CourseStatus
+  tagged courseId`, the first cut of 8.0). It let one fold be read per
+  course and per student alike, which looked like a feature and was
+  coupling: what a projection is kept per became every reader's to
+  decide, readers could disagree, and nothing at the projection said
+  which events reach which reader. A count per course and a count per
+  student are two projections, each saying what it is about.
+- **`CourseExists[courseId]` for a read**, again. Brackets read as an
+  index into a stored table — the read model DCB moves away from — and
+  a script's arguments would need a second kind (`X[courseId](14)`).
+  A read is a pure function of the log, its tags and its arguments, so
+  it is spelled as an application. What neither spelling can say, that
+  the read becomes part of the boundary, the editor says per command.
+- **`CourseExists tagged courseId` beside declared tags.** With the
+  type declared, the read needs only the value; `tagged` between the
+  name and the value was hard to parse as one operand inside a rule.
+- **Named values at a read** (`CourseStatus(courseId: courseId)`).
+  Noise outside the rare case of two tags of one type, and the
+  declaration fixes the order.
+- **Keys from the value's type.** A read's value has to be of the
+  declared type; the literal keeps its type only so the text shows it.
 
 ## Owed to the website
 
@@ -145,12 +183,15 @@ previous playground until it is bumped. When it is:
 
 - Every ```` ```dcb ```` block on the example and notation pages is
   rewritten in v8 (`scripts/dcb-render/render.js` parses with this repo's
-  code).
+  code): events mark their tags (`tag courseId: CourseId`), projections
+  name theirs or say `untagged`, and reads are calls
+  (`CourseStatus(courseId)`).
 - The Course subscriptions and Dynamic product price examples drop
   entities.
 - Reference anchors renamed or added: `read` → `alias`, `read-entity`,
-  `with`, `fan-out` (`each`), and new ones for `tagged`, event `tags`,
-  inline references and typed tag literals. `helpReferenceLinks()` is the
+  `fan-out` (`each`), and new ones for a projection's and an event's
+  `tag`, `untagged`, reads as calls, inline references and typed tag
+  literals; `with` is gone. `helpReferenceLinks()` is the
   list the build checks.
 - The notation guide's "Advanced" section is labelled experimental, and
   its "Open in Playground" links carry `&experimental`.

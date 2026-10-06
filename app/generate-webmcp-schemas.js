@@ -8,12 +8,16 @@
 // function calling, for one) do not resolve references — a schema
 // has to say everything where it stands.
 //
-// Two references cannot be inlined and are cut deliberately:
+// Three references cannot be inlined and are cut deliberately:
 //   - the external draft-2020-12 ref behind a custom type's opaque
 //     `schema` becomes a permissive object, described in words;
-//   - the one cycle (a successor operand nests another handler
-//     operand) is broken with a described permissive object at the
-//     point of recursion.
+//   - a cycle (a successor operand nests another handler operand) is
+//     broken with a described permissive object at the point of
+//     recursion;
+//   - a projection read in place is written compactly, its shape said
+//     in words rather than inlined: any operand of a command may be
+//     one, its tags are operands in turn, and inlining that at every
+//     operand more than doubled a command's schema.
 //
 // Run with `node app/generate-webmcp-schemas.js` after changing
 // dcb-model.schema.json. Nothing here runs in the browser; it is a
@@ -66,6 +70,21 @@ function inline(value, stack) {
   }
   const name = $ref.slice('#/$defs/'.length);
   if (!defs[name]) throw new Error(`dcb-model.schema.json has no $def "${name}"`);
+  if (name === 'ProjectionRead') {
+    return {
+      type: 'object',
+      description: ((siblings.description || '') + ' ' + defs[name].description.trim()
+        + ' `tags`: one value per tag the projection declares, keyed by its name — an operand of'
+        + ' the tag\'s type, a tag literal {tagType, tagValue}, or {each: operand}. `arguments`:'
+        + ' the values a script takes, keyed by name.').trim(),
+      properties: {
+        projection: { type: 'string' },
+        tags: { type: 'object' },
+        arguments: { type: 'object' },
+      },
+      required: ['projection'],
+    };
+  }
   if (stack.includes(name)) {
     return {
       type: 'object',

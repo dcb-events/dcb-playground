@@ -105,6 +105,12 @@
   "projectionDefinitions": [
     {
       "name": "ProductExists",
+      "tags": [
+        {
+          "name": "productId",
+          "tagType": "ProductId"
+        }
+      ],
       "valueType": "boolean",
       "isList": false,
       "initialValue": false,
@@ -118,6 +124,12 @@
     },
     {
       "name": "ProductCurrentPrice",
+      "tags": [
+        {
+          "name": "productId",
+          "tagType": "ProductId"
+        }
+      ],
       "valueType": "Money",
       "isList": false,
       "initialValue": null,
@@ -140,6 +152,12 @@
     },
     {
       "name": "OrderExists",
+      "tags": [
+        {
+          "name": "orderId",
+          "tagType": "OrderId"
+        }
+      ],
       "valueType": "boolean",
       "isList": false,
       "initialValue": false,
@@ -174,11 +192,11 @@
         {
           "leftHandSide": {
             "projection": "ProductExists",
-            "tags": [
-              {
+            "tags": {
+              "productId": {
                 "parameterName": "productId"
               }
-            ]
+            }
           },
           "predicate": "isFalse",
           "rejection": "Product already exists"
@@ -219,11 +237,11 @@
         {
           "leftHandSide": {
             "projection": "ProductExists",
-            "tags": [
-              {
+            "tags": {
+              "productId": {
                 "parameterName": "productId"
               }
-            ]
+            }
           },
           "predicate": "isTrue",
           "rejection": "Product does not exist"
@@ -231,11 +249,11 @@
         {
           "leftHandSide": {
             "projection": "ProductCurrentPrice",
-            "tags": [
-              {
+            "tags": {
+              "productId": {
                 "parameterName": "productId"
               }
-            ]
+            }
           },
           "predicate": "equals",
           "rightHandSide": {
@@ -280,11 +298,11 @@
         {
           "leftHandSide": {
             "projection": "OrderExists",
-            "tags": [
-              {
+            "tags": {
+              "orderId": {
                 "parameterName": "orderId"
               }
-            ]
+            }
           },
           "predicate": "isFalse",
           "rejection": "Order was already placed"
@@ -292,14 +310,14 @@
         {
           "leftHandSide": {
             "projection": "ProductExists",
-            "tags": [
-              {
+            "tags": {
+              "productId": {
                 "each": {
                   "parameterName": "items",
                   "property": "productId"
                 }
               }
-            ]
+            }
           },
           "predicate": "isTrue",
           "rejection": "Product does not exist"
@@ -307,14 +325,14 @@
         {
           "leftHandSide": {
             "projection": "ProductCurrentPrice",
-            "tags": [
-              {
+            "tags": {
+              "productId": {
                 "each": {
                   "parameterName": "items",
                   "property": "productId"
                 }
               }
-            ]
+            }
           },
           "predicate": "equals",
           "rightHandSide": {

@@ -566,9 +566,9 @@ function enableExperimentalForSession() { experimentalThisSession = true; }
 // The anchors are a contract with the website: its build fails on a
 // link `helpReferenceLinks` lists that it does not define, so renaming
 // one is a change on both sides. Until the website has pages for what
-// 8.0 added (`tagged`, event `tags`, `alias`, reads in place), those
-// link the nearest page it has — the list of what is owed is in
-// docs/research/2026-10-05-explicit-tags-and-aliases.md.
+// 8.0 added (a projection's and an event's `tag`, `untagged`, `alias`,
+// reads in place), those link the nearest page it has — the list of
+// what is owed is in docs/research/2026-10-05-explicit-tags-and-aliases.md.
 
 const NOTATION_GUIDE_URL = 'https://dcb.events/notation/';
 const NOTATION_REFERENCE_URL = 'https://dcb.events/notation/reference/';
@@ -1626,7 +1626,9 @@ function projectionReaders(model, projectionName) {
   const owners = boundAs(model, projectionName);
   const readers = [];
   for (const [command, body] of Object.entries(model['command-definitions'])) {
-    let reads = (body.boundary || []).some((b) => b.projection === projectionName);
+    // An alias's read, or one in place — the same read either way.
+    let reads = (body.boundary || []).some((b) => b.projection === projectionName)
+      || inlineReads(body).some(({ read }) => read.projection === projectionName);
     if (!reads) {
       // Every (alias, property) pair that lands on this projection: an
       // alias bound to an entity that calls it something, under the
@@ -1744,12 +1746,11 @@ function operandWords(operand) {
     // the tokens they are rather than as descriptions of themselves.
     case 'current-value': return 'currentValue';
     case 'successor': return `successor(${operandWords(operand.successor)})`;
-    // A projection read in place — what it is tagged by said the way a
-    // read card says it. A derived predicate's operand names no tags:
-    // it is read by its reader's.
+    // A projection read in place — the values it gives its tags said
+    // the way a read card says them.
     case 'projection-read': {
-      const tags = Array.isArray(operand.tags) ? operand.tags : [];
-      const said = tags.map((tag) => (operandSource(tag) === 'tag-literal' ? operandText(tag) : operandWords(tag)));
+      const said = readTagOperands(operand)
+        .map((tag) => (operandSource(tag) === 'tag-literal' ? operandText(tag) : operandWords(tag)));
       return readable(operand.projection || '?') + (said.length ? ' tagged ' + said.join(' and ') : '');
     }
     case 'tag-literal': return operandText(operand);
@@ -1916,10 +1917,11 @@ function readParts(model, body, binding) {
       alias: binding.alias,
       projection: binding.projection,
       plural: false,
-      // What it is read by — the tags of its query, each a value in the
+      // What it is read by — a value for each tag it declares, in the
       // command's scope or a literal with its type — and the values a
       // script's code reads besides.
-      tags: (binding.tags || []).map((operand) => ({
+      tags: readTagEntries(binding).map(([name, operand]) => ({
+        name,
         operand,
         words: operandSource(operand) === 'tag-literal' ? operandText(operand) : operandWords(operand),
       })),

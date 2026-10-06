@@ -137,8 +137,8 @@ check('a command reads as reads, rules and emissions', () => {
   const expected = [
     '@feature("Enrolment")',
     'command SubscribeStudentToCourse(courseId: CourseId, studentId: StudentId) {',
-    '  alias course = Course tagged courseId',
-    '  alias student = Student tagged studentId',
+    '  alias course = Course(courseId)',
+    '  alias student = Student(studentId)',
     '',
     '  require course.status == Existent',
     '    else reject "Course is not active"',
@@ -159,24 +159,30 @@ check('a command reads as reads, rules and emissions', () => {
 
 check('fan-out, exclusion, numbering, membership, guards and derived values have spellings', () => {
   const schedules = modelToSource(build(3).model());
-  eq(schedules.includes('alias theirs = Course tagged students.subscribedCourseIds excluding courseId'), true, 'excluding');
-  eq(schedules.includes('alias courseNumbering = CourseNumbering'), true, 'projection read');
+  eq(schedules.includes('alias theirs = Course(each students.subscribedCourseIds) excluding courseId'), true, 'excluding');
+  eq(schedules.includes('alias courseNumbering = CourseNumbering()'), true, 'an untagged read');
+  eq(schedules.includes('untagged projection CourseNumbering: CourseId = "c1" {'), true, 'an untagged projection');
+  eq(schedules.includes('entity Course (tag courseId: CourseId) {'), true, 'an entity\'s tag');
   eq(schedules.includes('emit CourseDefined { courseId: courseNumbering, capacity, slots }'), true, 'minted id');
   eq(schedules.includes('on CourseDefined => set successor(event.data.courseId)'), true, 'successor');
   eq(schedules.includes('require theirs.slots not containsAny slots'), true, 'containsAny');
   const tenant = modelToSource(build(2).model());
-  eq(tenant.includes('alias tenantCourseNumbering = TenantCourseNumbering tagged tenantId'), true, 'argument shorthand');
+  eq(tenant.includes('alias tenantCourseNumbering = TenantCourseNumbering(tenantId)'), true, 'a tagged read');
+  eq(tenant.includes('projection TenantCourseNumbering (tag tenantId: TenantId): CourseNumber = "1" {'), true, 'its tag');
   const guarded = modelToSource(build(8).model());
-  eq(guarded.includes('require DocumentStatus tagged docId in [Draft, Published, PendingChanges]'), true, 'equalsAny');
-  eq(guarded.includes('emit TextChanged { docId, text }\n    when text != DocumentPublishedText tagged docId'), true, 'when');
+  eq(guarded.includes('require DocumentStatus(docId) in [Draft, Published, PendingChanges]'), true, 'equalsAny');
+  eq(guarded.includes('emit TextChanged { docId, text }\n    when text != DocumentPublishedText(docId)'), true, 'when');
   const derived = modelToSource(build(9).model());
-  eq(derived.includes('derived DocumentCurrentText != DocumentPublishedText'), true, 'derived');
+  eq(derived.includes('projection DocumentHasPendingChanges (tag documentId: DocumentId): boolean\n'
+    + '  derived DocumentCurrentText(documentId) != DocumentPublishedText(documentId)'), true, 'derived, passing its tag on');
   const scripted = modelToSource(build(5).model());
-  eq(scripted.includes('projection DocumentStatus: DocumentStatus {\n  script()\n  initialState '), true, 'script');
+  eq(scripted.includes('projection DocumentStatus (tag documentId: DocumentId): DocumentStatus {\n  script\n  initialState '), true, 'script');
   eq(scripted.includes('on DocumentAdded => ```{"currentText":"","publishedText":"","status":"Draft"}```'), true, 'code');
   const pricing = modelToSource(build(4).model());
   eq(pricing.includes('record Item { productId: ProductId, price: Money }'), true, 'record');
-  eq(pricing.includes('require ProductCurrentPrice tagged each items.productId == items.price'), true,
+  eq(pricing.includes('event ProductsOrdered { tag orderId: OrderId, items: Item[] tag each productId }'), true,
+    'a tagged property, and a tag in each element of a list');
+  eq(pricing.includes('require ProductCurrentPrice(each items.productId) == items.price'), true,
     'a fan-out, paired with a parameter field');
   eq(pricing.includes('type Money = number { minimum: 0 }'), true, 'schema constraints');
 });
@@ -280,9 +286,11 @@ function emptyCollections(overrides) {
 
 check('a name resolves to a read when one declares it, and to the payload otherwise', () => {
   const parsed = parseModelSource([
+    'entity Course (tag courseId: CourseId) {}',
+    'untagged projection CourseNumbering: CourseId = "c1" {}',
     'command C(courseId: CourseId, items: Item[]) {',
-    '  alias course = Course tagged courseId',
-    '  alias numbering = CourseNumbering',
+    '  alias course = Course(courseId)',
+    '  alias numbering = CourseNumbering()',
     '  require course.status == items.price else reject "a"',
     '  require numbering == gone else reject "b"',
     '  require ghost.status is true else reject "c"',
@@ -345,10 +353,10 @@ check('adding, removing, reordering and renaming the model are one append togeth
   let text = modelToSource(model())
     .replace('model "Course Example (with entities)"', 'model "Renamed"')
     .replace(/@feature\("Course management"\)\ncommand ArchiveCourse[\s\S]*?\n}\n/, '')
-    + '\nentity Room {}\n';
+    + '\nentity Room (tag roomId: RoomId) {}\n';
   // Two events trade places.
-  text = text.replace('event CourseArchived { courseId: CourseId } tags courseId\n', '')
-    .replace('event CourseDefined', 'event CourseArchived { courseId: CourseId } tags courseId\nevent CourseDefined');
+  text = text.replace('event CourseArchived { tag courseId: CourseId }\n', '')
+    .replace('event CourseDefined', 'event CourseArchived { tag courseId: CourseId }\nevent CourseDefined');
   const before = appends;
   const summary = applyModelSource(id, text);
   eq(appends - before, 1, 'one append');
@@ -508,10 +516,10 @@ check('a scenario reads as given, when and then, nested in its command', () => {
     ...Object.values(model()['projection-scenario-definitions']).map((b) => b.projection)]);
   eq(text.split('\n  scenarios {\n').length - 1, subjects.size, 'one per block with scenarios');
   const sequence = modelToSource(importExample('course-sequence').model());
-  eq(sequence.includes('scenario "issues c1 before anything has happened" {\n      then CourseNumbering == "c1"\n    }'), true,
-    'a projection read by no tag');
+  eq(sequence.includes('scenario "issues c1 before anything has happened" {\n      then CourseNumbering() == "c1"\n    }'), true,
+    'an untagged projection, read');
   const guarded = modelToSource(importExample('content-decisions-guarded').model());
-  eq(guarded.includes('then DocumentStatus tagged DocumentId("d1") == NonExistent'), true, 'a tag literal');
+  eq(guarded.includes('then DocumentStatus(DocumentId("d1")) == NonExistent'), true, 'a tag literal');
 });
 
 check('a scenario written without a then is recorded with what the model does', () => {
@@ -665,11 +673,13 @@ check('scenarios refuse what they cannot mean', () => {
   const loose = (scenario) => errors(`scenarios {\n${scenario}\n}`);
   eq(errors('command A() {\n  scenarios {\n    scenario {\n      when B {}\n    }\n  }\n}')[0],
     'This scenario sits in A but is about B — move it there, or make it about A.', 'in the wrong block');
-  eq(loose('scenario {\n  then Ghost("x") == 1\n}')[0],
-    'A projection is read by the tags it names: Ghost tagged CourseId("c1").', 'the spelling before tags');
+  eq(loose('scenario {\n  then Ghost tagged CourseId("x") == 1\n}')[0],
+    'A read gives its values in parentheses, in the order Ghost declares them: Ghost(…).', 'the draft spelling');
+  eq(loose('scenario {\n  then Ghost == 1\n}')[0],
+    'A projection is read with its values in parentheses: Ghost(…) — empty for an untagged one.', 'parentheses, always');
   eq(loose('scenario {\n  when A {}\n  then nothing\n  then E {}\n}')[0], '"then nothing" is the whole outcome — it stands alone.', 'nothing and more');
   eq(loose('scenario {\n  then E {}\n}')[0], 'A scenario ending in events, nothing or a rejection needs a when — the command it runs.', 'no when');
-  eq(loose('scenario {\n  then Ghost tagged GhostId("1") with (x: 1) == 1\n}'), [], 'an orphan, read');
+  eq(loose('scenario {\n  then Ghost(GhostId("1"), 1) == 1\n}'), [], 'an orphan, read');
   const { id, model } = importExample('course-simple');
   const text = modelToSource(model()).replace('  emit CourseArchived { courseId }\n\n  scenarios {\n',
     '  emit CourseArchived { courseId }\n\n  scenarios {\n    scenario {\n      given CourseBurnt { courseId: "c1" }\n      when ArchiveCourse { courseId: "c1" }\n    }\n\n');
@@ -730,76 +740,103 @@ function completeAt(source) {
   return { labels: result.items.map((i) => i.label), items: result.items, slot: result.slot };
 }
 
-check('an event lists its tags after its block, and a rename follows them', () => {
+check('an event marks its tags in place, and a rename follows them', () => {
   const text = [
     'model "Tags"',
     'tag type ProductId = string',
+    'tag type OrderId = string',
     'record Line { productId: ProductId, qty: integer }',
-    'event Ordered { lines: Line[] } tags lines.productId',
+    'event Ordered { tag orderId: OrderId, lines: Line[] tag each productId, first: Line tag productId }',
     '',
   ].join('\n');
   const parsed = parseModelSource(text);
   eq(parsed.diagnostics, [], 'it reads');
-  eq(parsed.collections['event-definition'].Ordered.tags, ['lines.productId'], 'as a path');
-  eq(renameAt(text, 'Ordered { lines', 'Ordered { '.length, 'items').text.includes('tags items.productId'), true,
-    'the property, renamed, moves in the path');
-  eq(renameAt(text, 'Line { productId', 'Line { '.length, 'product').text.includes('tags lines.product'), true,
+  eq(parsed.collections['event-definition'].Ordered.tags, ['orderId', 'lines.productId', 'first.productId'], 'as paths');
+  eq(renameAt(text, 'lines: Line', 0, 'items').text.includes('items: Line[] tag each productId'), true,
+    'the property, renamed, keeps its mark');
+  eq(parseModelSource(renameAt(text, 'lines: Line', 0, 'items').text).collections['event-definition'].Ordered.tags,
+    ['orderId', 'items.productId', 'first.productId'], 'and its path moves');
+  eq(renameAt(text, 'Line { productId', 'Line { '.length, 'product').text.includes('lines: Line[] tag each product,'), true,
     'and so does the record field');
   eq(modelToSource({ name: 'T', 'custom-type-definitions': {}, 'event-definitions': { E: { properties: [], tags: [] } },
     'entity-definitions': {}, 'projection-definitions': {}, 'command-definitions': {},
     'scenario-definitions': {}, 'projection-scenario-definitions': {} }).includes('event E {}\n'), true,
-    'no list, no clause');
+    'no tags, no marks');
+  const errors = (source) => parseModelSource(source).diagnostics.map((d) => d.message);
+  eq(errors('event E { lines: Line[] tag productId }'), ['lines holds a list, so it is tagged by each element: tag each <field>.'], 'each, for a list');
+  eq(errors('event E { line: Line tag each productId }'), ['line holds one record — "each" is for a list: tag <field>.'], 'and only there');
+  eq(errors('event E { courseId: CourseId } tags courseId'), ['An event marks its tags in place: tag courseId: CourseId.'], 'the draft spelling');
+  eq(parseModelSource('event E { tag: string, tag tagged: CourseId }').collections['event-definition'].E,
+    { properties: [{ name: 'tag', propertyType: 'string', isOptional: false, isList: false },
+      { name: 'tagged', propertyType: 'CourseId', isOptional: false, isList: false }], tags: ['tagged'] },
+    'a property called tag is a property');
 });
 
-check('a read is tagged by its values — several in parentheses, a literal with its type', () => {
+check('a read gives its values in parentheses — in declared order, a literal with its type', () => {
   const text = [
     'model "Tags"',
     'tag type CourseId = string',
     'tag type StudentId = string',
-    'event Subscribed { courseId: CourseId, studentId: StudentId } tags courseId, studentId',
-    'projection Count: integer = 0 {',
+    'event Subscribed { tag courseId: CourseId, tag studentId: StudentId }',
+    'projection Both (tag courseId: CourseId, tag studentId: StudentId): integer = 0 {',
+    '  on Subscribed => increment 1',
+    '}',
+    'projection PerCourse (tag courseId: CourseId): integer = 0 {',
+    '  on Subscribed => increment 1',
+    '}',
+    'untagged projection All: integer = 0 {',
     '  on Subscribed => increment 1',
     '}',
     'command C(courseId: CourseId, studentId: StudentId) {',
-    '  alias both = Count tagged (courseId, studentId)',
-    '  alias one = Count tagged CourseId("c1")',
-    '  alias all = Count',
-    '  require both + 0 == 0',
+    '  alias both = Both(courseId, studentId)',
+    '  alias one = PerCourse(CourseId("c1"))',
+    '  alias all = All()',
+    '  require both < one',
     '    else reject "No"',
+    '  require all < 100',
+    '    else reject "Full"',
     '  emit Subscribed { courseId, studentId }',
     '}',
     '',
-  ].join('\n').replace('both + 0 == 0', 'both < one');
+  ].join('\n');
   const parsed = parseModelSource(text);
   eq(parsed.diagnostics, [], 'it reads');
+  eq(parsed.collections['projection-definition'].Both.tags,
+    [{ name: 'courseId', tagType: 'CourseId' }, { name: 'studentId', tagType: 'StudentId' }], 'a projection names its tags');
+  eq(parsed.collections['projection-definition'].All.tags, [], 'and untagged, none');
   const boundary = parsed.collections['command-definition'].C.boundary;
-  eq(boundary[0].tags, [{ parameterName: 'courseId' }, { parameterName: 'studentId' }], 'two tags, ANDed');
-  eq(boundary[1].tags, [{ tagType: 'CourseId', tagValue: 'c1' }], 'a literal with its type');
+  eq(boundary[0].tags, { courseId: { parameterName: 'courseId' }, studentId: { parameterName: 'studentId' } }, 'two tags, by name');
+  eq(boundary[1].tags, { courseId: { tagType: 'CourseId', tagValue: 'c1' } }, 'a literal with its type');
   eq('tags' in boundary[2], false, 'and none: the whole log');
   const renamed = renameAt(text, 'tag type CourseId', 'tag type '.length, 'CourseKey').text;
-  eq(renamed.includes('alias one = Count tagged CourseKey("c1")'), true, 'a literal\'s type renames with the type');
+  eq(renamed.includes('alias one = PerCourse(CourseKey("c1"))'), true, 'a literal\'s type renames with the type');
+  eq(renamed.includes('projection PerCourse (tag courseId: CourseKey)'), true, 'and so does a declared tag');
+  const tag = renameAt(text, 'PerCourse (tag courseId', 'PerCourse (tag '.length, 'course').text;
+  eq(parseModelSource(tag).collections['command-definition'].C.boundary[1].tags, { course: { tagType: 'CourseId', tagValue: 'c1' } },
+    'a tag renamed in its declaration names the reads\' values anew');
+  const errors = (source) => parseModelSource(text.replace('alias one = PerCourse(CourseId("c1"))', source)).diagnostics.map((d) => d.message);
+  eq(errors('alias one = PerCourse(courseId, studentId)'), ['PerCourse takes 1 value (courseId) — this gives 2.'], 'as many values as it declares');
+  eq(errors('alias one = PerCourse'), ['PerCourse is read with its values in parentheses — PerCourse(…), empty for an untagged projection.'], 'parentheses, always');
+  eq(errors('alias one = PerCourse(courseId: courseId)'), ['A read gives its values in order, as PerCourse declares them — no names.'], 'in order');
 });
 
-check('the spelling before tags is an error with its fix', () => {
-  const text = [
-    'tag type CourseId = string',
-    'projection P: integer = 0 {}',
-    'command C(courseId: CourseId) {',
-    '  alias p = P(courseId: courseId)',
-    '  alias q = P for courseId',
-    '  emit E {}',
-    '}',
-    'event E {}',
-  ].join('\n');
+check('a projection says what it is tagged by, or that it is untagged', () => {
+  const text = 'event E {}\nprojection P: integer = 0 {}\n';
   const { diagnostics } = parseModelSource(text);
-  eq(diagnostics.length, 2, 'both refused');
-  eq(/is the spelling before tags were explicit/.test(diagnostics[0].message), true, diagnostics[0].message);
-  const fixed = sandbox.sourceApplyEdits(text, diagnostics.map((d) => d.fix));
-  eq(fixed.includes('alias p = P tagged courseId'), true, 'the call becomes tagged');
-  eq(fixed.includes('alias q = P tagged courseId'), true, 'and so does for');
-  eq(parseModelSource(fixed).diagnostics, [], 'and the fixed text reads');
-  eq(/A projection declares no partition/.test(parseModelSource('projection P(courseId: CourseId): integer = 0 {}').diagnostics[0].message),
-    true, 'a declared partition is refused without a guessed fix');
+  eq(diagnostics.map((d) => d.message), ['Say what P is tagged by — projection P (tag pId: …) — or that it is untagged.'], 'neither is an error');
+  eq(parseModelSource(sandbox.sourceApplyEdits(text, [diagnostics[0].fix])).diagnostics, [], 'whose fix declares it untagged');
+  const errors = (source) => parseModelSource(source).diagnostics.map((d) => d.message);
+  eq(errors('untagged projection P (tag id: CourseId): integer = 0 {}'), ['P is declared untagged and tagged by id — one or the other.'], 'not both');
+  eq(errors('projection P (days: integer, tag id: CourseId): integer = 0 {}'), ['Tags come first — a read gives the tags, then the values a script takes.'], 'tags first');
+  eq(errors('projection P (tag id: CourseId, days: integer): integer = 0 {}'), ['Only a scripted projection takes values besides its tags — days is not a tag.'], 'arguments, only for a script');
+  eq(errors('projection P (tag id: CourseId): integer {\n  script(days: integer)\n}'),
+    ['A script takes its values in the projection\'s header, after the tags: projection X (tag …, days: integer).'], 'not in the block');
+  eq(errors('command C(courseId: CourseId) {\n  require P tagged courseId == 1 else reject "No"\n}'),
+    ['A read gives its values in parentheses, in the order P declares them: P(…).'], 'the draft spelling');
+  eq(errors('entity Course tagged CourseId {}'), ['Say what Course is tagged by: entity Course (tag courseId: CourseId).'], 'an entity too');
+  const scripted = parseModelSource('projection P (tag id: CourseId, days: integer): integer {\n  script\n  initialState 0\n}\n');
+  eq(scripted.diagnostics, [], 'a script\'s arguments follow its tags');
+  eq(scripted.collections['projection-definition'].P.script.arguments, [{ name: 'days', propertyType: 'integer' }], 'and are stored as its arguments');
 });
 
 check('a rule reads a projection in place — no alias needed', () => {
@@ -808,41 +845,43 @@ check('a rule reads a projection in place — no alias needed', () => {
     'enum CourseStatus { NonExistent, Existent }',
     'tag type CourseId = string',
     'tag type OwnerId = string',
-    'event CourseDefined { courseId: CourseId, ownerId: OwnerId } tags courseId, ownerId',
-    'projection CourseStatus: CourseStatus = NonExistent {',
+    'event CourseDefined { tag courseId: CourseId, tag ownerId: OwnerId }',
+    'projection CourseStatus (tag courseId: CourseId): CourseStatus = NonExistent {',
     '  on CourseDefined => set Existent',
     '}',
-    'projection CourseOwner: OwnerId = null {',
+    'projection CourseOwner (tag courseId: CourseId): OwnerId = null {',
     '  on CourseDefined => set event.data.ownerId',
     '}',
-    'projection OwnedCourses: integer = 0 {',
+    'projection OwnedCourses (tag ownerId: OwnerId): integer = 0 {',
     '  on CourseDefined => increment 1',
     '}',
-    'projection CourseNumbering: CourseId = "c1" {',
+    'untagged projection CourseNumbering: CourseId = "c1" {',
     '  on CourseDefined => set successor(event.data.courseId)',
     '}',
     'command Define(ownerId: OwnerId) {',
-    '  require OwnedCourses tagged ownerId < 3',
+    '  require OwnedCourses(ownerId) < 3',
     '    else reject "Too many"',
-    '  emit CourseDefined { courseId: CourseNumbering, ownerId }',
+    '  emit CourseDefined { courseId: CourseNumbering(), ownerId }',
     '}',
     'command Check(courseId: CourseId) {',
-    '  require CourseStatus tagged courseId == Existent',
+    '  require CourseStatus(courseId) == Existent',
     '    else reject "No such course"',
-    '  require OwnedCourses tagged (CourseOwner tagged courseId) < 3',
+    '  require OwnedCourses(CourseOwner(courseId)) < 3',
     '    else reject "Its owner has too many"',
-    '  emit CourseDefined { courseId, ownerId: CourseOwner tagged courseId }',
+    '  emit CourseDefined { courseId, ownerId: CourseOwner(courseId) }',
     '}',
     '',
   ].join('\n');
   const parsed = parseModelSource(text);
   eq(parsed.diagnostics, [], 'it reads');
   const check = parsed.collections['command-definition'].Check;
-  eq(check.conditions[0].leftHandSide, { projection: 'CourseStatus', tags: [{ parameterName: 'courseId' }] }, 'a read in place');
+  eq(check.conditions[0].leftHandSide, { projection: 'CourseStatus', tags: { courseId: { parameterName: 'courseId' } } }, 'a read in place');
   eq(check.conditions[0].rightHandSide, { enumMember: 'Existent' }, 'beside an enum member, which is not a projection');
-  eq(check.conditions[1].leftHandSide.tags[0], { projection: 'CourseOwner', tags: [{ parameterName: 'courseId' }] }, 'nested');
+  eq(check.conditions[1].leftHandSide.tags.ownerId, { projection: 'CourseOwner', tags: { courseId: { parameterName: 'courseId' } } }, 'nested');
   eq(parsed.collections['command-definition'].Define.publishes[0].parameters.courseId, { projection: 'CourseNumbering' },
-    'a bare projection name, read by no tag');
+    'an untagged read');
+  eq(parseModelSource(text.replace('courseId: CourseNumbering()', 'courseId: CourseNumbering')).diagnostics.map((d) => d.message),
+    ['CourseNumbering is a projection — read it as CourseNumbering(…).'], 'a projection bare is an error, with its fix');
   // Round trip: printed as it was written.
   const { id, model } = (() => {
     const modelId = sandbox.createDcbModel('Inline');
@@ -851,8 +890,8 @@ check('a rule reads a projection in place — no alias needed', () => {
   })();
   const printed = modelToSource(model());
   eq(printed.includes(' json {'), false, 'no fallback');
-  eq(printed.includes('require OwnedCourses tagged (CourseOwner tagged courseId) < 3'), true, 'nested, parenthesised');
-  eq(printed.includes('emit CourseDefined { courseId: CourseNumbering, ownerId }'), true, 'in an emission');
+  eq(printed.includes('require OwnedCourses(CourseOwner(courseId)) < 3'), true, 'nested');
+  eq(printed.includes('emit CourseDefined { courseId: CourseNumbering(), ownerId }'), true, 'in an emission');
   // Evaluated: the rules read what they name.
   let log = [];
   const run = (command, args) => {
@@ -870,7 +909,7 @@ check('a rule reads a projection in place — no alias needed', () => {
   eq(summary.queries[1].map((i) => i.projection), ['OwnedCourses'], 'the second');
   // A rename reaches into it.
   const renamed = renameAt(printed, 'projection CourseOwner', 'projection '.length, 'CourseHolder').text;
-  eq(renamed.includes('tagged (CourseHolder tagged courseId)'), true, 'renamed in place');
+  eq(renamed.includes('OwnedCourses(CourseHolder(courseId))'), true, 'renamed in place');
 });
 
 check('a read fans out where it says so — each, paired by index with its list', () => {
@@ -880,19 +919,19 @@ check('a read fans out where it says so — each, paired by index with its list'
     'tag type ProductId = string',
     'tag type OrderId = string',
     'record Item { productId: ProductId, price: Money }',
-    'event ProductDefined { productId: ProductId, price: Money } tags productId',
-    'event ProductsOrdered { orderId: OrderId, items: Item[] } tags orderId, items.productId',
-    'projection ProductExists: boolean = false {',
+    'event ProductDefined { tag productId: ProductId, price: Money }',
+    'event ProductsOrdered { tag orderId: OrderId, items: Item[] tag each productId }',
+    'projection ProductExists (tag productId: ProductId): boolean = false {',
     '  on ProductDefined => set true',
     '}',
-    'projection ProductPrice: Money = null {',
+    'projection ProductPrice (tag productId: ProductId): Money = null {',
     '  on ProductDefined => set event.data.price',
     '}',
     'command OrderProducts(orderId: OrderId, items: Item[]) {',
-    '  alias exists = ProductExists tagged each items.productId',
+    '  alias exists = ProductExists(each items.productId)',
     '  require exists is true',
     '    else reject "Product does not exist"',
-    '  require ProductPrice tagged each items.productId == items.price',
+    '  require ProductPrice(each items.productId) == items.price',
     '    else reject "Price has changed"',
     '  emit ProductsOrdered { orderId, items }',
     '}',
@@ -901,14 +940,14 @@ check('a read fans out where it says so — each, paired by index with its list'
   const parsed = parseModelSource(text);
   eq(parsed.diagnostics, [], 'it reads');
   const body = parsed.collections['command-definition'].OrderProducts;
-  eq(body.boundary[0].tags, [{ each: { parameterName: 'items', property: 'productId' } }], 'each, stored on the tag');
+  eq(body.boundary[0].tags, { productId: { each: { parameterName: 'items', property: 'productId' } } }, 'each, stored on the tag');
   const id = sandbox.createDcbModel('Fan');
   applyModelSource(id, text);
   const model = () => projectState()[id];
   eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
   const printed = modelToSource(model());
-  eq(printed.includes('alias exists = ProductExists tagged each items.productId'), true, 'printed as written');
-  eq(printed.includes('require ProductPrice tagged each items.productId == items.price'), true, 'in place too');
+  eq(printed.includes('alias exists = ProductExists(each items.productId)'), true, 'printed as written');
+  eq(printed.includes('require ProductPrice(each items.productId) == items.price'), true, 'in place too');
   const log = [
     { type: 'ProductDefined', data: { productId: 'p1', price: 10 } },
     { type: 'ProductDefined', data: { productId: 'p2', price: 20 } },
@@ -924,9 +963,13 @@ check('a read fans out where it says so — each, paired by index with its list'
   eq(items.every((item) => item.fannedOut && item.tags[0] === 'ProductId:each(items.productId)'), true,
     'the query says it fans out');
   const bad = sandbox.createDcbModel('Bad');
-  applyModelSource(bad, text.replace('require ProductPrice tagged each items.productId', 'require ProductPrice tagged each orderId'));
+  applyModelSource(bad, text.replace('require ProductPrice(each items.productId)', 'require ProductPrice(each orderId)'));
   eq(sandbox.modelAdvisories(projectState()[bad]).some((a) => /orderId is one value — "each" fans out over a list/.test(a.message)),
     true, 'each over one value is advised: ' + sandbox.modelAdvisories(projectState()[bad]).map((a) => a.message).join('; '));
+  const mistyped = sandbox.createDcbModel('Mistyped');
+  applyModelSource(mistyped, text.replace('require ProductPrice(each items.productId)', 'require ProductPrice(orderId)'));
+  eq(sandbox.modelAdvisories(projectState()[mistyped]).some((a) => /orderId, an OrderId — but its "productId" tag is a ProductId/.test(a.message)),
+    true, 'a value of another tag type is advised: ' + sandbox.modelAdvisories(projectState()[mistyped]).map((a) => a.message).join('; '));
 });
 
 check('the code view says what is experimental, and offers none of it with the flag off', () => {
@@ -1015,14 +1058,14 @@ check('a rename is exact: a member, not its look-alikes', () => {
 check('a projection and an enum sharing a name are two names', () => {
   const text = modelToSource(build(ENTITIES).model());
   const { text: out } = renameAt(text, 'status = CourseStatus', 'status = '.length, 'CourseState');
-  eq(out.includes('projection CourseState: CourseStatus = NonExistent {'), true, 'the projection, not its type');
+  eq(out.includes('projection CourseState (tag courseId: CourseId): CourseStatus = NonExistent {'), true, 'the projection, not its type');
   eq(out.includes('enum CourseStatus {'), true, 'the enum kept');
   const parsed = parseModelSource(text);
   const [line, col] = positionOf(text, 'status = CourseStatus', 'status = '.length);
   const at = sandbox.sourceSymbolAt(parsed, line, col);
   eq(at.symbol, 'projection CourseStatus', 'resolved');
   eq(sandbox.sourceDeclarationOf(parsed, at.symbol).token.line,
-    text.split('\n').findIndex((l) => l.startsWith('projection CourseStatus:')) + 1, 'goes to the projection');
+    text.split('\n').findIndex((l) => l.startsWith('projection CourseStatus (')) + 1, 'goes to the projection');
 });
 
 check('a shorthand splits when either of its names is renamed', () => {
@@ -1030,20 +1073,21 @@ check('a shorthand splits when either of its names is renamed', () => {
   const param = renameAt(text, 'emit CourseDefined { courseId', 'emit CourseDefined { '.length, 'id').text;
   eq(param.includes('command DefineCourse(id: CourseId, capacity: integer) {'), true, 'the parameter');
   eq(param.includes('emit CourseDefined { courseId: id, capacity }'), true, 'the shorthand, as the value');
-  const property = renameAt(text, 'event CourseDefined { courseId', 'event CourseDefined { '.length, 'id').text;
+  const property = renameAt(text, 'event CourseDefined { tag courseId', 'event CourseDefined { tag '.length, 'id').text;
   eq(property.includes('emit CourseDefined { id: courseId, capacity }'), true, 'the shorthand, as the key');
   eq(property.includes('command DefineCourse(courseId: CourseId, capacity: integer) {'), true, 'the parameter kept');
 });
 
 check('an entity takes its tracking identifier type along, and a type renamed under one is pinned', () => {
   const text = modelToSource(build(ENTITIES).model());
-  const entity = renameAt(text, 'entity Course tagged', 'entity '.length, 'Class').text;
+  const entity = renameAt(text, 'entity Course (', 'entity '.length, 'Class').text;
   eq(entity.includes('tag type ClassId = string'), true, 'the type moved');
-  eq(entity.includes('alias course = Class tagged courseId'), true, 'the reads moved');
-  eq(entity.includes('entity Class tagged ClassId {'), true, 'and the entity tracks it');
+  eq(entity.includes('alias course = Class(courseId)'), true, 'the reads moved');
+  eq(entity.includes('entity Class (tag classId: ClassId) {'), true, 'and the entity tracks it, its tag\'s name too');
   eq(/\bCourseId\b/.test(entity), false, 'nothing left on the old type');
+  eq(parseModelSource(entity).collections['entity-definition'].Class.identifierName, undefined, 'still tracking');
   const type = renameAt(text, 'tag type CourseId', 'tag type '.length, 'CourseKey').text;
-  eq(type.includes('entity Course tagged CourseKey {'), true, 'pinned');
+  eq(type.includes('entity Course (tag courseId: CourseKey) {'), true, 'pinned');
   const parsed = parseModelSource(type);
   eq(parsed.collections['entity-definition'].Course.identifierType, 'CourseKey', 'and so still its identifier');
   eq(parsed.implicit, [], 'no type synthesized');
@@ -1080,9 +1124,9 @@ check('a rename reaches into scenarios', () => {
   const out = renameAt(text, 'event CourseDefined', 'event '.length, 'CourseCreated').text;
   eq(/given CourseDefined\b/.test(out), false, 'a given event');
   eq(out.includes('given CourseCreated {'), true, 'renamed there');
-  const projection = renameAt(text, 'projection CourseStatus:', 'projection '.length, 'CourseState').text;
-  eq(projection.includes('require CourseState tagged courseId == NonExistent'), true, 'the rule reading it in place');
-  eq(/then CourseState tagged CourseId\("c1"\)/.test(projection), true, 'a projection scenario about it');
+  const projection = renameAt(text, 'projection CourseStatus (', 'projection '.length, 'CourseState').text;
+  eq(projection.includes('require CourseState(courseId) == NonExistent'), true, 'the rule reading it in place');
+  eq(/then CourseState\(CourseId\("c1"\)\)/.test(projection), true, 'a projection scenario about it');
   eq(projection.includes('then rejected "Course already exists"'), true, 'a refusal names its message, which no rename touches');
 });
 
@@ -1112,11 +1156,13 @@ check('completion knows a command\'s reads and payload', () => {
   eq(rule('require course.status in [|]').labels, ['NonExistent', 'Existent', 'Archived'], 'in a list');
   eq(rule('require course.status |').labels, ['==', '!=', 'in', 'not in'], 'what an enum admits');
   eq(rule('require courseId in |').labels, ['[…]', 'course', 'courseId', 'newCapacity'], 'a literal list or data');
-  eq(rule('alias other = |').items.find((i) => i.label === 'Course').insert, 'Course tagged $1', 'an entity read');
-  eq(rule('alias other = |').items.find((i) => i.label === 'CourseCapacity').insert, 'CourseCapacity', 'a projection, bare');
-  eq(rule('alias other = Course tagged |').labels.includes('courseId'), true, 'what it is tagged by');
-  eq(rule('alias other = Course tagged |').labels.includes('other'), false, 'not the read being written');
-  eq(rule('alias other = CourseCapacity |').labels, ['tagged', 'with'], 'what follows a projection');
+  eq(rule('alias other = |').items.find((i) => i.label === 'Course').insert, 'Course($1)', 'an entity read');
+  eq(rule('alias other = |').items.find((i) => i.label === 'CourseCapacity').insert, 'CourseCapacity($1)', 'a projection, with its values to give');
+  eq(rule('alias other = Course(|)').labels.includes('courseId'), true, 'what it is read by');
+  eq(rule('alias other = Course(|)').labels.includes('other'), false, 'not the read being written');
+  const value = rule('require CourseStatus(|)').items;
+  eq(value.filter((i) => i.sort === '0').map((i) => i.label), ['course', 'courseId'], 'a value of the declared tag type first');
+  eq(value.some((i) => i.label === 'each'), true, 'or each of a list');
   eq(rule('emit CourseCapacityChanged { courseId, |}').labels, ['newCapacity'], 'an event\'s remaining properties');
   eq(rule('emit CourseCapacityChanged { |}').items.map((i) => i.insert), ['courseId', 'newCapacity'], 'as shorthands');
   eq(rule('emit CourseArchived { courseId } when |').labels.slice(0, 3), ['course', 'courseId', 'newCapacity'], 'a guard');
@@ -1142,7 +1188,7 @@ check('completion knows scenarios, declarations, and when to stay quiet', () => 
   eq(completeAt(text.replace('// Commands', '// Commands |')).labels, [], 'in a comment');
   eq(completeAt(text.replace('@feature("Enrolment")', '@feature("Enrol|ment")')).labels, [], 'in a string');
   const entities = modelToSource(build(ENTITIES).model());
-  eq(completeAt(entities.replace('entity Course tagged CourseId {', 'entity Course tagged CourseId {\n  lifecycle |')).labels.includes('status'), true,
+  eq(completeAt(entities.replace('entity Course (tag courseId: CourseId) {', 'entity Course (tag courseId: CourseId) {\n  lifecycle |')).labels.includes('status'), true,
     'an entity\'s properties, written below');
 });
 
@@ -1163,7 +1209,7 @@ check('a read says which events it adds — only those of the properties used', 
   eq(archive.unread, ['capacity', 'subscriptionCount', 'subscribedStudentIds'], 'what it leaves out');
   eq(archive.reasons, ['rule'], 'why it is read');
   const line = text.split('\n')[archive.start.line - 1];
-  eq(line.slice(archive.start.col - 1, archive.end.endCol - 1), 'alias course = Course tagged courseId', 'the statement');
+  eq(line.slice(archive.start.col - 1, archive.end.endCol - 1), 'alias course = Course(courseId)', 'the statement');
 
   eq(of(queries(text), 'SubscribeStudentToCourse').types.includes('CourseCapacityChanged'), true,
     'a rule on capacity brings its events in');

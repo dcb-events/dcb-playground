@@ -97,6 +97,12 @@
   "projectionDefinitions": [
     {
       "name": "DocumentLifecycle",
+      "tags": [
+        {
+          "name": "documentId",
+          "tagType": "DocumentId"
+        }
+      ],
       "valueType": "DocumentLifecycle",
       "isList": false,
       "initialValue": {
@@ -128,6 +134,12 @@
     },
     {
       "name": "DocumentCurrentText",
+      "tags": [
+        {
+          "name": "documentId",
+          "tagType": "DocumentId"
+        }
+      ],
       "valueType": "string",
       "isList": false,
       "initialValue": null,
@@ -148,6 +160,12 @@
     },
     {
       "name": "DocumentPublishedText",
+      "tags": [
+        {
+          "name": "documentId",
+          "tagType": "DocumentId"
+        }
+      ],
       "valueType": "string",
       "isList": false,
       "initialValue": null,
@@ -163,15 +181,31 @@
     },
     {
       "name": "DocumentHasPendingChanges",
+      "tags": [
+        {
+          "name": "documentId",
+          "tagType": "DocumentId"
+        }
+      ],
       "valueType": "boolean",
       "isList": false,
       "derived": {
         "leftHandSide": {
-          "projection": "DocumentCurrentText"
+          "projection": "DocumentCurrentText",
+          "tags": {
+            "documentId": {
+              "parameterName": "documentId"
+            }
+          }
         },
         "predicate": "equals",
         "rightHandSide": {
-          "projection": "DocumentPublishedText"
+          "projection": "DocumentPublishedText",
+          "tags": {
+            "documentId": {
+              "parameterName": "documentId"
+            }
+          }
         },
         "negate": true
       }
@@ -193,11 +227,11 @@
         {
           "leftHandSide": {
             "projection": "DocumentLifecycle",
-            "tags": [
-              {
+            "tags": {
+              "documentId": {
                 "parameterName": "id"
               }
-            ]
+            }
           },
           "predicate": "equals",
           "rightHandSide": {
@@ -238,11 +272,11 @@
         {
           "leftHandSide": {
             "projection": "DocumentLifecycle",
-            "tags": [
-              {
+            "tags": {
+              "documentId": {
                 "parameterName": "docId"
               }
-            ]
+            }
           },
           "predicate": "equalsAny",
           "rightHandSide": [
@@ -258,11 +292,11 @@
         {
           "leftHandSide": {
             "projection": "DocumentCurrentText",
-            "tags": [
-              {
+            "tags": {
+              "documentId": {
                 "parameterName": "docId"
               }
-            ]
+            }
           },
           "predicate": "equals",
           "rightHandSide": {
@@ -301,11 +335,11 @@
         {
           "leftHandSide": {
             "projection": "DocumentLifecycle",
-            "tags": [
-              {
+            "tags": {
+              "documentId": {
                 "parameterName": "docId"
               }
-            ]
+            }
           },
           "predicate": "equalsAny",
           "rightHandSide": [
@@ -321,11 +355,11 @@
         {
           "leftHandSide": {
             "projection": "DocumentHasPendingChanges",
-            "tags": [
-              {
+            "tags": {
+              "documentId": {
                 "parameterName": "docId"
               }
-            ]
+            }
           },
           "predicate": "isTrue",
           "rejection": "No changes to publish"
@@ -340,11 +374,11 @@
             },
             "text": {
               "projection": "DocumentCurrentText",
-              "tags": [
-                {
+              "tags": {
+                "documentId": {
                   "parameterName": "docId"
                 }
-              ]
+              }
             }
           }
         }
@@ -365,11 +399,11 @@
         {
           "leftHandSide": {
             "projection": "DocumentLifecycle",
-            "tags": [
-              {
+            "tags": {
+              "documentId": {
                 "parameterName": "docId"
               }
-            ]
+            }
           },
           "predicate": "equalsAny",
           "rightHandSide": [
@@ -624,12 +658,12 @@
       "id": "2b0bdd3f-2ad4-4250-a3cb-f2c8d48ec542",
       "name": "a fresh draft has pending changes — nothing was ever published",
       "projection": "DocumentHasPendingChanges",
-      "tags": [
-        {
+      "tags": {
+        "documentId": {
           "tagType": "DocumentId",
           "tagValue": "d1"
         }
-      ],
+      },
       "given": [
         {
           "event": "DocumentAdded",
@@ -644,12 +678,12 @@
       "id": "6b17dd6b-fdf3-462b-ad34-7992e0f85a91",
       "name": "nothing pending right after publishing",
       "projection": "DocumentHasPendingChanges",
-      "tags": [
-        {
+      "tags": {
+        "documentId": {
           "tagType": "DocumentId",
           "tagValue": "d1"
         }
-      ],
+      },
       "given": [
         {
           "event": "DocumentAdded",
@@ -678,12 +712,12 @@
       "id": "8b05db3c-82fd-401a-ad72-cdbe6a762bd4",
       "name": "a change makes it pending",
       "projection": "DocumentHasPendingChanges",
-      "tags": [
-        {
+      "tags": {
+        "documentId": {
           "tagType": "DocumentId",
           "tagValue": "d1"
         }
-      ],
+      },
       "given": [
         {
           "event": "DocumentAdded",
@@ -719,12 +753,12 @@
       "id": "27e92137-69c8-4ab2-adfe-0ca4fad3892d",
       "name": "re-typing the published text clears it — no event says so",
       "projection": "DocumentHasPendingChanges",
-      "tags": [
-        {
+      "tags": {
+        "documentId": {
           "tagType": "DocumentId",
           "tagValue": "d1"
         }
-      ],
+      },
       "given": [
         {
           "event": "DocumentAdded",

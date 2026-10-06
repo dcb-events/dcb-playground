@@ -109,6 +109,12 @@
   "projectionDefinitions": [
     {
       "name": "DocumentStatus",
+      "tags": [
+        {
+          "name": "documentId",
+          "tagType": "DocumentId"
+        }
+      ],
       "valueType": "DocumentStatus",
       "isList": false,
       "script": {
@@ -155,11 +161,11 @@
         {
           "leftHandSide": {
             "projection": "DocumentStatus",
-            "tags": [
-              {
+            "tags": {
+              "documentId": {
                 "parameterName": "id"
               }
-            ]
+            }
           },
           "predicate": "equals",
           "rightHandSide": {
@@ -200,11 +206,11 @@
         {
           "leftHandSide": {
             "projection": "DocumentStatus",
-            "tags": [
-              {
+            "tags": {
+              "documentId": {
                 "parameterName": "docId"
               }
-            ]
+            }
           },
           "predicate": "equals",
           "rightHandSide": {
@@ -216,11 +222,11 @@
         {
           "leftHandSide": {
             "projection": "DocumentStatus",
-            "tags": [
-              {
+            "tags": {
+              "documentId": {
                 "parameterName": "docId"
               }
-            ]
+            }
           },
           "predicate": "equals",
           "rightHandSide": {
@@ -259,11 +265,11 @@
         {
           "leftHandSide": {
             "projection": "DocumentStatus",
-            "tags": [
-              {
+            "tags": {
+              "documentId": {
                 "parameterName": "docId"
               }
-            ]
+            }
           },
           "predicate": "equalsAny",
           "rightHandSide": [
@@ -303,11 +309,11 @@
         {
           "leftHandSide": {
             "projection": "DocumentStatus",
-            "tags": [
-              {
+            "tags": {
+              "documentId": {
                 "parameterName": "docId"
               }
-            ]
+            }
           },
           "predicate": "equalsAny",
           "rightHandSide": [
@@ -599,24 +605,24 @@
     {
       "id": "d6ac72fa-a595-4ed8-afb1-1de344fce8e9",
       "projection": "DocumentStatus",
-      "tags": [
-        {
+      "tags": {
+        "documentId": {
           "tagType": "DocumentId",
           "tagValue": "d1"
         }
-      ],
+      },
       "given": [],
       "then": "NonExistent"
     },
     {
       "id": "d41ef079-0f3d-4c2f-830c-2fcd2bb9e538",
       "projection": "DocumentStatus",
-      "tags": [
-        {
+      "tags": {
+        "documentId": {
           "tagType": "DocumentId",
           "tagValue": "d1"
         }
-      ],
+      },
       "given": [
         {
           "event": "DocumentAdded",
@@ -630,12 +636,12 @@
     {
       "id": "762a8c2a-0702-45b5-abaf-d78082e31a91",
       "projection": "DocumentStatus",
-      "tags": [
-        {
+      "tags": {
+        "documentId": {
           "tagType": "DocumentId",
           "tagValue": "d1"
         }
-      ],
+      },
       "given": [
         {
           "event": "DocumentAdded",
@@ -656,12 +662,12 @@
     {
       "id": "9ef9d34d-6f31-4b55-bddd-ab5163e5400b",
       "projection": "DocumentStatus",
-      "tags": [
-        {
+      "tags": {
+        "documentId": {
           "tagType": "DocumentId",
           "tagValue": "d1"
         }
-      ],
+      },
       "given": [
         {
           "event": "DocumentAdded",
@@ -688,12 +694,12 @@
     {
       "id": "90e91be3-2949-4f13-bacf-5f3696562aa3",
       "projection": "DocumentStatus",
-      "tags": [
-        {
+      "tags": {
+        "documentId": {
           "tagType": "DocumentId",
           "tagValue": "d1"
         }
-      ],
+      },
       "given": [
         {
           "event": "DocumentAdded",
@@ -727,12 +733,12 @@
     {
       "id": "e5d8262f-233d-43e8-ab23-6523431e2aa2",
       "projection": "DocumentStatus",
-      "tags": [
-        {
+      "tags": {
+        "documentId": {
           "tagType": "DocumentId",
           "tagValue": "d1"
         }
-      ],
+      },
       "given": [
         {
           "event": "DocumentAdded",
@@ -773,12 +779,12 @@
     {
       "id": "747dfa6f-9b78-4773-875e-92824767c413",
       "projection": "DocumentStatus",
-      "tags": [
-        {
+      "tags": {
+        "documentId": {
           "tagType": "DocumentId",
           "tagValue": "d1"
         }
-      ],
+      },
       "given": [
         {
           "event": "DocumentAdded",

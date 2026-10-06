@@ -89,9 +89,10 @@ it never works from `file:`.
   builders still build the course and content models with entities —
   the record of how they were designed — and a last layer,
   `seedWithoutEntities` (model.js), restates them as reads in place
-  through the ordinary commands; `seedOneSubscriptionCount` then folds
-  the course's and the student's subscription counts into the one fold
-  they always were. The entity forms live on as the experimental
+  through the ordinary commands — each projection already tagged by
+  the identifier the entity read it by (`seedEntityTag`), so a
+  course's and a student's subscription counts stay the two folds they
+  are. The entity forms live on as the experimental
   `course-entities` and `course-schedules` (which needs `excluding`).
   Entity tests build those, or a model from seed layers alone
   (`seeded(...)` in ui.test.js). A `PREDEFINED_MODELS` entry's
@@ -159,8 +160,8 @@ it never works from `file:`.
   thing anyone wants to declare: it is what a rule, a guard, an emission
   field, an emitted tag or another read *needs*. Since 8.0 a projection
   read need not be a binding at all: an operand may be a read in place
-  (`{projection, tags, arguments}`, `require CourseStatus tagged
-  courseId == …`), and the rule adder writes a rule about a projection
+  (`{projection, tags, arguments}`, `require CourseStatus(courseId)
+  == …`), and the rule adder writes a rule about a projection
   that way — it never invents an alias, which is the author's to write
   in the code view (`inlineReadOf`, swapped in at commit). Entity reads
   are still bindings. Inline reads are walked by `forEachCommandOperand`
@@ -204,17 +205,18 @@ it never works from `file:`.
   `SubscribeStudentToCourse` through the three questions and compares
   the result to the shipped definition. Its first question offers only
   what the command can reach — entities some operand already in scope
-  could identify, and every projection (none declares a partition;
-  "tagged by which value" is asked beside it, offering values whose
-  tag type every handled event lists, defaulting to how the model
-  already reads it) — and inventing an entity there also gives the
-  command the input that says *which* one, since a fresh identifier
-  type is reachable from nothing. A projection an entity property
+  could identify, and every projection, with a picker per tag it
+  declares beside it — values in scope of that tag's type, `each` of a
+  list of them, and `+ new input …`, the only offer when nothing in
+  scope has the type: committing adds a command property named after
+  the tag (`newReadInputs`). Inventing an entity there likewise gives
+  the command the input that says *which* one, since a fresh
+  identifier type is reachable from nothing. A projection an entity property
   binds is not offered: it is read through the entity
   (`course.capacity`), and offering it bare too would make one fact
   reachable as two different reads. The others are what lets a model
   without entities or lifecycles state its rules on the pages, not
-  only in the code view (`alias label = Label tagged documentId`).
+  only in the code view (`require Label(documentId) == …`).
 - **Reads split by their reason** (`decisionAliases`, model.js): a read
   a rule or guard names, and every hop it was reached through, belongs
   to the decide step; everything else is read in order to *record*
@@ -299,46 +301,65 @@ it never works from `file:`.
   carries no tag. The advisories say both (`eventTagAdvisories`): no
   tags, and each tag-typed value left unlisted. The pages keep the
   list in step with a field edit (`withEditedTags`, applied in
-  `patch`) and show it on the event's row; a body arriving whole — a
-  file, the code view, an agent — is stored as it says. Seeds and test
+  `patch`) and show it as a `tag` toggle on each field's row
+  (`eventTagToggles`) — the code view marks it in place too, `tag
+  courseId: CourseId`, `items: Item[] tag each productId`; a body
+  arriving whole — a file, the code view, an agent — is stored as it
+  says. Seeds and test
   fixtures write their lists with `tagPathsOf`, which is a convenience
   for stating them, not an inference at read time.
-- **A projection declares no partition; the read names its tags**
-  (8.0). A command's read is `{alias, projection, tags, arguments}` —
-  `tags` the values it is read by (operands in scope, or a typed
-  literal `{tagType, tagValue}`, `CourseId("c1")`), each keyed by its
-  own type; `arguments` only what a script takes besides (`with`). An
-  entity reads its properties tagged by its identifier, a projection
-  scenario by literals, and a derived projection's operands by their
-  reader's tags. So one fold is read per course and per student alike;
-  a read by no tag is the whole log. Scripts see the tags as `tags`
-  and have no `tagFilter`. Evaluation takes a *read* —
-  `foldProjection(model, events, name, { tags: [{type, value}], args })`.
-  A read fans out where it says so, `tagged each items.productId`
-  (`{each: operand}` on the tag): it is made once per element, and a
-  rule over it holds for every one, paired by index with values read
-  from the same list (`fanRootOf` / `isZipped`, the same machinery an
-  entity fan-out uses). An emission cannot take a fanned read.
-  What the model reads a projection by is derived
-  (`projectionReads` / `projectionReadTagSets`), and is what the
-  ledger row, the editor's "read by" and the State changes step say.
+- **A projection declares the tags it is read by; a read gives their
+  values** (8.0). `tags: [{name, tagType}]` on the projection — empty
+  is an *untagged* one, which folds the whole log, and the code view
+  makes that a decision (`untagged projection …`; neither is an error
+  with both fixes, and the pages' new-projection form will not save
+  until one is taken). A read is `{alias?, projection, tags,
+  arguments}` with `tags` keyed by the declared names
+  (`readTagEntries`) — values in scope of the declared
+  type, or a typed literal `{tagType, tagValue}`, `CourseId("c1")`.
+  The declared type is the key; a value of another type is an advisory
+  (`readProblem`) and an evaluation *error*, never a fold of the wrong
+  instance. The text writes reads positionally, `CourseStatus(courseId)`
+  — tags then a script's arguments, in declaration order, always with
+  parentheses (`CourseNumbering()`) — so the printer and the parser
+  need each projection's declaration (`sourceNamesOf`,
+  `options.projectionParameters`), and a call is a read or a tag
+  literal by whether a projection has its name (`settle`). The call
+  form is deliberate: a read is a pure function of the log, its tags
+  and arguments; brackets were rejected as reading like a stored
+  table. What a projection is kept per is its own to say, so a count
+  per course and per student are two projections — the reuse the
+  tagless draft allowed was dropped for the coupling it caused. An
+  entity property binds a projection tagged by exactly the entity's
+  identifier (`entityTagParam`); a derived operand gives its target's
+  tags by name, each one of the owner's own (`{parameterName}`) or a
+  literal. Scripts see `tags.<name>` and `args.<name>`, and have no
+  `tagFilter`. Evaluation takes a *read* —
+  `foldProjection(model, events, name, { tags: { courseId: 'c1' }, args })`.
+  Renaming a projection's tag is a member rename
+  (`MEMBER_REWRITES['projection-definition:tag']`) that moves every read
+  keyed by it. A read fans out where it says so, `each` on the value
+  (`{each: operand}`): it is made once per element, and a rule over it
+  holds for every one, paired by index with values read from the same
+  list (`fanRootOf` / `isZipped`). An entity read fans out the same way,
+  `Course(each …)`, and a list read without `each` is an advisory and
+  an error. An emission cannot take a fanned read.
 - **One handler per event type, per projection** — and it is a real
   constraint, not a convenience: tag matching is by _value_, whichever
   listed property carries it, so an event listing one identifier type
   in two properties reaches both reads by that type and a handler fires
   for both. A declarative handler cannot tell them apart; the fix is to
   list only one, split the event (one fact each) or script the
-  projection, and an advisory on the read points at the ambiguity
-  (`readTagProblem`). The editors offer only unhandled events.
+  projection, and an advisory on the projection points at the ambiguity
+  (`projectionTagProblem`). The editors offer only unhandled events.
   The opposite case is zero carriers: a handled event listing no tag of
-  a type a read is by never reaches that read. That is an advisory on
-  the *read* (`readTagProblem`, via `readTagsMissing`) — on the command,
-  entity or scenario that reads it — since the projection itself has
-  no partition to be wrong about. The State changes adder does not
-  offer a projection whose every read the event misses; a State
-  changes row about a standalone projection names the reads it moves
-  in the command's terms (`changeArguments`: `Book exists tagged isbn`)
-  and says which ones it misses.
+  a type the projection is tagged by never reaches it. That is an
+  advisory on the *projection* too (`projectionTagProblem`, via
+  `readTagsMissing`), since it is the projection that declared the
+  tags. The State changes adder does not offer a projection the event
+  cannot reach; a State changes row about a standalone projection
+  names the instance it moves in the command's terms
+  (`changeArguments`: `Book exists tagged isbn`).
 - **Wire format majors**: a new member of a closed vocabulary is a
   _major_, judged from the reader's side (see the versioning notes in
   `dcb-model.schema.json` and `model.js`). 4.0 added binding

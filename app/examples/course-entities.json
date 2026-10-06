@@ -184,6 +184,12 @@
   "projectionDefinitions": [
     {
       "name": "StudentExists",
+      "tags": [
+        {
+          "name": "studentId",
+          "tagType": "StudentId"
+        }
+      ],
       "valueType": "boolean",
       "isList": false,
       "initialValue": false,
@@ -197,6 +203,12 @@
     },
     {
       "name": "StudentSubscriptionCount",
+      "tags": [
+        {
+          "name": "studentId",
+          "tagType": "StudentId"
+        }
+      ],
       "valueType": "integer",
       "isList": false,
       "initialValue": 0,
@@ -215,6 +227,12 @@
     },
     {
       "name": "CourseStatus",
+      "tags": [
+        {
+          "name": "courseId",
+          "tagType": "CourseId"
+        }
+      ],
       "valueType": "CourseStatus",
       "isList": false,
       "initialValue": {
@@ -239,6 +257,12 @@
     },
     {
       "name": "CourseCapacity",
+      "tags": [
+        {
+          "name": "courseId",
+          "tagType": "CourseId"
+        }
+      ],
       "valueType": "integer",
       "isList": false,
       "initialValue": 0,
@@ -261,6 +285,12 @@
     },
     {
       "name": "CourseSubscriptionCount",
+      "tags": [
+        {
+          "name": "courseId",
+          "tagType": "CourseId"
+        }
+      ],
       "valueType": "integer",
       "isList": false,
       "initialValue": 0,
@@ -279,6 +309,12 @@
     },
     {
       "name": "CourseSubscribedStudentIds",
+      "tags": [
+        {
+          "name": "courseId",
+          "tagType": "CourseId"
+        }
+      ],
       "valueType": "StudentId",
       "isList": true,
       "initialValue": [],
