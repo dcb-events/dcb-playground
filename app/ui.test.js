@@ -18,7 +18,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const { createSandbox, loadApp, makeChecker, textOf, findAll } = require('./test-harness.js');
+const { createSandbox, loadApp, makeChecker, swap, textOf, findAll } = require('./test-harness.js');
 
 const APP = __dirname;
 
@@ -3276,7 +3276,7 @@ function build(index) {
     '  on Done => increment 1',
     '}',
     'projection FolderSize (tag folderId: FolderId): integer = 0 {}',
-    'command Finish(documentId: DocumentId) {',
+    'handler Finish(documentId: DocumentId) {',
     '  emit Done { documentId }',
     '}',
   ].join('\n'));
@@ -3483,7 +3483,7 @@ function build(index) {
     'projection EmployeeSeniority (tag employeeId: EmployeeId): Seniority = Junior {',
     '  on EmployeeHired => set event.data.seniority',
     '}',
-    'command Assign(projectId: ProjectId, employeeId: EmployeeId, wanted: Seniority[]) {',
+    'handler Assign(projectId: ProjectId, employeeId: EmployeeId, wanted: Seniority[]) {',
     '  alias project = Project(projectId)',
     '  alias employee = Employee(employeeId)',
     '  require employee.seniority in project.requiredSeniority',
@@ -4141,7 +4141,7 @@ function build(index) {
     eq(text.includes('In step with the model'), true, 'a clean text says so');
     eq(findAll(main, (n) => n.tag === 'textarea').length, 1, 'the textarea, with no Monaco to load');
     const codeView = sandbox.codeView;
-    sandbox.onCodeInput(codeView.text.replace('emit CourseArchived { courseId }', 'emit CourseCapacityChanged { courseId }'));
+    sandbox.onCodeInput(swap(codeView.text, 'emit CourseArchived { courseId }', 'emit CourseCapacityChanged { courseId }'));
     eq(sandbox.codeDirty(), true, 'edited');
     sandbox.leaveCode();
     eq(state.code, false, 'back on the pages');
@@ -4157,7 +4157,7 @@ function build(index) {
     Object.assign(state, { view: 'slice', slice: 'ArchiveCourse', code: true });
     const paint = () => sandbox.renderCode(sandbox.activeModel(), sandbox.document.createElement('div'));
     paint();
-    sandbox.onCodeInput(codeView.text.replace('student.subscriptionCount < 10', 'student.subscriptionCount < 12'));
+    sandbox.onCodeInput(swap(codeView.text, 'student.subscriptionCount < 10', 'student.subscriptionCount < 12'));
     const body = JSON.parse(JSON.stringify(m()['command-definitions'].ArchiveCourse));
     body.publishes[0].name = 'CourseCapacityChanged';
     updateDefinition('command-definition', id, 'ArchiveCourse', body);
@@ -4258,7 +4258,7 @@ check('the help opens the reference at the page\'s own concept', () => {
       'projection Label (tag documentId: DocumentId): string = "" {',
       '  on Labelled => set event.data.label',
       '}',
-      'command Relabel(documentId: DocumentId, label: string) {',
+      'handler Relabel(documentId: DocumentId, label: string) {',
       '  alias current = Label(documentId)',
       '  require current != label',
       '    else reject "Label is unchanged"',

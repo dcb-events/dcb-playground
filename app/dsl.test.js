@@ -15,7 +15,7 @@
 // ============================================================
 const fs = require('fs');
 const path = require('path');
-const { createSandbox, loadApp, makeChecker } = require('./test-harness.js');
+const { createSandbox, loadApp, makeChecker, swap } = require('./test-harness.js');
 
 const APP = __dirname;
 const { sandbox, store } = createSandbox();
@@ -136,7 +136,7 @@ check('a command reads as reads, rules and emissions', () => {
   const text = modelToSource(model());
   const expected = [
     '@feature("Enrolment")',
-    'command SubscribeStudentToCourse(courseId: CourseId, studentId: StudentId) {',
+    'handler SubscribeStudentToCourse(courseId: CourseId, studentId: StudentId) {',
     '  alias course = Course(courseId)',
     '  alias student = Student(studentId)',
     '',
@@ -155,6 +155,8 @@ check('a command reads as reads, rules and emissions', () => {
     '}',
   ].join('\n');
   eq(text.includes(expected), true, 'SubscribeStudentToCourse as printed:\n' + text);
+  eq(parseModelSource('handler A(a: integer) {}\ncommand B(b: integer) {}').diagnostics.map((d) => d.message),
+    ['A command is declared with its handler: handler B(…) { … }, not command.'], 'the old keyword names the fix');
 });
 
 check('fan-out, exclusion, numbering, membership, guards and derived values have spellings', () => {
@@ -205,7 +207,7 @@ check('every rule shape reads back as the rule it was', () => {
     ['a is false', { predicate: 'isFalse' }],
   ];
   for (const [text, expected] of rules) {
-    const source = `command C(a: integer, b: integer) {\n  require ${text}\n    else reject "No"\n}`;
+    const source = `handler C(a: integer, b: integer) {\n  require ${text}\n    else reject "No"\n}`;
     const parsed = parseModelSource(source);
     eq(parsed.diagnostics, [], text);
     const rule = parsed.collections['command-definition'].C.conditions[0];
@@ -221,7 +223,7 @@ check('every rule shape reads back as the rule it was', () => {
 
 check('every rule says what it is refused with, on its line or the next', () => {
   const ruleOf = (text) => {
-    const parsed = parseModelSource(`command C(a: integer) {\n${text}\n}`);
+    const parsed = parseModelSource(`handler C(a: integer) {\n${text}\n}`);
     return { diagnostics: parsed.diagnostics.map((d) => d.message), rule: (parsed.collections['command-definition'].C || {}).conditions };
   };
   const next = ruleOf('  require a > 1\n    else reject "Too small"');
@@ -233,22 +235,22 @@ check('every rule says what it is refused with, on its line or the next', () => 
     ['Expected "else reject" and the message the command is refused with, found "}".'], 'it is required');
   eq(ruleOf('  require a > 1 else reject Small').diagnostics,
     ['Expected the message the command is refused with, in quotes, found "Small".'], 'and it is text');
-  const scenario = parseModelSource('command C(a: integer) {\n  require a > 1 else reject "No"\n'
+  const scenario = parseModelSource('handler C(a: integer) {\n  require a > 1 else reject "No"\n'
     + '  scenarios {\n    scenario {\n      when C { a: 0 }\n      then rejected by a > 1\n    }\n  }\n}');
   eq(scenario.diagnostics.map((d) => d.message),
     ['A refusal is named by the message it was refused with: then rejected "…".'], 'a refusal names the message');
-  eq(parseModelSource('command C(a: integer) {\n  require a > 1 else reject "No"\n'
+  eq(parseModelSource('handler C(a: integer) {\n  require a > 1 else reject "No"\n'
     + '  scenarios {\n    scenario {\n      when C { a: 0 }\n      then rejected "No" saw 0, 1\n    }\n  }\n}').diagnostics.map((d) => d.message),
     ['A refusal is named by its message alone — what the rule read is not asserted.'], 'and by nothing else');
   const bare = { name: 'm', ...emptyCollections({ 'command-definition': { C: {
     properties: [], boundary: [], publishes: [], conditions: [{ leftHandSide: { parameterName: 'a' }, predicate: 'isTrue' }],
   } } }) };
-  eq(modelToSource(bare).includes('// Written as JSON: a rule has no rejection message.\ncommand C json {'), true,
+  eq(modelToSource(bare).includes('// Written as JSON: a rule has no rejection message.\nhandler C json {'), true,
     'a stored rule without one is written as JSON');
 });
 
 check('membership in data reads either way round, and prints as contains', () => {
-  const source = (rule) => `command C(a: integer, b: integer[]) {\n  require ${rule}\n    else reject "No"\n}`;
+  const source = (rule) => `handler C(a: integer, b: integer[]) {\n  require ${rule}\n    else reject "No"\n}`;
   const ruleOf = (rule) => {
     const parsed = parseModelSource(source(rule));
     eq(parsed.diagnostics, [], rule);
@@ -265,7 +267,7 @@ check('membership in data reads either way round, and prints as contains', () =>
   // A rule written the other way round still resolves and renames: the
   // marks travel with the operands, whichever side they land on.
   const text = modelToSource(build(ENTITIES).model());
-  const swapped = text.replace('course.subscribedStudentIds not contains studentId', 'studentId not in course.subscribedStudentIds');
+  const swapped = swap(text, 'course.subscribedStudentIds not contains studentId', 'studentId not in course.subscribedStudentIds');
   eq(swapped === text, false, 'the course model states membership');
   const parsed = parseModelSource(swapped);
   eq(parsed.diagnostics, [], 'swapped parses');
@@ -288,7 +290,7 @@ check('a name resolves to a read when one declares it, and to the payload otherw
   const parsed = parseModelSource([
     'entity Course (tag courseId: CourseId) {}',
     'untagged projection CourseNumbering: CourseId = "c1" {}',
-    'command C(courseId: CourseId, items: Item[]) {',
+    'handler C(courseId: CourseId, items: Item[]) {',
     '  alias course = Course(courseId)',
     '  alias numbering = CourseNumbering()',
     '  require course.status == items.price else reject "a"',
@@ -319,9 +321,9 @@ check('what the grammar cannot say is written as JSON, says why, and still round
   updateDefinition('command-definition', id, 'DefineCourse', shadowed);
   const text = modelToSource(model());
   eq(text.includes('// Written as JSON: a rule\'s predicate "resemblesStrongly" is not one the code form knows.\n'
-    + 'command ArchiveCourse json {'), true, 'unknown predicate');
+    + 'handler ArchiveCourse json {'), true, 'unknown predicate');
   eq(text.includes('// Written as JSON: "courseId" names both a payload property and an alias.\n'
-    + 'command DefineCourse json {'), true, 'a parameter and a read sharing a name');
+    + 'handler DefineCourse json {'), true, 'a parameter and a read sharing a name');
   const parsed = parseModelSource(text);
   eq(parsed.diagnostics, [], 'diagnostics');
   assertSameModel(model(), parsed, 'fallbacks');
@@ -336,8 +338,7 @@ check('what the grammar cannot say is written as JSON, says why, and still round
 
 check('an edit is written as exactly the definitions it changed, in one append', () => {
   const { id, model } = build(ENTITIES);
-  const text = modelToSource(model())
-    .replace('require student.subscriptionCount < 10', 'require student.subscriptionCount < 12');
+  const text = swap(modelToSource(model()), 'require student.subscriptionCount < 10', 'require student.subscriptionCount < 12');
   const before = appends;
   const log = loadEvents().length;
   const summary = applyModelSource(id, text);
@@ -350,13 +351,12 @@ check('an edit is written as exactly the definitions it changed, in one append',
 check('adding, removing, reordering and renaming the model are one append together', () => {
   const { id, model } = build(ENTITIES);
   const scenarios = JSON.stringify(model()['scenario-definitions']);
-  let text = modelToSource(model())
-    .replace('model "Course Example (with entities)"', 'model "Renamed"')
-    .replace(/@feature\("Course management"\)\ncommand ArchiveCourse[\s\S]*?\n}\n/, '')
+  let text = swap(modelToSource(model()), 'model "Course Example (with entities)"', 'model "Renamed"');
+  text = swap(text, /@feature\("Course management"\)\nhandler ArchiveCourse[\s\S]*?\n}\n/, '')
     + '\nentity Room (tag roomId: RoomId) {}\n';
   // Two events trade places.
-  text = text.replace('event CourseArchived { tag courseId: CourseId }\n', '')
-    .replace('event CourseDefined', 'event CourseArchived { tag courseId: CourseId }\nevent CourseDefined');
+  text = swap(text, 'event CourseArchived { tag courseId: CourseId }\n', '');
+  text = swap(text, 'event CourseDefined', 'event CourseArchived { tag courseId: CourseId }\nevent CourseDefined');
   const before = appends;
   const summary = applyModelSource(id, text);
   eq(appends - before, 1, 'one append');
@@ -371,7 +371,7 @@ check('adding, removing, reordering and renaming the model are one append togeth
 
 check('an identifier type left out of the text keeps what the model says about it', () => {
   const { id, model } = build(3);
-  const text = modelToSource(model()).replace('tag type CourseId = string { pattern: "^c[0-9]+$" }\n', '');
+  const text = swap(modelToSource(model()), 'tag type CourseId = string { pattern: "^c[0-9]+$" }\n', '');
   const parsed = parseModelSource(text);
   eq(parsed.implicit, ['CourseId'], 'implied');
   const order = Object.keys(model()['custom-type-definitions']);
@@ -383,7 +383,7 @@ check('an identifier type left out of the text keeps what the model says about i
 
 check('a text with an error applies nothing and says where', () => {
   const { id, model } = build(ENTITIES);
-  const text = modelToSource(model()).replace('require course.status == Existent', 'require course.status === Existent');
+  const text = swap(modelToSource(model()), 'require course.status == Existent', 'require course.status === Existent');
   const parsed = parseModelSource(text);
   eq(parsed.diagnostics.length, 1, 'one error');
   const line = text.split('\n').findIndex((l) => l.includes('===')) + 1;
@@ -401,7 +401,7 @@ check('an error in one declaration does not hide the next', () => {
     'event A { id: AId',
     'event B { id: }',
     'enum C { X, Y }',
-    'command A(',
+    'handler A(',
   ].join('\n'));
   eq(parsed.diagnostics.map((d) => d.line), [1, 2, 4], JSON.stringify(parsed.diagnostics));
   eq(parsed.diagnostics[0].message, 'Expected "}" before the next declaration.', 'where the brace is missing');
@@ -485,9 +485,9 @@ check('names no collection can be keyed by are refused, and padded ones trimmed'
 check('the model name is compared trimmed, and a rename is reported', () => {
   const { id, model } = build(ENTITIES);
   const before = loadEvents().length;
-  applyModelSource(id, modelToSource(model()).replace('model "Course Example (with entities)"', 'model " Course Example (with entities) "'));
+  applyModelSource(id, swap(modelToSource(model()), 'model "Course Example (with entities)"', 'model " Course Example (with entities) "'));
   eq(loadEvents().length, before, 'padding is no rename');
-  const summary = applyModelSource(id, modelToSource(model()).replace('model "Course Example (with entities)"', 'model "Courses"'));
+  const summary = applyModelSource(id, swap(modelToSource(model()), 'model "Course Example (with entities)"', 'model "Courses"'));
   eq(sandbox.sourceApplySummary(summary), 'renamed the model to "Courses"', 'reported');
 });
 
@@ -524,7 +524,7 @@ check('a scenario reads as given, when and then, nested in its command', () => {
 
 check('a scenario written without a then is recorded with what the model does', () => {
   const { id, model } = importExample('course-simple');
-  const text = modelToSource(model()).replace('  emit CourseArchived { courseId }\n\n  scenarios {\n', [
+  const text = swap(modelToSource(model()), '  emit CourseArchived { courseId }\n\n  scenarios {\n', [
     '  emit CourseArchived { courseId }',
     '',
     '  scenarios {',
@@ -556,8 +556,7 @@ check('a scenario written without a then is recorded with what the model does', 
 
 check('a written then is asserted: a drift is reported with its fix, and applying does not accept it', () => {
   const { id, model } = importExample('course-simple');
-  const text = modelToSource(model()).replace(
-    'when SubscribeStudentToCourse { courseId: "c1", studentId: "s1" }\n      then rejected "Course is not active"',
+  const text = swap(modelToSource(model()), 'when SubscribeStudentToCourse { courseId: "c1", studentId: "s1" }\n      then rejected "Course is not active"',
     'when SubscribeStudentToCourse { courseId: "c1", studentId: "s1" }\n      then rejected "Course is closed"',
   );
   const parsed = parseModelSource(text);
@@ -579,7 +578,7 @@ check('a written then is asserted: a drift is reported with its fix, and applyin
 check('an edited scenario keeps its id and place; a renamed command takes its scenarios along', () => {
   const { id, model } = importExample('course-simple');
   const ids = Object.keys(model()['scenario-definitions']);
-  const text = modelToSource(model()).replace('given CourseDefined { courseId: "c11", capacity: 123 }',
+  const text = swap(modelToSource(model()), 'given CourseDefined { courseId: "c11", capacity: 123 }',
     'given CourseDefined { courseId: "c11", capacity: 124 }');
   let summary = applyModelSource(id, text);
   eq(sandbox.sourceApplySummary(summary), 'updated 1 scenario', 'one scenario');
@@ -591,7 +590,7 @@ check('an edited scenario keeps its id and place; a renamed command takes its sc
 
 check('a scenario left out of the text is removed', () => {
   const { id, model } = importExample('course-sequence');
-  const text = modelToSource(model()).replace(/\n    scenario "issues c3[\s\S]*?\n    }\n/, '\n');
+  const text = swap(modelToSource(model()), /\n    scenario "issues c3[\s\S]*?\n    }\n/, '\n');
   applyModelSource(id, text);
   eq(Object.values(model()['projection-scenario-definitions']).map((b) => b.name), ['issues c1 before anything has happened'], 'one left');
 });
@@ -631,23 +630,23 @@ check('scenarios sit in one group per block, and a text from before groups is on
     eq(applyFixes(old), text, `${file}: the fix writes it as printed`);
   }
   const messages = (text) => parseModelSource(text).diagnostics.map((d) => d.message);
-  const command = (inner) => `command A() {\n  emit E\n${inner}\n}\nevent E {}`;
+  const command = (inner) => `handler A() {\n  emit E\n${inner}\n}\nevent E {}`;
   const group = '  scenarios {\n    scenario {\n      when A {}\n    }\n  }';
   eq(messages(command(group)), [], 'a group');
   eq(messages(command(`${group}\n${group}`)), ['A block has one scenarios group — move these scenarios into the first.'], 'one group');
   eq(messages(command(`${group}\n  emit E`)), ['The scenarios group comes last — nothing follows it in the block.'], 'and last');
   eq(messages(command('  scenarios {\n    emit E\n  }')), ['Expected scenario, found "emit".'], 'holding scenarios only');
   eq(messages(command('  scenarios {}')), [], 'empty is no error');
-  const early = parseModelSource('command A() {\n  scenario {\n    when A {}\n  }\n  emit E\n}\nevent E {}').diagnostics;
+  const early = parseModelSource('handler A() {\n  scenario {\n    when A {}\n  }\n  emit E\n}\nevent E {}').diagnostics;
   eq([early.length, early[0].fix], [1, undefined], 'a scenario before a statement is refused without a wrap that would not read');
-  const looseOnes = parseModelSource('scenario {\n  when A {}\n}\n\n// between\nscenario {\n  when A {}\n}\ncommand A() {}\nscenario {\n  when A {}\n}');
+  const looseOnes = parseModelSource('scenario {\n  when A {}\n}\n\n// between\nscenario {\n  when A {}\n}\nhandler A() {}\nscenario {\n  when A {}\n}');
   eq(looseOnes.diagnostics.length, 2, 'a run at the top level is one error, and the next run another');
   eq(looseOnes.scenarios.length, 3, 'and every one of them is still read');
 });
 
 check('the editor folds a scenarios group whole, every other block to its closing line', () => {
   const ranges = sandbox.sourceFoldingRanges([
-    'command A(', //            1
+    'handler A(', //            1
     '  a: integer', //          2
     ') {', //                   3
     '  emit E { a }', //        4
@@ -665,13 +664,13 @@ check('the editor folds a scenarios group whole, every other block to its closin
     { start: 6, end: 10, scenarios: true },
     { start: 7, end: 8, scenarios: false },
   ], 'ranges');
-  eq(sandbox.sourceFoldingRanges('command A() {\n  scenarios {\n    scenario { when A {').length, 0, 'an unclosed text folds nothing it cannot close');
+  eq(sandbox.sourceFoldingRanges('handler A() {\n  scenarios {\n    scenario { when A {').length, 0, 'an unclosed text folds nothing it cannot close');
 });
 
 check('scenarios refuse what they cannot mean', () => {
   const errors = (text) => parseModelSource(text).diagnostics.map((d) => d.message);
   const loose = (scenario) => errors(`scenarios {\n${scenario}\n}`);
-  eq(errors('command A() {\n  scenarios {\n    scenario {\n      when B {}\n    }\n  }\n}')[0],
+  eq(errors('handler A() {\n  scenarios {\n    scenario {\n      when B {}\n    }\n  }\n}')[0],
     'This scenario sits in A but is about B — move it there, or make it about A.', 'in the wrong block');
   eq(loose('scenario {\n  then Ghost tagged CourseId("x") == 1\n}')[0],
     'A read gives its values in parentheses, in the order Ghost declares them: Ghost(…).', 'the draft spelling');
@@ -681,7 +680,7 @@ check('scenarios refuse what they cannot mean', () => {
   eq(loose('scenario {\n  then E {}\n}')[0], 'A scenario ending in events, nothing or a rejection needs a when — the command it runs.', 'no when');
   eq(loose('scenario {\n  then Ghost(GhostId("1"), 1) == 1\n}'), [], 'an orphan, read');
   const { id, model } = importExample('course-simple');
-  const text = modelToSource(model()).replace('  emit CourseArchived { courseId }\n\n  scenarios {\n',
+  const text = swap(modelToSource(model()), '  emit CourseArchived { courseId }\n\n  scenarios {\n',
     '  emit CourseArchived { courseId }\n\n  scenarios {\n    scenario {\n      given CourseBurnt { courseId: "c1" }\n      when ArchiveCourse { courseId: "c1" }\n    }\n\n');
   const report = sandbox.sourceScenarioReport(model(), parseModelSource(text));
   eq(report.errors.length, 1, 'a scenario with nothing to record');
@@ -695,7 +694,7 @@ check('scenarios refuse what they cannot mean', () => {
 
 check('the draft is advised on before it is applied', () => {
   const { model } = build(ENTITIES);
-  const text = modelToSource(model()).replace('emit CourseArchived { courseId }', 'emit CourseBurnt { courseId }');
+  const text = swap(modelToSource(model()), 'emit CourseArchived { courseId }', 'emit CourseBurnt { courseId }');
   const parsed = parseModelSource(text);
   const found = sourceAdvisories(model(), parsed);
   eq(found.length, 1, JSON.stringify(found));
@@ -787,7 +786,7 @@ check('a read gives its values in parentheses — in declared order, a literal w
     'untagged projection All: integer = 0 {',
     '  on Subscribed => increment 1',
     '}',
-    'command C(courseId: CourseId, studentId: StudentId) {',
+    'handler C(courseId: CourseId, studentId: StudentId) {',
     '  alias both = Both(courseId, studentId)',
     '  alias one = PerCourse(CourseId("c1"))',
     '  alias all = All()',
@@ -814,7 +813,7 @@ check('a read gives its values in parentheses — in declared order, a literal w
   const tag = renameAt(text, 'PerCourse (tag courseId', 'PerCourse (tag '.length, 'course').text;
   eq(parseModelSource(tag).collections['command-definition'].C.boundary[1].tags, { course: { tagType: 'CourseId', tagValue: 'c1' } },
     'a tag renamed in its declaration names the reads\' values anew');
-  const errors = (source) => parseModelSource(text.replace('alias one = PerCourse(CourseId("c1"))', source)).diagnostics.map((d) => d.message);
+  const errors = (source) => parseModelSource(swap(text, 'alias one = PerCourse(CourseId("c1"))', source)).diagnostics.map((d) => d.message);
   eq(errors('alias one = PerCourse(courseId, studentId)'), ['PerCourse takes 1 value (courseId) — this gives 2.'], 'as many values as it declares');
   eq(errors('alias one = PerCourse'), ['PerCourse is read with its values in parentheses — PerCourse(…), empty for an untagged projection.'], 'parentheses, always');
   eq(errors('alias one = PerCourse(courseId: courseId)'), ['A read gives its values in order, as PerCourse declares them — no names.'], 'in order');
@@ -831,7 +830,7 @@ check('a projection says what it is tagged by, or that it is untagged', () => {
   eq(errors('projection P (tag id: CourseId, days: integer): integer = 0 {}'), ['Only a scripted projection takes values besides its tags — days is not a tag.'], 'arguments, only for a script');
   eq(errors('projection P (tag id: CourseId): integer {\n  script(days: integer)\n}'),
     ['A script takes its values in the projection\'s header, after the tags: projection X (tag …, days: integer).'], 'not in the block');
-  eq(errors('command C(courseId: CourseId) {\n  require P tagged courseId == 1 else reject "No"\n}'),
+  eq(errors('handler C(courseId: CourseId) {\n  require P tagged courseId == 1 else reject "No"\n}'),
     ['A read gives its values in parentheses, in the order P declares them: P(…).'], 'the draft spelling');
   eq(errors('entity Course tagged CourseId {}'), ['Say what Course is tagged by: entity Course (tag courseId: CourseId).'], 'an entity too');
   const scripted = parseModelSource('projection P (tag id: CourseId, days: integer): integer {\n  script\n  initialState 0\n}\n');
@@ -858,12 +857,12 @@ check('a rule reads a projection in place — no alias needed', () => {
     'untagged projection CourseNumbering: CourseId = "c1" {',
     '  on CourseDefined => set successor(event.data.courseId)',
     '}',
-    'command Define(ownerId: OwnerId) {',
+    'handler Define(ownerId: OwnerId) {',
     '  require OwnedCourses(ownerId) < 3',
     '    else reject "Too many"',
     '  emit CourseDefined { courseId: CourseNumbering(), ownerId }',
     '}',
-    'command Check(courseId: CourseId) {',
+    'handler Check(courseId: CourseId) {',
     '  require CourseStatus(courseId) == Existent',
     '    else reject "No such course"',
     '  require OwnedCourses(CourseOwner(courseId)) < 3',
@@ -880,7 +879,7 @@ check('a rule reads a projection in place — no alias needed', () => {
   eq(check.conditions[1].leftHandSide.tags.ownerId, { projection: 'CourseOwner', tags: { courseId: { parameterName: 'courseId' } } }, 'nested');
   eq(parsed.collections['command-definition'].Define.publishes[0].parameters.courseId, { projection: 'CourseNumbering' },
     'an untagged read');
-  eq(parseModelSource(text.replace('courseId: CourseNumbering()', 'courseId: CourseNumbering')).diagnostics.map((d) => d.message),
+  eq(parseModelSource(swap(text, 'courseId: CourseNumbering()', 'courseId: CourseNumbering')).diagnostics.map((d) => d.message),
     ['CourseNumbering is a projection — read it as CourseNumbering(…).'], 'a projection bare is an error, with its fix');
   // Round trip: printed as it was written.
   const { id, model } = (() => {
@@ -927,7 +926,7 @@ check('a read fans out where it says so — each, paired by index with its list'
     'projection ProductPrice (tag productId: ProductId): Money = null {',
     '  on ProductDefined => set event.data.price',
     '}',
-    'command OrderProducts(orderId: OrderId, items: Item[]) {',
+    'handler OrderProducts(orderId: OrderId, items: Item[]) {',
     '  alias exists = ProductExists(each items.productId)',
     '  require exists is true',
     '    else reject "Product does not exist"',
@@ -963,11 +962,11 @@ check('a read fans out where it says so — each, paired by index with its list'
   eq(items.every((item) => item.fannedOut && item.tags[0] === 'ProductId:each(items.productId)'), true,
     'the query says it fans out');
   const bad = sandbox.createDcbModel('Bad');
-  applyModelSource(bad, text.replace('require ProductPrice(each items.productId)', 'require ProductPrice(each orderId)'));
+  applyModelSource(bad, swap(text, 'require ProductPrice(each items.productId)', 'require ProductPrice(each orderId)'));
   eq(sandbox.modelAdvisories(projectState()[bad]).some((a) => /orderId is one value — "each" fans out over a list/.test(a.message)),
     true, 'each over one value is advised: ' + sandbox.modelAdvisories(projectState()[bad]).map((a) => a.message).join('; '));
   const mistyped = sandbox.createDcbModel('Mistyped');
-  applyModelSource(mistyped, text.replace('require ProductPrice(each items.productId)', 'require ProductPrice(orderId)'));
+  applyModelSource(mistyped, swap(text, 'require ProductPrice(each items.productId)', 'require ProductPrice(orderId)'));
   eq(sandbox.modelAdvisories(projectState()[mistyped]).some((a) => /orderId, an OrderId — but its "productId" tag is a ProductId/.test(a.message)),
     true, 'a value of another tag type is advised: ' + sandbox.modelAdvisories(projectState()[mistyped]).map((a) => a.message).join('; '));
 });
@@ -1071,11 +1070,11 @@ check('a projection and an enum sharing a name are two names', () => {
 check('a shorthand splits when either of its names is renamed', () => {
   const text = modelToSource(build(ENTITIES).model());
   const param = renameAt(text, 'emit CourseDefined { courseId', 'emit CourseDefined { '.length, 'id').text;
-  eq(param.includes('command DefineCourse(id: CourseId, capacity: integer) {'), true, 'the parameter');
+  eq(param.includes('handler DefineCourse(id: CourseId, capacity: integer) {'), true, 'the parameter');
   eq(param.includes('emit CourseDefined { courseId: id, capacity }'), true, 'the shorthand, as the value');
   const property = renameAt(text, 'event CourseDefined { tag courseId', 'event CourseDefined { tag '.length, 'id').text;
   eq(property.includes('emit CourseDefined { id: courseId, capacity }'), true, 'the shorthand, as the key');
-  eq(property.includes('command DefineCourse(courseId: CourseId, capacity: integer) {'), true, 'the parameter kept');
+  eq(property.includes('handler DefineCourse(courseId: CourseId, capacity: integer) {'), true, 'the parameter kept');
 });
 
 check('an entity takes its tracking identifier type along, and a type renamed under one is pinned', () => {
@@ -1107,14 +1106,14 @@ check('a rename refuses what it cannot do exactly', () => {
   const scripted = modelToSource(build(5).model());
   eq(/also appears in the script or JSON at line \d+/.test(renameAt(scripted, 'Draft, Published', 0, 'Concept').error), true,
     'a member a script spells as a string');
-  eq(renameAt(scripted, 'command UpdateText', 'command '.length, 'EditText').error, undefined, 'a script cannot name a command');
+  eq(renameAt(scripted, 'handler UpdateText', 'handler '.length, 'EditText').error, undefined, 'a script cannot name a command');
   const shared = 'enum A { Open, Closed }\nenum B { Open, Shut }\nprojection P: Unknown = Open\n'
-    + 'command C(a: A) {\n  require a == Open\n    else reject "Not open"\n}\n';
+    + 'handler C(a: A) {\n  require a == Open\n    else reject "Not open"\n}\n';
   eq(/Open at line 3 could be a member of A or B/.test(renameAt(shared, 'A { Open', 4, 'Opened').error), true,
     'a member where its enum cannot be told');
   eq(renameAt(shared, 'Unknown = Open', 'Unknown = '.length, 'X').error,
     'Open is a member of A and B, and nothing here says which — rename it at its declaration.', 'from there');
-  const typed = renameAt(shared.replace('projection P: Unknown = Open\n', ''), 'A { Open', 4, 'Opened').text;
+  const typed = renameAt(swap(shared, 'projection P: Unknown = Open\n', ''), 'A { Open', 4, 'Opened').text;
   eq(typed.includes('require a == Opened') && typed.includes('enum B { Open, Shut }'), true, 'typed by the rule\'s other side');
 });
 
@@ -1132,21 +1131,21 @@ check('a rename reaches into scenarios', () => {
 
 check('completion knows an event\'s payload in a handler', () => {
   const text = modelToSource(build(ENTITIES).model());
-  const handler = text.replace('on CourseDefined => set event.data.capacity', 'on CourseDefined => set event.|');
+  const handler = swap(text, 'on CourseDefined => set event.data.capacity', 'on CourseDefined => set event.|');
   eq(completeAt(handler).labels, ['data'], 'event.');
-  eq(completeAt(handler.replace('event.|', 'event.data.|')).labels, ['courseId', 'capacity'], 'event.data.');
-  eq(completeAt(handler.replace('event.|', 'event.data.ca|')).labels, ['courseId', 'capacity'], 'with a word begun');
-  const operand = completeAt(handler.replace('event.|', '|'));
+  eq(completeAt(swap(handler, 'event.|', 'event.data.|')).labels, ['courseId', 'capacity'], 'event.data.');
+  eq(completeAt(swap(handler, 'event.|', 'event.data.ca|')).labels, ['courseId', 'capacity'], 'with a word begun');
+  const operand = completeAt(swap(handler, 'event.|', '|'));
   eq(operand.labels.slice(0, 2), ['event.data', 'successor'], 'an integer fold');
-  eq(completeAt(text.replace('on CourseArchived => set Archived', 'on CourseArchived => set |')).labels,
+  eq(completeAt(swap(text, 'on CourseArchived => set Archived', 'on CourseArchived => set |')).labels,
     ['event.data', 'NonExistent', 'Existent', 'Archived'], 'an enum fold offers its members');
-  eq(completeAt(text.replace('on CourseArchived => set Archived', 'on |')).labels.includes('CourseDefined'), false,
+  eq(completeAt(swap(text, 'on CourseArchived => set Archived', 'on |')).labels.includes('CourseDefined'), false,
     'an event already handled');
 });
 
 check('completion knows a command\'s reads and payload', () => {
   const text = modelToSource(build(ENTITIES).model());
-  const rule = (insert) => completeAt(text.replace('    else reject "Course has more subscriptions than that"',
+  const rule = (insert) => completeAt(swap(text, '    else reject "Course has more subscriptions than that"',
     `    else reject "Course has more subscriptions than that"\n  ${insert}`));
   eq(rule('require |').labels, ['course', 'courseId', 'newCapacity', 'StudentExists', 'StudentSubscriptionCount',
     'CourseStatus', 'CourseCapacity', 'CourseSubscriptionCount', 'CourseSubscribedStudentIds', 'count', 'not'],
@@ -1173,22 +1172,22 @@ check('completion knows a command\'s reads and payload', () => {
 check('completion knows scenarios, declarations, and when to stay quiet', () => {
   const { model } = importExample('course-simple');
   const text = modelToSource(model());
-  const block = (insert) => completeAt(text.replace('  emit CourseArchived { courseId }\n\n  scenarios {\n',
+  const block = (insert) => completeAt(swap(text, '  emit CourseArchived { courseId }\n\n  scenarios {\n',
     `  emit CourseArchived { courseId }\n\n  scenarios {\n    scenario {\n      ${insert}\n    }\n\n`));
-  const group = completeAt(text.replace('  emit CourseArchived { courseId }\n\n  scenarios {\n',
+  const group = completeAt(swap(text, '  emit CourseArchived { courseId }\n\n  scenarios {\n',
     '  emit CourseArchived { courseId }\n\n  scenarios {\n    |\n'));
   eq(group.labels, ['scenario'], 'a group holds scenarios, nothing else');
   eq(block('given CourseDefined { |}').labels, ['courseId', 'capacity'], 'a payload\'s keys');
   eq(block('when |').labels[0], 'ArchiveCourse', 'the block\'s command first');
   eq(block('then |').items.filter((i) => i.sort === '0').map((i) => i.label), ['CourseArchived'], 'what it emits, first');
   eq(block('then rejected |').labels, ['"Course is not active"'], 'a refusal, by the messages the command has');
-  eq(completeAt(text.replace('// Commands', '// Commands\n@|')).labels, ['icon', 'feature', 'tagSchema'], 'annotations');
-  eq(completeAt(text.replace('command DefineCourse(courseId: CourseId', 'command DefineCourse(courseId: |')).labels
+  eq(completeAt(swap(text, '// Command handlers', '// Command handlers\n@|')).labels, ['icon', 'feature', 'tagSchema'], 'annotations');
+  eq(completeAt(swap(text, 'handler DefineCourse(courseId: CourseId', 'handler DefineCourse(courseId: |')).labels
     .slice(0, 3), ['boolean', 'integer', 'string'], 'a type');
-  eq(completeAt(text.replace('// Commands', '// Commands |')).labels, [], 'in a comment');
-  eq(completeAt(text.replace('@feature("Enrolment")', '@feature("Enrol|ment")')).labels, [], 'in a string');
+  eq(completeAt(swap(text, '// Command handlers', '// Command handlers |')).labels, [], 'in a comment');
+  eq(completeAt(swap(text, 'else reject "Course is not active"', 'else reject "Course is| not active"')).labels, [], 'in a string');
   const entities = modelToSource(build(ENTITIES).model());
-  eq(completeAt(entities.replace('entity Course (tag courseId: CourseId) {', 'entity Course (tag courseId: CourseId) {\n  lifecycle |')).labels.includes('status'), true,
+  eq(completeAt(swap(entities, 'entity Course (tag courseId: CourseId) {', 'entity Course (tag courseId: CourseId) {\n  lifecycle |')).labels.includes('status'), true,
     'an entity\'s properties, written below');
 });
 
@@ -1215,7 +1214,7 @@ check('a read says which events it adds — only those of the properties used', 
     'a rule on capacity brings its events in');
 
   // Nothing uses it: queried by tag alone, every event under it.
-  const unused = of(queries(text.replace('  require course.status == Existent\n    else reject "Course is not active"\n\n  emit CourseArchived',
+  const unused = of(queries(swap(text, '  require course.status == Existent\n    else reject "Course is not active"\n\n  emit CourseArchived',
     '  emit CourseArchived')), 'ArchiveCourse');
   eq([unused.hint, unused.reasons, unused.properties], ['‹reads any type — unused›', [], []], 'an unused read');
 });

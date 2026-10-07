@@ -111,6 +111,18 @@ function loadApp(sandbox, files, { withPage = false, trailer = '' } = {}) {
   vm.runInContext(source, sandbox, { filename: 'app.js' });
 }
 
+// A fixture edit that must land. `String.replace` on a text that no
+// longer contains its target returns the text unchanged, and the test
+// goes on asserting about an edit that never happened — which is how a
+// renamed section comment once left a completion test checking
+// nothing. Every edit of a fixture text goes through here; the
+// pre-commit hook refuses a bare `.replace(` on one.
+function swap(text, from, to) {
+  const found = typeof from === 'string' ? text.includes(from) : new RegExp(from.source, from.flags.replace('g', '')).test(text);
+  if (!found) throw new Error(`swap: the fixture does not contain ${typeof from === 'string' ? JSON.stringify(from) : from}`);
+  return text.replace(from, to);
+}
+
 // `check` records, `eq` asserts, `finish` prints the tally and sets
 // the exit code. `check` follows its function: a sync body is recorded
 // on the spot, an async one when it settles — one pair for all four
@@ -149,4 +161,4 @@ function makeChecker() {
   return { check, eq, finish };
 }
 
-module.exports = { createSandbox, loadApp, makeChecker, textOf, findAll };
+module.exports = { createSandbox, loadApp, makeChecker, swap, textOf, findAll };
