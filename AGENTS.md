@@ -17,6 +17,9 @@ handler's editor is on screen. The app runs from any static server —
 - `dcb-model.schema.json` — canonical JSON Schema for the interchange format
   (`https://dcb.events/schemas/model/v8.json`). Source of truth for what a
   DCB Model file contains; `app/webmcp-schemas.js` is generated from it.
+- `fixtures/` — test data only: models carrying scenarios authored in
+  the playground, which no seed builder produces; `dsl.test.js` reads
+  them. Hand-edited, never served.
 - `docs/design-notes.md` — the design rationale by area; see _Before
   changing an area_ below.
 - `docs/research/` — dated primary-source research notes backing design
@@ -89,12 +92,8 @@ Generated files — regenerate, never hand-edit:
 
 ```
 node app/generate-webmcp-schemas.js   # rewrites app/webmcp-schemas.js after a dcb-model.schema.json change
-node app/generate-examples.js         # rewrites app/examples/*.json after a seed* builder change
 node app/generate-vendor-monaco.js    # re-fetches app/vendor/monaco/ — only on a version bump (needs network)
 ```
-
-`app/examples/course-simple.json` is deliberately hand-edited; the generator
-detects and skips it.
 
 WebMCP tool execution needs a real origin — serve `app/` (e.g. `npx serve`);
 it never works from `file:`.

@@ -20,9 +20,15 @@ and prune what no longer holds.
   `course-entities` and `course-schedules` (which needs `excluding`).
   Entity tests build those, or a model from seed layers alone
   (`seeded(...)` in ui.test.js). A `PREDEFINED_MODELS` entry's
-  `experimental` mark decides whether the model list shows it with the
-  flag off (`shippedModels`), and a test holds the mark to the built
-  model's `experimentalFeatures`.
+  `experimental` mark says whether it uses anything experimental, and
+  a test holds the mark to the built model's `experimentalFeatures`.
+- **The playground ships no examples.** The examples live on
+  dcb.events, each page opening its model here through a share link;
+  the models dialog links there (`EXAMPLES_URL`). `PREDEFINED_MODELS`
+  and the seed builders stay as the suites' fixtures and as what
+  `print-model.js` prints; the former example files that carry
+  authored scenarios, which no builder produces, live on in
+  `fixtures/` for `dsl.test.js`.
 
 ## The experimental flag
 

@@ -9,7 +9,7 @@
 //   node app/print-model.js course-simple --json   # the stored definitions
 //
 // A slug builds through `PREDEFINED_MODELS` (the seed builders, so it
-// shows the working tree's seeds, not app/examples/); a path imports
+// shows the working tree's seeds); a path imports
 // the envelope the way the page does. Diagnostics of the printed text
 // parsed back go to stderr, so a syntax change that breaks a model's
 // round trip shows here before it shows in a suite.

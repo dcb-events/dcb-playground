@@ -21,7 +21,7 @@
 //
 // Run with `node app/generate-webmcp-schemas.js` after changing
 // dcb-model.schema.json. Nothing here runs in the browser; it is a
-// one-time-per-change build step, same as generate-examples.js.
+// one-time-per-change build step.
 // ============================================================
 const fs = require('fs');
 const path = require('path');

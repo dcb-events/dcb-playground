@@ -1563,15 +1563,6 @@ function modelsModal() {
   return overlayAround(modal, close);
 }
 
-// The shipped models on offer: every one with the experimental flag on,
-// and without it only those using nothing experimental. Whether one
-// does is its entry's `experimental`, which a test derives from the
-// built model's own features (`experimentalFeatures`) — so the list
-// cannot drift from the flag, though nothing is built to draw it.
-function shippedModels() {
-  return PREDEFINED_MODELS.filter((entry) => experimental() || !entry.experimental);
-}
-
 const NEW = ' new';         // sentinel row in a picker
 
 // ---------- how much is on screen ----------

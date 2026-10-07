@@ -21,8 +21,8 @@ The playground is hosted at [dcb.events/playground](https://dcb.events/playgroun
   scenario is flagged when a model change makes its outcome drift.
 - **Problems**: dangling references, uncovered tags and other modeling
   issues are reported as advisories — a defective model still loads and runs.
-- **Example models**: a set of predefined models to start from
-  (see [`app/examples/`](app/examples/)).
+- **Examples** live on [dcb.events](https://dcb.events/examples/), each
+  opening its model here through a share link.
 - **Import / export** as JSON, validated by
   [`dcb-model.schema.json`](dcb-model.schema.json), or share a model as a
   link.
@@ -62,6 +62,8 @@ node app/dsl.test.js
   one stylesheet. Each file's header comment documents its role.
 - [`dcb-model.schema.json`](dcb-model.schema.json) — JSON Schema of the
   model interchange format (`https://dcb.events/schemas/model/v7.json`).
+- [`fixtures/`](fixtures/) — models with authored scenarios, read by the
+  tests only.
 - [`docs/research/`](docs/research/) — dated notes behind design decisions.
 - [`design/`](design/) — artboards from UI explorations; not used by the app.
 - [`AGENTS.md`](AGENTS.md) — architecture, conventions and pitfalls in

@@ -3,7 +3,7 @@
 //
 // `dsl.js` claims two things, and this holds it to both: that the text
 // it prints says everything the model does (print, parse, compare —
-// for every shipped model and every example file, with no definition
+// for every shipped model and every fixture file, with no definition
 // falling back to JSON), and that applying a text writes exactly the
 // difference, as one append. The rest pins down the grammar's
 // spellings, its diagnostics, the JSON fallback that keeps printing
@@ -18,6 +18,10 @@ const path = require('path');
 const { createSandbox, loadApp, makeChecker, swap } = require('./test-harness.js');
 
 const APP = __dirname;
+// Models with scenarios authored in the playground, which no seed
+// builder produces — test data only, kept outside app/ so none of it
+// is served.
+const FIXTURES = path.join(APP, '..', 'fixtures');
 const { sandbox, store } = createSandbox();
 loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js'], {
   trailer: 'globalThis.PREDEFINED_MODELS = PREDEFINED_MODELS; globalThis.SOURCE_KINDS = SOURCE_KINDS;'
@@ -83,18 +87,18 @@ check('every predefined model prints without a JSON fallback and parses back equ
   });
 });
 
-function importExample(slug) {
+function importFixture(slug) {
   fresh();
   const { modelId, skipped } = importModelFromEnvelope(
-    JSON.parse(fs.readFileSync(path.join(APP, 'examples', slug + '.json'), 'utf8'))
+    JSON.parse(fs.readFileSync(path.join(FIXTURES, slug + '.json'), 'utf8'))
   );
   eq(skipped, [], `${slug} imported whole`);
   return { id: modelId, model: () => projectState()[modelId] };
 }
 
-check('every example file round-trips, scenarios and the hand-edited one included', () => {
-  for (const file of fs.readdirSync(path.join(APP, 'examples')).filter((f) => f.endsWith('.json'))) {
-    const { id, model } = importExample(file.replace(/\.json$/, ''));
+check('every fixture file round-trips, scenarios included', () => {
+  for (const file of fs.readdirSync(FIXTURES).filter((f) => f.endsWith('.json'))) {
+    const { id, model } = importFixture(file.replace(/\.json$/, ''));
     const text = modelToSource(model());
     eq(text.includes(' json {'), false, `${file} falls back to JSON`);
     const parsed = parseModelSource(text);
@@ -494,7 +498,7 @@ check('the model name is compared trimmed, and a rename is reported', () => {
 // ---------------------------------------------------------------
 
 check('a scenario reads as given, when and then, nested in its command', () => {
-  const { model } = importExample('course-simple');
+  const { model } = importFixture('course-simple');
   const text = modelToSource(model());
   eq(text.includes([
     '    scenario {  // is refused: Course is not active',
@@ -513,15 +517,15 @@ check('a scenario reads as given, when and then, nested in its command', () => {
   const subjects = new Set([...Object.values(model()['scenario-definitions']).map((b) => b.command),
     ...Object.values(model()['projection-scenario-definitions']).map((b) => b.projection)]);
   eq(text.split('\n  scenarios {\n').length - 1, subjects.size, 'one per block with scenarios');
-  const sequence = modelToSource(importExample('course-sequence').model());
+  const sequence = modelToSource(importFixture('course-sequence').model());
   eq(sequence.includes('scenario "issues c1 before anything has happened" {\n      then CourseNumbering() == "c1"\n    }'), true,
     'an untagged projection, read');
-  const guarded = modelToSource(importExample('content-decisions-guarded').model());
+  const guarded = modelToSource(importFixture('content-decisions-guarded').model());
   eq(guarded.includes('then DocumentStatus(DocumentId("d1")) == NonExistent'), true, 'a tag literal');
 });
 
 check('a scenario written without a then is recorded with what the model does', () => {
-  const { id, model } = importExample('course-simple');
+  const { id, model } = importFixture('course-simple');
   const text = swap(modelToSource(model()), '  emit CourseArchived { courseId }\n\n  scenarios {\n', [
     '  emit CourseArchived { courseId }',
     '',
@@ -553,7 +557,7 @@ check('a scenario written without a then is recorded with what the model does', 
 });
 
 check('a written then is asserted: a drift is reported with its fix, and applying does not accept it', () => {
-  const { id, model } = importExample('course-simple');
+  const { id, model } = importFixture('course-simple');
   const text = swap(modelToSource(model()), 'when SubscribeStudentToCourse { courseId: "c1", studentId: "s1" }\n      then rejected "Course is not active"',
     'when SubscribeStudentToCourse { courseId: "c1", studentId: "s1" }\n      then rejected "Course is closed"',
   );
@@ -574,7 +578,7 @@ check('a written then is asserted: a drift is reported with its fix, and applyin
 });
 
 check('an edited scenario keeps its id and place; a renamed command takes its scenarios along', () => {
-  const { id, model } = importExample('course-simple');
+  const { id, model } = importFixture('course-simple');
   const ids = Object.keys(model()['scenario-definitions']);
   const text = swap(modelToSource(model()), 'given CourseDefined { courseId: "c11", capacity: 123 }',
     'given CourseDefined { courseId: "c11", capacity: 124 }');
@@ -587,7 +591,7 @@ check('an edited scenario keeps its id and place; a renamed command takes its sc
 });
 
 check('a scenario left out of the text is removed', () => {
-  const { id, model } = importExample('course-sequence');
+  const { id, model } = importFixture('course-sequence');
   const text = swap(modelToSource(model()), /\n    scenario "issues c3[\s\S]*?\n    }\n/, '\n');
   applyModelSource(id, text);
   eq(Object.values(model()['projection-scenario-definitions']).map((b) => b.name), ['issues c1 before anything has happened'], 'one left');
@@ -618,8 +622,8 @@ function applyFixes(text) {
 }
 
 check('scenarios sit in one group per block, and a text from before groups is one fix away', () => {
-  for (const file of fs.readdirSync(path.join(APP, 'examples')).filter((f) => f.endsWith('.json'))) {
-    const text = modelToSource(importExample(file.replace(/\.json$/, '')).model());
+  for (const file of fs.readdirSync(FIXTURES).filter((f) => f.endsWith('.json'))) {
+    const text = modelToSource(importFixture(file.replace(/\.json$/, '')).model());
     const old = ungroup(text);
     if (old === text) continue; // no scenarios
     const diagnostics = parseModelSource(old).diagnostics;
@@ -677,7 +681,7 @@ check('scenarios refuse what they cannot mean', () => {
   eq(loose('scenario {\n  when A {}\n  then nothing\n  then E {}\n}')[0], '"then nothing" is the whole outcome — it stands alone.', 'nothing and more');
   eq(loose('scenario {\n  then E {}\n}')[0], 'A scenario ending in events, nothing or a rejection needs a when — the command it runs.', 'no when');
   eq(loose('scenario {\n  then Ghost(GhostId("1"), 1) == 1\n}'), [], 'an orphan, read');
-  const { id, model } = importExample('course-simple');
+  const { id, model } = importFixture('course-simple');
   const text = swap(modelToSource(model()), '  emit CourseArchived { courseId }\n\n  scenarios {\n',
     '  emit CourseArchived { courseId }\n\n  scenarios {\n    scenario {\n      given CourseBurnt { courseId: "c1" }\n      when ArchiveCourse { courseId: "c1" }\n    }\n\n');
   const report = sandbox.sourceScenarioReport(model(), parseModelSource(text));
@@ -705,11 +709,11 @@ check('the draft is advised on before it is applied', () => {
 // The language service.
 // ---------------------------------------------------------------
 
-// Every shipped text, printed: the predefined models and the examples.
+// Every shipped text, printed: the predefined models and the fixtures.
 function shippedTexts() {
   const texts = PREDEFINED_MODELS.map((entry, index) => [entry.slug, modelToSource(build(index).model())]);
-  for (const file of fs.readdirSync(path.join(APP, 'examples')).filter((f) => f.endsWith('.json'))) {
-    texts.push([file, modelToSource(importExample(file.replace(/\.json$/, '')).model())]);
+  for (const file of fs.readdirSync(FIXTURES).filter((f) => f.endsWith('.json'))) {
+    texts.push([file, modelToSource(importFixture(file.replace(/\.json$/, '')).model())]);
   }
   return texts;
 }
@@ -1116,7 +1120,7 @@ check('a rename refuses what it cannot do exactly', () => {
 });
 
 check('a rename reaches into scenarios', () => {
-  const { model } = importExample('course-simple');
+  const { model } = importFixture('course-simple');
   const text = modelToSource(model());
   const out = renameAt(text, 'event CourseDefined', 'event '.length, 'CourseCreated').text;
   eq(/given CourseDefined\b/.test(out), false, 'a given event');
@@ -1168,7 +1172,7 @@ check('completion knows a command\'s reads and payload', () => {
 });
 
 check('completion knows scenarios, declarations, and when to stay quiet', () => {
-  const { model } = importExample('course-simple');
+  const { model } = importFixture('course-simple');
   const text = modelToSource(model());
   const block = (insert) => completeAt(swap(text, '  emit CourseArchived { courseId }\n\n  scenarios {\n',
     `  emit CourseArchived { courseId }\n\n  scenarios {\n    scenario {\n      ${insert}\n    }\n\n`));

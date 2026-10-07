@@ -22,12 +22,12 @@ for t in evaluate ui webmcp dsl; do
 done
 rm -rf "$dir"
 
-# 2. Generated files are current: regenerating must change nothing.
-generated() { cat app/webmcp-schemas.js app/examples/*.json | shasum; }
+# 2. The generated file is current: regenerating must change nothing.
+generated() { shasum app/webmcp-schemas.js; }
 before=$(generated)
-node app/generate-webmcp-schemas.js >/dev/null && node app/generate-examples.js >/dev/null
+node app/generate-webmcp-schemas.js >/dev/null
 if [ "$before" != "$(generated)" ]; then
-  echo "pre-commit: the generators changed app/webmcp-schemas.js or app/examples/ — review and stage them." >&2
+  echo "pre-commit: the generator changed app/webmcp-schemas.js — review and stage it." >&2
   failed=1
 fi
 

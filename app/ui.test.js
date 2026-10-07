@@ -27,7 +27,7 @@ const { sandbox, store } = createSandbox();
 // `state` and the page's own functions live in the script's lexical
 // scope, not as properties of the context object — the same as they
 // would on `window` in a browser. The trailer hands out the few this
-// drives, the way `generate-examples.js` reaches `PREDEFINED_MODELS`.
+// drives, the way `print-model.js` reaches `PREDEFINED_MODELS`.
 loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js', 'shared.js'], {
   withPage: true,
   trailer: 'globalThis.state = state; globalThis.render = render; globalThis.session = session;'
@@ -465,7 +465,7 @@ function build(index) {
 }
 
 // ---------------------------------------------------------------
-// The shipped examples, against the schema they claim.
+// The shipped models and the fixtures, against the schema they claim.
 //
 // Not a JSON Schema validator — there is none here, and a playground
 // that needed one to run its own tests would be the first thing in this
@@ -490,11 +490,16 @@ function build(index) {
     }
   };
 
-  for (const slug of ['course-simple', 'course-sequence', 'course-tenant', 'course-schedules',
-    'pricing-simple', 'content-decisions-scripted', 'content-decisions-boundary',
-    'content-decisions-verified', 'content-decisions-guarded', 'content-decisions-derived']) {
-    const file = path.join(APP, 'examples', slug + '.json');
-    const envelope = JSON.parse(fs.readFileSync(file, 'utf8'));
+  // A fixture carries authored scenarios, so it stands in for its
+  // predefined model; every other one is checked as it exports.
+  const fixtures = path.join(APP, '..', 'fixtures');
+  const fixtureSlugs = fs.readdirSync(fixtures).filter((file) => file.endsWith('.json')).map((file) => file.replace(/\.json$/, ''));
+  const envelopes = [
+    ...fixtureSlugs.map((slug) => [slug, JSON.parse(fs.readFileSync(path.join(fixtures, slug + '.json'), 'utf8'))]),
+    ...sandbox.PREDEFINED_MODELS.flatMap((entry, index) => (fixtureSlugs.includes(entry.slug) ? []
+      : [[entry.slug, sandbox.buildShareEnvelope(build(index).model(), [])]])),
+  ];
+  for (const [slug, envelope] of envelopes) {
 
     check(`${slug} conforms to the schema's closed objects`, () => {
       const problems = [];
@@ -566,7 +571,7 @@ function build(index) {
       if (problems.length) throw new Error(problems.join('; '));
     });
 
-    // The scenarios a file ships with, actually run. A stored Then that
+    // The scenarios a model carries, actually run. A stored Then that
     // was right when it was written and is wrong now is exactly what a
     // scenario exists to report — but one shipped wrong from the start
     // reports nothing, it just cries wolf on first open. This is the
@@ -586,7 +591,6 @@ function build(index) {
       vm.runInContext(['model.js', 'evaluate.js']
         .map((f) => fs.readFileSync(path.join(APP, f), 'utf8')).join('\n;\n'), local, { filename: 'p.js' });
 
-      const envelope = JSON.parse(fs.readFileSync(file, 'utf8'));
       // Two statements, not one: a member expression evaluates its
       // object before its key, so importing *inside* the brackets would
       // index a snapshot taken before the import ran.
@@ -4240,10 +4244,6 @@ check('the help opens the reference at the page\'s own concept', () => {
       const used = sandbox.experimentalFeatures(model()).map((f) => f.feature);
       eq(!!entry.experimental, used.length > 0, `${entry.slug}: ${[...new Set(used)].join(', ') || 'nothing experimental'}`);
     });
-    store.set('dcb-playground:experimental', 'off');
-    eq(sandbox.shippedModels().some((entry) => entry.experimental), false, 'the flag off lists none of them');
-    store.set('dcb-playground:experimental', 'on');
-    eq(sandbox.shippedModels().length, sandbox.PREDEFINED_MODELS.length, 'the flag on lists all');
   });
 
   check('a model of types, events, projections and commands uses none', () => {
