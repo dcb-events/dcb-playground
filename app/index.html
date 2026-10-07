@@ -646,11 +646,17 @@
   .modal a { color: var(--accent); font-weight: 600; text-decoration: none; }
   .modal a:hover { text-decoration: underline; }
   .modal > header .grow { flex: 1; }
-  /* The help reads as prose: questions in sentence case, not as the
-     settings' small-caps section labels it borrows `.setting` from. */
   .help-modal p { font-size: 13.5px; line-height: 1.6; margin: 12px 0; }
-  .help-modal .setting h4 { text-transform: none; letter-spacing: 0; font-size: 13px; color: var(--text); }
-  .help-modal .setting .why { font-size: 12.5px; line-height: 1.55; }
+  .help-features {
+    display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px;
+    margin: 16px 0; font-size: 12.5px; line-height: 1.5;
+  }
+  .help-features dt { font-weight: 600; }
+  .help-features dd { margin: 0; color: var(--muted); }
+  @media (max-width: 560px) {
+    .help-features { grid-template-columns: 1fr; gap: 2px; }
+    .help-features dd { margin-bottom: 8px; }
+  }
   .setting { margin-top: 18px; }
   .setting > h4 { margin-bottom: 3px; }
   .setting .why { font-size: 11.5px; color: var(--muted); margin-bottom: 8px; }
@@ -1830,24 +1836,23 @@ const HELP_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor
   + '<circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>'
   + '<line x1="12" y1="17" x2="12.01" y2="17"></line></svg>';
 
-const HELP_FAQS = [
-  { q: 'What is a Dynamic Consistency Boundary?',
-    a: 'It replaces a fixed aggregate boundary with one a command declares for itself — '
-      + 'exactly the events it needs to stay consistent with, no more. This playground models '
-      + 'that boundary directly, so you can see its shape before it’s code.' },
-  { q: 'Do I need to know event sourcing already?',
-    a: 'It helps, but isn’t required. Commands, events and projections are the '
-      + 'whole vocabulary — the playground shows how they connect as you build, one '
-      + 'definition at a time.' },
-  { q: 'Where is my model stored?',
-    a: 'In this browser only, until you say otherwise. Nothing is sent anywhere — export '
-      + 'it as JSON or copy a link when you want to keep it or hand it to someone else.' },
-  { q: 'Can I share a model with someone else?',
-    a: 'Yes. Export it as JSON, or copy a link that reopens it exactly as it is — both are '
-      + 'one click away from the import & export dialog.' },
-  { q: 'How do I switch models?',
-    a: 'Click the playground’s name in the bar. It lists every model saved in this browser, '
-      + 'and the ways to start a new one.' },
+// What the playground does, one line each — not how to use it; the
+// pages say that where it is done.
+const HELP_FEATURES = [
+  { name: 'Visual and Code',
+    what: 'Edit a model through its pages, or as text in the Code view — two spellings of the same model.' },
+  { name: 'Derived boundaries',
+    what: 'Every command shows the queries it issues and the append condition its rules lead to.' },
+  { name: 'Scenarios',
+    what: 'Given / When / Then for commands and projections — flagged when a change makes one drift.' },
+  { name: 'Sandbox',
+    what: 'Drive commands against a hypothetical event log and watch what they append or why they refuse.' },
+  { name: 'Problems',
+    what: 'Dangling references, uncovered tags and other loose ends — a defective model still loads and runs.' },
+  { name: 'Import & export',
+    what: 'Models live in this browser only. Export one as JSON, or copy a link that reopens it as it is (⌘S).' },
+  { name: 'Quick open',
+    what: 'Jump to any definition or action from the keyboard (⌘K).' },
 ];
 
 function openHelp() {
@@ -1872,13 +1877,11 @@ function helpModal() {
       h('button', { class: 'btn ghost', onclick: close, title: 'Close' }, '×')),
     h('div', { class: 'muted small' }, 'Model consistency boundaries without writing a line of code.'),
     h('p', {},
-      'Dynamic Consistency Boundary decouples what a command must stay consistent with from '
-        + 'any fixed aggregate. This playground lets you build that model by hand — events, '
-        + 'projections and the commands that guard them — and watch the derived boundary take '
-        + 'shape as you go.'),
-    HELP_FAQS.map((item) => h('div', { class: 'setting' },
-      h('h4', {}, item.q),
-      h('div', { class: 'why' }, item.a))),
+      'Build a model of events, projections and the commands that guard them, and see the '
+        + 'consistency boundary each command derives.'),
+    h('dl', { class: 'help-features' }, HELP_FEATURES.map((item) => [
+      h('dt', {}, item.name),
+      h('dd', {}, item.what)])),
     h('p', {}, 'Everything a model can say is described in the ',
       h('a', { href: NOTATION_REFERENCE_URL, target: '_blank', rel: 'noopener' }, 'notation reference ↗'), '.'),
     h('div', { class: 'adder', style: 'margin-top:18px' },
