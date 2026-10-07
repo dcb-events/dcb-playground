@@ -1,0 +1,43 @@
+#!/bin/sh
+# The playground's guardrail: what AGENTS.md asks for after every
+# change, run so nobody has to remember it. Enable once per clone with
+#   git config core.hooksPath .githooks
+# Plain sh and node, nothing to install. It checks the working tree,
+# so stage what it regenerates and commit again.
+cd "$(git rev-parse --show-toplevel)" || exit 1
+failed=0
+
+# 1. The four suites, in parallel — each prints its tally.
+dir=$(mktemp -d)
+for t in evaluate ui webmcp dsl; do
+  node "app/$t.test.js" >"$dir/$t" 2>&1 &
+  eval "pid_$t=$!"
+done
+for t in evaluate ui webmcp dsl; do
+  if ! eval "wait \$pid_$t"; then
+    echo "pre-commit: app/$t.test.js failed" >&2
+    tail -40 "$dir/$t" >&2
+    failed=1
+  fi
+done
+rm -rf "$dir"
+
+# 2. Generated files are current: regenerating must change nothing.
+generated() { cat app/webmcp-schemas.js app/examples/*.json | shasum; }
+before=$(generated)
+node app/generate-webmcp-schemas.js >/dev/null && node app/generate-examples.js >/dev/null
+if [ "$before" != "$(generated)" ]; then
+  echo "pre-commit: the generators changed app/webmcp-schemas.js or app/examples/ — review and stage them." >&2
+  failed=1
+fi
+
+# 3. A fixture text is edited with swap() (test-harness.js), which
+#    throws when its target is gone; a bare .replace() passes silently.
+bare=$(grep -nE '\.replace\(' app/*.test.js | grep -vE '\bfile\.replace\(|\.slice\([^)]*\)\.replace\(')
+if [ -n "$bare" ]; then
+  echo "pre-commit: edit fixture texts with swap(text, from, to), not .replace():" >&2
+  echo "$bare" >&2
+  failed=1
+fi
+
+exit $failed
