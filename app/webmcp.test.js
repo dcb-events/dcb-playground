@@ -355,7 +355,7 @@ async function call(name, args) {
     const source = empty + [
       'event ProbeHappened { tag probeId: ProbeId }',
       'entity Probe (tag probeId: ProbeId) {}',
-      'command Probe2(probeId: ProbeId) {',
+      'handler Probe2(probeId: ProbeId) {',
       '  alias probe = Probe(probeId)',
       '  emit ProbeHappened { probeId }',
       '}',
