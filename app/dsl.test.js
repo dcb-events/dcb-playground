@@ -136,7 +136,7 @@ check('a command reads as reads, rules and emissions', () => {
   const text = modelToSource(model());
   const expected = [
     '@feature("Enrolment")',
-    'handler SubscribeStudentToCourse(courseId: CourseId, studentId: StudentId) {',
+    'command SubscribeStudentToCourse(courseId: CourseId, studentId: StudentId) {',
     '  alias course = Course(courseId)',
     '  alias student = Student(studentId)',
     '',
@@ -155,8 +155,6 @@ check('a command reads as reads, rules and emissions', () => {
     '}',
   ].join('\n');
   eq(text.includes(expected), true, 'SubscribeStudentToCourse as printed:\n' + text);
-  eq(parseModelSource('handler A(a: integer) {}\ncommand B(b: integer) {}').diagnostics.map((d) => d.message),
-    ['A command is declared with its handler: handler B(…) { … }, not command.'], 'the old keyword names the fix');
 });
 
 check('fan-out, exclusion, numbering, membership, guards and derived values have spellings', () => {
@@ -207,7 +205,7 @@ check('every rule shape reads back as the rule it was', () => {
     ['a is false', { predicate: 'isFalse' }],
   ];
   for (const [text, expected] of rules) {
-    const source = `handler C(a: integer, b: integer) {\n  require ${text}\n    else reject "No"\n}`;
+    const source = `command C(a: integer, b: integer) {\n  require ${text}\n    else reject "No"\n}`;
     const parsed = parseModelSource(source);
     eq(parsed.diagnostics, [], text);
     const rule = parsed.collections['command-definition'].C.conditions[0];
@@ -223,7 +221,7 @@ check('every rule shape reads back as the rule it was', () => {
 
 check('every rule says what it is refused with, on its line or the next', () => {
   const ruleOf = (text) => {
-    const parsed = parseModelSource(`handler C(a: integer) {\n${text}\n}`);
+    const parsed = parseModelSource(`command C(a: integer) {\n${text}\n}`);
     return { diagnostics: parsed.diagnostics.map((d) => d.message), rule: (parsed.collections['command-definition'].C || {}).conditions };
   };
   const next = ruleOf('  require a > 1\n    else reject "Too small"');
@@ -235,22 +233,22 @@ check('every rule says what it is refused with, on its line or the next', () => 
     ['Expected "else reject" and the message the command is refused with, found "}".'], 'it is required');
   eq(ruleOf('  require a > 1 else reject Small').diagnostics,
     ['Expected the message the command is refused with, in quotes, found "Small".'], 'and it is text');
-  const scenario = parseModelSource('handler C(a: integer) {\n  require a > 1 else reject "No"\n'
+  const scenario = parseModelSource('command C(a: integer) {\n  require a > 1 else reject "No"\n'
     + '  scenarios {\n    scenario {\n      when C { a: 0 }\n      then rejected by a > 1\n    }\n  }\n}');
   eq(scenario.diagnostics.map((d) => d.message),
     ['A refusal is named by the message it was refused with: then rejected "…".'], 'a refusal names the message');
-  eq(parseModelSource('handler C(a: integer) {\n  require a > 1 else reject "No"\n'
+  eq(parseModelSource('command C(a: integer) {\n  require a > 1 else reject "No"\n'
     + '  scenarios {\n    scenario {\n      when C { a: 0 }\n      then rejected "No" saw 0, 1\n    }\n  }\n}').diagnostics.map((d) => d.message),
     ['A refusal is named by its message alone — what the rule read is not asserted.'], 'and by nothing else');
   const bare = { name: 'm', ...emptyCollections({ 'command-definition': { C: {
     properties: [], boundary: [], publishes: [], conditions: [{ leftHandSide: { parameterName: 'a' }, predicate: 'isTrue' }],
   } } }) };
-  eq(modelToSource(bare).includes('// Written as JSON: a rule has no rejection message.\nhandler C json {'), true,
+  eq(modelToSource(bare).includes('// Written as JSON: a rule has no rejection message.\ncommand C json {'), true,
     'a stored rule without one is written as JSON');
 });
 
 check('membership in data reads either way round, and prints as contains', () => {
-  const source = (rule) => `handler C(a: integer, b: integer[]) {\n  require ${rule}\n    else reject "No"\n}`;
+  const source = (rule) => `command C(a: integer, b: integer[]) {\n  require ${rule}\n    else reject "No"\n}`;
   const ruleOf = (rule) => {
     const parsed = parseModelSource(source(rule));
     eq(parsed.diagnostics, [], rule);
@@ -290,7 +288,7 @@ check('a name resolves to a read when one declares it, and to the payload otherw
   const parsed = parseModelSource([
     'entity Course (tag courseId: CourseId) {}',
     'untagged projection CourseNumbering: CourseId = "c1" {}',
-    'handler C(courseId: CourseId, items: Item[]) {',
+    'command C(courseId: CourseId, items: Item[]) {',
     '  alias course = Course(courseId)',
     '  alias numbering = CourseNumbering()',
     '  require course.status == items.price else reject "a"',
@@ -321,9 +319,9 @@ check('what the grammar cannot say is written as JSON, says why, and still round
   updateDefinition('command-definition', id, 'DefineCourse', shadowed);
   const text = modelToSource(model());
   eq(text.includes('// Written as JSON: a rule\'s predicate "resemblesStrongly" is not one the code form knows.\n'
-    + 'handler ArchiveCourse json {'), true, 'unknown predicate');
+    + 'command ArchiveCourse json {'), true, 'unknown predicate');
   eq(text.includes('// Written as JSON: "courseId" names both a payload property and an alias.\n'
-    + 'handler DefineCourse json {'), true, 'a parameter and a read sharing a name');
+    + 'command DefineCourse json {'), true, 'a parameter and a read sharing a name');
   const parsed = parseModelSource(text);
   eq(parsed.diagnostics, [], 'diagnostics');
   assertSameModel(model(), parsed, 'fallbacks');
@@ -352,7 +350,7 @@ check('adding, removing, reordering and renaming the model are one append togeth
   const { id, model } = build(ENTITIES);
   const scenarios = JSON.stringify(model()['scenario-definitions']);
   let text = swap(modelToSource(model()), 'model "Course Example (with entities)"', 'model "Renamed"');
-  text = swap(text, /@feature\("Course management"\)\nhandler ArchiveCourse[\s\S]*?\n}\n/, '')
+  text = swap(text, /@feature\("Course management"\)\ncommand ArchiveCourse[\s\S]*?\n}\n/, '')
     + '\nentity Room (tag roomId: RoomId) {}\n';
   // Two events trade places.
   text = swap(text, 'event CourseArchived { tag courseId: CourseId }\n', '');
@@ -401,7 +399,7 @@ check('an error in one declaration does not hide the next', () => {
     'event A { id: AId',
     'event B { id: }',
     'enum C { X, Y }',
-    'handler A(',
+    'command A(',
   ].join('\n'));
   eq(parsed.diagnostics.map((d) => d.line), [1, 2, 4], JSON.stringify(parsed.diagnostics));
   eq(parsed.diagnostics[0].message, 'Expected "}" before the next declaration.', 'where the brace is missing');
@@ -630,23 +628,23 @@ check('scenarios sit in one group per block, and a text from before groups is on
     eq(applyFixes(old), text, `${file}: the fix writes it as printed`);
   }
   const messages = (text) => parseModelSource(text).diagnostics.map((d) => d.message);
-  const command = (inner) => `handler A() {\n  emit E\n${inner}\n}\nevent E {}`;
+  const command = (inner) => `command A() {\n  emit E\n${inner}\n}\nevent E {}`;
   const group = '  scenarios {\n    scenario {\n      when A {}\n    }\n  }';
   eq(messages(command(group)), [], 'a group');
   eq(messages(command(`${group}\n${group}`)), ['A block has one scenarios group — move these scenarios into the first.'], 'one group');
   eq(messages(command(`${group}\n  emit E`)), ['The scenarios group comes last — nothing follows it in the block.'], 'and last');
   eq(messages(command('  scenarios {\n    emit E\n  }')), ['Expected scenario, found "emit".'], 'holding scenarios only');
   eq(messages(command('  scenarios {}')), [], 'empty is no error');
-  const early = parseModelSource('handler A() {\n  scenario {\n    when A {}\n  }\n  emit E\n}\nevent E {}').diagnostics;
+  const early = parseModelSource('command A() {\n  scenario {\n    when A {}\n  }\n  emit E\n}\nevent E {}').diagnostics;
   eq([early.length, early[0].fix], [1, undefined], 'a scenario before a statement is refused without a wrap that would not read');
-  const looseOnes = parseModelSource('scenario {\n  when A {}\n}\n\n// between\nscenario {\n  when A {}\n}\nhandler A() {}\nscenario {\n  when A {}\n}');
+  const looseOnes = parseModelSource('scenario {\n  when A {}\n}\n\n// between\nscenario {\n  when A {}\n}\ncommand A() {}\nscenario {\n  when A {}\n}');
   eq(looseOnes.diagnostics.length, 2, 'a run at the top level is one error, and the next run another');
   eq(looseOnes.scenarios.length, 3, 'and every one of them is still read');
 });
 
 check('the editor folds a scenarios group whole, every other block to its closing line', () => {
   const ranges = sandbox.sourceFoldingRanges([
-    'handler A(', //            1
+    'command A(', //            1
     '  a: integer', //          2
     ') {', //                   3
     '  emit E { a }', //        4
@@ -664,13 +662,13 @@ check('the editor folds a scenarios group whole, every other block to its closin
     { start: 6, end: 10, scenarios: true },
     { start: 7, end: 8, scenarios: false },
   ], 'ranges');
-  eq(sandbox.sourceFoldingRanges('handler A() {\n  scenarios {\n    scenario { when A {').length, 0, 'an unclosed text folds nothing it cannot close');
+  eq(sandbox.sourceFoldingRanges('command A() {\n  scenarios {\n    scenario { when A {').length, 0, 'an unclosed text folds nothing it cannot close');
 });
 
 check('scenarios refuse what they cannot mean', () => {
   const errors = (text) => parseModelSource(text).diagnostics.map((d) => d.message);
   const loose = (scenario) => errors(`scenarios {\n${scenario}\n}`);
-  eq(errors('handler A() {\n  scenarios {\n    scenario {\n      when B {}\n    }\n  }\n}')[0],
+  eq(errors('command A() {\n  scenarios {\n    scenario {\n      when B {}\n    }\n  }\n}')[0],
     'This scenario sits in A but is about B — move it there, or make it about A.', 'in the wrong block');
   eq(loose('scenario {\n  then Ghost tagged CourseId("x") == 1\n}')[0],
     'A read gives its values in parentheses, in the order Ghost declares them: Ghost(…).', 'the draft spelling');
@@ -786,7 +784,7 @@ check('a read gives its values in parentheses — in declared order, a literal w
     'untagged projection All: integer = 0 {',
     '  on Subscribed => increment 1',
     '}',
-    'handler C(courseId: CourseId, studentId: StudentId) {',
+    'command C(courseId: CourseId, studentId: StudentId) {',
     '  alias both = Both(courseId, studentId)',
     '  alias one = PerCourse(CourseId("c1"))',
     '  alias all = All()',
@@ -830,7 +828,7 @@ check('a projection says what it is tagged by, or that it is untagged', () => {
   eq(errors('projection P (tag id: CourseId, days: integer): integer = 0 {}'), ['Only a scripted projection takes values besides its tags — days is not a tag.'], 'arguments, only for a script');
   eq(errors('projection P (tag id: CourseId): integer {\n  script(days: integer)\n}'),
     ['A script takes its values in the projection\'s header, after the tags: projection X (tag …, days: integer).'], 'not in the block');
-  eq(errors('handler C(courseId: CourseId) {\n  require P tagged courseId == 1 else reject "No"\n}'),
+  eq(errors('command C(courseId: CourseId) {\n  require P tagged courseId == 1 else reject "No"\n}'),
     ['A read gives its values in parentheses, in the order P declares them: P(…).'], 'the draft spelling');
   eq(errors('entity Course tagged CourseId {}'), ['Say what Course is tagged by: entity Course (tag courseId: CourseId).'], 'an entity too');
   const scripted = parseModelSource('projection P (tag id: CourseId, days: integer): integer {\n  script\n  initialState 0\n}\n');
@@ -857,12 +855,12 @@ check('a rule reads a projection in place — no alias needed', () => {
     'untagged projection CourseNumbering: CourseId = "c1" {',
     '  on CourseDefined => set successor(event.data.courseId)',
     '}',
-    'handler Define(ownerId: OwnerId) {',
+    'command Define(ownerId: OwnerId) {',
     '  require OwnedCourses(ownerId) < 3',
     '    else reject "Too many"',
     '  emit CourseDefined { courseId: CourseNumbering(), ownerId }',
     '}',
-    'handler Check(courseId: CourseId) {',
+    'command Check(courseId: CourseId) {',
     '  require CourseStatus(courseId) == Existent',
     '    else reject "No such course"',
     '  require OwnedCourses(CourseOwner(courseId)) < 3',
@@ -926,7 +924,7 @@ check('a read fans out where it says so — each, paired by index with its list'
     'projection ProductPrice (tag productId: ProductId): Money = null {',
     '  on ProductDefined => set event.data.price',
     '}',
-    'handler OrderProducts(orderId: OrderId, items: Item[]) {',
+    'command OrderProducts(orderId: OrderId, items: Item[]) {',
     '  alias exists = ProductExists(each items.productId)',
     '  require exists is true',
     '    else reject "Product does not exist"',
@@ -1070,11 +1068,11 @@ check('a projection and an enum sharing a name are two names', () => {
 check('a shorthand splits when either of its names is renamed', () => {
   const text = modelToSource(build(ENTITIES).model());
   const param = renameAt(text, 'emit CourseDefined { courseId', 'emit CourseDefined { '.length, 'id').text;
-  eq(param.includes('handler DefineCourse(id: CourseId, capacity: integer) {'), true, 'the parameter');
+  eq(param.includes('command DefineCourse(id: CourseId, capacity: integer) {'), true, 'the parameter');
   eq(param.includes('emit CourseDefined { courseId: id, capacity }'), true, 'the shorthand, as the value');
   const property = renameAt(text, 'event CourseDefined { tag courseId', 'event CourseDefined { tag '.length, 'id').text;
   eq(property.includes('emit CourseDefined { id: courseId, capacity }'), true, 'the shorthand, as the key');
-  eq(property.includes('handler DefineCourse(courseId: CourseId, capacity: integer) {'), true, 'the parameter kept');
+  eq(property.includes('command DefineCourse(courseId: CourseId, capacity: integer) {'), true, 'the parameter kept');
 });
 
 check('an entity takes its tracking identifier type along, and a type renamed under one is pinned', () => {
@@ -1106,9 +1104,9 @@ check('a rename refuses what it cannot do exactly', () => {
   const scripted = modelToSource(build(5).model());
   eq(/also appears in the script or JSON at line \d+/.test(renameAt(scripted, 'Draft, Published', 0, 'Concept').error), true,
     'a member a script spells as a string');
-  eq(renameAt(scripted, 'handler UpdateText', 'handler '.length, 'EditText').error, undefined, 'a script cannot name a command');
+  eq(renameAt(scripted, 'command UpdateText', 'command '.length, 'EditText').error, undefined, 'a script cannot name a command');
   const shared = 'enum A { Open, Closed }\nenum B { Open, Shut }\nprojection P: Unknown = Open\n'
-    + 'handler C(a: A) {\n  require a == Open\n    else reject "Not open"\n}\n';
+    + 'command C(a: A) {\n  require a == Open\n    else reject "Not open"\n}\n';
   eq(/Open at line 3 could be a member of A or B/.test(renameAt(shared, 'A { Open', 4, 'Opened').error), true,
     'a member where its enum cannot be told');
   eq(renameAt(shared, 'Unknown = Open', 'Unknown = '.length, 'X').error,
@@ -1181,10 +1179,10 @@ check('completion knows scenarios, declarations, and when to stay quiet', () => 
   eq(block('when |').labels[0], 'ArchiveCourse', 'the block\'s command first');
   eq(block('then |').items.filter((i) => i.sort === '0').map((i) => i.label), ['CourseArchived'], 'what it emits, first');
   eq(block('then rejected |').labels, ['"Course is not active"'], 'a refusal, by the messages the command has');
-  eq(completeAt(swap(text, '// Command handlers', '// Command handlers\n@|')).labels, ['icon', 'feature', 'tagSchema'], 'annotations');
-  eq(completeAt(swap(text, 'handler DefineCourse(courseId: CourseId', 'handler DefineCourse(courseId: |')).labels
+  eq(completeAt(swap(text, '// Commands', '// Commands\n@|')).labels, ['icon', 'feature', 'tagSchema'], 'annotations');
+  eq(completeAt(swap(text, 'command DefineCourse(courseId: CourseId', 'command DefineCourse(courseId: |')).labels
     .slice(0, 3), ['boolean', 'integer', 'string'], 'a type');
-  eq(completeAt(swap(text, '// Command handlers', '// Command handlers |')).labels, [], 'in a comment');
+  eq(completeAt(swap(text, '// Commands', '// Commands |')).labels, [], 'in a comment');
   eq(completeAt(swap(text, 'else reject "Course is not active"', 'else reject "Course is| not active"')).labels, [], 'in a string');
   const entities = modelToSource(build(ENTITIES).model());
   eq(completeAt(swap(entities, 'entity Course (tag courseId: CourseId) {', 'entity Course (tag courseId: CourseId) {\n  lifecycle |')).labels.includes('status'), true,

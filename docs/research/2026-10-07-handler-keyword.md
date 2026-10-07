@@ -1,4 +1,4 @@
-# `handler`, not `command`
+# `handler`, not `command` (reverted)
 
 2026-10-07. Background for the keyword change in `app/dsl.js`.
 
@@ -57,3 +57,10 @@ handler ChangeCourseCapacity(courseId: CourseId, newCapacity: integer) {
 The wire format, the pages and the docs anchors (`command`, keyed by
 definition kind) are unchanged. The notation guide on dcb.events still
 spells the old keyword and has to follow.
+
+## Reverted
+
+Reverted on 2026-10-07, before the change reached dcb.events: a command
+is declared with `command` again, and the printed section comment is
+`// Commands`. `handler` is an ordinary syntax error now. The wire
+format and the pages were never touched, so nothing else moved back.
