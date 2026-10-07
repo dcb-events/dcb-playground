@@ -36,6 +36,11 @@
   --accent-soft: #e6f4f2;
   --bg: #f8fafc;
   --surface: #ffffff;
+  /* A modal, lifted off the page: a shade off the page's own white, so
+     its edge reads even where the page behind is white too, over a
+     dimmed and blurred page (`--scrim`). */
+  --elevated: #fbfcfd;
+  --scrim: rgba(15, 23, 42, .38);
   --border: #e2e8f0;
   --border-strong: #cbd5e1;
   --text: #0f172a;
@@ -70,6 +75,8 @@ body.f-dark {
   --accent-soft: #0b2a2a;
   --bg: #0b1220;
   --surface: #131c2e;
+  --elevated: #1b263d;
+  --scrim: rgba(2, 6, 15, .62);
   --border: #22304a;
   --border-strong: #3a4b69;
   --text: #e2e8f0;

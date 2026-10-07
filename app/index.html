@@ -620,20 +620,28 @@
      Everything that decides how the interface behaves rather than what
      the model says. It lives in one place so the bar at the top can go
      back to being about the model, and so the next such choice has an
-     obvious home. The backdrop is thin on purpose: these settings
-     change the page behind it, and you should see them land. */
+     obvious home. Every other modal dims and blurs the page so it
+     stands clear of it; this one's backdrop is thin on purpose (`.thin`):
+     these settings change the page behind it, and you should see them
+     land. */
   .overlay {
     position: fixed; inset: 0; z-index: 40;
-    background: rgba(15, 23, 42, .22);
+    background: var(--scrim);
+    -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
     display: flex; justify-content: center; align-items: flex-start;
     padding: 64px 16px 24px;
   }
+  .overlay.thin { background: rgba(15, 23, 42, .22); -webkit-backdrop-filter: none; backdrop-filter: none; }
   .modal {
     width: 540px; max-width: 100%; max-height: calc(100vh - 100px); overflow: auto;
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: 10px; box-shadow: 0 18px 50px rgba(15, 23, 42, .28);
+    background: var(--elevated); border: 1px solid var(--border-strong);
+    border-radius: 12px; box-shadow: 0 24px 64px rgba(15, 23, 42, .35), 0 2px 6px rgba(15, 23, 42, .12);
     padding: 16px 20px 18px;
   }
+  /* Focused so Escape and Tab start inside it, not to be pointed at. */
+  .modal:focus { outline: none; }
+  /* A ghost button sits on the modal's own shade, not the page's white. */
+  .modal .btn.ghost { background: transparent; }
   .modal > header { display: flex; align-items: baseline; gap: 10px; margin-bottom: 2px; }
   .modal a { color: var(--accent); font-weight: 600; text-decoration: none; }
   .modal a:hover { text-decoration: underline; }
@@ -1795,16 +1803,18 @@ function renderSettingsModal(host) {
     h('div', { class: 'adder', style: 'margin-top:18px' },
       h('button', { class: 'btn primary', onclick: close }, 'Done')));
 
-  host.appendChild(overlayAround(modal, close));
+  host.appendChild(overlayAround(modal, close, { thin: true }));
   setTimeout(() => modal.focus(), 0);
 }
 
-// A modal, and the thin backdrop that closes it. Clicking the backdrop
-// only counts when it is the backdrop that was clicked — a click that
-// started inside the modal and drifted out of it is not a dismissal.
-function overlayAround(modal, close) {
+// A modal, and the backdrop that closes it — `thin` for one whose
+// changes should be seen landing on the page behind it. Clicking the
+// backdrop only counts when it is the backdrop that was clicked — a
+// click that started inside the modal and drifted out of it is not a
+// dismissal.
+function overlayAround(modal, close, { thin = false } = {}) {
   return h('div', {
-    class: 'overlay',
+    class: 'overlay' + (thin ? ' thin' : ''),
     onclick: (e) => { if (e.target === e.currentTarget) close(); },
   }, modal);
 }
