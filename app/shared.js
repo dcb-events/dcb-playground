@@ -558,10 +558,9 @@ function enableExperimentalForSession() { experimentalThisSession = true; }
 
 // ---------- the documentation ----------
 //
-// The help is the documentation itself: the notation guide and its
-// reference on dcb.events, opened in a new tab at the anchor for what
-// the reader is looking at. The page explains nothing twice — an `ⓘ`
-// says the one line a section needs and links on from there.
+// The notation is explained by its guide and reference on dcb.events,
+// not here: an `ⓘ` says the one line a section needs and links the
+// reference's anchor for it, and the help modal links the reference.
 //
 // The anchors are a contract with the website: its build fails on a
 // link `helpReferenceLinks` lists that it does not define, so renaming
@@ -590,29 +589,6 @@ function notationReference(anchor) {
 // the site's build checks against the pages it has just built.
 function helpReferenceLinks() {
   return [NOTATION_GUIDE_URL, ...NOTATION_ANCHORS.map((anchor) => NOTATION_REFERENCE_URL + '#' + anchor)];
-}
-
-// Where the reference explains a definition. The body decides between
-// the three kinds of projection; the rest are one anchor per kind.
-function docsAnchorFor(kind, body) {
-  if (kind === 'projection-definition' && body) {
-    if (body.script) return 'script';
-    if (body.derived) return 'derived';
-  }
-  return {
-    'custom-type-definition': body && body.isTag ? 'tag-type' : 'type',
-    'event-definition': 'event',
-    'entity-definition': 'entity',
-    'projection-definition': 'projection',
-    'command-definition': 'command',
-    'scenario-definition': 'scenario',
-    'projection-scenario-definition': 'projection-scenario',
-  }[kind] || null;
-}
-
-// The documentation, in a new tab — never in place of the model.
-function openDocs(url) {
-  if (typeof window !== 'undefined' && window.open) window.open(url || NOTATION_GUIDE_URL, '_blank', 'noopener');
 }
 
 // ---------- light / dark ----------

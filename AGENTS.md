@@ -118,12 +118,11 @@ was decided, why, and what was tried and reverted:
 
 ## Conventions and gotchas
 
-- **The help is the documentation on dcb.events** — the notation guide
-  and its reference, opened in a new tab (`openDocs`, shared.js) at the
-  anchor for what the page is about (`docsHere`: the construct under the
-  cursor in the code view, the page's kind elsewhere, the guide
-  otherwise). There is no help modal any more; an `ⓘ` keeps its one
-  line and links the reference. The anchors (`NOTATION_ANCHORS`) are a
+- **The help modal explains the playground, not the notation**
+  (`helpModal`, index.html): the bar's button, the `?` key and the
+  models dialog open it, and its one link is the notation reference on
+  dcb.events, in a new tab. An `ⓘ` keeps its one line and links the
+  reference's anchor for it. The anchors (`NOTATION_ANCHORS`) are a
   contract with the website: its build fails on a link
   `helpReferenceLinks()` lists that it does not define, so an anchor is
   added or renamed on both sides — until the website catches up with

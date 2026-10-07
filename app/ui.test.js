@@ -4189,26 +4189,16 @@ function build(index) {
   });
 }
 
-// The help is the documentation, opened in a new tab at what the page
-// is about — and the anchors it links are a contract with dcb.events,
-// whose build checks every one of them exists.
-check('the help opens the reference at the page\'s own concept', () => {
-  const id = loadPredefinedModel(ENTITIES);
-  sandbox.localStorage.setItem('dcb-playground:model', id);
-  sandbox.state.code = false;
-  const ref = (anchor) => sandbox.NOTATION_REFERENCE_URL + '#' + anchor;
-  const here = (view, extra = {}) => {
-    sandbox.state.view = view;
-    Object.assign(sandbox.state, extra);
-    return sandbox.docsHere();
-  };
-  eq(here('slice', { tab: 'definition' }), ref('command'), 'a command page');
-  eq(here('slice', { tab: 'scenarios' }), ref('scenario'), 'its scenarios');
-  eq([here('entity'), here('types'), here('projections'), here('events'), here('lifecycles')],
-    [ref('entity'), ref('type'), ref('projection'), ref('event'), ref('lifecycle')], 'the other pages');
-  eq(here('overview'), sandbox.NOTATION_GUIDE_URL, 'a page about no one concept opens the guide');
-  eq(sandbox.docsAnchorFor('projection-definition', { script: {} }), 'script', 'a scripted projection');
-  eq(sandbox.docsAnchorFor('custom-type-definition', { isTag: true }), 'tag-type', 'a tag type');
+// The help explains the playground and leaves the notation to the
+// reference on dcb.events — its one link, in a new tab.
+check('the help modal links the notation reference, and nothing else', () => {
+  const links = findAll(sandbox.helpModal(), (n) => n.tag === 'a');
+  eq(links.map((a) => [a.attributes.href, a.attributes.target]), [[sandbox.NOTATION_REFERENCE_URL, '_blank']]);
+});
+
+// The anchors an `ⓘ` links are a contract with dcb.events, whose build
+// checks every one of them exists.
+check('the reference links only anchors the website defines', () => {
   eq(sandbox.notationReference('no-such-anchor'), sandbox.NOTATION_GUIDE_URL, 'an anchor it does not know is the guide');
   const links = sandbox.helpReferenceLinks();
   eq(links[0], sandbox.NOTATION_GUIDE_URL, 'the guide');

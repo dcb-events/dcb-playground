@@ -638,6 +638,11 @@
   .modal a { color: var(--accent); font-weight: 600; text-decoration: none; }
   .modal a:hover { text-decoration: underline; }
   .modal > header .grow { flex: 1; }
+  /* The help reads as prose: questions in sentence case, not as the
+     settings' small-caps section labels it borrows `.setting` from. */
+  .help-modal p { font-size: 13.5px; line-height: 1.6; margin: 12px 0; }
+  .help-modal .setting h4 { text-transform: none; letter-spacing: 0; font-size: 13px; color: var(--text); }
+  .help-modal .setting .why { font-size: 12.5px; line-height: 1.55; }
   .setting { margin-top: 18px; }
   .setting > h4 { margin-bottom: 3px; }
   .setting .why { font-size: 11.5px; color: var(--muted); margin-bottom: 8px; }
@@ -1361,6 +1366,7 @@ const state = {
   loadingJson: false,       // within the models dialog: form open, asking for pasted JSON
   pendingImport: null,      // a decoded share envelope waiting on the scripted-code confirm
   settings: false,          // the settings modal
+  help: false,              // the help modal — see `helpModal`
   problems: false,         // the loose-ends-and-drifted-scenarios panel
   railOpen: false,          // the rail, as an off-canvas drawer on a narrow screen
   importExport: false,      // the Import & Export modal
@@ -1526,7 +1532,8 @@ function modelsModal() {
       h('h2', {}, 'DCB Playground'),
       h('span', { class: 'grow' }),
       activeId ? h('button', { class: 'btn ghost', onclick: close, title: 'Close' }, '×') : null),
-    h('div', { class: 'muted small' }, 'Pick one of your models or start a new one.'),
+    h('div', { class: 'muted small' }, 'Pick one of your models or start a new one. ',
+      h('a', { href: '#', onclick: (e) => { e.preventDefault(); openHelp(); } }, 'What is this?')),
     saved.length ? h('div', { class: 'setting' },
       h('h4', {}, 'Your models'),
       saved.map((other) => h('div', { class: 'row' },
@@ -1760,6 +1767,7 @@ function renderModals() {
   if (state.problems) { host.appendChild(problemsPanel()); return; }
   if (state.settings) { renderSettingsModal(host); return; }
   if (state.importExport) { host.appendChild(renderImportExportModal()); return; }
+  if (state.help) { host.appendChild(helpModal()); return; }
   if (state.models || !activeModelId()) { host.appendChild(modelsModal()); return; }
 }
 
@@ -1803,37 +1811,70 @@ function overlayAround(modal, close) {
 
 // ---------- help ----------
 //
-// The help is the documentation on dcb.events (`openDocs`, shared.js),
-// in a new tab: the bar's button and the `?` key open it at what the
-// page is about — the construct under the cursor in the code view, the
-// page's own kind of thing elsewhere, and the guide where a page is
-// about no one concept.
+// What the playground is, said once, in a modal: the bar's button, the
+// `?` key and the models dialog's "What is this?" open it. It explains
+// the playground, not the notation — that is the reference on
+// dcb.events, the one place it links to, in a new tab.
 const HELP_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
   + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
   + '<circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>'
   + '<line x1="12" y1="17" x2="12.01" y2="17"></line></svg>';
 
-function docsHere() {
-  if (!activeModel()) return NOTATION_GUIDE_URL;
-  if (state.code) {
-    const parsed = codeView.analysis && codeView.analysis.parsed;
-    const line = parsed ? codeCursorLine() : null;
-    const span = line ? sourceSpanAt(parsed, line) : null;
-    const anchor = span ? docsAnchorFor(span.kind, parsed.collections[span.kind][span.name]) : null;
-    return anchor ? notationReference(anchor) : NOTATION_GUIDE_URL;
-  }
-  if (state.view === 'slice') return notationReference(state.tab === 'scenarios' ? 'scenario' : 'command');
-  const anchor = {
-    entity: 'entity', types: 'type', projections: 'projection', events: 'event', lifecycles: 'lifecycle',
-  }[state.view];
-  return anchor ? notationReference(anchor) : NOTATION_GUIDE_URL;
+const HELP_FAQS = [
+  { q: 'What is a Dynamic Consistency Boundary?',
+    a: 'It replaces a fixed aggregate boundary with one a command declares for itself — '
+      + 'exactly the events it needs to stay consistent with, no more. This playground models '
+      + 'that boundary directly, so you can see its shape before it’s code.' },
+  { q: 'Do I need to know event sourcing already?',
+    a: 'It helps, but isn’t required. Commands, events and projections are the '
+      + 'whole vocabulary — the playground shows how they connect as you build, one '
+      + 'definition at a time.' },
+  { q: 'Where is my model stored?',
+    a: 'In this browser only, until you say otherwise. Nothing is sent anywhere — export '
+      + 'it as JSON or copy a link when you want to keep it or hand it to someone else.' },
+  { q: 'Can I share a model with someone else?',
+    a: 'Yes. Export it as JSON, or copy a link that reopens it exactly as it is — both are '
+      + 'one click away from the import & export dialog.' },
+  { q: 'How do I switch models?',
+    a: 'Click the playground’s name in the bar. It lists every model saved in this browser, '
+      + 'and the ways to start a new one.' },
+];
+
+function openHelp() {
+  closeForms();
+  state.help = true;
+  render();
 }
 
 function helpButton() {
   return h('button', {
-    class: 'icon-btn', type: 'button', title: 'The notation, on dcb.events (?)',
-    'aria-label': 'Documentation', onclick: () => openDocs(docsHere()),
+    class: 'icon-btn', type: 'button', title: 'About the playground (?)',
+    'aria-label': 'Help', onclick: openHelp,
   }, h('span', { html: HELP_ICON_SVG }));
+}
+
+function helpModal() {
+  const close = () => { state.help = false; render(); };
+  const modal = h('div', { class: 'modal help-modal', tabindex: '-1', role: 'dialog', 'aria-modal': 'true' },
+    h('header', {},
+      h('h2', {}, 'DCB Playground'),
+      h('span', { class: 'grow' }),
+      h('button', { class: 'btn ghost', onclick: close, title: 'Close' }, '×')),
+    h('div', { class: 'muted small' }, 'Model consistency boundaries without writing a line of code.'),
+    h('p', {},
+      'Dynamic Consistency Boundary decouples what a command must stay consistent with from '
+        + 'any fixed aggregate. This playground lets you build that model by hand — events, '
+        + 'projections and the commands that guard them — and watch the derived boundary take '
+        + 'shape as you go.'),
+    HELP_FAQS.map((item) => h('div', { class: 'setting' },
+      h('h4', {}, item.q),
+      h('div', { class: 'why' }, item.a))),
+    h('p', {}, 'Everything a model can say is described in the ',
+      h('a', { href: NOTATION_REFERENCE_URL, target: '_blank', rel: 'noopener' }, 'notation reference ↗'), '.'),
+    h('div', { class: 'adder', style: 'margin-top:18px' },
+      h('button', { class: 'btn primary', onclick: close }, 'Done')));
+  setTimeout(() => modal.focus(), 0);
+  return overlayAround(modal, close);
 }
 
 // The one confirmation an import can force: the model it would build
@@ -2372,7 +2413,7 @@ function closePalette() {
 
 function openPalette() {
   closeForms();
-  state.settings = false; state.problems = false; state.models = false; state.help = null;
+  state.settings = false; state.problems = false; state.models = false; state.help = false;
   state.palette = true;
   render();
 }
@@ -13136,7 +13177,7 @@ window.addEventListener('keydown', (e) => {
   if (state.hintPop) { state.hintPop = null; return render(); }
   if (state.lcMenu) { state.lcMenu = null; return render(); }
   if (state.pendingImport) { state.pendingImport = null; return render(); }
-  if (state.help) { state.help = null; return render(); }
+  if (state.help) { state.help = false; return render(); }
   if (state.problems) { state.problems = false; return render(); }
   if (state.settings) { state.settings = false; return render(); }
   if (state.models) {
@@ -13215,16 +13256,15 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-// `?` opens the documentation at what the page is about, in a new tab —
-// the convention, and the one key a field never needs to give up,
-// since inside one it is only ever typed.
+// `?` opens the help — the convention, and the one key a field never
+// needs to give up, since inside one it is only ever typed.
 window.addEventListener('keydown', (e) => {
   if (e.defaultPrevented || e.key !== '?' || e.metaKey || e.ctrlKey || e.altKey) return;
   const inField = e.target instanceof Element
     && e.target.closest('input, textarea, select, [contenteditable]');
   if (inField || state.palette || state.pendingImport) return;
   e.preventDefault();
-  openDocs(docsHere());
+  openHelp();
 });
 
 // Arrow keys move between rows. Reading a command is walking down its
