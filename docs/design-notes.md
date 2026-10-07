@@ -450,16 +450,13 @@ and prune what no longer holds.
   the listed values — and writes the same `contains`; a payload list
   containing a read value reopens as "is one of" (`draftFromCondition`),
   since a payload value can never be a rule's subject there.
-  A command is declared by its handler, `handler DefineCourse(courseId:
-  CourseId) { … }` — payload in the header, decision in the body; the
-  keyword says the block is more than the message, and the wire shape
-  is the one `CommandDefinition` it always was. `command` there is an
-  error naming the fix
+  A command is declared with `command`. Spelling it `handler` was
+  tried and reverted the same day
   (`docs/research/2026-10-07-handler-keyword.md`).
   Printing is **lossless by contract**:
   each definition is printed, parsed back and compared
   (`sameDefinition`), and one that does not survive is written as its
-  stored JSON (`handler Foo json { … }`) under a comment saying why. A
+  stored JSON (`command Foo json { … }`) under a comment saying why. A
   test holds every shipped model and example file free of fallbacks —
   so **a new wire-format construct needs a spelling in the printer and
   the parser**, or that test fails the moment a predefined model uses

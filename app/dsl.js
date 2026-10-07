@@ -27,7 +27,7 @@
 //     on CourseDefined => set successor(event.data.courseId)
 //   }
 //
-//   handler ChangeCourseCapacity(courseId: CourseId, newCapacity: integer) {
+//   command ChangeCourseCapacity(courseId: CourseId, newCapacity: integer) {
 //     alias capacity = CourseCapacity(courseId)
 //     require CourseStatus(courseId) == Existent
 //       else reject "Course does not exist"
@@ -35,18 +35,6 @@
 //       else reject "Capacity is unchanged"
 //     emit CourseCapacityChanged { courseId, newCapacity }
 //   }
-//
-// **A command is declared by its handler.** One block states the
-// payload in its header and what decides it in its body, so the keyword
-// is `handler`: `command` named the message while the block went on to
-// read, require and emit, and the payload alone is not what is being
-// defined. Only the word changed: the block is still one
-// `CommandDefinition` on the wire. Splitting the two into a `command` and a
-// separate `handle` block was tried and set aside: it gave the message
-// its own line at the cost of pulling apart what one page edits whole.
-// Scenarios still say `when ChangeCourseCapacity { … }` — what they run
-// is the command. The reasoning is in
-// docs/research/2026-10-07-handler-keyword.md.
 //
 // **Tags are explicit on both sides (8.0), and a projection owns its
 // own.** An event marks the values it is tagged by where it declares
@@ -164,7 +152,7 @@
 // then parsed back on the spot, and one that does not come back equal
 // (`sameDefinition`) — a defective body, a name the grammar cannot
 // write, a parameter and a read sharing a name — is printed as its
-// stored JSON instead (`handler Foo json { … }`), under a comment
+// stored JSON instead (`command Foo json { … }`), under a comment
 // saying why. So the text always says everything the model does, and
 // an untouched text applies as no change at all.
 //
@@ -242,7 +230,7 @@ const SOURCE_KEYWORD = {
   'event-definition': 'event',
   'entity-definition': 'entity',
   'projection-definition': 'projection',
-  'command-definition': 'handler',
+  'command-definition': 'command',
 };
 
 const SOURCE_SECTION = {
@@ -250,7 +238,7 @@ const SOURCE_SECTION = {
   'event-definition': 'Events',
   'entity-definition': 'Entities',
   'projection-definition': 'Projections',
-  'command-definition': 'Command handlers',
+  'command-definition': 'Commands',
 };
 
 // What the `= …` of `type X = …` may name without spelling a schema
@@ -266,7 +254,7 @@ const SOURCE_ANNOTATIONS = {
 
 const SOURCE_IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const SOURCE_MEMBER_RE = /^[A-Z][A-Za-z0-9_]*$/;
-const SOURCE_DECL_STARTS = ['@', 'model', 'type', 'tag', 'enum', 'record', 'event', 'entity', 'untagged', 'projection', 'handler'];
+const SOURCE_DECL_STARTS = ['@', 'model', 'type', 'tag', 'enum', 'record', 'event', 'entity', 'untagged', 'projection', 'command'];
 const SOURCE_WORD_PREDICATES = ['contains', 'containsAny', 'startsWith', 'endsWith'];
 const SOURCE_SYMBOL_PREDICATES = { '==': 'equals', '<': 'lessThan', '<=': 'lessThanOrEquals', '>': 'greaterThan', '>=': 'greaterThanOrEquals' };
 const SOURCE_COUNT_PREDICATES = { '==': 'countEquals', '<': 'countLessThan', '>': 'countGreaterThan' };
@@ -1467,9 +1455,8 @@ function parseModelSource(text, options = {}) {
     if (is('projection')) return projectionDecl(start, annotations, untagged);
     if (is('event')) return eventDecl(start, annotations);
     if (is('entity')) return entityDecl(start, annotations);
-    if (is('handler')) return commandDecl(start, annotations);
-    if (is('command')) fail(`A command is declared with its handler: handler ${peek(1).t === 'ident' ? peek(1).v : 'Name'}(…) { … }, not command.`);
-    return fail(`Expected a declaration — type, enum, record, event, entity, projection or handler — `
+    if (is('command')) return commandDecl(start, annotations);
+    return fail(`Expected a declaration — type, enum, record, event, entity, projection or command — `
       + `found ${describeToken(peek())}.`);
   };
 
@@ -2028,9 +2015,9 @@ function printCommand(name, body, names) {
   const operand = sourceCommandOperand(body, names);
 
   const signature = properties.map(sourceProperty);
-  const flat = `handler ${sourceDeclName(name)}(${signature.join(', ')})`;
+  const flat = `command ${sourceDeclName(name)}(${signature.join(', ')})`;
   const head = flat.length <= 96 ? flat
-    : `handler ${sourceDeclName(name)}(\n${signature.map((s) => '  ' + s + ',').join('\n')}\n)`;
+    : `command ${sourceDeclName(name)}(\n${signature.map((s) => '  ' + s + ',').join('\n')}\n)`;
 
   const reads = boundary.map((binding) => {
     if (!binding || typeof binding !== 'object') unprintable('an alias is not an object');
@@ -3250,7 +3237,7 @@ const SOURCE_SCENARIO_SNIPPET = 'scenario "${1}" {\n\t$0\n}';
 const SOURCE_GROUP_SNIPPET = 'scenarios {\n\tscenario "${1}" {\n\t\t$0\n\t}\n}';
 
 const SOURCE_DECLARATION_SNIPPETS = [
-  ['handler', 'handler ${1:Name}(${2}) {\n\t$0\n}'],
+  ['command', 'command ${1:Name}(${2}) {\n\t$0\n}'],
   ['event', 'event ${1:Name} { $0 }'],
   ['entity', 'entity ${1:Name} (tag ${2:nameId}: ${3:NameId}) {\n\t$0\n}'],
   ['projection', 'projection ${1:Name} (tag ${2:id}: ${3:Type}): ${4:integer} = ${5:0} {\n\t$0\n}'],
@@ -3302,7 +3289,7 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
   const atLineStart = !tokens.length || tokens[tokens.length - 1].endLine < line;
 
   // ---------- where the cursor is ----------
-  const DECL_WORDS = ['model', 'type', 'tag', 'enum', 'record', 'event', 'entity', 'untagged', 'projection', 'handler', 'scenarios', 'scenario', '@'];
+  const DECL_WORDS = ['model', 'type', 'tag', 'enum', 'record', 'event', 'entity', 'untagged', 'projection', 'command', 'scenarios', 'scenario', '@'];
   const v = (t) => (t ? t.v : undefined);
   const frames = [{ kind: 'top', level: 0, open: -1, stmt: 0 }];
   const level = [];
@@ -3325,12 +3312,12 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
       if (opener === '{') {
         if (prev === 'json' || kw === 'type' || kw === 'model') return own('json');
         const kinds = {
-          enum: 'enum', record: 'fields', event: 'fields', entity: 'entity', projection: 'projection', handler: 'command',
+          enum: 'enum', record: 'fields', event: 'fields', entity: 'entity', projection: 'projection', command: 'command',
           scenarios: 'scenarios', scenario: 'scenario',
         };
         return own(kinds[kw] || 'json', {
           entity: kw === 'entity' ? decl.name : undefined,
-          command: kw === 'handler' ? decl.name : undefined,
+          command: kw === 'command' ? decl.name : undefined,
           projection: kw === 'projection' ? decl.name : undefined,
           event: kw === 'event' ? decl.name : undefined,
           block: kw === 'scenario' || kw === 'scenarios' ? null : undefined,
@@ -3338,7 +3325,7 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
       }
       if (opener === '(') {
         const head = v(s[0]) === 'untagged' ? s.slice(1) : s;
-        if (head.length === 2 && (kw === 'handler' || kw === 'projection' || kw === 'entity')) return own('params', { header: kw });
+        if (head.length === 2 && (kw === 'command' || kw === 'projection' || kw === 'entity')) return own('params', { header: kw });
         if (kw === 'projection' && prev === 'count') return own('count');
         if (kw === 'projection' && s.some((t) => t.v === 'derived') && /^[A-Z]/.test(prev || '')) return own('derivedArgs', { callee: prev });
         return own('json');
@@ -3500,7 +3487,7 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
   const rejectionItems = (name) => {
     const offer = (message) => push(JSON.stringify(message), 'text', 'rejection', { sort: 0 });
     const decl_ = frame.decl || decl;
-    if (decl_ && decl_.keyword === 'handler' && decl_.name === name) {
+    if (decl_ && decl_.keyword === 'command' && decl_.name === name) {
       declared.forEach((t, i) => { if (t.t === 'string' && v(declared[i - 1]) === 'reject') offer(t.v); });
     }
     for (const rule of list((def('command-definition', name) || {}).conditions)) {
@@ -3516,7 +3503,7 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     const boundary = [];
     const body = has(parsed.collections['command-definition'], name) ? parsed.collections['command-definition'][name] : def('command-definition', name);
     const emits = [];
-    if (frame.decl && frame.decl.keyword === 'handler' && frame.decl.name === name) {
+    if (frame.decl && frame.decl.keyword === 'command' && frame.decl.name === name) {
       const d = declared;
       let i = 2;
       if (v(d[i]) === '(') {
@@ -4050,7 +4037,7 @@ function sourceExperimentalMarks(text) {
 const SOURCE_KEYWORDS = [
   'model', 'type', 'tag', 'enum', 'record', 'event', 'entity', 'lifecycle', 'untagged', 'projection', 'derived',
   'script', 'initialState', 'exposes', 'on', 'set', 'increment', 'decrement', 'append',
-  'remove', 'handler', 'alias', 'each', 'excluding', 'require', 'emit', 'when', 'and', 'not', 'is',
+  'remove', 'command', 'alias', 'each', 'excluding', 'require', 'emit', 'when', 'and', 'not', 'is',
   'empty', 'in', 'contains', 'containsAny', 'startsWith', 'endsWith', 'count', 'successor',
   'currentValue', 'json', 'true', 'false', 'null', 'scenarios', 'scenario', 'given', 'then', 'nothing', 'rejected',
   'else', 'reject',
