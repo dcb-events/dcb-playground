@@ -244,7 +244,7 @@
       // wrapper — the refusal has to reach the agent, not only the
       // toast — so both paths open a model the same one way.
       const id = openNewModel(name);
-      if (typeof state === 'object' && state) state.splash = false;
+      if (typeof state === 'object' && state) state.models = false;
       return {
         summary: `started model "${name.trim()}"`,
         payload: { id, name: name.trim() },

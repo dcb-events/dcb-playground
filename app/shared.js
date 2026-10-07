@@ -572,6 +572,9 @@ function enableExperimentalForSession() { experimentalThisSession = true; }
 
 const NOTATION_GUIDE_URL = 'https://dcb.events/notation/';
 const NOTATION_REFERENCE_URL = 'https://dcb.events/notation/reference/';
+// The example models live on dcb.events too, each page opening its
+// model here through a share link.
+const EXAMPLES_URL = 'https://dcb.events/examples/';
 const NOTATION_ANCHORS = [
   'model', 'comments', 'literals', 'annotations', 'json', 'tag-type', 'type', 'enum', 'record', 'event',
   'projection', 'on', 'event-data', 'successor', 'current-value', 'entity', 'lifecycle', 'require',

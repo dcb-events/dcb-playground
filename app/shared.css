@@ -130,16 +130,20 @@ body.f-dark .disclaimer { background: #2d2408; color: #fcd34d; border-bottom-col
 .brand-home { flex: none; display: block; border-radius: 6px; }
 .brand-home:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
-/* The title doubles as the way back to Models, for switching
-   or managing what's loaded — see `renderSplash` for the full-page
-   equivalent shown, unrequested, while nothing is loaded yet. */
-.brand-link {
-  display: flex; align-items: center; gap: 16px;
-  border: 0; background: none; padding: 0; margin: 0; font: inherit; color: inherit;
+/* The playground's name and the open model, one button — see
+   `paintPage`. Plain text rather than a .btn, so it reads as the bar's
+   title; the caret says it opens something. */
+.model-switch {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+  border: 0; background: none; padding: 4px 6px; margin: 0 0 0 -6px; font: inherit; color: inherit;
   cursor: pointer; border-radius: 6px;
 }
-.brand-link:hover h1 { color: var(--accent); }
-.brand-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.model-switch .brand-title { font-size: 16px; font-weight: 600; white-space: nowrap; }
+.model-switch .sep { color: var(--border-strong); }
+.model-switch .model-name { font-size: 14px; font-weight: 500; }
+.model-switch .caret { display: flex; color: var(--muted); }
+.model-switch:hover .brand-title, .model-switch:hover .model-name, .model-switch:hover .caret { color: var(--accent); }
+.model-switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .brand-mark { flex: none; width: 22px; height: 22px; display: block; }
 
 .app-bar #model-switch, .app-bar #tools, .app-bar #jump, .app-bar #actions {
@@ -198,7 +202,7 @@ body.f-dark .disclaimer { background: #2d2408; color: #fcd34d; border-bottom-col
 @media (max-width: 760px) {
   .app-bar .menu-btn { display: inline-flex; }
   .app-bar { gap: 6px; padding: 8px 10px; }
-  .brand-link { display: none; }
+  .model-switch .brand-title:has(+ .sep), .model-switch .sep { display: none; }
   /* Everything else in the bar is fixed-width (~266px of icons, gaps
      and padding at this breakpoint's sizes) — the name gets whatever
      is left of the screen, not a fraction of it. A vw-based cap falls

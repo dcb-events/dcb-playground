@@ -4192,7 +4192,6 @@ check('the help opens the reference at the page\'s own concept', () => {
   const id = loadPredefinedModel(ENTITIES);
   sandbox.localStorage.setItem('dcb-playground:model', id);
   sandbox.state.code = false;
-  sandbox.state.splash = false;
   const ref = (anchor) => sandbox.NOTATION_REFERENCE_URL + '#' + anchor;
   const here = (view, extra = {}) => {
     sandbox.state.view = view;
