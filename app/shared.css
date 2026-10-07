@@ -125,12 +125,12 @@ body.f-dark .disclaimer { background: #2d2408; color: #fcd34d; border-bottom-col
   border-bottom: 1px solid var(--border);
 }
 .app-bar .spacer { flex: 1; }
-/* The way back to the site the playground lives on. Same tab: the
-   playground is a place you went to, not a popup over the docs. */
-.app-bar .home { color: var(--muted); text-decoration: none; font-size: 12px; white-space: nowrap; }
-.app-bar .home:hover { color: var(--accent); }
+/* The mark is the way to the site the playground lives on — in a new
+   tab, so the model being worked on stays open behind it. */
+.brand-home { flex: none; display: block; border-radius: 6px; }
+.brand-home:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
-/* The mark and title double as the way back to Models, for switching
+/* The title doubles as the way back to Models, for switching
    or managing what's loaded — see `renderSplash` for the full-page
    equivalent shown, unrequested, while nothing is loaded yet. */
 .brand-link {
@@ -198,10 +198,7 @@ body.f-dark .disclaimer { background: #2d2408; color: #fcd34d; border-bottom-col
 @media (max-width: 760px) {
   .app-bar .menu-btn { display: inline-flex; }
   .app-bar { gap: 6px; padding: 8px 10px; }
-  /* No room left in the bar's budget below; the footer links back too. */
-  .app-bar .home { display: none; }
-  .brand-link { gap: 8px; }
-  .brand-link h1 { display: none; }
+  .brand-link { display: none; }
   /* Everything else in the bar is fixed-width (~266px of icons, gaps
      and padding at this breakpoint's sizes) — the name gets whatever
      is left of the screen, not a fraction of it. A vw-based cap falls
