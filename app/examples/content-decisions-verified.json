@@ -1,6 +1,6 @@
 {
-  "$schema": "https://dcb.events/schemas/model/v7.json",
-  "dcbModelVersion": "7.0",
+  "$schema": "https://dcb.events/schemas/model/v8.json",
+  "dcbModelVersion": "8.0",
   "name": "Content based decisions (client-verified)",
   "customTypeDefinitions": [
     {
@@ -33,6 +33,9 @@
           "isOptional": false,
           "isList": false
         }
+      ],
+      "tags": [
+        "id"
       ]
     },
     {
@@ -50,6 +53,9 @@
           "isOptional": false,
           "isList": false
         }
+      ],
+      "tags": [
+        "docId"
       ]
     },
     {
@@ -67,6 +73,9 @@
           "isOptional": false,
           "isList": false
         }
+      ],
+      "tags": [
+        "docId"
       ]
     },
     {
@@ -78,37 +87,20 @@
           "isOptional": false,
           "isList": false
         }
+      ],
+      "tags": [
+        "docId"
       ]
     }
   ],
-  "entityDefinitions": [
-    {
-      "name": "Document",
-      "icon": "📄",
-      "properties": [
-        {
-          "name": "status",
-          "projection": "DocumentLifecycle"
-        },
-        {
-          "name": "currentText",
-          "projection": "DocumentCurrentText"
-        },
-        {
-          "name": "publishedText",
-          "projection": "DocumentPublishedText"
-        }
-      ],
-      "lifecycle": "status"
-    }
-  ],
+  "entityDefinitions": [],
   "projectionDefinitions": [
     {
       "name": "DocumentLifecycle",
-      "parameters": [
+      "tags": [
         {
           "name": "documentId",
-          "propertyType": "DocumentId"
+          "tagType": "DocumentId"
         }
       ],
       "valueType": "DocumentLifecycle",
@@ -142,10 +134,10 @@
     },
     {
       "name": "DocumentCurrentText",
-      "parameters": [
+      "tags": [
         {
           "name": "documentId",
-          "propertyType": "DocumentId"
+          "tagType": "DocumentId"
         }
       ],
       "valueType": "string",
@@ -168,10 +160,10 @@
     },
     {
       "name": "DocumentPublishedText",
-      "parameters": [
+      "tags": [
         {
           "name": "documentId",
-          "propertyType": "DocumentId"
+          "tagType": "DocumentId"
         }
       ],
       "valueType": "string",
@@ -191,8 +183,6 @@
   "commandDefinitions": [
     {
       "name": "AddDocument",
-      "feature": "Document Authoring",
-      "icon": "⭐",
       "properties": [
         {
           "name": "id",
@@ -201,20 +191,16 @@
           "isList": false
         }
       ],
-      "boundary": [
-        {
-          "alias": "document",
-          "entity": "Document",
-          "id": {
-            "parameterName": "id"
-          }
-        }
-      ],
+      "boundary": [],
       "conditions": [
         {
           "leftHandSide": {
-            "alias": "document",
-            "property": "status"
+            "projection": "DocumentLifecycle",
+            "tags": {
+              "documentId": {
+                "parameterName": "id"
+              }
+            }
           },
           "predicate": "equals",
           "rightHandSide": {
@@ -236,8 +222,6 @@
     },
     {
       "name": "UpdateText",
-      "feature": "Document Authoring",
-      "icon": "✏️",
       "properties": [
         {
           "name": "docId",
@@ -252,20 +236,16 @@
           "isList": false
         }
       ],
-      "boundary": [
-        {
-          "alias": "document",
-          "entity": "Document",
-          "id": {
-            "parameterName": "docId"
-          }
-        }
-      ],
+      "boundary": [],
       "conditions": [
         {
           "leftHandSide": {
-            "alias": "document",
-            "property": "status"
+            "projection": "DocumentLifecycle",
+            "tags": {
+              "documentId": {
+                "parameterName": "docId"
+              }
+            }
           },
           "predicate": "equalsAny",
           "rightHandSide": [
@@ -280,8 +260,12 @@
         },
         {
           "leftHandSide": {
-            "alias": "document",
-            "property": "currentText"
+            "projection": "DocumentCurrentText",
+            "tags": {
+              "documentId": {
+                "parameterName": "docId"
+              }
+            }
           },
           "predicate": "equals",
           "rightHandSide": {
@@ -307,8 +291,6 @@
     },
     {
       "name": "PublishDocument",
-      "feature": "Document Authoring",
-      "icon": "💾",
       "properties": [
         {
           "name": "docId",
@@ -323,20 +305,16 @@
           "isList": false
         }
       ],
-      "boundary": [
-        {
-          "alias": "document",
-          "entity": "Document",
-          "id": {
-            "parameterName": "docId"
-          }
-        }
-      ],
+      "boundary": [],
       "conditions": [
         {
           "leftHandSide": {
-            "alias": "document",
-            "property": "status"
+            "projection": "DocumentLifecycle",
+            "tags": {
+              "documentId": {
+                "parameterName": "docId"
+              }
+            }
           },
           "predicate": "equalsAny",
           "rightHandSide": [
@@ -351,8 +329,12 @@
         },
         {
           "leftHandSide": {
-            "alias": "document",
-            "property": "currentText"
+            "projection": "DocumentCurrentText",
+            "tags": {
+              "documentId": {
+                "parameterName": "docId"
+              }
+            }
           },
           "predicate": "equals",
           "rightHandSide": {
@@ -366,8 +348,12 @@
           },
           "predicate": "equals",
           "rightHandSide": {
-            "alias": "document",
-            "property": "publishedText"
+            "projection": "DocumentPublishedText",
+            "tags": {
+              "documentId": {
+                "parameterName": "docId"
+              }
+            }
           },
           "negate": true,
           "rejection": "No changes to publish"
@@ -389,8 +375,6 @@
     },
     {
       "name": "ArchiveDocument",
-      "feature": "Document Authoring",
-      "icon": "🗑️",
       "properties": [
         {
           "name": "docId",
@@ -399,20 +383,16 @@
           "isList": false
         }
       ],
-      "boundary": [
-        {
-          "alias": "document",
-          "entity": "Document",
-          "id": {
-            "parameterName": "docId"
-          }
-        }
-      ],
+      "boundary": [],
       "conditions": [
         {
           "leftHandSide": {
-            "alias": "document",
-            "property": "status"
+            "projection": "DocumentLifecycle",
+            "tags": {
+              "documentId": {
+                "parameterName": "docId"
+              }
+            }
           },
           "predicate": "equalsAny",
           "rightHandSide": [
@@ -671,8 +651,11 @@
       "id": "92754bc8-d112-4520-acf8-f8502a99a83a",
       "name": "holds the proven text after publishing",
       "projection": "DocumentPublishedText",
-      "arguments": {
-        "documentId": "d1"
+      "tags": {
+        "documentId": {
+          "tagType": "DocumentId",
+          "tagValue": "d1"
+        }
       },
       "given": [
         {

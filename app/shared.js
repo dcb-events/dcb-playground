@@ -1,6 +1,6 @@
 // ============================================================
 // Everything the interface needs that is not the model: DOM helpers,
-// the simple / advanced mode, and the *slice* view — everything one
+// the experimental-features flag, and the *slice* view — everything one
 // command touches, gathered here so the page never has to walk the
 // definition graph itself.
 //
@@ -525,20 +525,92 @@ function createScriptEditorEntry(key) {
   return entry;
 }
 
-// ---------- simple / advanced ----------
+// ---------- experimental features ----------
 //
-// Advanced hides nothing structural — it only decides whether the parts
-// a first model never needs are on screen: identifier schemas, custom
-// types, projections, and the derived consistency boundary.
+// Everything that is DCB is always on screen: types, events, projections,
+// the consistency boundary each command derives. What the examples on
+// dcb.events never need — entities and their lifecycles, derived
+// projections, guarded emissions, the overview pages, annotations
+// (`EXPERIMENTAL_FEATURES`, model.js) — waits behind this flag.
+//
+// It gates *authoring*, never reading: a model that already uses an
+// experimental feature still loads, renders and evaluates it, and the
+// page says which ones it found (`experimentalFeatures`). A share link
+// may switch it on for one session (`&experimental`) without touching
+// the stored choice — following a link never changes a setting.
 //
 // How it is offered is the page's business, not this file's: it is one
 // of the interface's own settings, and they are collected in one place
 // rather than scattered along the top of the window.
 
-const MODE_KEY = 'dcb-playground:mode';
-function mode() { return localStorage.getItem(MODE_KEY) === 'advanced' ? 'advanced' : 'simple'; }
-function advanced() { return mode() === 'advanced'; }
-function setMode(next) { localStorage.setItem(MODE_KEY, next); if (typeof render === 'function') render(); }
+const EXPERIMENTAL_KEY = 'dcb-playground:experimental';
+let experimentalThisSession = false;
+function experimental() {
+  return experimentalThisSession || localStorage.getItem(EXPERIMENTAL_KEY) === 'on';
+}
+function setExperimental(on) {
+  experimentalThisSession = false;
+  if (on) localStorage.setItem(EXPERIMENTAL_KEY, 'on');
+  else localStorage.removeItem(EXPERIMENTAL_KEY);
+  if (typeof render === 'function') render();
+}
+function enableExperimentalForSession() { experimentalThisSession = true; }
+
+// ---------- the documentation ----------
+//
+// The help is the documentation itself: the notation guide and its
+// reference on dcb.events, opened in a new tab at the anchor for what
+// the reader is looking at. The page explains nothing twice — an `ⓘ`
+// says the one line a section needs and links on from there.
+//
+// The anchors are a contract with the website: its build fails on a
+// link `helpReferenceLinks` lists that it does not define, so renaming
+// one is a change on both sides. Until the website has pages for what
+// 8.0 added (a projection's and an event's `tag`, `untagged`, `alias`,
+// reads in place), those link the nearest page it has — the list of
+// what is owed is in docs/research/2026-10-05-explicit-tags-and-aliases.md.
+
+const NOTATION_GUIDE_URL = 'https://dcb.events/notation/';
+const NOTATION_REFERENCE_URL = 'https://dcb.events/notation/reference/';
+const NOTATION_ANCHORS = [
+  'model', 'comments', 'literals', 'annotations', 'json', 'tag-type', 'type', 'enum', 'record', 'event',
+  'projection', 'on', 'event-data', 'successor', 'current-value', 'entity', 'lifecycle', 'require',
+  'derived', 'script', 'command', 'read', 'read-entity', 'fan-out', 'optional-read', 'with', 'emit',
+  'emit-when', 'consistency-boundary', 'scenario', 'projection-scenario',
+];
+
+function notationReference(anchor) {
+  return NOTATION_ANCHORS.includes(anchor) ? NOTATION_REFERENCE_URL + '#' + anchor : NOTATION_GUIDE_URL;
+}
+
+// Every page of dcb.events this page links to, with its anchor: what
+// the site's build checks against the pages it has just built.
+function helpReferenceLinks() {
+  return [NOTATION_GUIDE_URL, ...NOTATION_ANCHORS.map((anchor) => NOTATION_REFERENCE_URL + '#' + anchor)];
+}
+
+// Where the reference explains a definition. The body decides between
+// the three kinds of projection; the rest are one anchor per kind.
+function docsAnchorFor(kind, body) {
+  if (kind === 'projection-definition' && body) {
+    if (body.script) return 'script';
+    if (body.derived) return 'derived';
+  }
+  return {
+    'custom-type-definition': body && body.isTag ? 'tag-type' : 'type',
+    'event-definition': 'event',
+    'entity-definition': 'entity',
+    'projection-definition': 'projection',
+    'command-definition': 'command',
+    'scenario-definition': 'scenario',
+    'projection-scenario-definition': 'projection-scenario',
+  }[kind] || null;
+}
+
+// The documentation, in a new tab — never in place of the model.
+function openDocs(url) {
+  if (typeof window !== 'undefined' && window.open) window.open(url || NOTATION_GUIDE_URL, '_blank', 'noopener');
+}
 
 // ---------- light / dark ----------
 //
@@ -556,8 +628,11 @@ function setMode(next) { localStorage.setItem(MODE_KEY, next); if (typeof render
 // it is the host's business — nothing here knows it.
 
 const THEME_KEY = 'dcb-playground:theme';
+// Guarded, like the listeners below: dcb.events loads this file outside
+// a browser to read `helpReferenceLinks`, and nothing at load may need
+// a window there.
 function hostTheme() {
-  const host = window.DCB_PLAYGROUND_HOST;
+  const host = typeof window !== 'undefined' ? window.DCB_PLAYGROUND_HOST : null;
   return host && host.theme && typeof host.theme.get === 'function' ? host.theme : null;
 }
 function theme() {
@@ -586,7 +661,7 @@ function isDark() {
 }
 // Only "system" cares about this firing — an explicit choice already
 // repaints itself the moment it is made.
-if (window.matchMedia) {
+if (typeof window !== 'undefined' && window.matchMedia) {
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
     if (theme() === 'system' && typeof render === 'function') render();
   });
@@ -1262,8 +1337,7 @@ function eventModel(model) {
   };
   const tagsOf = (eventName) => {
     const definition = model['event-definitions'][eventName];
-    const tags = (definition && definition.properties || [])
-      .flatMap((property) => idLeavesOfType(model, property.propertyType).map((leaf) => leaf.identifierType));
+    const tags = eventTagLeaves(model, definition).map((leaf) => leaf.identifierType);
     return [...new Set(tags)];
   };
 
@@ -1552,7 +1626,9 @@ function projectionReaders(model, projectionName) {
   const owners = boundAs(model, projectionName);
   const readers = [];
   for (const [command, body] of Object.entries(model['command-definitions'])) {
-    let reads = (body.boundary || []).some((b) => b.projection === projectionName);
+    // An alias's read, or one in place — the same read either way.
+    let reads = (body.boundary || []).some((b) => b.projection === projectionName)
+      || inlineReads(body).some(({ read }) => read.projection === projectionName);
     if (!reads) {
       // Every (alias, property) pair that lands on this projection: an
       // alias bound to an entity that calls it something, under the
@@ -1578,8 +1654,8 @@ function projectionReaders(model, projectionName) {
 //
 // A modeler types "define course"; the model stores `DefineCourse`. The
 // PascalCase is the schema's business, not the author's, so it is
-// derived on the way in and unwound on the way out. Advanced mode shows
-// the stored identifier beside the label for anyone who wants it.
+// derived on the way in and unwound on the way out. The stored
+// identifier rides beside the label, for anyone who wants it.
 
 function toPascal(label) {
   return String(label || '').split(/[^A-Za-z0-9]+/).filter(Boolean)
@@ -1670,10 +1746,15 @@ function operandWords(operand) {
     // the tokens they are rather than as descriptions of themselves.
     case 'current-value': return 'currentValue';
     case 'successor': return `successor(${operandWords(operand.successor)})`;
-    // A derived predicate's read of another projection. The arguments
-    // are not said — the partition is shared, and the editor is where
-    // it is spelled out.
-    case 'projection-read': return readable(operand.projection || '?');
+    // A projection read in place — the values it gives its tags said
+    // the way a read card says them.
+    case 'projection-read': {
+      const said = readTagOperands(operand)
+        .map((tag) => (operandSource(tag) === 'tag-literal' ? operandText(tag) : operandWords(tag)));
+      return readable(operand.projection || '?') + (said.length ? ' tagged ' + said.join(' and ') : '');
+    }
+    case 'tag-literal': return operandText(operand);
+    case 'each': return 'each ' + operandWords(operand.each);
     default:
       if (typeof operand === 'string') return `"${operand}"`;
       // A record a scripted projection folded to is a static value
@@ -1836,15 +1917,18 @@ function readParts(model, body, binding) {
       alias: binding.alias,
       projection: binding.projection,
       plural: false,
-      // One entry per name the projection declares, in its order. For
-      // a declared projection these arguments *are* the tags of its
-      // query; for a scripted one they are values its code reads, and
-      // the tags are stated in the script itself.
-      arguments: ((projection.script ? projection.script.arguments : projection.parameters) || [])
-        .map((p) => ({
-          name: p.name,
-          words: operandWords((binding.arguments || {})[p.name]),
-        })),
+      // What it is read by — a value for each tag it declares, in the
+      // command's scope or a literal with its type — and the values a
+      // script's code reads besides.
+      tags: readTagEntries(binding).map(([name, operand]) => ({
+        name,
+        operand,
+        words: operandSource(operand) === 'tag-literal' ? operandText(operand) : operandWords(operand),
+      })),
+      arguments: projectionSlots(projection).map((p) => ({
+        name: p.name,
+        words: operandWords((binding.arguments || {})[p.name]),
+      })),
     };
   }
   return {
@@ -1937,7 +2021,7 @@ function eventIcon(model, name) {
   return '';
 }
 
-// Shown beside the type, never behind the Advanced gate: a value
+// Shown beside the type, never behind a gate: a value
 // arrived at by code, or worked out from other projections, is a
 // different kind of claim from one arrived at by a declaration, and a
 // rule reading it should say so on the page.

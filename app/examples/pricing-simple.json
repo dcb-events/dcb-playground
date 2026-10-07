@@ -1,6 +1,6 @@
 {
-  "$schema": "https://dcb.events/schemas/model/v7.json",
-  "dcbModelVersion": "7.0",
+  "$schema": "https://dcb.events/schemas/model/v8.json",
+  "dcbModelVersion": "8.0",
   "name": "Dynamic Product Price (simple)",
   "customTypeDefinitions": [
     {
@@ -54,6 +54,9 @@
           "isOptional": false,
           "isList": false
         }
+      ],
+      "tags": [
+        "productId"
       ]
     },
     {
@@ -71,6 +74,9 @@
           "isOptional": false,
           "isList": false
         }
+      ],
+      "tags": [
+        "productId"
       ]
     },
     {
@@ -88,44 +94,21 @@
           "isOptional": false,
           "isList": true
         }
+      ],
+      "tags": [
+        "orderId",
+        "items.productId"
       ]
     }
   ],
-  "entityDefinitions": [
-    {
-      "name": "Product",
-      "icon": "📦",
-      "properties": [
-        {
-          "name": "exists",
-          "projection": "ProductExists"
-        },
-        {
-          "name": "currentPrice",
-          "projection": "ProductCurrentPrice"
-        }
-      ],
-      "lifecycle": "exists"
-    },
-    {
-      "name": "Order",
-      "icon": "🧾",
-      "properties": [
-        {
-          "name": "exists",
-          "projection": "OrderExists"
-        }
-      ],
-      "lifecycle": "exists"
-    }
-  ],
+  "entityDefinitions": [],
   "projectionDefinitions": [
     {
       "name": "ProductExists",
-      "parameters": [
+      "tags": [
         {
           "name": "productId",
-          "propertyType": "ProductId"
+          "tagType": "ProductId"
         }
       ],
       "valueType": "boolean",
@@ -141,10 +124,10 @@
     },
     {
       "name": "ProductCurrentPrice",
-      "parameters": [
+      "tags": [
         {
           "name": "productId",
-          "propertyType": "ProductId"
+          "tagType": "ProductId"
         }
       ],
       "valueType": "Money",
@@ -169,10 +152,10 @@
     },
     {
       "name": "OrderExists",
-      "parameters": [
+      "tags": [
         {
           "name": "orderId",
-          "propertyType": "OrderId"
+          "tagType": "OrderId"
         }
       ],
       "valueType": "boolean",
@@ -190,7 +173,6 @@
   "commandDefinitions": [
     {
       "name": "DefineProduct",
-      "feature": "Catalogue",
       "properties": [
         {
           "name": "productId",
@@ -205,20 +187,16 @@
           "isList": false
         }
       ],
-      "boundary": [
-        {
-          "alias": "product",
-          "entity": "Product",
-          "id": {
-            "parameterName": "productId"
-          }
-        }
-      ],
+      "boundary": [],
       "conditions": [
         {
           "leftHandSide": {
-            "alias": "product",
-            "property": "exists"
+            "projection": "ProductExists",
+            "tags": {
+              "productId": {
+                "parameterName": "productId"
+              }
+            }
           },
           "predicate": "isFalse",
           "rejection": "Product already exists"
@@ -240,7 +218,6 @@
     },
     {
       "name": "ChangeProductPrice",
-      "feature": "Catalogue",
       "properties": [
         {
           "name": "productId",
@@ -255,28 +232,28 @@
           "isList": false
         }
       ],
-      "boundary": [
-        {
-          "alias": "product",
-          "entity": "Product",
-          "id": {
-            "parameterName": "productId"
-          }
-        }
-      ],
+      "boundary": [],
       "conditions": [
         {
           "leftHandSide": {
-            "alias": "product",
-            "property": "exists"
+            "projection": "ProductExists",
+            "tags": {
+              "productId": {
+                "parameterName": "productId"
+              }
+            }
           },
           "predicate": "isTrue",
           "rejection": "Product does not exist"
         },
         {
           "leftHandSide": {
-            "alias": "product",
-            "property": "currentPrice"
+            "projection": "ProductCurrentPrice",
+            "tags": {
+              "productId": {
+                "parameterName": "productId"
+              }
+            }
           },
           "predicate": "equals",
           "rightHandSide": {
@@ -302,7 +279,6 @@
     },
     {
       "name": "OrderProducts",
-      "feature": "Checkout",
       "properties": [
         {
           "name": "orderId",
@@ -317,44 +293,46 @@
           "isList": true
         }
       ],
-      "boundary": [
-        {
-          "alias": "order",
-          "entity": "Order",
-          "id": {
-            "parameterName": "orderId"
-          }
-        },
-        {
-          "alias": "product",
-          "entity": "Product",
-          "id": {
-            "parameterName": "items",
-            "property": "productId"
-          }
-        }
-      ],
+      "boundary": [],
       "conditions": [
         {
           "leftHandSide": {
-            "alias": "order",
-            "property": "exists"
+            "projection": "OrderExists",
+            "tags": {
+              "orderId": {
+                "parameterName": "orderId"
+              }
+            }
           },
           "predicate": "isFalse",
           "rejection": "Order was already placed"
         },
         {
           "leftHandSide": {
-            "alias": "product",
-            "property": "exists"
+            "projection": "ProductExists",
+            "tags": {
+              "productId": {
+                "each": {
+                  "parameterName": "items",
+                  "property": "productId"
+                }
+              }
+            }
           },
           "predicate": "isTrue",
           "rejection": "Product does not exist"
         },
         {
           "leftHandSide": {
-            "alias": "product",
-            "property": "currentPrice"
+            "projection": "ProductCurrentPrice",
+            "tags": {
+              "productId": {
+                "each": {
+                  "parameterName": "items",
+                  "property": "productId"
+                }
+              }
+            }
           },
           "predicate": "equals",
           "rightHandSide": {

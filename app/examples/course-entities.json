@@ -1,7 +1,7 @@
 {
   "$schema": "https://dcb.events/schemas/model/v8.json",
   "dcbModelVersion": "8.0",
-  "name": "Course Example (with sequence and tenant)",
+  "name": "Course Example (with entities)",
   "customTypeDefinitions": [
     {
       "name": "CourseStatus",
@@ -24,36 +24,15 @@
     {
       "name": "CourseId",
       "schema": {
-        "type": "string",
-        "pattern": "^c[0-9]+$"
-      },
-      "isTag": true
-    },
-    {
-      "name": "TenantId",
-      "schema": {
         "type": "string"
       },
       "isTag": true
-    },
-    {
-      "name": "CourseNumber",
-      "schema": {
-        "type": "string",
-        "pattern": "^[0-9]+$"
-      }
     }
   ],
   "eventDefinitions": [
     {
       "name": "CourseDefined",
       "properties": [
-        {
-          "name": "tenantId",
-          "propertyType": "TenantId",
-          "isOptional": false,
-          "isList": false
-        },
         {
           "name": "courseId",
           "propertyType": "CourseId",
@@ -65,16 +44,9 @@
           "propertyType": "integer",
           "isOptional": false,
           "isList": false
-        },
-        {
-          "name": "courseNumber",
-          "propertyType": "CourseNumber",
-          "isOptional": false,
-          "isList": false
         }
       ],
       "tags": [
-        "tenantId",
         "courseId"
       ]
     },
@@ -167,23 +139,48 @@
         "courseId",
         "studentId"
       ]
-    },
-    {
-      "name": "TenantRegistered",
-      "properties": [
-        {
-          "name": "tenantId",
-          "propertyType": "TenantId",
-          "isOptional": false,
-          "isList": false
-        }
-      ],
-      "tags": [
-        "tenantId"
-      ]
     }
   ],
-  "entityDefinitions": [],
+  "entityDefinitions": [
+    {
+      "name": "Student",
+      "icon": "🧑‍🎓",
+      "properties": [
+        {
+          "name": "exists",
+          "projection": "StudentExists"
+        },
+        {
+          "name": "subscriptionCount",
+          "projection": "StudentSubscriptionCount"
+        }
+      ],
+      "lifecycle": "exists"
+    },
+    {
+      "name": "Course",
+      "icon": "📚",
+      "properties": [
+        {
+          "name": "status",
+          "projection": "CourseStatus"
+        },
+        {
+          "name": "capacity",
+          "projection": "CourseCapacity"
+        },
+        {
+          "name": "subscriptionCount",
+          "projection": "CourseSubscriptionCount"
+        },
+        {
+          "name": "subscribedStudentIds",
+          "projection": "CourseSubscribedStudentIds"
+        }
+      ],
+      "lifecycle": "status"
+    }
+  ],
   "projectionDefinitions": [
     {
       "name": "StudentExists",
@@ -337,75 +334,16 @@
           }
         }
       ]
-    },
-    {
-      "name": "CourseNumbering",
-      "tags": [],
-      "valueType": "CourseId",
-      "isList": false,
-      "initialValue": "c1",
-      "handlers": [
-        {
-          "event": "CourseDefined",
-          "operation": "set",
-          "value": {
-            "successor": {
-              "eventProperty": "courseId"
-            }
-          }
-        }
-      ]
-    },
-    {
-      "name": "TenantExists",
-      "tags": [
-        {
-          "name": "tenantId",
-          "tagType": "TenantId"
-        }
-      ],
-      "valueType": "boolean",
-      "isList": false,
-      "initialValue": false,
-      "handlers": [
-        {
-          "event": "TenantRegistered",
-          "operation": "set",
-          "value": true
-        }
-      ]
-    },
-    {
-      "name": "TenantCourseNumbering",
-      "tags": [
-        {
-          "name": "tenantId",
-          "tagType": "TenantId"
-        }
-      ],
-      "valueType": "CourseNumber",
-      "isList": false,
-      "initialValue": "1",
-      "handlers": [
-        {
-          "event": "CourseDefined",
-          "operation": "set",
-          "value": {
-            "successor": {
-              "eventProperty": "courseNumber"
-            }
-          }
-        }
-      ]
     }
   ],
   "commandDefinitions": [
     {
       "name": "DefineCourse",
+      "feature": "Course management",
       "properties": [
         {
-          "name": "tenantId",
-          "propertyType": "TenantId",
+          "name": "courseId",
+          "propertyType": "CourseId",
           "isOptional": false,
           "isList": false
         },
@@ -418,32 +356,24 @@
       ],
       "boundary": [
         {
-          "alias": "courseNumbering",
-          "projection": "CourseNumbering",
-          "tags": {}
-        },
-        {
-          "alias": "tenantCourseNumbering",
-          "projection": "TenantCourseNumbering",
-          "tags": {
-            "tenantId": {
-              "parameterName": "tenantId"
-            }
+          "alias": "course",
+          "entity": "Course",
+          "id": {
+            "parameterName": "courseId"
           }
         }
       ],
       "conditions": [
         {
           "leftHandSide": {
-            "projection": "TenantExists",
-            "tags": {
-              "tenantId": {
-                "parameterName": "tenantId"
-              }
-            }
+            "alias": "course",
+            "property": "status"
           },
-          "predicate": "isTrue",
-          "rejection": "Tenant is not registered"
+          "predicate": "equals",
+          "rightHandSide": {
+            "enumMember": "NonExistent"
+          },
+          "rejection": "Course already exists"
         }
       ],
       "publishes": [
@@ -451,16 +381,10 @@
           "name": "CourseDefined",
           "parameters": {
             "courseId": {
-              "alias": "courseNumbering"
+              "parameterName": "courseId"
             },
             "capacity": {
               "parameterName": "capacity"
-            },
-            "tenantId": {
-              "parameterName": "tenantId"
-            },
-            "courseNumber": {
-              "alias": "tenantCourseNumbering"
             }
           }
         }
@@ -468,6 +392,7 @@
     },
     {
       "name": "ChangeCourseCapacity",
+      "feature": "Course management",
       "properties": [
         {
           "name": "courseId",
@@ -482,16 +407,20 @@
           "isList": false
         }
       ],
-      "boundary": [],
+      "boundary": [
+        {
+          "alias": "course",
+          "entity": "Course",
+          "id": {
+            "parameterName": "courseId"
+          }
+        }
+      ],
       "conditions": [
         {
           "leftHandSide": {
-            "projection": "CourseStatus",
-            "tags": {
-              "courseId": {
-                "parameterName": "courseId"
-              }
-            }
+            "alias": "course",
+            "property": "status"
           },
           "predicate": "equals",
           "rightHandSide": {
@@ -501,12 +430,8 @@
         },
         {
           "leftHandSide": {
-            "projection": "CourseSubscriptionCount",
-            "tags": {
-              "courseId": {
-                "parameterName": "courseId"
-              }
-            }
+            "alias": "course",
+            "property": "subscriptionCount"
           },
           "predicate": "lessThanOrEquals",
           "rightHandSide": {
@@ -531,6 +456,7 @@
     },
     {
       "name": "ArchiveCourse",
+      "feature": "Course management",
       "properties": [
         {
           "name": "courseId",
@@ -539,16 +465,20 @@
           "isList": false
         }
       ],
-      "boundary": [],
+      "boundary": [
+        {
+          "alias": "course",
+          "entity": "Course",
+          "id": {
+            "parameterName": "courseId"
+          }
+        }
+      ],
       "conditions": [
         {
           "leftHandSide": {
-            "projection": "CourseStatus",
-            "tags": {
-              "courseId": {
-                "parameterName": "courseId"
-              }
-            }
+            "alias": "course",
+            "property": "status"
           },
           "predicate": "equals",
           "rightHandSide": {
@@ -570,6 +500,7 @@
     },
     {
       "name": "RegisterStudent",
+      "feature": "Student registration",
       "properties": [
         {
           "name": "studentId",
@@ -578,16 +509,20 @@
           "isList": false
         }
       ],
-      "boundary": [],
+      "boundary": [
+        {
+          "alias": "student",
+          "entity": "Student",
+          "id": {
+            "parameterName": "studentId"
+          }
+        }
+      ],
       "conditions": [
         {
           "leftHandSide": {
-            "projection": "StudentExists",
-            "tags": {
-              "studentId": {
-                "parameterName": "studentId"
-              }
-            }
+            "alias": "student",
+            "property": "exists"
           },
           "predicate": "isFalse",
           "rejection": "Student is already registered"
@@ -606,6 +541,7 @@
     },
     {
       "name": "SubscribeStudentToCourse",
+      "feature": "Enrolment",
       "properties": [
         {
           "name": "courseId",
@@ -620,16 +556,27 @@
           "isList": false
         }
       ],
-      "boundary": [],
+      "boundary": [
+        {
+          "alias": "course",
+          "entity": "Course",
+          "id": {
+            "parameterName": "courseId"
+          }
+        },
+        {
+          "alias": "student",
+          "entity": "Student",
+          "id": {
+            "parameterName": "studentId"
+          }
+        }
+      ],
       "conditions": [
         {
           "leftHandSide": {
-            "projection": "CourseStatus",
-            "tags": {
-              "courseId": {
-                "parameterName": "courseId"
-              }
-            }
+            "alias": "course",
+            "property": "status"
           },
           "predicate": "equals",
           "rightHandSide": {
@@ -639,44 +586,28 @@
         },
         {
           "leftHandSide": {
-            "projection": "StudentExists",
-            "tags": {
-              "studentId": {
-                "parameterName": "studentId"
-              }
-            }
+            "alias": "student",
+            "property": "exists"
           },
           "predicate": "isTrue",
           "rejection": "Student is not registered"
         },
         {
           "leftHandSide": {
-            "projection": "CourseSubscriptionCount",
-            "tags": {
-              "courseId": {
-                "parameterName": "courseId"
-              }
-            }
+            "alias": "course",
+            "property": "subscriptionCount"
           },
           "predicate": "lessThan",
           "rightHandSide": {
-            "projection": "CourseCapacity",
-            "tags": {
-              "courseId": {
-                "parameterName": "courseId"
-              }
-            }
+            "alias": "course",
+            "property": "capacity"
           },
           "rejection": "Course is full"
         },
         {
           "leftHandSide": {
-            "projection": "CourseSubscribedStudentIds",
-            "tags": {
-              "courseId": {
-                "parameterName": "courseId"
-              }
-            }
+            "alias": "course",
+            "property": "subscribedStudentIds"
           },
           "predicate": "contains",
           "rightHandSide": {
@@ -687,12 +618,8 @@
         },
         {
           "leftHandSide": {
-            "projection": "StudentSubscriptionCount",
-            "tags": {
-              "studentId": {
-                "parameterName": "studentId"
-              }
-            }
+            "alias": "student",
+            "property": "subscriptionCount"
           },
           "predicate": "lessThan",
           "rightHandSide": 10,
@@ -715,6 +642,7 @@
     },
     {
       "name": "UnsubscribeStudentFromCourse",
+      "feature": "Enrolment",
       "properties": [
         {
           "name": "courseId",
@@ -729,16 +657,20 @@
           "isList": false
         }
       ],
-      "boundary": [],
+      "boundary": [
+        {
+          "alias": "course",
+          "entity": "Course",
+          "id": {
+            "parameterName": "courseId"
+          }
+        }
+      ],
       "conditions": [
         {
           "leftHandSide": {
-            "projection": "CourseStatus",
-            "tags": {
-              "courseId": {
-                "parameterName": "courseId"
-              }
-            }
+            "alias": "course",
+            "property": "status"
           },
           "predicate": "equals",
           "rightHandSide": {
@@ -748,12 +680,8 @@
         },
         {
           "leftHandSide": {
-            "projection": "CourseSubscribedStudentIds",
-            "tags": {
-              "courseId": {
-                "parameterName": "courseId"
-              }
-            }
+            "alias": "course",
+            "property": "subscribedStudentIds"
           },
           "predicate": "contains",
           "rightHandSide": {
@@ -771,42 +699,6 @@
             },
             "studentId": {
               "parameterName": "studentId"
-            }
-          }
-        }
-      ]
-    },
-    {
-      "name": "RegisterTenant",
-      "properties": [
-        {
-          "name": "tenantId",
-          "propertyType": "TenantId",
-          "isOptional": false,
-          "isList": false
-        }
-      ],
-      "boundary": [],
-      "conditions": [
-        {
-          "leftHandSide": {
-            "projection": "TenantExists",
-            "tags": {
-              "tenantId": {
-                "parameterName": "tenantId"
-              }
-            }
-          },
-          "predicate": "isFalse",
-          "rejection": "Tenant is already registered"
-        }
-      ],
-      "publishes": [
-        {
-          "name": "TenantRegistered",
-          "parameters": {
-            "tenantId": {
-              "parameterName": "tenantId"
             }
           }
         }

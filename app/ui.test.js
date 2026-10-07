@@ -28,11 +28,12 @@ const { sandbox, store } = createSandbox();
 // scope, not as properties of the context object — the same as they
 // would on `window` in a browser. The trailer hands out the few this
 // drives, the way `generate-examples.js` reaches `PREDEFINED_MODELS`.
-loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js', 'help.js', 'shared.js'], {
+loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js', 'shared.js'], {
   withPage: true,
   trailer: 'globalThis.state = state; globalThis.render = render; globalThis.session = session;'
     + ' globalThis.closeForms = closeForms; globalThis.codeView = codeView;'
-    + ' globalThis.HELP_TOPICS = HELP_TOPICS;',
+    + ' globalThis.PREDEFINED_MODELS = PREDEFINED_MODELS;'
+    + ' globalThis.NOTATION_GUIDE_URL = NOTATION_GUIDE_URL; globalThis.NOTATION_REFERENCE_URL = NOTATION_REFERENCE_URL;',
 });
 const { check, eq, finish } = makeChecker();
 
@@ -45,11 +46,43 @@ const {
   createDcbModel, partitionCells, projectionScenariosFor,
 } = sandbox;
 
+// An event a fixture adds, tagged by every tag-typed value it holds —
+// what an author listing them all would write. Events are tagged only
+// by what they list (8.0); fixtures that test the list itself spell
+// `tags` out, and this leaves a given list alone.
+function addTaggedEvent(id, name, body) {
+  const tags = body.tags || sandbox.tagPathsOf(sandbox.projectState()[id], body.properties);
+  return sandbox.addDefinition('event-definition', id, name, { ...body, tags });
+}
+
+// The course example with entities — what `course-simple` was before the
+// shipped models were stated without them. Tests about entities,
+// lifecycles and entity reads build this one.
+const ENTITIES = sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-entities');
+// Entities and a numbering both: the one shipped model that still has
+// the two together.
+const SCHEDULES = sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-schedules');
+
+// A model built from seed layers alone — the entity form a shipped
+// model is stated without (`seedWithoutEntities`), for the tests about
+// entities and lifecycles that the shipped forms no longer have.
+function seeded(name, ...seeds) {
+  store.clear();
+  sandbox.bumpLogRevision();
+  store.set('dcb-playground:experimental', 'on');
+  const id = sandbox.createDcbModel(name);
+  for (const seed of seeds) sandbox[seed](id);
+  return { id, model: () => projectState()[id] };
+}
+
 function build(index) {
   // Clearing the store is a write `appendEvents` never sees, so the
   // projection cache is told the world moved underneath it.
   store.clear();
   sandbox.bumpLogRevision();
+  // Most of what is exercised here is entity authoring, which is
+  // experimental; the flag-off pages have their own block.
+  store.set('dcb-playground:experimental', 'on');
   const id = loadPredefinedModel(index);
   return { id, model: () => projectState()[id] };
 }
@@ -58,7 +91,7 @@ function build(index) {
 // The draft a projection is edited as, and the body it becomes.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
 
   check('a draft round-trips a declared projection unchanged', () => {
     const stored = model()['projection-definitions'].CourseCapacity;
@@ -195,7 +228,7 @@ function build(index) {
   check('the guard rows and their editor render without throwing', () => {
     const { id, model } = build(8);
     store.set('dcb-playground:model', id);
-    store.set('dcb-playground:mode', 'advanced');
+    store.set('dcb-playground:experimental', 'on');
     sandbox.state.view = 'slice';
     sandbox.state.slice = 'UpdateText';
     sandbox.render();
@@ -217,7 +250,7 @@ function build(index) {
   check('the derived detail and its editor render without throwing', () => {
     const { id, model } = build(9);
     store.set('dcb-playground:model', id);
-    store.set('dcb-playground:mode', 'advanced');
+    store.set('dcb-playground:experimental', 'on');
     sandbox.state.view = 'entity';
     sandbox.state.entity = 'Document';
     sandbox.state.projDraft = {
@@ -237,7 +270,7 @@ function build(index) {
 // A new projection's draft, and the name a new property gives one.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
 
   check('a blank draft is valid the moment it is created', () => {
     const draft = blankProjectionDraft(model());
@@ -245,9 +278,9 @@ function build(index) {
     eq(model()['projection-definitions'].Untouched.handlers, [], 'nothing moves it yet');
   });
 
-  check("a blank entity property's draft is partitioned by that entity", () => {
-    const draft = blankProjectionDraft(model(), 'Course');
-    eq(draft.parameters, [{ name: 'courseId', propertyType: 'CourseId' }], 'the instance it is kept for');
+  check("a blank entity property's draft is tagged by the entity's identifier", () => {
+    eq(blankProjectionDraft(model(), 'Course').tags, [{ name: 'courseId', tagType: 'CourseId' }], 'the one tag it binds by');
+    eq(blankProjectionDraft(model()).tags, null, 'one read on its own has not said yet');
   });
 
   check('a blank draft starts where its type starts, explicitly', () => {
@@ -283,18 +316,19 @@ function build(index) {
       'a record a scripted projection folded to, as the JSON it is');
   });
 
-  check('a row says what a projection is kept per, as the tag it is', () => {
-    const cells = partitionCells(model(), model()['projection-definitions'].ProductCurrentPrice);
-    eq(cells.length, 1, 'one parameter, one tag');
-    eq(textOf(cells[0]).includes('product id'), true, `got: ${textOf(cells[0])}`);
+  check('a row says what a projection is read by, as the tag it is', () => {
+    const cells = partitionCells(model(), 'ProductCurrentPrice');
+    eq(cells.length, 1, 'one way it is read, one tag');
+    eq(textOf(cells[0]).includes('Product id'), true, `got: ${textOf(cells[0])}`);
     eq(cells[0].className, 'chip tag', 'drawn as a tag');
   });
 
-  check('a projection kept once says so as an absence, not as a tag', () => {
-    const cells = partitionCells(model(), { valueType: 'string', parameters: [], handlers: [] });
+  check('an untagged projection says so as an absence, not as a tag', () => {
+    const numbering = build(1).model();
+    const cells = partitionCells(numbering, 'CourseNumbering');
     eq(cells.length, 1, 'one cell');
     eq(cells[0].className, 'chip unset', 'dashed and unfilled, like every other nothing here');
-    eq(textOf(cells[0]), 'kept once', 'and says what it is');
+    eq(textOf(cells[0]), 'untagged', 'and says what it is');
   });
 
   check('a type reads the same whether it is a member or a projection', () => {
@@ -364,7 +398,7 @@ function build(index) {
 
   check('a declared projection holding a composite is advisory-flagged', () => {
     addDefinition('projection-definition', id, 'ItemSnapshot', {
-      valueType: 'Item', isList: false, initialValue: null, parameters: [], handlers: [],
+      valueType: 'Item', isList: false, initialValue: null, tags: [], handlers: [],
     });
     eq(sandbox.modelAdvisories(model()).some(
       (a) => a.name === 'ItemSnapshot' && /composite/.test(a.message)
@@ -387,7 +421,7 @@ function build(index) {
 // Properties and projections, seen from either side.
 // ---------------------------------------------------------------
 {
-  const { model } = build(0);
+  const { model } = build(ENTITIES);
 
   check('a property resolves to the projection it binds', () => {
     const { binding, projection } = entityPropertyTarget(model(), 'Course', 'capacity');
@@ -486,9 +520,6 @@ function build(index) {
       }
       for (const projection of envelope.projectionDefinitions) {
         conforms(projection, 'ProjectionDefinition', `projection ${projection.name}`, report);
-        for (const parameter of projection.parameters || []) {
-          conforms(parameter, 'ProjectionParameter', `${projection.name}(${parameter.name})`, report);
-        }
         if (projection.script) {
           conforms(projection.script, 'ProjectionScript', `${projection.name}'s script`, report);
         }
@@ -576,8 +607,12 @@ function build(index) {
       if (problems.length) throw new Error(problems.join('; '));
     });
 
+    // An instance reads its properties tagged by its identifier, so a
+    // property fits when every event its projection handles is tagged
+    // by one.
     check(`${slug} binds every property to a projection that exists and fits`, () => {
       const projections = new Map(envelope.projectionDefinitions.map((p) => [p.name, p]));
+      const events = new Map(envelope.eventDefinitions.map((e) => [e.name, e]));
       const problems = [];
       for (const entity of envelope.entityDefinitions) {
         const idType = entity.identifierType || (entity.name + 'Id');
@@ -587,9 +622,13 @@ function build(index) {
             problems.push(`${entity.name}.${binding.name} binds the unknown ${binding.projection}`);
             continue;
           }
-          const slots = projection.script ? projection.script.arguments : projection.parameters;
-          if (!(slots || []).some((s) => s.propertyType === idType)) {
-            problems.push(`${entity.name}.${binding.name} binds ${binding.projection}, which has no ${idType}`);
+          for (const handler of projection.handlers || []) {
+            const event = events.get(handler.event) || { properties: [], tags: [] };
+            const tagged = (event.tags || []).some((path) => {
+              const property = (event.properties || []).find((p) => p.name === path);
+              return property && property.propertyType === idType;
+            });
+            if (!tagged) problems.push(`${entity.name}.${binding.name}: ${handler.event} is tagged by no ${idType}`);
           }
         }
       }
@@ -610,7 +649,7 @@ function build(index) {
 // be the worst kind of passing test.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
   // `run` repaints on success, and a repaint reads whichever model is
   // open — which is stored, not held — so a gesture cannot be driven
   // until one has been opened.
@@ -618,11 +657,10 @@ function build(index) {
   const active = () => sandbox.activeModel();
 
   check('the page renders every view without throwing', () => {
-    // Both modes: Advanced is where the projection editor, the derived
-    // boundary and the stored names live, so a simple-mode-only render
-    // would leave most of what changed untouched.
-    for (const mode of ['simple', 'advanced']) {
-      store.set('dcb-playground:mode', mode);
+    // With the flag both ways: the overview pages and the entity
+    // affordances render only with it on, everything else either way.
+    for (const flag of ['off', 'on']) {
+      store.set('dcb-playground:experimental', flag);
       for (const view of ['overview', 'slice', 'entity', 'types', 'projections', 'events', 'eventmodel', 'map']) {
         sandbox.state.view = view;
         sandbox.state.entity = 'Course';
@@ -639,7 +677,7 @@ function build(index) {
     eq(after['entity-definitions'].Course.properties.slice(-1),
       [{ name: 'seatCount', projection: 'CourseSeatCount' }], 'the binding');
     const projection = after['projection-definitions'].CourseSeatCount;
-    eq(projection.parameters, [{ name: 'courseId', propertyType: 'CourseId' }], 'partitioned by the instance');
+    eq(projection.tags, [{ name: 'courseId', tagType: 'CourseId' }], 'tagged by the entity\'s identifier');
     eq(projection.initialValue, 0, 'starting where an integer starts');
     eq(projection.handlers, [], 'nothing moves it yet');
   });
@@ -654,7 +692,7 @@ function build(index) {
     });
     const log = [{ type: 'CourseDefined', data: { courseId: 'c1', capacity: 12 } }];
     eq(sandbox.foldEntityProperty(model(), log, 'Course', 'seatCount', 'c1'), 12, 'folded through the binding');
-    eq(sandbox.foldProjection(model(), log, 'CourseSeatCount', { courseId: 'c1' }), 12, 'and read directly');
+    eq(sandbox.foldProjection(model(), log, 'CourseSeatCount', { tags: { courseId: 'c1' } }), 12, 'and read directly');
   });
 
   check('renaming a property moves what reads it, not the projection', () => {
@@ -701,7 +739,7 @@ function build(index) {
     const projection = after['projection-definitions'].VenueExists;
     eq(projection.valueType, 'boolean', 'a boolean — no enum, no custom type');
     eq(after['custom-type-definitions'].VenueStatus, undefined, 'nothing named VenueStatus exists');
-    eq(projection.parameters, [{ name: 'venueId', propertyType: 'VenueId' }], 'kept per venue');
+    eq('parameters' in projection, false, 'read per venue by the venue, not declared per venue');
     eq(sandbox.foldEntityProperty(after, [], 'Venue', 'exists', 'v1'), false, 'and folds');
   });
 
@@ -757,7 +795,7 @@ function build(index) {
     const id = active().id;
     sandbox.createEntity(active(), 'stage');
     sandbox.addDefinition('projection-definition', id, 'StageExistsCount', {
-      parameters: [{ name: 'stageId', propertyType: 'StageId' }],
+      tags: [{ name: 'stageId', tagType: 'StageId' }],
       valueType: 'integer', isList: false, initialValue: 0, handlers: [],
     });
     sandbox.updateDefinition('entity-definition', id, 'Stage', {
@@ -771,7 +809,7 @@ function build(index) {
   });
 
   check('the shared editor renders on an entity page and on the projections page', () => {
-    store.set('dcb-playground:mode', 'advanced');
+    store.set('dcb-playground:experimental', 'on');
     // The same editor mounted from both sides — the whole claim this
     // change makes. Which projection each side shows is now decided by
     // the binding: an entity's page holds the ones it calls something,
@@ -794,7 +832,7 @@ function build(index) {
     // This model binds every projection it has, so the page for the
     // unbound ones needs one to show.
     sandbox.addDefinition('projection-definition', id, 'CourseNumbering', {
-      parameters: [], valueType: 'CourseId', isList: false, initialValue: 'c1',
+      tags: [], valueType: 'CourseId', isList: false, initialValue: 'c1',
       handlers: [{
         event: 'CourseDefined', operation: 'set',
         value: { successor: { eventProperty: 'courseId' } },
@@ -815,14 +853,14 @@ function build(index) {
 
   check('the editor renders a scripted projection from either side', () => {
     sandbox.addDefinition('projection-definition', id, 'CourseTouches', {
+      tags: [{ name: 'courseId', tagType: 'CourseId' }],
       valueType: 'integer',
       isList: false,
       // Written in the order the schema declares, which is the order
       // the editor writes it back in.
       script: {
         initialState: 0,
-        arguments: [{ name: 'courseId', propertyType: 'CourseId' }],
-        tagFilter: ['CourseId:{courseId}'],
+        arguments: [{ name: 'since', propertyType: 'integer' }],
       },
       handlers: [{ event: 'CourseDefined', code: '(state || 0) + 1' }],
     });
@@ -866,7 +904,7 @@ function build(index) {
   });
 
   check('a watched projection folds at the position being looked at', () => {
-    const watch = sandbox.projectionWatch('CourseNumbering', {});
+    const watch = sandbox.projectionWatch('CourseNumbering', []);
     session.at = null;
     eq(sandbox.foldWatch(active(), watch), { value: 'c3' }, 'at the end, the next to issue');
     session.at = 1;
@@ -877,12 +915,12 @@ function build(index) {
   });
 
   check('watching is toggled by one identity, arguments included', () => {
-    const global_ = sandbox.projectionWatch('CourseNumbering', {});
+    const global_ = sandbox.projectionWatch('CourseNumbering', []);
     eq(sandbox.isPinned(global_), false, 'not watched to begin with');
     sandbox.togglePinned(global_);
     eq(sandbox.isPinned(global_), true, 'watched');
     // The same projection at a different partition is a different watch.
-    eq(sandbox.isPinned(sandbox.projectionWatch('CourseNumbering', { tenantId: 't1' })), false,
+    eq(sandbox.isPinned(sandbox.projectionWatch('CourseNumbering', [{ tagType: 'TenantId', tagValue: 't1' }])), false,
       'another partition is another thing to watch');
     sandbox.togglePinned(global_);
     eq(sandbox.isPinned(global_), false, 'unwatched');
@@ -890,7 +928,7 @@ function build(index) {
 
   check('an entity instance and a projection are both watchable, side by side', () => {
     sandbox.togglePinned(sandbox.entityWatch('CourseId:c1'));
-    sandbox.togglePinned(sandbox.projectionWatch('CourseNumbering', {}));
+    sandbox.togglePinned(sandbox.projectionWatch('CourseNumbering', []));
     eq(session.pinned.map((w) => w.kind), ['entity', 'projection'], 'one of each');
     sandbox.render();
   });
@@ -902,7 +940,7 @@ function build(index) {
 
   check('a projection can be watched before anything has happened', () => {
     sandbox.sessionReset();
-    eq(sandbox.foldWatch(active(), sandbox.projectionWatch('CourseNumbering', {})), { value: 'c1' },
+    eq(sandbox.foldWatch(active(), sandbox.projectionWatch('CourseNumbering', [])), { value: 'c1' },
       'its initial value, which is the whole of what it states');
     sandbox.state.view = 'sandbox';
     sandbox.render();
@@ -910,13 +948,13 @@ function build(index) {
   });
 
   check('the sandbox renders with things watched', () => {
-    store.set('dcb-playground:mode', 'advanced');
-    sandbox.togglePinned(sandbox.projectionWatch('CourseNumbering', {}));
+    store.set('dcb-playground:experimental', 'on');
+    sandbox.togglePinned(sandbox.projectionWatch('CourseNumbering', []));
     sandbox.state.view = 'sandbox';
     sandbox.render();
     // And with the watch picker open, which is the path a projection
     // nothing read is added through.
-    sandbox.state.watchDraft = { projection: 'CourseNumbering', arguments: {} };
+    sandbox.state.watchDraft = { projection: 'CourseNumbering', tags: [], arguments: {} };
     sandbox.render();
     sandbox.state.watchDraft = null;
     sandbox.sessionReset();
@@ -936,18 +974,18 @@ function build(index) {
     sandbox.render = () => { screen = sandbox.watchProjectionAdder(active(), names); };
     try {
       const watchAt = (id) => {
-        sandbox.state.watchDraft = { projection: 'CourseCapacity', arguments: {} };
+        sandbox.state.watchDraft = { projection: 'CourseCapacity', tags: { courseId: { tagType: 'CourseId', tagValue: '' } }, arguments: {} };
         sandbox.render();
         findAll(screen, (n) => n.tag === 'input')[0].onchange({ target: { value: id } });
         findAll(screen, (n) => n.tag === 'button' && textOf(n) === 'Watch it')[0].onclick();
       };
+      const tags = (w) => Object.values(w.tags).map((t) => t.tagValue);
       watchAt('c1');
-      eq(session.pinned.map((w) => w.arguments), [{ courseId: 'c1' }], 'the first is watched');
+      eq(session.pinned.map(tags), [['c1']], 'the first is watched');
       eq(findAll(screen, (n) => n.tag === 'input').length, 0,
         'and the paint the pin triggered no longer shows the form');
       watchAt('c2');
-      eq(session.pinned.map((w) => w.arguments), [{ courseId: 'c1' }, { courseId: 'c2' }],
-        'both partitions stay watched');
+      eq(session.pinned.map(tags), [['c1'], ['c2']], 'both reads stay watched');
     } finally {
       sandbox.render = realRender;
       sandbox.sessionReset();
@@ -972,7 +1010,7 @@ function build(index) {
 
   check('a scenario is listed under the one projection it is about', () => {
     const given = [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 4 } }];
-    const key = add({ projection: 'CourseCapacity', arguments: { courseId: 'c1' }, given });
+    const key = add({ projection: 'CourseCapacity', tags: { courseId: { tagType: 'CourseId', tagValue: 'c1' } }, given });
     eq(projectionScenariosFor(model(), 'CourseCapacity').map((e) => e.key).includes(key), true,
       'under the projection it names');
     eq(projectionScenariosFor(model(), 'CourseStatus').map((e) => e.key).includes(key), false,
@@ -981,8 +1019,8 @@ function build(index) {
 
   check('several projections over one Given are several scenarios', () => {
     const given = [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 4 } }];
-    const capacity = add({ projection: 'CourseCapacity', arguments: { courseId: 'c1' }, given });
-    const status = add({ projection: 'CourseStatus', arguments: { courseId: 'c1' }, given });
+    const capacity = add({ projection: 'CourseCapacity', tags: { courseId: { tagType: 'CourseId', tagValue: 'c1' } }, given });
+    const status = add({ projection: 'CourseStatus', tags: { courseId: { tagType: 'CourseId', tagValue: 'c1' } }, given });
     const stored = (k) => model()['projection-scenario-definitions'][k];
     eq(stored(capacity).then, 4, 'each holds its own projection\'s value');
     eq(stored(status).then, 'Existent', 'and nothing else\'s');
@@ -992,7 +1030,7 @@ function build(index) {
   });
 
   check('a scenario over a standalone projection lands on Projections', () => {
-    const key = add({ projection: 'CourseNumbering', arguments: {}, given: [] });
+    const key = add({ projection: 'CourseNumbering', given: [] });
     eq(projectionScenariosFor(model(), 'CourseNumbering').map((e) => e.key).includes(key), true,
       'listed on the projection');
     sandbox.goToProjectionScenario(model(), key);
@@ -1001,30 +1039,30 @@ function build(index) {
     eq(sandbox.state.projDraft.name, 'CourseNumbering', 'and that row is the projection it reads');
   });
 
-  check('a scenario over a bound projection opens on its entity', () => {
+  check('a scenario over a projection opens where the projection is edited', () => {
     const key = add({
-      projection: 'CourseCapacity', arguments: { courseId: 'c1' },
+      projection: 'CourseCapacity', tags: { courseId: { tagType: 'CourseId', tagValue: 'c1' } },
       given: [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 4 } }],
     });
     sandbox.goToProjectionScenario(model(), key);
-    eq(sandbox.state.view, 'entity', 'a bound projection is edited on its entity');
-    eq(sandbox.state.entity, 'Course', 'the one that binds it');
+    eq(sandbox.state.view, 'projections', 'no entity binds it, so the Projections page');
     eq(sandbox.state.projTab, 'checks', 'with the row open on its checks');
     sandbox.render();
   });
 
-  check('a fresh scenario asks only for the partition it is about', () => {
-    eq(sandbox.blankScenarioArguments(model(), 'CourseCapacity'), { courseId: '' },
-      'one blank per parameter');
-    eq(sandbox.blankScenarioArguments(model(), 'CourseNumbering'), {},
-      'and none at all for one that reads the whole log');
+  check('a fresh scenario reads the projection by the tags it declares', () => {
+    eq(sandbox.blankScenarioTags(model(), 'CourseCapacity'), { courseId: { tagType: 'CourseId', tagValue: '' } },
+      'one blank per tag it declares');
+    eq(sandbox.blankScenarioTags(model(), 'CourseNumbering'), {},
+      'and none at all for an untagged one');
+    eq(sandbox.blankScenarioArguments(model(), 'CourseCapacity'), {}, 'and no arguments for a declared fold');
   });
 
   check('copying a scenario leaves the row it was copied in open', () => {
     // `+ copy` is drawn inside an open ledger row. It used to go through
     // closeForms(), which folded that row away under the cursor — so the
     // button vanished mid-click and the focus on it went with it.
-    const key = add({ projection: 'CourseNumbering', arguments: {}, given: [] });
+    const key = add({ projection: 'CourseNumbering', given: [] });
     sandbox.goToProjectionScenario(model(), key);
     eq(sandbox.state.projDraft && sandbox.state.projDraft.name, 'CourseNumbering', 'the row is open');
     const before = Object.keys(model()['projection-scenario-definitions']).length;
@@ -1042,32 +1080,31 @@ function build(index) {
     sandbox.state.projDraft = null;
   });
 
-  check('an argument field holds the value, not the object holding it', () => {
+  check('a tag field holds the value, not the object holding it', () => {
     // `valueEditor` reads and writes exactly where it is pointed. Aimed
-    // at ['arguments'] instead of ['arguments', name] it read the whole
-    // object — rendering "[object Object]" into the field, and writing
-    // a scalar over every argument at once on the way back out.
+    // at the tag instead of its value it would read the whole object —
+    // rendering "[object Object]" into the field, and writing a scalar
+    // over the tag on the way back out.
     sandbox.startProjectionScenario(model(), { projection: 'CourseCapacity' });
-    sandbox.state.projectionScenarioDraft.body.arguments.courseId = 'c1';
+    sandbox.state.projectionScenarioDraft.body.tags.courseId.tagValue = 'c1';
     const main = sandbox.document.createElement('div');
-    sandbox.state.view = 'entity';
-    sandbox.state.entity = 'Course';
-    sandbox.renderEntity(model(), main);
+    sandbox.state.view = 'projections';
+    sandbox.renderProjections(model(), main);
 
     const fields = findAll(main, (n) => n.tag === 'input' && n.className === 'vin');
-    eq(fields.length, 1, 'one field, for the one parameter it is partitioned by');
+    eq(fields.length, 1, 'one field, for the one tag it declares');
     eq(fields[0].value, 'c1', 'showing the identifier it was given');
 
-    // And writing back lands on that argument alone.
-    sandbox.setAtPath(sandbox.state.projectionScenarioDraft.body, ['arguments', 'courseId'], 'c2');
-    eq(sandbox.state.projectionScenarioDraft.body.arguments, { courseId: 'c2' },
-      'the arguments object survives the write');
+    // And writing back lands on that tag's value alone.
+    sandbox.setAtPath(sandbox.state.projectionScenarioDraft.body, ['tags', 'courseId', 'tagValue'], 'c2');
+    eq(sandbox.state.projectionScenarioDraft.body.tags, { courseId: { tagType: 'CourseId', tagValue: 'c2' } },
+      'the tag survives the write');
     sandbox.state.projectionScenarioDraft = null;
     sandbox.state.projDraft = null;
   });
 
-  check('a watched projection asks for its arguments the same way', () => {
-    sandbox.state.watchDraft = { projection: 'CourseCapacity', arguments: { courseId: 'c1' } };
+  check('a watched projection asks for its tags the same way', () => {
+    sandbox.state.watchDraft = { projection: 'CourseCapacity', tags: { courseId: { tagType: 'CourseId', tagValue: 'c1' } }, arguments: {} };
     const card = sandbox.watchProjectionAdder(model(), ['CourseCapacity', 'CourseNumbering']);
     const fields = findAll(card, (n) => n.tag === 'input' && n.className === 'vin');
     eq(fields.length, 1, 'one field');
@@ -1076,12 +1113,12 @@ function build(index) {
   });
 
   check('both pages render the checks tab', () => {
-    store.set('dcb-playground:mode', 'advanced');
+    store.set('dcb-playground:experimental', 'on');
     sandbox.startProjectionScenario(model(), { projection: 'CourseNumbering' });
     eq(sandbox.state.view, 'projections', 'started where the projection lives');
     sandbox.render();
     sandbox.startProjectionScenario(model(), { projection: 'CourseCapacity' });
-    eq(sandbox.state.entity, 'Course', 'and this one on the entity that binds it');
+    eq(sandbox.state.view, 'projections', 'and this one too — no entity binds it');
     sandbox.render();
     sandbox.state.projectionScenarioDraft = null;
     sandbox.state.projDraft = null;
@@ -1093,7 +1130,9 @@ function build(index) {
 // The ledger: one component, two pages.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(1);
+  const { id, model } = build(SCHEDULES);
+  // Its numbering's scenarios, which the sequence model ships with.
+  sandbox.seedSequenceScenarios(id);
   store.set('dcb-playground:model', id);
   const page = () => {
     const main = sandbox.document.createElement('div');
@@ -1126,7 +1165,7 @@ function build(index) {
     const owned = sandbox.projectionLedger(model(), {
       owner: 'Course', nameHead: 'property', entries: [], add: null,
     });
-    eq(textOf(free.children[0]), 'projectionone perholdsstarts at', 'Projections says what each is kept per');
+    eq(textOf(free.children[0]), 'projectiontagged byholdsstarts at', 'Projections says what each is tagged by');
     eq(textOf(owned.children[0]), 'propertyholdsstarts at',
       'an entity does not, because Identity above it already has');
   });
@@ -1157,7 +1196,7 @@ function build(index) {
   });
 
   check('an opened row renders both of its tabs', () => {
-    store.set('dcb-playground:mode', 'advanced');
+    store.set('dcb-playground:experimental', 'on');
     const open = (name) => {
       const body = model()['projection-definitions'][name];
       sandbox.state.projDraft = { name, body: projectionDraftFrom(body) };
@@ -1184,11 +1223,11 @@ function build(index) {
       'the checks tab lists what checks it');
     sandbox.state.projDraft = null;
     sandbox.state.projTab = 'definition';
-    store.set('dcb-playground:mode', 'simple');
+    store.set('dcb-playground:experimental', 'on');
   });
 
   check('both names a bound projection has can be changed from its row', () => {
-    store.set('dcb-playground:mode', 'advanced');
+    store.set('dcb-playground:experimental', 'on');
     sandbox.state.view = 'entity';
     sandbox.state.entity = 'Course';
     sandbox.toggleProjectionRow(model(), 'CourseCapacity');
@@ -1210,7 +1249,7 @@ function build(index) {
     eq(textOf(other).includes('what this entity calls'), true, 'which is the binding');
     sandbox.state.editMember = null;
     sandbox.state.projDraft = null;
-    store.set('dcb-playground:mode', 'simple');
+    store.set('dcb-playground:experimental', 'on');
   });
 
   check('a projection knows who reads it, bound or not', () => {
@@ -1227,7 +1266,7 @@ function build(index) {
 // gesture that moves on, and a name is what makes a field real.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
   store.set('dcb-playground:model', id);
 
   const type = (adder, text) => {
@@ -1332,7 +1371,7 @@ function build(index) {
 // every step it holds back is one click from being shown.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
   store.set('dcb-playground:model', id);
 
   const slice = () => sandbox.sliceOf(model(), 'CertifyCourse');
@@ -1417,7 +1456,7 @@ function build(index) {
 // made is the thing selected, and the command never leaves the screen.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
   store.set('dcb-playground:model', id);
 
   const drive = (form, text, buttonLabel) => {
@@ -1526,7 +1565,7 @@ function build(index) {
 // and Escape discards whatever state the row was in.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
   store.set('dcb-playground:model', id);
   const LITERAL = ' literal';
 
@@ -1666,6 +1705,15 @@ function build(index) {
     sandbox.closeForms();
   });
 
+  check('with the flag off, entities are neither offered nor invented', () => {
+    store.set('dcb-playground:experimental', 'off');
+    const values = targetOptions('SubscribeStudentToCourse');
+    store.set('dcb-playground:experimental', 'on');
+    eq(values.some((v) => v.startsWith('entity:')), false, 'no entity read');
+    eq(values.includes(' new'), false, 'and no "+ New entity…"');
+    sandbox.closeForms();
+  });
+
   check('Escape discards a touched row instead of committing it', () => {
     sandbox.state.slice = 'DefineCourse';
     sandbox.state.adder = 'chg:CourseDefined';
@@ -1693,7 +1741,7 @@ function build(index) {
 // keeps it honest — and undo, not a Discard button, is the way back.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
   store.set('dcb-playground:model', id);
 
   check('an edited definition is stored without a Save press, row still open', () => {
@@ -1780,14 +1828,14 @@ function build(index) {
 }
 
 // ---------------------------------------------------------------
-// Advanced mode states every DCB query where the thing that runs it
+// The page states every DCB query where the thing that runs it
 // lives: on each read card, attributed in the union, and — with the
 // watched values in it — on a sandbox watch.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
   store.set('dcb-playground:model', id);
-  store.set('dcb-playground:mode', 'advanced');
+  store.set('dcb-playground:experimental', 'on');
 
   check('each read card carries a query popover, not a query line', () => {
     sandbox.state.slice = 'SubscribeStudentToCourse';
@@ -1827,25 +1875,13 @@ function build(index) {
 
   check('a watched projection shows the query it actually runs', () => {
     const card = sandbox.projectionWatchCard(model(),
-      { kind: 'projection', projection: 'CourseCapacity', arguments: { courseId: 'c1' } });
+      sandbox.projectionWatch('CourseCapacity', { courseId: { tagType: 'CourseId', tagValue: 'c1' } }));
     const text = textOf(card);
     eq(text.includes('CourseId:c1'), true, 'the concrete tag, not a placeholder');
+    eq(text.includes('tagged CourseId("c1")'), true, 'said in the spelling the code uses');
     eq(text.includes('CourseDefined'), true, 'and the events the fold handles');
   });
 
-  check('in Simple mode none of these lines appear', () => {
-    store.set('dcb-playground:mode', 'simple');
-    sandbox.state.slice = 'SubscribeStudentToCourse';
-    const step = sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'SubscribeStudentToCourse'));
-    eq(findAll(step, (n) => /\bqpop\b/.test(n.className || '')).length, 0,
-      'the reads step stays plain');
-    const card = sandbox.projectionWatchCard(model(),
-      { kind: 'projection', projection: 'CourseCapacity', arguments: { courseId: 'c1' } });
-    eq(textOf(card).includes('CourseId:c1'), false, 'and so does the watch');
-    store.set('dcb-playground:mode', 'advanced');
-  });
-
-  store.set('dcb-playground:mode', 'simple');
   store.delete('dcb-playground:model');
 }
 
@@ -1857,7 +1893,7 @@ function build(index) {
 // page read its effect as "undefined".
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
   store.set('dcb-playground:model', id);
 
   check('a half-picked handler is not stored, and the finished one is', () => {
@@ -1893,7 +1929,6 @@ function build(index) {
 
   check('a valueless handler stores, and the advisory says what is missing', () => {
     updateDefinition('projection-definition', id, 'CourseStartingWeek', {
-      parameters: [{ name: 'courseId', propertyType: 'CourseId' }],
       valueType: 'integer', isList: false, initialValue: 0,
       handlers: [{ event: 'CourseDefined', operation: 'set' }],
     });
@@ -1912,7 +1947,7 @@ function build(index) {
 {
   const { id, model } = build(3);
   store.set('dcb-playground:model', id);
-  store.set('dcb-playground:mode', 'advanced');
+  store.set('dcb-playground:experimental', 'on');
 
   check('a chained boundary shows one combined query per level of the chain', () => {
     sandbox.state.slice = 'RescheduleCourse';
@@ -1925,7 +1960,7 @@ function build(index) {
     eq(/reads \d+ types, \d+ tags, in 3 queries/.test(textOf(step)), true, 'and the summary says so');
   });
 
-  store.set('dcb-playground:mode', 'simple');
+  store.set('dcb-playground:experimental', 'on');
   store.delete('dcb-playground:model');
 }
 
@@ -1937,7 +1972,7 @@ function build(index) {
 // interface honest about what the write path now lets in.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
   store.set('dcb-playground:model', id);
 
   check('a model full of dangling references still renders every page', () => {
@@ -1946,7 +1981,7 @@ function build(index) {
     sandbox.removeDefinition('projection-definition', id, 'CourseCapacity');
     sandbox.removeDefinition('event-definition', id, 'CourseDefined');
     sandbox.removeDefinition('entity-definition', id, 'Student');
-    sandbox.addDefinition('event-definition', id, 'weird_thing', { properties: [] });
+    addTaggedEvent(id, 'weird_thing', { properties: [] });
     sandbox.updateDefinition('command-definition', id, 'DefineCourse', {
       properties: [{ name: 'courseId', propertyType: 'NoSuchType', isOptional: false, isList: false }],
       boundary: [{ alias: 'ghost', entity: 'NoSuchEntity', id: { parameterName: 'courseId' } }],
@@ -1970,12 +2005,11 @@ function build(index) {
     sandbox.state.entity = 'Course';
     paint(sandbox.renderEntity);
 
-    // The slice view of the broken command, step by step — in simple
-    // mode and in advanced mode, which additionally derives and prints
-    // each binding's DCB query.
+    // The slice view of the broken command, step by step, with the
+    // flag both ways.
     sandbox.state.slice = 'DefineCourse';
-    for (const mode of ['simple', 'advanced']) {
-      store.set('dcb-playground:mode', mode);
+    for (const flag of ['off', 'on']) {
+      store.set('dcb-playground:experimental', flag);
       const slice = sandbox.sliceOf(current, 'DefineCourse');
       textOf(sandbox.stepTrigger(current, slice));
       textOf(sandbox.stepDecision(current, slice));
@@ -1984,7 +2018,7 @@ function build(index) {
     }
     paint(sandbox.renderCoupling);
     paint(sandbox.renderRuleMap);
-    store.set('dcb-playground:mode', 'simple');
+    store.set('dcb-playground:experimental', 'on');
 
     // And the problems list still stands behind all of it.
     eq(sandbox.problems(current).length > 0, true, 'problems lists the fallout');
@@ -2004,8 +2038,8 @@ function build(index) {
   check('one gesture with several appends is one undo step', () => {
     const before = sandbox.loadEvents().length;
     sandbox.run(() => {
-      sandbox.addDefinition('event-definition', id, 'AHappened', { properties: [] });
-      sandbox.run(() => sandbox.addDefinition('event-definition', id, 'BHappened', { properties: [] }));
+      addTaggedEvent(id, 'AHappened', { properties: [] });
+      sandbox.run(() => addTaggedEvent(id, 'BHappened', { properties: [] }));
     });
     eq(sandbox.loadEvents().length, before + 2, 'two appends');
     sandbox.undo();
@@ -2055,7 +2089,7 @@ function build(index) {
   });
 
   check('saving spells the null into whatever a draft left unset', () => {
-    sandbox.addDefinition('event-definition', id, 'NotizErfasst', {
+    addTaggedEvent(id, 'NotizErfasst', {
       properties: [
         { name: 'anordnungId', propertyType: 'string', isOptional: false, isList: false },
         property,
@@ -2125,7 +2159,7 @@ function build(index) {
 // mean "into this group", never "at this position".
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
 
   check('commands within a feature sit alphabetically, wherever they were added', () => {
     const feature = sandbox.featureOf(Object.values(model()['command-definitions'])[0]);
@@ -2252,7 +2286,7 @@ function build(index) {
   });
 
   check('the predefined models synthesize cleanly', () => {
-    const { model: projected } = build(0);
+    const { model: projected } = build(ENTITIES);
     const [eventName] = Object.keys(projected()['event-definitions']);
     const text = scriptHandlerPreamble(projected(),
       { valueType: 'integer', script: { initialState: null, arguments: [] } },
@@ -2272,7 +2306,7 @@ function build(index) {
     lifecycleMachines(model).machines.find((m) => m.entity === entity);
 
   check('the base course model derives both machines', () => {
-    const { model } = build(0);
+    const { model } = build(ENTITIES);
     const course = machineOf(model(), 'Course');
     eq(course.states, ['NonExistent', 'Existent', 'Archived'], 'the enum is the states');
     eq(course.initial, 'NonExistent', 'the projection initial value is the entry state');
@@ -2293,7 +2327,7 @@ function build(index) {
   });
 
   check('a command with no rule over a lifecycle it binds is unguarded', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     // Built for the purpose rather than borrowed from a shipped model:
     // a command that *binds* a student and never tests whether it
     // exists. The shipped Unsubscribe used to be that example, until it
@@ -2321,7 +2355,8 @@ function build(index) {
   });
 
   check('an unguarded transition is drawn from the initial state, by convention', () => {
-    const { model } = build(1); // the sequence layer drops DefineCourse's status rule
+    // The sequence layer drops DefineCourse's status rule.
+    const { model } = seeded('Sequence with entities', 'seedBase', 'seedAddSequence');
     const course = machineOf(model(), 'Course');
     const defined = course.transitions.find((t) => t.event === 'CourseDefined');
     eq(defined.unguarded, true, 'the numbering guards it, the status does not');
@@ -2331,7 +2366,7 @@ function build(index) {
   });
 
   check('the pricing model derives across both entities', () => {
-    const { model } = build(4);
+    const { model } = seeded('Pricing with entities', 'seedProductPricing');
     const order = machineOf(model(), 'Order');
     eq(order.states, ['false', 'true'], 'a boolean lifecycle is a two-state machine');
     eq(order.compact, true, 'and the page draws it as a row, not a diagram');
@@ -2344,7 +2379,7 @@ function build(index) {
   });
 
   check('an entity designating no lifecycle is excluded with its reason', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     addDefinition('entity-definition', id, 'Room', { properties: [] });
     const { machines, excluded } = lifecycleMachines(model());
     eq(machines.some((m) => m.entity === 'Room'), false, 'no machine without a designation');
@@ -2352,7 +2387,7 @@ function build(index) {
   });
 
   check('a scripted lifecycle is excluded, not advised against', () => {
-    const { model } = build(5);   // content-decisions-scripted
+    const { model } = seeded('Scripted with entities', 'seedContentDecisionsScripted');
     const { machines, excluded } = lifecycleMachines(model());
     eq(machines.some((m) => m.entity === 'Document'), false, 'no machine can be read from a script');
     eq(excluded.find((e) => e.entity === 'Document').reason, 'scripted', 'the page says why');
@@ -2364,7 +2399,7 @@ function build(index) {
   });
 
   check('a negated status rule allows the complement', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     const body = sandbox.deepClone(model()['command-definitions'].ArchiveCourse);
     body.conditions[0].negate = true;
     updateDefinition('command-definition', id, 'ArchiveCourse', body);
@@ -2377,7 +2412,7 @@ function build(index) {
   // derivation reads it — but only a list of member references; a bare
   // literal makes the rule unreadable, not guessed at.
   const archiveGuardedBy = (rightHandSide, negate) => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     const body = sandbox.deepClone(model()['command-definitions'].ArchiveCourse);
     body.conditions = [{
       leftHandSide: { alias: 'course', property: 'status' },
@@ -2422,7 +2457,7 @@ function build(index) {
   // A student is the two-state case in every shipped model, so it is
   // what a promotion is exercised against.
   const promoted = () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
     sandbox.mergeIntoLifecycle(model(), 'Student', {
       typeName: 'StudentStatus', property: 'status', initialState: 'NonExistent',
@@ -2473,13 +2508,13 @@ function build(index) {
   check('two hand-added booleans merge into one lifecycle', () => {
     // The case the first cut of the suggestion missed entirely: neither
     // boolean is the designated lifecycle, and both were added by hand.
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
-    addDefinition('event-definition', id, 'StudentExpelled', {
+    addTaggedEvent(id, 'StudentExpelled', {
       properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
     });
     addDefinition('projection-definition', id, 'StudentExpulsion', {
-      parameters: [{ name: 'studentId', propertyType: 'StudentId' }],
+      tags: [{ name: 'studentId', tagType: 'StudentId' }],
       valueType: 'boolean', isList: false, initialValue: false,
       handlers: [{ event: 'StudentExpelled', operation: 'set', value: true }],
     });
@@ -2530,12 +2565,12 @@ function build(index) {
   });
 
   check('two booleans one event moves cannot become one lifecycle', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
     // Both set by StudentRegistered, so the merged fold would need two
     // handlers for one event — refused before anything is written.
     addDefinition('projection-definition', id, 'StudentGreeted', {
-      parameters: [{ name: 'studentId', propertyType: 'StudentId' }],
+      tags: [{ name: 'studentId', tagType: 'StudentId' }],
       valueType: 'boolean', isList: false, initialValue: false,
       handlers: [{ event: 'StudentRegistered', operation: 'set', value: true }],
     });
@@ -2552,16 +2587,16 @@ function build(index) {
   });
 
   check('a non-monotone boolean is refused as a stage', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
-    addDefinition('event-definition', id, 'StudentPaused', {
+    addTaggedEvent(id, 'StudentPaused', {
       properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
     });
-    addDefinition('event-definition', id, 'StudentResumed', {
+    addTaggedEvent(id, 'StudentResumed', {
       properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
     });
     addDefinition('projection-definition', id, 'StudentPause', {
-      parameters: [{ name: 'studentId', propertyType: 'StudentId' }],
+      tags: [{ name: 'studentId', tagType: 'StudentId' }],
       valueType: 'boolean', isList: false, initialValue: false,
       handlers: [
         { event: 'StudentPaused', operation: 'set', value: true },
@@ -2604,16 +2639,16 @@ function build(index) {
   // The discriminator. A one-way boolean folds into a lifecycle; an
   // orthogonal one must not, because collapsing it destroys a dimension.
   const withSecondBoolean = (handlers) => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
-    addDefinition('event-definition', id, 'CourseFlagged', {
+    addTaggedEvent(id, 'CourseFlagged', {
       properties: [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false }],
     });
-    addDefinition('event-definition', id, 'CourseUnflagged', {
+    addTaggedEvent(id, 'CourseUnflagged', {
       properties: [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false }],
     });
     addDefinition('projection-definition', id, 'StudentFlag', {
-      parameters: [{ name: 'studentId', propertyType: 'StudentId' }],
+      tags: [{ name: 'studentId', tagType: 'StudentId' }],
       valueType: 'boolean', isList: false, initialValue: false, handlers,
     });
     const student = sandbox.deepClone(model()['entity-definitions'].Student);
@@ -2660,7 +2695,7 @@ function build(index) {
   });
 
   check('two rules over one lifecycle alone suggest nothing', () => {
-    const { model } = build(0);
+    const { model } = build(ENTITIES);
     eq(lifecycleMergeSuggestion(
       model(), model()['command-definitions'].SubscribeStudentToCourse
     ), null, 'the shipped command guards a lifecycle and no second boolean');
@@ -2671,7 +2706,7 @@ function build(index) {
 // Saying "the course exists" — rendering only, never storage.
 // ---------------------------------------------------------------
 {
-  const { model } = build(0);
+  const { model } = build(ENTITIES);
   const body = () => model()['command-definitions'].SubscribeStudentToCourse;
   const partsOf = (condition) => sandbox.conditionParts(condition, model(), body());
 
@@ -2724,7 +2759,7 @@ function build(index) {
   const { operationsFor, hasSuccessor, offersSuccessor, handlerValueChoices } = sandbox;
 
   check('the operations offered follow the type held', () => {
-    const { model } = build(0);
+    const { model } = build(ENTITIES);
     eq(operationsFor(model(), { valueType: 'boolean', isList: false }), ['set'],
       'a boolean only ever becomes something — it does not go up by or gain');
     eq(operationsFor(model(), { valueType: 'CourseStatus', isList: false }), ['set'],
@@ -2736,7 +2771,7 @@ function build(index) {
   });
 
   check('the change adder offers only the operations the target admits', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
     const painted = (entity, property) => {
       sandbox.state.adder = 'chg:StudentRegistered';
@@ -2764,7 +2799,7 @@ function build(index) {
   });
 
   check('a boolean target offers true and false as values', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
     sandbox.state.adder = 'chg:StudentRegistered';
     sandbox.state.changeDraft = {
@@ -2784,7 +2819,7 @@ function build(index) {
   });
 
   check('"the one after" is offered only where a next value exists', () => {
-    const { model } = build(0);
+    const { model } = build(ENTITIES);
     eq(hasSuccessor(model(), 'integer'), true, 'integers count up');
     eq(hasSuccessor(model(), 'CourseId'), true, 'and so do scalar identifiers');
     eq(hasSuccessor(model(), 'boolean'), false, 'there is no value after true');
@@ -2806,7 +2841,7 @@ function build(index) {
   // plain string, never beside another verb — and `currentValue`, which
   // only ever repeats or doubles what is held, is not offered at all.
   check('a successor is offered only to set a numbering, and currentValue never', () => {
-    const { model } = build(0);
+    const { model } = build(ENTITIES);
     eq(offersSuccessor(model(), 'integer'), true, 'an integer counts');
     eq(offersSuccessor(model(), 'CourseId'), true, 'and so does a named scalar type');
     eq(offersSuccessor(model(), 'string'), false, 'a plain string does not, digits or not');
@@ -2828,7 +2863,7 @@ function build(index) {
   });
 
   check('an event field reads as its path once picked', () => {
-    const { model } = build(0);
+    const { model } = build(ENTITIES);
     const event = { properties: [{ name: 'courseId', propertyType: 'CourseId', isList: false }] };
     const choices = handlerValueChoices(model(), { valueType: 'CourseId', isList: false }, event, 'set');
     const sel = sandbox.pick(choices, choices[1][0], () => {});
@@ -2843,11 +2878,10 @@ function build(index) {
   });
 
   check('a successor the editor no longer offers is still refused if written', () => {
-    const { id } = build(0);
+    const { id } = build(ENTITIES);
     let refused = null;
     try {
       sandbox.updateDefinition('projection-definition', id, 'StudentExists', {
-        parameters: [{ name: 'studentId', propertyType: 'StudentId' }],
         valueType: 'boolean', isList: false, initialValue: false,
         handlers: [{ event: 'StudentRegistered', operation: 'set',
           value: { successor: { eventProperty: 'studentId' } } }],
@@ -2887,7 +2921,7 @@ function build(index) {
   });
 
   check('a touched, complete equalsAny rule is added by leaving it', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
     sandbox.state.slice = 'DefineCourse';
     sandbox.state.adder = 'rule';
@@ -3017,7 +3051,7 @@ function build(index) {
 }
 
 {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
   store.set('dcb-playground:model', id);
   const command = (name) => model()['command-definitions'][name];
 
@@ -3086,7 +3120,7 @@ function build(index) {
 // can still author everything the old two could.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
   store.set('dcb-playground:model', id);
   const cmd = () => model()['command-definitions'].SubscribeStudentToCourse;
   const shipped = JSON.parse(JSON.stringify(cmd()));
@@ -3223,8 +3257,8 @@ function build(index) {
 
 // ---------------------------------------------------------------
 // A model with no entity at all states its rules over projections: the
-// first question offers one this command can supply the arguments of,
-// and the read it brings is the plain `read label = Label(documentId)`.
+// first question offers every one, a value for each of its tags is asked
+// beside it, and the rule reads it in place — `Label(documentId)`.
 // ---------------------------------------------------------------
 {
   const id = sandbox.createDcbModel('Entity Free Probe');
@@ -3233,15 +3267,15 @@ function build(index) {
     'model "Entity Free Probe"',
     'tag type DocumentId = string',
     'tag type FolderId = string',
-    'event Labelled { documentId: DocumentId, label: string }',
-    'event Done { documentId: DocumentId }',
-    'projection Label(documentId: DocumentId): string = "" {',
+    'event Labelled { tag documentId: DocumentId, label: string }',
+    'event Done { tag documentId: DocumentId }',
+    'projection Label (tag documentId: DocumentId): string = "" {',
     '  on Labelled => set event.data.label',
     '}',
-    'projection DoneCount: integer = 0 {',
+    'projection DoneCount (tag documentId: DocumentId): integer = 0 {',
     '  on Done => increment 1',
     '}',
-    'projection FolderSize(folderId: FolderId): integer = 0 {}',
+    'projection FolderSize (tag folderId: FolderId): integer = 0 {}',
     'command Finish(documentId: DocumentId) {',
     '  emit Done { documentId }',
     '}',
@@ -3256,9 +3290,11 @@ function build(index) {
     sandbox.state.adder = 'rule';
     sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' };
     const values = findAll(selects()[0], (n) => n.tag === 'option').map((n) => n.value);
-    eq(values.includes('projection:Label'), true, 'its argument is the payload\'s document id');
-    eq(values.includes('projection:DoneCount'), true, 'no parameters: the whole log');
-    eq(values.includes('projection:FolderSize'), false, 'nothing here carries a FolderId');
+    // Every one is reachable: a value for each of its tags is asked
+    // beside it, and a new input can bring one the command lacks.
+    eq(values.includes('projection:Label'), true, 'Label');
+    eq(values.includes('projection:DoneCount'), true, 'DoneCount');
+    eq(values.includes('projection:FolderSize'), true, 'even one nothing moves');
     sandbox.closeForms();
   });
 
@@ -3277,26 +3313,48 @@ function build(index) {
     const button = findAll(paint(), (n) => n.tag === 'button' && textOf(n) === 'Add rule')[0];
     button.onclick();
     const body = model()['command-definitions'].Finish;
-    eq(body.boundary, [{ alias: 'label', projection: 'Label', arguments: { documentId: { parameterName: 'documentId' } } }],
-      'the read it brought');
-    eq(body.conditions, [{ leftHandSide: { alias: 'label' }, predicate: 'equals', rightHandSide: 'foo',
-      rejection: 'Label is not foo' }], 'and the rule about it');
+    // Read in place (8.0): no alias is invented, the rule names the read.
+    eq(body.boundary, [], 'no binding');
+    eq(body.conditions, [{
+      leftHandSide: { projection: 'Label', tags: { documentId: { parameterName: 'documentId' } } },
+      predicate: 'equals', rightHandSide: 'foo', rejection: 'Label is not foo',
+    }], 'the rule reads Label by the command\'s own document id');
     eq(sandbox.modelAdvisories(model()).length, 0, 'advisory-clean');
   });
 
-  check('a projection read is never asked which of its values — from its card, or reopened', () => {
+  check('a tag nothing in scope can fill brings a new input with the rule', () => {
     sandbox.state.slice = 'Finish';
     sandbox.state.adder = 'rule';
-    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '', onAlias: 'label' };
-    eq(/Which of its values\?/.test(textOf(paint())), false, '"+ rule about label"');
-    eq(/What must be true of it\?/.test(textOf(paint())), true, 'opens on the test');
-    sandbox.closeForms();
+    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' };
+    selects()[0].onchange({ target: { value: 'projection:FolderSize' } });
+    const tagPicker = selects()[1];
+    eq(findAll(tagPicker, (n) => n.tag === 'option').map((n) => [n.value, textOf(n)]),
+      [[' new', '+ new input folder id']], 'Finish holds no folder id, so a new input is the offer');
+    sandbox.state.ruleDraft.right = ' literal';
+    sandbox.state.ruleDraft.rightText = '100';
+    sandbox.state.ruleDraft.predicate = 'lessThan';
+    sandbox.state.ruleDraft.rejection = 'Folder is full';
+    findAll(paint(), (n) => n.tag === 'button' && textOf(n) === 'Add rule')[0].onclick();
+    const body = model()['command-definitions'].Finish;
+    eq(body.properties.map((p) => [p.name, p.propertyType]), [['documentId', 'DocumentId'], ['folderId', 'FolderId']],
+      'the input it needed, named after the tag');
+    eq(body.conditions[body.conditions.length - 1].leftHandSide,
+      { projection: 'FolderSize', tags: { folderId: { parameterName: 'folderId' } } }, 'and the read gives it');
+    const finish = sandbox.deepClone(body);
+    finish.properties.pop();
+    finish.conditions.pop();
+    sandbox.updateDefinition('command-definition', id, 'Finish', finish);
+  });
 
+  check('a projection read in place is never asked which of its values, reopened', () => {
     // Reopened, the picker would list every read's values — the rule
     // is about the one it names.
+    sandbox.state.slice = 'Finish';
     sandbox.state.editRule = 0;
     sandbox.state.ruleDraft = {
-      predicate: 'equals', negate: false, left: JSON.stringify({ alias: 'label' }), right: ' literal', rightText: 'foo',
+      predicate: 'equals', negate: false,
+      left: JSON.stringify({ projection: 'Label', tags: { documentId: { parameterName: 'documentId' } } }),
+      right: ' literal', rightText: 'foo',
     };
     eq(/Which of its values\?/.test(textOf(paint())), false, 'an existing rule, opened');
     eq(/What must be true of it\?/.test(textOf(paint())), true, 'opens whole otherwise');
@@ -3329,8 +3387,8 @@ function build(index) {
     findAll(changes(), (n) => n.tag === 'button' && textOf(n) === '+ Record a change')[0].onclick();
     eq(model()['projection-definitions'].Label.handlers.find((x) => x.event === 'Done'),
       { event: 'Done', operation: 'set', value: 'done' }, 'the handler it wrote');
-    eq(/Label for document id becomes "done"/.test(textOf(changes())), true,
-      'said with the instance it moves — the document id this command was given');
+    eq(/Label tagged document id becomes "done"/.test(textOf(changes())), true,
+      'said with the read it moves — the document id this command was given');
 
     const editOf = (row) => findAll(row, (n) => n.tag === 'button' && textOf(n) === 'Edit');
     const rows = findAll(changes(), (n) => n.tag === 'div' && editOf(n).length === 1 && /^Label/.test(textOf(n)));
@@ -3340,9 +3398,16 @@ function build(index) {
     sandbox.closeForms();
   });
 
-  // FolderSize is kept per FolderId, and no event here carries one: no
-  // event can reach an instance of it, so none is offered to move it.
-  check('an event that reaches no instance of a projection is not offered to move it', () => {
+  // FolderSize is tagged by a FolderId, and no event here carries one:
+  // no event can reach it, so none is offered to move it.
+  const readFolder = () => {
+    const body = sandbox.deepClone(model()['command-definitions'].Finish);
+    body.boundary.push({ alias: 'folder', projection: 'FolderSize', tags: { folderId: { tagType: 'FolderId', tagValue: 'f1' } } });
+    body.conditions.push({ leftHandSide: { alias: 'folder' }, predicate: 'lessThan', rightHandSide: 100, rejection: 'Folder is full' });
+    sandbox.updateDefinition('command-definition', id, 'Finish', body);
+  };
+  check('an event that reaches none of a projection\'s reads is not offered to move it', () => {
+    readFolder();
     sandbox.state.slice = 'Finish';
     sandbox.state.adder = 'chg:Done';
     sandbox.state.changeDraft = null;
@@ -3350,12 +3415,12 @@ function build(index) {
     eq(options.some((n) => n.value === JSON.stringify({ projection: 'FolderSize' })), false,
       'Done carries no folder id');
     eq(options.filter((n) => n.value === JSON.stringify({ projection: 'Label' })).map(textOf),
-      ['Label for document id'], 'and a target says which instance');
+      ['Label tagged document id'], 'and a target says which read');
     sandbox.closeForms();
 
-    // The projection's own editor, the other door: a new handler row
-    // offers only events that carry what it is kept separately by.
-    store.set('dcb-playground:mode', 'advanced');
+    // The projection's own editor offers every event: one that carries
+    // none of its tags is an advisory on the projection, said there.
+    store.set('dcb-playground:experimental', 'on');
     const offered = (name) => {
       const body = sandbox.projectionDraftFrom(model()['projection-definitions'][name]);
       body.handlers.push({ event: '', operation: 'set', value: '' });
@@ -3369,20 +3434,21 @@ function build(index) {
           + findAll(n, (o) => o.tag === 'option' && o.value === 'Labelled').length > 0);
       return select.length;
     };
-    eq(offered('Label') > 0, true, 'both events carry a document id');
-    eq(offered('FolderSize'), 0, 'neither carries a folder id');
+    eq(offered('Label') > 0, true, 'Label');
+    eq(offered('FolderSize') > 0, true, 'and FolderSize — the advisory, not the picker, says Done misses it');
     sandbox.state.projDraft = null;
   });
 
-  check('a handler that reaches no instance is an advisory, not a silent no-op', () => {
+  check('a handler its tags never reach is an advisory on the projection, not a silent no-op', () => {
     const before = model()['projection-definitions'].FolderSize;
     sandbox.updateDefinition('projection-definition', id, 'FolderSize',
       { ...before, handlers: [{ event: 'Done', operation: 'increment', value: 1 }] });
     const found = sandbox.modelAdvisories(model()).filter((a) => a.name === 'FolderSize');
-    eq(found.length, 1, 'reported once');
-    eq(/never fires/.test(found[0].message) && /FolderId/.test(found[0].message), true, found[0].message);
-    eq(/Folder size goes up by 1 — never fires: carries no folder id/.test(textOf(changes())), true,
-      'and the row says so where it sits');
+    eq(found.length, 1, 'reported once, on the projection');
+    eq(/is tagged by FolderId, but "Done", which it handles, is tagged by no FolderId/.test(found[0].message),
+      true, found[0].message);
+    eq(/Folder size goes up by 1 — not for reads tagged Folder id: Done is tagged by none/.test(textOf(changes())), true,
+      'and the change row says so where it sits');
     sandbox.updateDefinition('projection-definition', id, 'FolderSize', before);
   });
 }
@@ -3402,24 +3468,24 @@ function build(index) {
     'tag type ProjectId = string',
     'tag type EmployeeId = string',
     'enum Seniority { Junior, Senior }',
-    'event ProjectDefined { projectId: ProjectId, requiredSeniority: Seniority[] }',
-    'event EmployeeHired { employeeId: EmployeeId, seniority: Seniority }',
-    'event Assigned { projectId: ProjectId, employeeId: EmployeeId }',
-    'entity Project {',
+    'event ProjectDefined { tag projectId: ProjectId, requiredSeniority: Seniority[] }',
+    'event EmployeeHired { tag employeeId: EmployeeId, seniority: Seniority }',
+    'event Assigned { tag projectId: ProjectId, tag employeeId: EmployeeId }',
+    'entity Project (tag projectId: ProjectId) {',
     '  requiredSeniority = RequiredSeniority',
     '}',
-    'entity Employee {',
+    'entity Employee (tag employeeId: EmployeeId) {',
     '  seniority = EmployeeSeniority',
     '}',
-    'projection RequiredSeniority(projectId: ProjectId): Seniority[] = [] {',
+    'projection RequiredSeniority (tag projectId: ProjectId): Seniority[] = [] {',
     '  on ProjectDefined => set event.data.requiredSeniority',
     '}',
-    'projection EmployeeSeniority(employeeId: EmployeeId): Seniority = Junior {',
+    'projection EmployeeSeniority (tag employeeId: EmployeeId): Seniority = Junior {',
     '  on EmployeeHired => set event.data.seniority',
     '}',
     'command Assign(projectId: ProjectId, employeeId: EmployeeId, wanted: Seniority[]) {',
-    '  read project = Project[projectId]',
-    '  read employee = Employee[employeeId]',
+    '  alias project = Project(projectId)',
+    '  alias employee = Employee(employeeId)',
     '  require employee.seniority in project.requiredSeniority',
     '    else reject "Project does not need that seniority"',
     '  emit Assigned { projectId, employeeId }',
@@ -3478,7 +3544,7 @@ function build(index) {
 
 
 {
-  const { id, model } = build(0);   // its own copy: this one strips an entity down
+  const { id, model } = build(ENTITIES);   // its own copy: this one strips an entity down
   store.set('dcb-playground:model', id);
   const slice = () => sandbox.sliceOf(model(), 'SubscribeStudentToCourse');
 
@@ -3555,7 +3621,7 @@ function build(index) {
   }
 
   check('a boolean machine is drawn compactly and an enum one is not', () => {
-    const { model } = build(0);
+    const { model } = build(ENTITIES);
     store.set('dcb-playground:model', model().id);
     const text = paint('lifecycles', model());
     has(text, 'Existence only', 'the two weights are separated');
@@ -3563,7 +3629,7 @@ function build(index) {
   });
 
   check('an entity page paints its lifecycle in Identity, not the ledger', () => {
-    const { model } = build(0);
+    const { model } = build(ENTITIES);
     store.set('dcb-playground:model', model().id);
     sandbox.state.lcOpen = {};
     const text = paint('entity', model(), () => { sandbox.state.entity = 'Student'; });
@@ -3585,7 +3651,7 @@ function build(index) {
   });
 
   check('an enum lifecycle folds to its state count', () => {
-    const { model } = build(0);
+    const { model } = build(ENTITIES);
     store.set('dcb-playground:model', model().id);
     sandbox.state.lcOpen = {};
     const text = paint('entity', model(), () => { sandbox.state.entity = 'Course'; });
@@ -3594,7 +3660,7 @@ function build(index) {
   });
 
   check('a lifecycle nothing sets still says so, folded', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
     const fold = sandbox.lifecycleOf(model(), 'Student').projectionName;
     const body = sandbox.deepClone(model()['projection-definitions'][fold]);
@@ -3609,7 +3675,7 @@ function build(index) {
   });
 
   check('an entity with no lifecycle offers one and says nothing else about state', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
     sandbox.createEntity(model(), 'room');
     sandbox.state.lcMenu = null;
@@ -3624,7 +3690,7 @@ function build(index) {
   });
 
   check('an enum lifecycle named from nothing needs only two states', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
     sandbox.createEntity(model(), 'room');
     const text = paint('entity', model(), () => {
@@ -3652,7 +3718,7 @@ function build(index) {
   });
 
   check('an enum lifecycle cannot reuse a property name the entity has', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
     sandbox.createEntity(model(), 'room');
     sandbox.addExistenceLifecycle(model(), 'Room');
@@ -3688,7 +3754,7 @@ function build(index) {
   });
 
   check('the promotion form paints for a boolean lifecycle', () => {
-    const { model } = build(0);
+    const { model } = build(ENTITIES);
     store.set('dcb-playground:model', model().id);
     const text = paint('entity', model(), () => {
       sandbox.state.entity = 'Student';
@@ -3701,15 +3767,15 @@ function build(index) {
   });
 
   check('the merge form can drop a boolean and reorder the stages', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
     for (const [prop, event, fold] of [['registered', 'DidRegister', 'DidRegisterFold'],
       ['expelled', 'WasExpelled', 'WasExpelledFold']]) {
-      addDefinition('event-definition', id, event, {
+      addTaggedEvent(id, event, {
         properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
       });
       addDefinition('projection-definition', id, fold, {
-        parameters: [{ name: 'studentId', propertyType: 'StudentId' }],
+        tags: [{ name: 'studentId', tagType: 'StudentId' }],
         valueType: 'boolean', isList: false, initialValue: false,
         handlers: [{ event, operation: 'set', value: true }],
       });
@@ -3737,7 +3803,7 @@ function build(index) {
   });
 
   check('the designation picker offers only properties with states', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
     eq(sandbox.lifecycleCandidates(model(), 'Student'), ['exists'],
       'a count is not a lifecycle; a boolean is');
@@ -3753,14 +3819,14 @@ function build(index) {
   });
 
   check('designating a different property moves the lifecycle', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
     // A hand-built state property, which is the case the picker exists
     // for: nothing about it came from the scaffold or a promotion.
     addDefinition('custom-type-definition', id, 'Standing',
       { schema: { type: 'string', enum: ['Unknown', 'Good', 'Poor'] } });
     addDefinition('projection-definition', id, 'StudentStanding', {
-      parameters: [{ name: 'studentId', propertyType: 'StudentId' }],
+      tags: [{ name: 'studentId', tagType: 'StudentId' }],
       valueType: 'Standing', isList: false, initialValue: { enumMember: 'Unknown' },
       handlers: [{ event: 'StudentRegistered', operation: 'set', value: { enumMember: 'Good' } }],
     });
@@ -3781,7 +3847,7 @@ function build(index) {
   });
 
   check('un-designating leaves an entity with no lifecycle, which is allowed', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
     const body = sandbox.deepClone(model()['entity-definitions'].Student);
     delete body.lifecycle;
@@ -3800,13 +3866,13 @@ function build(index) {
   });
 
   check('the entity page offers the merge where the booleans are', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
-    addDefinition('event-definition', id, 'StudentExpelled2', {
+    addTaggedEvent(id, 'StudentExpelled2', {
       properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
     });
     addDefinition('projection-definition', id, 'StudentExpelled2Fold', {
-      parameters: [{ name: 'studentId', propertyType: 'StudentId' }],
+      tags: [{ name: 'studentId', tagType: 'StudentId' }],
       valueType: 'boolean', isList: false, initialValue: false,
       handlers: [{ event: 'StudentExpelled2', operation: 'set', value: true }],
     });
@@ -3821,13 +3887,13 @@ function build(index) {
   });
 
   check('the merge prompt paints in the decide step', () => {
-    const { id, model } = build(0);
+    const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
-    addDefinition('event-definition', id, 'StudentSuspended', {
+    addTaggedEvent(id, 'StudentSuspended', {
       properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
     });
     addDefinition('projection-definition', id, 'StudentSuspension', {
-      parameters: [{ name: 'studentId', propertyType: 'StudentId' }],
+      tags: [{ name: 'studentId', tagType: 'StudentId' }],
       valueType: 'boolean', isList: false, initialValue: false,
       handlers: [{ event: 'StudentSuspended', operation: 'set', value: true }],
     });
@@ -3867,7 +3933,7 @@ function build(index) {
     eq(move(2, 0, false), 'acbd1', 'up, after');
   });
 
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
   store.set('dcb-playground:model', id);
   const command = 'SubscribeStudentToCourse';
   const lefts = () => model()['command-definitions'][command].conditions
@@ -3936,7 +4002,7 @@ function build(index) {
 // from its name — and not from the actions at its right.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(0);
+  const { id, model } = build(ENTITIES);
   store.set('dcb-playground:model', id);
   // Nothing has happened, so the subscription is refused — any
   // scenario will do; what is under test is its row.
@@ -4063,7 +4129,7 @@ function build(index) {
   });
 
   check('the code view paints, and going back to the pages applies what was typed', () => {
-    const { id, model: m } = build(0);
+    const { id, model: m } = build(ENTITIES);
     store.set('dcb-playground:model', id);
     const { state } = sandbox;
     Object.assign(state, { view: 'slice', slice: 'ArchiveCourse', code: false });
@@ -4084,7 +4150,7 @@ function build(index) {
   });
 
   check('a text the model moved under stays stale through a model switch, and is never applied', () => {
-    const { id, model: m } = build(0);
+    const { id, model: m } = build(ENTITIES);
     const other = createDcbModel('Other');
     const { state, codeView } = sandbox;
     store.set('dcb-playground:model', id);
@@ -4119,30 +4185,110 @@ function build(index) {
   });
 }
 
-// The help: every topic in one panel, opened at the concept the page
-// is about.
-check('the help shows every topic, and opens at the page\'s own concept', () => {
-  const id = loadPredefinedModel(0);
+// The help is the documentation, opened in a new tab at what the page
+// is about — and the anchors it links are a contract with dcb.events,
+// whose build checks every one of them exists.
+check('the help opens the reference at the page\'s own concept', () => {
+  const id = loadPredefinedModel(ENTITIES);
   sandbox.localStorage.setItem('dcb-playground:model', id);
   sandbox.state.code = false;
   sandbox.state.splash = false;
+  const ref = (anchor) => sandbox.NOTATION_REFERENCE_URL + '#' + anchor;
   const here = (view, extra = {}) => {
     sandbox.state.view = view;
     Object.assign(sandbox.state, extra);
-    return sandbox.helpTopicHere();
+    return sandbox.docsHere();
   };
-  eq(here('slice', { tab: 'definition' }), 'command', 'a command page');
-  eq(here('slice', { tab: 'scenarios' }), 'scenario', 'its scenarios');
+  eq(here('slice', { tab: 'definition' }), ref('command'), 'a command page');
+  eq(here('slice', { tab: 'scenarios' }), ref('scenario'), 'its scenarios');
   eq([here('entity'), here('types'), here('projections'), here('events'), here('lifecycles')],
-    ['entity', 'custom-type', 'projection', 'event', 'lifecycle'], 'the other pages');
-  eq(here('overview'), null, 'a page about no one concept opens at the top');
-
-  sandbox.state.help = { topic: 'rule', land: true, scroll: 0 };
-  const text = textOf(sandbox.helpModal());
-  for (const topic of sandbox.HELP_TOPICS) eq(text.includes(topic.title), true, `${topic.id} is in it`);
-  eq(text.includes('require count(student.subscribedCourseIds) < 10'), true, 'snippets are shown whole');
-  eq(text.includes('reads 4 types, 3 tags, in 3 queries'), true, 'the boundary topic derives');
-  sandbox.state.help = null;
+    [ref('entity'), ref('type'), ref('projection'), ref('event'), ref('lifecycle')], 'the other pages');
+  eq(here('overview'), sandbox.NOTATION_GUIDE_URL, 'a page about no one concept opens the guide');
+  eq(sandbox.docsAnchorFor('projection-definition', { script: {} }), 'script', 'a scripted projection');
+  eq(sandbox.docsAnchorFor('custom-type-definition', { isTag: true }), 'tag-type', 'a tag type');
+  eq(sandbox.notationReference('no-such-anchor'), sandbox.NOTATION_GUIDE_URL, 'an anchor it does not know is the guide');
+  const links = sandbox.helpReferenceLinks();
+  eq(links[0], sandbox.NOTATION_GUIDE_URL, 'the guide');
+  eq(links.every((link) => link.startsWith(sandbox.NOTATION_GUIDE_URL)), true, 'only the notation pages');
+  eq(links.length, 32, 'the anchors the website defines, and no new one before it does');
+  // dcb.events reads the list by loading shared.js with nothing around
+  // it — no window, no document — so loading it must need neither.
+  const bare = require('vm').createContext({});
+  require('vm').runInContext(require('fs').readFileSync(require('path').join(__dirname, 'shared.js'), 'utf8')
+    + '\n;globalThis.links = helpReferenceLinks();', bare);
+  eq(bare.links, links, 'and the same list, read without a browser');
 });
+
+// ---------------------------------------------------------------
+// The experimental flag gates authoring, never reading: what a model
+// uses is named, and named on the page when the flag is off.
+// ---------------------------------------------------------------
+{
+  check('experimentalFeatures names what a model uses', () => {
+    const { model } = build(ENTITIES);
+    const used = [...new Set(sandbox.experimentalFeatures(model()).map((f) => f.feature))].sort();
+    eq(used, ['annotations', 'entities', 'lifecycles'], 'course-simple');
+    const guarded = build(8).model;
+    eq(sandbox.experimentalFeatures(guarded()).some((f) => f.feature === 'guards' && f.where === 'UpdateText'),
+      true, 'a guarded emission, on its command');
+    const derived = build(9).model;
+    eq(sandbox.experimentalFeatures(derived()).some((f) => f.feature === 'derived'), true, 'a derived projection');
+  });
+
+  check('a shipped model is marked experimental exactly when it uses something experimental', () => {
+    sandbox.PREDEFINED_MODELS.forEach((entry, index) => {
+      const { model } = build(index);
+      const used = sandbox.experimentalFeatures(model()).map((f) => f.feature);
+      eq(!!entry.experimental, used.length > 0, `${entry.slug}: ${[...new Set(used)].join(', ') || 'nothing experimental'}`);
+    });
+    store.set('dcb-playground:experimental', 'off');
+    eq(sandbox.shippedModels().some((entry) => entry.experimental), false, 'the flag off lists none of them');
+    store.set('dcb-playground:experimental', 'on');
+    eq(sandbox.shippedModels().length, sandbox.PREDEFINED_MODELS.length, 'the flag on lists all');
+  });
+
+  check('a model of types, events, projections and commands uses none', () => {
+    store.clear();
+    sandbox.bumpLogRevision();
+    const id = sandbox.createDcbModel('Core Probe');
+    sandbox.applyModelSource(id, [
+      'model "Core Probe"',
+      'tag type DocumentId = string',
+      'event Labelled { tag documentId: DocumentId, label: string }',
+      'projection Label (tag documentId: DocumentId): string = "" {',
+      '  on Labelled => set event.data.label',
+      '}',
+      'command Relabel(documentId: DocumentId, label: string) {',
+      '  alias current = Label(documentId)',
+      '  require current != label',
+      '    else reject "Label is unchanged"',
+      '  emit Labelled { documentId, label }',
+      '}',
+    ].join('\n'));
+    const model = projectState()[id];
+    eq(sandbox.experimentalFeatures(model), [], 'nothing experimental');
+    eq(sandbox.experimentalNotice(model), null, 'so nothing to say, flag or not');
+  });
+
+  check('the notice names the features when the flag is off, and only then', () => {
+    const { model } = build(ENTITIES);
+    eq(sandbox.experimentalNotice(model()), null, 'flag on: nothing to say');
+    store.set('dcb-playground:experimental', 'off');
+    const text = textOf(sandbox.experimentalNotice(model()));
+    eq(text.includes('entities, lifecycles, annotations'), true, 'the features, by name');
+    store.set('dcb-playground:experimental', 'on');
+  });
+
+  check('a share link turns it on for the session, a setting clears that', () => {
+    store.set('dcb-playground:experimental', 'off');
+    sandbox.enableExperimentalForSession();
+    eq(sandbox.experimental(), true, 'on for this session');
+    eq(store.get('dcb-playground:experimental'), 'off', 'without touching the stored choice');
+    sandbox.setExperimental(false);
+    eq(sandbox.experimental(), false, 'turning it off in Settings wins');
+    sandbox.setExperimental(true);
+    eq(store.get('dcb-playground:experimental'), 'on', 'and turning it on is stored');
+  });
+}
 
 finish();

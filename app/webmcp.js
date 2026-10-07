@@ -387,7 +387,7 @@
   register({
     name: 'rename_member',
     description: 'Rename one member of a definition — a property, an enum member, a '
-      + 'composite type\'s field, a projection\'s parameter — and rewrite everything '
+      + 'composite type\'s field — and rewrite everything '
       + 'that referred to it by that name. The valid kind/memberKind pairs: '
       + memberCombos.map(([k, m]) => `${k} + ${m}`).join('; ') + '.',
     inputSchema: {

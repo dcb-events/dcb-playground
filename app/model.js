@@ -92,7 +92,15 @@
 // the message as `rejection`, in place of a `failedRule` naming the
 // condition's text and index and the values it read. A v19 log has
 // neither, and there is no message to invent for it.
-const EVENT_LOG_KEY = 'dcb-playground:events:v20';
+// v21 made an event's tags explicit (`tags` on the event, 8.0): a v20
+// log's events list none, so replayed here every one of them would be
+// untagged.
+// v22 moved the tags back onto the projection, named (`tags: [{name,
+// tagType}]`, empty for an untagged one), and made a read supply a value
+// per name (`tags: {courseId: …}`) where it had listed operands; a
+// derived operand passes its owner's tags on by name, and an entity's
+// fan-out is marked (`id: {each: …}`). A v21 read has no names to match.
+const EVENT_LOG_KEY = 'dcb-playground:events:v22';
 
 const DEF_KINDS = [
   'entity-definition',
@@ -365,6 +373,17 @@ function idTypeOf(model, entityName) {
   return (entity && entity.identifierType) || (entityName + 'Id');
 }
 
+// The one tag `entityName` is read by, `{name, tagType}` — its
+// identifier type, under the name the entity gives it (`identifierName`)
+// or the type's own, lowercased: `courseId: CourseId`. A projection
+// bound as one of its properties is tagged by exactly this.
+function entityTagParam(model, entityName) {
+  const entity = model['entity-definitions'][entityName];
+  const tagType = idTypeOf(model, entityName);
+  const name = (entity && entity.identifierName) || tagType.charAt(0).toLowerCase() + tagType.slice(1);
+  return { name, tagType };
+}
+
 // The entity that owns a value type as its derived identifier, or null.
 // Ownership is discovered by asking every entity what it currently
 // derives, not stored on the value type itself — which is what lets a
@@ -458,6 +477,94 @@ function idLeavesOfType(model, typeName) {
     }
   }
   return out;
+}
+
+// The tags an event carries are the ones it lists (8.0). Each entry of
+// `tags` is a path: a property typed with a tag type, or
+// `property.field` into a record whose field is one — a list of either
+// contributing one tag per element. Nothing is implied any more: a
+// tag-typed property left off the list is an ordinary value, and an
+// event with no list carries no tag at all. The advisories say both
+// (`eventTagAdvisories`), because the author asked to be told rather
+// than guessed for.
+//
+// Resolves one path to the leaf `idLeavesOfType` would have produced
+// for it — `{ path, property, field, isList, identifierType }` — or to
+// `{ problem }` saying why it is not a tag.
+function resolveEventTagPath(model, event, path) {
+  if (typeof path !== 'string' || !path) return { problem: 'a tag entry must name a property' };
+  const [propertyName, fieldName, ...rest] = path.split('.');
+  if (rest.length) return { problem: `"${path}" reaches deeper than a record field` };
+  const property = ((event && event.properties) || []).find((p) => p && p.name === propertyName);
+  if (!property) return { problem: `"${path}" names no property of the event` };
+  const leaves = idLeavesOfType(model, property.propertyType);
+  const leaf = leaves.find((l) => l.field === (fieldName === undefined ? null : fieldName));
+  if (!leaf) {
+    if (fieldName === undefined && leaves.length) {
+      return { problem: `"${path}" is a record — name its tag field (${leaves.map((l) => `${propertyName}.${l.field}`).join(', ')})` };
+    }
+    return { problem: `"${path}" is not of a tag type` };
+  }
+  return { path, property: propertyName, field: leaf.field, isList: !!property.isList, identifierType: leaf.identifierType };
+}
+
+function eventTagLeaves(model, event) {
+  const seen = new Set();
+  const out = [];
+  for (const path of (event && event.tags) || []) {
+    const leaf = resolveEventTagPath(model, event, path);
+    if (leaf.problem || seen.has(leaf.path)) continue;
+    seen.add(leaf.path);
+    out.push(leaf);
+  }
+  return out;
+}
+
+// What the advisories say about an event's tags: an entry that is not
+// a tag, one listed twice, no tags at all, and a tag-typed value left
+// off the list — the last two because nothing is implied any more, so
+// a forgotten tag is an event no query by that tag will ever reach.
+function eventTagAdvisories(model, event) {
+  const messages = [];
+  const tags = (event && event.tags) || [];
+  const seen = new Set();
+  for (const path of tags) {
+    if (seen.has(path)) { messages.push(`Tag "${path}" is listed twice.`); continue; }
+    seen.add(path);
+    const resolved = resolveEventTagPath(model, event, path);
+    if (resolved.problem) messages.push(`Tag ${resolved.problem}.`);
+  }
+  if (!tags.length) messages.push('Carries no tags, so a query by tag never reaches it.');
+  for (const path of tagPathsOf(model, (event && event.properties) || [])) {
+    if (seen.has(path)) continue;
+    messages.push(`"${path}" is of a tag type but not one of this event's tags — a query by it does not reach this event.`);
+  }
+  return messages;
+}
+
+// Every path in `properties` that could be listed as a tag, in property
+// order. What an authoring gesture offers, and what a new event made
+// from a command's payload starts with listed — the stored list is the
+// fact, this is only a default someone can see and change.
+function tagPathsOf(model, properties) {
+  return (properties || []).flatMap((p) => (p && p.propertyType
+    ? idLeavesOfType(model, p.propertyType).map((leaf) => (leaf.field === null ? p.name : `${p.name}.${leaf.field}`))
+    : []));
+}
+
+// An event body after a page edit, with its tags kept in step: a
+// tag-typed value the edit introduced — a new property, or one retyped
+// into a tag type — is listed, and a path the edit left meaning nothing
+// (its property removed, or retyped out of a tag type) is dropped. The
+// pages' authoring default, visible and undoable like the edit itself;
+// a body arriving whole (a file, the code view, an agent) is stored as
+// it says and never passes through here.
+function withEditedTags(model, previous, next) {
+  const before = new Set(tagPathsOf(model, (previous && previous.properties) || []));
+  const kept = ((next && next.tags) || []).filter((path) => !resolveEventTagPath(model, next, path).problem);
+  const added = tagPathsOf(model, next.properties || [])
+    .filter((path) => !before.has(path) && !kept.includes(path));
+  return { ...next, tags: [...kept, ...added] };
 }
 
 function allTypeNames(model) {
@@ -568,20 +675,16 @@ function forEachReferenceSlot(kind, name, body, slot) {
       typeSlots((p.script || {}).arguments);
     }
   };
-  // A tag filter carries a value type by bare name — the one place a
-  // type is referenced outside a property type. The placeholder inside
-  // is an argument name and stays untouched.
-  const tagFilterSlots = (script) => {
-    if (!script || !script.tagFilter) return;
-    script.tagFilter.forEach((template, i) => {
-      const match = TAG_FILTER_RE.exec(String(template || ''));
-      if (!match) return;
-      slot('custom-type-definition', {
-        flavor: 'type',
-        get: () => match[1],
-        set: (v) => { script.tagFilter[i] = `${v}:${match[2]}`; },
-      });
-    });
+  // A tag literal carries its tag type by bare name (`CourseId("c1")`),
+  // and so does a projection's declared tag — the places a type is
+  // referenced outside a property type.
+  const tagLiteralSlots = (tags) => {
+    const values = tags && typeof tags === 'object' ? Object.values(tags) : [];
+    for (const tag of values) {
+      if (tag && typeof tag === 'object' && tag.tagType !== undefined) {
+        at(tag, 'tagType', 'custom-type-definition', 'type');
+      }
+    }
   };
   const givenSlots = (given) => {
     for (const step of given || []) at(step, 'event', 'event-definition', 'name');
@@ -617,11 +720,8 @@ function forEachReferenceSlot(kind, name, body, slot) {
       break;
     case 'projection-definition':
       at(body, 'valueType', 'custom-type-definition', 'type');
-      // A parameter is always a tag-bearing value type, so it
-      // references it the same way a property type does.
-      typeSlots(body.parameters);
+      tagLiteralSlots(body.tags);
       typeSlots((scriptOf(body) || {}).arguments);
-      tagFilterSlots(scriptOf(body));
       for (const handler of body.handlers || []) at(handler, 'event', 'event-definition', 'name');
       // A derived predicate names the projections it reads. `derived`
       // is read raw rather than through `derivedOf`, so a body carrying
@@ -629,6 +729,7 @@ function forEachReferenceSlot(kind, name, body, slot) {
       for (const operand of derivedOperands(body.derived)) {
         if (operand && typeof operand === 'object' && operand.projection !== undefined) {
           at(operand, 'projection', 'projection-definition', 'name');
+          tagLiteralSlots(operand.tags);
         }
       }
       break;
@@ -639,7 +740,15 @@ function forEachReferenceSlot(kind, name, body, slot) {
       for (const binding of body.boundary || []) {
         at(binding, 'entity', 'entity-definition', 'name');
         at(binding, 'projection', 'projection-definition', 'name');
+        tagLiteralSlots(binding && binding.tags);
       }
+      // An inline read names its projection, and its literals their tag
+      // types, wherever an operand sits.
+      forEachCommandOperand(body, (operand) => {
+        if (operandSource(operand) !== 'projection-read') return;
+        at(operand, 'projection', 'projection-definition', 'name');
+        tagLiteralSlots(operand.tags);
+      });
       for (const emission of body.publishes || []) at(emission, 'name', 'event-definition', 'name');
       break;
     case 'scenario-definition':
@@ -653,11 +762,12 @@ function forEachReferenceSlot(kind, name, body, slot) {
       for (const event of (body.then || {}).events || []) at(event, 'type', 'event-definition', 'name');
       break;
     case 'projection-scenario-definition':
-      // Names the projection it is about and every event its Given is
-      // written from. Its Then is a bare value and its `arguments` are
-      // values too — nothing in the model is identified by either.
+      // Names the projection it is about, every event its Given is
+      // written from, and the tag type of each tag it reads by. Its Then
+      // is a bare value and its `arguments` are values too.
       at(body, 'projection', 'projection-definition', 'name');
       givenSlots(body.given);
+      tagLiteralSlots(body.tags);
       break;
   }
 }
@@ -703,12 +813,25 @@ function findReferencers(model, targetKind, targetName) {
 // Operands.
 //
 // Command operands:  {parameterName} | {alias, property?} | {enumMember} | literal
+//                    | {projection, tags?, arguments?} (a read in place)
 // Handler operands:  {eventProperty} | {currentValue} | {successor} | {enumMember} | literal
-// Derived operands:  {projection, arguments?} | {enumMember} | literal
+// Derived operands:  {projection, tags?, arguments?} | {enumMember} | literal
+// Tag operands:      a command operand | {tagType, tagValue} | {each: operand}
 //
 // `{alias}` with no `property` reads a bound projection's value: a
 // projection holds exactly one value and has no name for it. On an
 // entity alias the property is required, since an entity has many.
+//
+// A projection declares its tags by name (8.0, `tags: [{name,
+// tagType}]`), and a read supplies one value per name — `tags:
+// {courseId: …}`, written `CourseStatus(courseId)`. The declared type is
+// the tag's key; the value has to be of it. A literal states its type
+// anyway — `{tagType, tagValue}`, spelled `CourseId("c1")` — because the
+// text shows it and a mismatch is then visible. It is allowed only
+// where a tag is, and its two keys keep it apart from any record
+// literal. `{each: operand}` is the fan-out, said where it happens: the
+// read is made once per element of a list, and a rule over it holds for
+// every one (`ProductExists(each items.productId)`).
 // ============================================================
 
 function operandSource(operand) {
@@ -721,6 +844,8 @@ function operandSource(operand) {
   if (operand.currentValue !== undefined) return 'current-value';
   if (operand.successor !== undefined) return 'successor';
   if (operand.projection !== undefined) return 'projection-read';
+  if (operand.tagType !== undefined) return 'tag-literal';
+  if (operand.each !== undefined) return 'each';
   return 'static';
 }
 
@@ -738,11 +863,14 @@ function operandText(operand) {
     case 'event-property': return `event.data.${operand.eventProperty || '?'}`;
     case 'current-value': return 'current';
     case 'successor': return `successor(${operandText(operand.successor)})`;
+    // The values in the order they are held, which is the order the
+    // projection declares them in wherever a writer built the read.
     case 'projection-read': {
-      const args = Object.entries(operand.arguments || {})
-        .map(([name, value]) => `${name}: ${operandText(value)}`).join(', ');
-      return `${operand.projection || '?'}(${args})`;
+      const values = [...readTagOperands(operand), ...Object.values(operand.arguments || {})];
+      return `${operand.projection || '?'}(${values.map(operandText).join(', ')})`;
     }
+    case 'tag-literal': return `${operand.tagType || '?'}(${JSON.stringify(operand.tagValue)})`;
+    case 'each': return `each ${operandText(operand.each)}`;
     default:
       if (operand === null || operand === undefined) return 'null';
       if (Array.isArray(operand)) return `[${operand.map(operandText).join(', ')}]`;
@@ -763,6 +891,8 @@ function operandIncomplete(operand) {
     case 'event-property': return !operand.eventProperty;
     case 'successor': return operandIncomplete(operand.successor);
     case 'projection-read': return !operand.projection;
+    case 'tag-literal': return !operand.tagType;
+    case 'each': return operandIncomplete(operand.each);
     default: return false;
   }
 }
@@ -838,28 +968,109 @@ function derivedOf(target) {
   return target && target.derived && !target.script ? target.derived : null;
 }
 
+// Which experimental features a model uses, as `{feature, where}`
+// pairs in a stable order — `feature` one of EXPERIMENTAL_FEATURES'
+// keys, `where` the definition it was found on. The flag (shared.js)
+// gates authoring them, never reading them: this is what lets a page
+// say "this model uses …" instead of hiding what is stored. The line
+// is drawn at what the examples on dcb.events need, see
+// docs/research/2026-10-05-explicit-tags-and-aliases.md.
+const EXPERIMENTAL_FEATURES = {
+  entities: 'entities',
+  lifecycles: 'lifecycles',
+  derived: 'derived projections',
+  guards: 'guarded emissions',
+  optional: 'optional reads',
+  excluding: 'excluding',
+  currentValue: 'currentValue',
+  annotations: 'annotations',
+};
+
+function experimentalFeatures(model) {
+  const found = [];
+  const seen = new Set();
+  const note = (feature, where) => {
+    const key = feature + '\u0000' + where;
+    if (seen.has(key)) return;
+    seen.add(key);
+    found.push({ feature, where });
+  };
+  const usesCurrentValue = (value) => {
+    if (!value || typeof value !== 'object') return false;
+    if (value.currentValue === true) return true;
+    return Object.values(value).some(usesCurrentValue);
+  };
+  for (const [name, body] of Object.entries(model['entity-definitions'] || {})) {
+    note('entities', name);
+    if (body && body.lifecycle) note('lifecycles', name);
+    if (body && body.icon) note('annotations', name);
+  }
+  for (const [name, body] of Object.entries(model['event-definitions'] || {})) {
+    if (body && body.icon) note('annotations', name);
+  }
+  for (const [name, body] of Object.entries(model['projection-definitions'] || {})) {
+    if (derivedOf(body)) note('derived', name);
+    if (!scriptOf(body) && usesCurrentValue(body && body.handlers)) note('currentValue', name);
+  }
+  for (const [name, body] of Object.entries(model['command-definitions'] || {})) {
+    if (!body) continue;
+    if (body.icon || body.feature) note('annotations', name);
+    for (const binding of body.boundary || []) {
+      if (!binding) continue;
+      if (binding.entity !== undefined) note('entities', name);
+      if (binding.isOptional) note('optional', name);
+      if (binding.excluding !== undefined && binding.excluding !== null) note('excluding', name);
+    }
+    if ((body.publishes || []).some((emission) => emission && (emission.when || []).length)) {
+      note('guards', name);
+    }
+  }
+  const order = Object.keys(EXPERIMENTAL_FEATURES);
+  return found.sort((a, b) => order.indexOf(a.feature) - order.indexOf(b.feature));
+}
+
 // Both sides of a derived predicate, in evaluation order — the derived
 // analogue of `conditionOperands`.
 function derivedOperands(derived) {
   return derived ? [derived.leftHandSide, derived.rightHandSide] : [];
 }
 
-// The slot of a projection that an entity property binding fills with
-// the bound instance's identifier: the parameter (declared) or script
-// argument (scripted) typed with the entity's own derived identifier.
-// Null when the projection has no such slot — which is what makes it
-// unbindable as that entity's property.
-function entityIdSlotOf(model, entityName, projection) {
-  if (!projection) return null;
-  const idType = idTypeOf(model, entityName);
-  return projectionSlots(projection).find((slot) => slot && slot.propertyType === idType) || null;
-}
-
-// What a reader of this projection must supply: its parameters, or a
-// script's arguments — the same `{name, propertyType}` either way.
+// What a reader of this projection supplies besides tags: a script's
+// arguments, `{name, propertyType}` — the values after the tags in
+// `X(courseId, 14)`. A declared or derived projection takes none.
 function projectionSlots(projection) {
   const script = scriptOf(projection);
-  return (script ? script.arguments : projection.parameters) || [];
+  return (script && script.arguments) || [];
+}
+
+// The tags a projection is read by, `[{name, tagType}]`, in declaration
+// order — one value per entry in every read of it, each keyed by its
+// declared type. Empty is an *untagged* projection, which folds the
+// whole log: a numbering is the case. Several are ANDed, as a DCB query
+// item's tags are. A body that states none reads as untagged; every
+// writer here states the list, and the text says `untagged` outright.
+function projectionTagParams(projection) {
+  return (projection && Array.isArray(projection.tags) ? projection.tags : [])
+    .filter((tag) => tag && typeof tag === 'object');
+}
+
+// The tag types one projection's query is narrowed by — the leaves of
+// its declared tag types, a record's tag-marked fields included.
+function projectionTagTypes(model, projectionName) {
+  const projection = model['projection-definitions'][projectionName];
+  return uniq(projectionTagParams(projection)
+    .flatMap((tag) => idLeavesOfType(model, tag.tagType).map((leaf) => leaf.identifierType)));
+}
+
+// A read's values, `[[name, operand]]` in the order held — the tags,
+// keyed by the names the projection declares.
+function readTagEntries(read) {
+  const tags = read && read.tags;
+  return tags && typeof tags === 'object' && !Array.isArray(tags) ? Object.entries(tags) : [];
+}
+
+function readTagOperands(read) {
+  return readTagEntries(read).map(([, operand]) => operand);
 }
 
 // The projections some entity property binds. Those are read through
@@ -964,41 +1175,6 @@ function literalKindOf(model, typeName) {
   return 'string';
 }
 
-// A scripted *standalone* projection states its own tags, because
-// nothing else can: it has no owning entity to take one from and no
-// parameter list to derive one from. The form is
-// `IdentifierType:{argument}` — the name of a *scalar* identifier type
-// (entity-derived or standalone; a composite one has no tag of its own
-// to name — its components do), and either a placeholder naming one of
-// the script's arguments or a literal value. The `:` here is purely
-// authoring syntax, separating which identifier from what value; the
-// actual tag is rendered through that identifier type's own
-// `tagSchema`, which may not even use `:` — see `renderTag`.
-const TAG_FILTER_RE = /^([A-Z][A-Za-z0-9]*):(.+)$/;
-// A placeholder names an argument, optionally reaching one field into
-// it — `{courseId}` or `{courseId.tenant}` — for the argument whose
-// value is a composite identifier and whose tag comes from one leaf.
-const TAG_PLACEHOLDER_RE = /\{([A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)*)\}/g;
-
-// The argument names a template interpolates — the root of each
-// placeholder, with any field access stripped.
-function tagFilterPlaceholders(template) {
-  return [...String(template || '').matchAll(TAG_PLACEHOLDER_RE)].map((m) => m[1].split('.')[0]);
-}
-
-function resolveTagFilter(model, template, args) {
-  const match = TAG_FILTER_RE.exec(String(template || ''));
-  if (!match) return String(template || '');
-  const valueText = match[2].replace(TAG_PLACEHOLDER_RE, (whole, path) => {
-    const [root, ...fields] = path.split('.');
-    if (args[root] === undefined) return whole;
-    const shown = operandText(args[root]);
-    return fields.length ? `${shown}.${fields.join('.')}` : shown;
-  });
-  const identifierType = identifierTypeOf(model, match[1]);
-  return identifierType ? renderTag(identifierType, valueText) : `${match[1]}:${valueText}`;
-}
-
 // Every scripted projection an entity alias is read through — resolved
 // through the property bindings — which is what decides the arguments
 // its binding has to supply.
@@ -1016,15 +1192,12 @@ function scriptedPropertiesRead(model, body, binding) {
 
 // The arguments a binding owes, gathered from everything it reads. Two
 // scripted projections asking for the same name ask for the same value —
-// they are read at one instant, through one binding. The entity's own
-// identifier slot is never owed: the binding supplies the instance it
-// bound, without being asked.
+// they are read at one instant, through one binding. The instance is
+// never an argument: it is the tag the binding reads by.
 function argumentsExpected(model, body, binding) {
-  const idType = idTypeOf(model, binding.entity);
   const out = [];
   for (const projection of scriptedPropertiesRead(model, body, binding)) {
     for (const argument of scriptOf(projection).arguments || []) {
-      if (argument.propertyType === idType) continue;
       if (!out.some((a) => a.name === argument.name)) out.push(argument);
     }
   }
@@ -1071,11 +1244,28 @@ function offersSuccessor(model, valueType) {
   return cls.kind === 'value' && !cls.composite;
 }
 
-// Walks every operand inside a command body.
-function forEachCommandOperand(body, visit) {
+// Walks every operand inside a command body — and into every inline
+// projection read (8.0), whose tags and arguments are operands in the
+// same scope: `CourseStatus(course.id)` names `course` exactly as a
+// rule does. A walker sees the read first, then what is inside it.
+function forEachCommandOperand(body, outerVisit) {
+  const visit = (operand, meta) => {
+    outerVisit(operand, meta);
+    if (operandSource(operand) === 'each') { visit(operand.each, meta); return; }
+    if (operandSource(operand) !== 'projection-read') return;
+    for (const [key, tag] of readTagEntries(operand)) {
+      visit(tag, { ...meta, where: `${meta.where} (${operand.projection} tag ${key})`, tag: true });
+    }
+    for (const [key, argument] of Object.entries(operand.arguments || {})) {
+      visit(argument, { ...meta, where: `${meta.where} (${operand.projection} argument ${key})`, tag: false });
+    }
+  };
   for (const binding of body.boundary || []) {
     if (!binding) continue;
     if (binding.projection) {
+      for (const [key, operand] of readTagEntries(binding)) {
+        visit(operand, { where: `binding "${binding.alias || '?'}" (tag ${key})`, tag: true });
+      }
       for (const [key, operand] of Object.entries(binding.arguments || {})) {
         visit(operand, { where: `binding "${binding.alias || '?'}" (argument ${key})` });
       }
@@ -1126,13 +1316,13 @@ function forEachCommandOperand(body, visit) {
 // A command's boundary *is* its dynamic consistency boundary, and
 // holds every read. An entity binding contributes one query item: its
 // tag, restricted to the event types reachable through the properties
-// the conditions actually read. A projection binding contributes one
-// item too: its arguments as tags — none at all when it declares no
-// parameters — and the event types it handles.
+// the conditions actually read. A projection read contributes one
+// item too: the tags it declares, with the values the read gives them —
+// none at all for an untagged one — and the event types it handles.
 //
-// Items carry `tags` rather than one tag because a projection may
-// declare several parameters. Tags within an item are ANDed; the items
-// themselves are ORed, which is the ordinary DCB query shape.
+// Items carry `tags` rather than one tag because a read may name
+// several. Tags within an item are ANDed; the items themselves are
+// ORed, which is the ordinary DCB query shape.
 // ============================================================
 
 // The type an operand resolves to, or null when it cannot be worked out
@@ -1155,6 +1345,20 @@ function resolveOperandType(operand, { boundary, commandProperties, model }) {
     // `isList` describe the value a condition reads, whatever shape the
     // code carries internally to arrive at it.
     return { propertyType: projection.valueType, isList: !!projection.isList };
+  }
+  if (source === 'tag-literal') {
+    return operand.tagType ? { propertyType: operand.tagType, isList: false } : null;
+  }
+  // One element of the list it fans out over.
+  if (source === 'each') {
+    const inner = resolveOperandType(operand.each, { boundary, commandProperties, model });
+    return inner ? { propertyType: inner.propertyType, isList: false } : null;
+  }
+  // An inline read holds its projection's value, the same as an alias
+  // bound to it does.
+  if (source === 'projection-read') {
+    const projection = model['projection-definitions'][operand.projection];
+    return projection ? { propertyType: projection.valueType, isList: !!projection.isList } : null;
   }
   if (source === 'parameter') {
     const property = (commandProperties || []).find((p) => p.name === operand.parameterName);
@@ -1216,27 +1420,38 @@ function rightHandExpectedType(predicate, leftType) {
   return { propertyType: leftType.propertyType, isList: leftType.isList };
 }
 
-// A binding whose identifier operand is a list covers one instance per
-// element — nothing declares it, it follows from the operand's type. A
-// list read off an already-fanned-out alias is a list of lists, which
-// flattens; either way the binding is plural.
-function isFannedOut(model, body, binding) {
-  if (!binding) return false;
-  // A projection binding reads one partition: every argument is a
-  // single tag, so there is nothing for it to fan over.
-  if (binding.projection) return false;
-  const resolved = resolveOperandType(binding.id, {
-    boundary: body.boundary || [],
-    commandProperties: body.properties || [],
-    model,
+// The tag a projection read fans out over — its `{each: …}` — or null.
+function readFanTag(read) {
+  return readTagOperands(read).find((tag) => operandSource(tag) === 'each') || null;
+}
+
+// Whether an operand holds many values in the command's scope: a list,
+// or a property read off a binding that fans out (one per instance).
+function operandIsPlural(model, body, operand) {
+  const resolved = resolveOperandType(operand, {
+    boundary: body.boundary || [], commandProperties: body.properties || [], model,
   });
   if (resolved && resolved.isList) return true;
-  // Reading a scalar property off a plural alias is itself plural.
-  if (operandSource(binding.id) === 'alias-property') {
-    const source = (body.boundary || []).find((b) => b && b.alias === binding.id.alias);
-    if (source && source !== binding) return isFannedOut(model, body, source);
-  }
-  return false;
+  if (operandSource(operand) !== 'alias-property') return false;
+  const source = (body.boundary || []).find((b) => b && b.alias === operand.alias);
+  return !!source && isFannedOut(model, body, source);
+}
+
+// The value an entity binding is read by, its `each` unwrapped — what
+// coverage compares and what a chain's root is found through.
+function entityIdOperand(binding) {
+  const id = binding && binding.id;
+  return operandSource(id) === 'each' ? id.each : id;
+}
+
+// A read fans out where it says so: a projection read at the tag that
+// is `each …`, an entity read when its identifier is (`Course(each
+// student.subscribedCourseIds)`). The list it fans over may itself be
+// read off a plural alias — a list of lists, which flattens.
+function isFannedOut(model, body, binding) {
+  if (!binding) return false;
+  if (binding.projection) return !!readFanTag(binding);
+  return operandSource(binding.id) === 'each';
 }
 
 // The list an operand is quantified over, as an identity string, or
@@ -1248,11 +1463,14 @@ function isFannedOut(model, body, binding) {
 function bindingFanRoot(model, body, binding, seen = []) {
   if (!binding || !isFannedOut(model, body, binding)) return null;
   if (seen.includes(binding.alias)) return null;
-  if (operandSource(binding.id) === 'parameter') {
-    return `parameter:${binding.id.parameterName}`;
+  // What it fans over: the `each` of a projection read's tag, or of an
+  // entity's identifier.
+  const over = binding.projection ? readFanTag(binding).each : entityIdOperand(binding);
+  if (operandSource(over) === 'parameter') {
+    return `parameter:${over.parameterName}`;
   }
-  if (operandSource(binding.id) === 'alias-property') {
-    const source = (body.boundary || []).find((b) => b && b.alias === binding.id.alias);
+  if (operandSource(over) === 'alias-property') {
+    const source = (body.boundary || []).find((b) => b && b.alias === over.alias);
     // A binding fanned from a plural *projection* has no list
     // parameter behind it, so it is its own root.
     const inherited = source && source !== binding
@@ -1269,14 +1487,28 @@ function fanRootOf(model, body, operand) {
     return bindingFanRoot(model, body,
       (body.boundary || []).find((b) => b && b.alias === operand.alias));
   }
+  // A read in place that fans out has the root of what it fans over —
+  // a payload list, or a list read off a binding.
+  if (source === 'projection-read') {
+    const fan = readFanTag(operand);
+    if (!fan) return null;
+    const over = resolveOperandType(fan.each, { boundary: body.boundary || [], commandProperties: body.properties || [], model });
+    if (over && !over.isList && operandSource(fan.each) !== 'alias-property') return null;
+    if (operandSource(fan.each) === 'parameter') return `parameter:${fan.each.parameterName}`;
+    if (operandSource(fan.each) === 'alias-property') {
+      return bindingFanRoot(model, body, (body.boundary || []).find((b) => b && b.alias === fan.each.alias))
+        || `binding:${fan.each.alias}`;
+    }
+    return null;
+  }
   if (source === 'parameter') {
     // A list parameter is a fan root only when something actually fans
     // out over it. A list nobody iterates — the new schedule handed to
     // a reschedule command, say — is an ordinary list value, and
     // reading it alongside a fanned alias is not a second quantifier.
     const root = `parameter:${operand.parameterName}`;
-    const iterated = (body.boundary || []).some(
-      (b) => bindingFanRoot(model, body, b) === root);
+    const iterated = (body.boundary || []).some((b) => bindingFanRoot(model, body, b) === root)
+      || inlineReads(body).some(({ read }) => fanRootOf(model, body, read) === root);
     return iterated ? root : null;
   }
   return null;
@@ -1311,7 +1543,7 @@ function isZipped(model, body, condition, operand) {
   if (!root || operandSource(operand) !== 'parameter') return false;
   return conditionOperands(condition).some((other) =>
     other !== operand
-    && operandSource(other) === 'alias-property'
+    && (operandSource(other) === 'alias-property' || operandSource(other) === 'projection-read')
     && fanRootOf(model, body, other) === root);
 }
 
@@ -1357,21 +1589,90 @@ function operandForLeaf(operand, leaf) {
 // component tags that `eventDefinitions` describes.
 function tagsForIdentifierValue(model, identifierTypeName, operand, { each } = {}) {
   const leaves = idLeavesOfType(model, identifierTypeName);
+  // A tag literal shows its value, not its own spelling: the tag it
+  // renders is `CourseId:c1`, never `CourseId:CourseId("c1")`.
+  const literal = operandSource(operand) === 'tag-literal';
+  const shownFor = (leaf) => {
+    if (operand === undefined) return '?';
+    if (literal) {
+      const held = leaf && leaf.field !== null ? (operand.tagValue || {})[leaf.field] : operand.tagValue;
+      return String(held);
+    }
+    return operandText(leaf ? operandForLeaf(operand, leaf) : operand);
+  };
   if (!leaves.length) {
     // Unresolved mid-edit — nothing to render through, so fall back to
     // the type name literally rather than showing nothing at all.
-    const shown = operand === undefined ? '?' : operandText(operand);
+    const shown = shownFor(null);
     return [`${identifierTypeName}:${each ? `each(${shown})` : shown}`];
   }
   return leaves.map((leaf) => {
-    const shown = operand === undefined ? '?' : operandText(operandForLeaf(operand, leaf));
+    const shown = shownFor(leaf);
     return renderTag(identifierTypeOf(model, leaf.identifierType), each ? `each(${shown})` : shown);
   });
+}
+
+// The type a tag operand holds — `{propertyType, isList}` — in the
+// scope of the command `body` it sits in, or null where that cannot be
+// worked out (a dangling reference, an untyped literal). It has to be
+// the type the projection declares for that tag, which is the key.
+function tagOperandType(model, body, operand) {
+  // `each` is resolved through `resolveOperandType` too: one element.
+  return resolveOperandType(operand, {
+    boundary: (body && body.boundary) || [],
+    commandProperties: (body && body.properties) || [],
+    model,
+  });
+}
+
+// The tags one projection read contributes, for display — one per leaf
+// of each declared tag type, with the value in the caller's terms
+// (`CourseId:courseId`). A tag the read leaves out shows as `?`.
+function readTagTexts(model, body, read) {
+  const projection = model['projection-definitions'][read && read.projection];
+  const held = (read && read.tags && typeof read.tags === 'object') ? read.tags : {};
+  return uniq(projectionTagParams(projection).flatMap((tag) => {
+    const operand = held[tag.name];
+    if (operandSource(operand) === 'each') {
+      return tagsForIdentifierValue(model, tag.tagType, operand.each, { each: true });
+    }
+    return tagsForIdentifierValue(model, tag.tagType, operand);
+  }));
+}
+
+// The tag-type sets a projection is read by — one, its own declared
+// tags (8.0): `[['CourseId']]`, or `[[]]` for an untagged one. Kept as
+// a list of sets because that is what every caller asks about.
+function projectionReadTagSets(model, projectionName) {
+  if (!model['projection-definitions'][projectionName]) return [];
+  return [[...projectionTagTypes(model, projectionName)].sort()];
+}
+
+// The events a read of `projectionName` by `tagTypes` — its own
+// declared ones unless given — can never see: each handled event that
+// does not list a tag of every one of those types (`eventTagLeaves`).
+// Tag matching is by value — a query by CourseId finds only events
+// tagged by one — so such a handler never fires. `[{event, missing}]`,
+// empty when every handled event is reachable. A derived projection
+// has no handlers of its own: each operand is read by its own tags and
+// answers for itself.
+function readTagsMissing(model, projectionName, tagTypes = projectionTagTypes(model, projectionName)) {
+  const out = [];
+  if (derivedOf(model['projection-definitions'][projectionName])) return out;
+  for (const eventName of projectionHandledTypes(model, projectionName)) {
+    const event = model['event-definitions'][eventName];
+    if (!event) continue;
+    const carried = new Set(eventTagLeaves(model, event).map((leaf) => leaf.identifierType));
+    const missing = (tagTypes || []).filter((type) => !carried.has(type));
+    if (missing.length) out.push({ event: eventName, missing });
+  }
+  return out;
 }
 
 // The tag(s) an entity binding contributes — one per leaf of the
 // entity's own derived identifier, scalar or composite alike.
 function entityBindingTags(model, entityName, idOperand, excludingOperand, fannedOut) {
+  if (operandSource(idOperand) === 'each') idOperand = idOperand.each;
   const leaves = idLeavesOfType(model, idTypeOf(model, entityName));
   if (!leaves.length) {
     // An unknown entity mid-edit has no derived identifier to look up —
@@ -1410,38 +1711,6 @@ function projectionHandledTypes(model, projectionName, seen = []) {
   return uniq(out);
 }
 
-// The tags one projection read contributes, for display: derived from
-// parameters, stated by a script's tag filter — or, derived, the union
-// of the operands' own reads with this read's argument operands
-// substituted through, so the shown tag stays in the caller's terms
-// ("DocumentId:docId", never the inner parameter name).
-function projectionReadTags(model, projectionName, argumentOperands, seen = []) {
-  const projection = model['projection-definitions'][projectionName];
-  if (!projection || seen.includes(projectionName)) return [];
-  const script = scriptOf(projection);
-  if (script) {
-    return (script.tagFilter || []).map((t) => resolveTagFilter(model, t, argumentOperands || {}));
-  }
-  const derived = derivedOf(projection);
-  if (!derived) {
-    return (projection.parameters || []).flatMap((p) =>
-      tagsForIdentifierValue(model, p.propertyType, (argumentOperands || {})[p.name]));
-  }
-  const tags = [];
-  for (const operand of derivedOperands(derived)) {
-    if (operandSource(operand) !== 'projection-read') continue;
-    const substituted = {};
-    for (const [name, inner] of Object.entries(operand.arguments || {})) {
-      substituted[name] = operandSource(inner) === 'parameter'
-        && (argumentOperands || {})[inner.parameterName] !== undefined
-        ? argumentOperands[inner.parameterName]
-        : inner;
-    }
-    tags.push(...projectionReadTags(model, operand.projection, substituted, [...seen, projectionName]));
-  }
-  return uniq(tags);
-}
-
 function deriveDcb(model, body) {
   const items = [];
 
@@ -1451,18 +1720,16 @@ function deriveDcb(model, body) {
     if (binding.projection) {
       const projection = model['projection-definitions'][binding.projection];
       if (!projection) continue;
-      // A declared projection's parameters *are* its tags, so the query
-      // is written from the parameter list rather than from anything
-      // about the value — one tag for a scalar identifier parameter,
-      // one per component for a composite one. A scripted projection
-      // states its tags itself, with argument names interpolated, and a
-      // derived one contributes its operands' reads — neither the
-      // escape hatch nor the predicate is allowed to hide what it
-      // reads.
+      // The projection declares its tags and the read gives their
+      // values, so the query is written from both — one tag per scalar
+      // tag value, one per component for a record — whatever kind of
+      // projection it reads: declared, scripted or derived, none of them
+      // can hide what it reads.
       items.push({
         projection: binding.projection,
         alias: binding.alias,
-        tags: projectionReadTags(model, binding.projection, binding.arguments || {}),
+        fannedOut: !!readFanTag(binding),
+        tags: readTagTexts(model, body, binding),
         types: projectionHandledTypes(model, binding.projection).sort(),
         readProperties: [],
       });
@@ -1495,6 +1762,21 @@ function deriveDcb(model, body) {
     });
   }
 
+  // Every inline read (8.0) is a query item too, once however often it
+  // is written: two rules about `CourseStatus(courseId)` read it once.
+  // It has no alias, so its item is known by its spelling.
+  for (const { key, read } of inlineReads(body)) {
+    items.push({
+      projection: read.projection,
+      alias: null,
+      inline: key,
+      fannedOut: !!readFanTag(read),
+      tags: readTagTexts(model, body, read),
+      types: projectionHandledTypes(model, read.projection).sort(),
+      readProperties: [],
+    });
+  }
+
   const writes = [];
   for (const emission of body.publishes || []) {
     if (!emission) continue;
@@ -1504,7 +1786,7 @@ function deriveDcb(model, body) {
       const operand = (emission.parameters || {})[property.name];
       const listed = property.isList || (operand !== undefined && operandSource(operand) === 'parameter'
         && (body.properties || []).some((p) => p.name === operand.parameterName && p.isList));
-      for (const leaf of idLeavesOfType(model, property.propertyType)) {
+      for (const leaf of eventTagLeaves(model, event).filter((l) => l.property === property.name)) {
         const shown = operand === undefined ? '?' : operandText(operandForLeaf(operand, leaf));
         writes.push(renderTag(identifierTypeOf(model, leaf.identifierType), listed ? `each(${shown})` : shown));
       }
@@ -1514,21 +1796,68 @@ function deriveDcb(model, body) {
   return { items, writes: uniq(writes) };
 }
 
+// Every inline projection read in a command, once per distinct
+// spelling — `{ key, read }`, `key` the read's canonical JSON — in the
+// order first written. Two rules reading `CourseStatus(courseId)` read
+// it once.
+function inlineReads(body) {
+  const out = [];
+  const seen = new Set();
+  forEachCommandOperand(body, (operand) => {
+    if (operandSource(operand) !== 'projection-read') return;
+    const key = JSON.stringify(canonicalOperand(operand));
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ key, read: operand });
+  });
+  return out;
+}
+
+// The operands one binding is read with — its identifier, exclusion,
+// tags and arguments.
+function bindingOperands(binding) {
+  if (!binding) return [];
+  return binding.projection
+    ? [...readTagOperands(binding), ...Object.values(binding.arguments || {})]
+    : [binding.id, binding.excluding, ...Object.values(binding.arguments || {})];
+}
+
+// The aliases an operand names, looking into inline reads.
+function operandAliases(operand, out = []) {
+  if (operandSource(operand) === 'alias-property') {
+    if (!out.includes(operand.alias)) out.push(operand.alias);
+  } else if (operandSource(operand) === 'each') {
+    operandAliases(operand.each, out);
+  } else if (operandSource(operand) === 'projection-read') {
+    for (const inner of [...readTagOperands(operand), ...Object.values(operand.arguments || {})]) operandAliases(inner, out);
+  }
+  return out;
+}
+
 // The aliases a binding waits for — every binding its own operands
-// name. A graph, not a tree: `id` and `excluding` may point somewhere
-// different, and arguments may point at several bindings at once.
+// name, inline reads included. A graph, not a tree: `id` and
+// `excluding` may point somewhere different, and arguments may point at
+// several bindings at once.
 function bindingDependsOn(body, binding) {
   if (!binding) return [];
-  const operands = binding.projection
-    ? Object.values(binding.arguments || {})
-    : [binding.id, binding.excluding, ...Object.values(binding.arguments || {})];
   const aliases = [];
-  for (const operand of operands) {
-    if (operandSource(operand) !== 'alias-property') continue;
-    if (operand.alias === binding.alias) continue;
-    if (!aliases.includes(operand.alias)) aliases.push(operand.alias);
+  for (const operand of bindingOperands(binding)) operandAliases(operand, aliases);
+  return aliases.filter((alias) => alias !== binding.alias);
+}
+
+// The query an operand waits for, as a depth: a bound alias waits for
+// its binding's round, an inline read is one query after whatever its
+// own tags wait for, and anything else waits for nothing.
+function operandDepth(operand, roundOf) {
+  switch (operandSource(operand)) {
+    case 'alias-property': return roundOf.get(operand.alias) || 0;
+    case 'each': return operandDepth(operand.each, roundOf);
+    case 'projection-read': {
+      const inner = [...readTagOperands(operand), ...Object.values(operand.arguments || {})];
+      return 1 + Math.max(0, ...inner.map((o) => operandDepth(o, roundOf)));
+    }
+    default: return 0;
   }
-  return aliases;
 }
 
 // Groups the boundary into the queries it actually resolves in — one
@@ -1552,7 +1881,9 @@ function deriveRounds(body) {
 
   for (const binding of boundary) {
     const waitsFor = bindingDependsOn(body, binding).filter((a) => roundOf.has(a));
-    const round = waitsFor.reduce((max, alias) => Math.max(max, roundOf.get(alias)), 0) + 1;
+    // An inline read among its operands is a query of its own, so the
+    // binding waits for it as it would for an alias.
+    const round = Math.max(0, ...bindingOperands(binding).map((o) => operandDepth(o, roundOf))) + 1;
     roundOf.set(binding.alias, round);
     while (rounds.length < round) rounds.push([]);
     rounds[round - 1].push({ binding, waitsFor });
@@ -1572,10 +1903,19 @@ function deriveRounds(body) {
 // cannot disagree.
 function boundarySummary(model, body) {
   const dcb = deriveDcb(model, body);
-  const byAlias = new Map(dcb.items.map((item) => [item.alias, item]));
-  const queries = deriveRounds(body)
-    .map((round) => round.map((entry) => byAlias.get(entry.binding.alias)).filter(Boolean))
-    .filter((query) => query.length);
+  const byAlias = new Map(dcb.items.filter((item) => item.alias).map((item) => [item.alias, item]));
+  const rounds = deriveRounds(body);
+  const queries = rounds.map((round) => round.map((entry) => byAlias.get(entry.binding.alias)).filter(Boolean));
+  // An inline read sits in the query its depth says: one after the
+  // aliases and reads its tags wait for.
+  const roundOf = new Map(rounds.flatMap((round, r) => round.map((entry) => [entry.binding.alias, r + 1])));
+  for (const { key, read } of inlineReads(body)) {
+    const item = dcb.items.find((i) => i.inline === key);
+    const depth = operandDepth(read, roundOf);
+    while (queries.length < depth) queries.push([]);
+    if (item) queries[depth - 1].push(item);
+  }
+  for (let i = queries.length - 1; i >= 0; i--) if (!queries[i].length) queries.splice(i, 1);
   const items = dcb.items;
   const types = uniq(items.flatMap((item) => item.types)).sort();
   const anyType = items.some((item) => !item.types.length);
@@ -1600,10 +1940,13 @@ function boundarySummary(model, body) {
 // modelling error of the same class as handling the wrong event, and
 // catching it is not this check's job.
 function mintsFromProjection(model, body, operand, eventName) {
-  if (operandSource(operand) !== 'alias-property' || operand.property) return false;
-  const binding = (body.boundary || []).find((b) => b && b.alias === operand.alias);
-  if (!binding || !binding.projection) return false;
-  const projection = model['projection-definitions'][binding.projection];
+  let projectionName = null;
+  if (operandSource(operand) === 'projection-read') projectionName = operand.projection;
+  else if (operandSource(operand) === 'alias-property' && !operand.property) {
+    const binding = (body.boundary || []).find((b) => b && b.alias === operand.alias);
+    projectionName = binding && binding.projection;
+  }
+  const projection = projectionName && model['projection-definitions'][projectionName];
   return !!projection && (projection.handlers || []).some((h) => h && h.event === eventName);
 }
 
@@ -1634,10 +1977,10 @@ function emittedTagRequirements(model, body) {
       if (operand === undefined && property.isOptional && !property.isList) continue;
       if (mintsFromProjection(model, body, operand, emission.name)) continue;
       const asserted = operand !== undefined && operandSource(operand) === 'parameter';
-      // Walked to the identifier *leaves* of the property's type, not
-      // its surface: a property typed `Item[]` writes one tag per
-      // element, and each names its own instance.
-      for (const leaf of idLeavesOfType(model, property.propertyType)) {
+      // Walked to the tag *leaves* the event lists, not the property's
+      // surface: a property typed `Item[]` writes one tag per element,
+      // and each names its own instance.
+      for (const leaf of eventTagLeaves(model, event).filter((l) => l.property === property.name)) {
         // A leaf whose identifier type is standalone — a component with
         // no entity of its own — names no entity instance, so there is
         // nothing here to consult or to keep alive.
@@ -1678,7 +2021,7 @@ function coverageIssues(model, body) {
     if (requirement.required === undefined) return true;
     return !(body.boundary || []).some((binding) => binding
       && binding.entity === requirement.entity
-      && sameOperand(binding.id, requirement.required));
+      && sameOperand(entityIdOperand(binding), requirement.required));
   });
 }
 
@@ -1713,7 +2056,7 @@ function bindingReferences(model, body) {
   // An operand naming an alias consults it whatever else it does, so
   // the walk is over operand *shape*, not over the position it sits in.
   const noteOperand = (operand, reason) => {
-    if (operandSource(operand) === 'alias-property') note(operand.alias, reason);
+    for (const alias of operandAliases(operand)) note(alias, reason);
   };
   const noteCondition = (condition, reason) => {
     if (!condition) return;
@@ -1740,6 +2083,7 @@ function bindingReferences(model, body) {
     if (!binding) continue;
     noteOperand(binding.id, 'chain');
     noteOperand(binding.excluding, 'chain');
+    for (const operand of readTagOperands(binding)) noteOperand(operand, 'chain');
     for (const operand of Object.values(binding.arguments || {})) {
       noteOperand(operand, 'chain');
     }
@@ -1755,7 +2099,7 @@ function bindingReferences(model, body) {
     if (requirement.asserted || requirement.required === undefined) continue;
     for (const binding of body.boundary || []) {
       if (binding && binding.entity === requirement.entity
-        && sameOperand(binding.id, requirement.required)) {
+        && sameOperand(entityIdOperand(binding), requirement.required)) {
         note(binding.alias, 'coverage');
       }
     }
@@ -1803,12 +2147,8 @@ function decisionAliases(model, body) {
     if (!alias || kept.has(alias) || !byAlias.has(alias)) return;
     kept.add(alias);
     const binding = byAlias.get(alias);
-    const walk = (operand) => {
-      if (operandSource(operand) === 'alias-property') visit(operand.alias);
-    };
-    walk(binding.id);
-    walk(binding.excluding);
-    for (const operand of Object.values(binding.arguments || {})) walk(operand);
+    const walk = (operand) => { for (const alias of operandAliases(operand)) visit(alias); };
+    for (const operand of bindingOperands(binding)) walk(operand);
   };
   for (const [alias, reasons] of references) {
     if (reasons.has('rule') || reasons.has('guard')) visit(alias);
@@ -2035,6 +2375,7 @@ function definitionAdvisories(model, kind, name, body) {
   // an agent writing a whole body. It still bounds the append, so it is
   // never dropped behind anyone's back; it is reported here and pruned
   // by the next edit to this command, which is what the message says.
+  if (kind === 'event-definition') messages.push(...eventTagAdvisories(model, body));
   if (kind === 'command-definition') {
     messages.push(...rejectionAdvisories(body));
     const stranded = unreferencedBindings(model, body);
@@ -2066,23 +2407,140 @@ function modelAdvisories(model) {
   return found;
 }
 
-// The identifier types a projection keeps its value separately for
-// that this event does not carry. Tag matching is by value — an event
-// reaches a partition only by carrying a tag of each type the query
-// names — so an event missing one reaches no instance at all, and a
-// handler for it never fires: `CopyExists(id)` moved by a
-// `BookCatalogued` that carries an isbn and no copy id. Looked at
-// through composites, the same way `tagsOfEvent` derives the tags.
-// Empty for a projection with no parameters (it reads the whole log)
-// and for a scripted one, whose tags are its own `tagFilter`.
-function partitionTagsMissing(model, projection, eventName) {
-  const event = model['event-definitions'][eventName];
-  if (!projection || !event || scriptOf(projection)) return [];
-  const typesOf = (properties) => (properties || [])
-    .flatMap((p) => (p && p.propertyType ? idLeavesOfType(model, p.propertyType) : []))
-    .map((leaf) => leaf.identifierType);
-  const carried = new Set(typesOf(event.properties));
-  return uniq(typesOf(projection.parameters)).filter((type) => !carried.has(type));
+// Why a tag operand cannot fill a projection's tag `tag` (`{name,
+// tagType}`) — or null. It must be one value of the declared type,
+// which is the tag's key: a literal states its type (`CourseId("c1")`),
+// any other value has one in the command's scope. A list is read once
+// per element only with `each`.
+function tagOperandProblem(model, body, operand, tag) {
+  const source = operandSource(operand);
+  const declared = tag && tag.tagType;
+  const mismatch = (held) => (declared && held && held !== declared
+    ? `is tagged ${operandText(operand)}, ${typeArticle(held)} ${held} — but its "${tag.name}" tag is ${typeArticle(declared)} ${declared}.`
+    : null);
+  if (source === 'static' || source === 'enum-member') {
+    return `is tagged ${operandText(operand)}, which says no tag type — write the literal with its type, `
+      + `${declared || 'CourseId'}(${JSON.stringify(source === 'static' ? operand : operand.enumMember)}).`;
+  }
+  if (source === 'tag-literal') {
+    if (operand.tagValue === null || operand.tagValue === undefined) return `is tagged ${operand.tagType} with no value — a tag has one.`;
+    return mismatch(operand.tagType);
+  }
+  // `each` fans out over a list; over one value there is nothing to fan.
+  if (source === 'each') {
+    const over = tagOperandType(model, body, operand.each);
+    if (over && !over.isList) {
+      return `is tagged ${operandText(operand)}, but ${operandText(operand.each)} is one value — ` +
+        `"each" fans out over a list; drop it.`;
+    }
+    if (operandSource(operand.each) === 'each') return 'is tagged each of each';
+    const element = tagOperandType(model, body, operand);
+    return element ? mismatch(element.propertyType) : null;
+  }
+  const resolved = tagOperandType(model, body, operand);
+  if (resolved && resolved.isList) {
+    return `is tagged ${operandText(operand)}, which is a list — a tag takes one value; ` +
+      `"each ${operandText(operand)}" reads it once per element.`;
+  }
+  return resolved ? mismatch(resolved.propertyType) : null;
+}
+
+// "a" or "an", for a type name in a sentence.
+function typeArticle(word) {
+  return /^[aeiou]/i.test(String(word || '')) ? 'an' : 'a';
+}
+
+// Why a read cannot be read as written — or null: a projection that
+// exists, one value for each tag it declares and none it does not, each
+// of the declared type, one fan-out at most, and the arguments its
+// script takes and no others. Shared by an alias's read and a read in
+// place, which are the same read. `chained(operand, what)` lets a
+// binding add its own rule — a value from a binding below it.
+function readProblem(model, body, read, where, chained = () => null) {
+  const projection = model['projection-definitions'][read.projection];
+  if (!projection) return `${where} reads "${read.projection}", which this model does not define.`;
+  const label = `${where} reads ${read.projection}`;
+  if (read.tags !== undefined && (read.tags === null || typeof read.tags !== 'object' || Array.isArray(read.tags))) {
+    return `${label} with tags that are not named — each value belongs to one of its tags.`;
+  }
+  const declared = projectionTagParams(projection);
+  const held = read.tags || {};
+  for (const tag of declared) {
+    if (!Object.prototype.hasOwnProperty.call(held, tag.name)) {
+      return `${label} without a value for its "${tag.name}" tag (${tag.tagType}).`;
+    }
+  }
+  for (const key of Object.keys(held)) {
+    if (!declared.some((tag) => tag.name === key)) {
+      return declared.length
+        ? `${label} with "${key}", which is not one of its tags (${declared.map((tag) => tag.name).join(', ')}).`
+        : `${label} with "${key}", but it is untagged — it is read by no tag.`;
+    }
+  }
+  const fans = readTagOperands(read).filter((operand) => operandSource(operand) === 'each');
+  if (fans.length > 1) return `${label}, which fans out over ${fans.length} lists — a read fans out over one.`;
+  for (const tag of declared) {
+    const operand = held[tag.name];
+    if (operand === undefined || operand === null || operandIncomplete(operand)) {
+      return `${label} with no value for its "${tag.name}" tag.`;
+    }
+    const outside = chained(operand, `its "${tag.name}" tag`);
+    if (outside) return outside;
+    const problem = tagOperandProblem(model, body, operand, tag);
+    if (problem) return `${label}, which ${problem}`;
+  }
+  const slots = projectionSlots(projection);
+  const supplied = Object.keys(read.arguments || {});
+  const missing = slots.find((slot) => !supplied.includes(slot.name));
+  if (missing) return `${label} without "${missing.name}", which it takes as an argument.`;
+  const extra = supplied.find((key) => !slots.some((slot) => slot.name === key));
+  if (extra) return `${label} with "${extra}", which it does not take as an argument.`;
+  for (const key of supplied) {
+    const outside = chained(read.arguments[key], `"${key}"`);
+    if (outside) return outside;
+  }
+  return null;
+}
+
+// What a projection's own tags cannot do, as the advisory that says so
+// — or null. Two ways a handler and the tags fail to meet, both decided
+// by the tags an event lists:
+//
+// - a handled event lists no tag of some type the projection is tagged
+//   by, so its query never returns it and that handler never fires
+//   (`CopyExists (tag copyId: CopyId)` moved by a `BookCatalogued` that
+//   lists only an isbn);
+// - a handled event lists one of those types twice (an assignment
+//   naming both the new holder and the one replaced), so it reaches
+//   both instances and a declarative handler fires for both: the
+//   instructor being replaced would "gain" the course their successor
+//   was just assigned. A script can tell the two apart (`tags`), so
+//   only a declared fold is held to it.
+function projectionTagProblem(model, projectionName) {
+  const projection = model['projection-definitions'][projectionName];
+  const tagTypes = projectionTagTypes(model, projectionName);
+  if (!projection || !tagTypes.length || derivedOf(projection)) return null;
+  const label = `Projection "${projectionName}"`;
+  const [unreached] = readTagsMissing(model, projectionName, tagTypes);
+  if (unreached) {
+    return `${label} is tagged by ${unreached.missing.join(' and ')}, but ` +
+      `"${unreached.event}", which it handles, is tagged by no ${unreached.missing.join(' or ')} — ` +
+      'so that handler never fires.';
+  }
+  if (scriptOf(projection)) return null;
+  for (const eventName of projectionHandledTypes(model, projectionName)) {
+    const leaves = eventTagLeaves(model, model['event-definitions'][eventName]);
+    for (const type of tagTypes) {
+      const carriers = leaves.filter((leaf) => leaf.identifierType === type);
+      if (carriers.length > 1) {
+        return `${label} is tagged by ${type}, and "${eventName}" is tagged by ` +
+          `${type} in ${carriers.map((leaf) => `"${leaf.path}"`).join(' and ')}, so its handler ` +
+          'fires for both and cannot tell them apart. Tag it by one, split the event so each ' +
+          'records one fact, or script the projection.';
+      }
+    }
+  }
+  return null;
 }
 
 // Handler validation. `target` is a projection body: `valueType`,
@@ -2134,34 +2592,6 @@ function validateHandlers(model, label, target, handlers) {
       throw new DomainError(`${label} handles "${handler.event}", which this model does not define.`);
     }
     const where = `The handler for "${handler.event}" on ${label}`;
-    // The other way round: no property at all, so no partition is ever
-    // reached. The editors no longer offer such an event; this is for
-    // what arrived another way, or was left behind by a rename.
-    const missing = partitionTagsMissing(model, target, handler.event);
-    if (missing.length) {
-      throw new DomainError(
-        `${where} never fires: ${label} is kept separately for each ${missing.join(' and ')}, ` +
-        `and "${handler.event}" carries none, so it reaches no instance to change.`
-      );
-    }
-    // Tag matching is by value, whichever property carries it — so an
-    // event holding the partition's identifier type in two properties
-    // (an assignment naming both the new holder and the one replaced)
-    // reaches both partitions, and a handler fires for both: the
-    // instructor being replaced would "gain" the course their
-    // successor was just assigned. A declarative handler cannot tell
-    // the two apart, so the honest fixes live elsewhere.
-    for (const parameter of target.parameters || []) {
-      const carriers = (event.properties || []).filter((p) => p && p.propertyType === parameter.propertyType);
-      if (carriers.length > 1) {
-        throw new DomainError(
-          `${where} fires for every partition "${handler.event}" names: the event carries ` +
-          `${parameter.propertyType} in ${carriers.map((p) => `"${p.name}"`).join(' and ')}, and a ` +
-          `handler cannot tell them apart. Split the event so each records one fact, or script ` +
-          `the projection.`
-        );
-      }
-    }
     // `undefined` is not a value an operand can have — JSON cannot even
     // carry it — but `operandSource` reads it as a static literal, so
     // without this a handler that says what it does without saying
@@ -2278,53 +2708,14 @@ function validateScript(model, label, target) {
     }
   }
 
-  // Every scripted projection states its own tags: a declared one
-  // derives them from its parameters, a scripted one has none, so the
-  // filter is the only thing that can say what the query reads. An
-  // empty list is legal and means the whole log — the same thing zero
-  // parameters mean on a declared projection. An entity property that
-  // binds a scripted projection scopes it by interpolating the
-  // identifier-typed argument the binding supplies.
-  if (!Array.isArray(script.tagFilter)) {
+  // A script is read by the tags its projection declares, like any
+  // projection (8.0) — they reach its code as `tags`. A filter of its
+  // own would be a second, disagreeing answer to "which events".
+  if (script.tagFilter !== undefined) {
     throw new DomainError(
-      `${label} is scripted and states no tag filter. A declared projection derives its tags ` +
-      'from its parameters; a scripted one must say what it reads — an empty list means the whole log.'
+      `${label} states a tag filter. A projection declares the tags it is read by, and a ` +
+      'script sees their values as `tags` — drop the filter.'
     );
-  }
-  for (const template of script.tagFilter) {
-    const match = TAG_FILTER_RE.exec(String(template || ''));
-    if (!match) {
-      throw new DomainError(
-        `Tag filter "${template}" on ${label} is not a tag. A tag is "TagType:value", and ` +
-        'the value may be a "{argument}" placeholder.'
-      );
-    }
-    const cls = classifyType(model, match[1]);
-    if (cls.kind !== 'value') {
-      throw new DomainError(
-        `Tag filter "${template}" on ${label} names "${match[1]}", which is not a value type.`
-      );
-    }
-    if (cls.composite) {
-      throw new DomainError(
-        `Tag filter "${template}" on ${label} names "${match[1]}", a composite — it has no tag of ` +
-        'its own. Name its tag-marked fields\' own types individually instead.'
-      );
-    }
-    if (!cls.isTag) {
-      throw new DomainError(
-        `Tag filter "${template}" on ${label} names "${match[1]}", which is not marked "represented ` +
-        'as a tag".'
-      );
-    }
-    for (const placeholder of tagFilterPlaceholders(template)) {
-      if (!seen.has(placeholder)) {
-        throw new DomainError(
-          `Tag filter "${template}" on ${label} interpolates "{${placeholder}}", which it does ` +
-          'not declare as an argument.'
-        );
-      }
-    }
   }
 }
 
@@ -2390,10 +2781,11 @@ function validateInitialValue(model, label, body) {
 
 // One projection — the one shape behind an entity property and a
 // standalone read alike: same handlers, same operations, same
-// operands. The partition is `parameters` — the tags a command (or an
-// entity property binding) supplies when it binds it. No parameters
-// means no tag, which is what a global numbering is.
+// operands. It declares the tags it is read by (8.0), each named and
+// of a tag type; none at all is an untagged projection, which folds
+// the whole log — what a global numbering is.
 function validateProjectionBody(model, projectionName, body) {
+  validateProjectionTags(model, projectionName, body);
   const valueCls = classifyType(model, body.valueType);
   if (valueCls.kind === 'unresolved') {
     throw new DomainError(
@@ -2409,15 +2801,6 @@ function validateProjectionBody(model, projectionName, body) {
   }
 
   if (script) {
-    // A scripted projection replaces `parameters` with `arguments` and
-    // a tag filter: its arguments are read-time values rather than
-    // tags, so the partition can no longer be inferred from them.
-    if ((body.parameters || []).length) {
-      throw new DomainError(
-        `Projection "${projectionName}" is scripted and also declares parameters. A scripted ` +
-        'projection states its tags in its tag filter and takes arguments instead.'
-      );
-    }
     validateScript(model, `projection "${projectionName}"`, body);
     validateHandlers(model, `projection "${projectionName}"`, body, body.handlers);
     return;
@@ -2446,7 +2829,6 @@ function validateProjectionBody(model, projectionName, body) {
         'derived projection — its operands\' handlers are its query.'
       );
     }
-    validateProjectionParameters(model, projectionName, body);
     validateDerived(model, projectionName, body);
     return;
   }
@@ -2472,47 +2854,51 @@ function validateProjectionBody(model, projectionName, body) {
   }
   validateInitialValue(model, `Projection "${projectionName}"`, body);
 
-  validateProjectionParameters(model, projectionName, body);
-
   // Zero handlers is a legitimate draft: a projection nothing moves
   // yet reads as its initial value, and the interface says so.
   validateHandlers(model, `projection "${projectionName}"`, body, body.handlers);
 }
 
-// Only a tag-bearing type can narrow a query. A parameter of any
-// other type could not restrict what the store returns — it could
-// only discard events after reading them, which is a predicate, and
-// predicates live in conditions. A script is exactly the place where
-// discarding after reading is legitimate, which is why that one
-// takes arguments and not parameters. A derived projection declares
-// parameters like a declared one — its operands' arguments draw from
-// them, so its partition is its operands'.
-function validateProjectionParameters(model, projectionName, body) {
-  const seenParameters = new Set();
-  for (const parameter of body.parameters || []) {
-    if (!parameter || !CAMEL_RE.test(parameter.name || '')) {
-      throw new DomainError(`A parameter on projection "${projectionName}" needs a camelCase name.`);
+// A projection's tags: each a camelCase name, once, of a tag type —
+// the key a read's value is rendered under — and no name a script
+// argument also has, since a read gives both in one list. Then whether
+// the events it handles carry them (`projectionTagProblem`).
+function validateProjectionTags(model, projectionName, body) {
+  const label = `Projection "${projectionName}"`;
+  const seen = new Set();
+  for (const tag of projectionTagParams(body)) {
+    if (!CAMEL_RE.test(tag.name || '')) {
+      throw new DomainError(`${label} has a tag named "${tag.name}", which is not a camelCase name.`);
     }
-    if (seenParameters.has(parameter.name)) {
-      throw new DomainError(`Projection "${projectionName}" declares parameter "${parameter.name}" twice.`);
+    if (seen.has(tag.name)) throw new DomainError(`${label} declares the tag "${tag.name}" twice.`);
+    seen.add(tag.name);
+    if (classifyType(model, tag.tagType).kind === 'unresolved') {
+      throw new DomainError(`${label}'s tag "${tag.name}" is typed "${tag.tagType}", which does not resolve in this model.`);
     }
-    seenParameters.add(parameter.name);
-    if (classifyType(model, parameter.propertyType).kind !== 'value' || !isTagBearing(model, parameter.propertyType)) {
+    if (!isTagBearing(model, tag.tagType)) {
       throw new DomainError(
-        `Parameter "${parameter.name}" on projection "${projectionName}" is typed ` +
-        `"${parameter.propertyType}", which carries no tag. A parameter becomes a tag, and only ` +
-        'a value type marked "represented as a tag" (directly, or through a tag-marked field) is one.'
+        `${label}'s tag "${tag.name}" is typed ${tag.tagType}, which is no tag type — nothing is ` +
+        'tagged by it, so no event would reach this projection.'
       );
     }
   }
+  for (const argument of projectionSlots(body)) {
+    if (argument && seen.has(argument.name)) {
+      throw new DomainError(`${label} names both a tag and an argument "${argument.name}".`);
+    }
+  }
+  const problem = projectionTagProblem(model, projectionName);
+  if (problem) throw new DomainError(problem);
 }
 
 // The derived predicate: both operands recognised, at least one of
 // them a projection read, every read's arguments covering exactly the
-// slots its target declares, each argument drawn from this
-// projection's own parameters or a literal, enum members belonging to
-// the type they sit opposite — and no cycle, since a value derived
-// through itself has nowhere to start.
+// arguments its target's script takes, each one a literal, enum
+// members belonging to the type they sit opposite — and no cycle,
+// since a value derived through itself has nowhere to start. An
+// operand gives its projection's tags by name, each one of the derived
+// projection's own (`{parameterName}`) or a typed literal, of the type
+// that tag declares.
 function validateDerived(model, projectionName, body) {
   const derived = body.derived;
   const label = `projection "${projectionName}"`;
@@ -2523,7 +2909,6 @@ function validateDerived(model, projectionName, body) {
     );
   }
 
-  const declared = new Set((body.parameters || []).map((p) => p && p.name));
   const reads = derivedOperands(derived).filter((o) => operandSource(o) === 'projection-read');
   if (!reads.length) {
     throw new DomainError(
@@ -2549,39 +2934,69 @@ function validateDerived(model, projectionName, body) {
         `${label} derives from "${operand.projection}", which this model does not define.`
       );
     }
-    const targetScript = scriptOf(target);
-    const slots = targetScript ? (targetScript.arguments || []) : (target.parameters || []);
+    const own = projectionTagParams(body);
+    const held = operand.tags && typeof operand.tags === 'object' && !Array.isArray(operand.tags) ? operand.tags : {};
+    for (const tag of projectionTagParams(target)) {
+      const value = held[tag.name];
+      const where = `${label} reads ${operand.projection}`;
+      if (value === undefined) {
+        throw new DomainError(`${where} without a value for its "${tag.name}" tag (${tag.tagType}).`);
+      }
+      if (operandSource(value) === 'parameter') {
+        const source = own.find((t) => t.name === value.parameterName);
+        if (!source || value.property !== undefined) {
+          throw new DomainError(
+            `${where} tagged ${operandText(value)}, which is none of ${projectionName}'s own tags ` +
+            `(${own.map((t) => t.name).join(', ') || 'it is untagged'}).`
+          );
+        }
+        if (source.tagType !== tag.tagType) {
+          throw new DomainError(
+            `${where} tagged ${value.parameterName}, ${typeArticle(source.tagType)} ${source.tagType} — ` +
+            `but its "${tag.name}" tag is ${typeArticle(tag.tagType)} ${tag.tagType}.`
+          );
+        }
+        continue;
+      }
+      if (operandSource(value) === 'tag-literal') {
+        if (value.tagType !== tag.tagType) {
+          throw new DomainError(
+            `${where} tagged ${operandText(value)} — but its "${tag.name}" tag is ` +
+            `${typeArticle(tag.tagType)} ${tag.tagType}.`
+          );
+        }
+        continue;
+      }
+      throw new DomainError(
+        `${where} tagged ${operandText(value)} — an operand's tag is one of ${projectionName}'s own ` +
+        'tags or a typed literal.'
+      );
+    }
+    for (const key of Object.keys(held)) {
+      if (!projectionTagParams(target).some((tag) => tag.name === key)) {
+        throw new DomainError(`${label} reads ${operand.projection} with "${key}", which is not one of its tags.`);
+      }
+    }
+    const slots = projectionSlots(target);
     const supplied = Object.keys(operand.arguments || {});
     for (const slot of slots) {
       if (!supplied.includes(slot.name)) {
         throw new DomainError(
-          `${label} reads "${operand.projection}" without "${slot.name}", which it ` +
-          `${targetScript ? 'takes as an argument' : 'is partitioned by'}.`
+          `${label} reads "${operand.projection}" without "${slot.name}", which it takes as an argument.`
         );
       }
     }
     for (const key of supplied) {
       if (!slots.some((s) => s.name === key)) {
         throw new DomainError(
-          `${label} reads "${operand.projection}" with "${key}", which it does not declare as ` +
-          `${targetScript ? 'an argument' : 'a parameter'}.`
+          `${label} reads "${operand.projection}" with "${key}", which it does not take as an argument.`
         );
       }
-      const argument = operand.arguments[key];
-      const argumentSource = operandSource(argument);
-      if (argumentSource === 'parameter') {
-        if (!declared.has(argument.parameterName)) {
-          throw new DomainError(
-            `${label} supplies "${key}" from parameter "${argument.parameterName}", which it ` +
-            'does not declare — a derived projection\'s operands draw from its own parameters.'
-          );
-        }
-        continue;
-      }
+      const argumentSource = operandSource(operand.arguments[key]);
       if (argumentSource !== 'enum-member' && argumentSource !== 'static') {
         throw new DomainError(
-          `${label} supplies "${key}" as "${operandText(argument)}" — an operand's argument is ` +
-          'one of this projection\'s own parameters, or a literal.'
+          `${label} supplies "${key}" as "${operandText(operand.arguments[key])}" — an operand's ` +
+          'argument is a literal.'
         );
       }
     }
@@ -2713,13 +3128,11 @@ function validateCustomTypeBody(model, typeName, body) {
   }
 }
 
-// An entity's properties are bindings — `{name, projection}` — and
-// what makes a projection bindable is its partition: it must carry
-// exactly the slot this binding can fill, one parameter (or, scripted,
-// one argument) typed with the entity's own derived identifier. A
-// scripted projection must also actually scope by it — a tag filter
-// that never interpolates the identifier would fold the whole log and
-// call it one instance.
+// An entity's properties are bindings — `{name, projection}` — and an
+// instance reads each one by its identifier, the way a command reads
+// `CourseCapacity(courseId)`. So what binds is a projection tagged by
+// exactly that identifier; whether its events carry the tag is the
+// projection's own advisory.
 function validateEntityBody(model, entityName, body) {
   if (body.identifierType !== undefined && !PASCAL_RE.test(body.identifierType)) {
     throw new DomainError(
@@ -2743,34 +3156,26 @@ function validateEntityBody(model, entityName, body) {
         'which this model does not define.'
       );
     }
-    const script = scriptOf(projection);
-    if (script) {
-      const slot = (script.arguments || []).find((a) => a && a.propertyType === idType);
-      if (!slot) {
-        throw new DomainError(
-          `Property "${property.name}" binds "${property.projection}", which declares no ` +
-          `${idType}-typed argument — nothing would carry the instance into its code.`
-        );
-      }
-      const scoped = (script.tagFilter || []).some((template) =>
-        tagFilterPlaceholders(template).includes(slot.name));
-      if (!scoped) {
-        throw new DomainError(
-          `Property "${property.name}" binds "${property.projection}", whose tag filter never ` +
-          `interpolates "{${slot.name}}" — it would fold the same events for every instance.`
-        );
-      }
-      continue;
-    }
-    const parameters = projection.parameters || [];
-    if (parameters.length !== 1 || parameters[0].propertyType !== idType) {
+    // An instance reads each property by its own identifier, so what
+    // binds is a projection tagged by exactly that — one tag, of the
+    // entity's identifier type. Anything else would leave a tag the
+    // instance has no value for, or read it by the wrong key.
+    const tags = projectionTagParams(projection);
+    if (tags.length !== 1 || tags[0].tagType !== idType) {
       throw new DomainError(
-        `Property "${property.name}" binds "${property.projection}", which is partitioned by ` +
-        `${parameters.length ? parameters.map((p) => `"${p.name}" (${p.propertyType})`).join(', ')
-          : 'nothing'} — an entity property needs exactly one parameter typed ${idType}, ` +
-        'so the binding can supply the instance.'
+        `Property "${property.name}" of ${entityName} binds "${property.projection}", which is ` +
+        (tags.length
+          ? `tagged by ${tags.map((tag) => `${tag.name}: ${tag.tagType}`).join(', ')}`
+          : 'untagged') +
+        ` — an instance reads its properties by its own identifier, so it binds a projection ` +
+        `tagged by one ${idType}.`
       );
     }
+  }
+  if (body.identifierName !== undefined && !CAMEL_RE.test(body.identifierName)) {
+    throw new DomainError(
+      `Entity "${entityName}"'s identifierName "${body.identifierName}" must be camelCase.`
+    );
   }
 
   // The designation. An entity need not have one, and a lifecycle is an
@@ -2828,8 +3233,7 @@ function validateCommandBody(model, body) {
         );
       }
       // `id` and `excluding` both belong to an entity binding. A
-      // projection binding reads one partition named by its arguments
-      // and never fans out.
+      // projection read gives its tags by name, `each` among them.
       for (const field of ['id', 'excluding']) {
         if (binding[field] !== undefined) {
           throw new DomainError(
@@ -2838,40 +3242,22 @@ function validateCommandBody(model, body) {
           );
         }
       }
-      // Declared and scripted projections take the same thing on the
-      // calling side — one argument per declared name. What differs is
-      // what they do with it: a parameter becomes a tag, an argument
-      // reaches the code.
-      const script = scriptOf(projection);
-      const parameters = script ? (script.arguments || []) : (projection.parameters || []);
-      const supplied = Object.keys(binding.arguments || {});
-      for (const parameter of parameters) {
-        if (!supplied.includes(parameter.name)) {
-          throw new DomainError(
-            `Boundary binding "${binding.alias}" supplies no "${parameter.name}", which ` +
-            `"${binding.projection}" ${script ? 'takes as an argument' : 'is partitioned by'}.`
-          );
+      // A read gives a value for each tag the projection declares — of
+      // the declared type, which is the tag's key — and, for a script,
+      // the arguments its code takes. What differs is what each does: a
+      // tag selects events, an argument reaches the code.
+      const chained = (operand, what) => {
+        for (const alias of operandAliases(operand)) {
+          if (alias === binding.alias) return `Boundary binding "${binding.alias}" takes ${what} from itself.`;
+          if (!declaredAbove.includes(alias)) {
+            return `Boundary binding "${binding.alias}" takes ${what} from "${operandText(operand)}", ` +
+              `but "${alias}" is not bound above it — a binding may only read what is declared earlier.`;
+          }
         }
-      }
-      for (const key of supplied) {
-        if (!parameters.some((p) => p.name === key)) {
-          throw new DomainError(
-            `Boundary binding "${binding.alias}" supplies "${key}", which "${binding.projection}" ` +
-            `does not declare as ${script ? 'an argument' : 'a parameter'}.`
-          );
-        }
-        const operand = binding.arguments[key];
-        if (operandSource(operand) !== 'alias-property') continue;
-        if (operand.alias === binding.alias) {
-          throw new DomainError(`Boundary binding "${binding.alias}" takes an argument from itself.`);
-        }
-        if (!declaredAbove.includes(operand.alias)) {
-          throw new DomainError(
-            `Boundary binding "${binding.alias}" takes "${key}" from "${operandText(operand)}", ` +
-            `but "${operand.alias}" is not bound above it — a binding may only read what is declared earlier.`
-          );
-        }
-      }
+        return null;
+      };
+      const problem = readProblem(model, body, binding, `Boundary binding "${binding.alias}"`, chained);
+      if (problem) throw new DomainError(problem);
       if (binding.isOptional !== undefined) {
         throw new DomainError(
           `Boundary binding "${binding.alias}" reads a projection and is marked "may be absent" — ` +
@@ -2888,16 +3274,31 @@ function validateCommandBody(model, body) {
     if (binding.id === undefined || binding.id === null || operandIncomplete(binding.id)) {
       throw new DomainError(`Boundary binding "${binding.alias}" has no identifier operand.`);
     }
-    if (operandSource(binding.id) === 'alias-property') {
-      if (binding.id.alias === binding.alias) {
+    const idOperand = entityIdOperand(binding);
+    if (operandSource(idOperand) === 'alias-property') {
+      if (idOperand.alias === binding.alias) {
         throw new DomainError(`Boundary binding "${binding.alias}" takes its identifier from itself.`);
       }
-      if (!declaredAbove.includes(binding.id.alias)) {
+      if (!declaredAbove.includes(idOperand.alias)) {
         throw new DomainError(
-          `Boundary binding "${binding.alias}" takes its identifier from "${operandText(binding.id)}", ` +
-          `but "${binding.id.alias}" is not bound above it — a binding may only read instances declared earlier.`
+          `Boundary binding "${binding.alias}" takes its identifier from "${operandText(idOperand)}", ` +
+          `but "${idOperand.alias}" is not bound above it — a binding may only read instances declared earlier.`
         );
       }
+    }
+    // Many instances are read where it says so, `each`, and only there.
+    const plural = operandIsPlural(model, body, idOperand);
+    if (isFannedOut(model, body, binding) && !plural && operandSource(idOperand) !== 'tag-literal') {
+      throw new DomainError(
+        `Boundary binding "${binding.alias}" reads each of ${operandText(idOperand)}, which is one value — ` +
+        `"each" fans out over a list; drop it.`
+      );
+    }
+    if (!isFannedOut(model, body, binding) && plural) {
+      throw new DomainError(
+        `Boundary binding "${binding.alias}" reads ${binding.entity} by ${operandText(idOperand)}, which ` +
+        `holds many — ${binding.entity}(each ${operandText(idOperand)}) reads one instance per element.`
+      );
     }
     if (binding.excluding !== undefined && !isFannedOut(model, body, binding)) {
       throw new DomainError(
@@ -2932,10 +3333,17 @@ function validateCommandBody(model, body) {
   ];
 
   // A plural alias cannot supply a single value, so it may be read by a
-  // condition — which quantifies over it — but never emitted.
+  // condition — which quantifies over it — but never emitted. Nor may a
+  // read in place that fans out.
   for (const emission of body.publishes || []) {
     if (!emission || !emission.parameters) continue;
     for (const [key, operand] of Object.entries(emission.parameters)) {
+      if (operandSource(operand) === 'projection-read' && readFanTag(operand)) {
+        throw new DomainError(
+          `"${emission.name}.${key}" takes its value from "${operandText(operand)}", which reads many. ` +
+          `A fanned-out read can be checked, not emitted.`
+        );
+      }
       if (operandSource(operand) !== 'alias-property') continue;
       const binding = boundary.find((b) => b.alias === operand.alias);
       if (binding && isFannedOut(model, body, binding)) {
@@ -3088,6 +3496,10 @@ function validateCommandBody(model, body) {
         return;
       }
     }
+    if (source === 'projection-read') {
+      failure = readProblem(model, body, operand, meta.where);
+      return;
+    }
     if (source === 'alias-property') {
       const binding = boundary.find((b) => b.alias === operand.alias);
       if (!binding) {
@@ -3172,6 +3584,16 @@ function validateCommandBody(model, body) {
       : [[condition.leftHandSide, condition.rightHandSide], [condition.rightHandSide, condition.leftHandSide]];
     for (const [maybeEnum, other] of sides) {
       if (operandSource(maybeEnum) !== 'enum-member') continue;
+      if (operandSource(other) === 'projection-read') {
+        const read = model['projection-definitions'][other.projection];
+        const members = read && enumMembersFor(model, read.valueType);
+        if (members && !members.includes(maybeEnum.enumMember)) {
+          throw new DomainError(
+            `"${maybeEnum.enumMember}" is not a member of ${read.valueType} (condition "${conditionText(condition)}").`
+          );
+        }
+        continue;
+      }
       if (operandSource(other) !== 'alias-property') continue;
       const binding = boundary.find((b) => b.alias === other.alias);
       if (!binding) continue;
@@ -3248,7 +3670,7 @@ function validateCommandBody(model, body) {
   }
   // Entity-binding arguments are deliberately exempt: they reach a
   // script as ordinary values, and null is one. An identifier, an
-  // exclusion or a partition argument becomes a tag, and null has no
+  // exclusion or a projection read's tag becomes a tag, and null has no
   // tag — evaluation errors when it is unset, and this says so first.
   for (const binding of boundary) {
     const feeds = [];
@@ -3261,8 +3683,8 @@ function validateCommandBody(model, body) {
       feeds.push(['its exclusion', binding.excluding, false]);
     }
     if (binding.projection !== undefined) {
-      for (const [key, operand] of Object.entries(binding.arguments || {})) {
-        if (readsOptionalParameter(operand)) feeds.push([`its argument "${key}"`, operand, false]);
+      for (const [name, operand] of readTagEntries(binding)) {
+        if (readsOptionalParameter(operand)) feeds.push([`its "${name}" tag`, operand, false]);
       }
     }
     if (feeds.length) {
@@ -3447,31 +3869,58 @@ function validateProjectionScenarioBody(model, body) {
       `This scenario is about projection "${body.projection}", which this model does not define.`
     );
   }
-  // The arguments a scenario owes are the projection's own — its
-  // parameters when declared, its script's arguments when scripted. The
-  // same "required here, rejected there" rule a command binding
-  // follows, and for the same reason: an argument that means nothing is
+  // It reads the projection the way a command does: one value for each
+  // tag it declares — literals here, each stating its type,
+  // `CourseId("c1")` — and with the arguments its script takes, required
+  // there and rejected anywhere else: an argument that means nothing is
   // a mistake, not a no-op.
-  const script = scriptOf(projection);
-  const expected = script ? (script.arguments || []) : (projection.parameters || []);
+  if (body.tags !== undefined && (body.tags === null || typeof body.tags !== 'object' || Array.isArray(body.tags))) {
+    throw new DomainError('A projection scenario\'s tags are named — one value per tag the projection declares.');
+  }
+  const held = body.tags || {};
+  const declared = projectionTagParams(projection);
+  for (const tag of declared) {
+    const value = held[tag.name];
+    if (value === undefined) {
+      throw new DomainError(`This scenario gives no value for ${body.projection}'s "${tag.name}" tag (${tag.tagType}).`);
+    }
+    if (operandSource(value) !== 'tag-literal' || operandIncomplete(value)) {
+      throw new DomainError(
+        `This scenario is tagged ${operandText(value)}, which is not a tag literal — write it with its ` +
+        `type, ${tag.tagType}("…").`
+      );
+    }
+    if (value.tagType !== tag.tagType) {
+      throw new DomainError(
+        `This scenario is tagged ${operandText(value)}, but ${body.projection}'s "${tag.name}" tag is ` +
+        `${typeArticle(tag.tagType)} ${tag.tagType}.`
+      );
+    }
+    if (value.tagValue === null || value.tagValue === undefined) {
+      throw new DomainError(`This scenario is tagged ${value.tagType} with no value — a tag has one.`);
+    }
+  }
+  for (const key of Object.keys(held)) {
+    if (!declared.some((tag) => tag.name === key)) {
+      throw new DomainError(`This scenario gives "${key}", which is not one of ${body.projection}'s tags.`);
+    }
+  }
+  const expected = projectionSlots(projection);
   const supplied = Object.keys(body.arguments || {});
   for (const parameter of expected) {
     if (!supplied.includes(parameter.name)) {
       throw new DomainError(
-        `This scenario supplies no "${parameter.name}", which "${body.projection}" ` +
-        `${script ? 'takes as an argument' : 'is partitioned by'}.`
+        `This scenario supplies no "${parameter.name}", which "${body.projection}" takes as an argument.`
       );
     }
   }
   for (const key of supplied) {
     if (!expected.some((p) => p.name === key)) {
       throw new DomainError(
-        `This scenario supplies "${key}", which "${body.projection}" does not declare as ` +
-        `${script ? 'an argument' : 'a parameter'}.`
+        `This scenario supplies "${key}", which "${body.projection}" does not take as an argument.`
       );
     }
   }
-
   // `then` is the projection's own value, so every shape one can hold
   // is legal here — `null` and `[]` included. There is nothing left to
   // check that the fold itself does not.
@@ -3505,6 +3954,18 @@ function assertStorableBody(kind, body) {
           `A ${humanize(kind)}'s "${field}" must hold objects — got ${JSON.stringify(element)}.`
         );
       }
+    }
+  }
+  // An event's tags are paths, not objects — the one list of strings.
+  if (kind === 'event-definition' && body.tags !== undefined) {
+    if (!Array.isArray(body.tags) || body.tags.some((tag) => typeof tag !== 'string')) {
+      throw new DomainError('An event\'s "tags" must be a list of property paths.');
+    }
+  }
+  // A projection's are its declared tags, `{name, tagType}` each.
+  if (kind === 'projection-definition' && body.tags !== undefined) {
+    if (!Array.isArray(body.tags) || body.tags.some((tag) => tag === null || typeof tag !== 'object')) {
+      throw new DomainError('A projection\'s "tags" must be a list of {name, tagType}.');
     }
   }
 }
@@ -3761,6 +4222,23 @@ function setAtDottedPath(obj, path, value) {
 
 // The rewrites each member kind implies, as
 // `(model, definitionName, previous, next) => [{kind, name, body}]`.
+// An event's tag paths with `rename(property, field)` applied — it
+// returns the new `[property, field]` or null to leave a path alone.
+// Null when nothing moved, so a rewrite only lands where it changed.
+function renameTagPaths(tags, rename) {
+  if (!Array.isArray(tags)) return null;
+  let moved = false;
+  const out = tags.map((path) => {
+    if (typeof path !== 'string') return path;
+    const [property, field] = path.split('.');
+    const renamed = rename(property, field === undefined ? null : field);
+    if (!renamed) return path;
+    moved = true;
+    return renamed[1] === null ? renamed[0] : `${renamed[0]}.${renamed[1]}`;
+  });
+  return moved ? out : null;
+}
+
 const MEMBER_REWRITES = {
   // An entity property is read as `{alias, property}` by any command
   // that binds this entity under that alias — and, when it is the
@@ -3868,7 +4346,7 @@ const MEMBER_REWRITES = {
           ];
         for (const [maybeEnum, other] of sides) {
           if (operandSource(maybeEnum) !== 'enum-member' || maybeEnum.enumMember !== previous) continue;
-          if (operandSource(other) !== 'alias-property') continue;
+          if (operandSource(other) !== 'alias-property' && operandSource(other) !== 'projection-read') continue;
           const resolved = resolveOperandType(other, {
             boundary: command.boundary || [],
             commandProperties: command.properties || [],
@@ -3933,6 +4411,13 @@ const MEMBER_REWRITES = {
       }
       return touched;
     }));
+
+    // The event's own tags name the property by path — a local name,
+    // so it moves on the owner, the way an entity's `lifecycle` does.
+    const event = model['event-definitions'][eventName];
+    const retagged = renameTagPaths(event && event.tags, (property, field) =>
+      (property === previous ? [next, field] : null));
+    if (retagged) out.push({ kind: 'event-definition', name: eventName, body: { ...deepClone(event), tags: retagged } });
     return out;
   },
 
@@ -3962,6 +4447,14 @@ const MEMBER_REWRITES = {
   // A composite's field is reached only through a parameter typed with
   // that composite — `{parameterName: items, property: productId}`.
   'custom-type-definition:field': (model, typeName, previous, next) => [
+    // An event lists a record's tag field by path, `items.productId`.
+    ...Object.entries(model['event-definitions']).flatMap(([name, event]) => {
+      const typed = new Set((event.properties || [])
+        .filter((p) => p && p.propertyType === typeName).map((p) => p.name));
+      const retagged = renameTagPaths(event.tags, (property, field) =>
+        (typed.has(property) && field === previous ? [property, next] : null));
+      return retagged ? [{ kind: 'event-definition', name, body: { ...deepClone(event), tags: retagged } }] : [];
+    }),
     ...rewriteCommands(model, (command) => {
       const parameters = new Set((command.properties || [])
         .filter((p) => p.propertyType === typeName).map((p) => p.name));
@@ -3999,46 +4492,46 @@ const MEMBER_REWRITES = {
     }),
   ],
 
-  // A projection parameter is supplied by key in a binding — and by
-  // key again in any derived projection that reads this one, while the
-  // owner's own derived operands draw from it by `{parameterName}`.
-  'projection-definition:parameter': (model, projectionName, previous, next) => {
+  // A read gives a projection's tags by name, so renaming one moves that
+  // key in every read of it — an alias's, one in place, a derived
+  // operand's, a projection scenario's — and, on a derived projection,
+  // in its own operands wherever they pass the tag on (`{parameterName}`).
+  // What a script reads as `tags.<name>` is code, and stays as written.
+  'projection-definition:tag': (model, projectionName, previous, next) => {
+    const renamed = (read) => {
+      if (!read || read.projection !== projectionName || !read.tags || !(previous in read.tags)) return false;
+      read.tags = renameKey(read.tags, previous, next);
+      return true;
+    };
     const out = rewriteCommands(model, (command) => {
       let touched = false;
-      for (const binding of command.boundary || []) {
-        if (!binding || binding.projection !== projectionName) continue;
-        if (binding.arguments && previous in binding.arguments) {
-          binding.arguments = renameKey(binding.arguments, previous, next);
-          touched = true;
-        }
-      }
+      for (const binding of command.boundary || []) if (binding && renamed(binding)) touched = true;
+      forEachCommandOperand(command, (operand) => {
+        if (operandSource(operand) === 'projection-read' && renamed(operand)) touched = true;
+      });
       return touched;
     });
     for (const [name, projection] of Object.entries(model['projection-definitions'])) {
-      if (!derivedOf(projection)) continue;
+      const derived = projection && projection.derived;
+      if (!derived) continue;
       const body = deepClone(projection);
       let touched = false;
       for (const operand of derivedOperands(body.derived)) {
         if (operandSource(operand) !== 'projection-read') continue;
-        // Reading the renamed projection: the argument keys are its
-        // parameter names.
-        if (operand.projection === projectionName
-            && operand.arguments && previous in operand.arguments) {
-          operand.arguments = renameKey(operand.arguments, previous, next);
-          touched = true;
-        }
-        // The renamed projection's own operands: `{parameterName}`
-        // values name its parameters, whatever projection they read.
-        if (name === projectionName) {
-          for (const argument of Object.values(operand.arguments || {})) {
-            if (operandSource(argument) === 'parameter' && argument.parameterName === previous) {
-              argument.parameterName = next;
-              touched = true;
-            }
+        if (renamed(operand)) touched = true;
+        if (name !== projectionName) continue;
+        for (const value of readTagOperands(operand)) {
+          if (operandSource(value) === 'parameter' && value.parameterName === previous) {
+            value.parameterName = next;
+            touched = true;
           }
         }
       }
       if (touched) out.push({ kind: 'projection-definition', name, body });
+    }
+    for (const [key, scenario] of Object.entries(model['projection-scenario-definitions'] || {})) {
+      const body = deepClone(scenario);
+      if (renamed(body)) out.push({ kind: 'projection-scenario-definition', name: key, body });
     }
     return out;
   },
@@ -4105,7 +4598,7 @@ const MEMBER_SHAPE = {
   property: { list: 'properties', named: true, label: 'Property' },
   member: { list: 'schema.enum', named: false, label: 'Member' },
   field: { list: 'properties', named: true, label: 'Field' },
-  parameter: { list: 'parameters', named: true, label: 'Parameter' },
+  tag: { list: 'tags', named: true, label: 'Tag' },
 };
 
 function renameMember(kind, modelId, definitionName, memberKind, previousName, newName) {
@@ -4220,11 +4713,12 @@ function reorderDefinitions(kind, modelId, order) {
 //
 // Only on the schema's own keys, though. An operand, and the
 // author-keyed maps of them (an emission's `parameters`, a read's
-// `arguments`), hold values rather than definition — `false`, `[]` and
-// a property that happens to be called `isList` are content there —
-// so they are compared as written, key order aside; the one thing
-// dropped inside them is an empty `arguments`, which says "none" the
-// same way its absence does. Data (`schema`, `initialState`,
+// `tags` and `arguments`), hold values rather than definition — `false`,
+// `[]` and a property that happens to be called `isList` are content
+// there — so they are compared as written, key order aside; the one
+// thing dropped inside them is an empty `tags` or `arguments`, which
+// says "none" the same way its absence does. An event's `tags` are a
+// set of paths, so their order is not compared either. Data (`schema`, `initialState`,
 // `initialValue`) is compared as written too. `rightHandSide`, `derived`
 // and `script` keep their empties: `equalsAny []` holds for nothing,
 // and an empty `derived` or `script` still decides what kind of
@@ -4232,7 +4726,7 @@ function reorderDefinitions(kind, modelId, order) {
 const DEFAULT_FLAGS = ['isOptional', 'isList', 'negate', 'isTag'];
 const DATA_FIELDS = ['schema', 'initialState', 'initialValue'];
 const OPERAND_FIELDS = ['leftHandSide', 'rightHandSide', 'id', 'excluding', 'value', 'successor'];
-const OPERAND_MAPS = ['parameters', 'arguments'];
+const OPERAND_MAPS = ['parameters', 'arguments', 'tags'];
 const KEEPS_EMPTY = ['rightHandSide', 'tagFilter', 'derived', 'script'];
 
 // Keys are set as own properties: a key called `__proto__` is a key.
@@ -4260,6 +4754,7 @@ function canonicalOperand(value) {
   for (const key of Object.keys(value).sort()) {
     if (value[key] === undefined) continue;
     if (key === 'arguments' && isEmptyContainer(value[key])) continue;
+    if (key === 'tags' && value.projection !== undefined && isEmptyContainer(value[key])) continue;
     normalizedPut(out, key, canonicalOperand(value[key]));
   }
   return out;
@@ -4279,6 +4774,10 @@ function normalizedDefinition(value) {
     if (isEmptyContainer(field) && !KEEPS_EMPTY.includes(key)) continue;
     if (OPERAND_MAPS.includes(key) && field !== null && typeof field === 'object' && !Array.isArray(field)) {
       normalizedPut(out, key, canonicalOperand(field));
+      continue;
+    }
+    if (key === 'tags' && Array.isArray(field) && field.every((tag) => typeof tag === 'string')) {
+      normalizedPut(out, key, [...field].sort());
       continue;
     }
     normalizedPut(out, key, normalizedDefinition(field));
@@ -4493,9 +4992,15 @@ function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
 // reader cannot read a 7.0 document, and this build reads no earlier
 // major: a 6.x rule has no message, and inventing one would put words
 // in the author's mouth that every scenario then asserts.
-const MODEL_VERSION = '7.0';
-const MODEL_SCHEMA_URL = 'https://dcb.events/schemas/model/v7.json';
-const READABLE_MAJORS = [7];
+// 8.0 made tags explicit: an event lists the values it is tagged by
+// (`tags`, property paths), and one without the list carries none; a
+// projection names the tags it is read by, and a read gives a value per
+// name. A 7.x reader would tag what this document leaves untagged, and
+// a 7.x document read here would carry no tag at all — so this build
+// reads 8.x only. Nothing is public yet; there is no upgrader.
+const MODEL_VERSION = '8.0';
+const MODEL_SCHEMA_URL = 'https://dcb.events/schemas/model/v8.json';
+const READABLE_MAJORS = [8];
 
 const SCHEMA_FIELD = {
   'custom-type-definition': 'customTypeDefinitions',
@@ -4518,7 +5023,14 @@ const SCHEMA_KINDS = [
 
 function definitionsToSchemaArray(kind, coll) {
   const idField = isIdKeyed(kind) ? 'id' : 'name';
-  return Object.entries(coll || {}).map(([key, body]) => ({ [idField]: key, ...body }));
+  return Object.entries(coll || {}).map(([key, body]) => {
+    // A projection always says what it is tagged by, if only that it is
+    // untagged: a body stored without the list writes the empty one.
+    if (kind === 'projection-definition' && body && body.tags === undefined) {
+      return { [idField]: key, tags: [], ...body };
+    }
+    return { [idField]: key, ...body };
+  });
 }
 
 function schemaArrayToDefinitions(kind, list) {
@@ -4840,14 +5352,23 @@ const seedParam = (name) => ({ parameterName: name });
 // `{alias}` with no property reads a bound projection's single value.
 const seedOf = (alias, property) => (property === undefined ? { alias } : { alias, property });
 const seedBind = (alias, entity, idParam) => ({ alias, entity, id: seedParam(idParam) });
-const seedReadProjection = (alias, projection, args = {}) =>
-  ({ alias, projection, arguments: args });
-// The projection behind one entity property: partitioned by exactly
-// the owning entity's identifier, which is what makes it bindable.
-const seedPropertyProjection = (entityName, valueType, initialValue, handlers, extra = {}) => ({
-  parameters: [{ name: defaultAlias(entityName) + 'Id', propertyType: entityName + 'Id' }],
-  valueType, isList: false, initialValue, handlers, ...extra,
+const seedReadProjection = (alias, projection, tags = {}) =>
+  ({ alias, projection, tags });
+// The one tag a projection about one of `entityName`'s instances is
+// tagged by — its identifier, named after it: `courseId: CourseId`.
+const seedEntityTag = (entityName) => ({
+  name: entityName.charAt(0).toLowerCase() + entityName.slice(1) + 'Id',
+  tagType: entityName + 'Id',
 });
+// The projection behind one entity property: tagged by the entity's
+// identifier, which is what an instance reads it by.
+const seedPropertyProjection = (entityName, valueType, initialValue, handlers, extra = {}) => ({
+  tags: [seedEntityTag(entityName)], valueType, isList: false, initialValue, handlers, ...extra,
+});
+// An event's tags, written out: every tag-typed value its properties
+// hold. A seed states them like any author would — nothing is implied
+// on the way in — and this only saves restating each list by hand.
+const seedTags = (modelId, properties) => tagPathsOf(getCtxOrThrow(modelId), properties);
 // The binding itself — everything else lives on the projection.
 const seedBindProp = (name, projection) => ({ name, projection });
 
@@ -4891,7 +5412,7 @@ function seedBase(modelId) {
 
   // 2. Events. Their entity-id properties are what carry the tags.
   const event = (name, properties) =>
-    addDefinition('event-definition', modelId, name, { properties });
+    addDefinition('event-definition', modelId, name, { properties, tags: seedTags(modelId, properties) });
 
   event('CourseDefined', [prop('courseId', 'CourseId'), prop('capacity', 'integer')]);
   event('CourseCapacityChanged', [prop('courseId', 'CourseId'), prop('newCapacity', 'integer')]);
@@ -4900,10 +5421,11 @@ function seedBase(modelId) {
   event('StudentSubscribedToCourse', [prop('courseId', 'CourseId'), prop('studentId', 'StudentId')]);
   event('StudentUnsubscribedFromCourse', [prop('courseId', 'CourseId'), prop('studentId', 'StudentId')]);
 
-  // 3. The projections themselves — ordinary definitions, each
-  //    partitioned by the identifier of the entity whose property will
-  //    bind it. Nothing about them says "entity property": that is
-  //    entirely the binding's doing.
+  // 3. The projections themselves — ordinary definitions, each tagged
+  //    by the identifier of what it is about, which is what lets an
+  //    entity bind one as a property: an instance reads it by its own
+  //    identifier. Nothing else about them says "entity property": that
+  //    is entirely the binding's doing.
   const projection = (name, body) =>
     addDefinition('projection-definition', modelId, name, body);
 
@@ -5063,7 +5585,7 @@ function seedBase(modelId) {
 // condition, which is what makes the numbering monotonic and what
 // makes the check redundant.
 //
-// The numbering is an ordinary projection with no parameters: its
+// The numbering is an ordinary projection, untagged: its
 // value is set to the *successor* of the id each CourseDefined
 // carried, so it holds the next number to issue at every point in its
 // life — `c1` before anything has happened, `successor(last)` after.
@@ -5075,7 +5597,7 @@ function seedAddSequence(modelId) {
   });
 
   addDefinition('projection-definition', modelId, 'CourseNumbering', {
-    parameters: [],
+    tags: [],
     valueType: 'CourseId',
     isList: false,
     initialValue: 'c1',
@@ -5120,14 +5642,12 @@ function seedSequenceScenarios(modelId) {
   seedProjectionScenario(modelId, 'a29c2e1f-6b04-4f5a-9d13-5f0a2d7c8e41', {
     name: 'issues c1 before anything has happened',
     projection: 'CourseNumbering',
-    arguments: {},
     given: [],
     then: 'c1',
   });
   seedProjectionScenario(modelId, 'f47b9c30-2a8d-4e16-b5c7-9e3a1d604f28', {
     name: 'issues c3 once two courses exist',
     projection: 'CourseNumbering',
-    arguments: {},
     given: [
       { event: 'CourseDefined', data: { courseId: 'c1', capacity: 10 } },
       { event: 'CourseDefined', data: { courseId: 'c2', capacity: 10 } },
@@ -5136,13 +5656,13 @@ function seedSequenceScenarios(modelId) {
   });
 }
 
-// Layer 3a: tenancy, and with it a *parameterised* projection.
+// Layer 3a: tenancy, and with it a numbering *tagged* by something.
 //
 // This is the case the old design could not express. It called
 // numbering "global by nature" and gave a sequence no tag at all —
-// which a numbering per tenant simply falsifies. A projection states
-// its own partition, so restarting the numbering per tenant is one
-// parameter and nothing else.
+// which a numbering per tenant simply falsifies. A projection declares
+// the tags it is read by, so restarting the numbering per tenant is a
+// numbering tagged by the tenant and nothing else.
 //
 // Number is not identity. `CourseId` stays globally minted by the
 // parameterless `CourseNumbering`, and the per-tenant projection
@@ -5162,11 +5682,12 @@ function seedAddTenancy(modelId) {
   });
 
   addDefinition('event-definition', modelId, 'TenantRegistered', {
-    properties: [seedProp('tenantId', 'TenantId')],
+    properties: [seedProp('tenantId', 'TenantId')], tags: ['tenantId'],
   });
   seedPatch('event-definition', modelId, 'CourseDefined', (event) => {
     event.properties.unshift(seedProp('tenantId', 'TenantId'));
     event.properties.push(seedProp('courseNumber', 'CourseNumber'));
+    event.tags = ['tenantId', ...event.tags];
   });
 
   addDefinition('projection-definition', modelId, 'TenantExists',
@@ -5177,12 +5698,11 @@ function seedAddTenancy(modelId) {
     tenant.lifecycle = LIFECYCLE_PROPERTY;
   });
 
-  // One parameter, so one tag: `Tenant:<id> AND type CourseDefined`.
-  // Drop the parameter and this is the global numbering again — that
-  // is the whole difference between the two, which is why there is one
-  // kind here and not two.
+  // Tagged by the tenant, so one tag: `Tenant:<id> AND type
+  // CourseDefined`. Untagged, this would be a global numbering — that
+  // is the whole difference.
   addDefinition('projection-definition', modelId, 'TenantCourseNumbering', {
-    parameters: [{ name: 'tenantId', propertyType: 'TenantId' }],
+    tags: [seedEntityTag('Tenant')],
     valueType: 'CourseNumber',
     isList: false,
     initialValue: '1',
@@ -5208,9 +5728,8 @@ function seedAddTenancy(modelId) {
   seedPatch('command-definition', modelId, 'DefineCourse', (define) => {
     define.properties.unshift(seedProp('tenantId', 'TenantId'));
     define.boundary.unshift(seedBind('tenant', 'Tenant', 'tenantId'));
-    define.boundary.push(seedReadProjection('tenantCourseNumbering', 'TenantCourseNumbering', {
-      tenantId: seedParam('tenantId'),
-    }));
+    define.boundary.push(seedReadProjection('tenantCourseNumbering', 'TenantCourseNumbering',
+      { tenantId: seedParam('tenantId') }));
     define.conditions.push({
       leftHandSide: seedOf('tenant', LIFECYCLE_PROPERTY),
       predicate: 'isTrue',
@@ -5240,6 +5759,7 @@ function seedAddSchedules(modelId) {
   });
   addDefinition('event-definition', modelId, 'CourseRescheduled', {
     properties: [seedProp('courseId', 'CourseId'), seedListProp('slots', 'TimeSlot')],
+    tags: ['courseId'],
   });
 
   addDefinition('projection-definition', modelId, 'CourseSlots',
@@ -5278,8 +5798,8 @@ function seedAddSchedules(modelId) {
     properties: [seedProp('courseId', 'CourseId'), seedListProp('slots', 'TimeSlot')],
     boundary: [
       seedBind('course', 'Course', 'courseId'),
-      { alias: 'students', entity: 'Student', id: seedOf('course', 'subscribedStudentIds') },
-      { alias: 'theirs', entity: 'Course', id: seedOf('students', 'subscribedCourseIds'),
+      { alias: 'students', entity: 'Student', id: { each: seedOf('course', 'subscribedStudentIds') } },
+      { alias: 'theirs', entity: 'Course', id: { each: seedOf('students', 'subscribedCourseIds') },
         excluding: seedParam('courseId') },
     ],
     conditions: [
@@ -5300,7 +5820,7 @@ function seedAddSchedules(modelId) {
   // one clashes. The condition holds for every course bound.
   seedPatch('command-definition', modelId, 'SubscribeStudentToCourse', (subscribe) => {
     subscribe.boundary.push({
-      alias: 'others', entity: 'Course', id: seedOf('student', 'subscribedCourseIds'),
+      alias: 'others', entity: 'Course', id: { each: seedOf('student', 'subscribedCourseIds') },
     });
     subscribe.conditions.push({
       leftHandSide: seedOf('others', 'slots'),
@@ -5325,7 +5845,7 @@ function seedAddSchedules(modelId) {
 //     `ProductId`, a property typed `Item[]` carries one Product tag
 //     per element, and `ProductsOrdered` ends up tagged with every
 //     product in the cart.
-//   - `product` binds `items.productId`, which is a list, so it fans
+//   - `product` binds each of `items.productId`, a list, so it fans
 //     out to one instance per line.
 //   - the price condition reads `items.price` alongside the fanned
 //     `product`. Both are rooted at `items`, so they are read at the
@@ -5362,7 +5882,7 @@ function seedProductPricing(modelId) {
 
   // 3. Events.
   const event = (name, properties) =>
-    addDefinition('event-definition', modelId, name, { properties });
+    addDefinition('event-definition', modelId, name, { properties, tags: seedTags(modelId, properties) });
 
   event('ProductDefined', [prop('productId', 'ProductId'), prop('price', 'Money')]);
   event('ProductPriceChanged', [prop('productId', 'ProductId'), prop('newPrice', 'Money')]);
@@ -5452,8 +5972,8 @@ function seedProductPricing(modelId) {
     properties: [prop('orderId', 'OrderId'), seedListProp('items', 'Item')],
     boundary: [
       seedBind('order', 'Order', 'orderId'),
-      // A list operand, so this binds one Product per line.
-      { alias: 'product', entity: 'Product', id: { parameterName: 'items', property: 'productId' } },
+      // Each element of a list, so this binds one Product per line.
+      { alias: 'product', entity: 'Product', id: { each: { parameterName: 'items', property: 'productId' } } },
     ],
     conditions: [
       // Singular: the order must not already have been placed.
@@ -5482,6 +6002,75 @@ function seedProductPricing(modelId) {
       // items.productId, which is exactly what `product` bound.
       parameters: { orderId: param('orderId'), items: param('items') },
     }],
+  });
+}
+
+// ============================================================
+// Without entities (8.0).
+//
+// The course and content models were designed with entities, and the
+// layers above still build them that way — which is the honest record
+// of how they came about, and what the one entity example keeps. Every
+// other shipped model is then stated without them, by this last layer:
+// a property an entity read stood for becomes the projection it binds,
+// read in place by the identifier the entity was read by — a fan-out
+// staying one — and the entities, their lifecycles and the annotations
+// (all experimental) go. One append, through the ordinary command, like
+// every layer.
+// ============================================================
+
+function seedWithoutEntities(modelId) {
+  const model = getCtxOrThrow(modelId);
+  const entities = model['entity-definitions'];
+  const commands = {};
+  for (const [name, stored] of Object.entries(model['command-definitions'])) {
+    const body = deepClone(stored);
+    const byAlias = new Map((body.boundary || []).filter((b) => b && b.entity).map((b) => [b.alias, b]));
+    const convert = (operand) => {
+      if (Array.isArray(operand)) return operand.map(convert);
+      if (!operand || typeof operand !== 'object') return operand;
+      if (operandSource(operand) === 'alias-property' && byAlias.has(operand.alias)) {
+        const binding = byAlias.get(operand.alias);
+        const property = (entities[binding.entity].properties || []).find((p) => p.name === operand.property);
+        const [tag] = projectionTagParams(model['projection-definitions'][property.projection]);
+        const read = { projection: property.projection, tags: { [tag.name]: convert(binding.id) } };
+        if (binding.arguments && Object.keys(binding.arguments).length) read.arguments = convert(binding.arguments);
+        return read;
+      }
+      const out = {};
+      for (const [key, value] of Object.entries(operand)) out[key] = convert(value);
+      return out;
+    };
+    const rule = (condition) => {
+      const out = { ...condition, leftHandSide: convert(condition.leftHandSide) };
+      if (condition.rightHandSide !== undefined) out.rightHandSide = convert(condition.rightHandSide);
+      return out;
+    };
+    body.conditions = (body.conditions || []).map(rule);
+    body.publishes = (body.publishes || []).map((emission) => {
+      const out = { ...emission };
+      if (emission.parameters) out.parameters = convert(emission.parameters);
+      if (emission.when) out.when = emission.when.map(rule);
+      return out;
+    });
+    body.boundary = (body.boundary || []).filter((b) => !b.entity).map(convert);
+    delete body.icon;
+    delete body.feature;
+    commands[name] = body;
+  }
+  const events = {};
+  for (const [name, body] of Object.entries(model['event-definitions'])) {
+    events[name] = { ...body };
+    delete events[name].icon;
+  }
+  replaceDefinitions(modelId, {
+    collections: {
+      'custom-type-definition': model['custom-type-definitions'],
+      'event-definition': events,
+      'entity-definition': {},
+      'projection-definition': model['projection-definitions'],
+      'command-definition': commands,
+    },
   });
 }
 
@@ -5536,7 +6125,7 @@ function seedContentDecisionsScripted(modelId) {
 
   // 2. Events. The texts live here; no projection re-publishes them.
   const event = (name, properties) =>
-    addDefinition('event-definition', modelId, name, { properties });
+    addDefinition('event-definition', modelId, name, { properties, tags: seedTags(modelId, properties) });
 
   event('DocumentAdded', [prop('id', 'DocumentId')]);
   event('TextUpdated', [prop('docId', 'DocumentId'), prop('text', 'string')]);
@@ -5547,13 +6136,12 @@ function seedContentDecisionsScripted(modelId) {
   //    out of the boundary: conditions read `status` and nothing else,
   //    typed exactly as a declared projection would be.
   addDefinition('projection-definition', modelId, 'DocumentStatus', {
+    tags: [seedEntityTag('Document')],
     valueType: 'DocumentStatus',
     isList: false,
     script: {
       initialState: { currentText: '', publishedText: '', status: 'NonExistent' },
       exposes: 'status',
-      arguments: [{ name: 'documentId', propertyType: 'DocumentId' }],
-      tagFilter: ['DocumentId:{documentId}'],
     },
     handlers: [
       { event: 'DocumentAdded',
@@ -5661,7 +6249,7 @@ function seedDocumentAuthoring(modelId) {
   addDefinition('entity-definition', modelId, 'Document', { icon: '📄', properties: [] });
 
   const event = (name, properties) =>
-    addDefinition('event-definition', modelId, name, { properties });
+    addDefinition('event-definition', modelId, name, { properties, tags: seedTags(modelId, properties) });
 
   event('DocumentAdded', [prop('id', 'DocumentId')]);
   event('TextUpdated', [prop('docId', 'DocumentId'), prop('text', 'string')]);
@@ -5813,20 +6401,17 @@ function seedVerifiedPublish(modelId) {
 // query is its operands' union, so binding it guards the append
 // exactly as reading both texts would.
 function seedDerivedPending(modelId) {
+  // Tagged by the document like the two it compares, and passing that
+  // tag on to each of them by name.
+  const own = { documentId: { parameterName: 'documentId' } };
   addDefinition('projection-definition', modelId, 'DocumentHasPendingChanges', {
-    parameters: [{ name: 'documentId', propertyType: 'DocumentId' }],
+    tags: [seedEntityTag('Document')],
     valueType: 'boolean',
     isList: false,
     derived: {
-      leftHandSide: {
-        projection: 'DocumentCurrentText',
-        arguments: { documentId: { parameterName: 'documentId' } },
-      },
+      leftHandSide: { projection: 'DocumentCurrentText', tags: own },
       predicate: 'equals',
-      rightHandSide: {
-        projection: 'DocumentPublishedText',
-        arguments: { documentId: { parameterName: 'documentId' } },
-      },
+      rightHandSide: { projection: 'DocumentPublishedText', tags: own },
       negate: true,
     },
   });
@@ -5864,7 +6449,7 @@ function seedGuardedAuthoring(modelId) {
   addDefinition('entity-definition', modelId, 'Document', { icon: '📄', properties: [] });
 
   const event = (name, properties) =>
-    addDefinition('event-definition', modelId, name, { properties });
+    addDefinition('event-definition', modelId, name, { properties, tags: seedTags(modelId, properties) });
 
   event('DocumentAdded', [prop('id', 'DocumentId')]);
   event('TextChanged', [prop('docId', 'DocumentId'), prop('text', 'string')]);
@@ -5982,20 +6567,27 @@ function seedGuardedAuthoring(modelId) {
   });
 }
 
+// `experimental` marks the entries that use what the experimental flag
+// keeps off the pages (entities, guards, derived projections…); the
+// model list shows those only with the flag on. A test holds the mark
+// to the built model's own `experimentalFeatures`.
 const PREDEFINED_MODELS = [
   {
     name: 'Course Example (simple)',
     slug: 'course-simple',
     description: 'Courses and students, capacity and subscriptions. '
       + 'Identifiers are supplied by the caller and checked with a state condition.',
-    build: (modelId) => { seedBase(modelId); },
+    build: (modelId) => { seedBase(modelId); seedWithoutEntities(modelId); },
   },
   {
     name: 'Course Example (with sequence)',
     slug: 'course-sequence',
     description: 'Adds a projection issuing c1, c2, c3… DefineCourse loses its identifier '
-      + 'parameter and its conditions — binding the numbering guards it instead.',
-    build: (modelId) => { seedBase(modelId); seedAddSequence(modelId); seedSequenceScenarios(modelId); },
+      + 'parameter and its conditions — reading the numbering guards it instead.',
+    build: (modelId) => {
+      seedBase(modelId); seedAddSequence(modelId); seedSequenceScenarios(modelId);
+      seedWithoutEntities(modelId);
+    },
   },
   {
     name: 'Course Example (with sequence and tenant)',
@@ -6003,22 +6595,28 @@ const PREDEFINED_MODELS = [
     description: 'The numbering restarts per tenant — the case a tagless sequence could not '
       + 'express. Identity stays globally minted; what restarts is the number, so no two '
       + 'tenants ever write the same Course tag.',
-    build: (modelId) => { seedBase(modelId); seedAddSequence(modelId); seedAddTenancy(modelId); },
+    build: (modelId) => {
+      seedBase(modelId); seedAddSequence(modelId); seedAddTenancy(modelId);
+      seedWithoutEntities(modelId);
+    },
   },
   {
     name: 'Course Example (with schedules)',
     slug: 'course-schedules',
+    experimental: true,
     description: 'Adds hourly slots and the rule that a student is never in two courses at '
-      + 'once, checked against live schedules so courses can be rescheduled under subscribers.',
+      + 'once, checked against live schedules so courses can be rescheduled under subscribers. '
+      + 'Stated with entities — rescheduling excludes the course itself from its subscribers\' '
+      + 'other courses, which only an entity read can say.',
     build: (modelId) => { seedBase(modelId); seedAddSequence(modelId); seedAddSchedules(modelId); },
   },
-{
+  {
     name: 'Dynamic Product Price (simple)',
     slug: 'pricing-simple',
     description: 'A cart ordered in one append. Each line names a product and the price shown '
       + 'to the customer; the boundary fans out over the lines and checks each price against '
       + 'the product it belongs to.',
-    build: (modelId) => { seedProductPricing(modelId); },
+    build: (modelId) => { seedProductPricing(modelId); seedWithoutEntities(modelId); },
   },
   {
     name: 'Content based decisions (scripted projection)',
@@ -6027,7 +6625,7 @@ const PREDEFINED_MODELS = [
       + 'its current text equals the last published one — a comparison no declared handler can '
       + 'express, so the status projection is scripted, keeps both texts as hidden state and '
       + 'exposes only the status.',
-    build: (modelId) => { seedContentDecisionsScripted(modelId); },
+    build: (modelId) => { seedContentDecisionsScripted(modelId); seedWithoutEntities(modelId); },
   },
   {
     name: 'Content based decisions (boundary comparison)',
@@ -6035,7 +6633,7 @@ const PREDEFINED_MODELS = [
     description: 'The comparison moved into the boundary: two plain text projections, '
       + 'DocumentPublished carrying the text it publishes, and a publish guard comparing them. '
       + 'Nothing is scripted; pending-ness is never stored, only visible where the texts differ.',
-    build: (modelId) => { seedDocumentAuthoring(modelId); },
+    build: (modelId) => { seedDocumentAuthoring(modelId); seedWithoutEntities(modelId); },
   },
   {
     name: 'Content based decisions (client-verified)',
@@ -6043,23 +6641,33 @@ const PREDEFINED_MODELS = [
     description: 'Publishing takes the text the caller saw and verifies it against the current '
       + 'one — the optimistic check OrderProducts applies to prices, made a domain rule. A stale '
       + 'echo is rejected; the published event carries the proven text.',
-    build: (modelId) => { seedDocumentAuthoring(modelId); seedVerifiedPublish(modelId); },
+    build: (modelId) => { seedDocumentAuthoring(modelId); seedVerifiedPublish(modelId); seedWithoutEntities(modelId); },
   },
   {
     name: 'Content based decisions (guarded emissions)',
     slug: 'content-decisions-guarded',
+    experimental: true,
     description: 'The decision made at write time and recorded: UpdateText emits TextChanged or '
       + 'TextRevertedToPublished under complementary guards, so the log says a revert happened '
       + 'and the five-state status folds from plain handlers again.',
-    build: (modelId) => { seedGuardedAuthoring(modelId); },
+    build: (modelId) => { seedGuardedAuthoring(modelId); seedWithoutEntities(modelId); },
   },
   {
     name: 'Content based decisions (derived projection)',
     slug: 'content-decisions-derived',
+    experimental: true,
     description: 'The comparison declared once: hasPendingChanges is a derived projection — no '
-      + 'handlers, one predicate over the two text projections — bound as an entity property and '
-      + 'read by the publish guard, so a frontend could interpret the same declaration.',
-    build: (modelId) => { seedDocumentAuthoring(modelId); seedDerivedPending(modelId); },
+      + 'handlers, one predicate over the two text projections — read by the publish guard, so '
+      + 'a frontend could interpret the same declaration.',
+    build: (modelId) => { seedDocumentAuthoring(modelId); seedDerivedPending(modelId); seedWithoutEntities(modelId); },
+  },
+  {
+    name: 'Course Example (with entities)',
+    slug: 'course-entities',
+    experimental: true,
+    description: 'The simple course example stated with entities and lifecycles — the '
+      + 'experimental way of grouping projections under the thing they are about.',
+    build: (modelId) => { seedBase(modelId); },
   },
 ];
 

@@ -383,10 +383,6 @@
   .hpanel .hline + .hline { margin-top: 5px; }
   .hpanel .hlinks { display: flex; gap: 14px; margin-top: 6px; }
   .hpanel .hlink { font-size: 11px; }
-  .xref {
-    font: inherit; padding: 0; border: 0; background: none; cursor: pointer;
-    color: var(--accent); text-decoration: underline; text-underline-offset: 2px;
-  }
 
   /* An entity chip is a way in: click it anywhere and the thing itself
      slides in beside what you were reading, rather than replacing it. */
@@ -738,88 +734,6 @@
     font-size: 10.5px; color: var(--muted); display: flex; gap: 12px;
   }
 
-  /* ---------- help ----------
-     Read rather than passed through, so it is the widest panel and the
-     only one that scrolls inside itself: the contents stay put beside
-     the topic, which is what makes landing on one from elsewhere work. */
-  .modal.help {
-    width: 900px; height: calc(100vh - 100px); padding: 0;
-    display: flex; flex-direction: column; overflow: hidden;
-  }
-  .modal.help > header { padding: 14px 20px 12px; margin: 0; border-bottom: 1px solid var(--border); }
-  .help-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 190px 1fr; }
-  .help-toc { overflow: auto; padding: 12px 8px 16px 14px; border-right: 1px solid var(--border); }
-  .help-toc h5 {
-    margin: 12px 0 4px 6px; font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
-    color: var(--muted);
-  }
-  .help-toc h5:first-child { margin-top: 0; }
-  .help-toc button {
-    display: block; width: 100%; text-align: left; font: inherit; font-size: 12.5px;
-    color: var(--text); background: none; border: 0; border-radius: 6px;
-    padding: 4px 6px; cursor: pointer;
-  }
-  .help-toc button:hover { background: var(--bg); }
-  .help-toc button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
-  .help-pages { position: relative; overflow: auto; padding: 4px 24px 40vh; outline: none; }
-  .help-topic { padding-top: 18px; }
-  .help-topic + .help-topic { border-top: 1px solid var(--border); margin-top: 22px; }
-  .help-topic h3 { display: flex; align-items: baseline; gap: 10px; margin: 0 0 8px; font-size: 16px; }
-  .help-topic h3 a { font-size: 11px; font-weight: 400; }
-  .help-topic p { font-size: 13px; line-height: 1.55; margin: 0 0 8px; max-width: 68ch; }
-  .help-topic code { font-size: 11.5px; padding: 0 3px; border-radius: 3px; background: var(--bg); }
-  .help-code {
-    margin: 12px 0; padding: 10px 12px; overflow: auto;
-    font-family: var(--mono); font-size: 11.5px; line-height: 1.55;
-    background: var(--bg); border: 1px solid var(--border); border-radius: 7px;
-  }
-  /* Each line a block, so a scenarios group's lines can carry the
-     editor's stripe at the snippet's edge. Blocks are what separates the
-     lines; an empty one holds a space, which keeps its height and keeps
-     it in a copied snippet. */
-  .help-code .hl-line { display: block; }
-  .help-code .hl-scenarios { margin: 0 -12px; padding: 0 12px; box-shadow: inset 2px 0 var(--scenario-stripe); }
-  .help-syntax { width: 100%; border-collapse: collapse; margin: 4px 0 4px; font-size: 12.5px; }
-  .help-syntax td { padding: 5px 10px 5px 0; vertical-align: baseline; border-top: 1px solid var(--border); }
-  .help-syntax td:first-child { width: 46%; font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap; }
-  .help-syntax td:nth-child(2) { line-height: 1.45; }
-  .help-syntax td:last-child { width: 1em; padding-right: 0; text-align: right; }
-  .help-syntax td:last-child a { text-decoration: none; }
-  .help-boundary { margin: 12px 0; font-size: 12px; }
-  .help-boundary > div { padding: 7px 0; border-top: 1px solid var(--border); }
-  .help-boundary .cmdline { display: flex; gap: 10px; align-items: baseline; margin-bottom: 3px; }
-  .help-boundary .cmdline b { font-family: var(--mono); font-size: 11.5px; }
-  .help-boundary .hq { padding-left: 14px; font-family: var(--mono); font-size: 11px; }
-  @media (max-width: 720px) {
-    .help-body { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
-    .help-toc {
-      display: flex; gap: 4px; overflow-x: auto; padding: 8px 12px;
-      border-right: 0; border-bottom: 1px solid var(--border);
-    }
-    .help-toc h5 { display: none; }
-    .help-toc button { width: auto; white-space: nowrap; }
-    .help-pages { padding: 4px 16px 40vh; }
-    .help-syntax td:first-child { width: auto; }
-  }
-
-  /* The code view's colours, for a text that is only shown: Monaco's
-     own `vs` / `vs-dark` palette for the classes `sourceHighlight`
-     gives, so a snippet in the help and the same line in the editor
-     look alike. */
-  .hl-keyword { color: #0000ff; }
-  .hl-flow { color: #af00db; }
-  .hl-type { color: #267f99; }
-  .hl-string, .hl-code { color: #a31515; }
-  .hl-number { color: #098658; }
-  .hl-comment { color: #008000; }
-  .hl-annotation { color: #795e26; }
-  body.f-dark .hl-keyword { color: #569cd6; }
-  body.f-dark .hl-flow { color: #c586c0; }
-  body.f-dark .hl-type { color: #4ec9b0; }
-  body.f-dark .hl-string, body.f-dark .hl-code { color: #ce9178; }
-  body.f-dark .hl-number { color: #b5cea8; }
-  body.f-dark .hl-comment { color: #6a9955; }
-  body.f-dark .hl-annotation { color: #dcdcaa; }
 
   /* ---------- problems: one diagnostic dress ----------
      The Problems panel's rows and the in-page advisory banner are the
@@ -863,6 +777,12 @@
     padding: 8px 11px; margin: 0 0 10px; font-size: 12px;
   }
   .advisory > div { display: flex; align-items: baseline; gap: 7px; }
+  .xnotice {
+    display: flex; align-items: baseline; gap: 10px;
+    border: 1px solid var(--accent); border-radius: 7px;
+    background: var(--accent-soft);
+    padding: 8px 11px; margin: 0 0 14px; font-size: 12px;
+  }
   .advisory .what { font-weight: 600; }
   .diag-mark { flex: none; }
   body.f-dark .issue, body.f-dark .advisory { border-color: #7f1d1d; color: #fecaca; }
@@ -1443,7 +1363,6 @@
 <script src="model.js"></script>
 <script src="evaluate.js"></script>
 <script src="dsl.js"></script>
-<script src="help.js"></script>
 <script src="shared.js"></script>
 <script src="webmcp-schemas.js"></script>
 <script src="webmcp.js"></script>
@@ -1461,8 +1380,9 @@
 //     and the PascalCase the schema wants is derived, not typed;
 //   - a new command is described in the page, not in a dialog — there
 //     are no browser prompts anywhere in here;
-//   - the machinery (identifier schemas, custom types, projections, the
-//     derived boundary, the entity manager) only appears in Advanced.
+//   - what DCB is made of (types, events, projections, the derived
+//     boundary) is always on screen; what the examples on dcb.events
+//     never need waits behind the experimental flag (shared.js).
 // ============================================================
 
 const state = {
@@ -1518,7 +1438,6 @@ const state = {
   splashFaqOpen: { 0: true }, // which FAQ entries are expanded, on the first-run splash
   pendingImport: null,      // a decoded share envelope waiting on the scripted-code confirm
   settings: false,          // the settings modal
-  help: null,               // the help modal: { topic, land, scroll } while it is up — see `openHelp`
   problems: false,         // the loose-ends-and-drifted-scenarios panel
   railOpen: false,          // the rail, as an off-canvas drawer on a narrow screen
   importExport: false,      // the Import & Export modal
@@ -1545,7 +1464,7 @@ const state = {
   projTab: 'definition',    // 'definition' | 'checks' inside the opened ledger row
   openProjectionScenarios: new Set(), // keys of every projection scenario whose detail is unfolded
   projectionScenarioDraft: null, // { key, insertAfter, body } — see `scenarioDraft`
-  watchDraft: null,         // { projection, arguments } — a projection about to be watched
+  watchDraft: null,         // { projection, tags, arguments } — a projection about to be watched
 };
 
 // A decoded share envelope, on its way in — from the URL fragment on
@@ -1714,7 +1633,7 @@ function modelsModal() {
     h('div', { class: 'setting' }, h('h4', {}, 'Start a new one'), startNew),
     h('div', { class: 'setting' },
       h('h4', {}, 'Or try an example'),
-      PREDEFINED_MODELS.map((entry) => h('button', {
+      shippedModels().map((entry) => h('button', {
         class: 'choice',
         onclick: () => runAsync(async () =>
           beginImport(await loadModelFromUrl('examples/' + entry.slug + '.json'))),
@@ -1804,7 +1723,7 @@ function renderSplash(main) {
     h('div', { class: 'splash-section' },
       h('h2', {}, 'Examples'),
       h('div', { class: 'splash-examples' },
-        PREDEFINED_MODELS.map((entry) => h('button', {
+        shippedModels().map((entry) => h('button', {
           class: 'splash-example',
           onclick: () => runAsync(async () =>
             beginImport(await loadModelFromUrl('examples/' + entry.slug + '.json'))),
@@ -1834,6 +1753,15 @@ function renderSplash(main) {
       h('a', { href: 'https://dcb.events', target: '_blank', rel: 'noopener' }, 'dcb.events ↗'))));
 }
 
+// The shipped models on offer: every one with the experimental flag on,
+// and without it only those using nothing experimental. Whether one
+// does is its entry's `experimental`, which a test derives from the
+// built model's own features (`experimentalFeatures`) — so the list
+// cannot drift from the flag, though nothing is built to draw it.
+function shippedModels() {
+  return PREDEFINED_MODELS.filter((entry) => experimental() || !entry.experimental);
+}
+
 const NEW = ' new';         // sentinel row in a picker
 
 // ---------- how much is on screen ----------
@@ -1854,16 +1782,16 @@ const NEW = ' new';         // sentinel row in a picker
 // from this list and knows nothing else about them.
 const UI_SETTINGS = [
   {
-    title: 'How much of the model',
-    why: 'Advanced hides nothing structural. It only decides whether the parts a first model '
-      + 'never needs are on screen.',
+    title: 'Experimental features',
+    why: 'What the examples on dcb.events do not need. A model that already uses one '
+      + 'shows it either way; this decides whether the pages offer to author them.',
     options: [
-      ['simple', 'Simple', 'Features, the state behind them, and the events that move it'],
-      ['advanced', 'Advanced', 'Also identifier schemas, value types, numbering, the stored '
-        + 'names and the consistency boundary each command derives'],
+      ['off', 'Off', 'Types, events, projections, commands and the consistency boundary'],
+      ['on', 'On', 'Also entities and lifecycles, derived projections, guarded emissions, '
+        + 'optional reads, annotations and the overview pages'],
     ],
-    get: mode,
-    set: setMode,
+    get: () => (experimental() ? 'on' : 'off'),
+    set: (value) => setExperimental(value === 'on'),
   },
 ];
 
@@ -2027,7 +1955,6 @@ function renderModals() {
   // comes last, and only when someone asked for it — while nothing is
   // loaded, `renderSplash` is the page rather than a panel over it.
   if (state.pendingImport) { host.appendChild(renderImportGate()); return; }
-  if (state.help) { host.appendChild(helpModal()); placeHelpScroll(); return; }
   if (state.problems) { host.appendChild(problemsPanel()); return; }
   if (state.settings) { renderSettingsModal(host); return; }
   if (state.importExport) { host.appendChild(renderImportExportModal()); return; }
@@ -2074,189 +2001,37 @@ function overlayAround(modal, close) {
 
 // ---------- help ----------
 //
-// The concepts, and how each is written in DCB notation. What it says
-// is help.js; this is the panel. It opens at a topic from wherever a
-// concept is in front of the reader — the bar's button at the page's
-// own (`helpTopicHere`), a hint panel at its section's, `?` from the
-// keyboard — and anything else that wants to point at an explanation
-// calls `openHelp(id)`. A modal on purpose: the page behind keeps its
-// place, and Escape is the way back to it.
-//
-// The topics scroll inside the panel, and every repaint rebuilds it,
-// so where the reader is has to outlive one: the offset is kept in
-// `state.help` as they scroll, and `land` asks for the one jump to a
-// topic that opening it, or a link inside it, means.
+// The help is the documentation on dcb.events (`openDocs`, shared.js),
+// in a new tab: the bar's button and the `?` key open it at what the
+// page is about — the construct under the cursor in the code view, the
+// page's own kind of thing elsewhere, and the guide where a page is
+// about no one concept.
 const HELP_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
   + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
   + '<circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>'
   + '<line x1="12" y1="17" x2="12.01" y2="17"></line></svg>';
 
-function openHelp(topic) {
-  if (state.palette) closePalette();
-  state.hintPop = null;
-  state.queryPop = null;
-  state.help = { topic: helpTopic(topic) ? topic : null, land: true, scroll: 0 };
-  render();
-}
-
-// The topic of whatever the page is about: the definition under the
-// cursor in the code view, the page's own kind of thing elsewhere, and
-// the top of the help where a page is about no one concept.
-function helpTopicHere() {
-  if (!activeModel() || state.splash) return null;
+function docsHere() {
+  if (!activeModel() || state.splash) return NOTATION_GUIDE_URL;
   if (state.code) {
     const parsed = codeView.analysis && codeView.analysis.parsed;
     const line = parsed ? codeCursorLine() : null;
     const span = line ? sourceSpanAt(parsed, line) : null;
-    return span ? helpTopicFor(span.kind, parsed.collections[span.kind][span.name]) : 'notation';
+    const anchor = span ? docsAnchorFor(span.kind, parsed.collections[span.kind][span.name]) : null;
+    return anchor ? notationReference(anchor) : NOTATION_GUIDE_URL;
   }
-  if (state.view === 'slice') return state.tab === 'scenarios' ? 'scenario' : 'command';
-  return {
-    entity: 'entity', types: 'custom-type', projections: 'projection', events: 'event', lifecycles: 'lifecycle',
-  }[state.view] || null;
+  if (state.view === 'slice') return notationReference(state.tab === 'scenarios' ? 'scenario' : 'command');
+  const anchor = {
+    entity: 'entity', types: 'type', projections: 'projection', events: 'event', lifecycles: 'lifecycle',
+  }[state.view];
+  return anchor ? notationReference(anchor) : NOTATION_GUIDE_URL;
 }
 
 function helpButton() {
   return h('button', {
-    class: 'icon-btn', type: 'button', title: 'Help — the concepts, and how each is written (?)',
-    'aria-label': 'Help', onclick: () => openHelp(helpTopicHere()),
+    class: 'icon-btn', type: 'button', title: 'The notation, on dcb.events (?)',
+    'aria-label': 'Documentation', onclick: () => openDocs(docsHere()),
   }, h('span', { html: HELP_ICON_SVG }));
-}
-
-// A link into the help, for prose elsewhere that names a concept.
-function helpLink(topic, label) {
-  return h('button', {
-    type: 'button', class: 'xref',
-    onclick: (e) => { e.stopPropagation(); openHelp(topic); },
-  }, label);
-}
-
-function goToHelpTopic(topic) {
-  state.help.topic = topic;
-  state.help.land = true;
-  placeHelpScroll();
-}
-
-// After the panel is in the document: the jump `land` asked for, or
-// back to where the reader had scrolled to before this repaint.
-function placeHelpScroll() {
-  const pages = document.querySelector('.help-pages');
-  if (!pages || !state.help) return;
-  const target = state.help.land && state.help.topic
-    ? document.getElementById('help-' + state.help.topic) : null;
-  pages.scrollTop = target ? target.offsetTop : state.help.land ? 0 : state.help.scroll;
-  state.help.land = false;
-  state.help.scroll = pages.scrollTop;
-  markHelpTopic(pages);
-}
-
-// The contents follow the reading: the topic marked is the last one
-// whose heading has scrolled past the top. Done on the elements, since
-// a repaint per scroll event would be one per frame.
-function markHelpTopic(pages) {
-  let current = HELP_TOPICS[0].id;
-  for (const section of pages.querySelectorAll('.help-topic')) {
-    if (section.offsetTop - pages.scrollTop > 24) break;
-    current = section.dataset.topic;
-  }
-  if (pages.scrollTop + pages.clientHeight >= pages.scrollHeight - 2) current = HELP_TOPICS[HELP_TOPICS.length - 1].id;
-  state.help.topic = current;
-  for (const button of document.querySelectorAll('.help-toc button')) {
-    button.classList.toggle('on', button.dataset.topic === current);
-  }
-}
-
-function helpProse(text) {
-  return helpRuns(text).map((run) => {
-    if (run.code !== undefined) return h('code', {}, run.code);
-    if (run.link !== undefined) {
-      // An anchor, not a button: a button is an atomic box, and the
-      // full stop after it would wrap onto a line of its own.
-      return h('a', {
-        href: '#help-' + run.link, class: 'xref',
-        onclick: (e) => { e.preventDefault(); goToHelpTopic(run.link); },
-      }, run.text);
-    }
-    return run.text;
-  });
-}
-
-// Line by line, so a scenarios group's lines can carry the stripe the
-// editor gives them.
-function helpCode(text) {
-  const grouped = new Set();
-  for (const r of sourceFoldingRanges(text)) if (r.scenarios) for (let l = r.start; l <= r.end; l += 1) grouped.add(l);
-  const lines = [[]];
-  for (const [cls, part] of sourceHighlight(text)) {
-    part.split('\n').forEach((piece, i) => {
-      if (i) lines.push([]);
-      if (piece) lines[lines.length - 1].push(cls ? h('span', { class: 'hl-' + cls }, piece) : piece);
-    });
-  }
-  return h('pre', { class: 'help-code' }, lines.map((parts, i) => h('span', {
-    class: grouped.has(i + 1) ? 'hl-line hl-scenarios' : 'hl-line',
-  }, parts.length ? parts : ' ')));
-}
-
-function helpBoundaryList(topic) {
-  return h('div', { class: 'help-boundary' }, helpBoundaries(topic).map((summary) =>
-    h('div', {},
-      h('div', { class: 'cmdline' }, h('b', {}, summary.command), h('span', { class: 'muted' }, summary.words)),
-      summary.queries.map((query, round) => query.map((item) => h('div', { class: 'hq dcb' },
-        summary.queries.length > 1 ? h('span', { class: 'muted' }, `${round + 1}. `) : null,
-        h('span', { class: 'muted' }, item.alias + ': '),
-        dcbQueryWords(item)))))));
-}
-
-function helpSection(topic) {
-  const example = helpExcerpt(topic);
-  return h('section', { class: 'help-topic', id: 'help-' + topic.id, 'data-topic': topic.id },
-    h('h3', {}, topic.title,
-      topic.href ? h('a', { href: topic.href, target: '_blank', rel: 'noopener' }, topic.hrefLabel || 'Reference ↗') : null),
-    topic.prose.map((text) => h('p', {}, helpProse(text))),
-    example ? helpCode(example) : null,
-    topic.boundaryOf ? helpBoundaryList(topic) : null,
-    topic.syntax ? h('table', { class: 'help-syntax' }, h('tbody', {},
-      topic.syntax.map(([spelling, meaning, anchor]) => h('tr', {},
-        h('td', {}, spelling), h('td', {}, helpProse(meaning)),
-        h('td', {}, h('a', {
-          href: notationReference(anchor), target: '_blank', rel: 'noopener', title: 'In the reference on dcb.events',
-        }, '↗')))))) : null);
-}
-
-function helpModal() {
-  const close = () => { state.help = null; render(); };
-  const toc = h('nav', { class: 'help-toc', 'aria-label': 'Topics' });
-  let group = null;
-  for (const topic of HELP_TOPICS) {
-    if (topic.group !== group) {
-      group = topic.group;
-      toc.appendChild(h('h5', {}, group));
-    }
-    toc.appendChild(h('button', {
-      type: 'button', 'data-topic': topic.id, class: topic.id === state.help.topic ? 'on' : '',
-      onclick: () => goToHelpTopic(topic.id),
-    }, topic.title));
-  }
-  const pages = h('div', {
-    class: 'help-pages', tabindex: '-1',
-    onscroll: (e) => {
-      if (!state.help) return;
-      state.help.scroll = e.target.scrollTop;
-      markHelpTopic(e.target);
-    },
-  }, HELP_TOPICS.map(helpSection));
-  const modal = h('div', { class: 'modal help', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Help' },
-    h('header', {},
-      h('h2', {}, 'Help'),
-      h('span', { class: 'muted small' }, 'The concepts, and how each is written in DCB notation'),
-      h('span', { class: 'grow' }),
-      h('button', { class: 'btn ghost', onclick: close, title: 'Close' }, '×')),
-    h('div', { class: 'help-body' }, toc, pages));
-  // The pages, not the panel, take the focus: they are what the arrow
-  // and page keys should scroll.
-  setTimeout(() => pages.focus({ preventScroll: true }), 0);
-  return overlayAround(modal, close);
 }
 
 // The one confirmation an import can force: the model it would build
@@ -2656,6 +2431,19 @@ function advisoryBanner(model, kind, name) {
       a.message)));
 }
 
+// A model may use what the flag keeps off the pages — it was imported,
+// shared, or written before the flag was turned off. It still loads and
+// renders whole (the flag gates authoring, never reading), and this is
+// what says so, on every page, with the one control that changes it.
+function experimentalNotice(model) {
+  if (experimental()) return null;
+  const used = [...new Set(experimentalFeatures(model).map((f) => EXPERIMENTAL_FEATURES[f.feature]))];
+  if (!used.length) return null;
+  return h('div', { class: 'xnotice' },
+    h('span', { class: 'grow' }, 'This model uses experimental features: ', used.join(', '), '.'),
+    h('button', { class: 'btn tiny', onclick: () => setExperimental(true) }, 'Enable'));
+}
+
 // Shown only when there is something to show — a clean model gets no
 // badge to reassure it is clean, the way "Loose ends ✓" used to.
 function problemsButton(model) {
@@ -2739,17 +2527,15 @@ function paletteEntries(model) {
       owner ? 'on ' + readable(owner.entity) : 'projections',
       () => goToProjection(name));
   }
-  if (advanced()) {
-    for (const name of Object.keys(model['custom-type-definitions'])) {
-      add('custom type', readable(name), 'custom types', () => goToCustomType(name));
-    }
+  for (const name of Object.keys(model['custom-type-definitions'])) {
+    add('custom type', readable(name), 'custom types', () => goToCustomType(name));
   }
   add('do', 'New command…', '', () => beginNewCommand(activeModel()));
   add('do', 'Models…', 'switch, load, or start a model', () => { state.models = true; });
   add('do', 'Settings', '', () => { state.settings = true; });
   add('do', isDark() ? 'Switch to light mode' : 'Switch to dark mode', '', toggleTheme);
-  add('do', advanced() ? 'Switch to Simple' : 'Switch to Advanced', '',
-    () => setMode(advanced() ? 'simple' : 'advanced'));
+  add('do', experimental() ? 'Disable experimental features' : 'Enable experimental features', '',
+    () => setExperimental(!experimental()));
   return entries;
 }
 
@@ -3637,6 +3423,15 @@ function membershipControls(draft, enumMembers) {
 // rule visible instead of only enforced.
 function operandChoicesAbove(model, slice, index) {
   const out = [...payloadChoices(model, slice.payload)];
+  // The projections this command already reads in place (8.0) — a rule
+  // about one is opened again with it on offer, and a second rule may
+  // read the same thing. A binding's own operands come only from above
+  // it, so these stay out of that scope.
+  if (index === undefined) {
+    for (const { read } of inlineReads(slice.body)) {
+      out.push([JSON.stringify(read), operandWords(read)]);
+    }
+  }
   slice.reads.slice(0, index === undefined ? undefined : index).forEach((b) => {
     if (b.projection) {
       out.push([JSON.stringify({ alias: b.alias }), propertyWords(b.alias)]);
@@ -3668,10 +3463,15 @@ function choicesOfType(model, slice, choices, propertyType, { list } = {}) {
 
 // ---------- small helpers ----------
 
+// An event edited on the pages keeps its tags in step with its fields
+// (`withEditedTags`): what an author adds of a tag type is listed, and
+// a path the edit emptied is dropped — visibly, on the event's own row.
 function patch(kind, name, mutate) {
   const model = activeModel();
-  const body = deepClone(model[DEF_COLLECTIONS[kind]][name]);
+  const previous = model[DEF_COLLECTIONS[kind]][name];
+  let body = deepClone(previous);
   mutate(body);
+  if (kind === 'event-definition') body = withEditedTags(model, previous, body);
   run(() => updateDefinition(kind, model.id, name, body));
 }
 const patchSlice = (mutate) => patch('command-definition', state.slice, mutate);
@@ -3704,7 +3504,7 @@ function renameDefinitionForm(model, kind, name, { stateKey, warn, after } = {})
 // once they have asked to see that sort of thing.
 function named(name, cls) {
   return h('span', { class: cls || '' }, readable(name),
-    advanced() ? h('span', { class: 'tech' }, name) : null);
+    h('span', { class: 'tech' }, name));
 }
 
 // A thing has one page, and every mention of it is the way there. It
@@ -3842,8 +3642,7 @@ function goToProjectionScenario(model, key) {
 }
 
 function typeChoices(model) {
-  if (advanced()) return allTypeNames(model);
-  return [...SIMPLE_TYPES, ...Object.keys(model['entity-definitions']).sort().map((n) => idTypeOf(model, n))];
+  return allTypeNames(model);
 }
 function typeOptions(model) {
   return typeChoices(model).map((t) => [t, readable(t)]);
@@ -4164,9 +3963,9 @@ function renderRail() {
 
   rail.appendChild(h('div', { class: 'add' },
     h('button', { class: 'btn', onclick: () => beginNewCommand(model) }, '+ Command'),
-    h('button', {
+    experimental() ? h('button', {
       class: 'btn ghost', onclick: () => { closeForms(); state.newFeature = true; render(); },
-    }, '+ Feature')));
+    }, '+ Feature') : null));
 
   if (state.namingCommand === true) rail.appendChild(newCommandForm(model));
 
@@ -4182,31 +3981,25 @@ function renderRail() {
     }));
   }
 
-  // Projections are advanced by nature, but a model that already has
-  // one has to offer a way in whatever mode you are in — otherwise the
-  // model holds something the interface refuses to show.
   const projectionNames = Object.keys(model['projection-definitions']);
   {
     rail.appendChild(h('h4', { style: 'margin-top:20px' }, 'Model'));
-    // The things themselves are not an advanced idea: a first model is
-    // mostly deciding what they are. Only what a modeler never has to
-    // state — value types, identifier schemas — waits for Advanced.
-    //
     // They are listed one by one, like the commands above: a thing has
     // a page, and the rail is where you get to it and where you see
-    // how many of them the model has grown.
-    rail.appendChild(renderEntityRail(model));
-    if (advanced()) {
-      rail.appendChild(h('a', {
-        href: '#', class: state.view === 'types' ? 'on' : '',
-        title: Object.keys(model['custom-type-definitions']).length + ' declared',
-        onclick: (e) => {
-          e.preventDefault(); closeForms();
-          state.view = 'types'; render();
-        },
-      }, 'Custom types'));
+    // how many of them the model has grown. Entities are experimental:
+    // without the flag the group shows only what a model already has.
+    if (experimental() || Object.keys(model['entity-definitions']).length) {
+      rail.appendChild(renderEntityRail(model));
     }
-    if (advanced() || projectionNames.length) rail.appendChild(h('a', {
+    rail.appendChild(h('a', {
+      href: '#', class: state.view === 'types' ? 'on' : '',
+      title: Object.keys(model['custom-type-definitions']).length + ' declared',
+      onclick: (e) => {
+        e.preventDefault(); closeForms();
+        state.view = 'types'; render();
+      },
+    }, 'Custom types'));
+    rail.appendChild(h('a', {
       href: '#', class: state.view === 'projections' ? 'on' : '',
       // A slice that binds a projection points here: the projection is
       // the source, and it lives nowhere else on that page.
@@ -4220,7 +4013,7 @@ function renderRail() {
       },
     }, 'Projections'));
     const eventNames = Object.keys(model['event-definitions']);
-    if (advanced() || eventNames.length) rail.appendChild(h('a', {
+    rail.appendChild(h('a', {
       href: '#', class: state.view === 'events' ? 'on' : '',
       'data-src': eventNames.map((n) => 'event:' + n).join(' ') || null,
       title: eventNames.length ? eventNames.map(readable).join(', ') : 'nothing recorded yet',
@@ -4233,10 +4026,9 @@ function renderRail() {
 
   // None of these is a definition of its own — each reads across
   // every command at once rather than living on any one of theirs,
-  // the way Events reads across every command that publishes one. And
-  // unlike Events, none holds anything a simple model would ever
-  // need to reach — so there is no "or it already has one" exception.
-  if (advanced() && Object.keys(model['command-definitions']).length) {
+  // the way Events reads across every command that publishes one. They
+  // are experimental: none is needed to read a model, only to survey it.
+  if (experimental() && Object.keys(model['command-definitions']).length) {
     rail.appendChild(h('h4', { style: 'margin-top:20px' }, 'Overview'));
     rail.appendChild(h('a', {
       href: '#', class: state.view === 'coupling' ? 'on' : '',
@@ -4331,7 +4123,7 @@ function renderEntityRail(model) {
       },
       onCancel: () => { state.newEntityAt = null; render(); },
     }));
-  } else {
+  } else if (experimental()) {
     box.appendChild(h('div', { class: 'add' }, h('button', {
       class: 'btn ghost',
       onclick: () => { closeForms(); state.newEntityAt = 'rail'; render(); },
@@ -4725,15 +4517,8 @@ function paintPage() {
     state.slice = names[0] || null;
     state.tab = 'definition';
   }
-  if (state.view === 'types' && !advanced()) state.view = 'slice';
-  if (state.view === 'projections' && !advanced() && !Object.keys(model['projection-definitions']).length) {
-    state.view = 'slice';
-  }
-  if (state.view === 'events' && !advanced() && !Object.keys(model['event-definitions']).length) {
-    state.view = 'slice';
-  }
   if (['coupling', 'rulemap', 'eventmodel', 'lifecycles'].includes(state.view)
-      && (!advanced() || !names.length)) {
+      && (!experimental() || !names.length)) {
     state.view = 'slice';
   }
   // A thing removed from under its own page leaves the page with
@@ -4761,6 +4546,8 @@ function paintPage() {
   }
   main.className = 'slice'
     + (['overview', 'coupling', 'rulemap', 'eventmodel', 'lifecycles'].includes(state.view) ? ' wide' : '');
+  const notice = experimentalNotice(model);
+  if (notice) main.appendChild(notice);
 
   if (state.view === 'overview') return renderOverview(model, main);
   if (state.view === 'sandbox') return renderSandbox(model, main);
@@ -4777,8 +4564,9 @@ function paintPage() {
     // With nothing to keep track of, a command has no identifier to be
     // given and every event it records is tagless — a model that cannot
     // say what any of it is *about*. So an empty model is pointed at a
-    // thing first, and only then at what someone can do to one.
-    if (!Object.keys(model['entity-definitions']).length) {
+    // thing first, and only then at what someone can do to one — when
+    // entities are on offer at all.
+    if (experimental() && !Object.keys(model['entity-definitions']).length) {
       main.appendChild(h('div', { class: 'blank' },
         h('h2', {}, 'Nothing here yet'),
         h('p', { class: 'muted small' },
@@ -4827,8 +4615,9 @@ function paintPage() {
           stateKey: 'renamingCommand', after: (next) => { state.slice = next; },
         })
       : qrow('div', { cls: 'row', key: 'cmd:' + slice.name },
-          h('button', {
+          !experimental() && !commandIcon(model, slice.name) ? null : h('button', {
             class: 'icon-btn', title: 'Choose the mark this is shown with',
+            disabled: !experimental(),
             onclick: () => {
               const open = state.commandIconPicker === slice.name;
               closeForms();
@@ -4888,9 +4677,7 @@ function paintPage() {
     main.appendChild(stepDecision(model, slice));
     main.appendChild(stepEmits(model, slice));
     main.appendChild(stepChanges(model, slice));
-    if (advanced()) main.appendChild(stepConsistency(model, slice));
-    else main.appendChild(h('div', { class: 'muted tiny', style: 'padding-left:26px' },
-      'Switch to Advanced to see the consistency boundary this command derives.'));
+    main.appendChild(stepConsistency(model, slice));
   }
 
   // A pinned reference outlives the repaint that follows clicking it.
@@ -4938,7 +4725,7 @@ function stepTrigger(model, slice) {
         }, readable(typeLabel(p))),
         h('span', { class: 'grow', style: 'flex:1' }),
         reveal(
-          advanced() ? h('span', { class: 'tech' }, p.name) : null,
+          h('span', { class: 'tech' }, p.name),
           h('button', { class: 'btn tiny danger', onclick: () => dropProperty(i) }, '×'))),
       enumType ? h('div', { class: 'use' },
         h('span', { class: 'muted' }, 'can be '), ...enumMemberChips(model, enumType)) : null,
@@ -5001,7 +4788,7 @@ function infoMark() {
   return h('span', { class: 'imark', html: INFO_MARK });
 }
 
-function hint(key, title, lines, href, topic) {
+function hint(key, title, lines, href, anchor) {
   const on = state.hintPop === key;
   return h('span', { class: 'hint' + (on ? ' on' : '') },
     h('button', {
@@ -5016,9 +4803,11 @@ function hint(key, title, lines, href, topic) {
     h('span', { class: 'hpanel', onclick: (e) => e.stopPropagation() },
       h('div', { class: 'k qtitle' }, title),
       ...(Array.isArray(lines) ? lines : [lines]).map((line) => h('div', { class: 'hline' }, line)),
-      href || topic ? h('div', { class: 'hlinks' },
+      href || anchor ? h('div', { class: 'hlinks' },
         href ? h('a', { class: 'hlink', href, target: '_blank', rel: 'noopener' }, 'dcb.events ↗') : null,
-        topic ? h('span', { class: 'hlink' }, helpLink(topic, 'In the help →')) : null) : null));
+        anchor && notationReference(anchor) !== href
+          ? h('a', { class: 'hlink', href: notationReference(anchor), target: '_blank', rel: 'noopener' }, 'In the reference ↗')
+          : null) : null));
 }
 
 // A query is one hover away rather than one more line on the page:
@@ -5075,15 +4864,22 @@ function readCard(model, slice, binding, index, waitsFor, ruleIndices) {
     ? h('span', { class: 'sentence' },
         projectionRef(model, r.projection, { cls: 'chip projection' }),
         ' as ', h('span', { class: 'op' }, r.alias),
-        // No arguments means no tag: the query is scoped by event type
-        // alone, which is what a global numbering is.
+        // No tag means the query is scoped by event type alone, which
+        // is what a global numbering is.
+        r.tags.length
+          ? h('span', {}, h('span', { class: 'verb' }, ' — tagged '),
+              ...r.tags.flatMap((tag, i) => [
+                i ? h('span', { class: 'verb' }, ' and ') : null,
+                opRef(tag.operand, null, tag.words),
+              ]))
+          : h('span', { class: 'verb' }, ' — the whole log'),
         r.arguments.length
-          ? h('span', {}, h('span', { class: 'verb' }, ' — for '),
+          ? h('span', {}, h('span', { class: 'verb' }, ' with '),
               ...r.arguments.flatMap((arg, i) => [
                 i ? h('span', { class: 'verb' }, ' and ') : null,
-                opRef((binding.arguments || {})[arg.name], null, arg.words),
+                opRef((binding.arguments || {})[arg.name], null, `${arg.name} = ${arg.words}`),
               ]))
-          : h('span', { class: 'verb' }, ' — the whole log'))
+          : null)
     : h('span', { class: 'sentence' },
         entityRef(model, r.entity),
         ' as ', h('span', { class: 'op' }, r.alias),
@@ -5111,10 +4907,10 @@ function readCard(model, slice, binding, index, waitsFor, ruleIndices) {
     qrow('div', { cls: 'row', key: 'read:' + binding.alias },
       sentence,
       // The query this read contributes, one hover away — stated on
-      // the read itself in Advanced, so "what does binding this cost?"
+      // the read itself, so "what does binding this cost?"
       // is answered where the binding is, not only in the union at the
       // foot of the page.
-      advanced() && queryItem
+      queryItem
         ? queryPopover('read:' + binding.alias, 'what this binding queries',
             h('div', {}, dcbQueryWords(queryItem)))
         : null,
@@ -5137,7 +4933,7 @@ function readCard(model, slice, binding, index, waitsFor, ruleIndices) {
         // narrow the boundary behind their back. It dangles, and says
         // so, until they deal with it.
         h('button', {
-          class: 'btn tiny danger', title: 'Remove this read, and the rules about it',
+          class: 'btn tiny danger', title: 'Remove this alias, and the rules about it',
           onclick: () => patchSlice((b) => {
             const names = (condition) => conditionOperands(condition)
               .some((operand) => operandSource(operand) === 'alias-property'
@@ -5276,7 +5072,7 @@ function bindingEditor(model, slice, binding, index) {
     // it hold vacuously, and reading a property of it yields null. A
     // fanned binding is not offered the choice — an empty list already
     // binds nothing.
-    binding.projection || fanned ? null : h('div', { class: 'adder' },
+    !experimental() || binding.projection || fanned ? null : h('div', { class: 'adder' },
       h('label', { class: 'muted tiny', style: 'display:flex;align-items:center;gap:4px' },
         h('input', {
           type: 'checkbox', checked: !!binding.isOptional,
@@ -5289,7 +5085,7 @@ function bindingEditor(model, slice, binding, index) {
       h('span', { class: 'muted tiny' },
         'a null identifier binds nothing instead of erroring; conditions over the alias hold vacuously')),
 
-    binding.projection || !fanned ? null : h('div', { class: 'adder' },
+    !experimental() || binding.projection || !fanned ? null : h('div', { class: 'adder' },
       h('span', { class: 'muted tiny' }, 'except'),
       ...operandPicker(excludingChoices, draft, 'excluding', { placeholder: '— nothing —', allowLiteral: false }),
       h('button', {
@@ -5465,9 +5261,10 @@ function stepDecision(model, slice) {
 
   // A rule belongs to the read its left side is about — the left side
   // is always something read, which is what the rule editor already
-  // enforced by filtering its own picker. A rule arriving from a
-  // hand-written file may name none, and is shown after the cards
-  // rather than dropped.
+  // enforced by filtering its own picker. A rule that reads its
+  // projection in place has no alias to sit under, and neither has one
+  // arriving from a hand-written file that names none: both are shown
+  // after the cards, each a card of its own.
   const rulesByAlias = new Map();
   const loose = [];
   slice.rules.forEach((condition, i) => {
@@ -5615,7 +5412,14 @@ function mergePrompt(model, merge) {
 // written.
 //
 // Returns null while the choice is still incomplete — an entity whose
-// identifier source has not been picked yet is not a read.
+// identifier source has not been picked yet is not a read, nor is a
+// projection with a tag left without a value.
+//
+// A tag nothing in scope can fill is filled by a new command input of
+// its type (`NEW` in the picker): the first rule about a student, in a
+// command that takes no student yet, has to have a way in. The input is
+// named after the tag and added in the same gesture as the rule
+// (`newReadInputs`).
 function pendingBinding(model, slice, draft) {
   const choice = draft && draft.newRead;
   if (!choice || !choice.entity) return null;
@@ -5630,7 +5434,21 @@ function pendingBinding(model, slice, draft) {
       if (!picked) return null;
       args[parameter.name] = JSON.parse(picked);
     }
-    return { alias: uniqueAlias(defaultAlias(name), taken), projection: name, arguments: args };
+    const tags = {};
+    const inputs = newReadInputs(model, slice, draft);
+    for (const tag of projectionTagParams(projection)) {
+      const picked = (choice.tags || {})[tag.name];
+      if (!picked) return null;
+      const input = inputs.find((p) => p.tag === tag.name);
+      tags[tag.name] = picked === NEW && input ? { parameterName: input.name } : JSON.parse(picked);
+    }
+    const binding = {
+      alias: uniqueAlias(defaultAlias(name), taken),
+      projection: name,
+    };
+    if (Object.keys(tags).length) binding.tags = tags;
+    if (Object.keys(args).length) binding.arguments = args;
+    return binding;
   }
   if (!choice.source) return null;
   return {
@@ -5638,6 +5456,32 @@ function pendingBinding(model, slice, draft) {
     entity: choice.entity,
     id: JSON.parse(choice.source),
   };
+}
+
+// The command inputs a rule about a projection brings with it — one
+// per tag left to a new input, named after the tag (made unique against
+// the payload), of the tag's type. `tag` says which tag it fills.
+function newReadInputs(model, slice, draft) {
+  const choice = draft && draft.newRead;
+  if (!choice || !choice.entity || !choice.entity.startsWith('projection:')) return [];
+  const projection = model['projection-definitions'][choice.entity.slice('projection:'.length)];
+  const taken = (slice.payload || []).map((p) => p && p.name);
+  const out = [];
+  for (const tag of projectionTagParams(projection)) {
+    if ((choice.tags || {})[tag.name] !== NEW) continue;
+    const name = uniqueAlias(tag.name, [...taken, ...out.map((p) => p.name)]);
+    out.push({ tag: tag.name, name, propertyType: tag.tagType, isOptional: false, isList: false });
+  }
+  return out;
+}
+
+// A projection binding, as the read it stands for in place — the same
+// projection, tags and arguments, without the alias.
+function inlineReadOf(binding) {
+  const read = { projection: binding.projection };
+  if (binding.tags && Object.keys(binding.tags).length) read.tags = deepClone(binding.tags);
+  if (binding.arguments && Object.keys(binding.arguments).length) read.arguments = deepClone(binding.arguments);
+  return read;
 }
 
 // One condition, open for editing — the same form whether it already
@@ -5683,13 +5527,13 @@ function ruleEditor(model, slice, index, target) {
   // identifier nothing here can supply is not a read anyone could
   // finish picking, and offering it is offering a dead end.
   //
-  // A projection is offered on the same terms, so a model can state its
-  // rules without an entity at all: `read label = Label(documentId)`
-  // and a rule about `label`. Except one an entity property binds —
-  // that value is read through the entity (`course.capacity`), and
-  // offering it here as well would be the same fact reachable as two
-  // different reads. Reachable means every parameter it takes has a
-  // source in scope; one with none is the whole log, untagged.
+  // A projection is offered too, so a model can state its rules
+  // without an entity at all: a rule about `Label(documentId)`. Except
+  // one an entity property binds — that value is read through the
+  // entity (`course.capacity`), and offering it here as well would be
+  // the same fact reachable as two different reads. Its tags need no
+  // value in scope, since a new input can bring one; what a script
+  // takes besides does.
   const scopeAbove = operandChoicesAbove(model, slice);
   const reachable = (entityName) => choicesOfType(
     model, slice, scopeAbove, idTypeOf(model, entityName), { list: true }).length > 0;
@@ -5719,7 +5563,9 @@ function ruleEditor(model, slice, index, target) {
   // instance belongs, and offering it twice made the same rule
   // reachable two ways with nothing to tell them apart. "Another
   // Course…" is a different matter: it is a different instance.
-  const targetRows = [...newRows, ...projectionRows, [NEW, '+ New entity…']];
+  const targetRows = experimental()
+    ? [...newRows, ...projectionRows, [NEW, '+ New entity…']]
+    : projectionRows;
   const chooseTarget = scoped === undefined;
   // Deliberately not defaulted. The row advances when the author
   // answers a question, so the first question has to be unanswered —
@@ -5738,7 +5584,7 @@ function ruleEditor(model, slice, index, target) {
       const entity = chosenTarget.startsWith('projection:')
         ? chosenTarget : chosenTarget.slice('entity:'.length);
       if (!draft.newRead || draft.newRead.entity !== entity) {
-        draft.newRead = { entity, source: '', args: {} };
+        draft.newRead = { entity, source: '', args: {}, tags: {} };
       }
     } else if (draft.newRead) {
       delete draft.newRead;
@@ -5766,6 +5612,31 @@ function ruleEditor(model, slice, index, target) {
   }
   const parameterSources = new Map(parameters.map((parameter) =>
     [parameter.name, choicesOfType(model, slice, baseScope, parameter.propertyType)]));
+  // A value for each tag the projection declares: anything in scope of
+  // that tag's type, or a list of them as `each` — the read made once
+  // per element, which a rule over it then holds for every one of — or a
+  // new command input of the type, which is the only offer when nothing
+  // in scope has it. Defaulted to the first, so a projection tagged by
+  // what the command was given needs no answer.
+  const declaredTags = chosenProjection ? projectionTagParams(chosenProjection) : [];
+  const tagSources = new Map(declaredTags.map((tag) => [tag.name, [
+    ...choicesOfType(model, slice, baseScope, tag.tagType, { list: true }).map(([v, label, ...rest]) => {
+      const resolved = resolveOperandType(JSON.parse(v), { boundary: slice.reads, commandProperties: slice.payload, model });
+      return resolved && resolved.isList
+        ? [JSON.stringify({ each: JSON.parse(v) }), 'each ' + label, ...rest]
+        : [v, label, ...rest];
+    }),
+    [NEW, '+ new input ' + propertyWords(tag.name)],
+  ]]));
+  if (chosenProjection) {
+    const picked = {};
+    for (const tag of declaredTags) {
+      const rows = tagSources.get(tag.name);
+      const held = (choice.tags || {})[tag.name];
+      picked[tag.name] = rows.some(([v]) => v === held) ? held : rows[0][0];
+    }
+    choice.tags = picked;
+  }
   for (const parameter of parameters) {
     const picked = (choice.args || {})[parameter.name];
     const rows = parameterSources.get(parameter.name);
@@ -5942,13 +5813,26 @@ function ruleEditor(model, slice, index, target) {
     state.editRule = null;
     state.editGuard = null;
     state.adder = null;
+    // A projection the rule brought is read in place (8.0): the
+    // provisional alias the wizard worked with is swapped for the read
+    // itself, and no binding is stored — an alias is the author's to
+    // write, in the code view, never one the pages invent.
+    const inline = pending && pending.projection ? inlineReadOf(pending) : null;
+    const swap = (operand) => (inline && operandSource(operand) === 'alias-property'
+      && operand.alias === pending.alias && operand.property === undefined ? deepClone(inline) : operand);
+    condition.leftHandSide = swap(condition.leftHandSide);
+    if (condition.rightHandSide !== undefined && !Array.isArray(condition.rightHandSide)) {
+      condition.rightHandSide = swap(condition.rightHandSide);
+    }
+    const inputs = pending ? newReadInputs(model, slice, draft) : [];
     patchSlice((b) => {
-      // One append, both writes. A binding stored without its rule
+      // One append, every write. A binding stored without its rule
       // would be pruned by the very write that stored it, and a rule
       // stored without its binding would dangle — so the read a rule
       // brought into being lands in the same gesture, above the rule
-      // that names it.
-      if (pending) (b.boundary = b.boundary || []).push(deepClone(pending));
+      // that names it, with any input it needs a value from.
+      for (const { tag, ...input } of inputs) (b.properties = b.properties || []).push(input);
+      if (pending && !inline) (b.boundary = b.boundary || []).push(deepClone(pending));
       const list = targetList(b);
       if (index === null) list.push(condition);
       else list[index] = condition;
@@ -5973,7 +5857,7 @@ function ruleEditor(model, slice, index, target) {
   const submit = () => {
     if (draft.newRead && !pending) {
       return toast(draft.newRead.entity.startsWith('projection:')
-        ? 'Pick what that projection is partitioned by.'
+        ? 'Pick a value for each of that projection\u2019s tags.'
         : 'Pick where that thing\u2019s id comes from.', true);
     }
     if (draftOperand(draft, 'left') === undefined) return toast('Pick what the rule is about.', true);
@@ -6068,17 +5952,25 @@ function ruleEditor(model, slice, index, target) {
             ]
           : []),
         ...(chosenProjection
-          ? (parameters.length
-              ? parameters.flatMap((parameter) => [
-                  h('span', { class: 'muted tiny' }, 'for its ' + propertyWords(parameter.name)),
-                  pick(parameterSources.get(parameter.name),
-                    (choice.args || {})[parameter.name],
-                    (v) => {
-                      choice.args = { ...(choice.args || {}), [parameter.name]: v };
-                      draft.touched = true; render();
-                    }),
-                ])
-              : [h('span', { class: 'muted tiny' }, '— the whole log, no tag')])
+          ? [
+              ...declaredTags.flatMap((tag) => [
+                h('span', { class: 'muted tiny' }, propertyWords(tag.name)),
+                pick(tagSources.get(tag.name), choice.tags[tag.name], (v) => {
+                  choice.tags = { ...choice.tags, [tag.name]: v };
+                  draft.touched = true; render();
+                }),
+              ]),
+              declaredTags.length ? null : h('span', { class: 'muted tiny' }, '— untagged: the whole log'),
+              ...parameters.flatMap((parameter) => [
+                h('span', { class: 'muted tiny' }, 'with its ' + propertyWords(parameter.name)),
+                pick(parameterSources.get(parameter.name),
+                  (choice.args || {})[parameter.name],
+                  (v) => {
+                    choice.args = { ...(choice.args || {}), [parameter.name]: v };
+                    draft.touched = true; render();
+                  }),
+              ]),
+            ]
           : []));
 
   // ---------- stage two: which of its values? ----------
@@ -6092,9 +5984,13 @@ function ruleEditor(model, slice, index, target) {
   // unset keeps the question on screen rather than strand the row.
   const isProjectionRead = (alias) => reads.some((b) => b && b.alias === alias && b.projection);
   const storedLeft = editingExisting ? ((targetList(slice.body) || [])[index] || {}).leftHandSide : null;
+  // A read in place is one value too, stored or being edited.
+  const leftNow = draft.left ? (() => { try { return JSON.parse(draft.left); } catch { return null; } })() : null;
   const oneValue = (aboutAlias && isProjectionRead(aboutAlias))
     || (operandSource(storedLeft) === 'alias-property' && storedLeft.property === undefined
-      && isProjectionRead(storedLeft.alias));
+      && isProjectionRead(storedLeft.alias))
+    || operandSource(storedLeft) === 'projection-read'
+    || (!!editingExisting && operandSource(leftNow) === 'projection-read');
   const valueStage = stage < VALUE_STAGE || (oneValue && valueSettled) ? null
     : stageRow('Which of its values?',
         ...operandPicker(leftRows, draft, 'left',
@@ -6250,7 +6146,7 @@ function emissionGuardRows(model, slice, emission, emissionIndex) {
 
   if (state.editGuard && state.editGuard.at === emissionIndex && state.editGuard.index === null) {
     rows.push(h('div', { class: 'card rule' }, ruleEditor(model, slice, null, target)));
-  } else {
+  } else if (experimental()) {
     // Not an `adderSlot` — a guard opens through `state.editGuard`, not
     // `state.adder` — but it folds and reveals exactly like one.
     rows.push(h('div', { class: 'adder quiet' }, h('button', {
@@ -6279,7 +6175,7 @@ function stepEmits(model, slice) {
         h('span', { class: 'muted tiny' }, params.length + ' field' + (params.length === 1 ? '' : 's')),
         h('span', { class: 'grow' }),
         reveal(
-          advanced() ? h('span', { class: 'tech' }, emission.name) : null,
+          h('span', { class: 'tech' }, emission.name),
           h('button', {
             class: 'btn tiny',
             onclick: () => { state.openEvent = open ? null : emission.name; render(); },
@@ -6415,9 +6311,10 @@ function pruneDanglingEmissionParameters(model, body) {
 // value itself be removed for a reason no longer visible anywhere.
 function removeEventField(model, eventName, index, propertyName) {
   run(() => {
-    const eventBody = deepClone(activeModel()['event-definitions'][eventName]);
+    const previous = activeModel()['event-definitions'][eventName];
+    const eventBody = deepClone(previous);
     eventBody.properties.splice(index, 1);
-    updateDefinition('event-definition', model.id, eventName, eventBody);
+    updateDefinition('event-definition', model.id, eventName, withEditedTags(activeModel(), previous, eventBody));
 
     const changes = [];
     for (const [name, body] of Object.entries(activeModel()['command-definitions'])) {
@@ -6568,11 +6465,11 @@ function stepChanges(model, slice) {
       const p = effectParts(effect);
       const projectionName = effect.projectionName || effect.projection;
       // An entity property names its instance through the entity; a
-      // projection says which of its instances outright.
-      const args = effect.entity ? [] : changeArguments(model, emission, projectionName);
-      // A handler the event cannot reach is kept, never hidden — it is
-      // an advisory, and this is where it is wrong.
-      const missing = partitionTagsMissing(model, model['projection-definitions'][projectionName], emission.name);
+      // projection says which of its reads the event moves — each tag
+      // set the model reads it by that the event carries, in this
+      // command's terms (`changeArguments`).
+      const { reads, unreached } = effect.entity
+        ? { reads: [], unreached: [] } : changeArguments(model, emission, projectionName);
       // A scripted handler has no operation/value for this form to
       // pre-fill — it is edited where its code is, in the projection's
       // own editor.
@@ -6580,12 +6477,20 @@ function stepChanges(model, slice) {
       return qrow('div', { cls: 'row', key: 'chg:' + emission.name + ':' + key },
         h('span', { class: 'sentence' },
           ref(p.subject), ' ',
-          ...(args.length ? [h('span', { class: 'muted' }, 'for '),
-            ...args.flatMap((a, i) => [i ? ' and ' : null, opRef(a, emission.name)]), ' '] : []),
+          ...reads.flatMap((set, i) => [
+            h('span', { class: 'muted' }, i ? ' · ' : ''),
+            set.length
+              ? [h('span', { class: 'verb' }, 'tagged '), ...set.flatMap((a, j) => [j ? ' and ' : null, opRef(a, emission.name)])]
+              : h('span', { class: 'muted' }, 'by no tag'),
+          ]),
+          reads.length ? ' ' : null,
           h('span', { class: 'verb' }, p.verb), ' ',
           opRef(effect.handler.value, emission.name, p.object),
-          missing.length ? h('span', { class: 'muted tiny' },
-            ` — never fires: carries no ${missing.map(propertyWords).join(' or ')}`) : null),
+          // A read the event cannot reach is said, never hidden — it is
+          // an advisory on the read, and this is where it shows.
+          unreached.length ? h('span', { class: 'muted tiny' },
+            ` — not for reads tagged ${unreached.map((set) => set.map(readable).join(' and ')).join(' or ')}: `
+            + `${readable(emission.name)} is tagged by none`) : null),
         h('span', { class: 'grow' }),
         reveal(
           scripted ? null : h('button', {
@@ -6619,25 +6524,27 @@ function stepChanges(model, slice) {
 }
 
 // Which instance of a projection a change moves, in the emitting
-// command's own terms: for each parameter, the event field carrying its
-// tag, and what this command puts in that field — `Book exists` for
-// `isbn`, the one it was given. A field the emission leaves unset is
-// said as its path. Not said for a scripted projection, whose tags are
-// its filter's business.
+// command's own terms: for each tag the projection declares, the event
+// field tagging it, and what this command puts in that field — `Book
+// exists` tagged `isbn`, the one it was given. A field the emission
+// leaves unset is said as its path. `unreached` is the tag sets the
+// event carries no tag for — then it moves none (`projectionReadTagSets`
+// keeps the list shape, with one set in it).
 function changeArguments(model, emission, projectionName) {
-  const projection = model['projection-definitions'][projectionName];
   const event = model['event-definitions'][emission.name];
-  if (!projection || !event || scriptOf(projection)) return [];
-  const typesOf = (type) => idLeavesOfType(model, type).map((leaf) => leaf.identifierType);
-  return (projection.parameters || []).flatMap((parameter) => {
-    const wanted = typesOf(parameter.propertyType);
-    return (event.properties || [])
-      .filter((p) => p && typesOf(p.propertyType).some((type) => wanted.includes(type)))
-      .map((p) => {
-        const operand = (emission.parameters || {})[p.name];
-        return operand !== undefined ? operand : { eventProperty: p.name };
-      });
-  });
+  if (!model['projection-definitions'][projectionName] || !event) return { reads: [], unreached: [] };
+  const leaves = eventTagLeaves(model, event);
+  const reads = [];
+  const unreached = [];
+  for (const set of projectionReadTagSets(model, projectionName)) {
+    const carriers = set.map((type) => leaves.find((leaf) => leaf.identifierType === type));
+    if (carriers.some((leaf) => !leaf)) { unreached.push(set); continue; }
+    reads.push(carriers.map((leaf) => {
+      const operand = (emission.parameters || {})[leaf.property];
+      return operand !== undefined ? operand : { eventProperty: leaf.path };
+    }));
+  }
+  return { reads, unreached };
 }
 
 // What a change targets: an entity property, `[entity, property]`, or a
@@ -6697,22 +6604,42 @@ function changeAdder(model, eventName, emission) {
   // A scripted or derived projection is not offered here: this form
   // writes an operation and an operand, and neither takes one — code
   // is edited where the code is, and nothing moves a derived value.
-  // Nor one this event cannot reach: a projection kept per copy id is
-  // not moved by an event that carries no copy id, whichever one it is
-  // (`partitionTagsMissing`).
-  const settable = (projection) => !!projection && !scriptOf(projection) && !derivedOf(projection)
-    && !partitionTagsMissing(model, projection, eventName).length;
+  // Nor one whose every read this event cannot reach: a projection read
+  // tagged by a copy id is not moved by an event that carries no copy
+  // id (`changeArguments`). One nothing reads yet is offered — its
+  // reads are still to come.
+  const settable = (name) => {
+    const projection = model['projection-definitions'][name];
+    if (!projection || scriptOf(projection) || derivedOf(projection)) return false;
+    if (!emission) return true;
+    const { reads, unreached } = changeArguments(model, emission, name);
+    return reads.length > 0 || !unreached.length;
+  };
   const hasEntities = Object.keys(model['entity-definitions']).length > 0;
   // Beside the entity properties, every projection no entity binds — a
   // bound one is already offered as its entity's property, and offering
   // it twice would be one handler reachable under two names.
   const standaloneTargets = Object.keys(model['projection-definitions']).sort()
-    .filter((name) => !boundAs(model, name).length && settable(model['projection-definitions'][name]))
+    .filter((name) => !boundAs(model, name).length && settable(name))
     .map((name) => {
-      const args = emission ? changeArguments(model, emission, name).map(operandWords) : [];
+      const reads = emission ? changeArguments(model, emission, name).reads : [];
+      const words = reads.filter((set) => set.length).map((set) => set.map(operandWords).join(' and '));
       return [JSON.stringify({ projection: name }),
-        'projection' + GROUP_SEP + readable(name) + (args.length ? ' for ' + args.join(' and ') : '')];
+        'projection' + GROUP_SEP + readable(name) + (words.length ? ' tagged ' + words.join(' · ') : '')];
     });
+  if (!hasEntities && !standaloneTargets.length && !experimental()) {
+    return h('div', { class: 'adder' },
+      h('span', { class: 'muted tiny' }, 'no projections'),
+      h('button', {
+        class: 'btn primary',
+        onclick: () => {
+          closeForms();
+          state.view = 'projections';
+          state.newProjection = { name: '', body: blankProjectionDraft(model) };
+          render();
+        },
+      }, '+ New projection'));
+  }
   if (!hasEntities && !standaloneTargets.length) {
     return h('div', { class: 'adder' },
       h('span', { class: 'muted tiny' }, 'no entities'),
@@ -6725,7 +6652,14 @@ function changeAdder(model, eventName, emission) {
   const targets = [
     ...Object.entries(model['entity-definitions']).flatMap(([name, entity]) =>
       (entity.properties || [])
-        .filter((p) => settable(entityPropertyTarget(model, name, p.name).projection))
+        .filter((p) => {
+          // An instance reads its properties tagged by its identifier,
+          // so an event that lists none of that type moves no instance.
+          const { projection } = entityPropertyTarget(model, name, p.name);
+          return !!projection && !scriptOf(projection) && !derivedOf(projection)
+            && !readTagsMissing(model, p.projection, idLeavesOfType(model, idTypeOf(model, name))
+              .map((leaf) => leaf.identifierType)).some((m) => m.event === eventName);
+        })
         .map((p) =>
           [JSON.stringify([name, p.name]),
             `${iconPrefix(entityIcon(model, name))}${readable(name)} · ${propertyWords(p.name)}`])),
@@ -6883,7 +6817,8 @@ function copyCommandPropertiesIntoEvent(model, commandName, eventName) {
     .filter((q) => !(event.properties || []).some((p) => p.name === q.name));
   if (!missing.length) return;
   run(() => {
-    const eventBody = deepClone(activeModel()['event-definitions'][eventName]);
+    const previous = activeModel()['event-definitions'][eventName];
+    const eventBody = deepClone(previous);
     eventBody.properties = eventBody.properties || [];
     for (const p of missing) {
       eventBody.properties.push({
@@ -6891,7 +6826,7 @@ function copyCommandPropertiesIntoEvent(model, commandName, eventName) {
         isOptional: p.isOptional, isList: p.isList,
       });
     }
-    updateDefinition('event-definition', model.id, eventName, eventBody);
+    updateDefinition('event-definition', model.id, eventName, withEditedTags(activeModel(), previous, eventBody));
     const commandBody = deepClone(activeModel()['command-definitions'][commandName]);
     const emission = (commandBody.publishes || []).find((x) => x.name === eventName);
     if (emission) {
@@ -6932,7 +6867,7 @@ function addExistenceLifecycle(model, entityName) {
     if (offer === 'create') {
       const projectionName = projectionNameFor(activeModel(), entityName, LIFECYCLE_PROPERTY);
       addDefinition('projection-definition', model.id, projectionName, {
-        parameters: [{ name: defaultAlias(entityName) + 'Id', propertyType: idTypeOf(model, entityName) }],
+        tags: [entityTagParam(model, entityName)],
         valueType: 'boolean',
         isList: false,
         initialValue: false,
@@ -7059,10 +6994,8 @@ function mergeIntoLifecycle(model, entityName, { typeName, property, initialStat
     addDefinition('custom-type-definition', model.id, type,
       { schema: { type: 'string', enum: states } });
 
-    // The merged fold: the first absorbed boolean's partition (they all
-    // share it — an entity property is partitioned by the entity's own
-    // identifier), and one handler per absorbed boolean's setters.
-    const first = taken.length ? entityPropertyTarget(model, entityName, taken[0]).projection : null;
+    // The merged fold: one handler per absorbed boolean's setters. The
+    // entity reads it tagged by its identifier, like every property.
     const handlers = [];
     rows.forEach((row, index) => {
       if (!row.from) return;
@@ -7076,8 +7009,7 @@ function mergeIntoLifecycle(model, entityName, { typeName, property, initialStat
       }
     });
     addDefinition('projection-definition', model.id, mergedProjection, {
-      parameters: first ? deepClone(first.parameters)
-        : [{ name: defaultAlias(entityName) + 'Id', propertyType: idTypeOf(model, entityName) }],
+      tags: [entityTagParam(model, entityName)],
       valueType: type,
       isList: false,
       initialValue: { enumMember: states[0] },
@@ -7525,13 +7457,13 @@ function identityBlock(model, name, entity) {
     h('span', {
       class: 'chip editable', title: 'Open ' + readable(idType) + ' in Custom Types',
       onclick: () => goToCustomType(idType),
-    }, readable(idType), advanced() ? h('span', { class: 'tech' }, idType) : null),
+    }, readable(idType), h('span', { class: 'tech' }, idType)),
     // No lifecycle yet: the one way to add one, and nothing else — no
     // row, no `not designated`. A folded one has no row until it is
     // opened, so its menu comes here, the one line the lifecycle is
     // always on, and stays when the row opens, so opening moves nothing.
     ...(!entity.lifecycle
-      ? [h('span', { class: 'grow' }), lifecycleAdder(model, name)]
+      ? (experimental() ? [h('span', { class: 'grow' }), lifecycleAdder(model, name)] : [])
       : lifecycleFolds(model, name)
         ? [h('span', { class: 'grow' }), lifecycleFold(model, name), lifecycleMenu(model, name)]
         : []));
@@ -7542,12 +7474,12 @@ function identityBlock(model, name, entity) {
 }
 
 // The stored spelling of a property, where it says something the words
-// do not. `exists` humanises to `exists`, and printing it twice in
-// advanced mode is the stutter this row was just rid of — the
+// do not. `exists` humanises to `exists`, and printing it twice is
+// the stutter this row was just rid of — the
 // identifier beside it (`Student id` / `StudentId`) is the case the
 // `.tech` span is actually for.
 function techSpelling(property) {
-  return advanced() && propertyWords(property) !== property
+  return propertyWords(property) !== property
     ? h('span', { class: 'tech' }, property) : null;
 }
 
@@ -7765,9 +7697,9 @@ function lifecycleMenu(model, name) {
     items.push(['Give it more than two states…',
       () => { closeForms(); state.promoting = name; render(); }]);
   }
-  // The Lifecycles page is advanced-only, like its rail link — offering
-  // it in simple mode would be a door onto `state.view = 'slice'`.
-  if (lifecycle && advanced()) {
+  // The Lifecycles page is experimental, like its rail link — offering
+  // it with the flag off would be a door onto `state.view = 'slice'`.
+  if (lifecycle && experimental()) {
     items.push(['Open in Lifecycles', () => goToLifecycles(name)]);
   }
   if (entity && entity.lifecycle) {
@@ -8013,7 +7945,7 @@ function projectionLedger(model, { owner, entries, nameHead, add }) {
   return h('div', { class: 'ledger' },
     h('div', { class: 'lhead', style: 'grid-template-columns:' + cols },
       h('span', {}, nameHead),
-      owner ? null : h('span', {}, 'one per'),
+      owner ? null : h('span', {}, 'tagged by'),
       h('span', {}, 'holds'),
       h('span', {}, 'starts at')),
     entries.length
@@ -8022,23 +7954,70 @@ function projectionLedger(model, { owner, entries, nameHead, add }) {
     add ? h('div', { class: 'addrow' }, add) : null);
 }
 
-// What a projection is kept per, as the tags it really queries by. A
-// parameter typed with an entity's identifier carries that entity's
-// mark, because that is what the tag is.
-function partitionCells(model, body) {
-  const script = scriptOf(body);
-  const slots = (script ? script.arguments : body.parameters) || [];
-  if (!slots.length) {
-    return [h('span', {
-      class: 'chip unset', title: 'One value for the whole model — a query with no tag',
-    }, 'kept once')];
+// What a projection is kept per: the tags it declares (8.0), one chip,
+// or `untagged` for one that folds the whole log. A tag type an entity
+// is read by carries that entity's mark, because that is what the tag
+// is.
+function partitionCells(model, name) {
+  const tags = projectionTagParams(model['projection-definitions'][name]);
+  if (!tags.length) {
+    return [h('span', { class: 'chip unset', title: 'Untagged — one value for the whole log' }, 'untagged')];
   }
-  return slots.map((slot) => {
-    const entity = entityOfIdType(model, slot.propertyType);
-    return h('span', { class: 'chip tag', title: readable(slot.propertyType) },
-      entity ? h('i', { class: 'ic' }, entityIcon(model, entity)) : null,
-      propertyWords(slot.name));
-  });
+  return [h('span', { class: 'chip tag', title: 'tagged by ' + tags.map((tag) => `${tag.name}: ${tag.tagType}`).join(', ') },
+    tags.map((tag, i) => {
+      const entity = entityOfIdType(model, tag.tagType);
+      return [i ? ' · ' : null, entity ? h('i', { class: 'ic' }, entityIcon(model, entity)) : null, readable(tag.tagType)];
+    }))];
+}
+
+// The tags a projection declares, edited: each a name and a tag type,
+// in the order a read gives them, with `+ tag` and `untagged` the two
+// doors while it has none. Renaming a saved projection's tag is a
+// rename — every read of it moves (`renameMember`) — and happens on the
+// spot; adding, retyping or removing one is part of the draft, and the
+// reads it leaves without a value say so as advisories.
+function projectionTagsEditor(model, draft, savedName) {
+  const types = partitionTypeOptions(model);
+  const undecided = draft.tags === null || draft.tags === undefined;
+  const tags = draft.tags || [];
+  const addTag = () => {
+    const [type] = types[0] || [''];
+    const base = type ? type.charAt(0).toLowerCase() + type.slice(1) : 'id';
+    draft.tags = [...tags, { name: uniqueAlias(base, tags.map((t) => t.name)), tagType: type }];
+    render();
+  };
+  const rows = tags.map((tag, i) => h('div', { class: 'adder' },
+    h('input', {
+      type: 'text', class: 'mono', style: 'width:130px', value: tag.name || '', placeholder: 'tag name',
+      onblur: (e) => {
+        const next = toCamel(e.target.value);
+        if (!next || next === tag.name) { e.target.value = tag.name || ''; return; }
+        const stored = savedName && projectionTagParams(model['projection-definitions'][savedName])
+          .some((t) => t.name === tag.name);
+        if (stored) run(() => renameMember('projection-definition', model.id, savedName, 'tag', tag.name, next));
+        tag.name = next;
+        render();
+      },
+      onkeydown: (e) => { if (e.key === 'Enter') e.target.blur(); },
+    }),
+    h('span', { class: 'muted tiny' }, 'a'),
+    pick(types, tag.tagType, (v) => { tag.tagType = v; render(); }, types.length ? null : '— no tag type yet —'),
+    h('button', {
+      class: 'btn tiny danger', title: 'Drop this tag',
+      onclick: () => { tags.splice(i, 1); draft.tags = [...tags]; render(); },
+    }, '×')));
+  return h('div', { style: 'margin-top:8px' },
+    h('div', { class: 'row' },
+      h('span', { class: 'muted tiny', style: 'min-width:90px' }, 'tagged by'),
+      undecided ? h('span', { class: 'muted tiny' }, '— say what each value is kept per, or that it is one for the whole log —')
+        : (tags.length ? null : h('span', { class: 'chip unset', title: 'One value for the whole log' }, 'untagged'))),
+    h('div', { style: 'margin-left:90px' }, ...rows,
+      h('div', { class: 'adder' },
+        h('button', { class: 'btn ghost tiny', disabled: !types.length, onclick: addTag }, '+ tag'),
+        undecided ? h('button', {
+          class: 'btn ghost tiny', title: 'One value for the whole log — a numbering is one',
+          onclick: () => { draft.tags = []; render(); },
+        }, 'untagged') : null)));
 }
 
 // A row, and — when it is the one being edited — everything under it.
@@ -8078,7 +8057,7 @@ function projectionLedgerRow(model, entry, { owner, cols }) {
     h('span', { class: 'nm' },
       h('span', { class: 'lcaret' }, open ? '▾' : '▸'),
       h('span', { class: 'txt' }, label)),
-    owner ? null : h('span', {}, ...partitionCells(model, body)),
+    owner ? null : h('span', {}, ...partitionCells(model, projection)),
     h('span', { class: 'lcell ty', title: typeLabel(body) },
       referenced ? h('i', { class: 'ic' }, entityIcon(model, referenced)) : null,
       readable(typeLabel(body)),
@@ -8108,8 +8087,8 @@ function toggleProjectionRow(model, projection) {
 function projectionDetail(model, entry, { owner }) {
   const { projection, binding } = entry;
   const draft = state.projDraft.body;
-  const tab = state.projTab === 'checks' ? 'checks' : 'definition';
   const entries = projectionScenariosFor(model, projection);
+  const tab = state.projTab === 'checks' ? 'checks' : 'definition';
   const trouble = entries.filter((e) => {
     const status = runProjectionScenario(model, e.body).status;
     return status === 'drifted' || status === 'broken';
@@ -8127,9 +8106,8 @@ function projectionDetail(model, entry, { owner }) {
   // Two names can be changed here, and they are genuinely two: what an
   // entity calls the projection (the binding, which every command
   // reading it names too) and what the projection itself is called.
-  // Renaming the second is Advanced — the name is derived from the
-  // first when the property is created, and nothing outside the stored
-  // model shows it.
+  // The second is derived from the first when the property is
+  // created.
   const renamingBinding = owner && editingMember('entity:' + owner, binding.name);
   const renamingProjection = state.renamingProjection === projection;
   const renameForm = renamingBinding
@@ -8265,7 +8243,7 @@ function projectionDetailFoot(model, entry, { owner }) {
   return h('div', { class: 'pfoot' },
     h('span', { class: 'muted tiny' }, 'Saves as you edit — undo takes it back.'),
     h('span', { class: 'grow' }),
-    advanced() ? h('span', { class: 'tech' }, projection) : null,
+    h('span', { class: 'tech' }, projection),
     h('button', {
       class: 'btn tiny',
       title: owner ? 'Rename what this entity calls it' : 'Rename the projection',
@@ -8275,9 +8253,8 @@ function projectionDetailFoot(model, entry, { owner }) {
     }, 'Rename'),
     // The projection's own name, on the page that does not own it.
     // Reachable, because a projection an entity binds is listed nowhere
-    // else — and Advanced, because nothing outside the stored model
-    // shows that name in the first place.
-    owner && advanced() ? h('button', {
+    // else.
+    owner ? h('button', {
       class: 'btn tiny', title: 'Rename the projection itself, not what this entity calls it',
       onclick: () => startRenameInRow(() => { state.renamingProjection = projection; }),
     }, 'Rename projection') : null,
@@ -8551,7 +8528,7 @@ function renderCustomTypes(model, main) {
                 : 'a standalone tag — every event carrying this is tagged with it') : null,
             h('span', { style: 'flex:1' }),
             reveal(
-              advanced() ? h('span', { class: 'tech' }, field.name) : null,
+              h('span', { class: 'tech' }, field.name),
               h('button', {
               class: 'btn tiny danger',
               onclick: () => {
@@ -8683,13 +8660,12 @@ function fieldTypeOptions(model) {
 //
 // A projection is the only kind of fold in this model. It holds one
 // value, starts somewhere, and is advanced by the events it handles,
-// over the query `tag IN (its parameters) AND type IN (handled
-// events)`. Declare no parameters and the query carries no tag at all,
-// which is what a global numbering is, and the only tagless query in a
-// DCB model.
+// over the query `tag IN (its tags, valued by the read) AND type IN
+// (handled events)`. It declares the tags it is read by (8.0), each
+// named and typed, and an untagged one is what a global numbering is.
 //
 // An entity property is a *binding* to one of these — an entry naming
-// a projection partitioned by that entity's own identifier. So there
+// a projection tagged by the entity's own identifier. So there
 // is one editor below, `projectionFields`, and the entity page and
 // this page both mount it. A second form editing the same thing is
 // exactly the drift two independent editors invite, and the way to not
@@ -8699,8 +8675,8 @@ function fieldTypeOptions(model) {
 // *successor* of what an event carried holds the next number to issue
 // at every point in its life.
 //
-// What it holds, where it starts, how it is partitioned and which
-// events move it are one decision rather than four — the value type
+// What it holds, where it starts and which events move it are one
+// decision rather than three — the value type
 // decides which event properties are even offerable — so this editor
 // collects a change and applies it on Save instead of as you type. A
 // half-edited projection would otherwise be refused by the model on
@@ -8860,7 +8836,7 @@ function initialValueEditor(model, draft) {
   return rows;
 }
 
-// The types on offer as a partition. Only a tag can narrow a query, so
+// The types a read can be tagged by. Only a tag can narrow a query, so
 // nothing else appears — an entity's own derived identifier as much as
 // a standalone tag-marked type, scalar or composite (through its
 // tag-marked fields) either way.
@@ -8961,12 +8937,22 @@ function projectionDraftFrom(body) {
 // back in is the same file rather than a reshuffled one.
 function cleanProjectionBody(draft) {
   const handlers = (draft.handlers || []).filter((handler) => handler && handler.event);
+  // The tags, always stated — an empty list is an untagged projection,
+  // and a draft that has not decided yet stores as one.
+  const tags = (draft.tags || []).filter((tag) => tag && tag.name && tag.tagType)
+    .map((tag) => ({ name: toCamel(tag.name), tagType: tag.tagType }));
   if (draft.derived && !draft.script) {
+    // An operand passes its projection the tags it declares — each one
+    // of this projection's own — and the literal arguments a script
+    // takes.
     const operand = (o) => {
       if (operandSource(o) !== 'projection-read') return o;
-      const cleaned = { projection: o.projection, arguments: {} };
+      const cleaned = { projection: o.projection };
+      for (const [key, value] of readTagEntries(o)) {
+        if (value !== undefined && value !== '') (cleaned.tags = cleaned.tags || {})[key] = value;
+      }
       for (const [key, value] of Object.entries(o.arguments || {})) {
-        if (value !== undefined && value !== '') cleaned.arguments[key] = value;
+        if (value !== undefined && value !== '') (cleaned.arguments = cleaned.arguments || {})[key] = value;
       }
       return cleaned;
     };
@@ -8977,9 +8963,7 @@ function cleanProjectionBody(draft) {
     };
     if (draft.derived.negate) derived.negate = true;
     return {
-      parameters: (draft.parameters || [])
-        .filter((p) => p && p.name)
-        .map((p) => ({ name: toCamel(p.name), propertyType: p.propertyType })),
+      tags,
       // The one thing a predicate can yield. Stated here rather than
       // trusted from the draft, so a body that left derived mode
       // half-way can never store another type against it.
@@ -8991,11 +8975,12 @@ function cleanProjectionBody(draft) {
   if (draft.script) {
     const script = { initialState: draft.script.initialState };
     if (draft.script.exposes) script.exposes = draft.script.exposes;
-    script.arguments = (draft.script.arguments || [])
+    const args = (draft.script.arguments || [])
       .filter((a) => a && a.name)
       .map((a) => ({ name: toCamel(a.name), propertyType: a.propertyType }));
-    script.tagFilter = (draft.script.tagFilter || []).map((t) => String(t).trim()).filter(Boolean);
+    if (args.length) script.arguments = args;
     return {
+      tags,
       valueType: draft.valueType,
       isList: !!draft.isList,
       script,
@@ -9003,9 +8988,7 @@ function cleanProjectionBody(draft) {
     };
   }
   return {
-    parameters: (draft.parameters || [])
-      .filter((p) => p && p.name)
-      .map((p) => ({ name: toCamel(p.name), propertyType: p.propertyType })),
+    tags,
     valueType: draft.valueType,
     isList: !!draft.isList,
     initialValue: draft.initialValue === undefined ? null : draft.initialValue,
@@ -9026,60 +9009,27 @@ function cleanProjectionBody(draft) {
   };
 }
 
-// A brand-new projection's draft. `entityName` makes it an entity
-// property's: partitioned by that entity's identifier, which is the
-// one thing that makes it bindable as one.
+// A brand-new projection's draft. An entity's property is tagged by
+// the entity's identifier, which is what binding it means; one read on
+// its own has not said yet (`tags: null`) — tagged by something, or
+// untagged, is the author's to decide, and the form will not save
+// until they have.
 function blankProjectionDraft(model, entityName) {
   const valueType = projectionTypeOptions(model)[0] ? projectionTypeOptions(model)[0][0] : 'string';
-  const draft = { valueType, isList: false, parameters: [], handlers: [] };
+  const draft = { tags: entityName ? [entityTagParam(model, entityName)] : null, valueType, isList: false, handlers: [] };
   draft.initialValue = defaultInitialValue(model, draft);
-  if (entityName) {
-    draft.parameters = [{
-      name: defaultAlias(entityName) + 'Id',
-      propertyType: idTypeOf(model, entityName),
-    }];
-  }
   return draft;
 }
 
-// What the parameter at this position is called in the stored
-// definition — null while a projection is still being described, and
-// null for a parameter added to the draft but not yet saved.
-function savedParameterName(model, draft, index) {
-  if (!state.projDraft || state.projDraft.body !== draft) return null;
-  const stored = model['projection-definitions'][state.projDraft.name];
-  const parameter = stored && (stored.parameters || [])[index];
-  return parameter ? parameter.name : null;
-}
-
-// The arguments a derived operand starts with when its projection is
-// picked: each slot filled from this projection's own parameters, by
-// name first and by type second — the ordinary case is one shared
-// identifier, and this makes it zero extra gestures.
-function autoDerivedArguments(model, draft, targetName) {
-  const target = model['projection-definitions'][targetName] || {};
-  const script = scriptOf(target);
-  const slots = script ? (script.arguments || []) : (target.parameters || []);
-  const own = (draft.parameters || []).filter((p) => p && p.name);
-  const args = {};
-  for (const slot of slots) {
-    const match = own.find((p) => p.name === slot.name)
-      || own.find((p) => p.propertyType === slot.propertyType);
-    if (match) args[slot.name] = { parameterName: match.name };
-  }
-  return args;
-}
-
-// One side of a derived predicate: another projection — read at the
-// partition this projection's own parameters name — or, on the right,
-// a typed value to compare against. Enum members are offered exactly
-// when the other side reads an enum-typed projection, the same rule
-// the rule editor follows.
+// One side of a derived predicate: another projection — read by
+// whatever this one is read by — or, on the right, a typed value to
+// compare against. Enum members are offered exactly when the other
+// side reads an enum-typed projection, the same rule the rule editor
+// follows.
 function derivedSideEditor(model, draft, side, { allowLiteral } = {}) {
   const derived = draft.derived;
   const current = derived[side];
   const isRead = operandSource(current) === 'projection-read';
-  const own = (draft.parameters || []).filter((p) => p && p.name);
   const options = Object.keys(model['projection-definitions'])
     .filter((name) => !(state.projDraft && state.projDraft.name === name))
     .sort()
@@ -9089,24 +9039,40 @@ function derivedSideEditor(model, draft, side, { allowLiteral } = {}) {
 
   const nodes = [pick(options, chosen, (v) => {
     if (v === LITERAL) derived[side] = '';
-    else derived[side] = { projection: v, arguments: autoDerivedArguments(model, draft, v) };
+    else derived[side] = { projection: v };
     render();
   }, '— which projection? —')];
 
+  // Each tag the operand's projection declares, given one of this
+  // projection's own tags of that type — the partition flows down, so a
+  // read of this one reads its operands at the same instance.
   if (isRead && current.projection) {
-    const target = model['projection-definitions'][current.projection] || {};
-    const script = scriptOf(target);
-    const slots = script ? (script.arguments || []) : (target.parameters || []);
-    for (const slot of slots) {
+    const own = (draft.tags || []).filter((tag) => tag && tag.name);
+    for (const tag of projectionTagParams(model['projection-definitions'][current.projection])) {
+      const options = own.filter((o) => o.tagType === tag.tagType)
+        .map((o) => [JSON.stringify({ parameterName: o.name }), propertyWords(o.name)]);
+      const held = (current.tags || {})[tag.name];
+      const value = held === undefined ? '' : JSON.stringify(held);
+      if (!held && options.length) current.tags = { ...(current.tags || {}), [tag.name]: JSON.parse(options[0][0]) };
+      nodes.push(
+        h('span', { class: 'muted tiny' }, `· by its ${propertyWords(tag.name)}`),
+        pick(options, held === undefined && options.length ? options[0][0] : value, (v) => {
+          current.tags = { ...(current.tags || {}), [tag.name]: JSON.parse(v) };
+          render();
+        }, options.length ? null : `— this projection has no ${readable(tag.tagType)} tag —`));
+    }
+    // A script's arguments, as literals: nothing else is in scope here.
+    for (const slot of projectionSlots(model['projection-definitions'][current.projection])) {
       const held = (current.arguments || {})[slot.name];
       nodes.push(
-        h('span', { class: 'muted tiny' }, `· its ${propertyWords(slot.name)} =`),
-        pick(own.map((p) => [JSON.stringify({ parameterName: p.name }), propertyWords(p.name)]),
-          operandSource(held) === 'parameter' ? JSON.stringify({ parameterName: held.parameterName }) : '',
-          (v) => {
-            current.arguments = { ...(current.arguments || {}), [slot.name]: JSON.parse(v) };
-            render();
-          }, '— which? —'));
+        h('span', { class: 'muted tiny' }, `· with ${propertyWords(slot.name)} =`),
+        h('input', {
+          type: 'text', style: 'width:110px', value: held === undefined || held === null ? '' : String(held),
+          onblur: (e) => {
+            current.arguments = { ...(current.arguments || {}), [slot.name]: literalOfType(model, slot.propertyType, e.target.value) };
+          },
+          onkeydown: (e) => { if (e.key === 'Enter') e.target.blur(); },
+        }));
     }
   }
 
@@ -9142,14 +9108,12 @@ function derivedSideEditor(model, draft, side, { allowLiteral } = {}) {
 // an entity's own page for the ones bound as its properties. `draft`
 // is mutated in place and only reaches the model on Save.
 //
-// `entityName` says the draft is an entity property's. The partition
-// is then not a choice — it is that entity's identifier, and the
-// binding supplies it — so the parameter editor gives way to one line
-// saying so. Everything else is identical, which is the point: there
-// is no second kind of thing here to edit differently.
+// `entityName` says the draft is an entity property's, which the "read
+// by" line says: the entity reads it tagged by its identifier.
+// Everything else is identical, which is the point: there is no second
+// kind of thing here to edit differently.
 function projectionFields(model, draft, { entityName } = {}) {
   const eventNames = Object.keys(model['event-definitions']).sort();
-  const partitionOptions = partitionTypeOptions(model);
   const enumType = isStringEnumType(model, draft.valueType) ? draft.valueType : null;
 
   const heldRow = h('div', { class: 'row' },
@@ -9185,79 +9149,31 @@ function projectionFields(model, draft, { entityName } = {}) {
     ? h('div', { class: 'use' }, h('span', { class: 'muted' }, 'can be '), ...enumMemberChips(model, enumType))
     : null;
 
-  // ---- the partition ----
-
-  const parameterRows = (draft.parameters || []).map((parameter, i) => {
-    // A parameter's name is edited in the draft like everything else
-    // here, but a *saved* projection's parameter is a name bindings
-    // supply by key — so renaming one has to rewrite them, and that
-    // goes through `renameMember` rather than the draft. `saved` is
-    // the name it currently has in the stored definition, or null
-    // while the projection is still being described.
-    const saved = savedParameterName(model, draft, i);
-    return h('div', { class: 'adder' },
-      h('input', {
-        type: 'text', value: parameter.name || '', placeholder: 'parameter name',
-        oninput: (e) => { parameter.name = e.target.value; },
-      }),
-      // Shown whenever the parameter is already stored, not only once
-      // the text differs — the input does not repaint as it is typed,
-      // so a button conditional on the typed value would never appear.
-      saved ? h('button', {
-        class: 'btn tiny', title: 'Rename it, rewriting every binding that supplies it',
-        onclick: () => {
-          if (toCamel(parameter.name) === saved) return;
-          run(() => {
-            renameMember('projection-definition', model.id, state.projDraft.name,
-              'parameter', saved, toCamel(parameter.name));
-            state.projDraft = null;
-          });
-        },
-      }, 'Rename') : null,
-      h('span', { class: 'muted tiny' }, 'identifying a'),
-      pick(partitionOptions, parameter.propertyType,
-        (v) => { parameter.propertyType = v; render(); }, '— which thing? —'),
-      h('button', {
-        class: 'btn tiny danger',
-        onclick: () => { draft.parameters.splice(i, 1); render(); },
-      }, '×'));
-  });
-
+  // ---- what it is tagged by ----
+  //
+  // The tags a read of it gives, each named and of a tag type (8.0) —
+  // or none, an untagged projection folding the whole log. An entity's
+  // property is tagged by the entity's identifier and nothing else,
+  // which is what binding it means, so that one is shown, not offered.
+  // A new projection has not decided yet (`tags: null`): both doors are
+  // open, and it saves once one is taken.
+  const savedName = state.projDraft && state.projDraft.body === draft ? state.projDraft.name : null;
   const partitionBlock = entityName
     ? h('div', { class: 'row', style: 'margin-top:8px' },
-        h('span', { class: 'muted tiny', style: 'min-width:90px' }, 'kept for'),
+        h('span', { class: 'muted tiny', style: 'min-width:90px' }, 'tagged by'),
         h('span', { class: 'chip entity' },
-          h('i', { class: 'ic' }, entityIcon(model, entityName)), 'each ' + readable(entityName)),
-        h('span', { class: 'muted tiny' },
-          'the binding supplies which one — that is all being a property means'))
-    : h('div', { style: 'margin-top:8px' },
-        h('div', { class: 'muted tiny', style: 'margin-bottom:4px' },
-          'kept separately for each — these become the tags of its query, so nothing but an '
-          + 'identifier can appear here:'),
-        parameterRows.length
-          ? parameterRows
-          : h('div', { class: 'empty' }, 'Nothing — one value for the whole system, and a query with no tag.'),
-        partitionOptions.length
-          ? h('div', { class: 'adder' }, h('button', {
-              class: 'btn ghost tiny',
-              onclick: () => {
-                (draft.parameters = draft.parameters || []).push({ name: '', propertyType: partitionOptions[0][0] });
-                render();
-              },
-            }, '+ kept separately for each'))
-          : null);
+          h('i', { class: 'ic' }, entityIcon(model, entityName)), 'each ' + readable(entityName)))
+    : projectionTagsEditor(model, draft, savedName);
 
   // ---- what moves it ----
 
   // One handler per event type is law, so an event another row already
   // claims is simply not offered — the row's own event stays, or the
-  // picker could not show its current choice.
-  // Nor one that carries nothing it is kept separately by — it would
-  // reach no instance (`partitionTagsMissing`). A row's own event stays
-  // even then, for the same reason; the advisory says what is wrong.
+  // picker could not show its current choice. An event that carries
+  // none of its tags is offered too, and said as an advisory on the
+  // projection (`projectionTagProblem`) rather than hidden here.
   const eventChoicesFor = (handler) =>
     unhandledEventChoices(eventNames, draft.handlers, handler)
-      .filter((n) => n === handler.event || !partitionTagsMissing(model, draft, n).length)
       .map((n) => [n, readable(n), eventIcon(model, n)]);
 
   const declaredHandlerRows = (draft.handlers || []).map((handler, i) => {
@@ -9350,8 +9266,8 @@ function projectionFields(model, draft, { entityName } = {}) {
   const scriptBlock = draft.script ? h('div', { style: 'margin-top:8px' },
     h('div', { class: 'tiny muted' },
       'Scripted. Each handler is a body of code over ',
-      h('code', {}, 'state'), ', ', h('code', {}, 'event'), ' and ', h('code', {}, 'args'),
-      ', returning the next state. Nothing here runs or checks it.'),
+      h('code', {}, 'state'), ', ', h('code', {}, 'event'), ', ', h('code', {}, 'args'), ' and ',
+      h('code', {}, 'tags'), ' (the values it is read by, by name), returning the next state. Nothing here runs or checks it.'),
     h('div', { class: 'row' },
       h('span', { class: 'muted tiny', style: 'min-width:90px' }, 'reads as'),
       h('input', {
@@ -9365,8 +9281,7 @@ function projectionFields(model, draft, { entityName } = {}) {
         },
       }),
       h('span', { class: 'muted tiny' }, 'one field of the state, when the state is a record')),
-    ...scriptArgumentRows(model, draft, entityName),
-    ...tagFilterRows(model, draft, entityName)) : null;
+    ...scriptArgumentRows(model, draft)) : null;
 
   // ---- derived: one predicate over other projections ----
 
@@ -9378,8 +9293,8 @@ function projectionFields(model, draft, { entityName } = {}) {
 
   const derivedBlock = !draft.derived ? null : h('div', { style: 'margin-top:8px' },
     h('div', { class: 'muted tiny', style: 'margin-bottom:4px' },
-      'worked out from other projections, read at this same partition — their queries are its '
-      + 'query, so binding it guards the append exactly as reading them would:'),
+      'worked out from other projections, read by the same tags as it is — their queries are its '
+      + 'query, so reading it guards the append exactly as reading them would:'),
     h('div', { class: 'adder' }, ...derivedSideEditor(model, draft, 'leftHandSide', {})),
     h('div', { class: 'adder' },
       h('label', { class: 'tiny muted' }, h('input', {
@@ -9394,26 +9309,21 @@ function projectionFields(model, draft, { entityName } = {}) {
         (v) => { draft.derived.predicate = v; render(); })),
     h('div', { class: 'adder' }, ...derivedSideEditor(model, draft, 'rightHandSide', { allowLiteral: true })));
 
-  const derivedToggle = advanced() ? h('div', { class: 'adder', style: 'margin-top:8px' },
+  const derivedToggle = experimental() ? h('div', { class: 'adder', style: 'margin-top:8px' },
     h('label', { class: 'tiny muted' }, h('input', {
       type: 'checkbox', checked: !!draft.derived,
       title: 'Replace the handlers with one predicate over other projections — logic stated once, as data',
       onchange: (e) => {
         if (e.target.checked) {
-          if (draft.script) {
-            delete draft.script;
-            draft.parameters = entityName
-              ? [{ name: defaultAlias(entityName) + 'Id', propertyType: idTypeOf(model, entityName) }]
-              : (draft.parameters || []);
-          }
+          delete draft.script;
           delete draft.initialValue;
           draft.handlers = [];
           draft.valueType = 'boolean';
           draft.isList = false;
           draft.derived = {
-            leftHandSide: { projection: '', arguments: {} },
+            leftHandSide: { projection: '' },
             predicate: 'equals',
-            rightHandSide: { projection: '', arguments: {} },
+            rightHandSide: { projection: '' },
           };
           toast('Now derived — one yes/no worked out from other projections. The handlers are gone.');
         } else {
@@ -9426,7 +9336,7 @@ function projectionFields(model, draft, { entityName } = {}) {
       },
     }), ' derived from other projections')) : null;
 
-  const scriptToggle = advanced() ? h('div', { class: 'adder', style: 'margin-top:8px' },
+  const scriptToggle = h('div', { class: 'adder', style: 'margin-top:8px' },
     h('label', { class: 'tiny muted' }, h('input', {
       type: 'checkbox', checked: !!draft.script,
       title: 'Replace the declared handlers with code, for state no operation here can express',
@@ -9434,17 +9344,8 @@ function projectionFields(model, draft, { entityName } = {}) {
         if (e.target.checked) {
           delete draft.derived;
           const initialState = draft.initialValue === undefined ? null : draft.initialValue;
-          draft.script = {
-            initialState,
-            arguments: entityName
-              ? [{ name: defaultAlias(entityName) + 'Id', propertyType: idTypeOf(model, entityName) }]
-              : [],
-            tagFilter: entityName
-              ? [`${idTypeOf(model, entityName)}:{${defaultAlias(entityName)}Id}`]
-              : [],
-          };
+          draft.script = { initialState, arguments: [] };
           delete draft.initialValue;
-          draft.parameters = [];
           draft.handlers = (draft.handlers || []).map((handler) => ({
             event: handler.event, code: 'state',
           }));
@@ -9459,9 +9360,6 @@ function projectionFields(model, draft, { entityName } = {}) {
             return toast(`It holds ${readable(draft.valueType)}, a record — only code can advance one. Pick a single-value type first.`, true);
           }
           draft.initialValue = defaultInitialValue(model, draft);
-          draft.parameters = entityName
-            ? [{ name: defaultAlias(entityName) + 'Id', propertyType: idTypeOf(model, entityName) }]
-            : [];
           delete draft.script;
           draft.handlers = (draft.handlers || []).map((handler) => ({
             event: handler.event, operation: 'set', value: '',
@@ -9470,7 +9368,7 @@ function projectionFields(model, draft, { entityName } = {}) {
         }
         render();
       },
-    }), ' worked out by code')) : null;
+    }), ' worked out by code'));
 
   return [
     draft.derived ? derivedHeldRow : heldRow,
@@ -9481,7 +9379,7 @@ function projectionFields(model, draft, { entityName } = {}) {
     scriptBlock,
     derivedToggle,
     scriptToggle,
-    advanced() ? projectionDcbPreview(model, draft, entityName) : null,
+    projectionDcbPreview(model, draft, entityName),
   ];
 }
 
@@ -9489,29 +9387,23 @@ function projectionFields(model, draft, { entityName } = {}) {
 // reach the code rather than the query. The one typed with the owning
 // entity's identifier is what a property binding fills in, so it is
 // shown as fixed rather than offered for removal.
-function scriptArgumentRows(model, draft, entityName) {
-  const idType = entityName ? idTypeOf(model, entityName) : null;
+function scriptArgumentRows(model, draft) {
   const args = draft.script.arguments || [];
-  const rows = args.map((argument, i) => {
-    const bound = idType && argument.propertyType === idType;
-    return h('div', { class: 'adder' },
-      h('input', {
-        type: 'text', value: argument.name || '', placeholder: 'argument name',
-        oninput: (e) => { argument.name = e.target.value; },
-      }),
-      h('span', { class: 'muted tiny' }, 'a'),
-      pick(typeOptions(model), argument.propertyType,
-        (v) => { argument.propertyType = v; render(); }),
-      bound
-        ? h('span', { class: 'muted tiny' }, '— the instance, supplied by the binding')
-        : h('button', {
-            class: 'btn tiny danger',
-            onclick: () => { draft.script.arguments.splice(i, 1); render(); },
-          }, '×'));
-  });
+  const rows = args.map((argument, i) => h('div', { class: 'adder' },
+    h('input', {
+      type: 'text', value: argument.name || '', placeholder: 'argument name',
+      oninput: (e) => { argument.name = e.target.value; },
+    }),
+    h('span', { class: 'muted tiny' }, 'a'),
+    pick(typeOptions(model), argument.propertyType,
+      (v) => { argument.propertyType = v; render(); }),
+    h('button', {
+      class: 'btn tiny danger',
+      onclick: () => { draft.script.arguments.splice(i, 1); render(); },
+    }, '×')));
   return [h('div', { style: 'margin-top:6px' },
     h('div', { class: 'muted tiny', style: 'margin-bottom:4px' },
-      'it asks whoever reads it for:'),
+      'besides its tags, it asks whoever reads it for:'),
     rows.length ? rows : h('div', { class: 'muted tiny' }, 'nothing'),
     h('div', { class: 'adder' }, h('button', {
       class: 'btn ghost tiny',
@@ -9522,67 +9414,18 @@ function scriptArgumentRows(model, draft, entityName) {
     }, '+ ask for a value')))];
 }
 
-// A scripted projection's tag filter — the one thing the escape hatch
-// is not allowed to hide, since it is what the query reads. Written as
-// `TagType:value`, where the value may interpolate an argument.
-function tagFilterRows(model, draft, entityName) {
-  const filters = draft.script.tagFilter || [];
-  const rows = filters.map((template, i) => h('div', { class: 'adder' },
-    h('input', {
-      type: 'text', class: 'mono', style: 'width:260px', value: template,
-      placeholder: '{type}:{value}',
-      onblur: (e) => { draft.script.tagFilter[i] = e.target.value; render(); },
-      onkeydown: (e) => { if (e.key === 'Enter') e.target.blur(); },
-    }),
-    h('button', {
-      class: 'btn tiny danger',
-      onclick: () => { draft.script.tagFilter.splice(i, 1); render(); },
-    }, '×')));
-  return [h('div', { style: 'margin-top:6px' },
-    h('div', { class: 'muted tiny', style: 'margin-bottom:4px' },
-      'and it reads the events tagged:'),
-    rows.length
-      ? rows
-      : h('div', { class: 'muted tiny' },
-          entityName
-            ? 'Nothing — which would fold the same events for every instance.'
-            : 'Nothing — the whole log, the same thing declaring no parameters means.'),
-    h('div', { class: 'adder' }, h('button', {
-      class: 'btn ghost tiny',
-      onclick: () => {
-        (draft.script.tagFilter = filters).push('');
-        render();
-      },
-    }, '+ a tag it reads')))];
-}
-
-// The DCB this projection derives, as the query it really runs.
+// The DCB this projection derives, as the query it really runs: the
+// tags it declares, each with a placeholder for the value a read gives
+// it, and the events it handles. A derived draft's query is its
+// operands', recursively, as the fold reads.
 function projectionDcbPreview(model, draft, entityName) {
-  const parameters = entityName && !draft.script
-    ? [{ name: defaultAlias(entityName) + 'Id', propertyType: idTypeOf(model, entityName) }]
-    : (draft.parameters || []);
-  // A derived draft's query is its operands': their tags with this
-  // draft's own parameter names showing where the value flows in, and
-  // their handled events — recursively, exactly as the fold reads.
   const derivedReads = draft.derived
     ? derivedOperands(draft.derived)
       .filter((o) => operandSource(o) === 'projection-read' && o.projection)
     : [];
-  const tags = draft.derived
-    ? uniq(derivedReads.flatMap((o) => projectionReadTags(model, o.projection, o.arguments || {})))
-    : draft.script
-    ? (draft.script.tagFilter || []).filter(Boolean)
-    // A parameter's own type may be a composite identifier, which has
-    // no tag of its own — its *leaves* each do — so this walks them
-    // and renders each through its own identifier's tagSchema, exactly
-    // as the query really will.
-    : parameters.flatMap((p) =>
-        idLeavesOfType(model, p.propertyType).map((leaf) => {
-          const identifierType = identifierTypeOf(model, leaf.identifierType);
-          const placeholder = `<${p.name || '?'}${leaf.field ? '.' + leaf.field : ''}>`;
-          return identifierType ? renderTag(identifierType, placeholder)
-            : `${leaf.identifierType}:${placeholder}`;
-        }));
+  const tags = (draft.tags || []).filter((tag) => tag && tag.tagType).flatMap((tag) =>
+    idLeavesOfType(model, tag.tagType).map((leaf) =>
+      renderTag(identifierTypeOf(model, leaf.identifierType), `<${tag.name || '?'}>`)));
   const handledTypes = draft.derived
     ? uniq(derivedReads.flatMap((o) => projectionHandledTypes(model, o.projection)))
     : (draft.handlers || []).map((handler) => handler.event).filter(Boolean);
@@ -9595,9 +9438,7 @@ function projectionDcbPreview(model, draft, entityName) {
         tags.length ? h('span', { class: 'k' }, ' and ') : null,
         h('span', { class: 'y' }, handledTypes.join(', ') || '(nothing)')),
       h('div', {}, h('span', { class: 'k' }, 'guard  '),
-        h('span', { class: 'k' }, tags.length
-          ? 'readers of the same partition are serialised against each other'
-          : 'no tag — every reader is serialised against every other'))));
+        h('span', { class: 'k' }, 'readers by the same tags are serialised against each other'))));
 }
 
 function renderProjections(model, main) {
@@ -9649,6 +9490,7 @@ function renderProjections(model, main) {
         onclick: () => {
           const projectionName = toPascal(draft.name);
           if (!projectionName) return toast('Give the projection a name.', true);
+          if (draft.body.tags === null) return toast('Say what it is tagged by — or that it is untagged.', true);
           run(() => {
             addDefinition('projection-definition', model.id, projectionName,
               cleanProjectionBody(draft.body));
@@ -9772,8 +9614,9 @@ function eventCard(model, name) {
 
   const pickingIcon = state.eventIconPicker === name;
   card.appendChild(qrow('div', { cls: 'ehead', key: 'event:' + name },
-    h('button', {
+    !experimental() && !eventIcon(model, name) ? null : h('button', {
       class: 'icon-btn event', title: 'Choose the mark this is shown with',
+      disabled: !experimental(),
       onclick: () => {
         const wasOpen = pickingIcon;
         closeForms();
@@ -9784,11 +9627,14 @@ function eventCard(model, name) {
     h('span', { class: 'chip event' }, readable(name)),
     h('span', { class: 'muted tiny' },
       (event.properties || []).length + ' field' + ((event.properties || []).length === 1 ? '' : 's')),
+    h('span', { class: 'muted tiny', title: 'What a query by tag finds this event by' },
+      (event.tags || []).length ? 'tags ' : 'no tags',
+      (event.tags || []).length ? h('code', {}, event.tags.join(', ')) : null),
     h('span', { class: 'muted tiny' }, publishers.length ? 'recorded by '
       + publishers.map((p) => readable(p.command)).join(', ') : 'recorded by nothing yet'),
     h('span', { style: 'flex:1' }),
     reveal(
-      advanced() ? h('span', { class: 'tech' }, name) : null,
+      h('span', { class: 'tech' }, name),
       h('button', {
         class: 'btn tiny',
         onclick: () => { state.openEvent = open ? null : name; render(); },
@@ -9807,6 +9653,7 @@ function eventCard(model, name) {
   if (open) {
     card.appendChild(h('div', { class: 'card event' },
       eventFieldsEditor(model, name, event),
+      eventTagsEditor(model, name, event),
       h('div', { class: 'refs', style: 'margin-top:12px' },
         h('div', { class: 'muted tiny' }, 'Recorded by'),
         publishers.length
@@ -9874,8 +9721,8 @@ function renderOverview(model, main) {
     stat('Commands', 'command', bodies.length, plural(ruleCount, 'rule')),
     stat('Events', 'event', events.length, unappended ? unappended + ' not appended' : null),
     stat('Entities', 'entity', entities.length, lifecycles ? lifecycles + ' with a lifecycle' : null),
-    advanced() || standalone ? stat('Projections', 'projection', standalone, 'standalone') : null,
-    advanced() ? stat('Custom types', 'type', types) : null,
+    stat('Projections', 'projection', standalone, 'standalone'),
+    stat('Custom types', 'type', types),
     stat('Scenarios', null, scenarios, trouble ? trouble + ' not current' : null),
     stat('Problems', null, found.length, null,
       found.length ? () => { closeForms(); state.problems = true; render(); } : null)));
@@ -10712,6 +10559,46 @@ function lifecycleRowsView(model, machine, rows, unguardedNames) {
 // particular command — that mapping is `eventFields`' job, on the
 // command's own page, because it is specific to that command's payload
 // and this page is not.
+// Which of an event's values are tags is said on each field's own row
+// (`eventTagToggles`), the way the code view marks it in place. What is
+// left for here is a listed path that no longer means anything — its
+// field gone or retyped — kept in view until it is dropped, since no
+// row is left to untick it on. Nothing is implied: an unticked value is
+// an ordinary one, and the advisories say so.
+function eventTagsEditor(model, name, event) {
+  const stale = (event.tags || []).filter((path) => resolveEventTagPath(model, event, path).problem);
+  if (!stale.length) return null;
+  return h('div', { class: 'refs', style: 'margin-top:12px' },
+    h('div', { class: 'muted tiny' }, 'Tags that tag nothing'),
+    h('div', { class: 'row', style: 'flex-wrap:wrap;gap:10px;margin-top:4px' },
+      stale.map((path) => h('span', { class: 'tiny', title: resolveEventTagPath(model, event, path).problem },
+        h('span', { class: 'diag-mark' }, '⚠ '), h('code', {}, path), ' ',
+        h('button', {
+          class: 'btn tiny danger', title: 'Drop this tag',
+          onclick: () => patch('event-definition', name, (b) => { b.tags = (b.tags || []).filter((p) => p !== path); }),
+        }, '×')))));
+}
+
+// One field's tag toggles: `tag` for a value of a tag type, `tag each
+// productId` for a tag-marked field of the records a list holds (`tag
+// productId` on one record). Ticked is listed; the code view writes the
+// same mark in front of the field or after its type.
+function eventTagToggles(model, name, event, property) {
+  const listed = event.tags || [];
+  return idLeavesOfType(model, property.propertyType).map((leaf) => {
+    const path = leaf.field === null ? property.name : `${property.name}.${leaf.field}`;
+    const label = leaf.field === null ? 'tag' : `tag ${property.isList ? 'each ' : ''}${leaf.field}`;
+    return h('label', { class: 'tiny muted', title: listed.includes(path)
+      ? 'A tag of this event — a query by it finds the event' : 'An ordinary value — no query by tag finds the event by it' },
+      h('input', {
+        type: 'checkbox', checked: listed.includes(path),
+        onchange: (e) => patch('event-definition', name, (b) => {
+          b.tags = e.target.checked ? [...(b.tags || []), path] : (b.tags || []).filter((p) => p !== path);
+        }),
+      }), ' ', label);
+  });
+}
+
 function eventFieldsEditor(model, name, event) {
   const where = 'event:' + name;
   const rows = (event.properties || []).map((p, i) => {
@@ -10735,13 +10622,14 @@ function eventFieldsEditor(model, name, event) {
         onRemove: dropField,
       },
         h('span', { class: 'nm' }, propertyWords(p.name)),
+        ...eventTagToggles(model, name, event, p),
         h('span', { class: 'grow', style: 'flex:1' }),
         reveal(
           h('span', {
             class: 'chip editable', title: 'Rename or retype this field',
             onclick: () => openMember(where, p.name),
           }, readable(typeLabel(p))),
-          advanced() ? h('span', { class: 'tech' }, p.name) : null,
+          h('span', { class: 'tech' }, p.name),
           h('button', {
             class: 'btn tiny danger', title: 'Remove this field',
             onclick: dropField,
@@ -11735,20 +11623,28 @@ function editProjectionScenario(model, key, body) {
   render();
 }
 
-// A fresh scenario's arguments: one blank per slot the projection
-// declares, and none at all for one that reads the whole log.
+// A fresh scenario's arguments: one blank per argument its script
+// takes, and none at all for a declared projection.
 function blankScenarioArguments(model, projectionName) {
-  const projection = model['projection-definitions'][projectionName] || {};
-  const script = scriptOf(projection);
-  const slots = script ? (script.arguments || []) : (projection.parameters || []);
   const args = {};
-  for (const slot of slots) args[slot.name] = '';
+  for (const slot of projectionSlots(model['projection-definitions'][projectionName])) args[slot.name] = '';
   return args;
+}
+
+// A fresh scenario reads the projection by the tags it declares, each
+// a typed literal with its value still blank.
+function blankScenarioTags(model, projectionName) {
+  const out = {};
+  for (const tag of projectionTagParams(model['projection-definitions'][projectionName])) {
+    out[tag.name] = { tagType: tag.tagType, tagValue: '' };
+  }
+  return out;
 }
 
 function startProjectionScenario(model, start, insertAfter) {
   const body = {
     projection: start.projection,
+    tags: blankScenarioTags(model, start.projection),
     arguments: blankScenarioArguments(model, start.projection),
     given: [],
   };
@@ -11761,25 +11657,36 @@ function patchProjectionScenarioDraft(mutate) {
   patchScenarioDraftOf('projection-scenario-definition', mutate);
 }
 
-// What the projection under test is handed. Not a list of reads any
-// more, and nothing to tick: a scenario is about one projection, and
-// its Then is that projection's value, so the only thing left to state
-// is which partition of it — and a projection with no parameters does
-// not even have that.
+// How the projection under test is read: a value for each tag it
+// declares — none at all for an untagged one, which reads the whole
+// log — and the arguments its script takes. A scenario is about one
+// projection, and its Then is that projection's value. The draft is
+// kept in step with the declaration, so a tag the projection gained
+// since is asked for rather than missing.
 function scenarioArgumentRows(model, body) {
   const projection = model['projection-definitions'][body.projection];
-  const script = projection && scriptOf(projection);
-  const slots = projection ? (script ? (script.arguments || []) : (projection.parameters || [])) : [];
-  if (!slots.length) {
-    return [h('div', { class: 'muted tiny' }, 'takes no arguments — it reads the whole log')];
+  const slots = projectionSlots(projection);
+  const declared = projectionTagParams(projection);
+  const held = body.tags && typeof body.tags === 'object' && !Array.isArray(body.tags) ? body.tags : {};
+  body.tags = {};
+  for (const tag of declared) {
+    const value = held[tag.name];
+    body.tags[tag.name] = { tagType: tag.tagType, tagValue: value && value.tagValue !== undefined ? value.tagValue : '' };
   }
-  return slots.map((slot) => h('div', { class: 'row' },
+  const tagRows = declared.map((tag) => h('div', { class: 'row' },
+    h('span', { class: 'muted tiny', style: 'min-width:90px' }, propertyWords(tag.name)),
+    valueEditor(model, { name: tag.name, propertyType: tag.tagType, isList: false },
+      ['tags', tag.name, 'tagValue'], specWhere(model))));
+  return [
+    ...(tagRows.length ? tagRows : [h('div', { class: 'muted tiny' }, 'untagged — it reads the whole log')]),
+    ...slots.map((slot) => h('div', { class: 'row' },
     h('span', { class: 'muted tiny', style: 'min-width:90px' }, propertyWords(slot.name)),
     // The full path to the value, not to the object holding it:
     // `valueEditor` reads and writes exactly where it is pointed, the
     // way `payloadEditor` points it at `[...path, property.name]`.
     valueEditor(model, { name: slot.name, propertyType: slot.propertyType, isList: false },
-      ['arguments', slot.name], specWhere(model))));
+      ['arguments', slot.name], specWhere(model)))),
+  ];
 }
 
 function projectionScenarioEditor(model) {
@@ -11951,7 +11858,7 @@ function sessionReset() {
 function watchKey(watch) {
   return watch.kind === 'entity'
     ? 'entity:' + watch.tag
-    : 'projection:' + watch.projection + ':' + JSON.stringify(watch.arguments || {});
+    : 'projection:' + watch.projection + ':' + JSON.stringify(watch.tags || {}) + ':' + JSON.stringify(watch.arguments || {});
 }
 
 function isPinned(watch) {
@@ -12214,7 +12121,7 @@ function sandboxDecision(model) {
     reads.length
       ? reads.map(([alias, read]) => read.kind === 'projection'
         ? h('div', { class: 'card sc-line' },
-            pinButton(projectionWatch(read.projection, read.arguments || {})),
+            pinButton(projectionWatch(read.projection, read.tags, read.arguments)),
             h('span', { class: 'k' }, alias + ' — '),
             h('span', { class: 't' }, readable(read.projection)),
             h('span', { class: 'k' }, '  ' + initialValueWords(read.value)))
@@ -12246,8 +12153,25 @@ function pinButton(watch) {
 }
 
 function entityWatch(tag) { return { kind: 'entity', tag }; }
-function projectionWatch(projection, args) {
-  return { kind: 'projection', projection, arguments: args || {} };
+// A watched read: a value for each tag the projection declares —
+// `[{name, type, value}]` as a run reports them, or already named tag
+// literals — kept by name as tag literals, the spelling the code view
+// shows (`CourseId("c1")`), and the script's arguments.
+function projectionWatch(projection, tags, args) {
+  const named = {};
+  if (Array.isArray(tags)) {
+    for (const tag of tags) named[tag.name] = { tagType: tag.type, tagValue: tag.value };
+  } else {
+    for (const [name, tag] of Object.entries(tags || {})) named[name] = { tagType: tag.tagType, tagValue: tag.tagValue };
+  }
+  return { kind: 'projection', projection, tags: named, arguments: args || {} };
+}
+
+// What a watch is folded as — the read the evaluator takes.
+function watchRead(watch) {
+  const tags = {};
+  for (const [name, tag] of Object.entries(watch.tags || {})) tags[name] = tag && tag.tagValue;
+  return { tags, args: watch.arguments || {} };
 }
 
 // One watched projection, folded at the position being looked at.
@@ -12257,9 +12181,9 @@ function projectionWatchCard(model, watch) {
   // not `<courseId>` but `course:c1`. The sandbox is the one place the
   // arguments are concrete, so it is the one place the query can be
   // shown the way the store would receive it.
-  const queryIcon = advanced() && projection ? (() => {
+  const queryIcon = projection ? (() => {
     let tags;
-    try { tags = projectionQueryTags(model, watch.projection, watch.arguments || {}); }
+    try { tags = projectionQueryTags(model, watch.projection, watchRead(watch)); }
     catch (error) { return null; }
     const types = uniq((projection.handlers || []).map((x) => x && x.event).filter(Boolean)).sort();
     return queryPopover('watch:' + watchKey(watch), 'what this watch queries',
@@ -12269,9 +12193,12 @@ function projectionWatchCard(model, watch) {
     h('div', { class: 'sc-line' },
       pinButton(watch),
       h('span', { class: 't' }, readable(watch.projection)),
-      Object.keys(watch.arguments || {}).length
-        ? h('span', { class: 'k' }, '  for ' + payloadText(watch.arguments))
+      Object.keys(watch.tags || {}).length
+        ? h('span', { class: 'k' }, '  tagged ' + Object.values(watch.tags).map(operandText).join(', '))
         : h('span', { class: 'k' }, '  the whole log'),
+      Object.keys(watch.arguments || {}).length
+        ? h('span', { class: 'k' }, '  with ' + payloadText(watch.arguments))
+        : null,
       queryIcon),
     ...rest);
 
@@ -12303,7 +12230,7 @@ function projectionWatchCard(model, watch) {
 
 function foldWatch(model, watch, fold) {
   try {
-    return { value: (fold || foldProjection)(model, sessionVisible(), watch.projection, watch.arguments || {}) };
+    return { value: (fold || foldProjection)(model, sessionVisible(), watch.projection, watchRead(watch)) };
   } catch (error) {
     if (error instanceof EvaluationError) return { error: error.message };
     throw error;
@@ -12358,7 +12285,7 @@ function watchProjectionAdder(model, names) {
       h('button', {
         class: 'btn tiny ghost',
         onclick: () => {
-          state.watchDraft = { projection: names[0], arguments: {} };
+          state.watchDraft = { projection: names[0], tags: blankScenarioTags(model, names[0]), arguments: {} };
           render();
         },
       }, '+ watch a projection'));
@@ -12366,30 +12293,41 @@ function watchProjectionAdder(model, names) {
 
   const draft = state.watchDraft;
   const projection = model['projection-definitions'][draft.projection];
-  const script = projection && scriptOf(projection);
-  const slots = projection ? (script ? (script.arguments || []) : (projection.parameters || [])) : [];
+  const slots = projectionSlots(projection);
   const where = { root: () => state.watchDraft, suggest: (entity) => sessionIdentifiers(model, entity) };
+  // One value per tag the projection declares, kept in step with it.
+  const declared = projectionTagParams(projection);
+  const held = draft.tags && typeof draft.tags === 'object' && !Array.isArray(draft.tags) ? draft.tags : {};
+  draft.tags = {};
+  for (const tag of declared) {
+    const value = held[tag.name];
+    draft.tags[tag.name] = { tagType: tag.tagType, tagValue: value && value.tagValue !== undefined ? value.tagValue : '' };
+  }
 
   return h('div', { class: 'card sc-step', style: 'margin-top:8px' },
     h('div', { class: 'row' },
       pick(names.map((n) => [n, readable(n)]), draft.projection, (v) => {
-        state.watchDraft = { projection: v, arguments: {} };
+        state.watchDraft = { projection: v, tags: blankScenarioTags(model, v), arguments: {} };
         render();
       }),
       h('span', { class: 'grow' })),
-    slots.length
-      ? slots.map((slot) => h('div', { class: 'row' },
-          h('span', { class: 'muted tiny', style: 'min-width:90px' }, propertyWords(slot.name)),
-          valueEditor(model, { name: slot.name, propertyType: slot.propertyType, isList: false },
-            ['arguments', slot.name], where)))
-      : h('div', { class: 'muted tiny' }, 'takes no arguments — it reads the whole log'),
+    declared.length
+      ? declared.map((tag) => h('div', { class: 'row' },
+          h('span', { class: 'muted tiny', style: 'min-width:90px' }, propertyWords(tag.name)),
+          valueEditor(model, { name: tag.name, propertyType: tag.tagType, isList: false },
+            ['tags', tag.name, 'tagValue'], where)))
+      : h('div', { class: 'muted tiny' }, 'untagged — it reads the whole log'),
+    slots.map((slot) => h('div', { class: 'row' },
+      h('span', { class: 'muted tiny', style: 'min-width:90px' }, 'with ' + propertyWords(slot.name)),
+      valueEditor(model, { name: slot.name, propertyType: slot.propertyType, isList: false },
+        ['arguments', slot.name], where))),
     h('div', { class: 'adder', style: 'margin-top:8px' },
       h('button', {
         class: 'btn primary',
         onclick: () => {
-          for (const slot of slots) {
-            if (draft.arguments[slot.name] === undefined || draft.arguments[slot.name] === '') {
-              return toast(`Say which ${readable(slot.propertyType)} to watch it for.`, true);
+          for (const tag of Object.values(draft.tags || {})) {
+            if (tag.tagValue === undefined || tag.tagValue === '' || tag.tagValue === null) {
+              return toast(`Say which ${readable(tag.tagType)} to watch it tagged by.`, true);
             }
           }
           // The draft must close before the pin repaints: `togglePinned`
@@ -12397,7 +12335,7 @@ function watchProjectionAdder(model, names) {
           // form on screen holding a stale closure — whose resubmission
           // carries the old arguments and so *unpins* the watch it just
           // added.
-          const watch = projectionWatch(draft.projection, { ...draft.arguments });
+          const watch = projectionWatch(draft.projection, deepClone(draft.tags || {}), { ...draft.arguments });
           state.watchDraft = null;
           togglePinned(watch);
         },
@@ -12468,7 +12406,7 @@ function sandboxNow(model) {
           // is usually the thing you then want to follow across every
           // other one. The arguments come from the binding that was
           // resolved, which is the only place they exist.
-          pinButton(projectionWatch(read.projection, read.arguments || {})),
+          pinButton(projectionWatch(read.projection, read.tags, read.arguments)),
           h('span', { class: 'k' }, alias + ' — '),
           h('span', { class: 't' }, readable(read.projection)),
           now
@@ -12662,6 +12600,16 @@ function refreshCodeChrome() {
       // What the quick fix finds its replacement by.
       code: d.fix ? 'fix:' + index : undefined,
     }));
+    // What the experimental flag keeps off the pages, said where it is
+    // written — never an error, the text applies whole either way.
+    if (!experimental()) {
+      for (const d of sourceExperimentalMarks(codeView.text)) {
+        markers.push({
+          severity: monaco.MarkerSeverity.Info, message: d.message,
+          startLineNumber: d.line, startColumn: d.col, endLineNumber: d.endLine, endColumn: d.endCol,
+        });
+      }
+    }
     monaco.editor.setModelMarkers(codeView.editor.model, 'dcb', markers);
     // What each read queries, after it. A decoration, not an inlay
     // hint: this Monaco cuts those at 43 characters, and a list of
@@ -12716,7 +12664,7 @@ function codeScenarioMarks(analysis, textModel) {
 }
 
 // What each `read` adds to the append condition, for the text as it
-// stands: `read course = Course[courseId]` looks like the whole entity
+// stands: `alias course = Course[courseId]` looks like the whole entity
 // and is only the properties something uses (sourceReadQueries, dsl.js).
 // Cached on the analysis, so it moves with the text.
 function codeReadQueries(model) {
@@ -12932,7 +12880,7 @@ function openDefinition(kind, name, { scenarios } = {}) {
   if (kind === 'entity-definition') return openEntity(name);
   if (kind === 'event-definition') return goToEvent(name);
   if (kind === 'projection-definition') return goToProjection(name);
-  if (kind === 'custom-type-definition' && advanced()) return goToCustomType(name);
+  if (kind === 'custom-type-definition') return goToCustomType(name);
   render();
 }
 
@@ -13043,7 +12991,7 @@ function registerSourceLanguage() {
       const word = textModel.getWordUntilPosition(position);
       const range = new monaco.Range(position.lineNumber, word.startColumn, position.lineNumber, word.endColumn);
       const { items, slot } = sourceCompletions(textModel.getValue(), position.lineNumber, position.column,
-        { model: activeModel() });
+        { model: activeModel(), experimental: experimental() });
       if (context.triggerKind === L.CompletionTriggerKind.TriggerCharacter && !slot) return { suggestions: [] };
       if (items.length) {
         return {
@@ -13168,7 +13116,7 @@ function registerSourceLanguage() {
     return {
       range: new monaco.Range(q.start.line, q.start.col, q.end.endLine, q.end.endCol),
       contents: [
-        { value: `**Read \`${q.alias}\`** — what it adds to the append condition` },
+        { value: `**Alias \`${q.alias}\`** — what it adds to the append condition` },
         { value: (q.tags.length ? `${code(q.tags)} ∧ ${types}` : `${types} (no tag — the whole log)`)
           + (q.fannedOut ? ' — one per element' : '') },
         ...(q.properties.length ? [{ value: q.properties
@@ -13484,7 +13432,7 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-// `?` opens the help at what the page is about, and closes it again —
+// `?` opens the documentation at what the page is about, in a new tab —
 // the convention, and the one key a field never needs to give up,
 // since inside one it is only ever typed.
 window.addEventListener('keydown', (e) => {
@@ -13493,7 +13441,7 @@ window.addEventListener('keydown', (e) => {
     && e.target.closest('input, textarea, select, [contenteditable]');
   if (inField || state.palette || state.pendingImport) return;
   e.preventDefault();
-  if (state.help) { state.help = null; render(); } else openHelp(helpTopicHere());
+  openDocs(docsHere());
 });
 
 // Arrow keys move between rows. Reading a command is walking down its
@@ -13539,7 +13487,8 @@ document.getElementById('rail').addEventListener('click', (e) => {
 // successfully or not — a bad or already-consumed link should not keep
 // re-triggering on every reload. A link may add `&surface=code` (or
 // `visual`) to say which surface the model opens on — dcb.events does
-// on the pages explaining the notation, whose reader came for the text.
+// on the pages explaining the notation, whose reader came for the text —
+// and `&experimental` to show experimental features for this session.
 async function boot() {
   // Safe mode — the way back into a model whose script hangs the page
   // on load, now that scripts run unprompted like everything else.
@@ -13557,8 +13506,10 @@ async function boot() {
   if (!hash.startsWith('#model=')) return;
   history.replaceState(null, '', location.pathname + location.search);
   const [encoded, ...options] = hash.slice('#model='.length).split('&');
-  const surface = new URLSearchParams(options.join('&')).get('surface');
+  const linkOptions = new URLSearchParams(options.join('&'));
+  const surface = linkOptions.get('surface');
   if (surface === 'code' || surface === 'visual') setCodeSurface(surface === 'code');
+  if (linkOptions.has('experimental')) enableExperimentalForSession();
   let envelope;
   try {
     envelope = await decodeShareLink(encoded);

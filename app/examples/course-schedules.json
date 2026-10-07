@@ -1,6 +1,6 @@
 {
-  "$schema": "https://dcb.events/schemas/model/v7.json",
-  "dcbModelVersion": "7.0",
+  "$schema": "https://dcb.events/schemas/model/v8.json",
+  "dcbModelVersion": "8.0",
   "name": "Course Example (with schedules)",
   "customTypeDefinitions": [
     {
@@ -59,6 +59,9 @@
           "isOptional": false,
           "isList": true
         }
+      ],
+      "tags": [
+        "courseId"
       ]
     },
     {
@@ -76,6 +79,9 @@
           "isOptional": false,
           "isList": false
         }
+      ],
+      "tags": [
+        "courseId"
       ]
     },
     {
@@ -87,6 +93,9 @@
           "isOptional": false,
           "isList": false
         }
+      ],
+      "tags": [
+        "courseId"
       ]
     },
     {
@@ -98,6 +107,9 @@
           "isOptional": false,
           "isList": false
         }
+      ],
+      "tags": [
+        "studentId"
       ]
     },
     {
@@ -115,6 +127,10 @@
           "isOptional": false,
           "isList": false
         }
+      ],
+      "tags": [
+        "courseId",
+        "studentId"
       ]
     },
     {
@@ -132,6 +148,10 @@
           "isOptional": false,
           "isList": false
         }
+      ],
+      "tags": [
+        "courseId",
+        "studentId"
       ]
     },
     {
@@ -149,6 +169,9 @@
           "isOptional": false,
           "isList": true
         }
+      ],
+      "tags": [
+        "courseId"
       ]
     }
   ],
@@ -203,10 +226,10 @@
   "projectionDefinitions": [
     {
       "name": "StudentExists",
-      "parameters": [
+      "tags": [
         {
           "name": "studentId",
-          "propertyType": "StudentId"
+          "tagType": "StudentId"
         }
       ],
       "valueType": "boolean",
@@ -222,10 +245,10 @@
     },
     {
       "name": "StudentSubscriptionCount",
-      "parameters": [
+      "tags": [
         {
           "name": "studentId",
-          "propertyType": "StudentId"
+          "tagType": "StudentId"
         }
       ],
       "valueType": "integer",
@@ -246,10 +269,10 @@
     },
     {
       "name": "CourseStatus",
-      "parameters": [
+      "tags": [
         {
           "name": "courseId",
-          "propertyType": "CourseId"
+          "tagType": "CourseId"
         }
       ],
       "valueType": "CourseStatus",
@@ -276,10 +299,10 @@
     },
     {
       "name": "CourseCapacity",
-      "parameters": [
+      "tags": [
         {
           "name": "courseId",
-          "propertyType": "CourseId"
+          "tagType": "CourseId"
         }
       ],
       "valueType": "integer",
@@ -304,10 +327,10 @@
     },
     {
       "name": "CourseSubscriptionCount",
-      "parameters": [
+      "tags": [
         {
           "name": "courseId",
-          "propertyType": "CourseId"
+          "tagType": "CourseId"
         }
       ],
       "valueType": "integer",
@@ -328,10 +351,10 @@
     },
     {
       "name": "CourseSubscribedStudentIds",
-      "parameters": [
+      "tags": [
         {
           "name": "courseId",
-          "propertyType": "CourseId"
+          "tagType": "CourseId"
         }
       ],
       "valueType": "StudentId",
@@ -356,7 +379,7 @@
     },
     {
       "name": "CourseNumbering",
-      "parameters": [],
+      "tags": [],
       "valueType": "CourseId",
       "isList": false,
       "initialValue": "c1",
@@ -374,10 +397,10 @@
     },
     {
       "name": "CourseSlots",
-      "parameters": [
+      "tags": [
         {
           "name": "courseId",
-          "propertyType": "CourseId"
+          "tagType": "CourseId"
         }
       ],
       "valueType": "TimeSlot",
@@ -402,10 +425,10 @@
     },
     {
       "name": "StudentSubscribedCourseIds",
-      "parameters": [
+      "tags": [
         {
           "name": "studentId",
-          "propertyType": "StudentId"
+          "tagType": "StudentId"
         }
       ],
       "valueType": "CourseId",
@@ -451,7 +474,7 @@
         {
           "alias": "courseNumbering",
           "projection": "CourseNumbering",
-          "arguments": {}
+          "tags": {}
         }
       ],
       "conditions": [],
@@ -657,8 +680,10 @@
           "alias": "others",
           "entity": "Course",
           "id": {
-            "alias": "student",
-            "property": "subscribedCourseIds"
+            "each": {
+              "alias": "student",
+              "property": "subscribedCourseIds"
+            }
           }
         }
       ],
@@ -836,16 +861,20 @@
           "alias": "students",
           "entity": "Student",
           "id": {
-            "alias": "course",
-            "property": "subscribedStudentIds"
+            "each": {
+              "alias": "course",
+              "property": "subscribedStudentIds"
+            }
           }
         },
         {
           "alias": "theirs",
           "entity": "Course",
           "id": {
-            "alias": "students",
-            "property": "subscribedCourseIds"
+            "each": {
+              "alias": "students",
+              "property": "subscribedCourseIds"
+            }
           },
           "excluding": {
             "parameterName": "courseId"
