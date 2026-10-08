@@ -1214,10 +1214,13 @@ function argumentsExpected(model, body, binding) {
   return out;
 }
 
-// The operations that make sense for a projection's type.
+// The operations that make sense for a projection's type. A scalar
+// value type counts as what its schema says it is underneath, so
+// `Hours` over an integer counts like the integer it replaced — wrapping
+// a primitive in a named type must not cost it its operations.
 function operationsFor(model, target) {
   if (target.isList) return ['set', 'append', 'remove'];
-  if (target.valueType === 'integer') return ['set', 'increment', 'decrement'];
+  if (literalKindOf(model, target.valueType) === 'number') return ['set', 'increment', 'decrement'];
   return ['set'];
 }
 

@@ -403,7 +403,7 @@
       ]
     },
     "PropertyHandler": {
-      "description": "How one event type advances one projection. Either declared —\n`operation` and `value`, with the vocabulary constrained by the\nprojection's type: `set` for any type, `increment`/`decrement`\nfor integers, `append`/`remove` for lists — or scripted, carrying\n`code` and neither of the other two.\n",
+      "description": "How one event type advances one projection. Either declared —\n`operation` and `value`, with the vocabulary constrained by the\nprojection's type: `set` for any type, `increment`/`decrement`\nfor numbers (an `integer`, or a value type whose schema is one),\n`append`/`remove` for lists — or scripted, carrying\n`code` and neither of the other two.\n",
       "type": "object",
       "additionalProperties": false,
       "properties": {

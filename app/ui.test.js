@@ -2774,6 +2774,18 @@ function build(index) {
       ['set', 'append', 'remove'], 'and a list gains and loses');
   });
 
+  check('a value type over a number counts like the number it wraps', () => {
+    const { id, model } = build(ENTITIES);
+    addDefinition('custom-type-definition', id, 'Hours', { schema: { type: 'integer' } });
+    addDefinition('custom-type-definition', id, 'Rate', { schema: { type: 'number' } });
+    eq(operationsFor(model(), { valueType: 'Hours', isList: false }),
+      ['set', 'increment', 'decrement'], 'an integer by another name still counts');
+    eq(operationsFor(model(), { valueType: 'Rate', isList: false }),
+      ['set', 'increment', 'decrement'], 'and so does a number');
+    eq(operationsFor(model(), { valueType: 'StudentId', isList: false }), ['set'],
+      'a value type over a string does not');
+  });
+
   check('the change adder offers only the operations the target admits', () => {
     const { id, model } = build(ENTITIES);
     store.set('dcb-playground:model', id);
