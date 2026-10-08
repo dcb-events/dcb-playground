@@ -27,6 +27,9 @@ loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js'], {
   trailer: 'globalThis.PREDEFINED_MODELS = PREDEFINED_MODELS; globalThis.SOURCE_KINDS = SOURCE_KINDS;'
     + ' globalThis.DEF_COLLECTIONS = DEF_COLLECTIONS; globalThis.DomainError = DomainError;'
     + ' globalThis.SOURCE_KEYWORDS = SOURCE_KEYWORDS; globalThis.SOURCE_BASE_TYPES = SOURCE_BASE_TYPES;'
+    + ' globalThis.SOURCE_REFERENCE_TOUR = SOURCE_REFERENCE_TOUR; globalThis.SOURCE_REFERENCE_FORMS = SOURCE_REFERENCE_FORMS;'
+    + ' globalThis.SOURCE_REFERENCE_EXAMPLE = SOURCE_REFERENCE_EXAMPLE;'
+    + ' globalThis.SOURCE_REFERENCE_EXAMPLE_SLUG = SOURCE_REFERENCE_EXAMPLE_SLUG;'
     + '',
 });
 const { check, eq, finish } = makeChecker();
@@ -1267,6 +1270,41 @@ check('a fanned-out read is marked, a projection read lists its events', () => {
   const numbering = sandbox.sourceReadQueries(model(), parseModelSource(modelToSource(model())))
     .find((q) => q.alias === 'courseNumbering');
   eq([numbering.hint, numbering.tags, numbering.unread], ['‹reads 1 type›', [], []], 'a projection read');
+});
+
+// ---------------------------------------------------------------
+// The language, for an agent (get_model_language).
+// ---------------------------------------------------------------
+
+check('the reference tour is a model that applies clean, with nothing experimental', () => {
+  fresh();
+  const { SOURCE_REFERENCE_TOUR: tour } = sandbox;
+  eq(parseModelSource(tour).diagnostics, [], 'it parses');
+  const id = sandbox.createDcbModel('Tour');
+  applyModelSource(id, tour);
+  const model = projectState()[id];
+  eq(sandbox.modelAdvisories(model), [], 'no advisories');
+  eq(sandbox.experimentalFeatures(model), [], 'nothing experimental');
+  eq(sandbox.sourceExperimentalMarks(tour), [], 'not even in passing');
+  eq(Object.keys(model['scenario-definitions']).length + Object.keys(model['projection-scenario-definitions']).length,
+    3, 'its scenarios recorded');
+  eq(modelToSource(model).includes(' json {'), false, 'every definition spelled in the language');
+});
+
+check('the reference example is the shipped model as printed', () => {
+  const index = PREDEFINED_MODELS.findIndex((m) => m.slug === sandbox.SOURCE_REFERENCE_EXAMPLE_SLUG);
+  eq(index >= 0 && !PREDEFINED_MODELS[index].experimental, true, 'a shipped model, not an experimental one');
+  eq(sandbox.SOURCE_REFERENCE_EXAMPLE, modelToSource(build(index).model()),
+    'reprint it into SOURCE_REFERENCE_EXAMPLE with node app/print-model.js');
+});
+
+check('every keyword outside the experimental ones is shown to an agent', () => {
+  // Entities, lifecycles, derived projections, excluding, currentValue
+  // and guards (`and` chains them) are not offered over WebMCP.
+  const experimental = ['entity', 'lifecycle', 'derived', 'excluding', 'currentValue', 'and'];
+  const shown = new Set((sandbox.SOURCE_REFERENCE_TOUR + '\n' + sandbox.SOURCE_REFERENCE_FORMS).match(/[A-Za-z]+/g));
+  eq(sandbox.SOURCE_KEYWORDS.filter((word) => !experimental.includes(word) && !shown.has(word)), [],
+    'add each to the tour or the forms in dsl.js');
 });
 
 finish();

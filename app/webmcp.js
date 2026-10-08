@@ -16,6 +16,24 @@
 //
 // Every call is announced with a toast, and a tool that changed the
 // model repaints the page, so what the agent does is watchable.
+//
+// **Text first.** An agent builds a model best the way a developer
+// does: by writing the whole of it in the model language
+// (`get_model_language` teaches it; `start_model` with a `source`,
+// then `apply_model_source`, write it). The per-kind `add_*` /
+// `update_*` tools stay for one targeted edit; their inlined schemas
+// are too large to compose a model from, and an agent that tried
+// stalled before its first call.
+//
+// **Nothing experimental is offered.** What the experimental flag
+// keeps off the pages is kept out of this API whether the flag is on
+// or not: no entity tools, no experimental members in a schema, and
+// an edit that would introduce a use is refused. The tools are
+// registered once, so following the flag would mean re-registering on
+// every toggle. A model that already uses those constructs still
+// reads whole and stays editable — only a *new* use is refused
+// (`introducedExperimentalFeatures`), as the flag gates an offer and
+// never the display of something stored.
 // ============================================================
 
 (() => {
@@ -73,8 +91,11 @@
           toast('Agent · ' + summary);
           const value = payload === undefined ? summary : payload;
           if (mutates) {
+            // A tool that opened another model (start_model) has no
+            // before on that one: everything it says is new.
             const current = activeModel();
-            const note = advisoryNote(before, current ? modelAdvisories(current) : []);
+            const same = current && model && current.id === model.id;
+            const note = advisoryNote(same ? before : [], current ? modelAdvisories(current) : []);
             if (note) {
               const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
               return asText(text + note);
@@ -114,13 +135,54 @@
     return { ...base, required: [...required] };
   };
 
+  // The kinds an agent may author — entities are experimental.
+  const KINDS = DEF_KINDS.filter((kind) => kind !== 'entity-definition');
+
+  // Refuses an edit that would introduce an experimental construct,
+  // naming each use — with its line, when the edit is a text.
+  const refuseNewExperimental = (before, after, lineOf = () => null) => {
+    const fresh = introducedExperimentalFeatures(before, after);
+    if (!fresh.length) return;
+    throw new DomainError('Nothing was applied — experimental constructs are not offered to agents:\n'
+      + fresh.map(({ feature, where }) => {
+        const line = lineOf(where);
+        return `- ${line ? `line ${line}: ` : ''}${where} uses ${EXPERIMENTAL_FEATURES[feature]}`;
+      }).join('\n')
+      + '\nWrite it with what get_model_language describes instead.');
+  };
+
+  // A whole model text, checked against the model it would replace:
+  // refused whole on any error, or on an experimental construct the
+  // model does not already use. Answers the parse, ready to apply.
+  const checkedSource = (model, source) => {
+    const parsed = parseModelSource(source);
+    const errors = parsed.diagnostics.length ? parsed.diagnostics : sourceScenarioReport(model, parsed).errors;
+    if (errors.length) {
+      throw new DomainError('Nothing was applied — the text has '
+        + `${errors.length} error${errors.length === 1 ? '' : 's'}:\n`
+        + errors.map((e) => `- line ${e.line}, column ${e.col}: ${e.message}`).join('\n'));
+    }
+    refuseNewExperimental(model, sourceDraftModel(model, parsed),
+      (name) => (parsed.spans.find((span) => span.name === name) || {}).line);
+    return parsed;
+  };
+
+  // A model with nothing in it, never stored — what a source for a
+  // model not yet created is checked against.
+  const emptyModel = (name) => {
+    const model = { id: null, name };
+    for (const kind of DEF_KINDS) model[DEF_COLLECTIONS[kind]] = {};
+    return model;
+  };
+
   // ---------- reading ----------
 
   register({
     name: 'get_model',
-    description: 'The DCB model currently open in the playground, in full: its events, '
-      + 'entities, projections, custom types and the commands that guard them. '
-      + 'Start here — every other tool speaks in this model\'s names.',
+    description: 'The DCB model currently open in the playground, in full, as stored JSON: its '
+      + 'custom types, events, projections and the commands that guard them. Every other tool '
+      + 'speaks in this model\'s names. get_model_source says the same far shorter, as code — '
+      + 'prefer it for reading, and for any edit beyond one definition.',
     inputSchema: { type: 'object', properties: {} },
     run: (model) => ({
       summary: `read model "${model.name}"`,
@@ -133,14 +195,27 @@
   register({
     name: 'get_model_source',
     description: 'The open model as code — the playground\'s own model language, the text its '
-      + 'Code view edits: types, events, entities, projections and commands, each command\'s and '
+      + 'Code view edits: types, events, projections and commands, each command\'s and '
       + 'projection\'s scenarios inside its block. Usually far shorter than get_model. Edit it and '
-      + 'send it back with apply_model_source.',
+      + 'send it back with apply_model_source; get_model_language explains the language.',
     inputSchema: { type: 'object', properties: {} },
     run: (model) => ({
       summary: `read model "${model.name}" as code`,
       payload: modelSource(model),
     }),
+  });
+
+  // The language itself (dsl.js), so an agent can write a model it has
+  // never seen one of — `start_model` leaves it nothing to imitate.
+  register({
+    name: 'get_model_language',
+    description: 'How to write a DCB model as code: the rules, every construct in a commented '
+      + 'tour, and a complete example. Read it before writing a model with start_model\'s source '
+      + 'or apply_model_source — the fastest way to build a model with its events, projections '
+      + 'and commands is to write the whole text and send it in one call.',
+    inputSchema: { type: 'object', properties: {} },
+    needsModel: false,
+    run: () => ({ summary: 'read the model language', payload: sourceLanguageReference() }),
   });
 
   register({
@@ -229,25 +304,44 @@
 
   register({
     name: 'start_model',
-    description: 'Start a fresh, empty model — no events, no entities, no commands — and '
-      + 'open it, so every other tool speaks about it from here on. The model that was '
-      + 'open before stays stored and can be reopened from the Models modal.',
+    description: 'Start a new model and open it, so every other tool speaks about it from here '
+      + 'on. Pass the whole model as source to create it with its types, events, projections, '
+      + 'commands and scenarios in this one call — see get_model_language for how to write it; '
+      + 'without source the model starts empty. A source with any error is refused whole and '
+      + 'nothing is created. The model that was open before stays stored and can be reopened '
+      + 'from the Models modal.',
     inputSchema: {
       type: 'object',
-      properties: { name: { type: 'string', description: 'What the new model is called.' } },
+      properties: {
+        name: { type: 'string', description: 'What the new model is called. A model line in the source renames it.' },
+        source: {
+          type: 'string',
+          description: 'Optional: the whole model, as code — what apply_model_source would take.',
+        },
+      },
       required: ['name'],
     },
     mutates: true,
     needsModel: false,
-    run: (_, { name }) => {
+    run: (_, { name, source }) => {
+      if (source !== undefined) checkedSource(emptyModel(name), source);
       // `openNewModel` is `createNamedModel` unwrapped from its `run`
       // wrapper — the refusal has to reach the agent, not only the
       // toast — so both paths open a model the same one way.
       const id = openNewModel(name);
       if (typeof state === 'object' && state) state.models = false;
+      if (source !== undefined) {
+        const applied = sourceApplySummary(applyModelSource(id, source));
+        return { summary: `started model "${name.trim()}" from code: ${applied}`, payload: { id, applied } };
+      }
       return {
         summary: `started model "${name.trim()}"`,
-        payload: { id, name: name.trim() },
+        payload: {
+          id,
+          name: name.trim(),
+          next: 'The model is empty. To build it, read get_model_language, write the whole model '
+            + 'as code and send it with apply_model_source — one call, not one per definition.',
+        },
       };
     },
   });
@@ -256,7 +350,7 @@
   // full shape of that one definition — an agent discovers what a
   // command body looks like from the tool itself, not by fishing an
   // example out of get_model.
-  for (const kind of DEF_KINDS) {
+  for (const kind of KINDS) {
     const label = humanize(kind);
     const suffix = kind.replace(/-/g, '_');
     const idKeyed = isIdKeyed(kind);
@@ -265,22 +359,28 @@
       const { name, id, ...body } = args;
       return idKeyed && args.name !== undefined ? { name: args.name, ...body } : body;
     };
+    // The model as it would be with this one body in place.
+    const withBody = (model, key, body) => {
+      const collection = DEF_COLLECTIONS[kind];
+      return { ...model, [collection]: { ...model[collection], [key]: body } };
+    };
+    const prefer = ' For creating a model or changing several definitions, write code instead '
+      + '(get_model_language, apply_model_source); this tool suits one targeted edit.';
 
     register({
       name: 'add_' + suffix,
       description: `Add a ${label.toLowerCase()} to the open model. The input is the `
         + 'definition itself, in the shape this schema describes.'
-        + (kind === 'entity-definition'
-          ? ' Adding an entity also creates its derived identifier type.' : '')
         + (idKeyed ? ' The id is generated when omitted.' : '')
         + ' Refused only when the name is taken or the body is structurally not a '
         + 'definition; anything semantically wrong — a dangling reference, a boundary '
         + 'gap — is accepted and comes back as an advisory in the result. Fix what it '
-        + 'reports before moving on.',
+        + 'reports before moving on.' + prefer,
       inputSchema: definitionSchema(kind, !idKeyed),
       mutates: true,
       run: (model, args) => {
         const key = idKeyed ? (args.id || generateId()) : args.name;
+        refuseNewExperimental(model, withBody(model, key, bodyOf(args)));
         addDefinition(kind, model.id, key, bodyOf(args));
         return { summary: `added ${label} "${idKeyed ? args.name || key : key}"` };
       },
@@ -292,10 +392,11 @@
         + 'points at, wholesale. A body that strands a reference elsewhere is accepted '
         + 'and the stranding comes back as an advisory in the result — renames still '
         + 'belong in rename_definition and rename_member, which move the references '
-        + 'along instead of stranding them.',
+        + 'along instead of stranding them.' + prefer,
       inputSchema: definitionSchema(kind, true),
       mutates: true,
       run: (model, args) => {
+        refuseNewExperimental(model, withBody(model, keyOf(args), bodyOf(args)));
         updateDefinition(kind, model.id, keyOf(args), bodyOf(args));
         return { summary: `updated ${label} "${idKeyed ? args.name || args.id : args.name}"` };
       },
@@ -310,7 +411,7 @@
     inputSchema: {
       type: 'object',
       properties: {
-        kind: kindSchema(DEF_KINDS),
+        kind: kindSchema(KINDS),
         name: {
           type: 'string',
           description: 'The name of the definition to remove — or its id, for the '
@@ -329,12 +430,14 @@
   register({
     name: 'apply_model_source',
     description: 'Replace the open model\'s definitions with the ones a whole model text declares '
-      + '(the text get_model_source returns, edited). Only what differs is written, as one undoable '
-      + 'step; a definition or scenario left out of the text is removed. A scenario written without '
-      + 'a then is recorded with what the model does; one with a then asserts it, and a drift is '
-      + 'reported by list_problems, never accepted silently. A renamed definition is a removal plus '
-      + 'an addition — references to it in the text move only if the text moves them. A text with '
-      + 'any error is refused whole, with every error and its line.',
+      + '(the text get_model_source returns, edited; get_model_language explains the language). '
+      + 'The way to build or restructure a model: write all of it and send it in one call. Only '
+      + 'what differs is written, as one undoable step; a definition or scenario left out of the '
+      + 'text is removed. A scenario written without a then is recorded with what the model does; '
+      + 'one with a then asserts it, and a drift is reported by list_problems, never accepted '
+      + 'silently. A renamed definition is a removal plus an addition — references to it in the '
+      + 'text move only if the text moves them. A text with any error is refused whole, with every '
+      + 'error and its line.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -344,13 +447,7 @@
     },
     mutates: true,
     run: (model, { source }) => {
-      const parsed = parseModelSource(source);
-      const errors = parsed.diagnostics.length ? parsed.diagnostics : sourceScenarioReport(model, parsed).errors;
-      if (errors.length) {
-        throw new DomainError('Nothing was applied — the text has '
-          + `${errors.length} error${errors.length === 1 ? '' : 's'}:\n`
-          + errors.map((e) => `- line ${e.line}, column ${e.col}: ${e.message}`).join('\n'));
-      }
+      checkedSource(model, source);
       return { summary: 'applied code: ' + sourceApplySummary(applyModelSource(model.id, source)) };
     },
   });
@@ -363,7 +460,7 @@
     inputSchema: {
       type: 'object',
       properties: {
-        kind: kindSchema(DEF_KINDS.filter((k) => !isIdKeyed(k))),
+        kind: kindSchema(KINDS.filter((k) => !isIdKeyed(k))),
         previousName: { type: 'string', description: 'The definition\'s current name.' },
         newName: {
           type: 'string',
@@ -381,9 +478,10 @@
   });
 
   // The combinations that exist are exactly the keys of MEMBER_REWRITES
-  // ('<kind>:<memberKind>'), so the schema is derived from them rather
-  // than restated here.
-  const memberCombos = Object.keys(MEMBER_REWRITES).map((k) => k.split(':'));
+  // ('<kind>:<memberKind>') of the kinds offered here, so the schema is
+  // derived from them rather than restated here.
+  const memberCombos = Object.keys(MEMBER_REWRITES).map((k) => k.split(':'))
+    .filter(([kind]) => KINDS.includes(kind));
   register({
     name: 'rename_member',
     description: 'Rename one member of a definition — a property, an enum member, a '

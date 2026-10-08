@@ -19,6 +19,12 @@
 //     one, its tags are operands in turn, and inlining that at every
 //     operand more than doubled a command's schema.
 //
+// The experimental members are cut before anything is inlined, since
+// WebMCP does not offer them (see webmcp.js): no entity kind, and no
+// schema so much as mentions an entity binding, a guard, a derived
+// projection, `currentValue` or an @icon / @feature annotation. The
+// canonical schema keeps them — a model using them still imports.
+//
 // Run with `node app/generate-webmcp-schemas.js` after changing
 // dcb-model.schema.json. Nothing here runs in the browser; it is a
 // one-time-per-change build step.
@@ -30,9 +36,42 @@ const APP = __dirname;
 const schema = JSON.parse(fs.readFileSync(path.join(APP, '..', 'dcb-model.schema.json'), 'utf8'));
 const defs = schema.$defs;
 
-// The seven kinds the playground stores, each rooted at its $def.
+// What the experimental flag keeps off the pages, as schema members:
+// properties of a $def, and branches of a $def's choice. A name that
+// is not there stops the build — the schema moved, and so must this.
+const EXPERIMENTAL_PROPERTIES = {
+  EventDefinition: ['icon'],
+  CommandDefinition: ['icon', 'feature'],
+  ProjectionDefinition: ['derived'],
+  EventEmission: ['when'],
+};
+const EXPERIMENTAL_BRANCHES = {
+  Binding: ['EntityBinding'],
+  HandlerOperand: ['CurrentValue'],
+};
+for (const [name, properties] of Object.entries(EXPERIMENTAL_PROPERTIES)) {
+  for (const property of properties) {
+    if (!defs[name] || !defs[name].properties || !(property in defs[name].properties)) {
+      throw new Error(`dcb-model.schema.json has no ${name}.${property} to cut`);
+    }
+    delete defs[name].properties[property];
+    if (defs[name].required) defs[name].required = defs[name].required.filter((r) => r !== property);
+  }
+}
+for (const [name, branches] of Object.entries(EXPERIMENTAL_BRANCHES)) {
+  const choice = defs[name] && (defs[name].oneOf ? 'oneOf' : defs[name].anyOf ? 'anyOf' : null);
+  if (!choice) throw new Error(`dcb-model.schema.json has no choice in ${name} to cut from`);
+  const kept = defs[name][choice].filter((branch) => !branches.includes((branch.$ref || '').slice('#/$defs/'.length)));
+  if (kept.length !== defs[name][choice].length - branches.length) {
+    throw new Error(`${name} does not offer all of ${branches.join(', ')} to cut`);
+  }
+  // A choice of one is that one — its description, written to tell
+  // the branches apart, would only mention what was cut.
+  defs[name] = kept.length === 1 ? kept[0] : { ...defs[name], [choice]: kept };
+}
+
+// The six kinds an agent may author, each rooted at its $def.
 const ROOTS = {
-  'entity-definition': 'EntityDefinition',
   'event-definition': 'EventDefinition',
   'projection-definition': 'ProjectionDefinition',
   'command-definition': 'CommandDefinition',

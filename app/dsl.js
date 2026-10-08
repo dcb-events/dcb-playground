@@ -4030,6 +4030,349 @@ function sourceExperimentalMarks(text) {
 }
 
 // ============================================================
+// The language, for an agent: what the WebMCP tool
+// `get_model_language` answers with — enough to write a whole model
+// as text without ever having seen one. A guide, the forms a rule can
+// take, a tour that declares a complete model using every construct
+// the tools offer, and a shipped model as the printer prints it.
+//
+// None of it is free prose that could rot: dsl.test.js parses the
+// tour (no diagnostics, no advisories, nothing experimental, scenarios
+// recorded), holds the example to `modelToSource` of the shipped model
+// it names, and requires every keyword of the grammar outside the
+// experimental ones to appear in the tour or the forms — so a new
+// construct cannot ship without the agent being told about it. The
+// experimental constructs are left out on purpose: WebMCP does not
+// offer them (see webmcp.js).
+// ============================================================
+
+const SOURCE_REFERENCE_GUIDE = `# The DCB model language
+
+The text get_model_source returns, apply_model_source applies and start_model takes as its source.
+
+- A text is the whole model: a model "Name" line, then types, events, projections and commands. A definition left out of an applied text is removed, so to change a model, edit what get_model_source returned and send all of it back.
+- A text with any error is refused whole, with each error's line and column; fix them and send it again. What does not stop it (an event nothing emits, a read of a projection nobody declared) comes back as advisories with the result; fix those as well.
+- DCB in brief: events are tagged by identifier values; a projection folds the events that carry its tags into one value; a command reads projections, checks its rules and emits events. Its consistency boundary is exactly what it reads — derived, never declared (derive_boundary shows it).
+- Definitions, enum members and records are PascalCase; properties, parameters, tags and aliases are camelCase.
+- // and /* */ are comments. They are not stored.
+- @tagSchema("{type}={value}") on the line before a tag type changes how its values render as tags; "{type}:{value}" is the default.`;
+
+const SOURCE_REFERENCE_FORMS = `Rules (after require), each negated by a leading not:
+  a == b    a != b    a < b    a <= b    a > b    a >= b
+  a in [Draft, Published]       a not in [Draft, Published]
+  xs contains x    x in xs      (a list value holding x)
+  xs containsAny ys    s startsWith "c"    s endsWith "c"
+  count(xs) == 3                (also !=, < and >)
+  a is empty    a is not empty    a is true    a is false
+
+Operands: a parameter (courseId) or its record field (items.price), an alias or its field,
+a read P(…), a literal ("text", 3, true, null, [..]), an enum member (Archived),
+a tag literal naming its type (CourseId("c1")).
+
+Scenarios sit in one scenarios { … } group at the end of the block of the command or
+projection they exercise, and name it:
+  scenario "<what it shows>" { given E { … }  when C { … }  then E { … } }
+  then rejected "<rule message>"    then nothing    then P(CourseId("c1")) == <value>
+Leave then out and applying records what the model does.
+
+A definition printed as command X json { … } is stored JSON the language cannot spell.
+Leave it as it is, or rewrite it in the language.`;
+
+const SOURCE_REFERENCE_TOUR = `model "Library"
+
+// ---- Types ----
+// "type" names a value type: a JSON Schema base type (string, number,
+// integer, boolean, object, array, null), optionally constrained by a
+// JSON Schema object.
+type Isbn = string { pattern: "^[0-9-]+$" }
+// "tag type" is a value type events can be tagged by: an identifier.
+tag type BookId = string
+tag type MemberId = string
+tag type LoanId = string { pattern: "^l[0-9]+$" }
+enum BookStatus { Unknown, Available, Lent, Withdrawn }
+// A record is a composite value; every field is one required value.
+record Copy { bookId: BookId, isbn: Isbn }
+
+// ---- Events ----
+// "tag" marks each value the event is tagged by; "name?:" is optional
+// (null when absent), "X[]" a list, and "tag each f" tags the event once
+// per element of a list of records, by that field.
+event BookAdded { tag bookId: BookId, isbn: Isbn, title: string, subtitle?: string }
+event CopiesDonated { donor: string, copies: Copy[] tag each bookId }
+event BookLent { tag bookId: BookId, tag memberId: MemberId, tag loanId: LoanId }
+event BookReturned { tag bookId: BookId, tag memberId: MemberId }
+event BookWithdrawn { tag bookId: BookId }
+event MemberJoined { tag memberId: MemberId, name: string }
+
+// ---- Projections ----
+// A projection folds the events it handles into one value, kept per
+// the tags in its header, "(tag name: TagType)", several ANDed; then
+// the type it holds ("X[]" for a list) and its initial value.
+// Each arm is "on Event => <operation>": set a value, increment /
+// decrement an integer, append / remove a list element. A value is
+// a literal, an enum member, event.data.<property> or
+// successor(event.data.<property>) (the next identifier: c1 -> c2).
+projection BookStatus (tag bookId: BookId): BookStatus = Unknown {
+  on BookAdded => set Available
+  on CopiesDonated => set Available
+  on BookLent => set Lent
+  on BookReturned => set Available
+  on BookWithdrawn => set Withdrawn
+}
+
+projection BookTitle (tag bookId: BookId): string = null {
+  on BookAdded => set event.data.title
+}
+
+projection MemberExists (tag memberId: MemberId): boolean = false {
+  on MemberJoined => set true
+}
+
+projection MemberLoanCount (tag memberId: MemberId): integer = 0 {
+  on BookLent => increment 1
+  on BookReturned => decrement 1
+}
+
+projection BookBorrowers (tag bookId: BookId): MemberId[] = [] {
+  on BookLent => append event.data.memberId
+}
+
+projection MemberHasBook (tag memberId: MemberId, tag bookId: BookId): boolean = false {
+  on BookLent => set true
+  on BookReturned => set false
+
+  // A projection's scenarios assert its value after the given events.
+  // A tag value given as a literal names its type: MemberId("m1").
+  scenarios {
+    scenario "a lent book is with the member" {
+      given BookLent { bookId: "b1", memberId: "m1", loanId: "l1" }
+      then MemberHasBook(MemberId("m1"), BookId("b1")) == true
+    }
+  }
+}
+
+// "untagged" folds the whole log: a global numbering is the case.
+untagged projection LoanNumbering: LoanId = "l1" {
+  on BookLent => set successor(event.data.loanId)
+}
+
+// A scripted projection, for what the operations above cannot say.
+// Values after the tags in the header are arguments its readers pass.
+// Each arm is a JavaScript expression in \`\`\` over state, event
+// (event.data.<property>), tags.<name> and args.<name>, returning
+// the next state; "exposes" names the state field the projection holds.
+projection MemberOverLimit (tag memberId: MemberId, limit: integer): boolean {
+  script
+  initialState { loans: 0, over: false }
+  exposes over
+  on BookLent => \`\`\`{ loans: state.loans + 1, over: state.loans + 1 > args.limit }\`\`\`
+  on BookReturned => \`\`\`{ loans: state.loans - 1, over: state.loans - 1 > args.limit }\`\`\`
+}
+
+// ---- Commands ----
+// Parameters are typed like event properties. A projection is read
+// with its tag values (then arguments) in parentheses, in header order,
+// "LoanNumbering()" when untagged; "each" reads once per list element.
+// Every "require" names the message the command is rejected with.
+// "emit" lists each event property: "name" alone takes the parameter
+// of that name, "name: <operand>" anything else.
+// The consistency boundary is derived from the reads; never declare it.
+command AddBook(bookId: BookId, isbn: Isbn, title: string, subtitle?: string) {
+  require BookStatus(bookId) == Unknown
+    else reject "Book already exists"
+  require title is not empty
+    else reject "A book needs a title"
+
+  emit BookAdded { bookId, isbn, title, subtitle }
+
+  // A command's scenarios: given events, when the command runs with
+  // these arguments, then the events it records, or rejected "<message>"
+  // with a rule's message, or nothing.
+  scenarios {
+    scenario "a new book is added" {
+      when AddBook { bookId: "b1", isbn: "978-0", title: "Dune", subtitle: null }
+      then BookAdded { bookId: "b1", isbn: "978-0", title: "Dune", subtitle: null }
+    }
+
+    scenario "a book is added once" {
+      given BookAdded { bookId: "b1", isbn: "978-0", title: "Dune", subtitle: null }
+      when AddBook { bookId: "b1", isbn: "978-0", title: "Dune", subtitle: null }
+      then rejected "Book already exists"
+    }
+  }
+}
+
+command DonateCopies(donor: string, copies: Copy[]) {
+  require copies is not empty
+    else reject "Nothing was donated"
+  require count(copies) < 50
+    else reject "Too many copies at once"
+  require BookStatus(each copies.bookId) == Unknown
+    else reject "A copy is already in the catalogue"
+
+  emit CopiesDonated { donor, copies }
+}
+
+command JoinLibrary(memberId: MemberId, name: string) {
+  require MemberExists(memberId) is false
+    else reject "Already a member"
+  require not name startsWith " "
+    else reject "A name starts with a letter"
+
+  emit MemberJoined { memberId, name }
+}
+
+// "alias" names a read for the rules and emissions below it.
+command LendBook(bookId: BookId, memberId: MemberId) {
+  alias loanNumber = LoanNumbering()
+  require BookStatus(bookId) == Available
+    else reject "Book is not available"
+  require MemberExists(memberId) is true
+    else reject "Not a member"
+  require MemberOverLimit(memberId, 5) is false
+    else reject "Too many loans"
+  require BookBorrowers(bookId) not contains memberId
+    else reject "Borrowed this book before"
+
+  emit BookLent { bookId, memberId, loanId: loanNumber }
+}
+
+command ReturnBook(bookId: BookId, memberId: MemberId) {
+  require MemberHasBook(memberId, bookId) is true
+    else reject "Book is not with this member"
+
+  emit BookReturned { bookId, memberId }
+}
+
+command WithdrawBook(bookId: BookId) {
+  require BookStatus(bookId) in [Available, Lent]
+    else reject "Book is not in the catalogue"
+
+  emit BookWithdrawn { bookId }
+}
+`;
+
+const SOURCE_REFERENCE_EXAMPLE = `model "Course Example (simple)"
+
+// Types
+enum CourseStatus { NonExistent, Existent, Archived }
+tag type StudentId = string
+tag type CourseId = string
+
+// Events
+event CourseDefined { tag courseId: CourseId, capacity: integer }
+event CourseCapacityChanged { tag courseId: CourseId, newCapacity: integer }
+event CourseArchived { tag courseId: CourseId }
+event StudentRegistered { tag studentId: StudentId }
+event StudentSubscribedToCourse { tag courseId: CourseId, tag studentId: StudentId }
+event StudentUnsubscribedFromCourse { tag courseId: CourseId, tag studentId: StudentId }
+
+// Projections
+projection StudentExists (tag studentId: StudentId): boolean = false {
+  on StudentRegistered => set true
+}
+
+projection StudentSubscriptionCount (tag studentId: StudentId): integer = 0 {
+  on StudentSubscribedToCourse => increment 1
+  on StudentUnsubscribedFromCourse => decrement 1
+}
+
+projection CourseStatus (tag courseId: CourseId): CourseStatus = NonExistent {
+  on CourseDefined => set Existent
+  on CourseArchived => set Archived
+}
+
+projection CourseCapacity (tag courseId: CourseId): integer = 0 {
+  on CourseDefined => set event.data.capacity
+  on CourseCapacityChanged => set event.data.newCapacity
+}
+
+projection CourseSubscriptionCount (tag courseId: CourseId): integer = 0 {
+  on StudentSubscribedToCourse => increment 1
+  on StudentUnsubscribedFromCourse => decrement 1
+}
+
+projection CourseSubscribedStudentIds (tag courseId: CourseId): StudentId[] = [] {
+  on StudentSubscribedToCourse => append event.data.studentId
+  on StudentUnsubscribedFromCourse => remove event.data.studentId
+}
+
+// Commands
+command DefineCourse(courseId: CourseId, capacity: integer) {
+  require CourseStatus(courseId) == NonExistent
+    else reject "Course already exists"
+
+  emit CourseDefined { courseId, capacity }
+}
+
+command ChangeCourseCapacity(courseId: CourseId, newCapacity: integer) {
+  require CourseStatus(courseId) == Existent
+    else reject "Course is not active"
+  require CourseSubscriptionCount(courseId) <= newCapacity
+    else reject "Course has more subscriptions than that"
+
+  emit CourseCapacityChanged { courseId, newCapacity }
+}
+
+command ArchiveCourse(courseId: CourseId) {
+  require CourseStatus(courseId) == Existent
+    else reject "Course is not active"
+
+  emit CourseArchived { courseId }
+}
+
+command RegisterStudent(studentId: StudentId) {
+  require StudentExists(studentId) is false
+    else reject "Student is already registered"
+
+  emit StudentRegistered { studentId }
+}
+
+command SubscribeStudentToCourse(courseId: CourseId, studentId: StudentId) {
+  require CourseStatus(courseId) == Existent
+    else reject "Course is not active"
+  require StudentExists(studentId) is true
+    else reject "Student is not registered"
+  require CourseSubscriptionCount(courseId) < CourseCapacity(courseId)
+    else reject "Course is full"
+  require CourseSubscribedStudentIds(courseId) not contains studentId
+    else reject "Student is already subscribed"
+  require StudentSubscriptionCount(studentId) < 10
+    else reject "Student is subscribed to too many courses"
+
+  emit StudentSubscribedToCourse { courseId, studentId }
+}
+
+command UnsubscribeStudentFromCourse(courseId: CourseId, studentId: StudentId) {
+  require CourseStatus(courseId) == Existent
+    else reject "Course is not active"
+  require CourseSubscribedStudentIds(courseId) contains studentId
+    else reject "Student is not subscribed"
+
+  emit StudentUnsubscribedFromCourse { courseId, studentId }
+}
+`;
+
+// The shipped model the example is printed from — held to the printer
+// by dsl.test.js.
+const SOURCE_REFERENCE_EXAMPLE_SLUG = 'course-simple';
+
+const SOURCE_REFERENCE_UNOFFERED = 'Not offered to agents: entities, lifecycles, derived projections, guarded '
+  + 'emissions (emit … when …), optional reads (alias x? = …), excluding, currentValue, and the @icon and '
+  + '@feature annotations. A text or definition that adds one is refused. A model that already uses them '
+  + 'shows them in get_model_source; keep those parts as they are.';
+
+function sourceLanguageReference() {
+  return [
+    SOURCE_REFERENCE_GUIDE,
+    '## Forms\n\n' + SOURCE_REFERENCE_FORMS,
+    '## Tour — a complete model using every construct\n\n~~~\n' + SOURCE_REFERENCE_TOUR + '~~~',
+    '## Example — a shipped model, as get_model_source prints it\n\n~~~\n' + SOURCE_REFERENCE_EXAMPLE + '~~~',
+    SOURCE_REFERENCE_UNOFFERED,
+  ].join('\n\n') + '\n';
+}
+
+// ============================================================
 // The grammar as Monaco reads it (a Monarch definition). Data, so the
 // keyword list sits next to the parser that gives the words meaning.
 // ============================================================

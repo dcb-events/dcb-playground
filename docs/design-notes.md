@@ -47,10 +47,21 @@ and prune what no longer holds.
   the flag off, completion leaves those constructs out
   (`sourceCompletions(…, { experimental })`) and the editor marks the
   ones a text uses at info level (`sourceExperimentalMarks`, read off
-  the tokens) — never an error, the text applies whole. WebMCP is not gated. A share link's
+  the tokens) — never an error, the text applies whole. A share link's
   `&experimental` turns it on for the session without storing it. The
   decisions are in
   `docs/research/2026-10-05-explicit-tags-and-aliases.md`.
+- **WebMCP offers nothing experimental, flag or no flag.** No entity
+  tools, no experimental member in a tool schema (cut by
+  `generate-webmcp-schemas.js`), nothing experimental in the language
+  reference (`sourceLanguageReference`), and an agent's edit that would
+  introduce a use is refused (`introducedExperimentalFeatures`). Following
+  the flag would have meant re-registering the tools on every toggle and
+  an agent API that changes with browser state. Gating stays an offer:
+  a model already using those constructs reads whole over WebMCP and
+  stays editable, since only a use the model does not already have is
+  refused — hiding them from `get_model_source` would have made an
+  apply delete them.
 
 ## Reads, rules and the rule adder
 

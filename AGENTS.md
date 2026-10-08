@@ -55,6 +55,8 @@ documentation; read it before editing the file:
 - `webmcp.js` — registers WebMCP tools on `document.modelContext` so an
   in-browser agent can inspect and edit the open model through the same
   command functions the buttons call. Inert without the API or an open model.
+  Agents are steered to write whole models as code: `get_model_language`
+  serves the reference kept in `dsl.js` (`sourceLanguageReference`).
 
 All classic scripts sharing one global scope — **not** ES modules: the tests
 depend on it, concatenating the files into one `vm` context. (The vendored
@@ -131,7 +133,9 @@ was decided, why, and what was tried and reverted:
   (`experimental()`, shared.js): gate an *offer* — an adder, a picker
   row, a tab, a completion — never the display of something stored. A
   model that uses a gated construct still loads, renders and evaluates
-  whole. WebMCP is not gated.
+  whole. WebMCP offers nothing experimental, flag or no flag: no entity
+  tools or schema members, and an agent's edit that would introduce a
+  use is refused — a model already using one stays editable.
 - **Storage versioning**: `EVENT_LOG_KEY` in `model.js` (`dcb-playground:events:vN`)
   must be bumped whenever a stored definition changes shape. The log is the
   whole state; there are no migrations — a fresh key is the honest move. Keep

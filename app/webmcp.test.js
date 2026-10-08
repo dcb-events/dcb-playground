@@ -16,7 +16,7 @@
 //
 // Run with `node app/webmcp.test.js`.
 // ============================================================
-const { createSandbox, loadApp, makeChecker } = require('./test-harness.js');
+const { createSandbox, loadApp, makeChecker, swap } = require('./test-harness.js');
 
 const { sandbox, store } = createSandbox();
 
@@ -53,12 +53,12 @@ async function call(name, args) {
 (async () => {
   await check('every agreed tool is registered, each with a schema', () => {
     const kinds = [
-      'entity_definition', 'event_definition', 'projection_definition',
+      'event_definition', 'projection_definition',
       'command_definition', 'custom_type_definition', 'scenario_definition',
       'projection_scenario_definition',
     ];
     const names = [
-      'get_model', 'get_model_source', 'apply_model_source',
+      'get_model', 'get_model_source', 'get_model_language', 'apply_model_source',
       'derive_boundary', 'evaluate_command', 'list_problems',
       'start_model', 'remove_definition', 'rename_definition', 'rename_member',
       'drive_command', 'get_sandbox', 'reset_sandbox',
@@ -104,6 +104,29 @@ async function call(name, args) {
     eq(scenarioAdd.required.includes('id'), false, 'an added scenario may omit its id');
     const scenarioUpdate = registered.get('update_scenario_definition').inputSchema;
     eq(scenarioUpdate.required.includes('id'), true, 'an updated one must say which');
+  });
+
+  await check('nothing experimental is offered in any tool\'s schema', () => {
+    const offered = (name) => registered.get(name).inputSchema.properties;
+    for (const name of ['remove_definition', 'rename_definition', 'rename_member']) {
+      eq(offered(name).kind.enum.includes('entity-definition'), false, `${name} offers no entities`);
+    }
+    const command = offered('add_command_definition');
+    eq('icon' in command || 'feature' in command, false, 'no command annotations');
+    eq(Object.keys(command.boundary.items.properties || {}).includes('entity'), false, 'a binding is a projection read');
+    eq('when' in command.publishes.items.properties, false, 'no guarded emissions');
+    eq('derived' in offered('add_projection_definition'), false, 'no derived projections');
+    eq('icon' in offered('add_event_definition'), false, 'no event annotations');
+    eq(JSON.stringify(registered.get('add_projection_definition').inputSchema).includes('"currentValue"'), false,
+      'no currentValue operand');
+  });
+
+  await check('the model language is there before any model is', async () => {
+    const { text, isError } = await call('get_model_language');
+    eq(isError, false, 'needs no open model');
+    eq(text.includes('apply_model_source'), true, 'says how to send a text');
+    eq(text.includes('untagged projection LoanNumbering'), true, 'carries the tour');
+    eq(text.includes('model "Course Example (simple)"'), true, 'and the example');
   });
 
   await check('rename tools offer only what the domain can do', () => {
@@ -353,10 +376,10 @@ async function call(name, args) {
     const { text: empty } = await call('get_model_source');
     eq(empty, 'model "Code Probe"\n', 'an empty model is its name');
     const source = empty + [
+      'tag type ProbeId = string',
       'event ProbeHappened { tag probeId: ProbeId }',
-      'entity Probe (tag probeId: ProbeId) {}',
+      'projection ProbeSeen (tag probeId: ProbeId): boolean = false { on ProbeHappened => set true }',
       'command Probe2(probeId: ProbeId) {',
-      '  alias probe = Probe(probeId)',
       '  emit ProbeHappened { probeId }',
       '}',
     ].join('\n');
@@ -369,11 +392,90 @@ async function call(name, args) {
     eq(sandbox.loadEvents().length, before, 'one undo takes the whole apply back');
     sandbox.redo();
     const { text: back } = await call('get_model_source');
-    eq(back.includes('tag type ProbeId = string'), true, 'the implied identifier is now stated');
+    eq(back.includes('projection ProbeSeen (tag probeId: ProbeId): boolean = false {'), true, 'what was sent is there');
     const refused = await call('apply_model_source', { source: source + '\nevent {' });
     eq(refused.isError, true, 'refused');
     eq(refused.text.includes('- line 8, column 7: Expected an event name'), true, refused.text);
     eq(sandbox.loadEvents().length, after, 'nothing appended');
+  });
+
+  // A model written whole, the way an agent should build one.
+  const LIBRARY = [
+    'model "Library"',
+    'tag type BookId = string',
+    'event BookAdded { tag bookId: BookId }',
+    'projection BookKnown (tag bookId: BookId): boolean = false { on BookAdded => set true }',
+    'command AddBook(bookId: BookId) {',
+    '  require BookKnown(bookId) is false',
+    '    else reject "Book already exists"',
+    '  emit BookAdded { bookId }',
+    '}',
+  ].join('\n');
+  const modelCount = () => Object.keys(projectState()).length;
+
+  await check('start_model creates a whole model from code, in one call', async () => {
+    const { value, isError, text } = await call('start_model', { name: 'Scratch', source: LIBRARY });
+    eq(isError, false, text);
+    eq(store.get('dcb-playground:model'), value.id, 'opened');
+    const opened = projectState()[value.id];
+    eq(opened.name, 'Library', 'the model line names it');
+    eq(Object.keys(opened['command-definitions']), ['AddBook'], 'with its definitions');
+    eq(text.includes('Advisories'), false, 'clean, and not judged against the model open before');
+  });
+
+  await check('start_model without code points the agent at the language', async () => {
+    const { value } = await call('start_model', { name: 'Empty Again' });
+    eq(value.next.includes('get_model_language') && value.next.includes('apply_model_source'), true, value.next);
+  });
+
+  await check('start_model refuses broken code and creates nothing', async () => {
+    const before = modelCount();
+    const { isError, text } = await call('start_model', { name: 'Broken', source: LIBRARY + '\nevent {' });
+    eq(isError, true, 'refused');
+    eq(text.includes('- line 10, column 7: Expected an event name'), true, text);
+    eq(modelCount(), before, 'no empty model left behind');
+  });
+
+  await check('code adding an experimental construct is refused, naming its line', async () => {
+    const before = modelCount();
+    const entity = LIBRARY + '\nentity Book (tag bookId: BookId) {}';
+    const started = await call('start_model', { name: 'Entities', source: entity });
+    eq(started.isError, true, 'refused when starting');
+    eq(started.text.includes('- line 10: Book uses entities'), true, started.text);
+    eq(modelCount(), before, 'and nothing created');
+    await call('start_model', { name: 'Guards', source: LIBRARY });
+    const guarded = swap(LIBRARY, '  emit BookAdded { bookId }', '  emit BookAdded { bookId } when BookKnown(bookId) is false');
+    const applied = await call('apply_model_source', { source: guarded });
+    eq(applied.isError, true, 'refused when applying');
+    eq(applied.text.includes('- line 5: AddBook uses guarded emissions'), true, applied.text);
+  });
+
+  await check('a definition adding an experimental construct is refused', async () => {
+    const { isError, text } = await call('add_command_definition', {
+      name: 'ProbeGuarded',
+      properties: [{ name: 'bookId', propertyType: 'BookId', isOptional: false, isList: false }],
+      boundary: [], conditions: [],
+      publishes: [{
+        name: 'BookAdded', parameters: { bookId: { parameterName: 'bookId' } },
+        when: [{ leftHandSide: { parameterName: 'bookId' }, predicate: 'isNotEmpty' }],
+      }],
+    });
+    eq(isError, true, 'refused');
+    eq(text.includes('ProbeGuarded uses guarded emissions'), true, text);
+    eq('ProbeGuarded' in projectState()[store.get('dcb-playground:model')]['command-definitions'], false, 'not stored');
+  });
+
+  await check('a model already using experimental constructs stays editable', async () => {
+    const entitiesId = loadPredefinedModel(sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-entities'));
+    store.set('dcb-playground:model', entitiesId);
+    const { text: source } = await call('get_model_source');
+    eq(source.includes('entity Course'), true, 'shown as stored');
+    const edited = swap(source, '"Course already exists"', '"Course was already defined"');
+    const applied = await call('apply_model_source', { source: edited });
+    eq(applied.isError, false, applied.text);
+    const command = projectState()[entitiesId]['command-definitions'].DefineCourse;
+    const updated = await call('update_command_definition', { name: 'DefineCourse', ...command });
+    eq(updated.isError, false, 'an entity binding it already had is kept: ' + updated.text);
   });
 
   await check('an agent edit is one undo step of its own', async () => {

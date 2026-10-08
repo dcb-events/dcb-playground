@@ -4,103 +4,6 @@
 // or {id, …body} for the id-keyed scenario kinds), every reference
 // inlined, ready to serve as a WebMCP tool's inputSchema.
 const WEBMCP_DEFINITION_SCHEMAS = {
-  "entity-definition": {
-    "description": "A modeled thing with an identity and a set of projected\nproperties.\n\nAn entity is projected state, **not** a consistency boundary. It\nholds no invariants, handles no commands and decides nothing on\nits own. Every decision is made by a command over the instances\nit binds in its `boundary` — dissolving the fixed aggregate is\nthe point of DCB, so an entity is deliberately not one.\n\nAn entity derives one identifier type, which *is* serialised —\nas an ordinary `customTypeDefinition`, created automatically when\nthe entity is (scalar, `isTag: true`, a plain string) and named\n`identifierType` unless overridden. From then on it is edited\nexactly like any other value type: its `schema` may change, it\nmay switch to `properties` and become composite, it may be\nrenamed. `isTag` and removability are the two things pinned to\nit for as long as the entity owns it — see\n`CustomTypeDefinition`.\n\nThe derived name is reserved: no other `customTypeDefinition` and\nno other entity may claim or derive the same name.\n\nA lifecycle is one of the entity's own properties, named by\n`lifecycle`. It is an ordinary property in every respect — folded\nby an ordinary projection, bound like any other — and what makes\nit the lifecycle is only that the entity points at it. Nothing\nrequires an entity to have one.\n\nThe two-state case needs no vocabulary and declares none: the\nprojection is typed `boolean`, starts `false`, and is set `true`\nby whatever records that the thing is there. A third state is what\nmakes an enum worth declaring, and promoting a boolean to one\nrenames the property, invents the enum and rewrites the\nconditions that guarded it — see\n`docs/research/2026-09-30-entity-lifecycle-as-boolean-existence.md`.\n",
-    "type": "object",
-    "additionalProperties": false,
-    "properties": {
-      "name": {
-        "type": "string",
-        "minLength": 2,
-        "maxLength": 100,
-        "pattern": "^[A-Z][A-Za-z0-9]+$",
-        "examples": [
-          "Course",
-          "Student"
-        ],
-        "description": "What this entity is called — PascalCase, unique among entities.\nA command binds it by this name, and its identifier type is\nderived from it unless `identifierType` says otherwise.\n"
-      },
-      "icon": {
-        "description": "A short glyph — one emoji, or a character or two — that stands\nfor this entity wherever it is named. Presentation only: no\npart of the model reads it, and two entities may share one.\nAbsent means an authoring tool picks its own placeholder.\n",
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 8,
-        "examples": [
-          "📚",
-          "🧾"
-        ]
-      },
-      "identifierType": {
-        "type": "string",
-        "minLength": 2,
-        "maxLength": 100,
-        "pattern": "^[A-Z][A-Za-z0-9]+$",
-        "examples": [
-          "EmailAddress"
-        ],
-        "description": "The name of the entity's derived identifier value type.\nAbsent means the ordinary case: the name *is* `<name>Id` and\ntracks the entity's own name, so renaming the entity renames\nits identifier type too. Given once, it stops tracking — the\nentity may then be renamed freely without moving it.\n\nThis field only ever holds a *name*; the value type it names\nis created when the entity is and from then on is edited in\n`customTypeDefinitions`, never here — there is no\nentity-local schema, fields or tag-schema to author.\n"
-      },
-      "identifierName": {
-        "type": "string",
-        "minLength": 2,
-        "maxLength": 100,
-        "pattern": "^[a-z][A-Za-z0-9]+$",
-        "examples": [
-          "someProperty"
-        ],
-        "description": "The name of the entity's one tag, as a read of it is written —\n`entity Course (tag courseId: CourseId)`. Absent means the\nidentifier type's own name with its first letter lowercased, and\nit tracks that name. Nothing is read by it: an instance is read by\nits identifier's value, and a projection bound as a property names\nits own tag.\n"
-      },
-      "properties": {
-        "description": "The entity's projections, each bound under a local name. An\nentry names a `projectionDefinition` and nothing else — what\nis held, where it starts and which events move it all live\nthere.\n\nNo entry is reserved and no name is privileged — the\nlifecycle is whichever entry `lifecycle` names, whatever it is\ncalled. An entity that consults its own tag but projects\nnothing beyond it — used purely as a reference — declares no\nproperties at all.\n",
-        "type": "array",
-        "items": {
-          "description": "One projection, bound as a property of this entity under a local\nname.\n\nThe binding carries nothing but the two names on purpose. An\noverride here — a different initial value, an extra handler —\nwould be a second place where the mechanics of a fold live, and\nthe whole point of a property being a binding is that there is\nonly one.\n\nWhat makes a projection bindable is its tags: exactly one, typed\nwith this entity's own identifier. Binding it as a property is what\nsupplies that tag's value — the instance being read. A projection\ntagged otherwise is not wrong, it is just not this entity's\nproperty; it is read directly by a command instead.\n",
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "name": {
-              "type": "string",
-              "minLength": 2,
-              "maxLength": 100,
-              "pattern": "^[a-z][A-Za-z0-9]+$",
-              "examples": [
-                "someProperty"
-              ],
-              "description": "What this entity calls the projection. Local to the entity:\ntwo entities may bind the same projection under different\nnames, and a command reads it as `{alias, property: <this>}`.\n"
-            },
-            "projection": {
-              "type": "string",
-              "minLength": 2,
-              "maxLength": 100,
-              "pattern": "^[A-Z][A-Za-z0-9]+$",
-              "examples": [
-                "CourseNumbering",
-                "TenantCourseNumbering"
-              ]
-            }
-          },
-          "required": [
-            "name",
-            "projection"
-          ]
-        }
-      },
-      "lifecycle": {
-        "type": "string",
-        "minLength": 2,
-        "maxLength": 100,
-        "pattern": "^[a-z][A-Za-z0-9]+$",
-        "examples": [
-          "someProperty"
-        ],
-        "description": "The name of the `properties` entry holding the state one of\nthese is in. Absent means this entity declares no lifecycle,\nwhich is an ordinary case and not a defect.\n\nA *local* name, like a command's alias: it names one of this\nentity's own bindings and can never point outside. Naming a\nprojection instead would allow a lifecycle no rule could ever\nguard against, since a condition reads `{alias, property}`.\n\nThe property it names should be a single (non-list) `boolean`,\nor typed with an enum value type. One that is scripted,\nderived, a list or typed a bare string is still a legitimate\ndesignation — it says what the thing's state *is* — but no\nstate machine can be read from it.\n\nAdded in 6.1, and a minor: a 6.0 reader that ignores this\nloses a derived diagram and misreads nothing. No condition\nchanged shape and evaluation is unaffected.\n"
-      }
-    },
-    "required": [
-      "name",
-      "properties"
-    ]
-  },
   "event-definition": {
     "description": "What an event carries. `properties` is the payload — the part\nsomebody emitting the event supplies.\n",
     "type": "object",
@@ -116,16 +19,6 @@ const WEBMCP_DEFINITION_SCHEMAS = {
           "StudentSubscribedToCourse"
         ],
         "description": "What this event type is called — PascalCase, past tense by\nconvention, unique among events. Handlers, emissions and\nscenarios refer to it by this name, and it is the `type` every\nrecorded instance carries.\n"
-      },
-      "icon": {
-        "description": "A short glyph — one emoji, or a character or two — that stands\nfor this event wherever it is named. Presentation only: no\npart of the model reads it, and two events may share one.\nAbsent means an authoring tool picks its own placeholder —\nconventionally the icon of the one command that publishes\nthis event, when exactly one does, and otherwise a neutral\nmark of its own.\n",
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 8,
-        "examples": [
-          "📚",
-          "🧾"
-        ]
       },
       "properties": {
         "description": "The event's payload, in declaration order. Which of these values are\ntags is `tags`.\n",
@@ -437,361 +330,6 @@ const WEBMCP_DEFINITION_SCHEMAS = {
           "initialState"
         ]
       },
-      "derived": {
-        "description": "Present when this projection is not folded at all but\n*derived* (6.0): one declared predicate over other\nprojections' values. It carries no handlers, no initial value\nand no script — its query is the union of its operands'\nqueries, and its value is the predicate's outcome, so\n`valueType` is always `boolean` and `isList` false.\n",
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "leftHandSide": {
-            "description": "One side of a derived projection's predicate: another\nprojection's value, read by the tags the operand gives it, or a\nliteral / enum-member reference to compare against.\n",
-            "oneOf": [
-              {
-                "description": "Another projection's value, as a derived projection's operand. It\ngives the projection's tags by name — each one of the *owning*\nprojection's own tags (`{parameterName}`) or a `TagLiteral`, of the\ntype the tag declares — and `arguments` one literal per argument of a\nscripted projection: the same \"required here, rejected there\" rule\nevery other map of them follows.\n",
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "projection": {
-                    "type": "string",
-                    "minLength": 2,
-                    "maxLength": 100,
-                    "pattern": "^[A-Z][A-Za-z0-9]+$",
-                    "examples": [
-                      "CourseNumbering",
-                      "TenantCourseNumbering"
-                    ]
-                  },
-                  "tags": {
-                    "type": "object",
-                    "additionalProperties": {
-                      "oneOf": [
-                        {
-                          "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it —\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n",
-                          "type": "object",
-                          "additionalProperties": false,
-                          "properties": {
-                            "parameterName": {
-                              "type": "string",
-                              "minLength": 2,
-                              "maxLength": 100,
-                              "pattern": "^[a-z][A-Za-z0-9]+$",
-                              "examples": [
-                                "someProperty"
-                              ]
-                            },
-                            "property": {
-                              "type": "string",
-                              "minLength": 2,
-                              "maxLength": 100,
-                              "pattern": "^[a-z][A-Za-z0-9]+$",
-                              "examples": [
-                                "someProperty"
-                              ],
-                              "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
-                            }
-                          },
-                          "required": [
-                            "parameterName"
-                          ]
-                        },
-                        {
-                          "description": "A literal tag value with its tag type — `CourseId(\"c1\")` in the\nnotation. The type has to be the one the tag it fills declares; a\nliteral states it all the same, so the text says which tag it is.\nAllowed only where a tag is.\n",
-                          "type": "object",
-                          "additionalProperties": false,
-                          "properties": {
-                            "tagType": {
-                              "description": "A simple type, or a declared value type — scalar (which includes\nan enum and a tag-marked identifier) or composite, including an\nentity's own derived identifier (`<name>Id` unless overridden,\nitself an ordinary `customTypeDefinition`). Every declared value\ntype shares one namespace, so a name resolves against it.\n",
-                              "type": "string",
-                              "anyOf": [
-                                {
-                                  "enum": [
-                                    "boolean",
-                                    "integer",
-                                    "string"
-                                  ]
-                                },
-                                {
-                                  "type": "string",
-                                  "minLength": 2,
-                                  "maxLength": 100,
-                                  "pattern": "^[A-Z][A-Za-z0-9]+$",
-                                  "examples": [
-                                    "EmailAddress"
-                                  ]
-                                }
-                              ]
-                            },
-                            "tagValue": {
-                              "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
-                              "type": [
-                                "string",
-                                "number",
-                                "boolean"
-                              ]
-                            }
-                          },
-                          "required": [
-                            "tagType",
-                            "tagValue"
-                          ]
-                        }
-                      ]
-                    },
-                    "default": {}
-                  },
-                  "arguments": {
-                    "type": "object",
-                    "additionalProperties": {
-                      "oneOf": [
-                        {
-                          "description": "A member of an enum type — a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains — a plain string is by far the\ncommon case, but nothing here requires it.\n",
-                          "type": "object",
-                          "additionalProperties": false,
-                          "properties": {
-                            "enumMember": {
-                              "type": [
-                                "string",
-                                "number",
-                                "boolean"
-                              ]
-                            }
-                          },
-                          "required": [
-                            "enumMember"
-                          ]
-                        },
-                        {
-                          "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
-                          "type": [
-                            "string",
-                            "number",
-                            "boolean"
-                          ]
-                        }
-                      ]
-                    },
-                    "default": {}
-                  }
-                },
-                "required": [
-                  "projection"
-                ]
-              },
-              {
-                "description": "A member of an enum type — a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains — a plain string is by far the\ncommon case, but nothing here requires it.\n",
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "enumMember": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean"
-                    ]
-                  }
-                },
-                "required": [
-                  "enumMember"
-                ]
-              },
-              {
-                "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
-                "type": [
-                  "string",
-                  "number",
-                  "boolean"
-                ]
-              }
-            ]
-          },
-          "predicate": {
-            "enum": [
-              "equals",
-              "countEquals",
-              "countLessThan",
-              "countGreaterThan",
-              "contains",
-              "containsAny",
-              "lessThan",
-              "lessThanOrEquals",
-              "greaterThan",
-              "greaterThanOrEquals",
-              "startsWith",
-              "endsWith"
-            ]
-          },
-          "rightHandSide": {
-            "description": "One side of a derived projection's predicate: another\nprojection's value, read by the tags the operand gives it, or a\nliteral / enum-member reference to compare against.\n",
-            "oneOf": [
-              {
-                "description": "Another projection's value, as a derived projection's operand. It\ngives the projection's tags by name — each one of the *owning*\nprojection's own tags (`{parameterName}`) or a `TagLiteral`, of the\ntype the tag declares — and `arguments` one literal per argument of a\nscripted projection: the same \"required here, rejected there\" rule\nevery other map of them follows.\n",
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "projection": {
-                    "type": "string",
-                    "minLength": 2,
-                    "maxLength": 100,
-                    "pattern": "^[A-Z][A-Za-z0-9]+$",
-                    "examples": [
-                      "CourseNumbering",
-                      "TenantCourseNumbering"
-                    ]
-                  },
-                  "tags": {
-                    "type": "object",
-                    "additionalProperties": {
-                      "oneOf": [
-                        {
-                          "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it —\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n",
-                          "type": "object",
-                          "additionalProperties": false,
-                          "properties": {
-                            "parameterName": {
-                              "type": "string",
-                              "minLength": 2,
-                              "maxLength": 100,
-                              "pattern": "^[a-z][A-Za-z0-9]+$",
-                              "examples": [
-                                "someProperty"
-                              ]
-                            },
-                            "property": {
-                              "type": "string",
-                              "minLength": 2,
-                              "maxLength": 100,
-                              "pattern": "^[a-z][A-Za-z0-9]+$",
-                              "examples": [
-                                "someProperty"
-                              ],
-                              "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
-                            }
-                          },
-                          "required": [
-                            "parameterName"
-                          ]
-                        },
-                        {
-                          "description": "A literal tag value with its tag type — `CourseId(\"c1\")` in the\nnotation. The type has to be the one the tag it fills declares; a\nliteral states it all the same, so the text says which tag it is.\nAllowed only where a tag is.\n",
-                          "type": "object",
-                          "additionalProperties": false,
-                          "properties": {
-                            "tagType": {
-                              "description": "A simple type, or a declared value type — scalar (which includes\nan enum and a tag-marked identifier) or composite, including an\nentity's own derived identifier (`<name>Id` unless overridden,\nitself an ordinary `customTypeDefinition`). Every declared value\ntype shares one namespace, so a name resolves against it.\n",
-                              "type": "string",
-                              "anyOf": [
-                                {
-                                  "enum": [
-                                    "boolean",
-                                    "integer",
-                                    "string"
-                                  ]
-                                },
-                                {
-                                  "type": "string",
-                                  "minLength": 2,
-                                  "maxLength": 100,
-                                  "pattern": "^[A-Z][A-Za-z0-9]+$",
-                                  "examples": [
-                                    "EmailAddress"
-                                  ]
-                                }
-                              ]
-                            },
-                            "tagValue": {
-                              "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
-                              "type": [
-                                "string",
-                                "number",
-                                "boolean"
-                              ]
-                            }
-                          },
-                          "required": [
-                            "tagType",
-                            "tagValue"
-                          ]
-                        }
-                      ]
-                    },
-                    "default": {}
-                  },
-                  "arguments": {
-                    "type": "object",
-                    "additionalProperties": {
-                      "oneOf": [
-                        {
-                          "description": "A member of an enum type — a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains — a plain string is by far the\ncommon case, but nothing here requires it.\n",
-                          "type": "object",
-                          "additionalProperties": false,
-                          "properties": {
-                            "enumMember": {
-                              "type": [
-                                "string",
-                                "number",
-                                "boolean"
-                              ]
-                            }
-                          },
-                          "required": [
-                            "enumMember"
-                          ]
-                        },
-                        {
-                          "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
-                          "type": [
-                            "string",
-                            "number",
-                            "boolean"
-                          ]
-                        }
-                      ]
-                    },
-                    "default": {}
-                  }
-                },
-                "required": [
-                  "projection"
-                ]
-              },
-              {
-                "description": "A member of an enum type — a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains — a plain string is by far the\ncommon case, but nothing here requires it.\n",
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "enumMember": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean"
-                    ]
-                  }
-                },
-                "required": [
-                  "enumMember"
-                ]
-              },
-              {
-                "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
-                "type": [
-                  "string",
-                  "number",
-                  "boolean"
-                ]
-              }
-            ]
-          },
-          "negate": {
-            "description": "When true the derived value is the predicate's complement.",
-            "type": "boolean",
-            "default": false
-          }
-        },
-        "required": [
-          "leftHandSide",
-          "predicate",
-          "rightHandSide"
-        ]
-      },
       "handlers": {
         "description": "At most one handler per event type; the handled types are the\nprojection's query. Declared handlers carry an operation and\nan operand; a scripted projection's carry one `code` body\neach.\n\nOne per type is a real constraint, not a convenience: tag\nmatching is by value, whichever property carries it, so an\nevent holding one of this projection's tag types in *two*\nproperties (an assignment naming both the new holder and the\none replaced) reaches both instances and the handler fires\nfor both. A declarative handler cannot tell the two apart —\nsplit the event so each records one fact, or script the\nprojection; an advisory points at the ambiguity.\n\nAn empty list is legal and means nothing moves this yet — a\nprojection mid-authoring reads as its initial value, which is\na more useful thing to show than a refusal to store it.\n\nA *derived* projection has no handlers at all — nothing\nadvances it, and its query is its operands'.\n",
         "type": "array",
@@ -839,21 +377,6 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                   },
                   "required": [
                     "eventProperty"
-                  ]
-                },
-                {
-                  "description": "The property's value before this event is applied — the fold's\naccumulator.\n",
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "currentValue": {
-                      "enum": [
-                        true
-                      ]
-                    }
-                  },
-                  "required": [
-                    "currentValue"
                   ]
                 },
                 {
@@ -929,22 +452,6 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         ],
         "description": "What this command is called — PascalCase, imperative by\nconvention, unique among commands. Scenarios refer to it by this\nname.\n"
       },
-      "icon": {
-        "description": "A short glyph — one emoji, or a character or two — that stands\nfor this command wherever it is named. Presentation only: no\npart of the model reads it, and two commands may share one.\nAbsent means an authoring tool picks its own placeholder. The\nevent this command publishes on success takes this same icon\nby default (see `EventDefinition.icon`), which is why setting\none here is usually enough to mark both.\n",
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 8,
-        "examples": [
-          "📚",
-          "🧾"
-        ]
-      },
-      "feature": {
-        "description": "The feature this command belongs to — \"Course management\",\n\"Checkout\". Commands naming the same feature are presented\ntogether.\n\nIt is the one field in this document that the modelled system\ndoes not read. No query, boundary, condition or tag depends on\nit, and removing every `feature` changes no behaviour: it\nrecords how a *modeler* grouped their work, on a different\naxis from the entities the rest of the model is organised\naround.\n\nA feature is therefore never declared. It exists because\ncommands name it, which is why it costs nothing and why an\nempty one is not a thing that can be stored.\n",
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 100
-      },
       "properties": {
         "description": "The command payload.",
         "type": "array",
@@ -1003,785 +510,344 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         "description": "Everything this command reads — entity instances and\nprojections alike, each under a local alias. **This list is\nthe command's dynamic consistency boundary**, with nothing\ncontributed from outside it: the append condition's query is\nthe union of the bindings' queries, an entity binding\ncontributing its tag(s) — more than one when its identifier\nis composite — restricted to the event types reachable\nthrough the properties the conditions read, a projection\nbinding contributing its arguments as tags and its handled\ntypes.\n\nEvery identifier-typed property of every published event\nmust resolve to a binding in this list — a command may\nnot write a tag it did not consult. A property supplied from\na projection binding is exempt, provided that projection\nhandles the event being published: its query then already\ncovers every event that could have issued the value, and a\nfreshly minted identifier has no history to consult. The\nexemption is unconditional in the partition — a projection\nscoped so narrowly that two partitions can mint the same\nidentifier is a modelling error of the same class as folding\nthe wrong event, and is not checked here.\n\n**Coverage follows tag derivation into composites.** Since a\nproperty typed `Item[]` writes one `ProductId:<id>` per element,\ncoverage is checked against the identifier *leaves* of an\nemitted property's type, not its surface: emitting `items`\ninto `ProductsOrdered.items` is covered by a binding whose\n`id` is `{parameterName: items, property: productId}`. Without\nthe recursion the event carrying the most tags would be the\none checked least.\n\n**Declaration order is the chain.** A binding may draw its\noperands from a binding *above* it and never from one below,\nso a command can read one thing to learn which thing to read\nnext. One left-to-right pass resolves the chain, and a cycle\nis impossible to write.\n\n**Queries are derived, never authored.** A binding waits only\nfor the bindings it actually references, so the number of\nqueries to the store is the *depth* of that dependency\ngraph, not the length of this list: two bindings that both\ntake their identifiers from the payload are read in one\nquery, not two. Each binding's query is `1 + max(query of the\nbindings its operands name)`, or 1 when it names none —\ncomputable in the same left-to-right pass, since the list is\nalready topologically sorted by the rule above.\n\nIt is a graph and not a tree: `id` and `excluding` may each\nname a different binding, and a binding's arguments may name\nseveral. That is why the structure is\nderived and rendered rather than written down as nesting,\nwhich could not represent a binding with two parents without\nduplicating it.\n\n**Execution.** The chain reads in several queries, but the\nwhole command decides as of a single point in the log:\n\n  1. `P` := the position of the last event overall — a\n     backwards read of everything, limited to one.\n  2. Resolve the bindings query by query, every read\n     **bounded at `P`**. Bounding matters: a read past `P`\n     could decide on an event that the append condition then\n     rejects it for.\n  3. Evaluate the conditions over the resolved instances.\n  4. Append with the condition\n     `query = the union of every binding's query, after = P`.\n\nBecause the query covers everything read and `P` precedes\nevery read, any concurrent change to anything this command\nlooked at invalidates the append — and nothing else does.\n",
         "type": "array",
         "items": {
-          "description": "One thing the command reads. Distinguished by which of `entity`\nor `projection` it carries.\n",
-          "oneOf": [
-            {
-              "description": "One entity instance the command consults, under a local alias.\nThe alias defaults to the entity name with a lowercased first\nletter; an explicit alias is only needed when a command binds\ntwo instances of the same entity (e.g. transferring between two\ncourses).\n",
+          "description": "One projection the command reads, under a local alias. The alias\ndefaults to the projection name with a lowercased first letter. The\nsame read may be written in place instead, without an alias\n(`ProjectionRead`).\n\nA projection read costs a query, takes its place in the chain when a\nvalue comes from a binding above it, and its query belongs in the\nappend condition — whichever of the two spellings it has.\n",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "alias": {
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 100,
+              "pattern": "^[a-z][A-Za-z0-9]*$",
+              "examples": [
+                "course",
+                "sourceCourse"
+              ]
+            },
+            "projection": {
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 100,
+              "pattern": "^[A-Z][A-Za-z0-9]+$",
+              "examples": [
+                "CourseNumbering",
+                "TenantCourseNumbering"
+              ]
+            },
+            "tags": {
+              "description": "A value for each tag the projection declares, keyed by its name,\nand none it does not — of the declared type, which is the tag's\nkey; a literal states it (`TagLiteral`). An untagged projection is\ngiven none. A value may name a binding above this one, which is\nwhat puts a projection into the chain; it may not resolve to a\nlist, except under `each` (`TagEach`).\n",
               "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "alias": {
-                  "type": "string",
-                  "minLength": 2,
-                  "maxLength": 100,
-                  "pattern": "^[a-z][A-Za-z0-9]*$",
-                  "examples": [
-                    "course",
-                    "sourceCourse"
-                  ]
-                },
-                "entity": {
-                  "type": "string",
-                  "minLength": 2,
-                  "maxLength": 100,
-                  "pattern": "^[A-Z][A-Za-z0-9]+$",
-                  "examples": [
-                    "Course",
-                    "Student"
-                  ]
-                },
-                "id": {
-                  "description": "Supplies the instance's identifier — typically a property of\nthe command payload, but equally a projected property of an\ninstance bound above this one, or the value of a projection\nread.\n\n**Many instances are read where it says so.** `{each: …}` over a\nlist binds one instance per element and contributes one query\nitem each (`Course(each student.subscribedCourseIds)`); reading a\nlist property of an already-fanned-out alias yields a list of\nlists, which is flattened. Without `each`, a list is no one\ninstance's identifier.\n",
-                  "oneOf": [
-                    {
-                      "description": "Where a value comes from inside a command — its boundary, its\nconditions and its event emissions — a projection read in place\namong them.\n",
-                      "oneOf": [
-                        {
-                          "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it —\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n",
-                          "type": "object",
-                          "additionalProperties": false,
-                          "properties": {
-                            "parameterName": {
-                              "type": "string",
-                              "minLength": 2,
-                              "maxLength": 100,
-                              "pattern": "^[a-z][A-Za-z0-9]+$",
-                              "examples": [
-                                "someProperty"
-                              ]
-                            },
-                            "property": {
-                              "type": "string",
-                              "minLength": 2,
-                              "maxLength": 100,
-                              "pattern": "^[a-z][A-Za-z0-9]+$",
-                              "examples": [
-                                "someProperty"
-                              ],
-                              "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
-                            }
-                          },
-                          "required": [
-                            "parameterName"
-                          ]
-                        },
-                        {
-                          "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` is a projected property of\na bound entity instance. `{alias: courseNumbering}` — no\n`property` — is a bound projection's value.\n\n`property` is therefore **required on an entity alias** and\n**rejected on a projection alias**: an entity has many values and\nno single one to mean, a projection has exactly one and no name\nfor it. That is the same shape of rule `excluding` and\n`arguments` already follow — a field that means nothing in its\nposition is a mistake, not a no-op.\n",
-                          "type": "object",
-                          "additionalProperties": false,
-                          "properties": {
-                            "alias": {
-                              "type": "string",
-                              "minLength": 2,
-                              "maxLength": 100,
-                              "pattern": "^[a-z][A-Za-z0-9]*$",
-                              "examples": [
-                                "course",
-                                "sourceCourse"
-                              ]
-                            },
-                            "property": {
-                              "type": "string",
-                              "minLength": 2,
-                              "maxLength": 100,
-                              "pattern": "^[a-z][A-Za-z0-9]+$",
-                              "examples": [
-                                "someProperty"
-                              ]
-                            }
-                          },
-                          "required": [
-                            "alias"
-                          ]
-                        },
-                        {
-                          "description": "A member of an enum type — a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains — a plain string is by far the\ncommon case, but nothing here requires it.\n",
-                          "type": "object",
-                          "additionalProperties": false,
-                          "properties": {
-                            "enumMember": {
-                              "type": [
-                                "string",
-                                "number",
-                                "boolean"
-                              ]
-                            }
-                          },
-                          "required": [
-                            "enumMember"
-                          ]
-                        },
-                        {
-                          "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
-                          "type": [
-                            "string",
-                            "number",
-                            "boolean"
-                          ]
-                        },
-                        {
-                          "type": "object",
-                          "description": "A projection read in place — a rule's operand, an emission's\nvalue, another read's tag — the same read a `ProjectionBinding`\nnames, without the name: `CourseStatus(courseId)`. Written twice in\none command, it is one query. `tags`: one value per tag the projection declares, keyed by its name — an operand of the tag's type, a tag literal {tagType, tagValue}, or {each: operand}. `arguments`: the values a script takes, keyed by name.",
-                          "properties": {
-                            "projection": {
-                              "type": "string"
-                            },
-                            "tags": {
-                              "type": "object"
-                            },
-                            "arguments": {
-                              "type": "object"
-                            }
-                          },
-                          "required": [
-                            "projection"
-                          ]
-                        }
-                      ]
-                    },
-                    {
-                      "description": "The fan-out, said where it happens: the read is made once per\nelement of a list, each element the tag's value, and a rule over the\nread holds for every one — paired by index with values read from the\nsame list (`ProductExists(each items.productId)`). A read fans out\nover one list at most. An entity read fans out the same way, its\nidentifier `{each: …}`.\n",
-                      "type": "object",
-                      "additionalProperties": false,
-                      "properties": {
-                        "each": {
-                          "oneOf": [
-                            {
-                              "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it —\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n",
-                              "type": "object",
-                              "additionalProperties": false,
-                              "properties": {
-                                "parameterName": {
-                                  "type": "string",
-                                  "minLength": 2,
-                                  "maxLength": 100,
-                                  "pattern": "^[a-z][A-Za-z0-9]+$",
-                                  "examples": [
-                                    "someProperty"
-                                  ]
-                                },
-                                "property": {
-                                  "type": "string",
-                                  "minLength": 2,
-                                  "maxLength": 100,
-                                  "pattern": "^[a-z][A-Za-z0-9]+$",
-                                  "examples": [
-                                    "someProperty"
-                                  ],
-                                  "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
-                                }
-                              },
-                              "required": [
-                                "parameterName"
-                              ]
-                            },
-                            {
-                              "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` is a projected property of\na bound entity instance. `{alias: courseNumbering}` — no\n`property` — is a bound projection's value.\n\n`property` is therefore **required on an entity alias** and\n**rejected on a projection alias**: an entity has many values and\nno single one to mean, a projection has exactly one and no name\nfor it. That is the same shape of rule `excluding` and\n`arguments` already follow — a field that means nothing in its\nposition is a mistake, not a no-op.\n",
-                              "type": "object",
-                              "additionalProperties": false,
-                              "properties": {
-                                "alias": {
-                                  "type": "string",
-                                  "minLength": 2,
-                                  "maxLength": 100,
-                                  "pattern": "^[a-z][A-Za-z0-9]*$",
-                                  "examples": [
-                                    "course",
-                                    "sourceCourse"
-                                  ]
-                                },
-                                "property": {
-                                  "type": "string",
-                                  "minLength": 2,
-                                  "maxLength": 100,
-                                  "pattern": "^[a-z][A-Za-z0-9]+$",
-                                  "examples": [
-                                    "someProperty"
-                                  ]
-                                }
-                              },
-                              "required": [
-                                "alias"
-                              ]
-                            }
-                          ]
-                        }
-                      },
-                      "required": [
-                        "each"
-                      ]
-                    }
-                  ]
-                },
-                "excluding": {
-                  "description": "One identifier to drop from a fanned-out set. Only meaningful\non a fanned-out binding, and needed when the set is derived\nfrom instances that necessarily include the one being acted\non — rescheduling a course must compare against its\nsubscribers' *other* courses, and every subscriber is by\ndefinition also in this one.\n\nIt narrows the binding rather than the conditions on purpose:\na condition over a fanned-out alias must hold for every\ninstance, so \"except this one\" cannot be stated as a\ncondition without turning it into an implication.\n",
-                  "oneOf": [
-                    {
-                      "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it —\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n",
-                      "type": "object",
-                      "additionalProperties": false,
-                      "properties": {
-                        "parameterName": {
-                          "type": "string",
-                          "minLength": 2,
-                          "maxLength": 100,
-                          "pattern": "^[a-z][A-Za-z0-9]+$",
-                          "examples": [
-                            "someProperty"
-                          ]
-                        },
-                        "property": {
-                          "type": "string",
-                          "minLength": 2,
-                          "maxLength": 100,
-                          "pattern": "^[a-z][A-Za-z0-9]+$",
-                          "examples": [
-                            "someProperty"
-                          ],
-                          "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
-                        }
-                      },
-                      "required": [
-                        "parameterName"
-                      ]
-                    },
-                    {
-                      "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` is a projected property of\na bound entity instance. `{alias: courseNumbering}` — no\n`property` — is a bound projection's value.\n\n`property` is therefore **required on an entity alias** and\n**rejected on a projection alias**: an entity has many values and\nno single one to mean, a projection has exactly one and no name\nfor it. That is the same shape of rule `excluding` and\n`arguments` already follow — a field that means nothing in its\nposition is a mistake, not a no-op.\n",
-                      "type": "object",
-                      "additionalProperties": false,
-                      "properties": {
-                        "alias": {
-                          "type": "string",
-                          "minLength": 2,
-                          "maxLength": 100,
-                          "pattern": "^[a-z][A-Za-z0-9]*$",
-                          "examples": [
-                            "course",
-                            "sourceCourse"
-                          ]
-                        },
-                        "property": {
-                          "type": "string",
-                          "minLength": 2,
-                          "maxLength": 100,
-                          "pattern": "^[a-z][A-Za-z0-9]+$",
-                          "examples": [
-                            "someProperty"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "alias"
-                      ]
-                    },
-                    {
-                      "description": "A member of an enum type — a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains — a plain string is by far the\ncommon case, but nothing here requires it.\n",
-                      "type": "object",
-                      "additionalProperties": false,
-                      "properties": {
-                        "enumMember": {
-                          "type": [
-                            "string",
-                            "number",
-                            "boolean"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "enumMember"
-                      ]
-                    },
-                    {
-                      "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
-                      "type": [
-                        "string",
-                        "number",
-                        "boolean"
-                      ]
-                    },
-                    {
-                      "type": "object",
-                      "description": "A projection read in place — a rule's operand, an emission's\nvalue, another read's tag — the same read a `ProjectionBinding`\nnames, without the name: `CourseStatus(courseId)`. Written twice in\none command, it is one query. `tags`: one value per tag the projection declares, keyed by its name — an operand of the tag's type, a tag literal {tagType, tagValue}, or {each: operand}. `arguments`: the values a script takes, keyed by name.",
-                      "properties": {
-                        "projection": {
-                          "type": "string"
-                        },
-                        "tags": {
-                          "type": "object"
-                        },
-                        "arguments": {
-                          "type": "object"
-                        }
-                      },
-                      "required": [
-                        "projection"
-                      ]
-                    }
-                  ]
-                },
-                "isOptional": {
-                  "description": "The binding may be absent: when its `id` resolves to null —\na derived identifier nothing has set yet, an optional\nparameter left unset — it binds zero instances instead of\nbeing an evaluation error. Conditions reading the alias then\nhold vacuously (the rule steps aside rather than deciding on\na phantom), and reading a property of it yields null.\n\nDeliberately opt-in: an unset identifier nobody declared\npossible stays the loud error it always was, because it is\nusually an accident. Only meaningful on a singular binding —\na fanned-out one already binds nothing over an empty list.\n",
-                  "type": "boolean",
-                  "default": false
-                },
-                "arguments": {
-                  "description": "Values handed to the scripted projections this binding reads\nthrough the entity's properties, keyed by argument name.\nRequired exactly when one of them declares an argument, and\nrejected otherwise — the same rule `excluding` follows, and\nfor the same reason: a field that means nothing here is a\nmistake, not a no-op. Two scripted projections asking for the\nsame name are answered once: they are read through one\nbinding, at one instant.\n\nThe entity's own identifier is never supplied here. It is what\nthe binding already names, and it reaches the projection as\nthe identifier-typed argument the property binding fills.\n\nThey are supplied, not ambient. A command that consults\ntime-sensitive state takes the instant as a payload property\nand passes it here, so the decision stays a pure function of\nits events and its parameters — the same events and the same\narguments always reach the same verdict. An implicit clock\nwould make replay disagree with the original decision.\n\nThey do not touch the append condition. The query still\ncovers the same tags and the same event types; an argument\ndecides how the events already read are projected, never\nwhich ones are read.\n",
-                  "type": "object",
-                  "additionalProperties": {
-                    "description": "Where a value comes from inside a command — its boundary, its\nconditions and its event emissions — a projection read in place\namong them.\n",
-                    "oneOf": [
-                      {
-                        "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it —\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n",
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                          "parameterName": {
-                            "type": "string",
-                            "minLength": 2,
-                            "maxLength": 100,
-                            "pattern": "^[a-z][A-Za-z0-9]+$",
-                            "examples": [
-                              "someProperty"
-                            ]
-                          },
-                          "property": {
-                            "type": "string",
-                            "minLength": 2,
-                            "maxLength": 100,
-                            "pattern": "^[a-z][A-Za-z0-9]+$",
-                            "examples": [
-                              "someProperty"
-                            ],
-                            "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
-                          }
-                        },
-                        "required": [
-                          "parameterName"
+              "additionalProperties": {
+                "description": "The value one tag of a read is given: a value in the command's\nscope of the tag's declared type (a tag-marked value type directly,\nor a record with tag-marked fields — one tag per field), a\n`TagLiteral`, a projection read in place, or a `TagEach`, reading once\nper element of a list.\n",
+                "oneOf": [
+                  {
+                    "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it —\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n",
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "parameterName": {
+                        "type": "string",
+                        "minLength": 2,
+                        "maxLength": 100,
+                        "pattern": "^[a-z][A-Za-z0-9]+$",
+                        "examples": [
+                          "someProperty"
                         ]
                       },
-                      {
-                        "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` is a projected property of\na bound entity instance. `{alias: courseNumbering}` — no\n`property` — is a bound projection's value.\n\n`property` is therefore **required on an entity alias** and\n**rejected on a projection alias**: an entity has many values and\nno single one to mean, a projection has exactly one and no name\nfor it. That is the same shape of rule `excluding` and\n`arguments` already follow — a field that means nothing in its\nposition is a mistake, not a no-op.\n",
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                          "alias": {
-                            "type": "string",
-                            "minLength": 2,
-                            "maxLength": 100,
-                            "pattern": "^[a-z][A-Za-z0-9]*$",
-                            "examples": [
-                              "course",
-                              "sourceCourse"
+                      "property": {
+                        "type": "string",
+                        "minLength": 2,
+                        "maxLength": 100,
+                        "pattern": "^[a-z][A-Za-z0-9]+$",
+                        "examples": [
+                          "someProperty"
+                        ],
+                        "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
+                      }
+                    },
+                    "required": [
+                      "parameterName"
+                    ]
+                  },
+                  {
+                    "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` is a projected property of\na bound entity instance. `{alias: courseNumbering}` — no\n`property` — is a bound projection's value.\n\n`property` is therefore **required on an entity alias** and\n**rejected on a projection alias**: an entity has many values and\nno single one to mean, a projection has exactly one and no name\nfor it. That is the same shape of rule `excluding` and\n`arguments` already follow — a field that means nothing in its\nposition is a mistake, not a no-op.\n",
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "alias": {
+                        "type": "string",
+                        "minLength": 2,
+                        "maxLength": 100,
+                        "pattern": "^[a-z][A-Za-z0-9]*$",
+                        "examples": [
+                          "course",
+                          "sourceCourse"
+                        ]
+                      },
+                      "property": {
+                        "type": "string",
+                        "minLength": 2,
+                        "maxLength": 100,
+                        "pattern": "^[a-z][A-Za-z0-9]+$",
+                        "examples": [
+                          "someProperty"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "alias"
+                    ]
+                  },
+                  {
+                    "description": "A literal tag value with its tag type — `CourseId(\"c1\")` in the\nnotation. The type has to be the one the tag it fills declares; a\nliteral states it all the same, so the text says which tag it is.\nAllowed only where a tag is.\n",
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "tagType": {
+                        "description": "A simple type, or a declared value type — scalar (which includes\nan enum and a tag-marked identifier) or composite, including an\nentity's own derived identifier (`<name>Id` unless overridden,\nitself an ordinary `customTypeDefinition`). Every declared value\ntype shares one namespace, so a name resolves against it.\n",
+                        "type": "string",
+                        "anyOf": [
+                          {
+                            "enum": [
+                              "boolean",
+                              "integer",
+                              "string"
                             ]
                           },
-                          "property": {
+                          {
                             "type": "string",
                             "minLength": 2,
                             "maxLength": 100,
-                            "pattern": "^[a-z][A-Za-z0-9]+$",
+                            "pattern": "^[A-Z][A-Za-z0-9]+$",
                             "examples": [
-                              "someProperty"
+                              "EmailAddress"
                             ]
                           }
-                        },
-                        "required": [
-                          "alias"
                         ]
                       },
-                      {
-                        "description": "A member of an enum type — a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains — a plain string is by far the\ncommon case, but nothing here requires it.\n",
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                          "enumMember": {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "enumMember"
-                        ]
-                      },
-                      {
+                      "tagValue": {
                         "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
                         "type": [
                           "string",
                           "number",
                           "boolean"
                         ]
-                      },
-                      {
-                        "type": "object",
-                        "description": "A projection read in place — a rule's operand, an emission's\nvalue, another read's tag — the same read a `ProjectionBinding`\nnames, without the name: `CourseStatus(courseId)`. Written twice in\none command, it is one query. `tags`: one value per tag the projection declares, keyed by its name — an operand of the tag's type, a tag literal {tagType, tagValue}, or {each: operand}. `arguments`: the values a script takes, keyed by name.",
-                        "properties": {
-                          "projection": {
-                            "type": "string"
-                          },
-                          "tags": {
-                            "type": "object"
-                          },
-                          "arguments": {
-                            "type": "object"
-                          }
-                        },
-                        "required": [
-                          "projection"
-                        ]
                       }
+                    },
+                    "required": [
+                      "tagType",
+                      "tagValue"
                     ]
-                  }
-                }
-              },
-              "required": [
-                "alias",
-                "entity",
-                "id"
-              ]
-            },
-            {
-              "description": "One projection the command reads, under a local alias. The alias\ndefaults to the projection name with a lowercased first letter. The\nsame read may be written in place instead, without an alias\n(`ProjectionRead`).\n\nA projection read costs a query, takes its place in the chain when a\nvalue comes from a binding above it, and its query belongs in the\nappend condition — whichever of the two spellings it has.\n",
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "alias": {
-                  "type": "string",
-                  "minLength": 2,
-                  "maxLength": 100,
-                  "pattern": "^[a-z][A-Za-z0-9]*$",
-                  "examples": [
-                    "course",
-                    "sourceCourse"
-                  ]
-                },
-                "projection": {
-                  "type": "string",
-                  "minLength": 2,
-                  "maxLength": 100,
-                  "pattern": "^[A-Z][A-Za-z0-9]+$",
-                  "examples": [
-                    "CourseNumbering",
-                    "TenantCourseNumbering"
-                  ]
-                },
-                "tags": {
-                  "description": "A value for each tag the projection declares, keyed by its name,\nand none it does not — of the declared type, which is the tag's\nkey; a literal states it (`TagLiteral`). An untagged projection is\ngiven none. A value may name a binding above this one, which is\nwhat puts a projection into the chain; it may not resolve to a\nlist, except under `each` (`TagEach`).\n",
-                  "type": "object",
-                  "additionalProperties": {
-                    "description": "The value one tag of a read is given: a value in the command's\nscope of the tag's declared type (a tag-marked value type directly,\nor a record with tag-marked fields — one tag per field), a\n`TagLiteral`, a projection read in place, or a `TagEach`, reading once\nper element of a list.\n",
-                    "oneOf": [
-                      {
-                        "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it —\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n",
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                          "parameterName": {
-                            "type": "string",
-                            "minLength": 2,
-                            "maxLength": 100,
-                            "pattern": "^[a-z][A-Za-z0-9]+$",
-                            "examples": [
-                              "someProperty"
-                            ]
-                          },
-                          "property": {
-                            "type": "string",
-                            "minLength": 2,
-                            "maxLength": 100,
-                            "pattern": "^[a-z][A-Za-z0-9]+$",
-                            "examples": [
-                              "someProperty"
-                            ],
-                            "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
-                          }
-                        },
-                        "required": [
-                          "parameterName"
-                        ]
+                  },
+                  {
+                    "type": "object",
+                    "description": "A projection read in place — a rule's operand, an emission's\nvalue, another read's tag — the same read a `ProjectionBinding`\nnames, without the name: `CourseStatus(courseId)`. Written twice in\none command, it is one query. `tags`: one value per tag the projection declares, keyed by its name — an operand of the tag's type, a tag literal {tagType, tagValue}, or {each: operand}. `arguments`: the values a script takes, keyed by name.",
+                    "properties": {
+                      "projection": {
+                        "type": "string"
                       },
-                      {
-                        "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` is a projected property of\na bound entity instance. `{alias: courseNumbering}` — no\n`property` — is a bound projection's value.\n\n`property` is therefore **required on an entity alias** and\n**rejected on a projection alias**: an entity has many values and\nno single one to mean, a projection has exactly one and no name\nfor it. That is the same shape of rule `excluding` and\n`arguments` already follow — a field that means nothing in its\nposition is a mistake, not a no-op.\n",
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                          "alias": {
-                            "type": "string",
-                            "minLength": 2,
-                            "maxLength": 100,
-                            "pattern": "^[a-z][A-Za-z0-9]*$",
-                            "examples": [
-                              "course",
-                              "sourceCourse"
-                            ]
-                          },
-                          "property": {
-                            "type": "string",
-                            "minLength": 2,
-                            "maxLength": 100,
-                            "pattern": "^[a-z][A-Za-z0-9]+$",
-                            "examples": [
-                              "someProperty"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "alias"
-                        ]
+                      "tags": {
+                        "type": "object"
                       },
-                      {
-                        "description": "A literal tag value with its tag type — `CourseId(\"c1\")` in the\nnotation. The type has to be the one the tag it fills declares; a\nliteral states it all the same, so the text says which tag it is.\nAllowed only where a tag is.\n",
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                          "tagType": {
-                            "description": "A simple type, or a declared value type — scalar (which includes\nan enum and a tag-marked identifier) or composite, including an\nentity's own derived identifier (`<name>Id` unless overridden,\nitself an ordinary `customTypeDefinition`). Every declared value\ntype shares one namespace, so a name resolves against it.\n",
-                            "type": "string",
-                            "anyOf": [
-                              {
-                                "enum": [
-                                  "boolean",
-                                  "integer",
-                                  "string"
-                                ]
-                              },
-                              {
+                      "arguments": {
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "projection"
+                    ]
+                  },
+                  {
+                    "description": "The fan-out, said where it happens: the read is made once per\nelement of a list, each element the tag's value, and a rule over the\nread holds for every one — paired by index with values read from the\nsame list (`ProductExists(each items.productId)`). A read fans out\nover one list at most. An entity read fans out the same way, its\nidentifier `{each: …}`.\n",
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "each": {
+                        "oneOf": [
+                          {
+                            "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it —\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n",
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "parameterName": {
                                 "type": "string",
                                 "minLength": 2,
                                 "maxLength": 100,
-                                "pattern": "^[A-Z][A-Za-z0-9]+$",
+                                "pattern": "^[a-z][A-Za-z0-9]+$",
                                 "examples": [
-                                  "EmailAddress"
-                                ]
-                              }
-                            ]
-                          },
-                          "tagValue": {
-                            "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "tagType",
-                          "tagValue"
-                        ]
-                      },
-                      {
-                        "type": "object",
-                        "description": "A projection read in place — a rule's operand, an emission's\nvalue, another read's tag — the same read a `ProjectionBinding`\nnames, without the name: `CourseStatus(courseId)`. Written twice in\none command, it is one query. `tags`: one value per tag the projection declares, keyed by its name — an operand of the tag's type, a tag literal {tagType, tagValue}, or {each: operand}. `arguments`: the values a script takes, keyed by name.",
-                        "properties": {
-                          "projection": {
-                            "type": "string"
-                          },
-                          "tags": {
-                            "type": "object"
-                          },
-                          "arguments": {
-                            "type": "object"
-                          }
-                        },
-                        "required": [
-                          "projection"
-                        ]
-                      },
-                      {
-                        "description": "The fan-out, said where it happens: the read is made once per\nelement of a list, each element the tag's value, and a rule over the\nread holds for every one — paired by index with values read from the\nsame list (`ProductExists(each items.productId)`). A read fans out\nover one list at most. An entity read fans out the same way, its\nidentifier `{each: …}`.\n",
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                          "each": {
-                            "oneOf": [
-                              {
-                                "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it —\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n",
-                                "type": "object",
-                                "additionalProperties": false,
-                                "properties": {
-                                  "parameterName": {
-                                    "type": "string",
-                                    "minLength": 2,
-                                    "maxLength": 100,
-                                    "pattern": "^[a-z][A-Za-z0-9]+$",
-                                    "examples": [
-                                      "someProperty"
-                                    ]
-                                  },
-                                  "property": {
-                                    "type": "string",
-                                    "minLength": 2,
-                                    "maxLength": 100,
-                                    "pattern": "^[a-z][A-Za-z0-9]+$",
-                                    "examples": [
-                                      "someProperty"
-                                    ],
-                                    "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
-                                  }
-                                },
-                                "required": [
-                                  "parameterName"
+                                  "someProperty"
                                 ]
                               },
-                              {
-                                "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` is a projected property of\na bound entity instance. `{alias: courseNumbering}` — no\n`property` — is a bound projection's value.\n\n`property` is therefore **required on an entity alias** and\n**rejected on a projection alias**: an entity has many values and\nno single one to mean, a projection has exactly one and no name\nfor it. That is the same shape of rule `excluding` and\n`arguments` already follow — a field that means nothing in its\nposition is a mistake, not a no-op.\n",
-                                "type": "object",
-                                "additionalProperties": false,
-                                "properties": {
-                                  "alias": {
-                                    "type": "string",
-                                    "minLength": 2,
-                                    "maxLength": 100,
-                                    "pattern": "^[a-z][A-Za-z0-9]*$",
-                                    "examples": [
-                                      "course",
-                                      "sourceCourse"
-                                    ]
-                                  },
-                                  "property": {
-                                    "type": "string",
-                                    "minLength": 2,
-                                    "maxLength": 100,
-                                    "pattern": "^[a-z][A-Za-z0-9]+$",
-                                    "examples": [
-                                      "someProperty"
-                                    ]
-                                  }
-                                },
-                                "required": [
-                                  "alias"
+                              "property": {
+                                "type": "string",
+                                "minLength": 2,
+                                "maxLength": 100,
+                                "pattern": "^[a-z][A-Za-z0-9]+$",
+                                "examples": [
+                                  "someProperty"
+                                ],
+                                "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
+                              }
+                            },
+                            "required": [
+                              "parameterName"
+                            ]
+                          },
+                          {
+                            "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` is a projected property of\na bound entity instance. `{alias: courseNumbering}` — no\n`property` — is a bound projection's value.\n\n`property` is therefore **required on an entity alias** and\n**rejected on a projection alias**: an entity has many values and\nno single one to mean, a projection has exactly one and no name\nfor it. That is the same shape of rule `excluding` and\n`arguments` already follow — a field that means nothing in its\nposition is a mistake, not a no-op.\n",
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "alias": {
+                                "type": "string",
+                                "minLength": 2,
+                                "maxLength": 100,
+                                "pattern": "^[a-z][A-Za-z0-9]*$",
+                                "examples": [
+                                  "course",
+                                  "sourceCourse"
+                                ]
+                              },
+                              "property": {
+                                "type": "string",
+                                "minLength": 2,
+                                "maxLength": 100,
+                                "pattern": "^[a-z][A-Za-z0-9]+$",
+                                "examples": [
+                                  "someProperty"
                                 ]
                               }
+                            },
+                            "required": [
+                              "alias"
                             ]
                           }
-                        },
-                        "required": [
-                          "each"
                         ]
                       }
+                    },
+                    "required": [
+                      "each"
+                    ]
+                  }
+                ]
+              },
+              "default": {}
+            },
+            "arguments": {
+              "description": "The values a scripted projection's code takes besides its\ntags, keyed by argument name — exactly its `script.arguments`.\nA declared or derived projection takes none.\n",
+              "type": "object",
+              "additionalProperties": {
+                "description": "Where a value comes from inside a command — its boundary, its\nconditions and its event emissions — a projection read in place\namong them.\n",
+                "oneOf": [
+                  {
+                    "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it —\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n",
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "parameterName": {
+                        "type": "string",
+                        "minLength": 2,
+                        "maxLength": 100,
+                        "pattern": "^[a-z][A-Za-z0-9]+$",
+                        "examples": [
+                          "someProperty"
+                        ]
+                      },
+                      "property": {
+                        "type": "string",
+                        "minLength": 2,
+                        "maxLength": 100,
+                        "pattern": "^[a-z][A-Za-z0-9]+$",
+                        "examples": [
+                          "someProperty"
+                        ],
+                        "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
+                      }
+                    },
+                    "required": [
+                      "parameterName"
                     ]
                   },
-                  "default": {}
-                },
-                "arguments": {
-                  "description": "The values a scripted projection's code takes besides its\ntags, keyed by argument name — exactly its `script.arguments`.\nA declared or derived projection takes none.\n",
-                  "type": "object",
-                  "additionalProperties": {
-                    "description": "Where a value comes from inside a command — its boundary, its\nconditions and its event emissions — a projection read in place\namong them.\n",
-                    "oneOf": [
-                      {
-                        "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it —\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n",
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                          "parameterName": {
-                            "type": "string",
-                            "minLength": 2,
-                            "maxLength": 100,
-                            "pattern": "^[a-z][A-Za-z0-9]+$",
-                            "examples": [
-                              "someProperty"
-                            ]
-                          },
-                          "property": {
-                            "type": "string",
-                            "minLength": 2,
-                            "maxLength": 100,
-                            "pattern": "^[a-z][A-Za-z0-9]+$",
-                            "examples": [
-                              "someProperty"
-                            ],
-                            "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
-                          }
-                        },
-                        "required": [
-                          "parameterName"
+                  {
+                    "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` is a projected property of\na bound entity instance. `{alias: courseNumbering}` — no\n`property` — is a bound projection's value.\n\n`property` is therefore **required on an entity alias** and\n**rejected on a projection alias**: an entity has many values and\nno single one to mean, a projection has exactly one and no name\nfor it. That is the same shape of rule `excluding` and\n`arguments` already follow — a field that means nothing in its\nposition is a mistake, not a no-op.\n",
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "alias": {
+                        "type": "string",
+                        "minLength": 2,
+                        "maxLength": 100,
+                        "pattern": "^[a-z][A-Za-z0-9]*$",
+                        "examples": [
+                          "course",
+                          "sourceCourse"
                         ]
                       },
-                      {
-                        "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` is a projected property of\na bound entity instance. `{alias: courseNumbering}` — no\n`property` — is a bound projection's value.\n\n`property` is therefore **required on an entity alias** and\n**rejected on a projection alias**: an entity has many values and\nno single one to mean, a projection has exactly one and no name\nfor it. That is the same shape of rule `excluding` and\n`arguments` already follow — a field that means nothing in its\nposition is a mistake, not a no-op.\n",
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                          "alias": {
-                            "type": "string",
-                            "minLength": 2,
-                            "maxLength": 100,
-                            "pattern": "^[a-z][A-Za-z0-9]*$",
-                            "examples": [
-                              "course",
-                              "sourceCourse"
-                            ]
-                          },
-                          "property": {
-                            "type": "string",
-                            "minLength": 2,
-                            "maxLength": 100,
-                            "pattern": "^[a-z][A-Za-z0-9]+$",
-                            "examples": [
-                              "someProperty"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "alias"
+                      "property": {
+                        "type": "string",
+                        "minLength": 2,
+                        "maxLength": 100,
+                        "pattern": "^[a-z][A-Za-z0-9]+$",
+                        "examples": [
+                          "someProperty"
                         ]
-                      },
-                      {
-                        "description": "A member of an enum type — a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains — a plain string is by far the\ncommon case, but nothing here requires it.\n",
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                          "enumMember": {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "enumMember"
-                        ]
-                      },
-                      {
-                        "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
+                      }
+                    },
+                    "required": [
+                      "alias"
+                    ]
+                  },
+                  {
+                    "description": "A member of an enum type — a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains — a plain string is by far the\ncommon case, but nothing here requires it.\n",
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "enumMember": {
                         "type": [
                           "string",
                           "number",
                           "boolean"
                         ]
-                      },
-                      {
-                        "type": "object",
-                        "description": "A projection read in place — a rule's operand, an emission's\nvalue, another read's tag — the same read a `ProjectionBinding`\nnames, without the name: `CourseStatus(courseId)`. Written twice in\none command, it is one query. `tags`: one value per tag the projection declares, keyed by its name — an operand of the tag's type, a tag literal {tagType, tagValue}, or {each: operand}. `arguments`: the values a script takes, keyed by name.",
-                        "properties": {
-                          "projection": {
-                            "type": "string"
-                          },
-                          "tags": {
-                            "type": "object"
-                          },
-                          "arguments": {
-                            "type": "object"
-                          }
-                        },
-                        "required": [
-                          "projection"
-                        ]
                       }
+                    },
+                    "required": [
+                      "enumMember"
                     ]
                   },
-                  "default": {}
-                }
+                  {
+                    "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
+                    "type": [
+                      "string",
+                      "number",
+                      "boolean"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "description": "A projection read in place — a rule's operand, an emission's\nvalue, another read's tag — the same read a `ProjectionBinding`\nnames, without the name: `CourseStatus(courseId)`. Written twice in\none command, it is one query. `tags`: one value per tag the projection declares, keyed by its name — an operand of the tag's type, a tag literal {tagType, tagValue}, or {each: operand}. `arguments`: the values a script takes, keyed by name.",
+                    "properties": {
+                      "projection": {
+                        "type": "string"
+                      },
+                      "tags": {
+                        "type": "object"
+                      },
+                      "arguments": {
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "projection"
+                    ]
+                  }
+                ]
               },
-              "required": [
-                "alias",
-                "projection"
-              ]
+              "default": {}
             }
+          },
+          "required": [
+            "alias",
+            "projection"
           ]
         }
       },
@@ -2247,452 +1313,6 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                 "CourseDefined",
                 "StudentSubscribedToCourse"
               ]
-            },
-            "when": {
-              "description": "Conditions under which this emission is published, ANDed —\nabsent or empty means always. Boundary reads inside a guard\ncount toward the command's query exactly as `conditions`\nreads do: a guard may hide nothing from the derived DCB.\n",
-              "type": "array",
-              "items": {
-                "allOf": [
-                  {
-                    "oneOf": [
-                      {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                          "leftHandSide": {
-                            "description": "Where a value comes from inside a command — its boundary, its\nconditions and its event emissions — a projection read in place\namong them.\n",
-                            "oneOf": [
-                              {
-                                "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it —\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n",
-                                "type": "object",
-                                "additionalProperties": false,
-                                "properties": {
-                                  "parameterName": {
-                                    "type": "string",
-                                    "minLength": 2,
-                                    "maxLength": 100,
-                                    "pattern": "^[a-z][A-Za-z0-9]+$",
-                                    "examples": [
-                                      "someProperty"
-                                    ]
-                                  },
-                                  "property": {
-                                    "type": "string",
-                                    "minLength": 2,
-                                    "maxLength": 100,
-                                    "pattern": "^[a-z][A-Za-z0-9]+$",
-                                    "examples": [
-                                      "someProperty"
-                                    ],
-                                    "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
-                                  }
-                                },
-                                "required": [
-                                  "parameterName"
-                                ]
-                              },
-                              {
-                                "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` is a projected property of\na bound entity instance. `{alias: courseNumbering}` — no\n`property` — is a bound projection's value.\n\n`property` is therefore **required on an entity alias** and\n**rejected on a projection alias**: an entity has many values and\nno single one to mean, a projection has exactly one and no name\nfor it. That is the same shape of rule `excluding` and\n`arguments` already follow — a field that means nothing in its\nposition is a mistake, not a no-op.\n",
-                                "type": "object",
-                                "additionalProperties": false,
-                                "properties": {
-                                  "alias": {
-                                    "type": "string",
-                                    "minLength": 2,
-                                    "maxLength": 100,
-                                    "pattern": "^[a-z][A-Za-z0-9]*$",
-                                    "examples": [
-                                      "course",
-                                      "sourceCourse"
-                                    ]
-                                  },
-                                  "property": {
-                                    "type": "string",
-                                    "minLength": 2,
-                                    "maxLength": 100,
-                                    "pattern": "^[a-z][A-Za-z0-9]+$",
-                                    "examples": [
-                                      "someProperty"
-                                    ]
-                                  }
-                                },
-                                "required": [
-                                  "alias"
-                                ]
-                              },
-                              {
-                                "description": "A member of an enum type — a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains — a plain string is by far the\ncommon case, but nothing here requires it.\n",
-                                "type": "object",
-                                "additionalProperties": false,
-                                "properties": {
-                                  "enumMember": {
-                                    "type": [
-                                      "string",
-                                      "number",
-                                      "boolean"
-                                    ]
-                                  }
-                                },
-                                "required": [
-                                  "enumMember"
-                                ]
-                              },
-                              {
-                                "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
-                                "type": [
-                                  "string",
-                                  "number",
-                                  "boolean"
-                                ]
-                              },
-                              {
-                                "type": "object",
-                                "description": "A projection read in place — a rule's operand, an emission's\nvalue, another read's tag — the same read a `ProjectionBinding`\nnames, without the name: `CourseStatus(courseId)`. Written twice in\none command, it is one query. `tags`: one value per tag the projection declares, keyed by its name — an operand of the tag's type, a tag literal {tagType, tagValue}, or {each: operand}. `arguments`: the values a script takes, keyed by name.",
-                                "properties": {
-                                  "projection": {
-                                    "type": "string"
-                                  },
-                                  "tags": {
-                                    "type": "object"
-                                  },
-                                  "arguments": {
-                                    "type": "object"
-                                  }
-                                },
-                                "required": [
-                                  "projection"
-                                ]
-                              }
-                            ]
-                          },
-                          "predicate": {
-                            "enum": [
-                              "isEmpty",
-                              "isNotEmpty",
-                              "isTrue",
-                              "isFalse"
-                            ]
-                          },
-                          "negate": {
-                            "description": "When true the condition holds iff the predicate does *not*.",
-                            "type": "boolean",
-                            "default": false
-                          },
-                          "rejection": {
-                            "description": "The message a refusal by this condition carries. Required on a\ncommand's rule (`Rule`); an emission's `when` guard never\nrejects, so it has none.\n",
-                            "type": "string",
-                            "minLength": 1,
-                            "maxLength": 200,
-                            "pattern": "^[^\\n]*\\S[^\\n]*$"
-                          }
-                        },
-                        "required": [
-                          "leftHandSide",
-                          "predicate"
-                        ]
-                      },
-                      {
-                        "description": "`contains` asks whether a list holds one value; `containsAny` asks\nwhether two lists intersect, which is how \"these two schedules\nclash\" is stated. Both sides of `containsAny` must be lists of the\nsame type, and `negate` turns it into \"must not overlap\".\n\n`equalsAny` asks whether a scalar equals one entry of a literal\nlist — \"status is one of Draft, Submitted\" — and `negate` turns it\ninto \"is not one of\". It is the one predicate whose\n`rightHandSide` is a `ValueList` rather than a `CommandOperand`,\nand the only predicate a `ValueList` means anything under;\nmembership against *data* stays `contains`/`containsAny` over a\nlist-typed source. An empty list holds for nothing (negated: for\neverything).\n",
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                          "leftHandSide": {
-                            "description": "Where a value comes from inside a command — its boundary, its\nconditions and its event emissions — a projection read in place\namong them.\n",
-                            "oneOf": [
-                              {
-                                "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it —\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n",
-                                "type": "object",
-                                "additionalProperties": false,
-                                "properties": {
-                                  "parameterName": {
-                                    "type": "string",
-                                    "minLength": 2,
-                                    "maxLength": 100,
-                                    "pattern": "^[a-z][A-Za-z0-9]+$",
-                                    "examples": [
-                                      "someProperty"
-                                    ]
-                                  },
-                                  "property": {
-                                    "type": "string",
-                                    "minLength": 2,
-                                    "maxLength": 100,
-                                    "pattern": "^[a-z][A-Za-z0-9]+$",
-                                    "examples": [
-                                      "someProperty"
-                                    ],
-                                    "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
-                                  }
-                                },
-                                "required": [
-                                  "parameterName"
-                                ]
-                              },
-                              {
-                                "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` is a projected property of\na bound entity instance. `{alias: courseNumbering}` — no\n`property` — is a bound projection's value.\n\n`property` is therefore **required on an entity alias** and\n**rejected on a projection alias**: an entity has many values and\nno single one to mean, a projection has exactly one and no name\nfor it. That is the same shape of rule `excluding` and\n`arguments` already follow — a field that means nothing in its\nposition is a mistake, not a no-op.\n",
-                                "type": "object",
-                                "additionalProperties": false,
-                                "properties": {
-                                  "alias": {
-                                    "type": "string",
-                                    "minLength": 2,
-                                    "maxLength": 100,
-                                    "pattern": "^[a-z][A-Za-z0-9]*$",
-                                    "examples": [
-                                      "course",
-                                      "sourceCourse"
-                                    ]
-                                  },
-                                  "property": {
-                                    "type": "string",
-                                    "minLength": 2,
-                                    "maxLength": 100,
-                                    "pattern": "^[a-z][A-Za-z0-9]+$",
-                                    "examples": [
-                                      "someProperty"
-                                    ]
-                                  }
-                                },
-                                "required": [
-                                  "alias"
-                                ]
-                              },
-                              {
-                                "description": "A member of an enum type — a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains — a plain string is by far the\ncommon case, but nothing here requires it.\n",
-                                "type": "object",
-                                "additionalProperties": false,
-                                "properties": {
-                                  "enumMember": {
-                                    "type": [
-                                      "string",
-                                      "number",
-                                      "boolean"
-                                    ]
-                                  }
-                                },
-                                "required": [
-                                  "enumMember"
-                                ]
-                              },
-                              {
-                                "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
-                                "type": [
-                                  "string",
-                                  "number",
-                                  "boolean"
-                                ]
-                              },
-                              {
-                                "type": "object",
-                                "description": "A projection read in place — a rule's operand, an emission's\nvalue, another read's tag — the same read a `ProjectionBinding`\nnames, without the name: `CourseStatus(courseId)`. Written twice in\none command, it is one query. `tags`: one value per tag the projection declares, keyed by its name — an operand of the tag's type, a tag literal {tagType, tagValue}, or {each: operand}. `arguments`: the values a script takes, keyed by name.",
-                                "properties": {
-                                  "projection": {
-                                    "type": "string"
-                                  },
-                                  "tags": {
-                                    "type": "object"
-                                  },
-                                  "arguments": {
-                                    "type": "object"
-                                  }
-                                },
-                                "required": [
-                                  "projection"
-                                ]
-                              }
-                            ]
-                          },
-                          "predicate": {
-                            "enum": [
-                              "equals",
-                              "equalsAny",
-                              "countEquals",
-                              "countLessThan",
-                              "countGreaterThan",
-                              "contains",
-                              "containsAny",
-                              "lessThan",
-                              "lessThanOrEquals",
-                              "greaterThan",
-                              "greaterThanOrEquals",
-                              "startsWith",
-                              "endsWith"
-                            ]
-                          },
-                          "rightHandSide": {
-                            "oneOf": [
-                              {
-                                "description": "Where a value comes from inside a command — its boundary, its\nconditions and its event emissions — a projection read in place\namong them.\n",
-                                "oneOf": [
-                                  {
-                                    "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it —\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n",
-                                    "type": "object",
-                                    "additionalProperties": false,
-                                    "properties": {
-                                      "parameterName": {
-                                        "type": "string",
-                                        "minLength": 2,
-                                        "maxLength": 100,
-                                        "pattern": "^[a-z][A-Za-z0-9]+$",
-                                        "examples": [
-                                          "someProperty"
-                                        ]
-                                      },
-                                      "property": {
-                                        "type": "string",
-                                        "minLength": 2,
-                                        "maxLength": 100,
-                                        "pattern": "^[a-z][A-Za-z0-9]+$",
-                                        "examples": [
-                                          "someProperty"
-                                        ],
-                                        "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
-                                      }
-                                    },
-                                    "required": [
-                                      "parameterName"
-                                    ]
-                                  },
-                                  {
-                                    "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` is a projected property of\na bound entity instance. `{alias: courseNumbering}` — no\n`property` — is a bound projection's value.\n\n`property` is therefore **required on an entity alias** and\n**rejected on a projection alias**: an entity has many values and\nno single one to mean, a projection has exactly one and no name\nfor it. That is the same shape of rule `excluding` and\n`arguments` already follow — a field that means nothing in its\nposition is a mistake, not a no-op.\n",
-                                    "type": "object",
-                                    "additionalProperties": false,
-                                    "properties": {
-                                      "alias": {
-                                        "type": "string",
-                                        "minLength": 2,
-                                        "maxLength": 100,
-                                        "pattern": "^[a-z][A-Za-z0-9]*$",
-                                        "examples": [
-                                          "course",
-                                          "sourceCourse"
-                                        ]
-                                      },
-                                      "property": {
-                                        "type": "string",
-                                        "minLength": 2,
-                                        "maxLength": 100,
-                                        "pattern": "^[a-z][A-Za-z0-9]+$",
-                                        "examples": [
-                                          "someProperty"
-                                        ]
-                                      }
-                                    },
-                                    "required": [
-                                      "alias"
-                                    ]
-                                  },
-                                  {
-                                    "description": "A member of an enum type — a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains — a plain string is by far the\ncommon case, but nothing here requires it.\n",
-                                    "type": "object",
-                                    "additionalProperties": false,
-                                    "properties": {
-                                      "enumMember": {
-                                        "type": [
-                                          "string",
-                                          "number",
-                                          "boolean"
-                                        ]
-                                      }
-                                    },
-                                    "required": [
-                                      "enumMember"
-                                    ]
-                                  },
-                                  {
-                                    "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
-                                    "type": [
-                                      "string",
-                                      "number",
-                                      "boolean"
-                                    ]
-                                  },
-                                  {
-                                    "type": "object",
-                                    "description": "A projection read in place — a rule's operand, an emission's\nvalue, another read's tag — the same read a `ProjectionBinding`\nnames, without the name: `CourseStatus(courseId)`. Written twice in\none command, it is one query. `tags`: one value per tag the projection declares, keyed by its name — an operand of the tag's type, a tag literal {tagType, tagValue}, or {each: operand}. `arguments`: the values a script takes, keyed by name.",
-                                    "properties": {
-                                      "projection": {
-                                        "type": "string"
-                                      },
-                                      "tags": {
-                                        "type": "object"
-                                      },
-                                      "arguments": {
-                                        "type": "object"
-                                      }
-                                    },
-                                    "required": [
-                                      "projection"
-                                    ]
-                                  }
-                                ]
-                              },
-                              {
-                                "description": "A literal list of values to compare against — the right-hand side\nof `equalsAny`, and besides `InitialValue` the one place this\ndocument spells a list out. Entries are literals or renameable\nenum-member references, never parameter or alias references\n(membership against data is `contains`/`containsAny` over a\nlist-typed source) and never `null` — \"unset or one of these\" is\ntwo conditions, not a null entry.\n",
-                                "type": "array",
-                                "items": {
-                                  "oneOf": [
-                                    {
-                                      "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
-                                      "type": [
-                                        "string",
-                                        "number",
-                                        "boolean"
-                                      ]
-                                    },
-                                    {
-                                      "description": "A member of an enum type — a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains — a plain string is by far the\ncommon case, but nothing here requires it.\n",
-                                      "type": "object",
-                                      "additionalProperties": false,
-                                      "properties": {
-                                        "enumMember": {
-                                          "type": [
-                                            "string",
-                                            "number",
-                                            "boolean"
-                                          ]
-                                        }
-                                      },
-                                      "required": [
-                                        "enumMember"
-                                      ]
-                                    }
-                                  ]
-                                }
-                              }
-                            ]
-                          },
-                          "negate": {
-                            "description": "When true the condition holds iff the predicate does *not*.",
-                            "type": "boolean",
-                            "default": false
-                          },
-                          "rejection": {
-                            "description": "The message a refusal by this condition carries. Required on a\ncommand's rule (`Rule`); an emission's `when` guard never\nrejects, so it has none.\n",
-                            "type": "string",
-                            "minLength": 1,
-                            "maxLength": 200,
-                            "pattern": "^[^\\n]*\\S[^\\n]*$"
-                          }
-                        },
-                        "required": [
-                          "leftHandSide",
-                          "predicate",
-                          "rightHandSide"
-                        ]
-                      }
-                    ]
-                  },
-                  {
-                    "not": {
-                      "required": [
-                        "rejection"
-                      ]
-                    }
-                  }
-                ]
-              },
-              "default": []
             },
             "parameters": {
               "description": "Keys are the event's property names; each value is a\n`CommandOperand` describing where the value comes from at\nexecution time. An *optional* event property's entry may be\nomitted; the published event then carries the explicit `null`\nthere — and writes no tag for it, when the property is\ntag-marked.\n",

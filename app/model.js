@@ -1029,6 +1029,16 @@ function experimentalFeatures(model) {
   return found.sort((a, b) => order.indexOf(a.feature) - order.indexOf(b.feature));
 }
 
+// What `after` uses that `before` did not, by feature and definition —
+// the experimental features an edit would introduce. A use the model
+// already has is not introduced by keeping it, so an editor that does
+// not offer them (WebMCP) can still edit a model that uses them.
+function introducedExperimentalFeatures(before, after) {
+  const keyOf = ({ feature, where }) => feature + '\u0000' + where;
+  const had = new Set(experimentalFeatures(before).map(keyOf));
+  return experimentalFeatures(after).filter((use) => !had.has(keyOf(use)));
+}
+
 // Both sides of a derived predicate, in evaluation order — the derived
 // analogue of `conditionOperands`.
 function derivedOperands(derived) {
