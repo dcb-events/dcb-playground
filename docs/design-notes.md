@@ -466,6 +466,18 @@ and prune what no longer holds.
   the register is for. An entity, event or command carries a mark only
   if one was authored — there is no hashed fallback, and `iconPrefix`
   is what keeps an unmarked name from rendering behind a stray space.
+- **Naming a new command is a page of its own** (`renderNewCommand`),
+  in the main area, whichever way in asked — the empty model's
+  "+ First command", the rail's "+ Command", a feature heading's "+",
+  the palette. It used to be a form in the rail, under the heading
+  that asked ("the answer lands where the question was asked"); that
+  was reverted because on a phone the rail is a drawer kept closed, so
+  every button outside it opened a form nobody could see, and because
+  the first step of a command should look the same from every door.
+  What the heading's position used to say, the page says in words —
+  `in <feature>` — and asking from the rail closes the drawer. The page
+  sits over the current view without moving it, so Cancel is only
+  forgetting the question.
 
 ## The code view's language
 

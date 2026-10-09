@@ -31,7 +31,7 @@ const { sandbox, store } = createSandbox();
 loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js', 'shared.js'], {
   withPage: true,
   trailer: 'globalThis.state = state; globalThis.render = render; globalThis.session = session;'
-    + ' globalThis.closeForms = closeForms; globalThis.codeView = codeView;'
+    + ' globalThis.closeForms = closeForms; globalThis.codeView = codeView; globalThis.UNGROUPED = UNGROUPED;'
     + ' globalThis.PREDEFINED_MODELS = PREDEFINED_MODELS;'
     + ' globalThis.NOTATION_GUIDE_URL = NOTATION_GUIDE_URL; globalThis.NOTATION_REFERENCE_URL = NOTATION_REFERENCE_URL;',
 });
@@ -4333,6 +4333,94 @@ check('the reference links only anchors the website defines', () => {
     sandbox.setExperimental(true);
     eq(store.get('dcb-playground:experimental'), 'on', 'and turning it on is stored');
   });
+}
+
+// ---------------------------------------------------------------
+// Naming a new command is a page of its own in the main area, whatever
+// began it. On a phone the rail is a closed drawer, and a form painted
+// into it was a button that did nothing. Here the page's elements are
+// kept per id for one render, so a test can ask which of them the form
+// landed in.
+// ---------------------------------------------------------------
+{
+  const screen = {};
+  const realGetElementById = sandbox.document.getElementById;
+  sandbox.document.getElementById = (id) => (screen[id] ||= sandbox.document.createElement('div'));
+  const fresh = () => { for (const key of Object.keys(screen)) delete screen[key]; };
+  const repaint = () => { fresh(); sandbox.render(); };
+  const naming = (node) => textOf(node).includes('New command');
+  const button = (node, label) => findAll(node, (n) => n.tag === 'button' && textOf(n) === label)[0];
+
+  check('the empty model\'s first command is named on the page, not in the rail', () => {
+    store.clear();
+    sandbox.bumpLogRevision();
+    const id = sandbox.createDcbModel('Empty Probe');
+    store.set('dcb-playground:model', id);
+    sandbox.closeForms();
+    Object.assign(sandbox.state, { view: 'slice', slice: null, code: false, railOpen: false });
+    repaint();
+    const first = button(screen.main, '+ First command');
+    eq(!!first, true, 'the blank page offers it');
+    fresh();
+    first.onclick();
+    eq(naming(screen.main), true, 'the form is in the main area');
+    eq(naming(screen.rail), false, 'and not in the drawer a phone keeps closed');
+    sandbox.closeForms();
+  });
+
+  const { id, model } = build(ENTITIES);
+  store.set('dcb-playground:model', id);
+  const feature = sandbox.featureGroups(model()).find((g) => g.name !== sandbox.UNGROUPED).name;
+
+  check('the rail\'s "+ Command" opens the page and closes the drawer', () => {
+    sandbox.closeForms();
+    Object.assign(sandbox.state, { view: 'slice', slice: 'DefineCourse', code: false, railOpen: true });
+    repaint();
+    const add = button(screen.rail, '+ Command');
+    fresh();
+    add.onclick();
+    eq(naming(screen.main), true, 'the form is in the main area');
+    eq(naming(screen.rail), false, 'and not in the rail');
+    eq(sandbox.state.railOpen, false, 'the drawer steps aside for it');
+    sandbox.closeForms();
+  });
+
+  check('a feature heading\'s "+" says on the page where the command lands', () => {
+    sandbox.closeForms();
+    Object.assign(sandbox.state, { view: 'slice', slice: 'DefineCourse', code: false, railOpen: true });
+    repaint();
+    const plus = findAll(screen.rail, (n) => n.tag === 'button'
+      && n.attributes.title === 'Add a command to this feature')[0];
+    eq(!!plus, true, 'the heading offers it');
+    fresh();
+    sandbox.beginNewCommand(model(), feature);
+    eq(naming(screen.main), true, 'the form is in the main area');
+    eq(textOf(screen.main).includes('in ' + feature), true, `got: ${textOf(screen.main)}`);
+    eq(naming(screen.rail), false, 'and not under the heading');
+
+    const input = findAll(screen.main, (n) => n.tag === 'input')[0];
+    input.oninput({ target: { value: 'audit course' } });
+    button(screen.main, 'Add').onclick();
+    eq(sandbox.featureOf(model()['command-definitions'].AuditCourse), feature, 'and it lands there');
+    eq(sandbox.state.slice, 'AuditCourse', 'its page opens');
+  });
+
+  check('cancelling goes back to the page that was open', () => {
+    sandbox.closeForms();
+    Object.assign(sandbox.state, { view: 'slice', slice: 'DefineCourse', code: false, railOpen: false });
+    repaint();
+    const before = textOf(screen.main);
+    fresh();
+    sandbox.beginNewCommand(model());
+    eq(naming(screen.main), true, 'the form replaces the page');
+    const cancel = button(screen.main, 'Cancel');
+    fresh();
+    cancel.onclick();
+    eq(naming(screen.main), false, 'the form is gone');
+    eq(textOf(screen.main), before, 'and the command page is back as it was');
+  });
+
+  sandbox.document.getElementById = realGetElementById;
 }
 
 finish();

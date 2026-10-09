@@ -3796,9 +3796,6 @@ function renderRail() {
         h('span', { class: 'grow' }), commandGrip(model, name)));
     }
     if (!group.commands.length) rail.appendChild(h('div', { class: 'gempty' }, 'nothing in it yet'));
-    // Naming a command headed for this feature happens right under it —
-    // the answer lands where the question was asked.
-    if (state.namingCommand === group.name) rail.appendChild(newCommandForm(model));
   }
 
   // With the picker gone, dropping is the only way out of a feature —
@@ -3815,8 +3812,6 @@ function renderRail() {
     experimental() ? h('button', {
       class: 'btn ghost', onclick: () => { closeForms(); state.newFeature = true; render(); },
     }, '+ Feature') : null));
-
-  if (state.namingCommand === true) rail.appendChild(newCommandForm(model));
 
   if (state.newFeature) {
     rail.appendChild(inlineForm({
@@ -4029,36 +4024,52 @@ function renameFeature(model, from, to) {
 // ---------- describing a new command ----------
 
 // Naming is the only thing a command cannot do without, so it is the
-// only question asked up front — an inline field, not a page of its
-// own. Everything else (what it takes, what it reads, what it decides,
-// what it records) is added afterwards, on the command's own page,
-// the same way it would be for a command that already existed.
+// only question asked up front. Everything else (what it takes, what
+// it reads, what it decides, what it records) is added afterwards, on
+// the command's own page, the same way it would be for a command that
+// already existed.
+//
+// The question is a page in the main area, whichever button asked it —
+// never a form in the rail, which on a phone is a drawer kept closed,
+// so a form painted there was a button that did nothing. Asking from
+// the rail closes the drawer for the same reason. The page sits over
+// whatever was open: nothing else in `state` moves, so cancelling is
+// only forgetting the question.
 //
 // `namingCommand` holds where the answer will land: a feature name when
-// the + on a heading asked the question (the form opens under it), or
-// `true` from the plain "+ Command" button, where the feature is
-// guessed from whichever command's page is open.
+// the + on a heading asked the question, or `true` from every other
+// way in, where the feature is guessed from whichever command's page
+// is open. Either way the page says which (`namingFeature`).
 function beginNewCommand(model, feature) {
   closeForms();
   state.namingCommand = feature || true;
+  state.railOpen = false;
   render();
 }
 
-function newCommandForm(model) {
-  return inlineForm({
-    question: 'New command', placeholder: 'command name', showsIdentifier: true,
-    onSubmit: (v) => createCommand(model, v),
-    onCancel: () => { state.namingCommand = false; render(); },
-  });
+function namingFeature(model) {
+  return typeof state.namingCommand === 'string'
+    ? state.namingCommand
+    : state.slice && model['command-definitions'][state.slice]
+      ? featureOf(model['command-definitions'][state.slice]) : UNGROUPED;
+}
+
+function renderNewCommand(model, main) {
+  const feature = namingFeature(model);
+  main.appendChild(h('div', { class: 'blank' },
+    h('h2', {}, 'New command'),
+    feature === UNGROUPED ? null : h('p', { class: 'muted small' }, 'in ', h('b', {}, feature)),
+    inlineForm({
+      placeholder: 'command name', showsIdentifier: true,
+      onSubmit: (v) => createCommand(model, v),
+      onCancel: () => { state.namingCommand = false; render(); },
+    })));
 }
 
 function createCommand(model, label) {
   const name = toPascal(label);
   if (!name) return toast('Give it a name.', true);
-  const current = typeof state.namingCommand === 'string'
-    ? state.namingCommand
-    : state.slice && model['command-definitions'][state.slice]
-      ? featureOf(model['command-definitions'][state.slice]) : UNGROUPED;
+  const current = namingFeature(model);
   // A command with nothing it records is not one the model can hold —
   // so a starting event comes along with it, guessed from the command's
   // own name the same way the event field always was. It is an ordinary
@@ -4377,6 +4388,11 @@ function paintPage() {
 
   const main = document.getElementById('main');
   main.innerHTML = '';
+  // Over every page, the code included — see `beginNewCommand`.
+  if (state.namingCommand) {
+    main.className = 'slice';
+    return renderNewCommand(model, main);
+  }
   if (state.code) {
     main.className = 'slice wide code-view';
     return renderCode(model, main);
