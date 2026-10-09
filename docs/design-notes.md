@@ -610,6 +610,77 @@ One breakpoint, 760px (shared.css, _narrow screens_), and a floor of
   scrolls inside itself, as on desktop; only overflow of the page
   itself is a bug.
 
+## The sandbox
+
+The page is the viewport, in four fixed bands (`renderSandbox`): the
+header holding the driver, the watched strip, the step at the playhead,
+and the timeline docked at the bottom. Only the step band scrolls.
+
+- **Fixed bands, because a run gets long.** It used to be one column:
+  driver, a row of event icons that wrapped, every visible event as a
+  line, the step's reads, then the watches last. Each event pushed the
+  watches further down, and scrubbing moved them, so the thing you came
+  to watch was the thing you had to scroll to. Three directions were
+  drawn before choosing (on a design canvas, outside the repo): three
+  fixed columns with a log in the middle; this one; and a ledger with
+  steps as rows and watches as columns. The ledger reads a watch's
+  history best but turns the timeline into a table. This one keeps a
+  timeline and still gives every watch its history.
+  Below the narrow breakpoint the bands flow with the page again: a
+  phone has no height to split four ways. Above it, the site footer is
+  hidden on this page; it was the one thing below the viewport, and so
+  the reason the page had a scrollbar at all.
+- **Lanes are tags.** One lane per tag any event carries
+  (`sandboxLanes`). A lane holds exactly the events a query for that tag
+  gets back, so it is how a boundary sees the log. An event with
+  several tags sits on several lanes, and so a subscription shows up on
+  both the course and the student. "By event type" is the other reading,
+  for a model whose tags say little. Lanes a projection watch is tagged
+  by are bold.
+- **One event is one fixed width** (`SANDBOX_PITCH`). A long run
+  scrolls sideways, with the lane labels sticky on the left. The first
+  version spread the whole run across the track: marks narrowed as
+  events were added and turned into dots past 80, so one run looked
+  different from one minute to the next. The ruler, the band over the
+  current step and the playhead are all placed by index times the
+  pitch, and scrubbing turns the pointer's x back into an index the
+  same way. A repaint rebuilds the lanes, so their scroll is kept
+  (`keepLanesInView`). A playhead that moves out of view is scrolled
+  back to the middle; scrolling along the run without moving it leaves
+  the view alone.
+- **Marks have no fill, and the playhead is drawn over them.** A
+  filled mark hid the playhead wherever the two met. Rows are told
+  apart by a rule between lanes, not a line through the marks. There
+  is no "Latest" button: `End` and the lanes do the same.
+- **A watch is a tile with a history.** It is the card it always was,
+  plus "was …" when the step at the playhead changed it, and its value
+  at the end of every step drawn under it. A number (a list, by its
+  length) is drawn as a level that holds between steps; anything else
+  is a tick wherever it changed. It is the whole run squeezed to the
+  tile's width — a shape at a glance, not the lanes' axis. That is a fold from zero per step, so
+  `watchSeries` caches it per model, log and watch: scrubbing repaints
+  on every pointer move and changes none of those.
+- **The driver is always there, and its draft survives a run.** It used
+  to open per command and clear after it. The next step is usually the
+  same command with one identifier changed. It is not a `<form>`: the
+  value editors carry their own buttons, and any of them would submit
+  it. Enter in a field runs it instead.
+  An identifier field offers every value of its type the run has
+  used so far (`sessionIdentifiers`), read from the events' payloads
+  and the commands' arguments. These are keyed by tag type, not by
+  entity: keyed by entity, a model without entities (every shipped one
+  but the experimental ones) was offered nothing. Scenarios use the
+  same keying (`identifiersInUse`).
+- **The playhead can sit inside a step.** `sessionStepAt` is the step
+  the last visible event belongs to, even when only some of its events
+  are visible. The step band shows those; the rest are faint.
+- **Now folds the read again; it does not decide again.** The Now
+  column used to evaluate the command again over the visible log and
+  take its reads. At the end of the command's own step that usually
+  refuses (the course is already defined), and a refusal stops short
+  of later reads, which crashed the page. Each projection read is now
+  folded on its own, with the tags and arguments the step resolved.
+
 ## The code view's language
 
 - **The code view's language is a spelling of the wire format** (`dsl.js`,

@@ -1020,41 +1020,129 @@
   }
 
   /* ---------- sandbox ----------
-     A run of events, read as the icons they carry rather than the
-     count of them — a session is scanned as a shape before it is read
-     as a number, and any position in it is reached by pointing at the
-     icon that was there. */
-  .timeline { display: flex; flex-direction: column; gap: 7px; }
-  .trow { display: flex; align-items: center; gap: 9px; }
-  .escrub {
-    display: flex; flex-wrap: wrap; align-items: center; gap: 3px;
-    padding: 5px 3px; margin: 0 -3px; border-radius: 8px;
-    cursor: grab; touch-action: none; -webkit-user-select: none; user-select: none;
+     The page is the viewport, in fixed bands: header with the driver,
+     the watched strip, the step at the playhead (the one band that
+     scrolls), and the timeline docked at the bottom. See `renderSandbox`. */
+  .slice.sandbox {
+    max-width: none; padding: 0; display: flex; flex-direction: column;
+    height: calc(100dvh - var(--topbar-h));
   }
-  .escrub:active { cursor: grabbing; }
-  .escrub:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .estep {
-    flex: none; width: 28px; height: 28px; border-radius: 8px;
+  .slice.sandbox > * { flex: none; }
+  .slice.sandbox > .xnotice { margin: 12px 24px 0; }
+  .slice.sandbox > header {
+    position: static; margin: 0; padding: 10px 24px; box-shadow: none;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px;
+  }
+  .slice.sandbox > header .name { display: flex; align-items: center; gap: 6px; }
+  .sbx-driver {
+    flex: 1 1 520px; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    padding: 5px 6px 5px 10px; border: 1px solid var(--border-strong); border-radius: var(--radius);
+    background: var(--surface);
+  }
+  .sbx-driver .grow { flex: 1; }
+
+  .sbx-watch {
+    display: flex; align-items: flex-start; gap: 10px; padding: 12px 24px;
+    border-bottom: 1px solid var(--border); overflow-x: auto; max-height: 40vh; overflow-y: auto;
+  }
+  .sbx-watch > * { flex: none; }
+  .sbx-watch > .adder, .sbx-watch > .card { margin-top: 0 !important; }
+  .sbx-watch-none { align-self: center; }
+  .sbx-tile { width: 280px; margin: 0; }
+  .sbx-tile.changed { border-color: var(--accent); }
+  .sbx-tile .val { font-size: 15px; font-weight: 600; color: var(--text); }
+  .sbx-delta { font-size: 11px; color: var(--muted); }
+  .sbx-delta.changed { color: var(--accent); }
+  .sbx-hist { display: block; margin-top: 6px; }
+  .sbx-hist svg { display: block; width: 100%; height: 26px; overflow: visible; }
+  .sbx-hist line, .sbx-hist polyline { fill: none; vector-effect: non-scaling-stroke; }
+  .sbx-hist .rest { stroke: var(--border-strong); stroke-width: 1.5; }
+  .sbx-hist .played { stroke: var(--projection); stroke-width: 2; }
+  .sbx-hist .head { stroke: var(--accent); stroke-width: 2; }
+
+  .slice.sandbox > .sbx-body {
+    flex: 1 1 auto; min-height: 120px; overflow: auto;
+    display: flex; flex-wrap: wrap; align-content: flex-start; gap: 0 28px; padding: 14px 24px;
+  }
+  .sbx-col { flex: 1 1 300px; min-width: 0; }
+  .sbx-col > h4 { margin: 0 0 8px; }
+  .sbx-upcoming { opacity: .4; }
+
+  /* The timeline. Every lane, the ruler, the band and the playhead
+     place things by a fraction of the log across the track, so all of
+     them agree on where event n is without measuring anything. */
+  .sbx-dock { border-top: 1px solid var(--border-strong); background: var(--surface); }
+  .sbx-transport {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    padding: 7px 24px; border-bottom: 1px solid var(--border);
+  }
+  .sbx-transport .grow { flex: 1; }
+  .sbx-transport .btn[aria-pressed="true"] {
+    border-color: var(--accent); color: var(--accent); background: var(--accent-soft);
+  }
+  .sbx-none { padding: 12px 24px; }
+  /* Scrolls both ways: down through the lanes, along through the run.
+     The labels stay put on the left, over the marks scrolling under
+     them; the right padding is the last column's, so the final mark is
+     not flush against the edge. */
+  .slanes {
+    max-height: min(300px, 34vh); overflow: auto; padding: 4px 0 10px;
+    cursor: grab; touch-action: pan-x pan-y; -webkit-user-select: none; user-select: none;
+  }
+  .slanes:active { cursor: grabbing; }
+  .slanes:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .slanes-in { position: relative; --lw: 174px; width: max-content; min-width: 100%; }
+  .slane {
+    position: relative; display: grid;
+    grid-template-columns: var(--lw) calc(var(--n) * var(--pitch) + 24px);
+    align-items: center; height: 22px;
+  }
+  .slane + .slane { border-top: 1px solid var(--border); }
+  .slabel {
+    position: sticky; left: 0; z-index: 2; align-self: stretch;
+    display: flex; align-items: center; box-sizing: border-box; padding: 0 10px 0 24px;
+    background: var(--surface); font-family: var(--mono); font-size: 11px; color: var(--muted);
+    overflow: hidden; white-space: nowrap;
+  }
+  .slabel.watched { color: var(--text); font-weight: 600; }
+  .strack { position: relative; height: 100%; }
+  .stick {
+    position: absolute; top: 3px; bottom: 3px; border-left: 1px solid var(--border);
+    padding-left: 3px; font-family: var(--mono); font-size: 10px; line-height: 16px; color: var(--muted);
+  }
+  .smark {
+    position: absolute; top: 50%; transform: translate(-50%, -50%);
+    width: 17px; height: 17px; border-radius: 5px; box-sizing: border-box;
     display: inline-flex; align-items: center; justify-content: center;
-    font-size: 14px; line-height: 1; border: 1px solid var(--border);
-    background: var(--surface); color: var(--muted); cursor: pointer;
-    transition: opacity .12s ease, border-color .12s ease, background .12s ease;
+    font-size: 11px; line-height: 1; color: var(--text); border: 1px solid var(--event);
   }
-  /* Icons from the same command sit close together; the next command's
-     get a little more air, so the run reads in decisions, not just in
-     events. */
-  .estep.step-end { margin-right: 7px; }
-  .estep:hover { border-color: var(--event); }
-  .estep.played { border-color: var(--event-soft); background: var(--event-soft); color: var(--text); }
-  .estep.current {
-    border-color: var(--event); background: var(--event-soft); color: var(--text);
-    box-shadow: 0 0 0 2px var(--event-soft);
-  }
+  .smark.fallback-event { color: var(--event); }
+  .smark.current { border-color: var(--accent); }
   /* Still on the timeline — scrubbing back does not shorten the run,
      it only looks away from the rest of it. */
-  .estep.upcoming { opacity: .38; }
-  .estep.fallback-event { color: var(--event); }
-  .eplayhead { flex: none; width: 2px; align-self: stretch; min-height: 26px; background: var(--accent); border-radius: 2px; }
+  .smark.upcoming { opacity: .3; }
+  .sband, .splayhead { position: absolute; top: 0; bottom: 0; pointer-events: none; }
+  .sband {
+    left: calc(var(--lw) + var(--pitch) * var(--a));
+    width: calc(var(--pitch) * var(--w)); background: var(--accent-soft);
+  }
+  /* Over the marks, under the labels. */
+  .splayhead {
+    left: calc(var(--lw) + var(--pitch) * var(--pos)); width: 2px; margin-left: -1px;
+    background: var(--accent); border-radius: 2px; z-index: 1;
+  }
+  /* The page is the viewport here; the footer would be the one thing
+     below it, and so the reason the page scrolls at all. */
+  @media (min-width: 761px) {
+    body:has(.slice.sandbox) .site-footer { display: none; }
+  }
+  @media (max-width: 760px) {
+    .slice.sandbox { height: auto; }
+    .slice.sandbox > .sbx-body { overflow: visible; }
+    .slice.sandbox > header, .sbx-watch, .slice.sandbox > .sbx-body, .sbx-transport { padding-left: 16px; padding-right: 16px; }
+    .slanes-in { --lw: 108px; }
+    .slabel { padding-left: 16px; }
+  }
 
   .pin {
     background: none; border: none; cursor: pointer; padding: 0 5px 0 0;
@@ -1513,6 +1601,7 @@ const state = {
   // `key` is set, since an edit never moves what it edits.
   scenarioDraft: null,
   sandboxDraft: null,       // { command, arguments } — a command about to be driven
+  sandboxLanes: 'tag',      // the timeline's lanes: 'tag' | 'type'
   projTab: 'definition',    // 'definition' | 'checks' inside the opened ledger row
   openProjectionScenarios: new Set(), // keys of every projection scenario whose detail is unfolded
   projectionScenarioDraft: null, // { key, insertAfter, body } — see `scenarioDraft`
@@ -4903,7 +4992,8 @@ function paintBehind(model) {
     return renderCode(model, main);
   }
   main.className = 'slice'
-    + (['overview', 'coupling', 'rulemap', 'eventmodel', 'lifecycles'].includes(state.view) ? ' wide' : '');
+    + (['overview', 'coupling', 'rulemap', 'eventmodel', 'lifecycles'].includes(state.view) ? ' wide' : '')
+    + (state.view === 'sandbox' ? ' sandbox' : '');
   const notice = experimentalNotice(model);
   if (notice) main.appendChild(notice);
 
@@ -11413,10 +11503,12 @@ function scenarioTrouble(model) {
 // A payload is written rather than chosen, which is the one place in
 // this interface where a modeler types a value the model will act on.
 // Identifiers get the strongest help available short of picking from a
-// list that does not exist yet: every identifier of the same kind
-// already written anywhere in this scenario is offered as you type. A
-// new instance is still just typed, because before the first event
-// mentions one there is nothing to have picked.
+// list that does not exist yet: every identifier of the same type
+// already written anywhere in this scenario (or, in the sandbox, used
+// so far in the run) is offered as you type. A new instance is still
+// just typed, because before the first event mentions one there is
+// nothing to have picked. "Of the same type" is the tag type, not the
+// entity: a model without entities has identifiers all the same.
 
 let suggestionSeq = 0;
 
@@ -11448,30 +11540,42 @@ function setAtPath(root, path, value) {
   return root;
 }
 
-// Every identifier of a given entity already written anywhere in a
+// Whether a field of this type is offered the identifiers in use: a
+// tag type, or an entity's identifier.
+function suggestsIdentifiers(model, typeName) {
+  return entityOfIdType(model, typeName) !== null
+    || idLeavesOfType(model, typeName).some((leaf) => leaf.field === null);
+}
+
+// Every value of identifier type `typeName` in a payload of
+// `properties` — a record's tag fields and a list's elements included —
+// added to `found`.
+function harvestIdentifiers(model, values, properties, typeName, found) {
+  for (const property of properties || []) {
+    const value = (values || {})[property.name];
+    if (value === undefined || value === null) continue;
+    const elements = property.isList ? (Array.isArray(value) ? value : []) : [value];
+    for (const leaf of idLeavesOfType(model, property.propertyType)) {
+      if (leaf.identifierType !== typeName) continue;
+      for (const element of elements) {
+        const held = leaf.field === null ? element : (element || {})[leaf.field];
+        if (held !== undefined && held !== null && held !== '') found.add(String(held));
+      }
+    }
+  }
+}
+
+// Every identifier of a given type already written anywhere in a
 // scenario. Read at the moment the field is used rather than the moment
 // it was drawn, so an id typed into the Given is offered in the When
 // without anything having to repaint in between.
-function identifiersInUse(model, body, entityName) {
+function identifiersInUse(model, body, typeName) {
   const found = new Set();
-  const harvest = (values, properties) => {
-    for (const property of properties || []) {
-      const value = (values || {})[property.name];
-      if (value === undefined || value === null) continue;
-      const elements = property.isList ? (Array.isArray(value) ? value : []) : [value];
-      for (const leaf of idLeavesOfType(model, property.propertyType)) {
-        if (entityOfIdType(model, leaf.identifierType) !== entityName) continue;
-        for (const element of elements) {
-          const held = leaf.field === null ? element : (element || {})[leaf.field];
-          if (held !== undefined && held !== null && held !== '') found.add(String(held));
-        }
-      }
-    }
-  };
   for (const step of body.given || []) {
-    harvest(step.data, (model['event-definitions'][step.event] || {}).properties);
+    harvestIdentifiers(model, step.data, (model['event-definitions'][step.event] || {}).properties, typeName, found);
   }
-  harvest((body.when || {}).arguments, (model['command-definitions'][body.command] || {}).properties);
+  harvestIdentifiers(model, (body.when || {}).arguments,
+    (model['command-definitions'][body.command] || {}).properties, typeName, found);
   return [...found].sort();
 }
 
@@ -11495,9 +11599,8 @@ function valueEditor(model, property, path, where) {
           held === undefined || held === null ? '' : String(held),
           (v) => setAtPath(draft(), at, v), '— choose —'));
     }
-    const entity = entityOfIdType(model, property.propertyType);
-    const listId = entity ? `sug-${++suggestionSeq}` : null;
-    const options = () => where.suggest(entity);
+    const listId = suggestsIdentifiers(model, property.propertyType) ? `sug-${++suggestionSeq}` : null;
+    const options = () => where.suggest(property.propertyType);
     return h('span', { class: 'vwrap' },
       h('input', {
         class: 'vin', value: held === undefined || held === null ? '' : String(held),
@@ -11593,16 +11696,14 @@ function payloadEditor(model, properties, path, where) {
 function scenarioWhere(model) {
   return {
     root: () => state.scenarioDraft.body,
-    suggest: (entity) => identifiersInUse(model, state.scenarioDraft.body, entity),
+    suggest: (type) => identifiersInUse(model, state.scenarioDraft.body, type),
   };
 }
 
 function sandboxWhere(model) {
   return {
     root: () => state.sandboxDraft,
-    suggest: (entity) => sessionInstances(model)
-      .filter((tag) => tag.startsWith(entity + ':'))
-      .map((tag) => tag.slice(entity.length + 1)),
+    suggest: (type) => sessionIdentifiers(model, type),
   };
 }
 
@@ -11990,7 +12091,7 @@ function projectionScenariosFor(model, projectionName) {
 function specWhere(model) {
   return {
     root: () => state.projectionScenarioDraft.body,
-    suggest: (entity) => identifiersInUse(model, state.projectionScenarioDraft.body, entity),
+    suggest: (type) => identifiersInUse(model, state.projectionScenarioDraft.body, type),
   };
 }
 
@@ -12363,14 +12464,12 @@ function sessionVisible() {
   return session.log.slice(0, sessionPosition());
 }
 
-// The step the current position sits inside — the command whose events
-// were the last to arrive. Nothing at position zero: before the first
+// The step the current position sits inside — the command whose
+// events were the last to arrive, all of them or, scrubbed into the
+// middle of a step, some. Nothing at position zero: before the first
 // command there is no decision to look at.
 function sessionStepAt(position) {
-  for (let i = session.steps.length - 1; i >= 0; i--) {
-    if (session.steps[i].to <= position) return session.steps[i];
-  }
-  return null;
+  return session.steps.find((s) => position > s.from && position <= s.to) || null;
 }
 
 // Drives a command against everything recorded so far — the one seam
@@ -12401,7 +12500,6 @@ function sessionRun(model, commandName, args) {
     const rule = result.failedRule;
     return toast(`${readable(commandName)} was refused: ${rule.rejection || rule.text}`, true);
   }
-  state.sandboxDraft = null;
   render();
 }
 
@@ -12420,11 +12518,10 @@ function sessionInstances(model) {
 // folds the same way a declared one does: the binding's one
 // identifier-typed argument is the instance itself, which is all this
 // card has to give it.
-function sessionInstanceState(model, tag) {
+function sessionInstanceState(model, tag, log = sessionVisible()) {
   const [entityName, id] = [tag.slice(0, tag.indexOf(':')), tag.slice(tag.indexOf(':') + 1)];
   const entity = model['entity-definitions'][entityName];
   if (!entity) return null;
-  const log = sessionVisible();
   return {
     entity: entityName,
     id,
@@ -12444,67 +12541,116 @@ function sessionInstanceState(model, tag) {
 
 
 // ---------- driving one ----------
-
+//
+// Always on screen, in the page's header. A session is driven one
+// command after another, and a driver that had to be opened for each
+// one cost a click per step; the draft outlives a run for the same
+// reason — the next step is usually the same command with one
+// identifier changed.
 function sandboxDriver(model) {
   const names = Object.keys(model['command-definitions']);
-  if (!names.length) return null;
-  if (!state.sandboxDraft) {
-    return h('div', { class: 'adder' },
-      h('button', {
-        class: 'btn primary',
-        onclick: () => {
-          state.sandboxDraft = { command: names[0], arguments: {} };
-          render();
-        },
-      }, '+ Do something'));
+  if (!names.length) return h('span', { class: 'muted small' }, 'This model has no commands to drive yet.');
+  if (!state.sandboxDraft || !names.includes(state.sandboxDraft.command)) {
+    state.sandboxDraft = { command: names[0], arguments: {} };
   }
-
   const draft = state.sandboxDraft;
   const command = model['command-definitions'][draft.command];
-  return h('div', { class: 'card sc-editor' },
-    h('div', { class: 'row' },
-      pick(names.map((n) => [n, readable(n), commandIcon(model, n)]), draft.command, (v) => {
-        state.sandboxDraft = { command: v, arguments: {} };
-        render();
-      }),
-      h('span', { class: 'grow' })),
+  const run = () => sessionRun(model, state.sandboxDraft.command, state.sandboxDraft.arguments);
+  // Not a <form>: the value editors carry buttons of their own (a
+  // list's `+`), and any of them would submit it. Enter in a field
+  // runs instead — after the field has handed its value over, which
+  // it otherwise does only on `change`.
+  return h('div', {
+    class: 'sbx-driver',
+    onkeydown: (e) => {
+      if (e.key !== 'Enter' || e.target.tagName !== 'INPUT') return;
+      e.preventDefault();
+      e.target.dispatchEvent(new Event('change', { bubbles: true }));
+      run();
+    },
+  },
+    pick(names.map((n) => [n, readable(n), commandIcon(model, n)]), draft.command, (v) => {
+      state.sandboxDraft = { command: v, arguments: {} };
+      render();
+    }),
     payloadEditor(model, (command || {}).properties, ['arguments'], sandboxWhere(model)),
-    h('div', { class: 'adder', style: 'margin-top:12px' },
-      h('button', {
-        class: 'btn primary',
-        onclick: () => sessionRun(model, draft.command, draft.arguments),
-      }, 'Do it'),
-      h('button', {
-        class: 'btn ghost',
-        onclick: () => { state.sandboxDraft = null; render(); },
-      }, 'Cancel')));
+    h('span', { class: 'grow' }),
+    h('button', { class: 'btn primary', type: 'button', onclick: run }, 'Run'));
 }
 
 // ---------- the timeline ----------
+//
+// Docked under the page, one lane per tag: a run is read as which
+// instances were busy when, and a lane is the events a query for that
+// tag would get back — the same thing a boundary asks the store for.
+// An event with several tags is on several lanes, which is the point.
+// By event type is the other reading, for a model whose tags say
+// little. Every event is one fixed pitch wide, at its index, so the
+// lanes, the ruler and the playhead share one axis — and a long run
+// scrolls sideways instead of squeezing its marks until they blur.
 
-// The pointer never owns a single `.estep` — the whole page gets
-// rebuilt under it on every move, which would drop a capture set on
-// one particular element. Tracking through `window` instead survives
-// that: each move just asks the live DOM what is under the pointer
-// now, so it does not matter that "now" is a different node than a
-// moment ago.
+const SANDBOX_PITCH = 22;   // px per event on the timeline
+const SANDBOX_RULER = 5;    // events between ruler labels
+
+function sandboxLanes(model, mode) {
+  const lanes = new Map();
+  const add = (key, label, i) => {
+    if (!lanes.has(key)) lanes.set(key, { key, label, events: [] });
+    lanes.get(key).events.push(i);
+  };
+  session.log.forEach((event, i) => {
+    if (mode === 'type') {
+      const icon = eventIcon(model, event.type);
+      return add(event.type, [h('span', { class: 'ic' + fallbackIconClass(icon) }, icon), ' ', readable(event.type)], i);
+    }
+    const tags = tagsOfEvent(model, event.type, event.data);
+    if (!tags.length) add('', 'untagged', i);
+    for (const tag of tags) add(tag, tag, i);
+  });
+  const list = [...lanes.values()];
+  if (mode !== 'type') list.sort((a, b) => (a.key === '') - (b.key === '') || a.key.localeCompare(b.key));
+  return list;
+}
+
+// The tags a projection watch is folded over, rendered the way an
+// event carries them — so the lanes it follows can say so.
+function watchedTags(model) {
+  const found = new Set();
+  for (const watch of session.pinned) {
+    if (watch.kind !== 'projection') continue;
+    for (const tag of Object.values(watch.tags || {})) {
+      const type = tag && identifierTypeOf(model, tag.tagType);
+      if (type && tag.tagValue !== null && tag.tagValue !== undefined) found.add(renderTag(type, String(tag.tagValue)));
+    }
+  }
+  return found;
+}
+
+// The pointer never owns a lane — the whole page gets rebuilt under it
+// on every move, which would drop a capture set on one element.
+// Tracking through `window` survives that: each move measures the live
+// track and turns the pointer's x into a position on the log.
 function scrubToPointer(e, goTo) {
-  const el = document.elementFromPoint(e.clientX, e.clientY);
-  const step = el && el.closest && el.closest('.estep');
-  if (step) goTo(Number(step.dataset.index) + 1);
+  const track = document.querySelector('.slanes .strack');
+  if (!track) return false;
+  const r = track.getBoundingClientRect();
+  if (e.clientX < r.left - 8) return false;
+  goTo(Math.round((e.clientX - r.left) / SANDBOX_PITCH));
+  return true;
 }
 
 function sandboxTimeline(model) {
   const total = session.log.length;
   const position = sessionPosition();
   const goTo = (next) => {
-    session.at = Math.max(0, Math.min(total, next));
-    if (session.at === total) session.at = null;
+    const at = Math.max(0, Math.min(total, next));
+    if (at === position) return;
+    session.at = at === total ? null : at;
     render();
   };
-
+  const mode = state.sandboxLanes;
   const startDrag = (e) => {
-    scrubToPointer(e, goTo);
+    if (e.button !== 0 || !scrubToPointer(e, goTo)) return;
     const onMove = (ev) => scrubToPointer(ev, goTo);
     const onUp = () => {
       window.removeEventListener('pointermove', onMove);
@@ -12514,51 +12660,112 @@ function sandboxTimeline(model) {
     window.addEventListener('pointerup', onUp);
   };
 
-  // Which step produced event `i` — not sessionStepAt, which answers a
-  // different question (the step a *position* last completed inside).
-  const stepOfEvent = (i) => session.steps.find((s) => i >= s.from && i < s.to) || null;
+  // The step the playhead is inside — its events are the ones the page
+  // above is about, so they are banded across every lane.
+  const current = sessionStepAt(position);
+  const at = (n) => `${n * SANDBOX_PITCH}px`;
+  const mark = (i) => {
+    const event = session.log[i];
+    const icon = eventIcon(model, event.type);
+    const step = session.steps.find((s) => i >= s.from && i < s.to);
+    return h('span', {
+      class: 'smark' + fallbackIconClass(icon)
+        + (i >= position ? ' upcoming' : current && i >= current.from ? ' current' : ''),
+      style: `left:${at(i + 0.5)}`,
+      title: `${i + 1} · ${readable(event.type)}`
+        + (Object.keys(event.data || {}).length ? ' · ' + payloadText(event.data) : '')
+        + (step ? ' — from ' + readable(step.command) : ''),
+    }, icon);
+  };
+  const ticks = [];
+  for (let n = SANDBOX_RULER; n <= total; n += SANDBOX_RULER) ticks.push(n);
+  const watched = mode === 'type' ? new Set() : watchedTags(model);
 
-  const items = [];
-  session.log.forEach((event, i) => {
-    if (i === position) items.push(h('span', { class: 'eplayhead' }));
-    const step = stepOfEvent(i);
-    items.push(h('span', {
-      class: 'estep'
-        + (i < position ? (i === position - 1 ? ' current' : ' played') : ' upcoming')
-        + (step && i === step.to - 1 ? ' step-end' : '')
-        + fallbackIconClass(eventIcon(model, event.type)),
-      'data-index': String(i),
-      title: readable(event.type) + (step ? ' — from ' + readable(step.command) : '')
-        + (Object.keys(event.data || {}).length ? ' · ' + payloadText(event.data) : ''),
-      onclick: () => goTo(i + 1),
-    }, eventIcon(model, event.type)));
-  });
-  if (position === total) items.push(h('span', { class: 'eplayhead' }));
+  const lanesButton = (value, label) => h('button', {
+    class: 'btn tiny', type: 'button', 'aria-pressed': mode === value ? 'true' : 'false',
+    onclick: () => { state.sandboxLanes = value; render(); },
+  }, label);
 
-  return h('div', { class: 'timeline' },
-    h('div', { class: 'trow' },
+  return h('section', { class: 'sbx-dock', 'aria-label': 'Timeline' },
+    h('div', { class: 'sbx-transport' },
       h('button', {
-        class: 'btn tiny', disabled: position === 0, title: 'Back one event',
+        class: 'btn tiny', type: 'button', disabled: position === 0, title: 'Back one event',
         onclick: () => goTo(position - 1),
       }, '◀'),
-      h('div', {
-        class: 'escrub', tabindex: '0', role: 'slider',
-        'aria-orientation': 'horizontal', 'aria-valuemin': '0', 'aria-valuemax': String(total),
-        'aria-valuenow': String(position), 'aria-valuetext': `${position} of ${total}`,
-        title: 'Drag, click, or use the arrow keys to scrub through what has happened',
-        onpointerdown: startDrag,
-        onkeydown: (e) => {
-          if (e.key === 'ArrowLeft') { e.preventDefault(); goTo(position - 1); }
-          else if (e.key === 'ArrowRight') { e.preventDefault(); goTo(position + 1); }
-          else if (e.key === 'Home') { e.preventDefault(); goTo(0); }
-          else if (e.key === 'End') { e.preventDefault(); goTo(total); }
-        },
-      }, items),
       h('button', {
-        class: 'btn tiny', disabled: position === total, title: 'On one event',
+        class: 'btn tiny', type: 'button', disabled: position === total, title: 'On one event',
         onclick: () => goTo(position + 1),
       }, '▶'),
-      h('span', { class: 'muted tiny' }, `${position} of ${total}`)));
+      h('span', { class: 'small' }, `${position} of ${total}`),
+      current ? h('span', { class: 'muted small' },
+        `· step ${session.steps.indexOf(current) + 1} of ${session.steps.length}`) : null,
+      h('span', { class: 'grow' }),
+      h('span', { class: 'muted small' }, 'Lanes'),
+      lanesButton('tag', 'by tag'),
+      lanesButton('type', 'by event type')),
+    total
+      ? h('div', {
+          class: 'slanes', tabindex: '0', role: 'slider',
+          'aria-label': 'Position in the run',
+          'aria-orientation': 'horizontal', 'aria-valuemin': '0', 'aria-valuemax': String(total),
+          'aria-valuenow': String(position), 'aria-valuetext': `${position} of ${total}`,
+          title: 'Drag, click, or use the arrow keys to move through the run',
+          onpointerdown: startDrag,
+          onscroll: (e) => {
+            sandboxLanesView.left = e.currentTarget.scrollLeft;
+            sandboxLanesView.top = e.currentTarget.scrollTop;
+          },
+          onkeydown: (e) => {
+            if (e.key === 'ArrowLeft') { e.preventDefault(); goTo(position - 1); }
+            else if (e.key === 'ArrowRight') { e.preventDefault(); goTo(position + 1); }
+            else if (e.key === 'Home') { e.preventDefault(); goTo(0); }
+            else if (e.key === 'End') { e.preventDefault(); goTo(total); }
+          },
+        },
+          h('div', { class: 'slanes-in', style: `--pitch:${SANDBOX_PITCH}px;--n:${total};--pos:${position}` },
+            current ? h('span', {
+              class: 'sband',
+              style: `--a:${current.from};--w:${Math.min(current.to, position) - current.from}`,
+            }) : null,
+            h('div', { class: 'slane ruler' },
+              h('span', { class: 'slabel' }),
+              h('span', { class: 'strack' },
+                ticks.map((n) => h('span', { class: 'stick', style: `left:${at(n)}` }, String(n))))),
+            sandboxLanes(model, mode).map((lane) => h('div', { class: 'slane' },
+              h('span', {
+                class: 'slabel' + (watched.has(lane.key) ? ' watched' : ''),
+                title: (typeof lane.label === 'string' ? lane.label : readable(lane.key))
+                  + ` — ${lane.events.length} event${lane.events.length === 1 ? '' : 's'}`,
+              }, lane.label),
+              h('span', { class: 'strack' }, lane.events.map(mark)))),
+            h('span', { class: 'splayhead' })))
+      : h('div', { class: 'empty sbx-none' }, 'Nothing has happened yet.'));
+}
+
+// A repaint rebuilds the lanes, which would put them back at the left
+// edge on every move. So the scroll is kept here and put back, and a
+// playhead that has moved out of view is brought back to the middle —
+// never while someone is looking along the run with the playhead
+// staying where it is.
+const sandboxLanesView = { left: 0, top: 0, position: -1 };
+function keepLanesInView() {
+  const lanes = document.querySelector('.slanes');
+  const label = lanes && lanes.querySelector('.slabel');
+  if (!label) return;
+  const view = sandboxLanesView;
+  lanes.scrollTop = view.top;
+  lanes.scrollLeft = view.left;
+  const position = sessionPosition();
+  if (position !== view.position) {
+    view.position = position;
+    const x = position * SANDBOX_PITCH;
+    const width = lanes.clientWidth - label.offsetWidth;
+    if (x < lanes.scrollLeft + SANDBOX_PITCH || x > lanes.scrollLeft + width - SANDBOX_PITCH) {
+      lanes.scrollLeft = Math.max(0, x - width / 2);
+    }
+  }
+  view.left = lanes.scrollLeft;
+  view.top = lanes.scrollTop;
 }
 
 // ---------- what the current step saw ----------
@@ -12598,8 +12805,6 @@ function sandboxDecision(model) {
   const reads = Object.entries(result.reads || {});
   return h('div', {},
     stale,
-    h('div', { class: 'muted tiny' },
-      readable(step.command) + ' · ' + payloadText(step.args)),
     reads.length
       ? reads.map(([alias, read]) => read.kind === 'projection'
         ? h('div', { class: 'card sc-line' },
@@ -12700,7 +12905,7 @@ function projectionWatchCard(model, watch) {
     ? foldWatch(model, watch, foldProjectionState)
     : null;
   return head(
-    h('div', { class: 'sc-line' }, h('span', {}, '  ' + initialValueWords(held.value))),
+    h('div', { class: 'sc-line' }, h('span', { class: 'val' }, initialValueWords(held.value))),
     inside ? h('div', { class: 'sc-line' },
       h('span', { class: 'k' }, '  keeping '),
       h('span', { class: 'k' }, inside.error
@@ -12710,9 +12915,9 @@ function projectionWatchCard(model, watch) {
           : JSON.stringify(inside.value)))) : null);
 }
 
-function foldWatch(model, watch, fold) {
+function foldWatch(model, watch, fold, log = sessionVisible()) {
   try {
-    return { value: (fold || foldProjection)(model, sessionVisible(), watch.projection, watchRead(watch)) };
+    return { value: (fold || foldProjection)(model, log, watch.projection, watchRead(watch)) };
   } catch (error) {
     if (error instanceof EvaluationError) return { error: error.message };
     throw error;
@@ -12746,16 +12951,124 @@ function instanceStateCard(model, tag) {
         : h('span', {}, JSON.stringify(property.value)))));
 }
 
-function sandboxWatched(model) {
+// ---------- what is watched ----------
+//
+// A strip under the header that does not move with the run: a watch is
+// the thing you came to see change, so it keeps its place while
+// everything else scrolls or scrubs. Each tile is the card a watch has
+// always been, plus two things only a strip of them can afford: whether
+// the step at the playhead changed it, and its value over the whole
+// run, squeezed to the tile's width — a glance at its shape, where the
+// lanes below are the run at full length.
+function sandboxWatchStrip(model) {
   const names = Object.keys(model['projection-definitions']).sort();
-  if (!session.pinned.length && !names.length) return null;
-  return step('scenarios', 'Scenarios',
-    h('div', { class: 'muted small' },
-      'Followed wherever you are on the timeline, whether or not the step you are looking at '
-      + 'read them. A projection watched here is folded the same way a command folds it — a '
-      + 'numbering shows the next value it would issue, at every point in the run.'),
-    session.pinned.map((watch) => watchCard(model, watch)),
+  return h('section', { class: 'sbx-watch', 'aria-label': 'Watching' },
+    session.pinned.length ? null : h('div', { class: 'sbx-watch-none muted small' },
+      'Nothing watched. ☆ a read to follow it here at every point of the run.'),
+    session.pinned.map((watch) => watchTile(model, watch)),
     names.length ? watchProjectionAdder(model, names) : null);
+}
+
+// What one watch reads as after `log` — comparable as `key`, plottable
+// as `num` when it is a number (a list, by its length).
+function watchValueAt(model, watch, log) {
+  let value;
+  if (watch.kind === 'projection') {
+    if (!model['projection-definitions'][watch.projection]) return null;
+    const held = foldWatch(model, watch, null, log);
+    if (held.error) return { key: '\0' + held.error, words: '—', num: null };
+    value = held.value;
+  } else {
+    const held = sessionInstanceState(model, watch.tag, log);
+    if (!held) return null;
+    value = Object.fromEntries(held.properties.map((p) => [p.name, p.error ? '\0' + p.error : p.value]));
+  }
+  return {
+    key: JSON.stringify(value === undefined ? null : value),
+    words: watch.kind === 'projection' ? initialValueWords(value) : payloadText(value),
+    num: typeof value === 'number' ? value : Array.isArray(value) ? value.length : null,
+  };
+}
+
+// The value at the end of every step — the run a history line draws.
+// Folding from zero at each boundary is quadratic in the run, so it is
+// done once per log, model and watch rather than once per repaint:
+// scrubbing repaints on every pointer move and changes none of them.
+const watchSeriesCache = { model: null, log: null, length: -1, byKey: new Map() };
+function watchSeries(model, watch) {
+  const cache = watchSeriesCache;
+  if (cache.model !== model || cache.log !== session.log || cache.length !== session.log.length) {
+    Object.assign(cache, { model, log: session.log, length: session.log.length, byKey: new Map() });
+  }
+  const key = watchKey(watch);
+  if (!cache.byKey.has(key)) {
+    const at = [0, ...session.steps.map((s) => s.to)];
+    cache.byKey.set(key, at.map((n) => ({ at: n, value: watchValueAt(model, watch, session.log.slice(0, n)) })));
+  }
+  return cache.byKey.get(key);
+}
+
+// The line under a tile. A number is drawn as a level that holds
+// between steps; anything else as a tick wherever it changed. The
+// part already played is drawn in the projection colour, the rest
+// faint, and the playhead at the same fraction of the run.
+function watchHistory(model, watch) {
+  const total = session.log.length;
+  if (!total) return null;
+  const series = watchSeries(model, watch).filter((p) => p.value);
+  if (!series.length) return null;
+  const position = sessionPosition();
+  const x = (n) => (n / total * 100).toFixed(2);
+  const nums = series.map((p) => p.value.num);
+  let played = '';
+  let rest = '';
+  if (nums.every((n) => n !== null)) {
+    const lo = Math.min(...nums);
+    const span = Math.max(...nums) - lo || 1;
+    const y = (n) => (21 - (n - lo) / span * 18).toFixed(2);
+    const points = [];
+    series.forEach((p, i) => {
+      if (i) points.push([p.at, nums[i - 1]]);
+      points.push([p.at, nums[i]]);
+    });
+    points.push([total, nums[nums.length - 1]]);
+    const line = (pts, cls) => pts.length > 1
+      ? `<polyline class="${cls}" points="${pts.map(([n, v]) => x(n) + ',' + y(v)).join(' ')}"/>` : '';
+    const upTo = points.filter(([n]) => n <= position);
+    const last = upTo[upTo.length - 1];
+    rest = line(points, 'rest');
+    played = line(last && last[0] < position ? [...upTo, [position, last[1]]] : upTo, 'played');
+  } else {
+    series.forEach((p, i) => {
+      if (!i || p.value.key === series[i - 1].value.key) return;
+      const tick = `<line class="${p.at <= position ? 'played' : 'rest'}" x1="${x(p.at)}" x2="${x(p.at)}" y1="4" y2="21"/>`;
+      if (p.at <= position) played += tick; else rest += tick;
+    });
+    rest = `<line class="rest" x1="0" x2="100" y1="21" y2="21"/>` + rest;
+  }
+  return h('span', {
+    class: 'sbx-hist', 'aria-hidden': 'true',
+    html: `<svg viewBox="0 0 100 24" preserveAspectRatio="none">${rest}${played}`
+      + `<line class="head" x1="${x(position)}" x2="${x(position)}" y1="0" y2="24"/></svg>`,
+  });
+}
+
+function watchTile(model, watch) {
+  const card = watchCard(model, watch);
+  card.classList.add('sbx-tile');
+  const position = sessionPosition();
+  const step = sessionStepAt(position);
+  if (step) {
+    const before = watchValueAt(model, watch, session.log.slice(0, step.from));
+    const now = watchValueAt(model, watch, sessionVisible());
+    const changed = before && now && before.key !== now.key;
+    if (changed) card.classList.add('changed');
+    card.appendChild(h('div', { class: 'sbx-delta' + (changed ? ' changed' : '') },
+      changed ? 'was ' + before.words : `unchanged by step ${session.steps.indexOf(step) + 1}`));
+  }
+  const history = watchHistory(model, watch);
+  if (history) card.appendChild(history);
+  return card;
 }
 
 // Picking a projection to watch, and the arguments to watch it at. The
@@ -12776,7 +13089,7 @@ function watchProjectionAdder(model, names) {
   const draft = state.watchDraft;
   const projection = model['projection-definitions'][draft.projection];
   const slots = projectionSlots(projection);
-  const where = { root: () => state.watchDraft, suggest: (entity) => sessionIdentifiers(model, entity) };
+  const where = { root: () => state.watchDraft, suggest: (type) => sessionIdentifiers(model, type) };
   // One value per tag the projection declares, kept in step with it.
   const declared = projectionTagParams(projection);
   const held = draft.tags && typeof draft.tags === 'object' && !Array.isArray(draft.tags) ? draft.tags : {};
@@ -12828,16 +13141,21 @@ function watchProjectionAdder(model, names) {
       }, 'Cancel')));
 }
 
-// Every identifier of a given entity any visible event carries — the
-// sandbox's answer to `identifiersInUse`, read off the tags rather than
-// off a scenario's hand-written payloads.
-function sessionIdentifiers(model, entityName) {
+// Every identifier of a given type used so far in the run — the
+// sandbox's answer to `identifiersInUse`: what the events carry and
+// what the commands were given, the whole run and not only up to the
+// playhead, since the next command always runs after the last event.
+// Read off the payloads rather than the tags: a tag is rendered through
+// its type's `tagSchema`, and the type is not reliably read back out.
+function sessionIdentifiers(model, typeName) {
   const found = new Set();
-  for (const tag of sessionInstances(model)) {
-    const [type, value] = [tag.slice(0, tag.indexOf(':')), tag.slice(tag.indexOf(':') + 1)];
-    if (entityOfIdType(model, type) === entityName) found.add(value);
+  for (const event of session.log) {
+    harvestIdentifiers(model, event.data, (model['event-definitions'][event.type] || {}).properties, typeName, found);
   }
-  return [...found];
+  for (const step of session.steps) {
+    harvestIdentifiers(model, step.args, (model['command-definitions'][step.command] || {}).properties, typeName, found);
+  }
+  return [...found].sort();
 }
 
 // ---------- what the involved decision models look like now ----------
@@ -12847,9 +13165,10 @@ function sessionIdentifiers(model, entityName) {
 // card `instanceStateCard` gives a pinned instance — not only the
 // properties the decision happened to touch, which is the boundary's
 // story to tell, not this one's. A projection has no properties to
-// enumerate, so its "now" is just a fresh fold — gotten by deciding the
-// same command again against the log as it stands here, which is also
-// the only way to recover the argument values it was folded with.
+// enumerate, so its "now" is the same read folded again over the log
+// as it stands here, with the tags and arguments the step resolved.
+// Deciding the command again would not do: a refusal stops short of
+// the reads after the rule that refused it.
 function sandboxNow(model) {
   const position = sessionPosition();
   const step = sessionStepAt(position);
@@ -12864,7 +13183,7 @@ function sandboxNow(model) {
   } catch (error) {
     if (!(error instanceof EvaluationError)) throw error;
     return h('div', { class: 'card' },
-      h('div', { class: 'empty' }, 'See "What it looked at to decide" above.'));
+      h('div', { class: 'empty' }, 'See Reads.'));
   }
 
   const reads = Object.entries(then.reads || {});
@@ -12872,82 +13191,97 @@ function sandboxNow(model) {
     return h('div', { class: 'card' }, h('div', { class: 'empty' }, 'It involved nothing.'));
   }
 
-  let now = null;
-  let nowError = null;
-  try {
-    now = evaluateCommand(model, sessionVisible(), step.command, step.args);
-  } catch (error) {
-    if (!(error instanceof EvaluationError)) throw error;
-    nowError = error.message;
-  }
-
   return h('div', {},
-    reads.map(([alias, read]) => read.kind === 'projection'
-      ? h('div', { class: 'card sc-line' },
-          // Pinnable like an instance is: a numbering read by one step
-          // is usually the thing you then want to follow across every
-          // other one. The arguments come from the binding that was
-          // resolved, which is the only place they exist.
-          pinButton(projectionWatch(read.projection, read.tags, read.arguments)),
-          h('span', { class: 'k' }, alias + ' — '),
-          h('span', { class: 't' }, readable(read.projection)),
-          now
-            ? h('span', { class: 'k' }, '  ' + initialValueWords(now.reads[alias].value))
-            : h('span', { class: 'k' }, '  can no longer be worked out here: ' + nowError))
-      : h('div', {},
+    reads.map(([alias, read]) => {
+      if (read.kind !== 'projection') {
+        return h('div', {},
           h('div', { class: 'muted tiny' },
             alias + ' — ' + readable(read.entity)
               + (read.fanned ? ` (${read.instances.length})` : '')
               + (read.absent ? ' — bound nothing (identifier unset)' : '')),
           read.instances.map((instance) =>
-            instanceStateCard(model, read.entity + ':' + instance.id)))));
+            instanceStateCard(model, read.entity + ':' + instance.id)));
+      }
+      // Pinnable like an instance is: a numbering read by one step is
+      // usually the thing you then want to follow across every other
+      // one.
+      const watch = projectionWatch(read.projection, read.tags, read.arguments);
+      const now = foldWatch(model, watch);
+      return h('div', { class: 'card sc-line' },
+        pinButton(watch),
+        h('span', { class: 'k' }, alias + ' — '),
+        h('span', { class: 't' }, readable(read.projection)),
+        now.error
+          ? h('span', { class: 'k' }, '  can no longer be worked out here: ' + now.error)
+          : h('span', { class: 'k' }, '  ' + initialValueWords(now.value)));
+    }));
 }
 
 // ---------- the page ----------
+//
+// Four fixed bands, top to bottom: the header with the driver, the
+// watched strip, the step at the playhead, the docked timeline. Only
+// the step scrolls — a long run must not push the watches or the
+// timeline off the screen, which is what the one long column did. Below
+// the narrow breakpoint the bands go back to flowing with the page.
+
+// The step at the playhead: what it was asked, and what it appended.
+// Its events past the playhead are on the page but faint — the
+// position can sit inside a step, and those have not happened yet.
+function sandboxAppended(model) {
+  const position = sessionPosition();
+  const step = sessionStepAt(position);
+  if (!step) return h('div', { class: 'empty' }, '—');
+  return h('div', {},
+    h('div', { class: 'sc-line' },
+      h('span', { class: 'ic' + fallbackIconClass(commandIcon(model, step.command)) }, commandIcon(model, step.command)),
+      ' ', h('span', { class: 'c' }, readable(step.command)),
+      h('span', { class: 'k' }, '  ' + payloadText(step.args))),
+    h('div', { class: 'card sc-line' },
+      session.log.slice(step.from, step.to).map((event, i) => h('div', {
+        class: step.from + i >= position ? 'sbx-upcoming' : '',
+      },
+        h('span', { class: 'k' }, String(step.from + i + 1) + '  '),
+        h('span', { class: 'ic' + fallbackIconClass(eventIcon(model, event.type)) }, eventIcon(model, event.type)),
+        ' ', h('span', { class: 'y' }, readable(event.type)),
+        h('span', { class: 'k' }, '  ' + payloadText(event.data))))));
+}
 
 function renderSandbox(model, main) {
   main.appendChild(h('header', {},
-    qrow('div', { cls: 'row', key: 'sandbox' },
-      h('div', { class: 'name' }, 'Sandbox'),
-      h('span', { class: 'grow' }),
-      session.log.length
-        ? removeButton('sandbox:reset', {
-            label: 'Start over',
-            title: 'Throw all of this away and start from nothing',
-            confirm: 'Really start over?',
-            onRemove: () => { sessionReset(); state.sandboxDraft = null; render(); },
-          })
-        : null),
-    h('div', { class: 'muted small summary' },
-      'Drive the commands and watch what happens. Nothing here is kept — it is gone when this '
-      + 'page reloads, and the model itself is never written to.')));
+    h('div', { class: 'name' }, 'Sandbox',
+      hint('sandbox', 'Sandbox', [
+        'Run commands against each other and watch what happens. Nothing here is kept — it is gone '
+        + 'when this page reloads, and the model itself is never written to.',
+        'A command always runs after the last event, wherever the playhead is.',
+      ])),
+    sandboxDriver(model),
+    session.log.length
+      ? removeButton('sandbox:reset', {
+          label: 'Start over',
+          title: 'Throw all of this away and start from nothing',
+          confirm: 'Really start over?',
+          onRemove: () => { sessionReset(); state.sandboxDraft = null; render(); },
+        })
+      : null));
 
-  main.appendChild(step('trigger', 'Do something', sandboxDriver(model)
-    || h('div', { class: 'empty' }, 'This model has no commands to drive yet.')));
-
-  if (session.log.length) {
-    main.appendChild(step('emits', 'What has happened',
-      sandboxTimeline(model),
-      h('div', { class: 'card sc-line', style: 'margin-top:8px' },
-        sessionVisible().length
-          ? sessionVisible().map((event, index) => h('div', {
-              class: index === sessionPosition() - 1 ? 'lit' : '',
-            },
-              h('span', { class: 'ic' + fallbackIconClass(eventIcon(model, event.type)) }, eventIcon(model, event.type)),
-              h('span', { class: 'y' }, readable(event.type)),
-              h('span', { class: 'k' }, '  ' + payloadText(event.data))))
-          : h('div', { class: 'empty' }, 'nothing yet'))));
-
-    main.appendChild(step('reads', 'What it looked at to decide', sandboxDecision(model)));
-    main.appendChild(step('now', 'What it looks like now', sandboxNow(model)));
-  }
-
-  // Outside the gate above on purpose: what a projection reads before
+  // Before the first command too: what a projection reads before
   // anything has happened is a real answer and often the interesting
   // one — a numbering's first value is the whole of what its initial
   // value states.
-  const watched = sandboxWatched(model);
-  if (watched) main.appendChild(watched);
+  main.appendChild(sandboxWatchStrip(model));
+
+  main.appendChild(h('section', { class: 'sbx-body', 'aria-label': 'The step at the playhead' },
+    session.log.length
+      ? [
+          h('div', { class: 'sbx-col' }, h('h4', {}, 'Append'), sandboxAppended(model)),
+          h('div', { class: 'sbx-col' }, h('h4', {}, 'Reads'), sandboxDecision(model)),
+          h('div', { class: 'sbx-col' }, h('h4', {}, 'Now'), sandboxNow(model)),
+        ]
+      : h('div', { class: 'empty' }, 'Nothing has happened yet — run a command.')));
+
+  main.appendChild(sandboxTimeline(model));
+  keepLanesInView();
 }
 
 // ============================================================

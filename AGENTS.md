@@ -120,6 +120,7 @@ was decided, why, and what was tried and reverted:
   modals — _Inline definitions from a command_
 - wording on any page — _The interface register_
 - the bar, dialogs or layout at phone width — _Narrow screens_
+- the sandbox's layout, its timeline lanes or watches — _The sandbox_
 - the code view's language, its editor or language service — _The code
   view's language_, and the `dsl.js` header
 

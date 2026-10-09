@@ -998,6 +998,43 @@ function build(index) {
 }
 
 // ---------------------------------------------------------------
+// Identifiers already used are offered by tag type, in a model with no
+// entities at all — they used to be keyed by entity, so a plain tag
+// type such as CourseId was offered nothing.
+// ---------------------------------------------------------------
+{
+  const { id, model } = build(sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-simple'));
+  store.set('dcb-playground:model', id);
+  const session = sandbox.session;
+
+  check('a tag type offers what was used; a plain value does not', () => {
+    eq(sandbox.suggestsIdentifiers(model(), 'CourseId'), true, 'a tag type');
+    eq(sandbox.suggestsIdentifiers(model(), 'integer'), false, 'a capacity');
+  });
+
+  check('the sandbox offers the identifiers its run used, per type', () => {
+    sandbox.sessionReset();
+    sandbox.sessionRun(model(), 'DefineCourse', { courseId: 'c2', capacity: 5 });
+    sandbox.sessionRun(model(), 'DefineCourse', { courseId: 'c1', capacity: 5 });
+    sandbox.sessionRun(model(), 'RegisterStudent', { studentId: 's1' });
+    session.at = 0;
+    eq(sandbox.sandboxWhere(model()).suggest('CourseId'), ['c1', 'c2'],
+      'every course so far, wherever the playhead is');
+    eq(sandbox.sandboxWhere(model()).suggest('StudentId'), ['s1'], 'and only students for a student');
+    sandbox.sessionReset();
+  });
+
+  check('a scenario offers the identifiers written in it', () => {
+    const body = {
+      command: 'SubscribeStudentToCourse',
+      given: [{ event: 'CourseDefined', data: { courseId: 'c7', capacity: 1 } }],
+      when: { arguments: { courseId: 'c8', studentId: 's1' } },
+    };
+    eq(sandbox.identifiersInUse(model(), body, 'CourseId'), ['c7', 'c8'], 'from the Given and the When');
+  });
+}
+
+// ---------------------------------------------------------------
 // Where a projection scenario is listed.
 // ---------------------------------------------------------------
 {
