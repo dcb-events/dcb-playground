@@ -3274,8 +3274,8 @@ function sourceOffset(text, line, col) {
 // whole text's parse, with `model`'s definitions filling in for any
 // that fail to parse while being typed.
 // `experimental: false` leaves out what the experimental flag keeps off
-// the pages — entities, lifecycles, derived projections, guards and the
-// `@feature` annotation. A text using them still reads.
+// the pages — entities, lifecycles, derived projections and guards.
+// A text using them still reads.
 function sourceCompletions(text, line, col, { model = null, experimental = true } = {}) {
   const none = { items: [], slot: false };
   const prefix = text.slice(0, sourceOffset(text, line, col));
@@ -3705,7 +3705,6 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     }
     if (prev === '@') {
       for (const [name, kinds] of Object.entries(SOURCE_ANNOTATIONS)) {
-        if (!experimental && name === 'feature') continue;
         push(name, 'keyword', kinds.map((x) => SOURCE_KEYWORD[x]).join(', '), { insert: `${name}("$1")`, snippet: true, sort: 0 });
       }
       return done();
@@ -4016,7 +4015,6 @@ function sourceExperimentalMarks(text) {
     if (token.t === 'punct' && v === '{') { frames.push(scenarioNext); scenarioNext = false; return; }
     if (token.t === 'punct' && v === '}') { frames.pop(); return; }
     if (token.t === 'punct' && v === '?' && tokens[i - 2] && tokens[i - 2].v === 'alias') { said(token, 'An optional read'); return; }
-    if (token.t === 'punct' && v === '@' && next && next.v === 'feature') { said(next, 'A feature group'); return; }
     if (token.t !== 'ident') return;
     if (v === 'scenario') { scenarioNext = true; return; }
     if (v === 'entity' && next && next.t === 'ident') said(token, 'An entity');
@@ -4056,7 +4054,8 @@ The text get_model_source returns, apply_model_source applies and start_model ta
 - Definitions, enum members and records are PascalCase; properties, parameters, tags and aliases are camelCase.
 - // and /* */ are comments. They are not stored.
 - @tagSchema("{type}={value}") on the line before a tag type changes how its values render as tags; "{type}:{value}" is the default.
-- @icon("📦") on the line before an event or a command gives it the mark the pages show it with — one emoji or short glyph.`;
+- @icon("📦") on the line before an event or a command gives it the mark the pages show it with — one emoji or short glyph.
+- @feature("Course management") on the line before a command puts it in that feature group; the pages list commands by feature. A command without one is ungrouped.`;
 
 const SOURCE_REFERENCE_FORMS = `Rules (after require), each negated by a leading not:
   a == b    a != b    a < b    a <= b    a > b    a >= b
@@ -4359,9 +4358,8 @@ command UnsubscribeStudentFromCourse(courseId: CourseId, studentId: StudentId) {
 const SOURCE_REFERENCE_EXAMPLE_SLUG = 'course-simple';
 
 const SOURCE_REFERENCE_UNOFFERED = 'Not offered to agents: entities, lifecycles, derived projections, guarded '
-  + 'emissions (emit … when …), optional reads (alias x? = …), excluding, currentValue, and the '
-  + '@feature annotation. A text or definition that adds one is refused. A model that already uses them '
-  + 'shows them in get_model_source; keep those parts as they are.';
+  + 'emissions (emit … when …), optional reads (alias x? = …), excluding and currentValue. A text or '
+  + 'definition that adds one is refused. A model that already uses them shows them in get_model_source; keep those parts as they are.';
 
 function sourceLanguageReference() {
   return [

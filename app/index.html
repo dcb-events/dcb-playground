@@ -78,10 +78,19 @@
   .rail a.cmd.drop-into { background: var(--accent-soft); }
   /* The way out of a feature, shown only while a command is in the air
      and no real Ungrouped group is on screen to receive it. */
-  .rail .drop-stub { display: none; color: var(--muted); font-style: italic; font-weight: 400; }
-  .rail .drop-stub .gname { cursor: default; }
-  .rail .drop-stub .gname:hover { color: var(--muted); }
+  .rail .drop-stub { display: none; }
   .rail.dragging-cmd .drop-stub { display: flex; }
+  /* Ungrouped is not a feature but what is left over, so it does not
+     look like one: no caret (it never folds), no adder (+ Command is
+     that), a heading quiet enough to read as a label, and a rule
+     between it and the features above when there are any. */
+  .group.ungrouped {
+    font-weight: 400; font-size: 10px; letter-spacing: .04em;
+    text-transform: uppercase; color: var(--muted);
+  }
+  .group.ungrouped .gname, .group.ungrouped .gname:hover { cursor: default; color: var(--muted); }
+  .group.ungrouped.after-features { margin: 10px 16px 0; padding: 9px 0 3px; border-top: 1px solid var(--border); }
+  .group.ungrouped.drop-into { border-top-color: transparent; }
   .rail a.cmd { padding-left: 32px; display: flex; align-items: center; gap: 6px; }
   .rail a.cmd .grow { flex: 1; }
   .rail a.cmd .grip { opacity: 0; }
@@ -1808,7 +1817,7 @@ const UI_SETTINGS = [
     options: [
       ['off', 'Off', 'Types, events, projections, commands and the consistency boundary'],
       ['on', 'On', 'Also entities and lifecycles, derived projections, guarded emissions, '
-        + 'optional reads, feature groups and the overview pages'],
+        + 'optional reads and the overview pages'],
     ],
     get: () => (experimental() ? 'on' : 'off'),
     set: (value) => setExperimental(value === 'on'),
@@ -4321,8 +4330,16 @@ function renderRail() {
   }, 'Overview'));
   rail.appendChild(h('h4', {}, 'Features'));
 
-  for (const group of featureGroups(model)) {
-    if (state.renamingFeature === group.name) {
+  const groups = featureGroups(model);
+  const ungroupedHeading = () => h('div', {
+    class: 'group ungrouped' + (groups.some((g) => g.name !== UNGROUPED) ? ' after-features' : ''),
+    ...featureDropTarget(UNGROUPED),
+  }, h('span', { class: 'gname' }, UNGROUPED));
+
+  for (const group of groups) {
+    if (group.name === UNGROUPED) {
+      rail.appendChild(ungroupedHeading());
+    } else if (state.renamingFeature === group.name) {
       rail.appendChild(inlineForm({
         question: 'Rename this feature', value: group.name, submitLabel: 'Rename',
         onSubmit: (v) => { renameFeature(model, group.name, v); },
@@ -4335,12 +4352,8 @@ function renderRail() {
           class: 'caret', onclick: () => { state.collapsed[group.name] = !collapsed; render(); },
         }, collapsed ? '▸' : '▾'),
         h('span', {
-          class: 'gname',
-          title: group.name === UNGROUPED ? '' : 'Rename',
-          onclick: () => {
-            if (group.name === UNGROUPED) return;
-            closeForms(); state.renamingFeature = group.name; render();
-          },
+          class: 'gname', title: 'Rename',
+          onclick: () => { closeForms(); state.renamingFeature = group.name; render(); },
         }, group.name),
         // Not a count: the way in. A command belongs to a feature, so
         // the feature heading is where one gets added to it.
@@ -4354,7 +4367,7 @@ function renderRail() {
         // A feature is not a definition — it exists because commands
         // name it — so removing one leaves its commands where they are,
         // ungrouped.
-        group.name === UNGROUPED ? null : h('span', {
+        h('span', {
           class: 'rm' + (state.confirmRemove === 'feature:' + group.name ? ' on' : ''),
         },
           removeButton('feature:' + group.name, {
@@ -4388,17 +4401,17 @@ function renderRail() {
   // With the picker gone, dropping is the only way out of a feature —
   // so when nothing is ungrouped (the catch-all group not rendered), a
   // stand-in target appears, but only while a command is in the air.
-  if (!featureGroups(model).some((g) => g.name === UNGROUPED)) {
-    rail.appendChild(h('div', { class: 'group drop-stub', ...featureDropTarget(UNGROUPED) },
-      h('span', { class: 'caret' }),
-      h('span', { class: 'gname' }, UNGROUPED)));
+  if (!groups.some((g) => g.name === UNGROUPED)) {
+    const stub = ungroupedHeading();
+    stub.classList.add('drop-stub');
+    rail.appendChild(stub);
   }
 
   rail.appendChild(h('div', { class: 'add' },
     h('button', { class: 'btn', onclick: () => beginNewCommand(model) }, '+ Command'),
-    experimental() ? h('button', {
+    h('button', {
       class: 'btn ghost', onclick: () => { closeForms(); state.newFeature = true; render(); },
-    }, '+ Feature') : null));
+    }, '+ Feature')));
 
   if (state.newFeature) {
     rail.appendChild(inlineForm({

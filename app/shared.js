@@ -530,7 +530,7 @@ function createScriptEditorEntry(key) {
 // Everything that is DCB is always on screen: types, events, projections,
 // the consistency boundary each command derives. What the examples on
 // dcb.events never need — entities and their lifecycles, derived
-// projections, guarded emissions, the overview pages, feature groups
+// projections, guarded emissions, the overview pages
 // (`EXPERIMENTAL_FEATURES`, model.js) — waits behind this flag.
 //
 // It gates *authoring*, never reading: a model that already uses an

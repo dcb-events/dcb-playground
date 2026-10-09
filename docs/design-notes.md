@@ -38,7 +38,7 @@ and prune what no longer holds.
   derived boundary — is always on screen; what the examples on
   dcb.events do not need is behind the flag: entities and lifecycles,
   derived projections, guarded emissions, optional reads, `excluding`,
-  `currentValue`, `@feature` groups, and the Coupling /
+  `currentValue`, and the Coupling /
   Rule map / Event model / Lifecycles views. A model that uses any of
   it still loads, renders and evaluates whole; `experimentalFeatures`
   (model.js) names what it uses and `experimentalNotice` says so on
@@ -509,7 +509,16 @@ on Projections, on an entity's page, and in the definition modals.
   (🟦/🟧) were tried first: they ignored the theme and said only what
   the chip's background already did.
   Icons left the experimental flag with it — an icon is one line of
-  legibility, not a modelling construct; `@feature` stays behind it.
+  legibility, not a modelling construct. Feature groups followed: a
+  group is how a model with more than a handful of commands stays
+  navigable, not a modelling construct either, and a rail that showed
+  Features and Ungrouped but offered no way to add one read as broken.
+- **Ungrouped is not drawn as a feature.** It is what is left over,
+  not a group anyone made, so its heading is a muted label with no
+  caret (it never folds), no "+" (+ Command is that) and no rename or
+  remove, set off from the features above by a rule when there are
+  any. It stays a drop target — dropping there is the way out of a
+  feature.
 - **Naming a new command is a page of its own** (`renderNewCommand`),
   in the main area, whichever way in asked — the empty model's
   "+ First command", the rail's "+ Command", a feature heading's "+",

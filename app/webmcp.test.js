@@ -112,7 +112,7 @@ async function call(name, args) {
       eq(offered(name).kind.enum.includes('entity-definition'), false, `${name} offers no entities`);
     }
     const command = offered('add_command_definition');
-    eq('feature' in command, false, 'no feature groups');
+    eq('feature' in command, true, 'feature groups are not experimental');
     eq('icon' in command, true, 'a command\'s icon is not experimental');
     eq(Object.keys(command.boundary.items.properties || {}).includes('entity'), false, 'a binding is a projection read');
     eq('when' in command.publishes.items.properties, false, 'no guarded emissions');

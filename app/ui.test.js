@@ -4312,7 +4312,7 @@ check('the reference links only anchors the website defines', () => {
   check('experimentalFeatures names what a model uses', () => {
     const { model } = build(ENTITIES);
     const used = [...new Set(sandbox.experimentalFeatures(model()).map((f) => f.feature))].sort();
-    eq(used, ['entities', 'feature', 'lifecycles'], 'course-simple');
+    eq(used, ['entities', 'lifecycles'], 'course-simple — feature groups are not experimental');
     const guarded = build(8).model;
     eq(sandbox.experimentalFeatures(guarded()).some((f) => f.feature === 'guards' && f.where === 'UpdateText'),
       true, 'a guarded emission, on its command');
@@ -4385,7 +4385,7 @@ check('the reference links only anchors the website defines', () => {
     eq(sandbox.experimentalNotice(model()), null, 'flag on: nothing to say');
     store.set('dcb-playground:experimental', 'off');
     const text = textOf(sandbox.experimentalNotice(model()));
-    eq(text.includes('entities, lifecycles, feature groups'), true, 'the features, by name');
+    eq(text.includes('entities, lifecycles.'), true, 'the features, by name: ' + text);
     store.set('dcb-playground:experimental', 'on');
   });
 

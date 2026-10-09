@@ -472,6 +472,12 @@ const WEBMCP_DEFINITION_SCHEMAS = {
           "🧾"
         ]
       },
+      "feature": {
+        "description": "The feature this command belongs to — \"Course management\",\n\"Checkout\". Commands naming the same feature are presented\ntogether.\n\nIt is the one field in this document that the modelled system\ndoes not read. No query, boundary, condition or tag depends on\nit, and removing every `feature` changes no behaviour: it\nrecords how a *modeler* grouped their work, on a different\naxis from the entities the rest of the model is organised\naround.\n\nA feature is therefore never declared. It exists because\ncommands name it, which is why it costs nothing and why an\nempty one is not a thing that can be stored.\n",
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 100
+      },
       "properties": {
         "description": "The command payload.",
         "type": "array",

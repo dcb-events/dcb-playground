@@ -983,7 +983,6 @@ const EXPERIMENTAL_FEATURES = {
   optional: 'optional reads',
   excluding: 'excluding',
   currentValue: 'currentValue',
-  feature: 'feature groups',
 };
 
 function experimentalFeatures(model) {
@@ -1010,7 +1009,6 @@ function experimentalFeatures(model) {
   }
   for (const [name, body] of Object.entries(model['command-definitions'] || {})) {
     if (!body) continue;
-    if (body.feature) note('feature', name);
     for (const binding of body.boundary || []) {
       if (!binding) continue;
       if (binding.entity !== undefined) note('entities', name);
@@ -6023,9 +6021,9 @@ function seedProductPricing(modelId) {
 // other shipped model is then stated without them, by this last layer:
 // a property an entity read stood for becomes the projection it binds,
 // read in place by the identifier the entity was read by — a fan-out
-// staying one — and the entities, their lifecycles and the feature
-// groups (all experimental) go, the icons with them. One append, through the ordinary command, like
-// every layer.
+// staying one — and the entities and their lifecycles (experimental)
+// go, the icons and feature groups with them. One append, through the
+// ordinary command, like every layer.
 // ============================================================
 
 function seedWithoutEntities(modelId) {
