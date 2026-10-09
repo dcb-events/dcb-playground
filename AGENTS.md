@@ -115,6 +115,7 @@ was decided, why, and what was tried and reverted:
 - entity lifecycles or their UI — _Entity lifecycles_
 - guards, rejection messages, derived projections — _Guarded emissions…_
 - wording on any page — _The interface register_
+- the bar, dialogs or layout at phone width — _Narrow screens_
 - the code view's language, its editor or language service — _The code
   view's language_, and the `dsl.js` header
 

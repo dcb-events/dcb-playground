@@ -479,6 +479,40 @@ and prune what no longer holds.
   sits over the current view without moving it, so Cancel is only
   forgetting the question.
 
+## Narrow screens
+
+One breakpoint, 760px (shared.css, _narrow screens_), and a floor of
+320px: at or above it, nothing runs past the right edge of the page.
+
+- **The bar keeps what is used while modelling.** Below the breakpoint
+  it holds the rail's toggle, the model's name, the Visual/Code toggle
+  (icons only), the Problems count (no word) and quick open. Import &
+  export, help, theme and Settings fold behind ⋯ (`moreMenu`) — a
+  dropdown, four rows, each doing exactly what its desktop button does.
+  The dcb.events mark is hidden; the footer links the site. The Visual/Code
+  toggle stays in the bar rather than in ⋯ because it is switched too
+  often to be two taps away.
+- **The name is the part of the bar that gives.** It ellipsizes into
+  whatever the rest leaves, by flex shrinking. It used to be a
+  `100vw - 266px` budget; controls were added after it was written,
+  the budget was never updated, and at 360px the bar ran 190px past the
+  edge — which also widened the page under every dialog, so the dialogs
+  were cut off on the right. A budget written down once drifts; shrinking
+  cannot. At 320px the name keeps about 70px.
+- **Every dialog is fullscreen on a phone**, Settings and quick open
+  included: a card with a margin round it spends width the content
+  needs. Heights are `100dvh` — `100vh` is taller than what a phone
+  shows. The header with the × is sticky, because with no backdrop
+  left to tap the × (and Escape) is the way out; quick open gains a ×
+  of its own, shown only there, and drops its keyboard hints. Settings
+  loses its see-through backdrop, which on a fullscreen sheet has
+  nothing to show through — the setting most worth watching land, the
+  theme, is in ⋯.
+- **Pages are not given phone layouts.** A strip that is wider than the
+  window (the overview table, Coupling's matrix, a lifecycle band)
+  scrolls inside itself, as on desktop; only overflow of the page
+  itself is a bug.
+
 ## The code view's language
 
 - **The code view's language is a spelling of the wire format** (`dsl.js`,

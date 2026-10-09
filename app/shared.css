@@ -178,8 +178,24 @@ body.f-dark .disclaimer { background: #2d2408; color: #fcd34d; border-bottom-col
 .app-bar .icon-btn:hover { border-color: var(--accent); color: var(--accent); }
 .app-bar .icon-btn svg { width: 16px; height: 16px; }
 /* The rail's own toggle — only meaningful once the rail is off-canvas,
-   so it stays out of the bar entirely above that breakpoint. */
-.app-bar .menu-btn { display: none; }
+   so it stays out of the bar entirely above that breakpoint. The ⋯
+   menu likewise: above it, its four rows are buttons in the bar. */
+.app-bar .menu-btn, .app-bar .more { display: none; }
+.app-bar .more { position: relative; }
+.more-catcher { position: fixed; inset: 0; z-index: 30; }
+.more-panel {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 31; min-width: 220px;
+  background: var(--elevated); border: 1px solid var(--border-strong); border-radius: 10px;
+  padding: 5px; box-shadow: 0 12px 32px rgba(15, 23, 42, .25);
+}
+.more-item {
+  display: flex; align-items: center; gap: 11px; width: 100%; min-height: 44px;
+  padding: 0 11px; border: 0; border-radius: 7px; background: none; text-align: left;
+  font: inherit; font-size: 14px; color: var(--text); cursor: pointer;
+}
+.more-item:hover, .more-item:focus-visible { background: var(--accent-soft); color: var(--accent); }
+.more-icon { display: flex; flex: none; color: var(--muted); }
+.more-icon svg { width: 18px; height: 18px; }
 
 /* The trigger that opens quick open — a button that looks like a
    search field but only ever holds a placeholder; the field itself
@@ -202,21 +218,32 @@ body.f-dark .disclaimer { background: #2d2408; color: #fcd34d; border-bottom-col
 
 /* ---------- narrow screens ----------
    One breakpoint, everything the bar and the rail need to keep working
-   at a phone width: the rail becomes a drawer (see .rail below), its
-   toggle appears, the bar's own controls compact enough that nothing
-   is pushed off the edge, and touch targets grow to the ~40px a finger
-   actually needs — the desktop 30px stays for a mouse. */
+   down to a 320px phone: the rail becomes a drawer (see .rail below),
+   its toggle appears, the bar keeps only what is used while modelling
+   — the model, the surface toggle (icons only), quick open — and folds
+   import/export, help, theme and Settings behind ⋯ (`moreMenu`). Touch
+   targets grow to the ~40px a finger actually needs — the desktop 30px
+   stays for a mouse. Every dialog goes fullscreen here; that lives
+   with .modal in index.html. */
 @media (max-width: 760px) {
-  .app-bar .menu-btn { display: inline-flex; }
-  .app-bar { gap: 6px; padding: 8px 10px; }
+  .app-bar .menu-btn, .app-bar .more { display: inline-flex; }
+  .app-bar #actions > .icon-btn { display: none; }
+  /* The site is a footer link away; the bar cannot spare its width. */
+  .app-bar .brand-home { display: none; }
+  .app-bar { gap: 4px; padding: 8px 10px; }
+  /* The spacer's job falls to the name's margin, so it does not cost
+     the bar a gap for a box that is empty. */
+  .app-bar .spacer { display: none; }
+  .app-bar #model-switch { margin-right: auto; }
   .model-switch .brand-title:has(+ .sep), .model-switch .sep { display: none; }
-  /* Everything else in the bar is fixed-width (~266px of icons, gaps
-     and padding at this breakpoint's sizes) — the name gets whatever
-     is left of the screen, not a fraction of it. A vw-based cap falls
-     short right at the narrow end (a fixed share of not much is still
-     too much); this keeps the same margin at every width instead of
-     needing a second breakpoint to patch the narrowest phones. */
-  .app-bar .model-name { max-width: clamp(40px, calc(100vw - 266px), 220px); }
+  /* The name is the one part of the bar that gives: everything else
+     keeps its size and the name ellipsizes into whatever is left. Flex
+     shrinking rather than a vw budget, because the rest of the bar is
+     not fixed — the Problems count comes and goes — and a budget
+     written down once drifts the moment a control is added (one did,
+     and the bar ran 190px past a phone's edge). */
+  .app-bar #model-switch, .app-bar .model-switch, .app-bar .model-name { min-width: 0; }
+  .app-bar #tools, .app-bar #jump, .app-bar #actions { flex: none; }
   .app-bar .icon-btn, .app-bar .trigger { width: 40px; height: 40px; }
   .app-bar .icon-btn svg { width: 18px; height: 18px; }
   .app-bar .trigger { padding: 0; justify-content: center; }

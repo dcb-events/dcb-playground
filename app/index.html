@@ -647,6 +647,33 @@
   .modal a { color: var(--accent); font-weight: 600; text-decoration: none; }
   .modal a:hover { text-decoration: underline; }
   .modal > header .grow { flex: 1; }
+  /* On a phone every dialog is the whole screen — Settings and quick
+     open included. A card with a margin round it spends width the
+     content needs, and its height was 100vh, which on a phone is taller
+     than what is visible; dvh is what is visible (vh stays as the
+     fallback). The header holds the × and stays put while the body
+     scrolls, since with no backdrop left to tap the × and Escape are
+     the ways out; a closing "Done" stays where the content ends. The
+     thin backdrop Settings uses to show its changes landing has
+     nothing to show through here — the one change worth watching, the
+     theme, sits in the bar's ⋯ menu. */
+  @media (max-width: 760px) {
+    .overlay { padding: 0; align-items: stretch; }
+    .modal {
+      width: 100%; max-width: none; height: 100vh; height: 100dvh; max-height: none;
+      border: 0; border-radius: 0; box-shadow: none;
+    }
+    .modal { padding: 0 16px 24px; }
+    .modal > header {
+      position: sticky; top: 0; z-index: 1; align-items: center;
+      margin: 0 -16px 8px; padding: 10px 8px 10px 16px;
+      background: var(--elevated); border-bottom: 1px solid var(--border);
+    }
+    .modal > header > .btn.ghost:last-child {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 40px; height: 40px; padding: 0; font-size: 22px;
+    }
+  }
   .help-modal p { font-size: 13.5px; line-height: 1.6; margin: 12px 0; }
   .help-features {
     display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px;
@@ -734,8 +761,11 @@
     border: 1px solid var(--border-strong); border-radius: 10px;
     box-shadow: 0 22px 60px rgba(15, 23, 42, .34); overflow: hidden;
   }
+  .palette-overlay { padding-top: 14vh; }
+  .palette-head { display: flex; align-items: center; border-bottom: 1px solid var(--border); }
+  .palette-close { display: none; margin-right: 8px; }
   .palette input {
-    width: 100%; border: 0; border-bottom: 1px solid var(--border); border-radius: 0;
+    flex: 1; min-width: 0; width: 100%; border: 0; border-radius: 0;
     padding: 13px 15px; font-size: 15px; background: transparent;
   }
   .palette input:focus { outline: none; }
@@ -754,6 +784,22 @@
   .palette footer {
     border-top: 1px solid var(--border); padding: 6px 12px;
     font-size: 10.5px; color: var(--muted); display: flex; gap: 12px;
+  }
+  /* Fullscreen on a phone, like every dialog — see .modal. */
+  @media (max-width: 760px) {
+    .palette-overlay { padding: 0; }
+    .palette {
+      display: flex; flex-direction: column; width: 100%; max-width: none;
+      height: 100vh; height: 100dvh; border: 0; border-radius: 0; box-shadow: none;
+    }
+    .palette .palette-close {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 40px; height: 40px; padding: 0; font-size: 22px;
+    }
+    .palette .hits { max-height: none; flex: 1; }
+    .palette .hit { min-height: 40px; }
+    /* Keyboard hints, on a screen without the keys. */
+    .palette footer { display: none; }
   }
 
 
@@ -1244,9 +1290,15 @@
   .surface button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
   .surface button:not(.on):hover { color: var(--text); background: var(--bg); }
   .surface-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--event); }
+  .surface-icon { display: none; }
+  .surface-icon svg { width: 17px; height: 17px; display: block; }
+  /* Icons instead of words on a phone, and the Problems button down to
+     its count — the width goes to the model's name (shared.css). */
   @media (max-width: 760px) {
     .surface { height: 40px; }
-    .surface button { padding: 0 9px; }
+    .surface button { padding: 0 8px; }
+    .surface .label, .problems-btn .label { display: none; }
+    .surface-icon { display: flex; }
   }
   .code-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 10px; }
   .code-bar .grow { flex: 1; }
@@ -1384,6 +1436,7 @@ const state = {
   help: false,              // the help modal — see `helpModal`
   problems: false,         // the loose-ends-and-drifted-scenarios panel
   railOpen: false,          // the rail, as an off-canvas drawer on a narrow screen
+  moreOpen: false,          // the bar's ⋯ menu, on a narrow screen — see `moreMenu`
   importExport: false,      // the Import & Export modal
   ieTab: 'import',          // within it: 'import' | 'export'
   ieImportMode: 'url',      // within Import: 'url' | 'json'
@@ -1637,6 +1690,21 @@ const SETTINGS_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentC
   + '1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 '
   + '2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 '
   + '0 0-1.51 1z"></path></svg>';
+
+const MORE_ICON_SVG = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">'
+  + '<circle cx="5" cy="12" r="2"></circle><circle cx="12" cy="12" r="2"></circle>'
+  + '<circle cx="19" cy="12" r="2"></circle></svg>';
+
+// The surface toggle's words give way to these on a phone, where the
+// bar cannot spare the width — see the narrow-screens block in shared.css.
+const VISUAL_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+  + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect>'
+  + '<rect x="3" y="14" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect></svg>';
+const CODE_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+  + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>';
+
 // Pages or code — two surfaces over one model, see `renderCode`. The
 // dot says a text is waiting to be applied, wherever you are.
 function surfaceToggle(model) {
@@ -1644,12 +1712,14 @@ function surfaceToggle(model) {
   return h('span', { class: 'surface', role: 'group', 'aria-label': 'Show the model as' },
     h('button', {
       type: 'button', class: state.code ? '' : 'on', 'aria-pressed': state.code ? 'false' : 'true',
-      title: 'The model as pages', onclick: leaveCode,
-    }, 'Visual'),
+      title: 'The model as pages', 'aria-label': 'Visual', onclick: leaveCode,
+    }, h('span', { class: 'surface-icon', html: VISUAL_ICON_SVG }), h('span', { class: 'label' }, 'Visual')),
     h('button', {
       type: 'button', class: state.code ? 'on' : '', 'aria-pressed': state.code ? 'true' : 'false',
-      title: waiting ? 'The model as code — edited, not applied' : 'The model as code', onclick: enterCode,
-    }, 'Code', waiting ? h('span', { class: 'surface-dot' }) : null));
+      title: waiting ? 'The model as code — edited, not applied' : 'The model as code',
+      'aria-label': 'Code', onclick: enterCode,
+    }, h('span', { class: 'surface-icon', html: CODE_ICON_SVG }), h('span', { class: 'label' }, 'Code'),
+    waiting ? h('span', { class: 'surface-dot' }) : null));
 }
 
 // Light or dark — the one interface choice that sits in the bar rather
@@ -1684,6 +1754,35 @@ function settingsButton() {
     'aria-label': 'Settings',
     onclick: () => { state.settings = true; render(); },
   }, h('span', { html: SETTINGS_ICON_SVG }));
+}
+
+// On a phone the bar has room for what is used while modelling — the
+// model, the surface, quick open — and the rest folds behind ⋯: the
+// same four buttons as rows, each doing what its button does. Above
+// the breakpoint the button is not shown and the bar keeps them all
+// (shared.css, narrow screens). The catcher behind the panel is what
+// makes a tap anywhere else close it without also landing there.
+function moreMenu(model) {
+  const open = !!state.moreOpen;
+  const close = () => { state.moreOpen = false; };
+  const item = (icon, label, go) => h('button', {
+    class: 'more-item', type: 'button', role: 'menuitem',
+    onclick: () => { close(); go(); render(); },
+  }, h('span', { class: 'more-icon', html: icon }), label);
+  return h('span', { class: 'more' + (open ? ' on' : '') },
+    h('button', {
+      class: 'icon-btn more-btn', type: 'button', title: 'More', 'aria-label': 'More',
+      'aria-haspopup': 'menu', 'aria-expanded': open ? 'true' : 'false',
+      onclick: () => { closeForms(); state.moreOpen = !open; render(); },
+    }, h('span', { html: MORE_ICON_SVG })),
+    open ? [
+      h('span', { class: 'more-catcher', onclick: () => { close(); render(); } }),
+      h('span', { class: 'more-panel', role: 'menu' },
+        model ? item(IMPORT_EXPORT_ICON_SVG, 'Import & export', openImportExport) : null,
+        item(HELP_ICON_SVG, 'About the playground', openHelp),
+        item(isDark() ? SUN_ICON_SVG : MOON_ICON_SVG, isDark() ? 'Light mode' : 'Dark mode', toggleTheme),
+        item(SETTINGS_ICON_SVG, 'Settings', () => { state.settings = true; })),
+    ] : null);
 }
 
 // The import/export icon — two arrows crossing, drawn as an SVG rather
@@ -2307,9 +2406,9 @@ function problemsButton(model) {
   const found = problems(model);
   if (!found.length) return null;
   return h('button', {
-    class: 'btn ghost', title: 'Problems in this model',
+    class: 'btn ghost problems-btn', title: 'Problems in this model', 'aria-label': 'Problems: ' + found.length,
     onclick: () => { closeForms(); state.problems = true; render(); },
-  }, 'Problems', h('span', { class: 'badge' }, found.length));
+  }, h('span', { class: 'label' }, 'Problems'), h('span', { class: 'badge' }, found.length));
 }
 
 function problemsPanel() {
@@ -2499,13 +2598,21 @@ function renderPalette() {
     },
   });
 
+  // Escape and the backdrop are how quick open is left on a desktop; a
+  // phone has neither once the palette fills the screen, so it gets the
+  // × every other dialog carries — shown only there (shared.css).
   paletteEl = h('div', { class: 'palette', role: 'dialog', 'aria-modal': 'true' },
-    input, list,
+    h('div', { class: 'palette-head' }, input,
+      h('button', {
+        class: 'btn ghost palette-close', type: 'button', title: 'Close', 'aria-label': 'Close',
+        onclick: () => { closePalette(); render(); },
+      }, '×')),
+    list,
     h('footer', {},
       h('span', {}, '↑↓ to move'), h('span', {}, '↵ to open'), h('span', {}, 'esc to close')));
   paint();
   host.appendChild(h('div', {
-    class: 'overlay', style: 'padding-top:14vh',
+    class: 'overlay palette-overlay',
     onclick: (e) => { if (e.target === e.currentTarget) { closePalette(); render(); } },
   }, paletteEl));
   setTimeout(() => input.focus(), 0);
@@ -3665,7 +3772,7 @@ const closeForms = () => {
   commitPendingField();
   for (const key of [...FORM_KEYS, ...DRAFT_KEYS]) state[key] = null;
   state.sel = null; state.adder = null; state.lit = null; state.queryPop = null;
-  state.hintPop = null; state.lcMenu = null;
+  state.hintPop = null; state.lcMenu = null; state.moreOpen = false;
 };
 
 // ---------- rail ----------
@@ -4316,6 +4423,7 @@ function paintPage() {
     actions.appendChild(helpButton());
     actions.appendChild(themeButton());
     actions.appendChild(settingsButton());
+    actions.appendChild(moreMenu(null));
     document.getElementById('rail').innerHTML = '';
     const main = document.getElementById('main');
     main.innerHTML = '';
@@ -4353,6 +4461,7 @@ function paintPage() {
   actions.appendChild(helpButton());
   actions.appendChild(themeButton());
   actions.appendChild(settingsButton());
+  actions.appendChild(moreMenu(model));
 
   renderModals();
   renderPalette();
@@ -13209,6 +13318,7 @@ window.addEventListener('keydown', (e) => {
   if (state.queryPop) { state.queryPop = null; return render(); }
   if (state.hintPop) { state.hintPop = null; return render(); }
   if (state.lcMenu) { state.lcMenu = null; return render(); }
+  if (state.moreOpen) { state.moreOpen = false; return render(); }
   if (state.pendingImport) { state.pendingImport = null; return render(); }
   if (state.help) { state.help = false; return render(); }
   if (state.problems) { state.problems = false; return render(); }
