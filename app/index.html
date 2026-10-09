@@ -674,6 +674,15 @@
       width: 40px; height: 40px; padding: 0; font-size: 22px;
     }
   }
+  /* A definition modal holds a whole editor — a projection's handlers
+     run wide — so it gets more room than a dialog of choices. */
+  .modal.def-modal { width: 760px; }
+  .modal.def-modal .def-back { flex: none; }
+  /* The pencil is drawn, not written: the button sits inside sentences
+     that read as prose, and its name is its aria-label. */
+  .btn.def-edit { padding: 0 4px; margin-left: 2px; color: var(--muted); }
+  .btn.def-edit::before { content: '✎'; }
+  .btn.def-edit:hover { color: var(--accent); }
   .help-modal p { font-size: 13.5px; line-height: 1.6; margin: 12px 0; }
   .help-features {
     display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px;
@@ -1392,6 +1401,7 @@ const state = {
   sel: null,                // the row being attended to
   adder: null,              // which "add another" is unfolded
   projDraft: null,          // { name, body } — a projection being edited
+  defFrames: [],            // the definition modals, bottom first — see `openDefinitionModal`
   newProjection: null,      // a projection being described
   renamingProjection: null,
   newEvent: null,           // { name } — a bare event being described
@@ -1877,11 +1887,13 @@ function renderModals() {
   // comes last: when someone asked for it, and always while nothing is
   // loaded — then it is the page, and closing it has nothing to go
   // back to.
+  settleDefinitionModals();
   if (state.pendingImport) { host.appendChild(renderImportGate()); return; }
   if (state.problems) { host.appendChild(problemsPanel()); return; }
   if (state.settings) { renderSettingsModal(host); return; }
   if (state.importExport) { host.appendChild(renderImportExportModal()); return; }
   if (state.help) { host.appendChild(helpModal()); return; }
+  if (state.defFrames.length && activeModel()) { host.appendChild(definitionModal(activeModel())); return; }
   if (state.models || !activeModelId()) { host.appendChild(modelsModal()); return; }
 }
 
@@ -1923,6 +1935,324 @@ function overlayAround(modal, close, { thin = false } = {}) {
     class: 'overlay' + (thin ? ' thin' : ''),
     onclick: (e) => { if (e.target === e.currentTarget) close(); },
   }, modal);
+}
+
+// ---------- definition modals ----------
+//
+// A command is designed in one place: the custom type an input needs
+// and the projection a rule reads are created — and corrected — from
+// the picker that noticed they were missing, in a modal showing the
+// same editor their own pages show. Leaving the command for them
+// would drop whatever rule or input was half-built when the need
+// came up.
+//
+// Each modal is a frame. Opening one sets the page's open forms and
+// drafts aside (`frameKeys`) and closing it puts them back, so the
+// editors inside — which open and close their own forms through
+// `closeForms` like anywhere else — never reach the command
+// underneath. The page behind is painted from what was set aside, so
+// the half-built rule stays visible through the backdrop.
+//
+// At most two frames: a projection's modal may open a custom type's,
+// because a projection's value is so often a type not yet written —
+// and a header that says what is underneath is the way back down.
+// Nothing deeper; a stack nobody can see the bottom of is the reason
+// the other dialogs never stack at all.
+//
+// Edits commit as they are made, as on the pages — undo takes them
+// back. Creating a definition and selecting it in the picker that
+// asked for it is one undo step.
+// A function, not a constant: the lists it reads are declared further
+// down the script.
+const frameKeys = () => [
+  ...FORM_KEYS.filter((key) => key !== 'pendingImport'), ...DRAFT_KEYS,
+  'sel', 'adder', 'lit', 'queryPop', 'hintPop', 'lcMenu', 'projTab',
+];
+
+function takeFrameKeys() {
+  const kept = {};
+  for (const key of frameKeys()) { kept[key] = state[key]; state[key] = null; }
+  return kept;
+}
+function putFrameKeys(kept) {
+  for (const key of frameKeys()) state[key] = kept[key];
+}
+
+// Which page a frame was opened over. A frame outliving its page —
+// something inside it navigated — has nothing to go back to.
+function definitionModalPage() {
+  return [state.view, state.slice, state.entity, state.code, activeModelId()].join('\0');
+}
+
+const topDefinitionFrame = () => state.defFrames[state.defFrames.length - 1] || null;
+
+// `kind` is 'custom-type' or 'projection'; `name` an existing one to
+// edit, or null to create one. `onCreated(name)` puts the new
+// definition where the picker that asked for it can see it — it runs
+// inside the same gesture as the creation, and again with the new
+// name if the definition is renamed before the modal closes.
+function openDefinitionModal(model, { kind, name = null, onCreated = null }) {
+  if (state.defFrames.length >= 2) return;
+  if (state.defFrames.length) autoSaveProjectionDraft();
+  const frame = { kind, name, onCreated, form: null, page: definitionModalPage() };
+  if (kind === 'projection') {
+    const stored = name && model['projection-definitions'][name];
+    frame.draft = stored
+      ? { name, body: projectionDraftFrom(stored) }
+      : { name: '', body: blankProjectionDraft(model) };
+  }
+  frame.below = takeFrameKeys();
+  frame.focus = true;
+  state.defFrames.push(frame);
+  anchorDefinitionModal();
+  render();
+}
+
+// The top modal only. Whatever is pending inside it is committed the
+// way leaving a page commits it — Escape has already discarded it.
+function closeDefinitionModal() {
+  if (!state.defFrames.length) return;
+  commitPendingField();
+  const frame = state.defFrames.pop();
+  putFrameKeys(frame.below);
+  anchorDefinitionModal();
+}
+
+function closeAllDefinitionModals() {
+  while (state.defFrames.length) closeDefinitionModal();
+}
+
+// An existing projection's modal edits through `projDraft`, which is
+// what its autosave flushes; it is put back after every `closeForms`
+// inside the modal, the way `keepingRowOpen` keeps a ledger row open.
+function definitionModalAnchor() {
+  const frame = topDefinitionFrame();
+  return frame && frame.kind === 'projection' && frame.name ? frame.draft : null;
+}
+function anchorDefinitionModal() {
+  const anchor = definitionModalAnchor();
+  if (anchor) state.projDraft = anchor;
+}
+
+// Another dialog wins: the definition modal steps aside — its edits
+// are already stored — rather than waiting underneath it. And one
+// whose page went away (something inside navigated) is simply gone,
+// with the forms of the page it was over.
+function settleDefinitionModals() {
+  if (!state.defFrames.length) return;
+  if (state.defFrames[0].page !== definitionModalPage()) { state.defFrames = []; return; }
+  if (state.pendingImport || state.problems || state.settings || state.importExport
+    || state.help || state.models || state.palette) {
+    closeAllDefinitionModals();
+  }
+}
+
+// The page behind a modal is painted from the forms the bottom frame
+// set aside, and whatever that paint does to them is set aside again.
+function behindDefinitionModal(paint) {
+  const bottom = state.defFrames[0];
+  if (!bottom) return paint();
+  const local = takeFrameKeys();
+  putFrameKeys(bottom.below);
+  try {
+    paint();
+  } finally {
+    bottom.below = takeFrameKeys();
+    putFrameKeys(local);
+  }
+}
+
+// Every pick inside a modal repaints it, so the keyboard's place is
+// kept by position, as `restoreMainFocusRank` keeps it on the page —
+// and a modal that holds no focus takes it, or a field on the page
+// behind would.
+function definitionModalStops() {
+  const modal = document.querySelector('#modal-host .def-modal');
+  if (!modal) return [];
+  return [...modal.querySelectorAll('a[href], button, select, input, textarea, [tabindex]')]
+    .filter((el) => !el.disabled && el.tabIndex !== -1);
+}
+function definitionModalFocusRank() {
+  if (!state.defFrames.length) return null;
+  const at = definitionModalStops().indexOf(document.activeElement);
+  return at < 0 ? null : at;
+}
+function restoreDefinitionModalFocus(rank) {
+  const modal = document.querySelector('#modal-host .def-modal');
+  if (!modal) return;
+  const frame = topDefinitionFrame();
+  if (frame && frame.focus) {
+    frame.focus = false;
+    const first = modal.querySelector('.def-body input, .def-body select, .def-body button');
+    (first || modal).focus({ preventScroll: true });
+    return;
+  }
+  if (modal.contains(document.activeElement)) return;
+  const stops = definitionModalStops();
+  if (rank !== null && stops.length) stops[Math.min(rank, stops.length - 1)].focus({ preventScroll: true });
+  else modal.focus({ preventScroll: true });
+}
+
+// The picker row that opens one, and the pencil beside a reference.
+const NEW_DEFINITION = ' new definition';
+const NEW_TYPE_LABEL = '+ New custom type…';
+const NEW_PROJECTION_LABEL = '+ New projection…';
+
+function editDefinitionButton(model, kind, name) {
+  return h('button', {
+    class: 'btn ghost tiny def-edit', type: 'button',
+    title: 'Edit ' + readable(name) + ' here',
+    'aria-label': 'Edit ' + readable(name),
+    onclick: (e) => { e.stopPropagation(); openDefinitionModal(model, { kind, name }); },
+  });
+}
+
+function definitionModal(model) {
+  const frame = topDefinitionFrame();
+  const under = state.defFrames.length > 1 ? state.defFrames[0] : null;
+  const close = () => { closeDefinitionModal(); render(); };
+  const isType = frame.kind === 'custom-type';
+  const collection = isType ? 'custom-type-definitions' : 'projection-definitions';
+  const exists = !!frame.name && !!model[collection][frame.name];
+  const noun = isType ? 'custom type' : 'projection';
+
+  // Created, then renamed: the new name follows into the frame, the
+  // projection's draft and whatever the picker below selected.
+  const renamed = (next) => {
+    frame.name = next;
+    if (frame.draft) frame.draft.name = next;
+    if (frame.selected && frame.onCreated) frame.onCreated(next);
+  };
+  const created = (definitionName) => {
+    frame.name = definitionName;
+    if (frame.onCreated) { frame.onCreated(definitionName); frame.selected = true; }
+  };
+
+  let body;
+  if (frame.name && !exists) {
+    // Undone, or removed elsewhere, while the modal was up.
+    body = h('div', { class: 'empty' }, `This ${noun} no longer exists.`);
+  } else if (isType) {
+    body = exists
+      ? customTypeEditor(model, frame.name, { inModal: true, onRenamed: renamed })
+      : newCustomTypeQuestion(model, frame, created);
+  } else {
+    body = exists
+      ? definitionModalProjection(model, frame, renamed)
+      : newProjectionQuestion(model, frame, created);
+  }
+
+  const modal = h('div', {
+    class: 'modal def-modal', tabindex: '-1', role: 'dialog', 'aria-modal': 'true',
+    'aria-label': exists ? readable(frame.name) : 'New ' + noun,
+  },
+    h('header', {},
+      under ? h('button', { class: 'btn ghost tiny def-back', onclick: close },
+        '‹ Back to ' + (under.name ? readable(under.name) : 'the new projection')) : null,
+      h('h2', {}, exists ? named(frame.name) : 'New ' + noun),
+      h('span', { class: 'grow' }),
+      h('button', { class: 'btn ghost', onclick: close, title: 'Close' }, '×')),
+    h('div', { class: 'def-body' }, body),
+    h('div', { class: 'adder', style: 'margin-top:18px' },
+      h('button', { class: 'btn primary', onclick: close }, 'Done'),
+      h('span', { class: 'grow' }),
+      exists ? h('button', {
+        class: 'btn ghost tiny', title: `Leave the command for this ${noun}’s own page`,
+        onclick: () => {
+          const target = frame.name;
+          closeAllDefinitionModals();
+          if (isType) goToCustomType(target); else goToProjection(target);
+        },
+      }, 'Open its page') : null));
+
+  return overlayAround(modal, close);
+}
+
+// The Custom types page's own question, asked here: which form, then
+// what it is called.
+function newCustomTypeQuestion(model, frame, created) {
+  if (!frame.form) {
+    const choose = (form) => () => { frame.form = form; render(); };
+    return h('div', { class: 'adder' },
+      h('button', { class: 'btn primary', onclick: choose('composite') }, '+ New record'),
+      h('button', { class: 'btn', onclick: choose('enum') }, '+ New enum'),
+      h('button', { class: 'btn', onclick: choose('scalar') }, '+ New single value'));
+  }
+  return inlineForm({
+    question: 'Name',
+    placeholder: frame.form === 'enum' ? 'enum name' : 'type name',
+    onSubmit: (v) => {
+      const typeName = toPascal(v);
+      if (!typeName) return toast('Give the type a name.', true);
+      run(() => {
+        addDefinition('custom-type-definition', model.id, typeName, newCustomTypeBody(frame.form));
+        frame.form = null;
+        created(typeName);
+      });
+    },
+    onCancel: () => { frame.form = null; render(); },
+  });
+}
+
+// What a projection's "it holds" picker offers inside a modal: a type
+// of its own, in the one modal that may sit on top of this one.
+function projectionNewTypeOffer(model, frame) {
+  if (state.defFrames.length > 1) return null;
+  return (choose) => openDefinitionModal(model, { kind: 'custom-type', onCreated: choose });
+}
+
+// The Projections page's question, asked here.
+function newProjectionQuestion(model, frame, created) {
+  const draft = frame.draft;
+  return h('div', {},
+    h('div', { class: 'row' },
+      h('span', { class: 'muted tiny', style: 'min-width:90px' }, 'called'),
+      h('input', {
+        type: 'text', value: draft.name, placeholder: 'projection name',
+        oninput: (e) => { draft.name = e.target.value; },
+      })),
+    h('div', { class: 'card projection' },
+      ...projectionFields(model, draft.body, { onNewType: projectionNewTypeOffer(model, frame) })),
+    h('div', { class: 'adder', style: 'margin-top:10px' },
+      h('button', {
+        class: 'btn primary',
+        onclick: () => {
+          const projectionName = toPascal(draft.name);
+          if (!projectionName) return toast('Give the projection a name.', true);
+          if (draft.body.tags === null) return toast('Say what it is tagged by — or that it is untagged.', true);
+          run(() => {
+            addDefinition('projection-definition', model.id, projectionName, cleanProjectionBody(draft.body));
+            const stored = projectState()[model.id]['projection-definitions'][projectionName];
+            frame.draft = { name: projectionName, body: projectionDraftFrom(stored) };
+            created(projectionName);
+            anchorDefinitionModal();
+          });
+        },
+      }, 'Create')));
+}
+
+// An existing projection, as its ledger row edits it: saved as it is
+// edited, renamed in place.
+function definitionModalProjection(model, frame, renamed) {
+  const name = frame.name;
+  return h('div', {
+    oninput: scheduleProjectionAutosave,
+    onchange: scheduleProjectionAutosave,
+  },
+    state.renamingProjection === name
+      ? renameDefinitionForm(model, 'projection-definition', name, {
+          stateKey: 'renamingProjection', after: renamed,
+        })
+      : null,
+    h('div', { class: 'card projection' },
+      ...projectionFields(model, frame.draft.body, { onNewType: projectionNewTypeOffer(model, frame) })),
+    h('div', { class: 'pfoot' },
+      h('span', { class: 'muted tiny' }, 'Saves as you edit — undo takes it back.'),
+      h('span', { class: 'grow' }),
+      h('button', {
+        class: 'btn tiny', title: 'Rename the projection',
+        onclick: () => { closeForms(); state.renamingProjection = name; render(); },
+      }, 'Rename')));
 }
 
 // ---------- help ----------
@@ -2995,7 +3325,7 @@ function discardPendingEdits() {
 function propertyAdder(model, {
   placeholder = 'property name', label = '+ Add', type = 'string',
   onAdd, onRemoveLast, onEmptyEnter, draftKey = 'field',
-  types = typeOptions, offerOptional = true,
+  types = typeOptions, offerOptional = true, newType = null,
 }) {
   const draft = state.fieldDraft && state.fieldDraft.key === draftKey
     ? state.fieldDraft
@@ -3057,7 +3387,10 @@ function propertyAdder(model, {
     },
   },
     input,
-    pick(types(model), draft.propertyType, (v) => { draft.propertyType = v; }),
+    pick([...types(model), ...(newType ? [[NEW_DEFINITION, NEW_TYPE_LABEL]] : [])], draft.propertyType, (v) => {
+      if (v === NEW_DEFINITION) return newType((typeName) => { draft.propertyType = typeName; });
+      draft.propertyType = v;
+    }),
     h('label', { class: 'tiny muted' },
       h('input', {
         type: 'checkbox', checked: draft.isList,
@@ -3158,7 +3491,10 @@ function retypeMember(member, changes) {
 //
 // `allow` says which knobs this site has: a projection parameter is
 // always a single required identifier, so it has no arity to set.
-function memberEditor(model, { member, where, types, allow = {}, onReplace, onRename }) {
+//
+// `newType(choose)` adds a row to the type picker that creates a custom
+// type and hands it to `choose`.
+function memberEditor(model, { member, where, types, allow = {}, onReplace, onRename, newType = null }) {
   const close = () => { state.editMember = null; render(); };
   let name = member.name;
   const options = types || typeOptions(model);
@@ -3182,7 +3518,11 @@ function memberEditor(model, { member, where, types, allow = {}, onReplace, onRe
         onclick: doRename,
       }, 'Rename'),
       h('span', { class: 'muted tiny' }, 'is a'),
-      pick(options, member.propertyType, (v) => onReplace(retypeMember(member, { propertyType: v }))),
+      pick([...options, ...(newType ? [[NEW_DEFINITION, NEW_TYPE_LABEL]] : [])], member.propertyType, (v) => {
+        const retype = (typeName) => onReplace(retypeMember(member, { propertyType: typeName }));
+        if (v === NEW_DEFINITION) return newType(retype);
+        retype(v);
+      }),
       allow.arity === false ? null : h('label', { class: 'tiny muted' },
         h('input', {
           type: 'checkbox', checked: !!member.isList,
@@ -3761,7 +4101,10 @@ const FORM_KEYS = [
 const DRAFT_KEYS = ['bindingDraft', 'ruleDraft', 'changeDraft',
   'watchDraft', 'fieldDraft', 'promoteDraft'];
 
-const formOpen = () => FORM_KEYS.some((key) => state[key]);
+// The projection a definition modal edits holds `projDraft` for as
+// long as the modal is up, so it is not "a form open" in the modal's
+// own sense — Escape would otherwise close it and leave the modal empty.
+const formOpen = () => FORM_KEYS.some((key) => state[key] && state[key] !== definitionModalAnchor());
 
 const closeForms = () => {
   // A named field that was never confirmed is confirmed by leaving it —
@@ -3773,6 +4116,7 @@ const closeForms = () => {
   for (const key of [...FORM_KEYS, ...DRAFT_KEYS]) state[key] = null;
   state.sel = null; state.adder = null; state.lit = null; state.queryPop = null;
   state.hintPop = null; state.lcMenu = null; state.moreOpen = false;
+  anchorDefinitionModal();
 };
 
 // ---------- rail ----------
@@ -4380,8 +4724,10 @@ function restoreMainFocusRank(rank) {
 // once it knows which view it is drawing.
 function render() {
   const focusRank = mainFocusRank();
+  const modalRank = definitionModalFocusRank();
   paintPage();
   restoreMainFocusRank(focusRank);
+  restoreDefinitionModalFocus(modalRank);
   sweepScriptEditors();
   if (!state.land) return;
   const selector = state.land;
@@ -4465,7 +4811,11 @@ function paintPage() {
 
   renderModals();
   renderPalette();
+  behindDefinitionModal(() => paintBehind(model));
+}
 
+// Everything below the bar: the rail and the page itself.
+function paintBehind(model) {
   const names = Object.keys(model['command-definitions']);
   // A model with no command has nothing to give an overview of, and its
   // first command is begun from the slice page — so that is where an
@@ -4655,6 +5005,7 @@ function step(kind, title, ...body) {
 
 function stepTrigger(model, slice) {
   const where = 'payload:' + slice.name;
+  const newTypeHere = (choose) => openDefinitionModal(model, { kind: 'custom-type', onCreated: choose });
   // A stale reference from before `removeEventField` existed would
   // otherwise refuse this removal for a reason no longer visible
   // anywhere — see the comment there.
@@ -4665,7 +5016,7 @@ function stepTrigger(model, slice) {
   const rows = slice.payload.map((p, i) => {
     if (editingMember(where, p.name)) {
       return memberEditor(model, {
-        member: p, where,
+        member: p, where, newType: newTypeHere,
         onReplace: (next) => patchSlice((b) => { b.properties[i] = next; }),
         onRename: (name) => renameMember('command-definition', model.id, slice.name, 'property', p.name, name),
       });
@@ -4685,6 +5036,8 @@ function stepTrigger(model, slice) {
           class: 'type-tag', title: 'Rename or retype this input',
           onclick: (e) => { e.stopPropagation(); openMember(where, p.name); },
         }, readable(typeLabel(p))),
+        model['custom-type-definitions'][p.propertyType]
+          ? editDefinitionButton(model, 'custom-type', p.propertyType) : null,
         h('span', { class: 'grow', style: 'flex:1' }),
         reveal(
           h('span', { class: 'tech' }, p.name),
@@ -4699,6 +5052,7 @@ function stepTrigger(model, slice) {
     h('div', { class: 'card command' }, rows,
       adderSlot('in', 'trigger', '+ input', () => propertyAdder(model, {
         placeholder: 'field name', label: '+ Add input', draftKey: 'in:' + slice.name,
+        newType: newTypeHere,
         onAdd: (property) => patchSlice((b) => b.properties.push(property)),
         onRemoveLast: slice.payload.length ? () => dropProperty(slice.payload.length - 1) : undefined,
         // Enter on an empty name means "done with these". Mid-wizard
@@ -4825,6 +5179,7 @@ function readCard(model, slice, binding, index, waitsFor) {
   const sentence = r.projection
     ? h('span', { class: 'sentence' },
         projectionRef(model, r.projection, { cls: 'chip projection' }),
+        boundAs(model, r.projection).length ? null : editDefinitionButton(model, 'projection', r.projection),
         ' as ', h('span', { class: 'op' }, r.alias),
         // No tag means the query is scoped by event type alone, which
         // is what a global numbering is.
@@ -5485,9 +5840,10 @@ function ruleEditor(model, slice, index, target) {
   ]);
   const targetRows = [
     ...aliasRows,
-    ...(experimental()
-      ? [...newRows, ...projectionRows, [NEW, '+ New entity…']]
-      : projectionRows),
+    ...(experimental() ? newRows : []),
+    ...projectionRows,
+    [NEW_DEFINITION, NEW_PROJECTION_LABEL],
+    ...(experimental() ? [[NEW, '+ New entity…']] : []),
   ];
   const chooseTarget = !editingExisting && !target;
   // Deliberately not defaulted. The row advances when the author
@@ -5889,6 +6245,16 @@ function ruleEditor(model, slice, index, target) {
     : stageRow('What is this rule about?',
         pick(targetRows, chosenTarget, (v) => {
           if (v === NEW) { closeForms(); state.newEntityAt = 'rules'; return render(); }
+          if (v === NEW_DEFINITION) {
+            return openDefinitionModal(model, {
+              kind: 'projection',
+              onCreated: (projectionName) => {
+                draft.target = 'projection:' + projectionName;
+                draft.left = '';
+                draft.touched = true;
+              },
+            });
+          }
           draft.target = v;
           // The value picked for the old target cannot mean anything
           // against the new one. Clearing it is also what puts the
@@ -6439,7 +6805,8 @@ function stepChanges(model, slice) {
       const scripted = effect.handler.code !== undefined;
       return qrow('div', { cls: 'row', key: 'chg:' + emission.name + ':' + key },
         h('span', { class: 'sentence' },
-          ref(p.subject), ' ',
+          ref(p.subject),
+          effect.entity ? null : editDefinitionButton(model, 'projection', projectionName), ' ',
           ...reads.flatMap((set, i) => [
             h('span', { class: 'muted' }, i ? ' · ' : ''),
             set.length
@@ -6594,12 +6961,7 @@ function changeAdder(model, eventName, emission) {
       h('span', { class: 'muted tiny' }, 'no projections'),
       h('button', {
         class: 'btn primary',
-        onclick: () => {
-          closeForms();
-          state.view = 'projections';
-          state.newProjection = { name: '', body: blankProjectionDraft(model) };
-          render();
-        },
+        onclick: () => openDefinitionModal(model, { kind: 'projection' }),
       }, '+ New projection'));
   }
   if (!hasEntities && !standaloneTargets.length) {
@@ -6626,11 +6988,12 @@ function changeAdder(model, eventName, emission) {
           [JSON.stringify([name, p.name]),
             `${iconPrefix(entityIcon(model, name))}${readable(name)} · ${propertyWords(p.name)}`])),
     ...standaloneTargets,
+    [NEW_DEFINITION, NEW_PROJECTION_LABEL],
     // A new property lands on an entity, so it is offered only where
     // there is one to land on.
     ...(hasEntities ? [[NEW, '+ New property…']] : []),
   ];
-  const firstTarget = (targets.find(([v]) => v !== NEW) || [''])[0];
+  const firstTarget = (targets.find(([v]) => v !== NEW && v !== NEW_DEFINITION) || [''])[0];
   // The draft outlives a repaint, which a typed literal needs: the
   // picker rebuilds on every keystroke otherwise.
   const draft = state.changeDraft && state.changeDraft.eventName === eventName
@@ -6690,6 +7053,15 @@ function changeAdder(model, eventName, emission) {
 
   const targetSel = pick(targets, draft.target, (v) => {
     if (v === NEW) { closeForms(); state.addingProp = { eventName }; return render(); }
+    if (v === NEW_DEFINITION) {
+      return openDefinitionModal(model, {
+        kind: 'projection',
+        onCreated: (projectionName) => {
+          draft.target = JSON.stringify({ projection: projectionName });
+          draft.touched = true;
+        },
+      });
+    }
     draft.target = v;
     draft.touched = true;
     render();
@@ -6714,7 +7086,7 @@ function changeAdder(model, eventName, emission) {
   // Touched and complete, though, is an edit someone made, and leaving
   // the row is what finishes it.
   draft.ready = () => !!draft.touched
-    && !!draft.target && draft.target !== NEW && draft.value !== NEW
+    && !!draft.target && draft.target !== NEW && draft.target !== NEW_DEFINITION && draft.value !== NEW
     && draftOperand(draft, 'value') !== undefined;
   draft.commit = record;
 
@@ -8440,8 +8812,11 @@ function renderCustomTypes(model, main) {
 }
 
 // One custom type's card: its head, its fields, members or schema, and
-// its tag switch. The Custom types page lists these.
-function customTypeEditor(model, name) {
+// its tag switch. The Custom types page lists these, and a definition
+// modal shows one (`inModal`): there it offers no removal — the command
+// behind it may be using the type — and no way off to the owning
+// entity, and a rename tells the modal its new name (`onRenamed`).
+function customTypeEditor(model, name, { inModal = false, onRenamed = null } = {}) {
   const body = model['custom-type-definitions'][name];
   const composite = Array.isArray(body.properties);
   const owner = entityOfIdType(model, name);
@@ -8449,7 +8824,7 @@ function customTypeEditor(model, name) {
 
   if (state.renamingType === name) {
     card.appendChild(renameDefinitionForm(model, 'custom-type-definition', name, {
-      stateKey: 'renamingType',
+      stateKey: 'renamingType', after: onRenamed || undefined,
     }));
   } else {
     const tags = composite
@@ -8462,7 +8837,7 @@ function customTypeEditor(model, name) {
       h('span', { class: 'muted tiny' }, composite
         ? `${body.properties.length} field${body.properties.length === 1 ? '' : 's'}`
         : 'one value'),
-      owner ? h('span', {
+      owner ? h('span', inModal ? { class: 'chip entity' } : {
         class: 'chip entity', title: 'Open ' + readable(owner),
         onclick: () => openEntity(owner),
       }, h('i', { class: 'ic' }, entityIcon(model, owner)), 'identifier of ' + readable(owner)) : null,
@@ -8474,7 +8849,7 @@ function customTypeEditor(model, name) {
         class: 'btn tiny',
         onclick: () => { closeForms(); state.renamingType = name; render(); },
       }, 'Rename'),
-      owner
+      inModal ? null : owner
         ? h('button', {
             class: 'btn tiny danger', disabled: true,
             title: `Remove the ${readable(owner)} entity instead — its identifier goes with it.`,
@@ -9082,19 +9457,32 @@ function derivedSideEditor(model, draft, side, { allowLiteral } = {}) {
 // by" line says: the entity reads it tagged by its identifier.
 // Everything else is identical, which is the point: there is no second
 // kind of thing here to edit differently.
-function projectionFields(model, draft, { entityName } = {}) {
+//
+// `onNewType(choose)`, given in a definition modal, adds a row to the
+// type picker that creates a custom type and hands it to `choose`.
+function projectionFields(model, draft, { entityName, onNewType } = {}) {
   const eventNames = Object.keys(model['event-definitions']).sort();
   const enumType = isStringEnumType(model, draft.valueType) ? draft.valueType : null;
 
+  const retype = (v) => {
+    draft.valueType = v;
+    // Everything scoped by the type goes with it: the operand picker
+    // is built from it, and a value of the old type is not a value
+    // of the new one.
+    for (const handler of draft.handlers || []) { handler.value = ''; handler.valueText = ''; }
+    if (!draft.script) draft.initialValue = defaultInitialValue(model, draft);
+  };
   const heldRow = h('div', { class: 'row' },
     h('span', { class: 'muted tiny', style: 'min-width:90px' }, 'it holds'),
-    pick(projectionTypeOptions(model, { scripted: !!draft.script }), draft.valueType, (v) => {
-      draft.valueType = v;
-      // Everything scoped by the type goes with it: the operand picker
-      // is built from it, and a value of the old type is not a value
-      // of the new one.
-      for (const handler of draft.handlers || []) { handler.value = ''; handler.valueText = ''; }
-      if (!draft.script) draft.initialValue = defaultInitialValue(model, draft);
+    pick([
+      ...projectionTypeOptions(model, { scripted: !!draft.script }),
+      ...(onNewType ? [[NEW_DEFINITION, NEW_TYPE_LABEL]] : []),
+    ], draft.valueType, (v) => {
+      if (v === NEW_DEFINITION) {
+        // Picked from under the new type's modal, against a fresh model.
+        return onNewType((typeName) => retype(typeName));
+      }
+      retype(v);
       render();
     }, '— which type? —'),
     h('label', { class: 'tiny muted' }, h('input', {
@@ -13335,6 +13723,21 @@ window.addEventListener('keydown', (e) => {
   if (state.models) {
     state.models = false;
     state.newModel = false; state.loadingUrl = false; state.loadingJson = false;
+    return render();
+  }
+
+  // A definition modal is layered the way the page is — a field, then
+  // a form inside it, then a selected row — and only once those are
+  // gone does Escape close the modal itself, the top one only.
+  if (state.defFrames.length) {
+    const inField = e.target instanceof Element && e.target.closest('input, textarea, select');
+    if (inField) { inField.blur(); return; }
+    discardPendingEdits();
+    if (formOpen() || state.sel || state.adder || state.lit) {
+      closeForms();
+      return render();
+    }
+    closeDefinitionModal();
     return render();
   }
 

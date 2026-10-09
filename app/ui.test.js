@@ -4423,4 +4423,175 @@ check('the reference links only anchors the website defines', () => {
   sandbox.document.getElementById = realGetElementById;
 }
 
+// ---------------------------------------------------------------
+// Definition modals: a custom type or a projection created and edited
+// from the command that needs it, without leaving the command — and
+// without losing the rule or input that was half-built when the need
+// came up.
+// ---------------------------------------------------------------
+{
+  const screen = {};
+  const realGetElementById = sandbox.document.getElementById;
+  sandbox.document.getElementById = (id) => (screen[id] ||= sandbox.document.createElement('div'));
+  const fresh = () => { for (const key of Object.keys(screen)) delete screen[key]; };
+  const repaint = () => { fresh(); sandbox.render(); };
+  const modal = () => screen['modal-host'];
+  const button = (node, label) => findAll(node, (n) => n.tag === 'button' && textOf(n) === label)[0];
+  const offering = (node, label) => findAll(node, (n) => n.tag === 'select'
+    && findAll(n, (o) => o.tag === 'option' && textOf(o) === label).length)[0];
+  const press = (node, label) => {
+    const b = button(node, label);
+    if (!b) throw new Error(`no "${label}" button on screen`);
+    fresh();
+    b.onclick();
+  };
+  const choose = (select, value) => { fresh(); select.onchange({ target: { value } }); };
+  const NEW = ' new definition';
+
+  // The shipped models are stated without entities, so this is the
+  // flag-off page — the one most people see.
+  const { id, model } = build(0);
+  store.set('dcb-playground:model', id);
+  store.set('dcb-playground:experimental', 'off');
+  const openRuleAdder = () => {
+    sandbox.state.defFrames = [];
+    sandbox.closeForms();
+    Object.assign(sandbox.state, { view: 'slice', slice: 'DefineCourse', code: false, tab: 'definition',
+      wizard: null, adder: 'rule' });
+    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' };
+    repaint();
+  };
+
+  check('a rule\'s first question offers a new projection, flag or no flag', () => {
+    openRuleAdder();
+    eq(!!offering(screen.main, '+ New projection…'), true, 'among what the rule can be about');
+  });
+
+  check('a projection made from that row is the rule\'s answer, and the rule is still there', () => {
+    openRuleAdder();
+    const rule = sandbox.state.ruleDraft;
+    choose(offering(screen.main, '+ New projection…'), NEW);
+    eq(sandbox.state.defFrames.length, 1, 'a modal is up');
+    eq(sandbox.state.ruleDraft, null, 'the rule is set aside, out of reach of the modal\'s own forms');
+    eq(/New projection/.test(textOf(modal())), true, 'asking for a new projection');
+    eq(/What is this rule about\?/.test(textOf(screen.main)), true, 'the half-built rule still shows behind it');
+
+    const draft = sandbox.state.defFrames[0].draft;
+    draft.name = 'Course seats';
+    Object.assign(draft.body, { tags: [], valueType: 'integer', initialValue: '0' });
+    press(modal(), 'Create');
+    eq(!!model()['projection-definitions'].CourseSeats, true, 'it is created');
+    eq(sandbox.state.defFrames.length, 1, 'and the modal stays, on the projection it made');
+    eq(/Saves as you edit/.test(textOf(modal())), true, 'now its editor');
+    eq(sandbox.state.projDraft && sandbox.state.projDraft.name, 'CourseSeats', 'editing through its draft');
+
+    press(modal(), 'Done');
+    eq(sandbox.state.defFrames.length, 0, 'Done closes it');
+    eq(sandbox.state.ruleDraft, rule, 'the very rule that asked is back');
+    eq(rule.target, 'projection:CourseSeats', 'with the new projection as its answer');
+    eq(sandbox.state.adder, 'rule', 'and its adder still open');
+    eq(sandbox.state.projDraft, null, 'the modal\'s draft does not stay behind');
+  });
+
+  check('closing before Create leaves the rule exactly as it was', () => {
+    openRuleAdder();
+    const before = JSON.stringify(sandbox.state.ruleDraft);
+    choose(offering(screen.main, '+ New projection…'), NEW);
+    press(modal(), '×');
+    eq(JSON.stringify(sandbox.state.ruleDraft), before, 'nothing chosen');
+  });
+
+  check('an input\'s new type is created in a modal and lands on the half-typed input', () => {
+    sandbox.state.defFrames = [];
+    sandbox.closeForms();
+    Object.assign(sandbox.state, { view: 'slice', slice: 'DefineCourse', adder: 'in' });
+    repaint();
+    const field = sandbox.state.fieldDraft;
+    field.name = 'seat';
+    choose(offering(screen.main, '+ New custom type…'), NEW);
+    eq(sandbox.state.defFrames.length, 1, 'a modal is up');
+    // The editors inside open and close their forms like anywhere else;
+    // none of it reaches the field set aside underneath.
+    sandbox.closeForms();
+    press(modal(), '+ New record');
+    const name = findAll(modal(), (n) => n.tag === 'input')[0];
+    name.oninput({ target: { value: 'Seat' } });
+    press(modal(), 'Add');
+    eq(!!model()['custom-type-definitions'].Seat, true, 'the type is created');
+    eq(/value/.test(textOf(modal())), true, 'and its editor shows, with the field it starts with');
+    eq(sandbox.state.fieldDraft, null, 'the input row is still set aside');
+    press(modal(), 'Done');
+    eq(sandbox.state.fieldDraft, field, 'the half-typed input is back');
+    eq(field.propertyType, 'Seat', 'typed with the new type');
+    eq(field.name, 'seat', 'its name untouched');
+    sandbox.closeForms();
+  });
+
+  check('a projection\'s modal may open a type\'s — one level, and the way back is named', () => {
+    sandbox.state.defFrames = [];
+    sandbox.closeForms();
+    Object.assign(sandbox.state, { view: 'slice', slice: 'DefineCourse' });
+    sandbox.openDefinitionModal(model(), { kind: 'projection' });
+    fresh();
+    sandbox.render();
+    choose(offering(modal(), '+ New custom type…'), NEW);
+    eq(sandbox.state.defFrames.length, 2, 'stacked once');
+    eq(/Back to the new projection/.test(textOf(modal())), true, 'saying what is underneath');
+    eq(!!offering(modal(), '+ New custom type…'), false, 'and offering nothing deeper');
+    sandbox.openDefinitionModal(model(), { kind: 'custom-type' });
+    eq(sandbox.state.defFrames.length, 2, 'nor opening it');
+
+    press(modal(), '+ New enum');
+    findAll(modal(), (n) => n.tag === 'input')[0].oninput({ target: { value: 'Seat kind' } });
+    press(modal(), 'Add');
+    eq(sandbox.state.defFrames[0].draft.body.valueType, 'SeatKind', 'the projection now holds it');
+    press(modal(), '‹ Back to the new projection');
+    eq(sandbox.state.defFrames.length, 1, 'back on the projection');
+    press(modal(), '×');
+    eq(sandbox.state.defFrames.length, 0, 'and closed');
+  });
+
+  check('an existing definition opens from the pencil beside it, without its removal', () => {
+    sandbox.state.defFrames = [];
+    sandbox.closeForms();
+    Object.assign(sandbox.state, { view: 'slice', slice: 'DefineCourse' });
+    repaint();
+    const pencil = findAll(screen.main, (n) => n.tag === 'button'
+      && n.attributes['aria-label'] === 'Edit Course id')[0];
+    eq(!!pencil, true, 'beside the input typed with it');
+    fresh();
+    pencil.onclick({ stopPropagation() {} });
+    eq(sandbox.state.defFrames.length, 1, 'opens it');
+    eq(!!button(modal(), 'Rename'), true, 'renamed here');
+    eq(!!button(modal(), 'Remove'), false, 'but never removed from under the command');
+    press(modal(), 'Done');
+  });
+
+  check('another dialog closes it and gives the page its forms back', () => {
+    openRuleAdder();
+    const rule = sandbox.state.ruleDraft;
+    choose(offering(screen.main, '+ New projection…'), NEW);
+    sandbox.state.help = true;
+    repaint();
+    eq(sandbox.state.defFrames.length, 0, 'the modal stepped aside');
+    eq(sandbox.state.ruleDraft, rule, 'the rule is back underneath the help');
+    sandbox.state.help = false;
+    sandbox.closeForms();
+  });
+
+  check('leaving for a definition\'s page closes every modal on the way', () => {
+    openRuleAdder();
+    sandbox.openDefinitionModal(model(), { kind: 'projection', name: 'CourseStatus' });
+    fresh();
+    sandbox.render();
+    press(modal(), 'Open its page');
+    eq(sandbox.state.defFrames.length, 0, 'no modal left');
+    eq(sandbox.state.view, 'projections', 'on the projection\'s own page');
+    eq(sandbox.state.projDraft && sandbox.state.projDraft.name, 'CourseStatus', 'opened there');
+    sandbox.closeForms();
+  });
+
+  sandbox.document.getElementById = realGetElementById;
+}
+
 finish();
