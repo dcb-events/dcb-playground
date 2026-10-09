@@ -634,6 +634,11 @@
   /* Unmarked is the common case: an authored mark is the exception, so
      the slot has to vanish rather than reserve itself a gutter. */
   .ic:empty { display: none; }
+  /* A kind's fallback mark is a text glyph, so the colour is ours to
+     give: the kind's, where the slot is not kind-coloured already. */
+  .fallback-command { color: var(--command); }
+  .fallback-event { color: var(--event); }
+  .chip .fallback-command, .chip .fallback-event { color: inherit; }
   .icon-btn {
     font: inherit; font-size: 20px; line-height: 1; cursor: pointer;
     width: 34px; height: 34px; flex: none; padding: 0;
@@ -1048,6 +1053,7 @@
   /* Still on the timeline — scrubbing back does not shorten the run,
      it only looks away from the rest of it. */
   .estep.upcoming { opacity: .38; }
+  .estep.fallback-event { color: var(--event); }
   .eplayhead { flex: none; width: 2px; align-self: stretch; min-height: 26px; background: var(--accent); border-radius: 2px; }
 
   .pin {
@@ -1713,7 +1719,7 @@ const UI_SETTINGS = [
     options: [
       ['off', 'Off', 'Types, events, projections, commands and the consistency boundary'],
       ['on', 'On', 'Also entities and lifecycles, derived projections, guarded emissions, '
-        + 'optional reads, annotations and the overview pages'],
+        + 'optional reads, feature groups and the overview pages'],
     ],
     get: () => (experimental() ? 'on' : 'off'),
     set: (value) => setExperimental(value === 'on'),
@@ -3868,7 +3874,7 @@ function refChip(name, { cls, icon, onOpen, text }) {
   return h('span', {
     class: cls, title: 'Open ' + readable(name),
     onclick: onOpen,
-  }, icon ? h('i', { class: 'ic' }, icon) : null,
+  }, icon ? h('i', { class: 'ic' + fallbackIconClass(icon) }, icon) : null,
     text === undefined ? readable(name) : text);
 }
 
@@ -4284,7 +4290,7 @@ function renderRail() {
           e.preventDefault(); closeForms();
           state.slice = name; state.openEvent = null; state.view = 'slice'; render();
         },
-      }, h('i', { class: 'ic' }, commandIcon(model, name)), readable(name),
+      }, h('i', { class: 'ic' + fallbackIconClass(commandIcon(model, name)) }, commandIcon(model, name)), readable(name),
         h('span', { class: 'grow' }), commandGrip(model, name)));
     }
     if (!group.commands.length) rail.appendChild(h('div', { class: 'gempty' }, 'nothing in it yet'));
@@ -4966,9 +4972,9 @@ function paintBehind(model) {
           stateKey: 'renamingCommand', after: (next) => { state.slice = next; },
         })
       : qrow('div', { cls: 'row', key: 'cmd:' + slice.name },
-          !experimental() && !commandIcon(model, slice.name) ? null : h('button', {
-            class: 'icon-btn', title: 'Choose the mark this is shown with',
-            disabled: !experimental(),
+          h('button', {
+            class: 'icon-btn' + fallbackIconClass(commandIcon(model, slice.name)),
+            title: 'Choose the mark this is shown with',
             onclick: () => {
               const open = state.commandIconPicker === slice.name;
               closeForms();
@@ -6539,7 +6545,7 @@ function stepEmits(model, slice) {
     return h('div', { class: 'card event' },
       qrow('div', { cls: 'row', key: 'emit:' + emission.name },
         event ? eventRef(model, emission.name)
-          : h('span', { class: 'chip event' }, h('i', { class: 'ic' }, eventIcon(model, emission.name)), readable(emission.name)),
+          : h('span', { class: 'chip event' }, h('i', { class: 'ic' + fallbackIconClass(eventIcon(model, emission.name)) }, eventIcon(model, emission.name)), readable(emission.name)),
         h('span', { class: 'muted tiny' }, params.length + ' field' + (params.length === 1 ? '' : 's')),
         h('span', { class: 'grow' }),
         reveal(
@@ -6882,7 +6888,7 @@ function stepChanges(model, slice) {
     });
     cards.push(h('div', { class: 'card entity' },
       h('div', { class: 'row' }, h('span', { class: 'chip event' },
-          h('i', { class: 'ic' }, eventIcon(model, emission.name)), readable(emission.name)),
+          h('i', { class: 'ic' + fallbackIconClass(eventIcon(model, emission.name)) }, eventIcon(model, emission.name)), readable(emission.name)),
         h('span', { class: 'muted tiny' }, 'changes')),
       h('div', { style: 'margin-top:6px' },
         rows.length ? rows : h('div', { class: 'empty' }, 'Changes nothing we know.')),
@@ -8763,9 +8769,9 @@ function eventIconPicker(model, name, event) {
 }
 
 // A command's icon is also the default mark for whichever single event
-// it publishes (see `eventIcon`), so clearing it back to the neutral
-// mark changes that event's default too, unless the event has a mark
-// of its own already.
+// it publishes (see `eventIcon`), so clearing it back to the command
+// fallback puts that event back on the event fallback too, unless the
+// event has a mark of its own already.
 function commandIconPicker(model, name, command) {
   return iconForm(name, command, {
     stateKey: 'commandIconPicker', kind: 'command-definition', current: commandIcon(model, name),
@@ -10077,9 +10083,9 @@ function eventCard(model, name) {
 
   const pickingIcon = state.eventIconPicker === name;
   card.appendChild(qrow('div', { cls: 'ehead', key: 'event:' + name },
-    !experimental() && !eventIcon(model, name) ? null : h('button', {
-      class: 'icon-btn event', title: 'Choose the mark this is shown with',
-      disabled: !experimental(),
+    h('button', {
+      class: 'icon-btn event' + fallbackIconClass(eventIcon(model, name)),
+      title: 'Choose the mark this is shown with',
       onclick: () => {
         const wasOpen = pickingIcon;
         closeForms();
@@ -12519,7 +12525,8 @@ function sandboxTimeline(model) {
     items.push(h('span', {
       class: 'estep'
         + (i < position ? (i === position - 1 ? ' current' : ' played') : ' upcoming')
-        + (step && i === step.to - 1 ? ' step-end' : ''),
+        + (step && i === step.to - 1 ? ' step-end' : '')
+        + fallbackIconClass(eventIcon(model, event.type)),
       'data-index': String(i),
       title: readable(event.type) + (step ? ' — from ' + readable(step.command) : '')
         + (Object.keys(event.data || {}).length ? ' · ' + payloadText(event.data) : ''),
@@ -12926,7 +12933,7 @@ function renderSandbox(model, main) {
           ? sessionVisible().map((event, index) => h('div', {
               class: index === sessionPosition() - 1 ? 'lit' : '',
             },
-              h('span', { class: 'ic' }, eventIcon(model, event.type)),
+              h('span', { class: 'ic' + fallbackIconClass(eventIcon(model, event.type)) }, eventIcon(model, event.type)),
               h('span', { class: 'y' }, readable(event.type)),
               h('span', { class: 'k' }, '  ' + payloadText(event.data))))
           : h('div', { class: 'empty' }, 'nothing yet'))));

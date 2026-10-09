@@ -979,8 +979,8 @@ check('a read fans out where it says so — each, paired by index with its list'
 check('the code view says what is experimental, and offers none of it with the flag off', () => {
   const entities = modelToSource(build(ENTITIES).model());
   const marks = sandbox.sourceExperimentalMarks(entities).map((m) => m.message.split(' is experimental')[0]);
-  eq(marks.includes('An entity') && marks.includes('A lifecycle') && marks.includes('An annotation'), true,
-    'entities, lifecycles and annotations: ' + [...new Set(marks)].join(', '));
+  eq(marks.includes('An entity') && marks.includes('A lifecycle') && marks.includes('A feature group'), true,
+    'entities, lifecycles and feature groups: ' + [...new Set(marks)].join(', '));
   const guarded = modelToSource(build(PREDEFINED_MODELS.findIndex((m) => m.slug === 'content-decisions-guarded')).model());
   eq(sandbox.sourceExperimentalMarks(guarded).filter((m) => /guarded emission/.test(m.message)).length, 2,
     'each guard, and no scenario\'s when');
@@ -997,7 +997,7 @@ check('the code view says what is experimental, and offers none of it with the f
   };
   eq(at('|', { experimental: true }).includes('entity'), true, 'offered with the flag on');
   eq(at('|', { experimental: false }).includes('entity'), false, 'and not with it off');
-  eq(at('@|', { experimental: false }), ['tagSchema'], 'the one annotation that is not experimental');
+  eq(at('@|', { experimental: false }), ['icon', 'tagSchema'], 'the annotations that are not experimental');
 });
 
 check('every name in every shipped text resolves to a symbol', () => {

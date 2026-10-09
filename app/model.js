@@ -983,7 +983,7 @@ const EXPERIMENTAL_FEATURES = {
   optional: 'optional reads',
   excluding: 'excluding',
   currentValue: 'currentValue',
-  annotations: 'annotations',
+  feature: 'feature groups',
 };
 
 function experimentalFeatures(model) {
@@ -1003,10 +1003,6 @@ function experimentalFeatures(model) {
   for (const [name, body] of Object.entries(model['entity-definitions'] || {})) {
     note('entities', name);
     if (body && body.lifecycle) note('lifecycles', name);
-    if (body && body.icon) note('annotations', name);
-  }
-  for (const [name, body] of Object.entries(model['event-definitions'] || {})) {
-    if (body && body.icon) note('annotations', name);
   }
   for (const [name, body] of Object.entries(model['projection-definitions'] || {})) {
     if (derivedOf(body)) note('derived', name);
@@ -1014,7 +1010,7 @@ function experimentalFeatures(model) {
   }
   for (const [name, body] of Object.entries(model['command-definitions'] || {})) {
     if (!body) continue;
-    if (body.icon || body.feature) note('annotations', name);
+    if (body.feature) note('feature', name);
     for (const binding of body.boundary || []) {
       if (!binding) continue;
       if (binding.entity !== undefined) note('entities', name);
@@ -6027,8 +6023,8 @@ function seedProductPricing(modelId) {
 // other shipped model is then stated without them, by this last layer:
 // a property an entity read stood for becomes the projection it binds,
 // read in place by the identifier the entity was read by — a fan-out
-// staying one — and the entities, their lifecycles and the annotations
-// (all experimental) go. One append, through the ordinary command, like
+// staying one — and the entities, their lifecycles and the feature
+// groups (all experimental) go, the icons with them. One append, through the ordinary command, like
 // every layer.
 // ============================================================
 

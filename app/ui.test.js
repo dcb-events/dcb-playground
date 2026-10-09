@@ -4275,7 +4275,7 @@ check('the reference links only anchors the website defines', () => {
   check('experimentalFeatures names what a model uses', () => {
     const { model } = build(ENTITIES);
     const used = [...new Set(sandbox.experimentalFeatures(model()).map((f) => f.feature))].sort();
-    eq(used, ['annotations', 'entities', 'lifecycles'], 'course-simple');
+    eq(used, ['entities', 'feature', 'lifecycles'], 'course-simple');
     const guarded = build(8).model;
     eq(sandbox.experimentalFeatures(guarded()).some((f) => f.feature === 'guards' && f.where === 'UpdateText'),
       true, 'a guarded emission, on its command');
@@ -4314,12 +4314,41 @@ check('the reference links only anchors the website defines', () => {
     eq(sandbox.experimentalNotice(model), null, 'so nothing to say, flag or not');
   });
 
+  check('icons are not experimental, and an unmarked command or event shows its kind\'s mark', () => {
+    store.clear();
+    sandbox.bumpLogRevision();
+    const id = sandbox.createDcbModel('Icon Probe');
+    sandbox.applyModelSource(id, [
+      'model "Icon Probe"',
+      'tag type DocumentId = string',
+      '@icon("📄")',
+      'event Opened { tag documentId: DocumentId }',
+      'event Closed { tag documentId: DocumentId }',
+      'event Archived { tag documentId: DocumentId }',
+      '@icon("🗑️")',
+      'command Close(documentId: DocumentId) {',
+      '  emit Closed { documentId }',
+      '}',
+      'command Archive(documentId: DocumentId) {',
+      '  emit Archived { documentId }',
+      '}',
+    ].join('\n'));
+    const model = projectState()[id];
+    eq(sandbox.experimentalFeatures(model), [], 'an @icon is nothing experimental');
+    eq(sandbox.commandIcon(model, 'Close'), '🗑️', 'an authored command mark');
+    eq(sandbox.commandIcon(model, 'Archive'), '➜', 'an unmarked command: the command mark');
+    eq(sandbox.eventIcon(model, 'Opened'), '📄', 'an authored event mark');
+    eq(sandbox.eventIcon(model, 'Closed'), '🗑️', 'an unmarked event borrows its one command\'s authored mark');
+    eq(sandbox.eventIcon(model, 'Archived'), '↯', 'but never its fallback');
+    eq(sandbox.modelToSource(model).includes('↯'), false, 'a fallback is never written');
+  });
+
   check('the notice names the features when the flag is off, and only then', () => {
     const { model } = build(ENTITIES);
     eq(sandbox.experimentalNotice(model()), null, 'flag on: nothing to say');
     store.set('dcb-playground:experimental', 'off');
     const text = textOf(sandbox.experimentalNotice(model()));
-    eq(text.includes('entities, lifecycles, annotations'), true, 'the features, by name');
+    eq(text.includes('entities, lifecycles, feature groups'), true, 'the features, by name');
     store.set('dcb-playground:experimental', 'on');
   });
 

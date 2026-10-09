@@ -38,7 +38,7 @@ and prune what no longer holds.
   derived boundary — is always on screen; what the examples on
   dcb.events do not need is behind the flag: entities and lifecycles,
   derived projections, guarded emissions, optional reads, `excluding`,
-  `currentValue`, annotations, and the Coupling /
+  `currentValue`, `@feature` groups, and the Coupling /
   Rule map / Event model / Lifecycles views. A model that uses any of
   it still loads, renders and evaluates whole; `experimentalFeatures`
   (model.js) names what it uses and `experimentalNotice` says so on
@@ -498,9 +498,18 @@ on Projections, on an entity's page, and in the definition modals.
   Inline field hints are deleted; *derived facts* stay on the page,
   terse (`not designated`, `scripted fold`, `appended by: —`), because
   hiding a fact about the model behind a popover is the opposite of what
-  the register is for. An entity, event or command carries a mark only
-  if one was authored — there is no hashed fallback, and `iconPrefix`
-  is what keeps an unmarked name from rendering behind a stray space.
+  the register is for. An entity carries a mark only if one was
+  authored — there is no hashed fallback, and `iconPrefix` is what
+  keeps an unmarked name from rendering behind a stray space. A command
+  or event does carry one either way: unmarked, it shows its kind's
+  mark (➜ command, ↯ event), so the kinds stay told apart at a
+  glance; the fallback is drawn, never stored. The glyph says what the
+  thing is and the stylesheet colours it — a text glyph, not an emoji,
+  so it takes the kind's colour (`fallbackIconClass`). Coloured squares
+  (🟦/🟧) were tried first: they ignored the theme and said only what
+  the chip's background already did.
+  Icons left the experimental flag with it — an icon is one line of
+  legibility, not a modelling construct; `@feature` stays behind it.
 - **Naming a new command is a page of its own** (`renderNewCommand`),
   in the main area, whichever way in asked — the empty model's
   "+ First command", the rail's "+ Command", a feature heading's "+",

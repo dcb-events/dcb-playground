@@ -530,7 +530,7 @@ function createScriptEditorEntry(key) {
 // Everything that is DCB is always on screen: types, events, projections,
 // the consistency boundary each command derives. What the examples on
 // dcb.events never need — entities and their lifecycles, derived
-// projections, guarded emissions, the overview pages, annotations
+// projections, guarded emissions, the overview pages, feature groups
 // (`EXPERIMENTAL_FEATURES`, model.js) — waits behind this flag.
 //
 // It gates *authoring*, never reading: a model that already uses an
@@ -1935,11 +1935,20 @@ function typeLabel(member) {
 // shape long before it is read by name. So every entity carries one
 // mark, and the mark goes wherever the entity does.
 //
-// It is authored and only authored. An unmarked thing carries no glyph:
-// a hashed stand-in was tried and did not earn its place — a shape
-// nobody chose says nothing about the thing, so every page paid a
-// column of noise for a legibility that never arrived. The tables below
-// are the picker's offer, not a fallback.
+// An entity's mark is authored and only authored. An unmarked entity
+// carries no glyph: a hashed stand-in was tried and did not earn its
+// place — a shape nobody chose says nothing about the thing, so every
+// page paid a column of noise for a legibility that never arrived. The
+// tables below are the picker's offer, not a fallback.
+//
+// Commands and events are the exception: an unmarked one shows its
+// kind's mark (`COMMAND_FALLBACK_ICON`, `EVENT_FALLBACK_ICON`) — one
+// mark per kind, not per name, so it says only what the thing is. The
+// glyph carries the meaning (an intent pushed in, something that
+// happened) and the stylesheet the colour: a plain text glyph takes
+// the colour of what it sits in, and `fallbackIconClass` lets a slot
+// that is not already kind-coloured paint it. It is a rendering, never
+// stored: the code view and the wire format see only an authored icon.
 const ENTITY_MARKS = ['◆', '●', '■', '▲', '★', '◇', '○', '□', '△', '✦'];
 
 // The icon a body actually carries, or '' when it carries none worth
@@ -1971,8 +1980,20 @@ const EVENT_MARKS = ['✱', '✲', '✳', '✴', '✵', '✶', '✷', '✸', '�
 // spark, since one page can hold all three kinds at once.
 const COMMAND_MARKS = ['▶', '▷', '◈', '◉', '◐', '◑', '◒', '◓', '⬖', '⬗'];
 
+const COMMAND_FALLBACK_ICON = '➜';
+const EVENT_FALLBACK_ICON = '↯';
+
+// The class a mark's element takes when the mark is a kind's fallback.
+// An authored icon that happens to be the same glyph reads the same,
+// which is what it looks like anyway.
+function fallbackIconClass(icon) {
+  if (icon === COMMAND_FALLBACK_ICON) return ' fallback-command';
+  if (icon === EVENT_FALLBACK_ICON) return ' fallback-event';
+  return '';
+}
+
 function commandIcon(model, name) {
-  return chosenIcon(model, 'command-definitions', name);
+  return chosenIcon(model, 'command-definitions', name) || COMMAND_FALLBACK_ICON;
 }
 
 // Every command that publishes this event — usually none or one, since
@@ -1990,11 +2011,12 @@ function eventIcon(model, name) {
   // Unmarked, and the outcome of exactly one command: read as that
   // command's doing, the same mark and all — a modeler who wants this
   // event to look like its own thing gives it its own icon, same as
-  // always. Two commands recording the same event agree on nothing this
-  // way, so that case stays unmarked.
+  // always. Only an *authored* command mark is borrowed — the command's
+  // fallback would make the event read as a command. Two commands
+  // recording the same event agree on nothing, so that case falls back.
   const commands = commandsPublishing(model, name);
-  if (commands.length === 1) return commandIcon(model, commands[0]);
-  return '';
+  const borrowed = commands.length === 1 ? chosenIcon(model, 'command-definitions', commands[0]) : '';
+  return borrowed || EVENT_FALLBACK_ICON;
 }
 
 // Shown beside the type, never behind a gate: a value

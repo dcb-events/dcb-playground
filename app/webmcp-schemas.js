@@ -20,6 +20,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         ],
         "description": "What this event type is called — PascalCase, past tense by\nconvention, unique among events. Handlers, emissions and\nscenarios refer to it by this name, and it is the `type` every\nrecorded instance carries.\n"
       },
+      "icon": {
+        "description": "A short glyph — one emoji, or a character or two — that stands\nfor this event wherever it is named. Presentation only: no\npart of the model reads it, and two events may share one.\nAbsent means an authoring tool picks its own placeholder —\nconventionally the icon of the one command that publishes\nthis event, when exactly one does, and otherwise a neutral\nmark of its own.\n",
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 8,
+        "examples": [
+          "📚",
+          "🧾"
+        ]
+      },
       "properties": {
         "description": "The event's payload, in declaration order. Which of these values are\ntags is `tags`.\n",
         "type": "array",
@@ -451,6 +461,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
           "SubscribeStudentToCourse"
         ],
         "description": "What this command is called — PascalCase, imperative by\nconvention, unique among commands. Scenarios refer to it by this\nname.\n"
+      },
+      "icon": {
+        "description": "A short glyph — one emoji, or a character or two — that stands\nfor this command wherever it is named. Presentation only: no\npart of the model reads it, and two commands may share one.\nAbsent means an authoring tool picks its own placeholder. The\nevent this command publishes on success takes this same icon\nby default (see `EventDefinition.icon`), which is why setting\none here is usually enough to mark both.\n",
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 8,
+        "examples": [
+          "📚",
+          "🧾"
+        ]
       },
       "properties": {
         "description": "The command payload.",

@@ -22,7 +22,7 @@
 // The experimental members are cut before anything is inlined, since
 // WebMCP does not offer them (see webmcp.js): no entity kind, and no
 // schema so much as mentions an entity binding, a guard, a derived
-// projection, `currentValue` or an @icon / @feature annotation. The
+// projection, `currentValue` or a @feature annotation. The
 // canonical schema keeps them — a model using them still imports.
 //
 // Run with `node app/generate-webmcp-schemas.js` after changing
@@ -40,8 +40,7 @@ const defs = schema.$defs;
 // properties of a $def, and branches of a $def's choice. A name that
 // is not there stops the build — the schema moved, and so must this.
 const EXPERIMENTAL_PROPERTIES = {
-  EventDefinition: ['icon'],
-  CommandDefinition: ['icon', 'feature'],
+  CommandDefinition: ['feature'],
   ProjectionDefinition: ['derived'],
   EventEmission: ['when'],
 };

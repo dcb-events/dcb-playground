@@ -112,11 +112,12 @@ async function call(name, args) {
       eq(offered(name).kind.enum.includes('entity-definition'), false, `${name} offers no entities`);
     }
     const command = offered('add_command_definition');
-    eq('icon' in command || 'feature' in command, false, 'no command annotations');
+    eq('feature' in command, false, 'no feature groups');
+    eq('icon' in command, true, 'a command\'s icon is not experimental');
     eq(Object.keys(command.boundary.items.properties || {}).includes('entity'), false, 'a binding is a projection read');
     eq('when' in command.publishes.items.properties, false, 'no guarded emissions');
     eq('derived' in offered('add_projection_definition'), false, 'no derived projections');
-    eq('icon' in offered('add_event_definition'), false, 'no event annotations');
+    eq('icon' in offered('add_event_definition'), true, 'nor is an event\'s');
     eq(JSON.stringify(registered.get('add_projection_definition').inputSchema).includes('"currentValue"'), false,
       'no currentValue operand');
   });
