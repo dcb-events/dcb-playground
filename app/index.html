@@ -180,15 +180,14 @@
   .step.reads > .dot, .step.changes > .dot, .step.now > .dot { background: var(--entity); }
   .step.rules > .dot, .step.decide > .dot { background: var(--rule); }
   .card.rule { border-left: 3px solid var(--rule); }
-  /* A rule inside the read it is about: indented under the sentence
-     that introduced the thing, and carrying the rule colour so the two
-     kinds of line stay tellable apart now that they share a card. */
-  .rule-row { margin: 4px 0 0 12px; padding-left: 8px; border-left: 2px solid var(--rule); }
-  /* The grip sits in the margin left of the rule line, outside the
-     row, so it neither shifts the sentence nor waits for the row to be
-     opened — it fades in on hover, the way a rail command's does. */
+  /* The rules are rows of one card, below the reads they use: the
+     card carries the rule colour, so the rows need no stripe of their
+     own. The grip sits in the card's padding left of the sentence, so
+     it neither shifts the sentence nor waits for the row to be opened —
+     it fades in on hover, the way a rail command's does. */
   .rule-row { position: relative; }
-  .rule-row > .grip { position: absolute; left: -16px; top: 3px; opacity: 0; }
+  .rule-row + .rule-row { margin-top: 4px; }
+  .rule-row > .grip { position: absolute; left: -13px; top: 3px; opacity: 0; }
   .rule-row:hover > .grip, .rule-row > .grip:focus, .rule-row.dragging > .grip { opacity: 1; }
   /* The same edge line a scenario drop draws — see `.scenario.drop-before`. */
   .rule-row.drop-before { box-shadow: inset 0 2px 0 var(--rule); }
@@ -201,10 +200,6 @@
   .rule-stage > .q { font-size: 10px; text-transform: uppercase;
     letter-spacing: .06em; color: var(--muted); padding: 2px 0 0 2px; }
   .rule-stage > .adder { padding-top: 0; }
-  /* What a command can be refused with: the messages its rules add up to. */
-  .rejection-list { margin-top: 8px; padding: 4px 2px; }
-  .rejection-list > .q { font-size: 10px; text-transform: uppercase;
-    letter-spacing: .06em; color: var(--muted); padding-bottom: 2px; }
   .rejection-msg { font-style: italic; }
   .card > .adder.quiet { margin-left: 12px; }
   .step.emits > .dot { background: var(--event); }
@@ -1025,7 +1020,7 @@
      command on one row. Nothing here edits; a name is only the way to
      its own page. */
   .overview-stats {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(124px, 1fr));
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(124px, 1fr));
     gap: 10px; margin-bottom: 26px;
   }
   .overview-stat {
@@ -2757,17 +2752,15 @@ function moveAgainst(list, from, to, before) {
   return at;
 }
 
-// The reorder drag among the rules inside one read's card. Order is
-// meaning here, not tidiness: rules are checked top to bottom and the
-// first that fails is the one a refusal names. A rule only lands among
-// rules about the same alias — dropping it into another card would be
-// a different rule, not a different place. Everything keyed by a
-// rule's index (the open row, the one being edited) follows it.
-function ruleGrip(slice, i, alias) {
+// The reorder drag among the rules of the rules card. Order is meaning
+// here, not tidiness: rules are checked top to bottom and the first
+// that fails is the one a refusal names. Everything keyed by a rule's
+// index (the open row, the one being edited) follows it.
+function ruleGrip(slice, i) {
   let over = null;
   const clear = () => { if (over) over.classList.remove('drop-before', 'drop-after'); over = null; };
   const rowUnder = (under) => {
-    const row = under && under.closest(`[data-rule][data-rule-alias="${CSS.escape(alias)}"]`);
+    const row = under && under.closest('[data-rule]');
     return row && Number(row.getAttribute('data-rule')) !== i ? row : null;
   };
   const landsBefore = (row, e) => {
@@ -4701,7 +4694,7 @@ function dcbQueryWords(item) {
 // One binding, as a card. `index` is its position in the authored
 // boundary, which is what removal needs — the queries regroup the cards
 // but never renumber the list underneath them.
-function readCard(model, slice, binding, index, waitsFor, ruleIndices) {
+function readCard(model, slice, binding, index, waitsFor) {
   const r = readParts(model, slice.body, binding);
   const queryItem = (slice.dcb.items || []).find((item) => item.alias === binding.alias);
   const sentence = r.projection
@@ -4746,6 +4739,14 @@ function readCard(model, slice, binding, index, waitsFor, ruleIndices) {
               ]))
           : null);
 
+  const names = (condition) => conditionOperands(condition)
+    .some((operand) => operandSource(operand) === 'alias-property'
+      && operand.alias === binding.alias);
+  const usingRules = [
+    ...(slice.body.conditions || []),
+    ...(slice.body.publishes || []).flatMap((e) => (e && e.when) || []),
+  ].filter((c) => c && names(c)).length;
+
   return h('div', { class: 'card ' + (r.projection ? 'projection' : 'entity'),
       'data-src': 'alias:' + binding.alias },
     qrow('div', { cls: 'row', key: 'read:' + binding.alias },
@@ -4768,20 +4769,20 @@ function readCard(model, slice, binding, index, waitsFor, ruleIndices) {
             render();
           },
         }, 'Edit'),
-        // Removing a read takes the rules and guards about it with it:
-        // they are its own children on this page, and a rule whose
-        // subject is gone is not a rule. What it does *not* take is a
+        // Removing a read takes the rules and guards that use it with
+        // it: a rule whose subject is gone is not a rule. They sit in
+        // the rules card below rather than in this one, so the button
+        // says how many it takes. What it does *not* take is a
         // read further down the chain that drew its identifier from
         // this one — that is a sibling card the author can see and
         // repoint, and deleting a subtree nobody pointed at would
         // narrow the boundary behind their back. It dangles, and says
         // so, until they deal with it.
         h('button', {
-          class: 'btn tiny danger', title: 'Remove this alias, and the rules about it',
+          class: 'btn tiny danger',
+          title: 'Remove this alias' + (usingRules
+            ? `, and the ${usingRules === 1 ? 'rule' : usingRules + ' rules'} that use it` : ''),
           onclick: () => patchSlice((b) => {
-            const names = (condition) => conditionOperands(condition)
-              .some((operand) => operandSource(operand) === 'alias-property'
-                && operand.alias === binding.alias);
             b.boundary = (b.boundary || []).filter((x) => !(x && x.alias === binding.alias));
             b.conditions = (b.conditions || []).filter((c) => !(c && names(c)));
             for (const emission of b.publishes || []) {
@@ -4800,30 +4801,6 @@ function readCard(model, slice, binding, index, waitsFor, ruleIndices) {
           ...waitsFor.flatMap((alias, i) => [
             i ? ' and ' : null, h('span', { class: 'op' }, alias),
           ]))
-      : null,
-    // The rules about this read, inside it. A card with none is an
-    // intermediate hop or an emission's read — it still costs a query
-    // and still bounds the append, so it is shown as what it is
-    // rather than hidden for having nothing to check.
-    // More than one, and they can be dragged into the order they are
-    // checked in — among themselves only.
-    ...(ruleIndices || []).map((i) => ruleRow(model, slice, slice.rules[i], i,
-      ruleIndices.length > 1 ? binding.alias : null)),
-    ruleIndices
-      ? h('div', { class: 'adder quiet' }, h('button', {
-          class: 'btn tiny',
-          onclick: () => {
-            closeForms();
-            state.adder = 'rule';
-            // Opened from a card, the target is settled — the editor
-            // skips its own read picker and scopes the left side to
-            // this alias.
-            state.ruleDraft = {
-              predicate: 'equals', negate: false, left: '', right: '', onAlias: binding.alias,
-            };
-            render();
-          },
-        }, '+ rule about ' + propertyWords(binding.alias)))
       : null);
 }
 
@@ -4999,31 +4976,20 @@ function rejectionQuote(rejection) {
   return h('span', { class: 'rejection-msg' }, '\u201c' + rejection + '\u201d');
 }
 
-// Beside a rule's sentence: what it is refused with — or that it says
-// nothing, which the Problems panel explains.
+// Beside a rule's sentence, quietly: what it is refused with — the
+// code view's `else reject "…"` — or that it says nothing, which the
+// Problems panel explains.
 function rejectionMark(condition) {
   if (condition && !rejectionProblem(condition.rejection)) {
-    return h('span', { class: 'tiny' }, h('span', { class: 'muted' }, ' — refused with '),
-      rejectionQuote(condition.rejection));
+    return h('span', { class: 'muted tiny' }, ' — else ', rejectionQuote(condition.rejection));
   }
   return h('span', { class: 'muted tiny' }, ' — no rejection message');
 }
 
-// The messages this command can be refused with, each once, with the
-// rules that lead to it — the fixed set of outcomes the rules add up
-// to. Derived, never declared: the rules already say it.
-function rejectionList(model, slice) {
-  const outcomes = commandRejections(slice.body);
-  if (!outcomes.length) return null;
-  return h('div', { class: 'rejection-list' },
-    h('div', { class: 'q' }, 'Can be refused with'),
-    ...outcomes.map(({ rejection, rules }) => h('div', { class: 'row' },
-      rejectionQuote(rejection),
-      rules.length > 1 ? h('span', { class: 'muted tiny' }, ` — ${rules.length} rules`) : null)));
-}
-
-function ruleRow(model, slice, condition, i, dragAlias) {
-  if (state.editRule === i) return h('div', { class: 'card rule' }, ruleEditor(model, slice, i));
+// One rule, as a row of the rules card. More than one, and each can be
+// dragged into the order they are checked in.
+function ruleRow(model, slice, condition, i, draggable) {
+  if (state.editRule === i) return h('div', { class: 'rule-row' }, ruleEditor(model, slice, i));
   const p = conditionParts(condition, model, slice.body);
   const quantifier = quantifierWords(model, slice.body, condition);
   // A rule over an alias declared "may be absent" does not decide on
@@ -5035,9 +5001,9 @@ function ruleRow(model, slice, condition, i, dragAlias) {
     .filter((alias) => (slice.body.boundary || []).some((b) => b && b.alias === alias && b.isOptional));
   return h('div', {
       class: 'rule-row',
-      'data-rule': dragAlias ? i : null, 'data-rule-alias': dragAlias || null,
+      'data-rule': draggable ? i : null,
     },
-    dragAlias ? ruleGrip(slice, i, dragAlias) : null,
+    draggable ? ruleGrip(slice, i) : null,
     qrow('div', { cls: 'row', key: 'rule:' + i },
       h('span', { class: 'sentence' },
         quantifier ? h('span', { class: 'verb' }, quantifier + ', ') : null,
@@ -5079,11 +5045,14 @@ function ruleRow(model, slice, condition, i, dragAlias) {
 // modeller answer a question about storage before they had finished
 // the question about the domain.
 //
-// So a read is not authored here. Each card is a read something
-// demanded, and the rules about it live inside it — which is also why
-// the card has no delete button: `pruneUnreferencedBindings` takes it
-// away when the last thing consulting it goes, and there is nothing
-// for a user to remove that they ever added.
+// So a read is mostly not authored here. Each card is a read something
+// demanded, and `pruneUnreferencedBindings` takes it away when the last
+// thing consulting it goes. The rules come after all of them, in one
+// card, in the order they are checked — not inside the card of the read
+// they are about, because a rule can be about two
+// (`devCapacity < projectCapacity`) or about a read in place, and
+// either had no card to sit in. The reads above, the rules below: the
+// order the code view prints them in.
 //
 // The queries spine survives the merge, and is the reason the cards did
 // not collapse into the rules. "We must read the courses before we
@@ -5103,26 +5072,8 @@ function stepDecision(model, slice) {
   const indexOfBinding = new Map(slice.reads.map((b, i) => [b, i]));
   const reads = slice.reads.filter(mine);
 
-  // A rule belongs to the read its left side is about — the left side
-  // is always something read, which is what the rule editor already
-  // enforced by filtering its own picker. A rule that reads its
-  // projection in place has no alias to sit under, and neither has one
-  // arriving from a hand-written file that names none: both are shown
-  // after the cards, each a card of its own.
-  const rulesByAlias = new Map();
-  const loose = [];
-  slice.rules.forEach((condition, i) => {
-    const left = condition && condition.leftHandSide;
-    const alias = operandSource(left) === 'alias-property' ? left.alias : null;
-    if (alias && slice.reads.some((b) => b && b.alias === alias)) {
-      if (!rulesByAlias.has(alias)) rulesByAlias.set(alias, []);
-      rulesByAlias.get(alias).push(i);
-    } else loose.push(i);
-  });
-
   const cardFor = (binding, waitsFor) => readCard(
-    model, slice, binding, indexOfBinding.get(binding), waitsFor,
-    rulesByAlias.get(binding.alias) || []);
+    model, slice, binding, indexOfBinding.get(binding), waitsFor);
 
   let cards;
   if (rounds.length > 1) {
@@ -5135,7 +5086,10 @@ function stepDecision(model, slice) {
   } else {
     cards = reads.map((binding) => cardFor(binding, []));
   }
-  for (const i of loose) cards.push(h('div', { class: 'card rule' }, ruleRow(model, slice, slice.rules[i], i)));
+  if (slice.rules.length) {
+    cards.push(h('div', { class: 'card rule' },
+      ...slice.rules.map((condition, i) => ruleRow(model, slice, condition, i, slice.rules.length > 1))));
+  }
 
   const body = [h('div', {}, cards)];
 
@@ -5199,9 +5153,6 @@ function stepDecision(model, slice) {
   // same DCB. What it gives up is only that the states stay unnamed.
   const merge = lifecycleMergeSuggestion(model, slice.body);
   if (merge) body.push(mergePrompt(model, merge));
-
-  const refusals = rejectionList(model, slice);
-  if (refusals) body.push(refusals);
 
   // Nothing tested is nothing decided. `DefineCourse` really is always
   // allowed: the numbering it reads is read in order to *record* the
@@ -5356,14 +5307,10 @@ function ruleEditor(model, slice, index, target) {
   // Progressive on purpose: the property picker's choices depend on the
   // read, and the identifier sources depend on the entity, so a row
   // that painted all of them at once would be offering answers to
-  // questions not yet asked. A rule opened from a read's own card, or
-  // a guard (which is written against reads that already exist), skips
-  // this entirely — `onAlias` says the question is already answered.
+  // questions not yet asked. A rule opened for editing, or a guard
+  // (which is written against reads that already exist), skips this
+  // entirely.
   const editingExisting = index !== null;
-  const scoped = draft.onAlias
-    || (editingExisting || target
-      ? null
-      : undefined);
   const alreadyRead = new Set((slice.reads || []).filter(Boolean).map((b) => b.entity).filter(Boolean));
   // Only what this command could actually reach. An entity is offered
   // when something already in scope could identify one — a command
@@ -5401,16 +5348,24 @@ function ruleEditor(model, slice, index, target) {
       'projection:' + n,
       'projection' + GROUP_SEP + (alreadyReadProjection.has(n) ? 'another ' : '') + readable(n) + '…',
     ]);
-  // Only reads this command does not have yet. A read it already makes
-  // is not offered here, because it already carries its own "+ rule
-  // about …" button — that is where a second rule about the same
-  // instance belongs, and offering it twice made the same rule
-  // reachable two ways with nothing to tell them apart. "Another
-  // Course…" is a different matter: it is a different instance.
-  const targetRows = experimental()
-    ? [...newRows, ...projectionRows, [NEW, '+ New entity…']]
-    : projectionRows;
-  const chooseTarget = scoped === undefined;
+  // The reads this command already makes come first — two rules about
+  // the same course are two rules and one read — under the alias the
+  // rules name them by. "Another Course…" is a different matter: it is
+  // a different instance. An existing alias is offered in either mode:
+  // the flag gates starting a read of an entity, never writing about
+  // one the model already has.
+  const aliasRows = (slice.reads || []).filter((b) => b && b.alias).map((b) => [
+    'alias:' + b.alias,
+    'already read' + GROUP_SEP + b.alias,
+    b.entity ? entityIcon(model, b.entity) : null,
+  ]);
+  const targetRows = [
+    ...aliasRows,
+    ...(experimental()
+      ? [...newRows, ...projectionRows, [NEW, '+ New entity…']]
+      : projectionRows),
+  ];
+  const chooseTarget = !editingExisting && !target;
   // Deliberately not defaulted. The row advances when the author
   // answers a question, so the first question has to be unanswered —
   // a pre-picked target would either advance on its own (putting
@@ -5419,7 +5374,9 @@ function ruleEditor(model, slice, index, target) {
   if (chooseTarget && draft.target && !targetRows.some(([v]) => v === draft.target)) {
     draft.target = '';
   }
-  const chosenTarget = scoped ? 'alias:' + scoped : draft.target;
+  const chosenTarget = draft.target;
+  const scoped = chooseTarget && chosenTarget && chosenTarget.startsWith('alias:')
+    ? chosenTarget.slice('alias:'.length) : null;
   // The draft's read choice is derived from the target every paint, so
   // switching target cannot leave a half-built read of the old one
   // behind.
@@ -5428,7 +5385,7 @@ function ruleEditor(model, slice, index, target) {
       const entity = chosenTarget.startsWith('projection:')
         ? chosenTarget : chosenTarget.slice('entity:'.length);
       if (!draft.newRead || draft.newRead.entity !== entity) {
-        draft.newRead = { entity, source: '', args: {}, tags: {} };
+        draft.newRead = { entity, source: '', args: {}, tags: {}, as: '' };
       }
     } else if (draft.newRead) {
       delete draft.newRead;
@@ -5642,6 +5599,28 @@ function ruleEditor(model, slice, index, target) {
     render();
   };
 
+  // The alias a projection read is given in the read stage, if any —
+  // camel-cased the way a rename is — and what is wrong with it. A name
+  // the command already uses for a read or an input is refused here
+  // rather than stored: an alias and an input sharing a name is the
+  // one thing the code view cannot print back as code.
+  const typedAlias = () => (pending && pending.projection && choice && (choice.as || '').trim()
+    ? toCamel(choice.as) : null);
+  const aliasProblem = () => {
+    const typed = pending && pending.projection && choice ? (choice.as || '').trim() : '';
+    if (!typed) return null;
+    const name = typedAlias();
+    if (!/^[a-z][A-Za-z0-9]*$/.test(name)) return 'An alias starts with a letter.';
+    if (SOURCE_RESERVED_NAMES.includes(name)) return `"${name}" is a word of the language.`;
+    if ((slice.reads || []).some((b) => b && b.alias === name)) {
+      return `"${name}" is already bound in this command.`;
+    }
+    if ([...(slice.payload || []), ...newReadInputs(model, slice, draft)].some((p) => p && p.name === name)) {
+      return `"${name}" is already an input of this command.`;
+    }
+    return null;
+  };
+
   // The write itself, shared by the button and the leave-the-row
   // commit. The toasts stay in `submit`: a silent commit only runs on
   // a row `ready()` already vouched for.
@@ -5657,13 +5636,19 @@ function ruleEditor(model, slice, index, target) {
     state.editRule = null;
     state.editGuard = null;
     state.adder = null;
-    // A projection the rule brought is read in place (8.0): the
-    // provisional alias the wizard worked with is swapped for the read
-    // itself, and no binding is stored — an alias is the author's to
-    // write, in the code view, never one the pages invent.
-    const inline = pending && pending.projection ? inlineReadOf(pending) : null;
-    const swap = (operand) => (inline && operandSource(operand) === 'alias-property'
-      && operand.alias === pending.alias && operand.property === undefined ? deepClone(inline) : operand);
+    // A projection the rule brought is read in place (8.0) unless the
+    // author named it: the provisional alias the wizard worked with is
+    // swapped for the read itself, and no binding is stored — or, named,
+    // for the name, and the binding is stored under it. The pages never
+    // pick an alias for a projection on their own.
+    const named = typedAlias();
+    const inline = pending && pending.projection && !named ? inlineReadOf(pending) : null;
+    const binding = pending && !inline ? { ...deepClone(pending), ...(named ? { alias: named } : {}) } : null;
+    const swap = (operand) => {
+      if (!pending || operandSource(operand) !== 'alias-property' || operand.alias !== pending.alias) return operand;
+      if (inline) return operand.property === undefined ? deepClone(inline) : operand;
+      return named ? { ...operand, alias: named } : operand;
+    };
     condition.leftHandSide = swap(condition.leftHandSide);
     if (condition.rightHandSide !== undefined && !Array.isArray(condition.rightHandSide)) {
       condition.rightHandSide = swap(condition.rightHandSide);
@@ -5676,7 +5661,7 @@ function ruleEditor(model, slice, index, target) {
       // brought into being lands in the same gesture, above the rule
       // that names it, with any input it needs a value from.
       for (const { tag, ...input } of inputs) (b.properties = b.properties || []).push(input);
-      if (pending && !inline) (b.boundary = b.boundary || []).push(deepClone(pending));
+      if (binding) (b.boundary = b.boundary || []).push(binding);
       const list = targetList(b);
       if (index === null) list.push(condition);
       else list[index] = condition;
@@ -5691,6 +5676,7 @@ function ruleEditor(model, slice, index, target) {
   draft.ready = () => !!draft.touched
     && (!refuses || !rejectionProblem((draft.rejection || '').trim()))
     && (!draft.newRead || !!pending)
+    && !aliasProblem()
     && draftOperand(draft, 'left') !== undefined
     && (unary || fromData || (membership ? entryOperands().length > 0 : draftOperand(draft, 'right') !== undefined));
   draft.commit = record;
@@ -5705,6 +5691,8 @@ function ruleEditor(model, slice, index, target) {
         : 'Pick where that thing\u2019s id comes from.', true);
     }
     if (draftOperand(draft, 'left') === undefined) return toast('Pick what the rule is about.', true);
+    const badAlias = aliasProblem();
+    if (badAlias) return toast(badAlias, true);
     if (!unary && !membership && draftOperand(draft, 'right') === undefined) {
       return toast('Pick a value to compare it with.', true);
     }
@@ -5773,9 +5761,7 @@ function ruleEditor(model, slice, index, target) {
   // belongs to this question rather than to one of its own: "the
   // course, identified by the course id" is a single thought, and an
   // existing read skips it entirely.
-  const readStage = !chooseTarget
-    ? (scoped ? h('div', { class: 'rule-stage' },
-        h('div', { class: 'q' }, 'About ', h('span', { class: 'op' }, scoped))) : null)
+  const readStage = !chooseTarget ? null
     : stageRow('What is this rule about?',
         pick(targetRows, chosenTarget, (v) => {
           if (v === NEW) { closeForms(); state.newEntityAt = 'rules'; return render(); }
@@ -5814,6 +5800,15 @@ function ruleEditor(model, slice, index, target) {
                     draft.touched = true; render();
                   }),
               ]),
+              // Named, the read becomes an alias other rules can use
+              // too (`devCapacity < projectCapacity`); left empty, it
+              // is read in place, as before.
+              h('span', { class: 'muted tiny' }, 'as'),
+              h('input', {
+                type: 'text', class: 'read-alias', style: 'width:130px',
+                placeholder: 'read in place', value: choice.as || '',
+                oninput: (e) => { choice.as = e.target.value; draft.touched = true; },
+              }),
             ]
           : []));
 
@@ -9559,12 +9554,14 @@ function renderOverview(model, main) {
     h('span', { class: 'count' }, String(count)),
     sub ? h('span', { class: 'sub' }, sub) : null);
 
-  // The same mode rule the rail follows: what Simple keeps out of the
-  // rail it keeps out of the count, unless the model already has one.
+  // The same rule the rail follows: what the experimental flag keeps out
+  // of the rail it keeps out of the count, unless the model already has one.
   main.appendChild(h('div', { class: 'overview-stats' },
     stat('Commands', 'command', bodies.length, plural(ruleCount, 'rule')),
     stat('Events', 'event', events.length, unappended ? unappended + ' not appended' : null),
-    stat('Entities', 'entity', entities.length, lifecycles ? lifecycles + ' with a lifecycle' : null),
+    experimental() || entities.length
+      ? stat('Entities', 'entity', entities.length, lifecycles ? lifecycles + ' with a lifecycle' : null)
+      : null,
     stat('Projections', 'projection', standalone, 'standalone'),
     stat('Custom types', 'type', types),
     stat('Scenarios', null, scenarios, trouble ? trouble + ' not current' : null),
@@ -9587,7 +9584,7 @@ function renderOverview(model, main) {
 
       // A read is named after what it reads; the alias is shown only
       // where it says something the name does not — `others`, `theirs`.
-      const reads = (body.boundary || []).map((binding) => {
+      const reads = (body.boundary || []).filter(Boolean).map((binding) => {
         const target = binding.projection || binding.entity;
         const plain = target ? target[0].toLowerCase() + target.slice(1) : null;
         const text = binding.alias === plain ? undefined
@@ -9596,6 +9593,16 @@ function renderOverview(model, main) {
           ? projectionRef(model, binding.projection, { text })
           : entityRef(model, binding.entity, { text });
       });
+      // A read in place (`require CourseStatus(courseId) …`) has no
+      // binding, but reads all the same — once per projection, beside
+      // the bound ones.
+      const bound = new Set((body.boundary || []).map((b) => b && b.projection).filter(Boolean));
+      const inPlace = new Set();
+      forEachCommandOperand(body, (operand) => {
+        if (operandSource(operand) === 'projection-read' && operand.projection
+          && !bound.has(operand.projection)) inPlace.add(operand.projection);
+      });
+      for (const projection of inPlace) reads.push(projectionRef(model, projection));
 
       const rules = (body.conditions || []).length;
       const guards = sum((body.publishes || []).map((p) => (p && p.when ? p.when.length : 0)));

@@ -1694,8 +1694,8 @@ function build(index) {
     const values = targetOptions('SubscribeStudentToCourse');
     eq(values.some((v) => v.startsWith('projection:')), false,
       'no projection an entity binds — course.capacity is read through the course');
-    eq(values.some((v) => v.startsWith('alias:')), false,
-      'and no read it already makes — those carry their own "+ rule about …" button');
+    eq(values.filter((v) => v.startsWith('alias:')), ['alias:course', 'alias:student'],
+      'the reads it already makes come first, by their alias');
     eq(values.includes('entity:Course'), true, 'another Course — the payload carries a course id');
     eq(values.includes('entity:Student'), true, 'another Student — and a student id');
     sandbox.closeForms();
@@ -3146,15 +3146,12 @@ function build(index) {
   // selects themselves — a stage that stopped revealing the next one
   // fails here rather than passing quietly, because the control it
   // needs would never be on screen.
-  // `target` names a read the command does not have yet — the step's own
-  // "+ rule" wizard. `onAlias` is the other door: the "+ rule about …"
-  // button on a read's card, which knows the first answer already and
-  // opens on the second question.
-  const addRule = ({ target, onAlias, left, existence, predicate, right, rightText, negate, rejection }) => {
+  // `target` is the first answer: a read the command does not have yet
+  // (`entity:Course`), or one it already makes, by its alias
+  // (`alias:course`).
+  const addRule = ({ target, left, existence, predicate, right, rightText, negate, rejection }) => {
     sandbox.state.adder = 'rule';
-    sandbox.state.ruleDraft = {
-      predicate: 'equals', negate: false, left: '', right: '', ...(onAlias ? { onAlias } : {}),
-    };
+    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' };
     const paint = () => sandbox.stepDecision(model(), slice());
     const selects = () => findAll(paint(), (n) => n.tag === 'select');
     const draft = () => sandbox.state.ruleDraft;
@@ -3230,12 +3227,12 @@ function build(index) {
     // and picking it is the whole test — the message is still asked.
     addRule({ target: 'entity:Student', left: A('student', 'exists'), existence: 'exists',
       rejection: 'Student is not registered' });
-    addRule({ onAlias: 'course', left: A('course', 'subscriptionCount'),
+    addRule({ target: 'alias:course', left: A('course', 'subscriptionCount'),
       predicate: 'lessThan', right: A('course', 'capacity'), rejection: 'Course is full' });
-    addRule({ onAlias: 'course', left: A('course', 'subscribedStudentIds'),
+    addRule({ target: 'alias:course', left: A('course', 'subscribedStudentIds'),
       predicate: 'contains', right: JSON.stringify({ parameterName: 'studentId' }), negate: true,
       rejection: 'Student is already subscribed' });
-    addRule({ onAlias: 'student', left: A('student', 'subscriptionCount'),
+    addRule({ target: 'alias:student', left: A('student', 'subscriptionCount'),
       predicate: 'lessThan', rightText: '10', rejection: 'Student is subscribed to too many courses' });
 
     eq(cmd().boundary, shipped.boundary,
@@ -3246,8 +3243,8 @@ function build(index) {
   check('existence is two rows of the value question, not a property and a predicate', () => {
     const A = (alias, property) => JSON.stringify({ alias, property });
     sandbox.state.adder = 'rule';
-    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '', onAlias: 'student' };
-    const picker = () => findAll(sandbox.stepDecision(model(), slice()), (n) => n.tag === 'select')[0];
+    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '', target: 'alias:student' };
+    const picker = () => findAll(sandbox.stepDecision(model(), slice()), (n) => n.tag === 'select').pop();
     const values = findAll(picker(), (n) => n.tag === 'option').map((o) => o.value);
     eq(values.includes(' exists:' + A('student', 'exists')), true, 'the present state is offered');
     eq(values.includes(' absent:' + A('student', 'exists')), true, 'and the absent one');
@@ -3263,7 +3260,7 @@ function build(index) {
     // own row and the third question — it is shown as stored.
     sandbox.state.adder = 'rule';
     sandbox.state.ruleDraft = {
-      predicate: 'isTrue', negate: true, left: A('student', 'exists'), right: '', onAlias: 'student',
+      predicate: 'isTrue', negate: true, left: A('student', 'exists'), right: '', target: 'alias:student',
     };
     const step = sandbox.stepDecision(model(), slice());
     eq(/What must be true of it\?/.test(textOf(step)), true, 'a negated isTrue opens whole');
@@ -3360,6 +3357,55 @@ function build(index) {
     finish.properties.pop();
     finish.conditions.pop();
     sandbox.updateDefinition('command-definition', id, 'Finish', finish);
+  });
+
+  check('a projection read named in the first question is stored as an alias', () => {
+    const shipped = sandbox.deepClone(model()['command-definitions'].Finish);
+    const addAbout = (target, as, rejection) => {
+      sandbox.state.slice = 'Finish';
+      sandbox.state.adder = 'rule';
+      sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' };
+      selects()[0].onchange({ target: { value: target } });
+      if (as !== undefined) {
+        const field = findAll(paint(), (n) => /\bread-alias\b/.test(n.className || ''))[0];
+        field.oninput({ target: { value: as } });
+      }
+      Object.assign(sandbox.state.ruleDraft,
+        { predicate: 'lessThan', right: ' literal', rightText: '5', rejection });
+      findAll(paint(), (n) => n.tag === 'button' && textOf(n) === 'Add rule')[0].onclick();
+    };
+    const body = () => model()['command-definitions'].Finish;
+    const added = () => body().conditions.slice(shipped.conditions.length).map((c) => c.leftHandSide);
+
+    addAbout('projection:DoneCount', 'done count', 'Done too often');
+    eq(body().boundary, [{ alias: 'doneCount', projection: 'DoneCount',
+      tags: { documentId: { parameterName: 'documentId' } } }], 'bound under the name given, camel-cased');
+    eq(added(), [{ alias: 'doneCount' }], 'and the rule names it');
+
+    // Once bound, the read is a target of its own, by its alias.
+    addAbout('alias:doneCount', undefined, 'Done far too often');
+    eq(body().boundary.length, 1, 'a second rule about it binds nothing new');
+    eq(added(), [{ alias: 'doneCount' }, { alias: 'doneCount' }],
+      'and names the same alias');
+
+    // A name already taken is refused in the form, never stored.
+    for (const taken of ['doneCount', 'documentId', '1st']) {
+      addAbout('projection:Label', taken, 'Refused anyway');
+      eq(added().length, 2, `"${taken}" is refused`);
+      sandbox.closeForms();
+    }
+
+    // The rules follow the reads, in one card, each with its message
+    // set off as the code view's `else`.
+    sandbox.state.slice = 'Finish';
+    const cards = findAll(paint(), (n) => /\bcard\b/.test(n.className || ''));
+    eq(cards.map((n) => n.className), ['card projection', 'card rule'], 'the read, then the rules');
+    eq(findAll(cards[1], (n) => /\brule-row\b/.test(n.className || '')).length,
+      shipped.conditions.length + 2, 'every rule in it, the one read in place too');
+    eq(/ — else \u201cDone too often\u201d/.test(textOf(cards[1])), true, 'the message after "else"');
+    eq(/Can be refused with/.test(textOf(paint())), false, 'and no list of them besides');
+
+    sandbox.updateDefinition('command-definition', id, 'Finish', shipped);
   });
 
   check('a projection read in place is never asked which of its values, reopened', () => {
@@ -3520,7 +3566,7 @@ function build(index) {
       'the code view\'s `x in xs`');
     sandbox.state.slice = 'Assign';
     sandbox.state.adder = 'rule';
-    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '', onAlias: 'employee' };
+    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '', target: 'alias:employee' };
     const draft = () => sandbox.state.ruleDraft;
     draft().left = A('employee', 'seniority');
     draft().predicate = 'equalsAny';
@@ -3974,9 +4020,7 @@ function build(index) {
       getBoundingClientRect: () => ({ top: 0, height: 10 }),
       classList: { add() {}, remove() {}, toggle() {} },
     };
-    const sameCard = target && target.attributes['data-rule-alias'] === at(from).attributes['data-rule-alias'];
-    sandbox.CSS = { escape: (s) => s };
-    sandbox.document.elementFromPoint = () => ({ closest: () => (sameCard ? row : null) });
+    sandbox.document.elementFromPoint = () => ({ closest: () => row || null });
     const e = {
       button: 0, pointerId: 1, clientX: 0, clientY: before ? 2 : 8,
       preventDefault() {}, stopPropagation() {},
@@ -3987,28 +4031,27 @@ function build(index) {
     grip.onpointerup(e);
   };
 
-  check('every rule sharing a card carries a grip', () => {
+  check('every rule carries a grip, in the order they are checked', () => {
     const all = rows();
-    eq(all.length, 5, 'three about the course, two about the student');
+    eq(all.length, 5, 'three about the course, two about the student — one card');
     eq(all.every((n) => findAll(n, (m) => /\bgrip\b/.test(m.className || '')).length === 1), true,
       'one grip each');
-    eq(all.map((n) => n.attributes['data-rule-alias']),
-      ['course', 'course', 'course', 'student', 'student'], 'each names the card it moves within');
+    eq(all.map((n) => n.attributes['data-rule']), [0, 1, 2, 3, 4], 'each by its place in conditions');
   });
 
-  check('dropping a rule above another moves it there in conditions', () => {
-    const [first, second, third] = lefts().filter((l) => l.startsWith('course.'));
-    sandbox.state.sel = 'rule:3';
-    drag(3, 0, true);
-    eq(lefts().filter((l) => l.startsWith('course.')), [third, first, second],
-      'the course rules in their new order');
-    eq(lefts().filter((l) => l.startsWith('student.')).length, 2, 'the student rules untouched');
+  check('dropping a rule above another moves it there, whatever read it is about', () => {
+    const before = lefts();
+    eq(before[4].startsWith('student.') && before[0].startsWith('course.'), true,
+      'a student rule, dropped above a course rule');
+    sandbox.state.sel = 'rule:4';
+    drag(4, 0, true);
+    eq(lefts(), [before[4], ...before.slice(0, 4)], 'the rules in their new order');
     eq(sandbox.state.sel, 'rule:0', 'the open row follows the rule it showed');
   });
 
-  check('a drop onto another card\'s rule does nothing', () => {
+  check('a drop outside the rules does nothing', () => {
     const before = lefts();
-    drag(0, 1, true);
+    drag(0, undefined, true);
     eq(lefts(), before, 'conditions unchanged');
   });
 }

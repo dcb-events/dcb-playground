@@ -72,8 +72,14 @@ and prune what no longer holds.
   read need not be a binding at all: an operand may be a read in place
   (`{projection, tags, arguments}`, `require CourseStatus(courseId)
   == …`), and the rule adder writes a rule about a projection
-  that way — it never invents an alias, which is the author's to write
-  in the code view (`inlineReadOf`, swapped in at commit). Entity reads
+  that way unless the author names it — an optional "as" beside the
+  projection's tags, empty by default; named, it is stored as a
+  binding under that name so other rules can use it
+  (`devCapacity < projectCapacity`). The pages never pick an alias for
+  a projection themselves (`inlineReadOf`, swapped in at commit). A
+  name the command already uses for a read or an input is refused in
+  the form, not left to an advisory: an alias sharing a name with an
+  input is what the code view cannot print back. Entity reads
   are still bindings. Inline reads are walked by `forEachCommandOperand`
   (it descends into their tags), counted once per spelling
   (`inlineReads`), placed in the query their tags wait for
@@ -98,9 +104,9 @@ and prune what no longer holds.
   The rule adder is itself staged (`ruleEditor`): what it is about,
   which of that thing's values, what must be true of it — because a
   rule now spans what used to be two steps, and asking it all at once
-  put five pickers in a row nobody could read as a sentence. A rule
-  added from a read's own card, and every guard, starts at the second
-  question; a rule opened for editing opens whole. There is no Next
+  put five pickers in a row nobody could read as a sentence. Every
+  guard starts at the second question; a rule opened for editing opens
+  whole. There is no Next
   button: **which questions are on screen is derived from what has been
   answered**, never accumulated by the act of answering. That is the
   row's correctness, not a style choice — gate a question on a change
@@ -109,9 +115,14 @@ and prune what no longer holds.
   which is what stranded an entity whose single property was filled in
   for you. The first question is deliberately *not* pre-answered, or the
   row would answer itself and put every control on screen at once.
-  Its picker offers only reads the command does not have yet — a read it
-  already makes carries its own "+ rule about …" button, which is the
-  other door into the same wizard and opens on the second question. A test authors
+  Its picker lists the reads the command already makes first, by
+  alias, then the ones it could start. Reads used to carry their own
+  "+ rule about …" button instead, with the rules nested in the read's
+  card; that was reverted because a rule about two aliases, or about a
+  read in place, had no card to sit in. Now the read cards come first
+  and every rule follows in one `--rule` card, in the order they are
+  checked and can be dragged into — the order the code view prints. Each
+  rule's message trails it, muted, as ` — else "…"`. A test authors
   `SubscribeStudentToCourse` through the three questions and compares
   the result to the shipped definition. Its first question offers only
   what the command can reach — entities some operand already in scope
@@ -402,8 +413,9 @@ and prune what no longer holds.
   reports it broken, and the printer falls back to JSON. A guard never
   rejects, so a message on one is an advisory too. The set of a
   command's messages is derived (`commandRejections`), never declared;
-  the Rules step lists it and scenario coverage counts by it
-  (`uncoveredRejections`). The rule wizard asks for the message last,
+  scenario coverage counts by it (`uncoveredRejections`). The Rules
+  step used to list the set as well ("Can be refused with"); it was
+  dropped, since each rule already ends in its message. The rule wizard asks for the message last,
   required and deliberately not pre-filled with the condition's text.
 - **Derived projections (6.0)**: a third projection kind — no handlers,
   no initial value, one declared predicate over other projections
