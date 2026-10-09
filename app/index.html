@@ -13183,9 +13183,12 @@ function watchSeries(model, watch) {
 }
 
 // The line under a tile. A number is drawn as a level that holds
-// between steps; anything else as a tick wherever it changed. The
-// part already played is drawn in the projection colour, the rest
-// faint, and the playhead at the same fraction of the run.
+// between steps; anything else as a tick wherever it changed. Null, or
+// a fold that failed, is no value rather than a different kind of one:
+// it breaks the level, so a projection that starts at null and becomes
+// a number is drawn from where it does. The part already played is
+// drawn in the projection colour, the rest faint, and the playhead at
+// the same fraction of the run.
 function watchHistory(model, watch) {
   const total = session.log.length;
   if (!total) return null;
@@ -13194,24 +13197,34 @@ function watchHistory(model, watch) {
   const position = sessionPosition();
   const x = (n) => (n / total * 100).toFixed(2);
   const nums = series.map((p) => p.value.num);
+  const gap = (p) => p.value.num === null && (p.value.key === 'null' || p.value.key[0] === '\0');
   let played = '';
   let rest = '';
-  if (nums.every((n) => n !== null)) {
-    const lo = Math.min(...nums);
-    const span = Math.max(...nums) - lo || 1;
+  if (nums.some((n) => n !== null) && series.every((p) => p.value.num !== null || gap(p))) {
+    const known = nums.filter((n) => n !== null);
+    const lo = Math.min(...known);
+    const span = Math.max(...known) - lo || 1;
     const y = (n) => (21 - (n - lo) / span * 18).toFixed(2);
-    const points = [];
+    // One run of levels per stretch of numbers, each ending where the
+    // next point has no value, or at the end of the log.
+    const runs = [];
     series.forEach((p, i) => {
-      if (i) points.push([p.at, nums[i - 1]]);
-      points.push([p.at, nums[i]]);
+      if (nums[i] === null) return;
+      if (!i || nums[i - 1] === null) runs.push([]);
+      const run = runs[runs.length - 1];
+      if (run.length) run.push([p.at, nums[i - 1]]);
+      run.push([p.at, nums[i]]);
+      if (i === series.length - 1) run.push([total, nums[i]]);
+      else if (nums[i + 1] === null) run.push([series[i + 1].at, nums[i]]);
     });
-    points.push([total, nums[nums.length - 1]]);
     const line = (pts, cls) => pts.length > 1
       ? `<polyline class="${cls}" points="${pts.map(([n, v]) => x(n) + ',' + y(v)).join(' ')}"/>` : '';
-    const upTo = points.filter(([n]) => n <= position);
-    const last = upTo[upTo.length - 1];
-    rest = line(points, 'rest');
-    played = line(last && last[0] < position ? [...upTo, [position, last[1]]] : upTo, 'played');
+    for (const run of runs) {
+      const upTo = run.filter(([n]) => n <= position);
+      const last = upTo[upTo.length - 1];
+      rest += line(run, 'rest');
+      played += line(last && upTo.length < run.length ? [...upTo, [position, last[1]]] : upTo, 'played');
+    }
   } else {
     series.forEach((p, i) => {
       if (!i || p.value.key === series[i - 1].value.key) return;
