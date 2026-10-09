@@ -1290,15 +1290,15 @@
   .surface button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
   .surface button:not(.on):hover { color: var(--text); background: var(--bg); }
   .surface-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--event); }
-  .surface-icon { display: none; }
-  .surface-icon svg { width: 17px; height: 17px; display: block; }
-  /* Icons instead of words on a phone, and the Problems button down to
-     its count — the width goes to the model's name (shared.css). */
+  .surface-icon { display: flex; }
+  .surface-icon svg { width: 14px; height: 14px; display: block; }
+  /* Icons alone on a phone, and the Problems button down to its count —
+     the width goes to the model's name (shared.css). */
   @media (max-width: 760px) {
     .surface { height: 40px; }
     .surface button { padding: 0 8px; }
     .surface .label, .problems-btn .label { display: none; }
-    .surface-icon { display: flex; }
+    .surface-icon svg { width: 17px; height: 17px; }
   }
   .code-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 10px; }
   .code-bar .grow { flex: 1; }
@@ -1695,8 +1695,8 @@ const MORE_ICON_SVG = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden=
   + '<circle cx="5" cy="12" r="2"></circle><circle cx="12" cy="12" r="2"></circle>'
   + '<circle cx="19" cy="12" r="2"></circle></svg>';
 
-// The surface toggle's words give way to these on a phone, where the
-// bar cannot spare the width — see the narrow-screens block in shared.css.
+// The surface toggle's marks, beside its words — and in place of them
+// on a phone, where the bar cannot spare the width (shared.css).
 const VISUAL_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
   + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
   + '<rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect>'
