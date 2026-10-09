@@ -205,7 +205,9 @@
 // that happens to match — so a rename (`sourceRename`) touches exactly
 // those tokens, and refuses rather than guess: over a script or json
 // body the name may also hide in, a member whose enum the text cannot
-// tell, or a result that would not read back the same. Completion
+// tell, or a result that would not read back the same. A read in place
+// can be named by an alias (`sourceIntroduceAlias`), proved the same
+// way: the command reads back as it was. Completion
 // (`sourceCompletions`) reads the cursor's place off the tokens before
 // it, since a text being typed rarely parses there. And beside every
 // `alias` it says how many event types that alias adds to the append
@@ -569,6 +571,9 @@ function parseModelSource(text, options = {}) {
     const callee = next();
     const out = { '%call': callee.v, ...callArguments(valueOf) };
     mark(out, 'callee', callee);
+    // Its closing parenthesis: a read's extent, for introducing an
+    // alias for it (`sourceIntroduceAlias`).
+    mark(out, 'close', last());
     return out;
   };
   const callArguments = (valueOf) => {
@@ -1539,7 +1544,9 @@ function parseModelSource(text, options = {}) {
       if (value.named) for (const key of Object.keys(value.named)) value.named[key] = settle(value.named[key]);
       if (declares('projection-definition', 'projectionNames', name)) {
         if (value.named) report(token, `A read gives its values in order, as ${name} declares them — no names.`);
-        return readOf(name, values, value.named ? null : token);
+        const read = readOf(name, values, value.named ? null : token);
+        mark(read, 'close', (marksOf(value) || {}).close);
+        return read;
       }
       // `CourseId("c1")`: a tag literal, its type and one value.
       if (values.length === 1 && isLiteral(values[0]) && !value.named) {
@@ -3219,6 +3226,112 @@ function sourceApplyEdits(text, edits) {
   return out;
 }
 
+// ---------- introduce alias ----------
+
+// Edits that name a read written in place — `CourseStatus(courseId)` in
+// a rule, a guard, an emission or another read — with an alias:
+// `{ name, title, edits }`, or `{ error }`. The innermost read under
+// the cursor is the one named; it is declared after the command's last
+// alias, or first in its block, and every equal read in the command is
+// replaced by the name, since written twice it is one query anyway.
+// The name is the projection's, lowercased, numbered past what the
+// command already names; `at` is where it lands, and the editor opens
+// a rename there, so it is named as it is introduced.
+//
+// Nothing about the boundary may change — a read in place and an alias
+// derive the same query — and that is checked, not assumed: the result
+// is read back, the alias put back in place of each use, and the
+// command has to come out as it was.
+function sourceIntroduceAlias(text, line, col) {
+  const parsed = parseModelSource(text);
+  const marksOf = (o) => (o && typeof o === 'object' && parsed.marks.get(o)) || {};
+  // A read in place is marked from its projection's name to its closing
+  // parenthesis; an alias's own read is marked by its statement instead.
+  const readsIn = (value, out = []) => {
+    if (!value || typeof value !== 'object') return out;
+    const m = marksOf(value);
+    if (!Array.isArray(value) && value.projection !== undefined && m.projection && m.close) out.push(value);
+    for (const v of Array.isArray(value) ? value : Object.values(value)) readsIn(v, out);
+    return out;
+  };
+  const covers = (read) => {
+    const { projection: from, close: to } = marksOf(read);
+    return (line > from.line || (line === from.line && col >= from.col))
+      && (line < to.endLine || (line === to.endLine && col <= to.endCol));
+  };
+  let command = null;
+  let target = null;
+  let reads = [];
+  for (const [name, body] of Object.entries(parsed.collections['command-definition'])) {
+    if (!body || !Array.isArray(body.boundary)) continue;
+    const all = readsIn([body.boundary, body.conditions, body.publishes]);
+    // Pre-order, so the last read covering the cursor is the innermost.
+    const hit = all.filter(covers).pop();
+    if (hit) { command = name; target = hit; reads = all; break; }
+  }
+  if (!target) return { error: 'There is no read in place here — put the cursor on one in a rule, a guard or an emission.' };
+
+  const body = parsed.collections['command-definition'][command];
+  const key = JSON.stringify(target);
+  const taken = new Set([
+    ...body.boundary.map((b) => b && b.alias), ...body.properties.map((p) => p.name), ...SOURCE_RESERVED_NAMES,
+  ]);
+  const base = target.projection.charAt(0).toLowerCase() + target.projection.slice(1);
+  let name = base;
+  for (let n = 2; taken.has(name); n += 1) name = base + n;
+
+  const span = (read) => {
+    const { projection: from, close: to } = marksOf(read);
+    return { line: from.line, col: from.col, endLine: to.endLine, endCol: to.endCol };
+  };
+  const at = span(target);
+  const readText = text.slice(sourceOffset(text, at.line, at.col), sourceOffset(text, at.endLine, at.endCol));
+  const lines = text.split('\n');
+  const indentOf = (l) => (lines[l - 1] || '').match(/^\s*/)[0];
+  const declared = body.boundary.filter((b) => marksOf(b).statementEnd);
+  let after;
+  let indent;
+  if (declared.length) {
+    const statement = marksOf(declared[declared.length - 1]);
+    after = statement.statementEnd;
+    indent = indentOf(statement.statement.line);
+  } else {
+    after = marksOf(body).open;
+    const outer = indentOf(after.line);
+    const next = lines.slice(after.line).find((l) => l.trim() !== '');
+    const inner = next === undefined ? '' : next.match(/^\s*/)[0];
+    indent = inner.length > outer.length ? inner : outer + '  ';
+  }
+  const edits = [
+    { line: after.endLine, col: after.endCol, endLine: after.endLine, endCol: after.endCol, text: `\n${indent}alias ${name} = ${readText}` },
+    ...reads.filter((r) => JSON.stringify(r) === key).map((r) => ({ ...span(r), text: name })),
+  ];
+
+  // The proof: the alias, put back in place of each use, gives back
+  // the command as it was.
+  const reread = parseModelSource(sourceApplyEdits(text, edits));
+  if (reread.diagnostics.length > parsed.diagnostics.length) {
+    return { error: `An alias here would not read back: ${reread.diagnostics[0].message}` };
+  }
+  const now = reread.collections['command-definition'][command];
+  const inline = (value) => {
+    if (Array.isArray(value)) return value.map(inline);
+    if (!value || typeof value !== 'object') return value;
+    if (Object.keys(value).length === 1 && value.alias === name) return JSON.parse(key);
+    const out = {};
+    for (const k of Object.keys(value)) out[k] = inline(value[k]);
+    return out;
+  };
+  const restored = now && inline({ ...now, boundary: now.boundary.filter((b) => b.alias !== name) });
+  if (!restored || !sameDefinition(restored, body)) {
+    return { error: `An alias ${name} here would change what ${command} means.` };
+  }
+  // Where the name lands in the result, so the editor can open a
+  // rename on it at once: the default is rarely the name wanted.
+  const token = reread.marks.get(now.boundary.find((b) => b.alias === name)).alias;
+  return { name, title: `Introduce alias ${name}`, edits, at: { line: token.line, col: token.col } };
+}
+
 // ---------- completion ----------
 
 const SOURCE_CONDITION_STARTS = ['require', 'when', 'and'];
@@ -3585,7 +3698,7 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
       return done();
     }
     if (last === 'is') {
-      const kinds = predicatesForType(leftType);
+      const kinds = predicatesForType(leftType, known);
       if (kinds.includes('isEmpty')) push('empty', 'keyword');
       if (kinds.includes('isNotEmpty')) push('not empty', 'keyword');
       if (kinds.includes('isTrue')) push('true', 'keyword');
@@ -3603,7 +3716,7 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     // A whole operand: what may be said of it.
     const complete = cond[cond.length - 1].t === 'ident' || last === ')';
     if (!complete) return done();
-    const kinds = left && left.count ? ['countEquals', 'countLessThan', 'countGreaterThan'] : predicatesForType(leftType);
+    const kinds = left && left.count ? ['countEquals', 'countLessThan', 'countGreaterThan'] : predicatesForType(leftType, known);
     const words = new Set();
     for (const predicate of kinds) {
       const spelling = left && left.count

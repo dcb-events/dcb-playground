@@ -1725,12 +1725,13 @@ function operandWords(operand) {
     // the tokens they are rather than as descriptions of themselves.
     case 'current-value': return 'currentValue';
     case 'successor': return `successor(${operandWords(operand.successor)})`;
-    // A projection read in place — the values it gives its tags said
-    // the way a read card says them.
+    // A projection read in place, as a call: the name, then the values
+    // it gives its tags and arguments — `Developer seniority level
+    // (developer)`. The code view's spelling with the words a reader
+    // reads; `projectionReadParts` hands the pieces to a renderer.
     case 'projection-read': {
-      const said = readTagOperands(operand)
-        .map((tag) => (operandSource(tag) === 'tag-literal' ? operandText(tag) : operandWords(tag)));
-      return readable(operand.projection || '?') + (said.length ? ' tagged ' + said.join(' and ') : '');
+      const { name, values } = projectionReadParts(operand);
+      return values.length ? `${name} (${values.map((v) => v.words).join(', ')})` : name;
     }
     case 'tag-literal': return operandText(operand);
     case 'each': return 'each ' + operandWords(operand.each);
@@ -1854,6 +1855,68 @@ function conditionParts(condition, model, body) {
   const left = operandWords(condition.leftHandSide);
   if (condition.rightHandSide === undefined) return { left, verb, right: null };
   return { left, verb, right: operandWords(condition.rightHandSide) };
+}
+
+// A read in place in pieces: the projection's name, and each value
+// it is read with — tags first, then arguments as `name = value` — with
+// the operand each came from, so a renderer can point back at it.
+function projectionReadParts(operand) {
+  const tagWords = (tag) => (operandSource(tag) === 'tag-literal' ? operandText(tag) : operandWords(tag));
+  return {
+    name: readable(operand.projection || '?'),
+    values: [
+      ...readTagOperands(operand).map((tag) => ({ operand: tag, words: tagWords(tag) })),
+      ...Object.entries(operand.arguments || {})
+        .map(([name, value]) => ({ operand: value, words: `${name} = ${operandWords(value)}` })),
+    ],
+  };
+}
+
+// The message a rule is refused with when its author wrote none: the
+// condition, said as what the command requires — `Developer seniority
+// level must be at least Required seniority level`. A read in place is
+// named without its tags, an alias's property as words: the message is
+// static text, and what a refusal read is never part of it.
+function derivedRejection(model, body, condition) {
+  // "Is one of" a list held in data is stored with its sides swapped
+  // (`contains`, the list first); said the way the rule adder asks it.
+  const swapped = condition.predicate === 'contains'
+    && operandSource(condition.leftHandSide) === 'parameter'
+    && operandSource(condition.rightHandSide) === 'alias-property';
+  const said = swapped
+    ? { ...condition, predicate: 'equalsAny', leftHandSide: condition.rightHandSide, rightHandSide: condition.leftHandSide }
+    : condition;
+  const p = conditionParts(said, model, body);
+  // Only where the sentence named the operand itself — "course exists"
+  // already said the lifecycle property its own way.
+  const words = (operand, fallback) => {
+    if (fallback !== operandWords(operand)) return fallback;
+    if (operandSource(operand) === 'projection-read') return readable(operand.projection || '?');
+    if (operandSource(operand) === 'alias-property' && operand.property) {
+      return `${propertyWords(operand.alias)} ${propertyWords(operand.property)}`;
+    }
+    return fallback;
+  };
+  const left = words(said.leftHandSide, p.left);
+  const right = p.right === null ? null
+    : Array.isArray(said.rightHandSide) ? p.right : words(said.rightHandSide, p.right);
+  const text = [left, requirementVerb(p.verb), right].filter(Boolean).join(' ');
+  const message = text[0].toUpperCase() + text.slice(1);
+  return message.length > REJECTION_MAX_LENGTH ? message.slice(0, REJECTION_MAX_LENGTH - 1) + '…' : message;
+}
+
+// A rule's verb, as a requirement: "is at least" -> "must be at least",
+// "does not contain" -> "must not contain", "has fewer than" -> "must
+// have fewer than", "exists" -> "must exist".
+function requirementVerb(verb) {
+  if (/^is not\b/.test(verb)) return verb.replace(/^is not\b/, 'must not be');
+  if (/^is\b/.test(verb)) return verb.replace(/^is\b/, 'must be');
+  if (/^does not\b/.test(verb)) return verb.replace(/^does not\b/, 'must not');
+  if (/^not\b/.test(verb)) return verb.replace(/^not\b/, 'must not');
+  if (/^has\b/.test(verb)) return verb.replace(/^has\b/, 'must have');
+  const [first, ...rest] = verb.split(' ');
+  const base = /(ss|sh|ch|x)es$/.test(first) ? first.slice(0, -2) : first.replace(/s$/, '');
+  return ['must', base, ...rest].join(' ');
 }
 
 // A condition as one plain sentence — the same words `conditionParts`

@@ -1389,12 +1389,20 @@ function resolveOperandType(operand, { boundary, commandProperties, model }) {
 // "starts with" never turns up against an integer. `null` (the type
 // could not be worked out, e.g. an untyped literal) leaves every
 // predicate on the table rather than guessing.
-function predicatesForType(resolved) {
+//
+// Given the model, a scalar value type counts as what it is underneath,
+// the way `operationsFor` counts it: `Hours` over an integer is ordered
+// like the integer it wraps — naming a primitive must not cost it its
+// predicates. An identifier (a tag type) and an enum are not: they are
+// compared for identity, whatever they are spelled in.
+function predicatesForType(resolved, model) {
   if (!resolved) return [...BINARY_PREDICATES, ...UNARY_PREDICATES];
   if (resolved.isList) {
     return ['equals', 'countEquals', 'countLessThan', 'countGreaterThan',
       'contains', 'containsAny', 'isEmpty', 'isNotEmpty'];
   }
+  const underlying = underlyingScalarType(model, resolved.propertyType);
+  if (underlying) return predicatesForType({ propertyType: underlying, isList: false });
   if (resolved.propertyType === 'boolean') return ['equals', 'equalsAny', 'isTrue', 'isFalse'];
   if (resolved.propertyType === 'integer') {
     return ['equals', 'equalsAny', 'lessThan', 'lessThanOrEquals', 'greaterThan', 'greaterThanOrEquals'];
@@ -1410,6 +1418,17 @@ function predicatesForType(resolved) {
   // `equals`, only against a scalar left-hand side: "this list is one
   // of these lists" is authorable noise).
   return ['equals', 'equalsAny'];
+}
+
+// The simple type a plain scalar value type wraps (`integer`,
+// `string`, `boolean`), or null for anything else — a simple type
+// itself, a composite, an enum, an identifier, an unknown name.
+function underlyingScalarType(model, typeName) {
+  if (!model || !model['custom-type-definitions']) return null;
+  const cls = classifyType(model, typeName);
+  if (cls.kind !== 'value' || cls.composite || cls.isTag || enumMembersFor(model, typeName)) return null;
+  const kind = literalKindOf(model, typeName);
+  return kind === 'number' ? 'integer' : kind;
 }
 
 // The type a rule's right-hand side has to hold for a given predicate
@@ -1818,6 +1837,75 @@ function inlineReads(body) {
     out.push({ key, read: operand });
   });
   return out;
+}
+
+// Naming a read in place, and taking the name back — the rule adder
+// writes a projection read in place, and the page offers the alias
+// afterwards. Both rewrite one command body in place and return it.
+//
+// Naming binds the read under `alias` and points every spelling of
+// it in the command at the alias: they are one read already
+// (`inlineReads`), so naming one names them all. The binding goes last,
+// since its tags can only name what is bound before it.
+function aliasInlineRead(body, key, alias) {
+  const found = inlineReads(body).find((r) => r.key === key);
+  if (!found) return body;
+  const read = deepClone(found.read);
+  (body.boundary = body.boundary || []).push({ alias, ...read });
+  mapConditionOperands(body, (operand) => (operandSource(operand) === 'projection-read'
+    && JSON.stringify(canonicalOperand(operand)) === key ? { alias } : operand));
+  return body;
+}
+
+// Whether a projection alias can be read in place again: only while
+// every use is the read's whole value, written where a read in place
+// may stand — a rule, a guard, an emission field. A property of it
+// (`alias.field`) or a use inside another read has no in-place
+// spelling to go back to.
+function aliasInlinable(body, alias) {
+  const binding = (body.boundary || []).find((b) => b && b.alias === alias);
+  if (!binding || !binding.projection) return false;
+  const names = (operand) => operandSource(operand) === 'alias-property' && operand.alias === alias;
+  let uses = 0;
+  forEachCommandOperand(body, (operand) => { if (names(operand)) uses += 1; });
+  let wholeValues = 0;
+  mapConditionOperands(deepClone(body), (operand) => {
+    if (names(operand) && operand.property === undefined) wholeValues += 1;
+    return operand;
+  });
+  return uses === wholeValues;
+}
+
+function inlineAliasedRead(body, alias) {
+  const binding = (body.boundary || []).find((b) => b && b.alias === alias);
+  if (!binding || !binding.projection) return body;
+  const read = { projection: binding.projection };
+  if (readTagEntries(binding).length) read.tags = deepClone(binding.tags);
+  if (binding.arguments && Object.keys(binding.arguments).length) read.arguments = deepClone(binding.arguments);
+  body.boundary = body.boundary.filter((b) => b !== binding);
+  mapConditionOperands(body, (operand) => (operandSource(operand) === 'alias-property'
+    && operand.alias === alias && operand.property === undefined ? deepClone(read) : operand));
+  return body;
+}
+
+// Replaces the top-level operands of every rule, guard and emission
+// field with what `replace` returns for each — the places a read in
+// place or an alias's whole value can stand.
+function mapConditionOperands(body, replace) {
+  const mapCondition = (condition) => {
+    if (!condition) return;
+    condition.leftHandSide = replace(condition.leftHandSide);
+    if (Array.isArray(condition.rightHandSide)) condition.rightHandSide = condition.rightHandSide.map(replace);
+    else if (condition.rightHandSide !== undefined) condition.rightHandSide = replace(condition.rightHandSide);
+  };
+  for (const condition of body.conditions || []) mapCondition(condition);
+  for (const emission of body.publishes || []) {
+    if (!emission) continue;
+    for (const condition of emission.when || []) mapCondition(condition);
+    for (const key of Object.keys(emission.parameters || {})) {
+      emission.parameters[key] = replace(emission.parameters[key]);
+    }
+  }
 }
 
 // The operands one binding is read with — its identifier, exclusion,

@@ -226,6 +226,11 @@
      .reveal until the row is clicked. */
   .qrow > .reveal { display: none; align-items: center; gap: 8px; }
   .qrow.open > .reveal { display: inline-flex; }
+  /* A rule's or guard's controls can be long ("Add alias: Developer
+     seniority level"), so its row wraps: the controls drop to a line of
+     their own rather than squeezing the sentence a word per line. */
+  .qrow.wraps { flex-wrap: wrap; }
+  .qrow.wraps > .reveal { flex-wrap: wrap; justify-content: flex-end; margin-left: auto; }
   .qrow:focus { outline: 1px solid var(--accent); outline-offset: 1px; }
   .qrow { cursor: pointer; }
   .qrow:hover, .qrow.open { background: var(--accent-soft); }
@@ -334,6 +339,13 @@
   .op.ref:hover, .op.ref:focus, .op.ref.pinned {
     border-color: var(--accent); color: var(--accent); outline: none;
   }
+  /* A read in place: the projection's name, muted brackets, and each
+     value a reference chip of its own. */
+  .sentence .op.read { background: none; border: none; padding: 0; }
+  .op.read .read-name { color: var(--projection); font-weight: 600; }
+  .op.read .read-punct { color: var(--muted); }
+  .read-alias { font-family: var(--mono); font-size: 12px; width: 150px; }
+  .read-alias.invalid { border-color: var(--danger); }
   .lit { box-shadow: 0 0 0 2px var(--accent); border-radius: 5px; }
   .fields { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); }
   .field { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 2px 0; }
@@ -3171,6 +3183,9 @@ function paintLit(hovered) {
 // An operand as a chip that points back at its source.
 function opRef(operand, eventName, text) {
   const label = text === undefined ? operandWords(operand) : text;
+  if (operandSource(operand) === 'projection-read' && label === operandWords(operand)) {
+    return projectionReadRef(operand, eventName);
+  }
   const key = sourceKey(operand, eventName);
   if (!key) return h('span', { class: 'op' }, label);
   return h('span', {
@@ -3189,6 +3204,25 @@ function opRef(operand, eventName, text) {
       render();
     },
   }, label);
+}
+
+// A read in place, as the call it is — `Developer seniority level
+// (developer)` — with the name, the brackets and each value set apart,
+// and each value a reference of its own: the tag lights the input it
+// came from. `name` stands in for the name when the page puts
+// something there instead (the alias being typed).
+function projectionReadRef(operand, eventName, name) {
+  const { name: words, values } = projectionReadParts(operand);
+  return h('span', { class: 'op read' },
+    name || h('span', { class: 'read-name' }, words),
+    values.length
+      ? h('span', {}, h('span', { class: 'read-punct' }, ' ('),
+          ...values.flatMap((value, i) => [
+            i ? h('span', { class: 'read-punct' }, ', ') : null,
+            opRef(value.operand, eventName, value.words),
+          ]),
+          h('span', { class: 'read-punct' }, ')'))
+      : null);
 }
 
 // A row that is quiet by default: `key` names it, `src` for anything
@@ -3906,6 +3940,39 @@ function choicesOfType(model, slice, choices, propertyType, { list } = {}) {
   });
 }
 
+// The projections a rule's right side could read in place — one row
+// per way of filling every tag and argument from `choices`, so "the
+// developer's seniority is at least the project's required seniority"
+// needs no rule about the project first. Since rules read projections
+// in place, nothing else would put a second projection in scope. Those
+// an entity property binds are read through the entity instead, and a
+// read's values are never themselves reads.
+function projectionReadChoices(model, slice, choices) {
+  const MAX_ROWS = 24;
+  const values = choices.filter(([v]) => operandSource(JSON.parse(v)) !== 'projection-read');
+  const boundByEntity = entityBoundProjections(model);
+  const out = [];
+  for (const name of Object.keys(model['projection-definitions']).sort()) {
+    if (boundByEntity.has(name)) continue;
+    const projection = model['projection-definitions'][name];
+    const slots = [
+      ...projectionTagParams(projection).map((tag) => ['tags', tag.name, tag.tagType]),
+      ...projectionSlots(projection).map((slot) => ['arguments', slot.name, slot.propertyType]),
+    ];
+    let reads = [{ projection: name }];
+    for (const [key, slotName, type] of slots) {
+      const offered = choicesOfType(model, slice, values, type).map(([v]) => JSON.parse(v));
+      reads = reads.flatMap((read) => offered.map((operand) =>
+        ({ ...read, [key]: { ...(read[key] || {}), [slotName]: operand } })));
+    }
+    for (const read of reads) {
+      if (out.length >= MAX_ROWS) return out;
+      out.push([JSON.stringify(read), 'read' + GROUP_SEP + operandWords(read)]);
+    }
+  }
+  return out;
+}
+
 // ---------- small helpers ----------
 
 // An event edited on the pages keeps its tags in step with its fields
@@ -4234,7 +4301,7 @@ const FORM_KEYS = [
   'scenarioDraft', 'sandboxDraft',
   'projectionScenarioDraft',
   'pendingImport',
-  'promoting', 'designating',
+  'promoting', 'designating', 'aliasing',
 ];
 
 // What a form was holding while it was open. These outlive the form
@@ -5389,6 +5456,16 @@ function readCard(model, slice, binding, index, waitsFor) {
         : null,
       h('span', { class: 'grow' }),
       reveal(
+        // The way back from "Add alias": the read in place again, in
+        // every rule naming the alias — offered only while each of them
+        // reads its whole value (`aliasInlinable`).
+        binding.projection && aliasInlinable(slice.body, binding.alias)
+          ? h('button', {
+              class: 'btn tiny', style: 'white-space:nowrap',
+              title: 'Read this projection in place again, in every rule using the alias',
+              onclick: () => patchSlice((b) => { inlineAliasedRead(b, binding.alias); }),
+            }, 'Remove alias')
+          : null,
         h('button', {
           class: 'btn tiny',
           onclick: () => {
@@ -5614,6 +5691,97 @@ function rejectionMark(condition) {
   return h('span', { class: 'muted tiny' }, ' — no rejection message');
 }
 
+// ---------- naming a read in place ----------
+//
+// The rule adder writes a projection read in place and asks for no
+// name: an "as" field in the middle of the first question was one more
+// thing to answer before the rule was even written. A read is named
+// afterwards, on the selected rule or guard — "Add alias" swaps the
+// read's name in the sentence for a field, and Enter binds it under the
+// alias, every spelling of it in the command at once
+// (`aliasInlineRead`). `state.aliasing` is that field: the row it is in
+// and the read's canonical spelling.
+
+const readSpelling = (operand) => JSON.stringify(canonicalOperand(operand));
+
+// The reads in place a rule or guard names itself — not one inside
+// another read's tags, which has no sentence position to rename in.
+function inlineReadsOf(condition) {
+  const sides = [condition.leftHandSide,
+    ...(Array.isArray(condition.rightHandSide) ? [] : [condition.rightHandSide])];
+  const seen = new Set();
+  return sides.filter((operand) => {
+    if (operandSource(operand) !== 'projection-read') return false;
+    const key = readSpelling(operand);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+// What is wrong with `name` as a new alias in this command, or null. A
+// name the command already uses for a read or an input is refused here
+// rather than stored: an alias and an input sharing a name is the one
+// thing the code view cannot print back as code.
+function aliasNameProblem(slice, name) {
+  if (!name) return 'Give the alias a name.';
+  if (!/^[a-z][A-Za-z0-9]*$/.test(name)) return 'An alias starts with a letter.';
+  if (SOURCE_RESERVED_NAMES.includes(name)) return `"${name}" is a word of the language.`;
+  if ((slice.body.boundary || []).some((b) => b && b.alias === name)) {
+    return `"${name}" is already bound in this command.`;
+  }
+  if ((slice.body.properties || []).some((p) => p && p.name === name)) {
+    return `"${name}" is already an input of this command.`;
+  }
+  return null;
+}
+
+// The selected row's "Add alias" buttons — one per read in place it
+// names, labelled with the read when there are two.
+function addAliasButtons(condition, row) {
+  const reads = inlineReadsOf(condition);
+  return reads.map((read) => h('button', {
+    class: 'btn tiny', style: 'white-space:nowrap',
+    title: 'Bind this read under a name — every rule reading it the same way uses the name',
+    onclick: () => {
+      closeForms();
+      state.aliasing = { row, key: readSpelling(read) };
+      render();
+    },
+  }, reads.length > 1 ? 'Add alias: ' + readable(read.projection) : 'Add alias'));
+}
+
+// One side of a rule or guard sentence — the alias field in place of
+// the read's name while that read is being named.
+function ruleOperandRef(slice, row, operand, text) {
+  const naming = state.aliasing;
+  if (!naming || naming.row !== row || operandSource(operand) !== 'projection-read'
+      || readSpelling(operand) !== naming.key) {
+    return opRef(operand, null, text);
+  }
+  // A refused name is said the way the rule adder says one, in a toast,
+  // and the field is marked — text inside the sentence would split it.
+  const commit = (typed) => {
+    const name = toCamel(typed);
+    const problem = aliasNameProblem(slice, name);
+    if (problem) { input.classList.add('invalid'); toast(problem, true); return; }
+    state.aliasing = null;
+    patchSlice((b) => { aliasInlineRead(b, naming.key, name); });
+  };
+  const input = h('input', {
+    type: 'text', class: 'read-alias',
+    placeholder: toCamel(operand.projection),
+    'aria-label': 'Alias for ' + readable(operand.projection),
+    oninput: () => { input.classList.remove('invalid'); },
+    onkeydown: (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); commit(e.target.value); }
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); state.aliasing = null; render(); }
+    },
+  });
+  setTimeout(() => { if (input.focus) input.focus(); }, 0);
+  return projectionReadRef(operand, null, input);
+}
+
 // One rule, as a row of the rules card. More than one, and each can be
 // dragged into the order they are checked in.
 function ruleRow(model, slice, condition, i, draggable) {
@@ -5632,11 +5800,11 @@ function ruleRow(model, slice, condition, i, draggable) {
       'data-rule': draggable ? i : null,
     },
     draggable ? ruleGrip(slice, i) : null,
-    qrow('div', { cls: 'row', key: 'rule:' + i },
+    qrow('div', { cls: 'row wraps', key: 'rule:' + i },
       h('span', { class: 'sentence' },
         quantifier ? h('span', { class: 'verb' }, quantifier + ', ') : null,
-        opRef(condition.leftHandSide, null, p.left), ' ', h('span', { class: 'verb' }, p.verb),
-        p.right ? h('span', {}, ' ', opRef(condition.rightHandSide, null, p.right)) : null,
+        ruleOperandRef(slice, 'rule:' + i, condition.leftHandSide, p.left), ' ', h('span', { class: 'verb' }, p.verb),
+        p.right ? h('span', {}, ' ', ruleOperandRef(slice, 'rule:' + i, condition.rightHandSide, p.right)) : null,
         optionalAliases.length
           ? h('span', { class: 'muted tiny' },
               ' — skipped when ' + optionalAliases.map(propertyWords).join(' or ') + ' is absent')
@@ -5644,12 +5812,18 @@ function ruleRow(model, slice, condition, i, draggable) {
       rejectionMark(condition),
       h('span', { class: 'grow' }),
       reveal(
+        ...addAliasButtons(condition, 'rule:' + i),
         h('button', {
           class: 'btn tiny',
           onclick: () => {
             closeForms();
             state.editRule = i;
             state.ruleDraft = draftFromCondition(condition);
+            // A message the rule derived is opened empty, so editing the
+            // rule derives it afresh; one the author wrote is kept.
+            if (condition.rejection === derivedRejection(model, slice.body, condition)) {
+              delete state.ruleDraft.rejection;
+            }
             render();
           },
         }, 'Edit'),
@@ -6013,7 +6187,7 @@ function ruleEditor(model, slice, index, target) {
       const entity = chosenTarget.startsWith('projection:')
         ? chosenTarget : chosenTarget.slice('entity:'.length);
       if (!draft.newRead || draft.newRead.entity !== entity) {
-        draft.newRead = { entity, source: '', args: {}, tags: {}, as: '' };
+        draft.newRead = { entity, source: '', args: {}, tags: {} };
       }
     } else if (draft.newRead) {
       delete draft.newRead;
@@ -6152,7 +6326,7 @@ function ruleEditor(model, slice, index, target) {
   // current choice is pulled back onto the list when it no longer fits,
   // the same way a stale entity/source choice snaps back elsewhere.
   const predicateChoices = BINARY_PREDICATES.concat(UNARY_PREDICATES)
-    .filter((p) => predicatesForType(leftType).includes(p));
+    .filter((p) => predicatesForType(leftType, model).includes(p));
   if (!predicateChoices.includes(draft.predicate)) {
     draft.predicate = predicateChoices[0] || draft.predicate;
   }
@@ -6181,8 +6355,15 @@ function ruleEditor(model, slice, index, target) {
   // Whatever the left side already names is dropped too: "capacity
   // equals capacity" is never a rule anyone meant to write.
   const rightType = rightHandExpectedType(draft.predicate, leftType);
+  // A projection not yet read is on offer too, read in place — except
+  // the one the left side is reading, and any spelled the same as a
+  // read already in scope.
+  const sameRead = (v) => JSON.stringify(canonicalOperand(JSON.parse(v)));
+  const inScope = new Set(scope.map(([v]) => sameRead(v)));
+  if (pending && pending.projection) inScope.add(sameRead(JSON.stringify(inlineReadOf(pending))));
+  const readRows = projectionReadChoices(model, slice, baseScope).filter(([v]) => !inScope.has(sameRead(v)));
   const rightScope = (rightType
-    ? scope.filter(([v]) => {
+    ? [...scope, ...readRows].filter(([v]) => {
         const resolved = resolveOperandType(JSON.parse(v), typeScope);
         return resolved && resolved.propertyType === rightType.propertyType
           && resolved.isList === rightType.isList;
@@ -6227,32 +6408,13 @@ function ruleEditor(model, slice, index, target) {
     render();
   };
 
-  // The alias a projection read is given in the read stage, if any —
-  // camel-cased the way a rename is — and what is wrong with it. A name
-  // the command already uses for a read or an input is refused here
-  // rather than stored: an alias and an input sharing a name is the
-  // one thing the code view cannot print back as code.
-  const typedAlias = () => (pending && pending.projection && choice && (choice.as || '').trim()
-    ? toCamel(choice.as) : null);
-  const aliasProblem = () => {
-    const typed = pending && pending.projection && choice ? (choice.as || '').trim() : '';
-    if (!typed) return null;
-    const name = typedAlias();
-    if (!/^[a-z][A-Za-z0-9]*$/.test(name)) return 'An alias starts with a letter.';
-    if (SOURCE_RESERVED_NAMES.includes(name)) return `"${name}" is a word of the language.`;
-    if ((slice.reads || []).some((b) => b && b.alias === name)) {
-      return `"${name}" is already bound in this command.`;
-    }
-    if ([...(slice.payload || []), ...newReadInputs(model, slice, draft)].some((p) => p && p.name === name)) {
-      return `"${name}" is already an input of this command.`;
-    }
-    return null;
-  };
-
-  // The write itself, shared by the button and the leave-the-row
-  // commit. The toasts stay in `submit`: a silent commit only runs on
-  // a row `ready()` already vouched for.
-  const record = () => {
+  // The rule as it would be stored, and the binding stored with it. A
+  // projection the rule brought is read in place (8.0): the
+  // provisional alias the wizard worked with is swapped for the read
+  // itself, and no binding is stored. Naming it is a later gesture, on
+  // the stored rule ("Add alias") — the pages never pick an alias for a
+  // projection on their own.
+  const drafted = () => {
     const condition = fromData
       ? { leftHandSide: JSON.parse(draft.rightList), predicate: 'contains', rightHandSide: draftOperand(draft, 'left') }
       : { leftHandSide: draftOperand(draft, 'left'), predicate: draft.predicate };
@@ -6260,27 +6422,37 @@ function ruleEditor(model, slice, index, target) {
       condition.rightHandSide = membership ? entryOperands() : draftOperand(draft, 'right');
     }
     if (draft.negate) condition.negate = true;
-    if (refuses) condition.rejection = (draft.rejection || '').trim();
-    state.editRule = null;
-    state.editGuard = null;
-    state.adder = null;
-    // A projection the rule brought is read in place (8.0) unless the
-    // author named it: the provisional alias the wizard worked with is
-    // swapped for the read itself, and no binding is stored — or, named,
-    // for the name, and the binding is stored under it. The pages never
-    // pick an alias for a projection on their own.
-    const named = typedAlias();
-    const inline = pending && pending.projection && !named ? inlineReadOf(pending) : null;
-    const binding = pending && !inline ? { ...deepClone(pending), ...(named ? { alias: named } : {}) } : null;
+    const inline = pending && pending.projection ? inlineReadOf(pending) : null;
+    const binding = pending && !inline ? deepClone(pending) : null;
     const swap = (operand) => {
-      if (!pending || operandSource(operand) !== 'alias-property' || operand.alias !== pending.alias) return operand;
-      if (inline) return operand.property === undefined ? deepClone(inline) : operand;
-      return named ? { ...operand, alias: named } : operand;
+      if (!inline || operandSource(operand) !== 'alias-property' || operand.alias !== pending.alias) return operand;
+      return operand.property === undefined ? deepClone(inline) : operand;
     };
     condition.leftHandSide = swap(condition.leftHandSide);
     if (condition.rightHandSide !== undefined && !Array.isArray(condition.rightHandSide)) {
       condition.rightHandSide = swap(condition.rightHandSide);
     }
+    return { condition, binding };
+  };
+  // The message a rule left without one is refused with — said from the
+  // rule itself, and shown as the field's placeholder while it is empty.
+  const derivedMessage = () => {
+    if (draftOperand(draft, 'left') === undefined) return '';
+    const { condition, binding } = drafted();
+    const body = binding ? { ...slice.body, boundary: [...(slice.body.boundary || []), binding] } : slice.body;
+    try { return derivedRejection(model, body, condition); } catch { return ''; }
+  };
+  const typedMessage = () => (draft.rejection || '').trim();
+
+  // The write itself, shared by the button and the leave-the-row
+  // commit. The toasts stay in `submit`: a silent commit only runs on
+  // a row `ready()` already vouched for.
+  const record = () => {
+    const { condition, binding } = drafted();
+    if (refuses) condition.rejection = typedMessage() || derivedMessage();
+    state.editRule = null;
+    state.editGuard = null;
+    state.adder = null;
     const inputs = pending ? newReadInputs(model, slice, draft) : [];
     patchSlice((b) => {
       // One append, every write. A binding stored without its rule
@@ -6302,9 +6474,8 @@ function ruleEditor(model, slice, index, target) {
   // silent leave-commit holds out for at least one entry, while an
   // explicit save is taken at its word.
   draft.ready = () => !!draft.touched
-    && (!refuses || !rejectionProblem((draft.rejection || '').trim()))
+    && (!refuses || !typedMessage() || !rejectionProblem(typedMessage()))
     && (!draft.newRead || !!pending)
-    && !aliasProblem()
     && draftOperand(draft, 'left') !== undefined
     && (unary || fromData || (membership ? entryOperands().length > 0 : draftOperand(draft, 'right') !== undefined));
   draft.commit = record;
@@ -6319,17 +6490,11 @@ function ruleEditor(model, slice, index, target) {
         : 'Pick where that thing\u2019s id comes from.', true);
     }
     if (draftOperand(draft, 'left') === undefined) return toast('Pick what the rule is about.', true);
-    const badAlias = aliasProblem();
-    if (badAlias) return toast(badAlias, true);
     if (!unary && !membership && draftOperand(draft, 'right') === undefined) {
       return toast('Pick a value to compare it with.', true);
     }
-    const problem = refuses && rejectionProblem((draft.rejection || '').trim());
-    if (problem) {
-      return toast(problem === 'is empty'
-        ? 'Say what the command is refused with when this does not hold.'
-        : `That message ${problem}.`, true);
-    }
+    const problem = refuses && typedMessage() && rejectionProblem(typedMessage());
+    if (problem) return toast(`That message ${problem}.`, true);
     state.ruleDraft = null;
     record();
   };
@@ -6438,15 +6603,6 @@ function ruleEditor(model, slice, index, target) {
                     draft.touched = true; render();
                   }),
               ]),
-              // Named, the read becomes an alias other rules can use
-              // too (`devCapacity < projectCapacity`); left empty, it
-              // is read in place, as before.
-              h('span', { class: 'muted tiny' }, 'as'),
-              h('input', {
-                type: 'text', class: 'read-alias', style: 'width:130px',
-                placeholder: 'read in place', value: choice.as || '',
-                oninput: (e) => { choice.as = e.target.value; draft.touched = true; },
-              }),
             ]
           : []));
 
@@ -6520,19 +6676,21 @@ function ruleEditor(model, slice, index, target) {
   // ---------- and what is it refused with? ----------
   //
   // A rule's message is what the command is refused with: what a person
-  // reads, and what a scenario names the refusal by. Required, and not
-  // pre-filled — the condition's own text is exactly what the message
-  // is there to replace. The messages the command already has are
-  // offered, so two rules can be one outcome. A guard never refuses,
-  // so it is never asked.
+  // reads, and what a scenario names the refusal by. Optional here: left
+  // empty, the rule is refused with what it requires, said from the
+  // rule (`derivedRejection`) — shown as the placeholder, so what an
+  // empty field saves is never a surprise. The messages the command
+  // already has are offered, so two rules can be one outcome. A guard
+  // never refuses, so it is never asked.
   const knownMessages = uniq((slice.body.conditions || [])
     .map((c) => c && c.rejection).filter((m) => typeof m === 'string' && m));
   const messageList = 'rejections-' + slice.name;
   const rejectionStage = !refuses || stage < TEST_STAGE ? null
     : stageRow('Refused with',
         h('input', {
-          type: 'text', class: 'rejection', style: 'min-width:260px',
-          placeholder: 'e.g. Course is full', maxlength: REJECTION_MAX_LENGTH,
+          type: 'text', class: 'rejection',
+          style: `min-width:260px;width:${Math.min(Math.max(derivedMessage().length, 30), 70) + 2}ch;max-width:100%`,
+          placeholder: derivedMessage() || 'e.g. Course is full', maxlength: REJECTION_MAX_LENGTH,
           value: draft.rejection || '', list: knownMessages.length ? messageList : null,
           oninput: (e) => { draft.rejection = e.target.value; draft.touched = true; },
         }),
@@ -6595,14 +6753,17 @@ function emissionGuardRows(model, slice, emission, emissionIndex) {
     const p = conditionParts(condition, model, slice.body);
     const quantifier = quantifierWords(model, slice.body, condition);
     return h('div', {},
-      qrow('div', { cls: 'row', key: `guard:${emissionIndex}:${j}` },
+      qrow('div', { cls: 'row wraps', key: `guard:${emissionIndex}:${j}` },
         h('span', { class: 'sentence tiny' },
           h('span', { class: 'verb' }, 'only while '),
           quantifier ? h('span', { class: 'verb' }, quantifier + ', ') : null,
-          opRef(condition.leftHandSide, null, p.left), ' ', h('span', { class: 'verb' }, p.verb),
-          p.right ? h('span', {}, ' ', opRef(condition.rightHandSide, null, p.right)) : null),
+          ruleOperandRef(slice, `guard:${emissionIndex}:${j}`, condition.leftHandSide, p.left),
+          ' ', h('span', { class: 'verb' }, p.verb),
+          p.right ? h('span', {}, ' ',
+            ruleOperandRef(slice, `guard:${emissionIndex}:${j}`, condition.rightHandSide, p.right)) : null),
         h('span', { class: 'grow' }),
         reveal(
+          ...addAliasButtons(condition, `guard:${emissionIndex}:${j}`),
           h('button', {
             class: 'btn tiny',
             onclick: () => {
@@ -13915,6 +14076,15 @@ function registerSourceLanguage() {
     provideFoldingRanges: (textModel) => sourceFoldingRanges(textModel.getValue())
       .map((r) => ({ start: r.start, end: r.end })),
   });
+  // Runs after an action's edit: the cursor onto a name, and F2 there.
+  monaco.editor.registerCommand('dcb.renameAt', (accessor, line, col) => {
+    if (!codeView.editor) return;
+    const { editor } = codeView.editor;
+    editor.setPosition({ lineNumber: line, column: col });
+    editor.revealPositionInCenterIfOutsideViewport({ lineNumber: line, column: col });
+    editor.focus();
+    editor.trigger('alias', 'editor.action.rename', null);
+  });
   L.registerCodeActionProvider('dcb', {
     provideCodeActions: (textModel, range, context) => {
       const model = activeModel();
@@ -13936,6 +14106,21 @@ function registerSourceLanguage() {
           };
         })
         .filter(Boolean);
+      // A read in place, named by an alias (sourceIntroduceAlias, dsl.js)
+      // — offered under the cursor, not on a marker, and followed by a
+      // rename on the new name, so it is named as it is introduced.
+      const wanted = !context.only || 'refactor.extract'.startsWith(context.only);
+      const alias = wanted ? sourceIntroduceAlias(textModel.getValue(), range.startLineNumber, range.startColumn) : { error: true };
+      if (!alias.error) {
+        actions.push({
+          title: alias.title, kind: 'refactor.extract',
+          command: { id: 'dcb.renameAt', title: 'Name the alias', arguments: [alias.at.line, alias.at.col] },
+          edit: { edits: alias.edits.map((e) => ({
+            resource: textModel.uri, versionId: textModel.getVersionId(),
+            textEdit: { range: new monaco.Range(e.line, e.col, e.endLine, e.endCol), text: e.text },
+          })) },
+        });
+      }
       return { actions, dispose() {} };
     },
   });

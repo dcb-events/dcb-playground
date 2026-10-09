@@ -1664,20 +1664,27 @@ function build(index) {
     }, 'exactly as picked');
   });
 
-  check('a touched rule without its message is not added by leaving it', () => {
+  check('a touched rule without its message is added by leaving it, refused with what it requires', () => {
     sandbox.state.slice = 'DefineCourse';
     sandbox.state.adder = 'rule';
-    const count = model()['command-definitions'].DefineCourse.conditions.length;
+    const shipped = sandbox.deepClone(model()['command-definitions'].DefineCourse);
+    const count = shipped.conditions.length;
     sandbox.state.ruleDraft = {
       predicate: 'equals', negate: true,
       left: JSON.stringify({ alias: 'course', property: 'status' }),
       right: JSON.stringify({ enumMember: 'Archived' }),
       rejection: '  ',
+      target: 'alias:course',
       touched: true,
     };
-    sandbox.ruleEditor(model(), sandbox.sliceOf(model(), 'DefineCourse'), null);
+    const editor = sandbox.ruleEditor(model(), sandbox.sliceOf(model(), 'DefineCourse'), null);
+    const field = findAll(editor, (n) => n.tag === 'input' && /\brejection\b/.test(n.className || ''))[0];
+    eq(field.attributes.placeholder, 'Course status must not be Archived', 'the message it would get, shown while empty');
     sandbox.closeForms();
-    eq(model()['command-definitions'].DefineCourse.conditions.length, count, 'a rule says what it refuses with');
+    const conditions = model()['command-definitions'].DefineCourse.conditions;
+    eq(conditions.length, count + 1, 'added');
+    eq(conditions[count].rejection, 'Course status must not be Archived', 'with the derived message');
+    sandbox.updateDefinition('command-definition', id, 'DefineCourse', shipped);
   });
 
   // The read half of the merged row narrows exactly as the old read
@@ -2950,6 +2957,45 @@ function build(index) {
 }
 
 // ---------------------------------------------------------------
+// A scalar value type is compared and folded as what it wraps:
+// `Hours` over an integer is ordered and decremented like one.
+// ---------------------------------------------------------------
+{
+  const id = sandbox.createDcbModel('Value Type Probe');
+  sandbox.applyModelSource(id, [
+    'model "Value Type Probe"',
+    'type Hours = integer',
+    'type Note = string',
+    'tag type DeveloperId = string',
+    'enum Level { Junior, Senior }',
+    'event HoursAllocated { tag developer: DeveloperId, requested: Hours }',
+    'projection AvailableHours (tag developer: DeveloperId): Hours = 0 {',
+    '  on HoursAllocated => decrement event.data.requested',
+    '}',
+    'command Allocate(developer: DeveloperId, requested: Hours) {',
+    '  require AvailableHours(developer) >= requested else reject "Not enough hours"',
+    '  emit HoursAllocated { developer, requested }',
+    '}',
+  ].join('\n'));
+  const model = () => sandbox.projectState()[id];
+  const scalar = (type) => ({ propertyType: type, isList: false });
+
+  check('a value type is offered the predicates of the type it wraps', () => {
+    eq(sandbox.predicatesForType(scalar('Hours'), model()), sandbox.predicatesForType(scalar('integer')), 'Hours, as an integer');
+    eq(sandbox.predicatesForType(scalar('Note'), model()), sandbox.predicatesForType(scalar('string')), 'Note, as a string');
+    eq(sandbox.predicatesForType(scalar('DeveloperId'), model()), ['equals', 'equalsAny'], 'an identifier: identity only');
+    eq(sandbox.predicatesForType(scalar('Level'), model()), ['equals', 'equalsAny'], 'an enum: identity only');
+  });
+
+  check('and folded with its operations, stored and evaluated as written', () => {
+    eq(sandbox.operationsFor(model(), { valueType: 'Hours' }), ['set', 'increment', 'decrement'], 'decrement on Hours');
+    const body = model()['command-definitions'].Allocate;
+    eq(body.conditions[0].predicate, 'greaterThanOrEquals', 'the ordering, stored');
+    eq(sandbox.modelAdvisories(model()).length, 0, 'advisory-clean');
+  });
+}
+
+// ---------------------------------------------------------------
 // `equalsAny` — the membership predicate across the pure UI layer.
 // ---------------------------------------------------------------
 {
@@ -3396,51 +3442,59 @@ function build(index) {
     sandbox.updateDefinition('command-definition', id, 'Finish', finish);
   });
 
-  check('a projection read named in the first question is stored as an alias', () => {
+  check('the first question asks no name; a stored read is named afterwards, and unnamed again', () => {
     const shipped = sandbox.deepClone(model()['command-definitions'].Finish);
-    const addAbout = (target, as, rejection) => {
+    const addAbout = (target, rejection) => {
       sandbox.state.slice = 'Finish';
       sandbox.state.adder = 'rule';
       sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' };
       selects()[0].onchange({ target: { value: target } });
-      if (as !== undefined) {
-        const field = findAll(paint(), (n) => /\bread-alias\b/.test(n.className || ''))[0];
-        field.oninput({ target: { value: as } });
-      }
+      eq(findAll(paint(), (n) => /\bread-alias\b/.test(n.className || '')).length, 0, 'no alias field in the wizard');
       Object.assign(sandbox.state.ruleDraft,
         { predicate: 'lessThan', right: ' literal', rightText: '5', rejection });
       findAll(paint(), (n) => n.tag === 'button' && textOf(n) === 'Add rule')[0].onclick();
     };
     const body = () => model()['command-definitions'].Finish;
     const added = () => body().conditions.slice(shipped.conditions.length).map((c) => c.leftHandSide);
+    const read = { projection: 'DoneCount', tags: { documentId: { parameterName: 'documentId' } } };
+    const n = shipped.conditions.length;
 
-    addAbout('projection:DoneCount', 'done count', 'Done too often');
-    eq(body().boundary, [{ alias: 'doneCount', projection: 'DoneCount',
-      tags: { documentId: { parameterName: 'documentId' } } }], 'bound under the name given, camel-cased');
-    eq(added(), [{ alias: 'doneCount' }], 'and the rule names it');
+    addAbout('projection:DoneCount', 'Done too often');
+    addAbout('projection:DoneCount', 'Done far too often');
+    eq(body().boundary, [], 'read in place, twice');
+    eq(added(), [read, read], 'the same spelling');
 
-    // Once bound, the read is a target of its own, by its alias.
-    addAbout('alias:doneCount', undefined, 'Done far too often');
-    eq(body().boundary.length, 1, 'a second rule about it binds nothing new');
-    eq(added(), [{ alias: 'doneCount' }, { alias: 'doneCount' }],
-      'and names the same alias');
-
-    // A name already taken is refused in the form, never stored.
-    for (const taken of ['doneCount', 'documentId', '1st']) {
-      addAbout('projection:Label', taken, 'Refused anyway');
-      eq(added().length, 2, `"${taken}" is refused`);
-      sandbox.closeForms();
+    // Selected, the rule offers the alias; the field takes the read's
+    // name in the sentence.
+    sandbox.state.slice = 'Finish';
+    const row = findAll(paint(), (x) => x.attributes && x.attributes['data-key'] === 'rule:' + n)[0];
+    const addAlias = findAll(row, (x) => x.tag === 'button' && textOf(x) === 'Add alias');
+    eq(addAlias.length, 1, 'one read in place, one button');
+    addAlias[0].onclick();
+    eq(sandbox.state.aliasing, { row: 'rule:' + n, key: JSON.stringify(sandbox.canonicalOperand(read)) }, 'naming it');
+    const field = () => findAll(paint(), (x) => /\bread-alias\b/.test(x.className || ''))[0];
+    eq(field().attributes.placeholder, 'doneCount', 'a name suggested');
+    for (const taken of ['documentId', '1st', 'true']) {
+      field().onkeydown({ key: 'Enter', target: { value: taken }, preventDefault() {} });
+      eq(body().boundary, [], `"${taken}" is refused`);
     }
+    field().onkeydown({ key: 'Enter', target: { value: 'done count' }, preventDefault() {} });
+    eq(body().boundary, [{ alias: 'doneCount', ...read }], 'bound under the name given, camel-cased');
+    eq(added(), [{ alias: 'doneCount' }, { alias: 'doneCount' }], 'every rule reading it now names it');
+    eq(sandbox.state.aliasing, null, 'the field closes');
 
     // The rules follow the reads, in one card, each with its message
     // set off as the code view's `else`.
-    sandbox.state.slice = 'Finish';
     const cards = findAll(paint(), (n) => /\bcard\b/.test(n.className || ''));
     eq(cards.map((n) => n.className), ['card projection', 'card rule'], 'the read, then the rules');
-    eq(findAll(cards[1], (n) => /\brule-row\b/.test(n.className || '')).length,
-      shipped.conditions.length + 2, 'every rule in it, the one read in place too');
     eq(/ — else \u201cDone too often\u201d/.test(textOf(cards[1])), true, 'the message after "else"');
     eq(/Can be refused with/.test(textOf(paint())), false, 'and no list of them besides');
+
+    // And back: the read card takes the name away again.
+    const remove = findAll(cards[0], (n) => n.tag === 'button' && textOf(n) === 'Remove alias')[0];
+    remove.onclick();
+    eq(body().boundary, [], 'no binding');
+    eq(added(), [read, read], 'read in place again');
 
     sandbox.updateDefinition('command-definition', id, 'Finish', shipped);
   });
@@ -3549,6 +3603,130 @@ function build(index) {
     eq(/Folder size increment 1 — not for reads tagged Folder id: Done is tagged by none/.test(textOf(changes())), true,
       'and the change row says so where it sits');
     sandbox.updateDefinition('projection-definition', id, 'FolderSize', before);
+  });
+}
+
+// ---------------------------------------------------------------
+// Two projections compared: "the developer's seniority is at least the
+// project's required seniority". Rules read projections in place, so a
+// projection nothing reads yet has to be on the right side's list as a
+// read of its own, or no rule could ever compare two.
+// ---------------------------------------------------------------
+{
+  const id = sandbox.createDcbModel('Projection Comparison Probe');
+  store.set('dcb-playground:model', id);
+  sandbox.applyModelSource(id, [
+    'model "Projection Comparison Probe"',
+    'tag type ProjectId = string',
+    'tag type DeveloperId = string',
+    'event ProjectDefined { tag projectId: ProjectId, seniority: integer }',
+    'event DeveloperHired { tag developerId: DeveloperId, seniority: integer }',
+    'event Assigned { tag projectId: ProjectId, tag developerId: DeveloperId }',
+    'projection RequiredSeniority (tag projectId: ProjectId): integer = 0 {',
+    '  on ProjectDefined => set event.data.seniority',
+    '}',
+    'projection DeveloperSeniority (tag developerId: DeveloperId): integer = 0 {',
+    '  on DeveloperHired => set event.data.seniority',
+    '}',
+    'command Assign(projectId: ProjectId, developerId: DeveloperId) {',
+    '  emit Assigned { projectId, developerId }',
+    '}',
+  ].join('\n'));
+  const model = () => projectState()[id];
+  const cmd = () => model()['command-definitions'].Assign;
+  const paint = () => sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'Assign'));
+  const required = { projection: 'RequiredSeniority', tags: { projectId: { parameterName: 'projectId' } } };
+
+  check('a projection nothing reads yet is on the right side, read in place', () => {
+    sandbox.state.slice = 'Assign';
+    sandbox.state.adder = 'rule';
+    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '', target: 'projection:DeveloperSeniority' };
+    paint();
+    const draft = sandbox.state.ruleDraft;
+    draft.predicate = 'greaterThanOrEquals';
+    const right = findAll(paint(), (n) => n.tag === 'select').pop();
+    const offered = findAll(right, (n) => n.tag === 'option').map((n) => n.value);
+    eq(offered.includes(JSON.stringify(required)), true, 'the project\'s required seniority');
+    eq(offered.some((v) => /DeveloperSeniority/.test(v)), false, 'not the read the rule is about');
+    draft.right = JSON.stringify(required);
+    draft.rejection = 'Developer is too junior';
+    findAll(paint(), (n) => n.tag === 'button' && textOf(n) === 'Add rule')[0].onclick();
+    eq(cmd().conditions, [{
+      leftHandSide: { projection: 'DeveloperSeniority', tags: { developerId: { parameterName: 'developerId' } } },
+      predicate: 'greaterThanOrEquals', rightHandSide: required, rejection: 'Developer is too junior',
+    }], 'both sides read in place');
+    eq(cmd().boundary || [], [], 'no binding stored');
+  });
+
+  const seniority = { projection: 'DeveloperSeniority', tags: { developerId: { parameterName: 'developerId' } } };
+
+  check('a read in place reads as a call: the name, then its values in brackets', () => {
+    eq(sandbox.operandWords(seniority), 'Developer seniority (developer id)', 'one tag');
+    eq(sandbox.operandWords({ projection: 'DeveloperSeniority' }), 'Developer seniority', 'none: no brackets');
+    eq(sandbox.operandWords({ projection: 'P', tags: { a: { parameterName: 'a' }, b: { tagType: 'B', tagValue: 'x' } },
+      arguments: { limit: 3 } }), 'P (a, B("x"), limit = 3)', 'tags, a literal as its text, then arguments');
+    const chip = sandbox.opRef(seniority);
+    eq(textOf(findAll(chip, (n) => /\bread-name\b/.test(n.className || ''))[0]), 'Developer seniority', 'the name, set apart');
+    const tag = findAll(chip, (n) => /\bref\b/.test(n.className || ''))[0];
+    eq(textOf(tag), 'developer id', 'the tag, a reference of its own');
+    eq(typeof tag.onmouseenter, 'function', 'that lights up on hover');
+    eq(sandbox.sourceKey(seniority.tags.developerId), 'param:developerId', 'the input it came from');
+  });
+
+  check('a rule left without a message is refused with what it requires', () => {
+    const derive = (condition) => sandbox.derivedRejection(model(), cmd(), condition);
+    eq(derive({ leftHandSide: seniority, predicate: 'greaterThanOrEquals', rightHandSide: required }),
+      'Developer seniority must be at least Required seniority', 'reads in place, without their tags');
+    eq(derive({ leftHandSide: seniority, predicate: 'equals', negate: true, rightHandSide: 3 }),
+      'Developer seniority must not be 3', 'negated');
+    eq(derive({ leftHandSide: seniority, predicate: 'equalsAny', rightHandSide: [1, 2] }),
+      'Developer seniority must be one of 1, 2', 'a literal list');
+    eq(derive({ leftHandSide: { parameterName: 'projectId' }, predicate: 'startsWith', rightHandSide: 'p-' }),
+      'Project id must start with "p-"', 'a verb of its own');
+    eq(derive({ leftHandSide: { parameterName: 'projectId' }, predicate: 'contains', negate: true, rightHandSide: 'x' }),
+      'Project id must not contain "x"', 'a denied one');
+    eq(derive({ leftHandSide: { parameterName: 'projectId' }, predicate: 'equals', rightHandSide: 'x'.repeat(300) }).length,
+      200, 'never longer than a message may be');
+  });
+
+  check('editing a rule derives its message afresh, unless the author wrote it', () => {
+    const shipped = sandbox.deepClone(cmd());
+    const withRules = sandbox.deepClone(shipped);
+    const rule = { leftHandSide: seniority, predicate: 'greaterThan', rightHandSide: 0 };
+    withRules.conditions = [
+      { ...rule, rejection: 'Developer seniority must be more than 0' },
+      { ...rule, rejection: 'Too junior' },
+    ];
+    sandbox.updateDefinition('command-definition', id, 'Assign', withRules);
+    sandbox.state.slice = 'Assign';
+    const edit = (i) => {
+      sandbox.state.sel = 'rule:' + i;
+      const row = findAll(paint(), (x) => x.attributes && x.attributes['data-key'] === 'rule:' + i)[0];
+      findAll(row, (x) => x.tag === 'button' && textOf(x) === 'Edit')[0].onclick();
+      return sandbox.state.ruleDraft;
+    };
+    eq(edit(0).rejection, undefined, 'derived: opened empty');
+    sandbox.closeForms();
+    eq(edit(1).rejection, 'Too junior', 'written: kept');
+    sandbox.closeForms();
+    sandbox.updateDefinition('command-definition', id, 'Assign', shipped);
+  });
+
+  check('an alias is put back in place only while every use is its whole value', () => {
+    const body = {
+      boundary: [{ alias: 'senior', ...seniority }],
+      conditions: [{ leftHandSide: { alias: 'senior' }, predicate: 'greaterThan', rightHandSide: 0, rejection: 'r' }],
+    };
+    eq(sandbox.aliasInlinable(body, 'senior'), true, 'a rule about its value');
+    const viaProperty = sandbox.deepClone(body);
+    viaProperty.conditions.push({ leftHandSide: { alias: 'senior', property: 'level' }, predicate: 'isNotEmpty', rejection: 'r' });
+    eq(sandbox.aliasInlinable(viaProperty, 'senior'), false, 'not with a property of it read');
+    const asTag = sandbox.deepClone(body);
+    asTag.boundary.push({ alias: 'other', projection: 'RequiredSeniority', tags: { projectId: { alias: 'senior' } } });
+    eq(sandbox.aliasInlinable(asTag, 'senior'), false, 'nor with another read tagged by it');
+    sandbox.inlineAliasedRead(body, 'senior');
+    eq(body, { boundary: [], conditions: [{ leftHandSide: seniority, predicate: 'greaterThan', rightHandSide: 0, rejection: 'r' }] },
+      'back in place');
   });
 }
 

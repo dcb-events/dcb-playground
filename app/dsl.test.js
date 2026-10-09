@@ -1084,6 +1084,110 @@ check('a shorthand splits when either of its names is renamed', () => {
   eq(property.includes('command DefineCourse(courseId: CourseId, capacity: integer) {'), true, 'the parameter kept');
 });
 
+// ---------------------------------------------------------------
+// Introduce alias.
+// ---------------------------------------------------------------
+
+const ALIAS_TEXT = [
+  'model "Aliases"',
+  'enum CourseStatus { NonExistent, Existent }',
+  'tag type CourseId = string',
+  'tag type OwnerId = string',
+  'event CourseDefined { tag courseId: CourseId, tag ownerId: OwnerId, capacity: integer }',
+  'projection CourseStatus (tag courseId: CourseId): CourseStatus = NonExistent {',
+  '  on CourseDefined => set Existent',
+  '}',
+  'projection CourseOwner (tag courseId: CourseId): OwnerId = null {',
+  '  on CourseDefined => set event.data.ownerId',
+  '}',
+  'projection OwnedCourses (tag ownerId: OwnerId): integer = 0 {',
+  '  on CourseDefined => increment 1',
+  '}',
+  'command Change(courseId: CourseId, capacity: integer) {',
+  '  require CourseStatus(courseId) == Existent',
+  '    else reject "No such course"',
+  '  require OwnedCourses(CourseOwner(courseId)) < 3',
+  '    else reject "Its owner has too many"',
+  '  emit CourseDefined { courseId, ownerId: CourseOwner(courseId), capacity } when CourseStatus(courseId) == Existent',
+  '}',
+  '',
+].join('\n');
+
+function introduceAt(text, needle, offset = 0) {
+  const [line, col] = positionOf(text, needle, offset);
+  const result = sandbox.sourceIntroduceAlias(text, line, col);
+  return result.error ? result : { ...result, text: sandbox.sourceApplyEdits(text, result.edits) };
+}
+
+check('a read in place becomes an alias, every equal read in the command with it', () => {
+  const out = introduceAt(ALIAS_TEXT, 'require CourseStatus', 'require Course'.length);
+  eq(out.error, undefined, 'offered');
+  eq(out.name, 'courseStatus', 'named after the projection');
+  eq(out.title, 'Introduce alias courseStatus', 'and says so');
+  const [line, col] = positionOf(out.text, 'alias courseStatus', 'alias '.length);
+  eq(out.at, { line, col }, 'where its name lands, for the rename that follows');
+  eq(renameAt(out.text, 'alias courseStatus', 'alias '.length, 'status').text.includes('require status == Existent'), true,
+    'and the name is a rename away');
+  eq(out.text.includes([
+    'command Change(courseId: CourseId, capacity: integer) {',
+    '  alias courseStatus = CourseStatus(courseId)',
+    '  require courseStatus == Existent',
+  ].join('\n')), true, 'declared at the top, used in the rule');
+  eq(out.text.includes('when courseStatus == Existent'), true, 'and in the guard');
+  const parsed = parseModelSource(out.text);
+  eq(parsed.diagnostics, [], 'it reads');
+  const body = parsed.collections['command-definition'].Change;
+  eq(body.boundary, [{ alias: 'courseStatus', projection: 'CourseStatus', tags: { courseId: { parameterName: 'courseId' } } }],
+    'one binding');
+  eq(body.conditions[0].leftHandSide, { alias: 'courseStatus' }, 'read through it');
+});
+
+check('the innermost read under the cursor is the one introduced', () => {
+  const inner = introduceAt(ALIAS_TEXT, 'OwnedCourses(CourseOwner', 'OwnedCourses(Course'.length);
+  eq(inner.name, 'courseOwner', 'the nested read');
+  eq(inner.text.includes('require OwnedCourses(courseOwner) < 3'), true, 'replaced inside the outer read');
+  eq(inner.text.includes('ownerId: courseOwner,'), true, 'and in the emission');
+  const outer = introduceAt(ALIAS_TEXT, 'OwnedCourses(CourseOwner', 'Owned'.length);
+  eq(outer.text.includes('  alias ownedCourses = OwnedCourses(CourseOwner(courseId))\n'), true, 'the outer read, whole');
+  eq(outer.text.includes('ownerId: CourseOwner(courseId)'), true, 'its inner read elsewhere untouched');
+});
+
+check('a new alias goes after the others, under a name nothing in the command holds', () => {
+  const text = swap(swap(ALIAS_TEXT, 'command Change(courseId: CourseId, capacity: integer) {',
+    'command Change(courseId: CourseId, capacity: integer, courseStatus: integer) {\n  alias owner = CourseOwner(courseId)'),
+  'emit CourseDefined { courseId, ownerId: CourseOwner(courseId), capacity }', 'emit CourseDefined { courseId, ownerId: owner, capacity }');
+  const out = introduceAt(text, 'require CourseStatus', 'require '.length);
+  eq(out.name, 'courseStatus2', 'a parameter holds the plain name');
+  eq(out.text.includes('  alias owner = CourseOwner(courseId)\n  alias courseStatus2 = CourseStatus(courseId)\n'), true, 'after the last alias');
+  eq(out.at, { line: positionOf(out.text, 'alias courseStatus2')[0], col: 9 }, 'its name found there too');
+  eq(parseModelSource(out.text).diagnostics, [], 'it reads');
+  const inAlias = introduceAt(text, '= CourseOwner(courseId)', '= Course'.length);
+  eq(inAlias.error !== undefined, true, 'an alias\'s own read is not a read in place');
+});
+
+check('introducing an alias is offered only on a read in place', () => {
+  eq(introduceAt(ALIAS_TEXT, 'projection CourseStatus', 'projection '.length).error !== undefined, true, 'a declaration');
+  eq(introduceAt(ALIAS_TEXT, '== Existent', '== '.length).error !== undefined, true, 'an enum member');
+  eq(introduceAt(ALIAS_TEXT, 'require CourseStatus', 0).error !== undefined, true, 'a keyword');
+});
+
+check('every read in place in every shipped text can be introduced as an alias', () => {
+  let tried = 0;
+  for (const [slug, text] of shippedTexts()) {
+    const lines = text.split('\n');
+    lines.forEach((source, index) => {
+      if (!/^\s+(require|emit)\b/.test(source)) return;
+      for (const match of source.matchAll(/\b[A-Z][A-Za-z0-9_]*\(/g)) {
+        const result = sandbox.sourceIntroduceAlias(text, index + 1, match.index + 1);
+        if (result.error) continue;
+        tried += 1;
+        eq(parseModelSource(sandbox.sourceApplyEdits(text, result.edits)).diagnostics, [], `${slug}:${index + 1} ${match[0]}`);
+      }
+    });
+  }
+  eq(tried > 10, true, 'the shipped models read in place');
+});
+
 check('an entity takes its tracking identifier type along, and a type renamed under one is pinned', () => {
   const text = modelToSource(build(ENTITIES).model());
   const entity = renameAt(text, 'entity Course (', 'entity '.length, 'Class').text;

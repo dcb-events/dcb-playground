@@ -71,15 +71,29 @@ and prune what no longer holds.
   field, an emitted tag or another read *needs*. Since 8.0 a projection
   read need not be a binding at all: an operand may be a read in place
   (`{projection, tags, arguments}`, `require CourseStatus(courseId)
-  == …`), and the rule adder writes a rule about a projection
-  that way unless the author names it — an optional "as" beside the
-  projection's tags, empty by default; named, it is stored as a
-  binding under that name so other rules can use it
-  (`devCapacity < projectCapacity`). The pages never pick an alias for
-  a projection themselves (`inlineReadOf`, swapped in at commit). A
-  name the command already uses for a read or an input is refused in
-  the form, not left to an advisory: an alias sharing a name with an
-  input is what the code view cannot print back. Entity reads
+  == …`), and the rule adder always writes a rule about a projection
+  that way (`inlineReadOf`, swapped in at commit). It used to offer an
+  optional "as" beside the projection's tags; that was removed, because
+  a name field in the middle of the first question was one more thing
+  to answer before the rule existed, and since the right side reads
+  projections in place too, a name is rarely needed. A read is named
+  afterwards instead: a selected rule or guard offers "Add alias" (one
+  button per read in place it names, labelled with the read when there
+  are two), which swaps the read's name in the sentence for a field
+  (`state.aliasing`); Enter binds the read under the name and points
+  every spelling of it in the command at the alias (`aliasInlineRead`,
+  model.js), since those are one read already. The read card's "Remove
+  alias" goes back (`inlineAliasedRead`), offered only while every use
+  is the read's whole value in a rule, guard or emission field
+  (`aliasInlinable`). The pages never pick an alias for a projection
+  themselves. A name the command already uses for a read or an input
+  is refused in the field (`aliasNameProblem`), not left to an
+  advisory: an alias sharing a name with an input is what the code
+  view cannot print back. A read in place reads as a call, `Developer
+  seniority (developer)`: the name in the projection colour, the
+  brackets muted, and each value an `opRef` of its own, so a tag lights
+  the input it came from (`projectionReadRef`). It replaced "Developer
+  seniority tagged developer", which was too long to scan in a rule. Entity reads
   are still bindings. Inline reads are walked by `forEachCommandOperand`
   (it descends into their tags), counted once per spelling
   (`inlineReads`), placed in the query their tags wait for
@@ -88,6 +102,11 @@ and prune what no longer holds.
   provisional binding; `record` appends binding and rule in one
   `patchSlice`, because a binding stored without its rule would be
   pruned by its own write), and the read card has no delete button.
+  The right side offers a projection nothing reads yet the same way, read
+  in place, once per way the scope can fill its tags
+  (`projectionReadChoices`): with no bindings to put a second projection
+  in scope, two projections could otherwise never be compared
+  (`DeveloperSeniority(developerId) >= RequiredSeniority(projectId)`).
   `bindingReferences` / `unreferencedBindings` (model.js) name the five
   reasons a read is consulted — rule, guard, emission, coverage, chain —
   and `updateDefinitions` prunes what nothing consults, transitively, in
@@ -187,6 +206,12 @@ and prune what no longer holds.
   another verb), and `currentValue` is not offered at all (`set` to it
   is a no-op, `increment` by it doubles). Both stay in the wire format
   and still run when stored.
+  A plain scalar value type counts as what it wraps, for predicates as
+  for operations (`underlyingScalarType`, `predicatesForType` given the
+  model): `Hours` over an integer is ordered and decremented like one.
+  Predicates used to go by the type's name alone, so wrapping an
+  integer in a named type left it only `equals`. An identifier (a tag
+  type) and an enum stay identity-only, whatever they are spelled in.
 
 ## Tags: events, projections, handlers
 
@@ -444,7 +469,19 @@ on Projections, on an entity's page, and in the definition modals.
   scenario coverage counts by it (`uncoveredRejections`). The Rules
   step used to list the set as well ("Can be refused with"); it was
   dropped, since each rule already ends in its message. The rule wizard asks for the message last,
-  required and deliberately not pre-filled with the condition's text.
+  and it is optional there: left empty, the rule is refused with what it
+  requires, said from the rule (`derivedRejection`, shared.js) —
+  `Developer seniority must be at least Required seniority`, reads
+  named without their tags, cut at the length limit — and the field's
+  placeholder shows that message while it is empty. This reverses an
+  earlier decision (required, never pre-filled, since the condition's
+  text is what a message is there to replace): having to write a
+  sentence before the rule was saved got in the way of modelling, and
+  a derived message is still a valid, static outcome a scenario can
+  name. Editing a rule whose message equals its derivation opens the
+  field empty, so the message follows the edited rule; a message the
+  author wrote is never touched. Only the wizard derives — the wire
+  format, the code view and WebMCP still require the message.
 - **Derived projections (6.0)**: a third projection kind — no handlers,
   no initial value, one declared predicate over other projections
   (`derived`), always a single boolean. Its query is its operands'
@@ -747,7 +784,16 @@ and the timeline docked at the bottom. Only the step band scrolls.
   `Existent` apart from `NonExistent` and the projection CourseStatus
   apart from the enum. Rename refuses rather than guesses (a name a
   script or json body may hide, a member whose enum cannot be told) and
-  proves itself by re-reading the result. A test holds every name in
+  proves itself by re-reading the result. *Introduce alias*, a
+  refactor offered on a read in place (`sourceIntroduceAlias`), proves
+  itself the same way: an inline read and an alias derive the same
+  query, so the result, its alias put back at each use, must read as
+  the command it was — the alias is spelling, never a boundary change.
+  It names every equal read in the command at once and picks the
+  projection's own name, lowercased, and opens a rename on it at once
+  — the default is rarely the name wanted, so it is named as it is
+  introduced.
+  A test holds every name in
   every shipped text resolved, so **a new construct also needs its
   marks and a case in `sourceSymbols`**. Completion reads the cursor's
   context off the tokens, not the parse — the block being typed rarely
