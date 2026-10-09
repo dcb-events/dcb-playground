@@ -130,9 +130,12 @@
   }
   /* Wraps rather than squeezes: on a phone the facts and the revealed
      buttons go on to the next line, whole, instead of each one being
-     crushed into a column a word wide. */
+     crushed into a column a word wide. The buttons are one .reveal and
+     move as one; the stored identifier is a .reveal of its own right
+     after the chip, beside the name it spells. */
   .ehead { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 9px; margin-bottom: 9px; }
   .ehead > .chip { white-space: nowrap; }
+  .ehead > .reveal > .tech { margin-left: 0; }
   .erows { border-top: 1px dashed var(--border); }
   .erow {
     display: flex; align-items: center; gap: 8px;
@@ -213,7 +216,7 @@
      the stored identifier, the button that removes it — waits inside a
      .reveal until the row is clicked. */
   .qrow > .reveal { display: none; align-items: center; gap: 8px; }
-  .qrow.open > .reveal { display: inline-flex; flex-wrap: wrap; }
+  .qrow.open > .reveal { display: inline-flex; }
   .qrow:focus { outline: 1px solid var(--accent); outline-offset: 1px; }
   .qrow { cursor: pointer; }
   .qrow:hover, .qrow.open { background: var(--accent-soft); }
@@ -8312,6 +8315,7 @@ function renderCustomTypes(model, main) {
         : [];
       card.appendChild(qrow('div', { cls: 'ehead', key: 'type:' + name },
         h('span', { class: 'chip' }, readable(name)),
+        reveal(h('span', { class: 'tech' }, name)),
         h('span', { class: 'muted tiny' }, composite
           ? `${body.properties.length} field${body.properties.length === 1 ? '' : 's'}`
           : 'one value'),
@@ -8323,7 +8327,7 @@ function renderCustomTypes(model, main) {
           ? h('span', { class: 'muted tiny' }, ' · tags whatever carries it: ' + tags.join(', '))
           : null,
         h('span', { style: 'flex:1' }),
-        h('span', { class: 'reveal' }, h('span', { class: 'tech' }, name), h('button', {
+        reveal(h('button', {
           class: 'btn tiny',
           onclick: () => { closeForms(); state.renamingType = name; render(); },
         }, 'Rename'),
@@ -9473,6 +9477,7 @@ function eventCard(model, name) {
       },
     }, eventIcon(model, name)),
     h('span', { class: 'chip event' }, readable(name)),
+    reveal(h('span', { class: 'tech' }, name)),
     h('span', { class: 'muted tiny' },
       (event.properties || []).length + ' field' + ((event.properties || []).length === 1 ? '' : 's')),
     h('span', { class: 'muted tiny', title: 'What a query by tag finds this event by' },
@@ -9482,7 +9487,6 @@ function eventCard(model, name) {
       + publishers.map((p) => readable(p.command)).join(', ') : 'recorded by nothing yet'),
     h('span', { style: 'flex:1' }),
     reveal(
-      h('span', { class: 'tech' }, name),
       h('button', {
         class: 'btn tiny',
         onclick: () => { state.openEvent = open ? null : name; render(); },
