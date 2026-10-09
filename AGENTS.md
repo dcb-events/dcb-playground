@@ -114,6 +114,8 @@ was decided, why, and what was tried and reverted:
 - the wire format's version — _Wire format versions_
 - entity lifecycles or their UI — _Entity lifecycles_
 - guards, rejection messages, derived projections — _Guarded emissions…_
+- creating or editing a definition from a command page, the definition
+  modals — _Inline definitions from a command_
 - wording on any page — _The interface register_
 - the bar, dialogs or layout at phone width — _Narrow screens_
 - the code view's language, its editor or language service — _The code

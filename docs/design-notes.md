@@ -479,6 +479,59 @@ and prune what no longer holds.
   sits over the current view without moving it, so Cancel is only
   forgetting the question.
 
+## Inline definitions from a command
+
+A use case is designed on its command's page, start to finish. The
+custom type an input needs and the projection a rule or a change reads
+are created, and corrected, from the picker that noticed they were
+missing: "+ New custom type…" in the payload's type pickers, "+ New
+projection…" in a rule's (or guard's) first question and in the change
+adder, and a pencil beside every referenced type or projection a
+command page shows (`openDefinitionModal`, index.html). Events and
+entities keep the inline forms they already had.
+
+- **A modal, not a page or an inline form.** Naming a new command is a
+  page because nothing is half-built yet; here something is — the rule
+  whose first question is being answered, the input whose name is
+  typed. A page would replace it, and an inline form cannot hold a
+  projection's editor. The modal shows the very editor the definition's
+  own page shows (`customTypeEditor`, `projectionFields`), so there is
+  one way to edit each kind.
+- **The page's forms are set aside, not closed.** The editors inside
+  open and close their own forms through `closeForms` as anywhere
+  else; opening the modal moves the page's forms and drafts into the
+  frame (`frameKeys`) and closing it puts them back, so none of that
+  reaches the command. The page behind is painted from what was set
+  aside, so the rule stays visible through the backdrop. Before this,
+  the change adder's "+ New projection" navigated to Projections and
+  dropped whatever was being entered.
+- **Created is chosen.** Creating a definition selects it in the
+  picker that asked, in the same gesture — one undo step — and the
+  modal stays open on its full editor, since a new record's `value`
+  field or a new projection's handlers are rarely right first time.
+  Closing before Create changes nothing. A rename inside the modal
+  carries the selection with it.
+- **Edits commit as they are made**, as on the pages: Done, × and
+  Escape only close. Escape backs out of a field, then a form inside
+  the modal, then the modal — the top one only.
+- **One stacked level, and only projection → custom type.** The other
+  dialogs never stack, because a stack is a way down with no way back
+  (`renderModals`). This one is allowed once, because a projection's
+  value is so often a type not yet written, and its header names what
+  is underneath ("‹ Back to …"). Nothing deeper is offered.
+- **What the modal leaves out.** Removal — the command behind it may be
+  using the definition; it stays on the page. Navigation off to an
+  owning entity. Projections an entity binds: the modal creates and
+  edits only free-standing ones, so it never touches the experimental
+  flag. "Open its page" is the one way out to the definition's page,
+  and it goes through ordinary navigation, which commits or drops the
+  command's pending forms as any other move does.
+- **Other dialogs win.** Help, Problems, Settings, Import & export,
+  the models dialog, quick open and the import gate close the
+  definition modal (its edits are stored already) and give the page
+  its forms back, rather than stacking over it. A modal whose page
+  went away underneath it is dropped.
+
 ## Narrow screens
 
 One breakpoint, 760px (shared.css, _narrow screens_), and a floor of
