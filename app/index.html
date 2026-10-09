@@ -8407,165 +8407,7 @@ function renderCustomTypes(model, main) {
     main.appendChild(h('div', { class: 'empty' }, 'None yet.'));
   }
 
-  for (const name of names) {
-    const body = model['custom-type-definitions'][name];
-    const composite = Array.isArray(body.properties);
-    const owner = entityOfIdType(model, name);
-    const card = h('div', { class: 'ecard' });
-
-    if (state.renamingType === name) {
-      card.appendChild(renameDefinitionForm(model, 'custom-type-definition', name, {
-        stateKey: 'renamingType',
-      }));
-    } else {
-      const tags = composite
-        ? idLeavesOfType(model, name).map((l) =>
-            `${readable(entityOfIdType(model, l.identifierType) || l.identifierType)} (from ${readable(l.field)})`)
-        : [];
-      card.appendChild(qrow('div', { cls: 'ehead', key: 'type:' + name },
-        h('span', { class: 'chip' }, readable(name)),
-        reveal(h('span', { class: 'tech' }, name)),
-        h('span', { class: 'muted tiny' }, composite
-          ? `${body.properties.length} field${body.properties.length === 1 ? '' : 's'}`
-          : 'one value'),
-        owner ? h('span', {
-          class: 'chip entity', title: 'Open ' + readable(owner),
-          onclick: () => openEntity(owner),
-        }, h('i', { class: 'ic' }, entityIcon(model, owner)), 'identifier of ' + readable(owner)) : null,
-        tags.length
-          ? h('span', { class: 'muted tiny' }, ' · tags whatever carries it: ' + tags.join(', '))
-          : null,
-        h('span', { style: 'flex:1' }),
-        reveal(h('button', {
-          class: 'btn tiny',
-          onclick: () => { closeForms(); state.renamingType = name; render(); },
-        }, 'Rename'),
-        owner
-          ? h('button', {
-              class: 'btn tiny danger', disabled: true,
-              title: `Remove the ${readable(owner)} entity instead — its identifier goes with it.`,
-            }, 'Remove')
-          : removeButton('custom-type:' + name, {
-              label: 'Remove', title: 'Remove this custom type',
-              onRemove: () => run(() => removeDefinition('custom-type-definition', model.id, name)),
-            }))));
-    }
-
-    if (composite) {
-      const where = 'field:' + name;
-      card.appendChild(h('div', { class: 'erows' }, body.properties.map((field, i) => {
-        // A field is always singular and always required — that is
-        // what keeps a list of records the same length as the bindings
-        // fanned out over it — so arity is not offered here.
-        if (editingMember(where, field.name)) {
-          return memberEditor(model, {
-            member: field, where, allow: { arity: false }, types: fieldTypeOptions(model),
-            onReplace: (next) => patch('custom-type-definition', name, (b) => {
-              b.properties[i] = { name: next.name, propertyType: next.propertyType };
-            }),
-            onRename: (to) => renameMember('custom-type-definition', model.id, name, 'field', field.name, to),
-          });
-        }
-        const cls = classifyType(model, field.propertyType);
-        const isId = cls.kind === 'value' && !cls.composite && cls.isTag;
-        // A standalone tag-marked type has no owning entity — nothing
-        // to mark it with and nothing to name in the sentence below.
-        const ownerEntity = isId ? cls.ownerEntity : null;
-        const enumType = isStringEnumType(model, field.propertyType) ? field.propertyType : null;
-        // A record field is its type — that one stays on screen even
-        // here, because with it hidden the row would say nothing.
-        return [
-          qrow('div', { cls: 'erow', key: 'field:' + name + '.' + field.name },
-            h('span', { class: 'nm' }, propertyWords(field.name)),
-            h('span', {
-              class: (ownerEntity ? 'chip entity' : 'chip') + ' editable',
-              title: 'Rename or retype this field',
-              onclick: () => openMember(where, field.name),
-            }, ownerEntity ? h('i', { class: 'ic' }, entityIcon(model, ownerEntity)) : null,
-              readable(field.propertyType)),
-            isId ? h('span', { class: 'tiny muted' },
-              ownerEntity
-                ? ('identifies a ' + iconPrefix(entityIcon(model, ownerEntity)) + readable(ownerEntity)
-                  + ' — every event carrying this is tagged with it')
-                : 'a standalone tag — every event carrying this is tagged with it') : null,
-            h('span', { style: 'flex:1' }),
-            reveal(
-              h('span', { class: 'tech' }, field.name),
-              h('button', {
-              class: 'btn tiny danger',
-              onclick: () => {
-                if (body.properties.length === 1) {
-                  return toast('A record needs at least one field. Remove the type instead.', true);
-                }
-                patch('custom-type-definition', name, (b) => {
-                  b.properties = b.properties.filter((f) => f.name !== field.name);
-                });
-              },
-            }, '×'))),
-          enumType ? h('div', { class: 'use' },
-            h('span', { class: 'muted' }, 'can be '), ...enumMemberChips(model, enumType)) : null,
-        ];
-      })));
-
-      let fname = '', ftype = 'string';
-      card.appendChild(adderSlot('field:' + name, null, '+ field', () => h('div', { class: 'adder' },
-        h('input', { type: 'text', placeholder: 'field name', oninput: (e) => { fname = e.target.value; } }),
-        pick(fieldTypeOptions(model), ftype, (v) => { ftype = v; }),
-        h('button', {
-          class: 'btn', onclick: () => {
-            if (!fname.trim()) return toast('Give the field a name.', true);
-            patch('custom-type-definition', name, (b) => {
-              b.properties.push({ name: toCamel(fname), propertyType: ftype });
-            });
-          },
-        }, '+ Field'),
-        h('span', { style: 'flex:1' }),
-        h('span', { class: 'tiny muted' }, 'fields are single and required'))));
-    } else if (isStringEnumType(model, name)) {
-      // An enum is not a distinct form of type — it is a scalar whose
-      // schema carries `enum` — so this is the same card as any other
-      // scalar, just with a chip editor over that one keyword instead
-      // of a raw-text view of the whole schema.
-      card.appendChild(h('div', { class: 'irow' }, ...enumMemberChips(model, name)));
-    } else {
-      let text = JSON.stringify(body.schema == null ? { type: 'string' } : body.schema);
-      card.appendChild(h('div', { class: 'adder' },
-        h('input', {
-          type: 'text', value: text, style: 'flex:1;font-family:var(--mono);font-size:11px',
-          oninput: (e) => { text = e.target.value; },
-        }),
-        h('button', {
-          class: 'btn', onclick: () => run(() => {
-            let parsed;
-            try { parsed = JSON.parse(text); }
-            catch (e) { throw new DomainError('That is not valid JSON: ' + e.message); }
-            updateDefinition('custom-type-definition', model.id, name, { ...body, schema: parsed });
-          }),
-        }, 'Save')));
-    }
-
-    // "Represented as a tag" applies only to the scalar form — a
-    // composite is never itself a tag, only whichever of its fields are
-    // (see the field rows above). Pinned on and undisabled for an
-    // entity-owned type: it must stay a tag for the entity to be
-    // bindable at all, so this is where that invariant is enforced in
-    // the UI rather than only caught after the fact by validation.
-    if (!composite) {
-      card.appendChild(h('div', { class: 'irow' },
-        h('span', { class: 'nm' }, 'represented as a tag'),
-        h('label', { class: 'tiny muted' },
-          h('input', {
-            type: 'checkbox', checked: !!body.isTag, disabled: !!owner,
-            onchange: (e) => patch('custom-type-definition', name, (b) => {
-              if (e.target.checked) b.isTag = true; else delete b.isTag;
-            }),
-          }),
-          owner ? ` required — this is ${readable(owner)}’s identifier` : '')));
-      if (body.isTag && !owner) card.appendChild(tagSchemaField(name, body));
-    }
-
-    main.appendChild(card);
-  }
+  for (const name of names) main.appendChild(customTypeEditor(model, name));
 
   if (state.newType) {
     main.appendChild(inlineForm({
@@ -8576,16 +8418,7 @@ function renderCustomTypes(model, main) {
         const form = state.newType;
         state.newType = null;
         run(() => addDefinition('custom-type-definition', model.id, typeName,
-          form === 'composite'
-            // A record needs a field to exist at all, so it starts with
-            // one the modeler is expected to rename rather than with an
-            // empty body the model would reject.
-            ? { properties: [{ name: 'value', propertyType: 'string' }] }
-            : form === 'enum'
-              // Same for an enum: one member to rename, rather than a
-              // legal-but-useless empty list.
-              ? { schema: { type: 'string', enum: ['Member'] } }
-              : { schema: { type: 'string' } }));
+          newCustomTypeBody(form)));
       },
       onCancel: () => { state.newType = null; render(); },
     }));
@@ -8604,6 +8437,182 @@ function renderCustomTypes(model, main) {
         onclick: () => { closeForms(); state.newType = 'scalar'; render(); },
       }, '+ New single value')));
   }
+}
+
+// One custom type's card: its head, its fields, members or schema, and
+// its tag switch. The Custom types page lists these.
+function customTypeEditor(model, name) {
+  const body = model['custom-type-definitions'][name];
+  const composite = Array.isArray(body.properties);
+  const owner = entityOfIdType(model, name);
+  const card = h('div', { class: 'ecard' });
+
+  if (state.renamingType === name) {
+    card.appendChild(renameDefinitionForm(model, 'custom-type-definition', name, {
+      stateKey: 'renamingType',
+    }));
+  } else {
+    const tags = composite
+      ? idLeavesOfType(model, name).map((l) =>
+          `${readable(entityOfIdType(model, l.identifierType) || l.identifierType)} (from ${readable(l.field)})`)
+      : [];
+    card.appendChild(qrow('div', { cls: 'ehead', key: 'type:' + name },
+      h('span', { class: 'chip' }, readable(name)),
+      reveal(h('span', { class: 'tech' }, name)),
+      h('span', { class: 'muted tiny' }, composite
+        ? `${body.properties.length} field${body.properties.length === 1 ? '' : 's'}`
+        : 'one value'),
+      owner ? h('span', {
+        class: 'chip entity', title: 'Open ' + readable(owner),
+        onclick: () => openEntity(owner),
+      }, h('i', { class: 'ic' }, entityIcon(model, owner)), 'identifier of ' + readable(owner)) : null,
+      tags.length
+        ? h('span', { class: 'muted tiny' }, ' · tags whatever carries it: ' + tags.join(', '))
+        : null,
+      h('span', { style: 'flex:1' }),
+      reveal(h('button', {
+        class: 'btn tiny',
+        onclick: () => { closeForms(); state.renamingType = name; render(); },
+      }, 'Rename'),
+      owner
+        ? h('button', {
+            class: 'btn tiny danger', disabled: true,
+            title: `Remove the ${readable(owner)} entity instead — its identifier goes with it.`,
+          }, 'Remove')
+        : removeButton('custom-type:' + name, {
+            label: 'Remove', title: 'Remove this custom type',
+            onRemove: () => run(() => removeDefinition('custom-type-definition', model.id, name)),
+          }))));
+  }
+
+  if (composite) {
+    const where = 'field:' + name;
+    card.appendChild(h('div', { class: 'erows' }, body.properties.map((field, i) => {
+      // A field is always singular and always required — that is
+      // what keeps a list of records the same length as the bindings
+      // fanned out over it — so arity is not offered here.
+      if (editingMember(where, field.name)) {
+        return memberEditor(model, {
+          member: field, where, allow: { arity: false }, types: fieldTypeOptions(model),
+          onReplace: (next) => patch('custom-type-definition', name, (b) => {
+            b.properties[i] = { name: next.name, propertyType: next.propertyType };
+          }),
+          onRename: (to) => renameMember('custom-type-definition', model.id, name, 'field', field.name, to),
+        });
+      }
+      const cls = classifyType(model, field.propertyType);
+      const isId = cls.kind === 'value' && !cls.composite && cls.isTag;
+      // A standalone tag-marked type has no owning entity — nothing
+      // to mark it with and nothing to name in the sentence below.
+      const ownerEntity = isId ? cls.ownerEntity : null;
+      const enumType = isStringEnumType(model, field.propertyType) ? field.propertyType : null;
+      // A record field is its type — that one stays on screen even
+      // here, because with it hidden the row would say nothing.
+      return [
+        qrow('div', { cls: 'erow', key: 'field:' + name + '.' + field.name },
+          h('span', { class: 'nm' }, propertyWords(field.name)),
+          h('span', {
+            class: (ownerEntity ? 'chip entity' : 'chip') + ' editable',
+            title: 'Rename or retype this field',
+            onclick: () => openMember(where, field.name),
+          }, ownerEntity ? h('i', { class: 'ic' }, entityIcon(model, ownerEntity)) : null,
+            readable(field.propertyType)),
+          isId ? h('span', { class: 'tiny muted' },
+            ownerEntity
+              ? ('identifies a ' + iconPrefix(entityIcon(model, ownerEntity)) + readable(ownerEntity)
+                + ' — every event carrying this is tagged with it')
+              : 'a standalone tag — every event carrying this is tagged with it') : null,
+          h('span', { style: 'flex:1' }),
+          reveal(
+            h('span', { class: 'tech' }, field.name),
+            h('button', {
+            class: 'btn tiny danger',
+            onclick: () => {
+              if (body.properties.length === 1) {
+                return toast('A record needs at least one field. Remove the type instead.', true);
+              }
+              patch('custom-type-definition', name, (b) => {
+                b.properties = b.properties.filter((f) => f.name !== field.name);
+              });
+            },
+          }, '×'))),
+        enumType ? h('div', { class: 'use' },
+          h('span', { class: 'muted' }, 'can be '), ...enumMemberChips(model, enumType)) : null,
+      ];
+    })));
+
+    let fname = '', ftype = 'string';
+    card.appendChild(adderSlot('field:' + name, null, '+ field', () => h('div', { class: 'adder' },
+      h('input', { type: 'text', placeholder: 'field name', oninput: (e) => { fname = e.target.value; } }),
+      pick(fieldTypeOptions(model), ftype, (v) => { ftype = v; }),
+      h('button', {
+        class: 'btn', onclick: () => {
+          if (!fname.trim()) return toast('Give the field a name.', true);
+          patch('custom-type-definition', name, (b) => {
+            b.properties.push({ name: toCamel(fname), propertyType: ftype });
+          });
+        },
+      }, '+ Field'),
+      h('span', { style: 'flex:1' }),
+      h('span', { class: 'tiny muted' }, 'fields are single and required'))));
+  } else if (isStringEnumType(model, name)) {
+    // An enum is not a distinct form of type — it is a scalar whose
+    // schema carries `enum` — so this is the same card as any other
+    // scalar, just with a chip editor over that one keyword instead
+    // of a raw-text view of the whole schema.
+    card.appendChild(h('div', { class: 'irow' }, ...enumMemberChips(model, name)));
+  } else {
+    let text = JSON.stringify(body.schema == null ? { type: 'string' } : body.schema);
+    card.appendChild(h('div', { class: 'adder' },
+      h('input', {
+        type: 'text', value: text, style: 'flex:1;font-family:var(--mono);font-size:11px',
+        oninput: (e) => { text = e.target.value; },
+      }),
+      h('button', {
+        class: 'btn', onclick: () => run(() => {
+          let parsed;
+          try { parsed = JSON.parse(text); }
+          catch (e) { throw new DomainError('That is not valid JSON: ' + e.message); }
+          updateDefinition('custom-type-definition', model.id, name, { ...body, schema: parsed });
+        }),
+      }, 'Save')));
+  }
+
+  // "Represented as a tag" applies only to the scalar form — a
+  // composite is never itself a tag, only whichever of its fields are
+  // (see the field rows above). Pinned on and undisabled for an
+  // entity-owned type: it must stay a tag for the entity to be
+  // bindable at all, so this is where that invariant is enforced in
+  // the UI rather than only caught after the fact by validation.
+  if (!composite) {
+    card.appendChild(h('div', { class: 'irow' },
+      h('span', { class: 'nm' }, 'represented as a tag'),
+      h('label', { class: 'tiny muted' },
+        h('input', {
+          type: 'checkbox', checked: !!body.isTag, disabled: !!owner,
+          onchange: (e) => patch('custom-type-definition', name, (b) => {
+            if (e.target.checked) b.isTag = true; else delete b.isTag;
+          }),
+        }),
+        owner ? ` required — this is ${readable(owner)}’s identifier` : '')));
+    if (body.isTag && !owner) card.appendChild(tagSchemaField(name, body));
+  }
+
+  return card;
+}
+
+// The body a new custom type starts with, by form.
+function newCustomTypeBody(form) {
+  return form === 'composite'
+    // A record needs a field to exist at all, so it starts with one the
+    // modeler is expected to rename rather than with an empty body the
+    // model would reject.
+    ? { properties: [{ name: 'value', propertyType: 'string' }] }
+    : form === 'enum'
+      // Same for an enum: one member to rename, rather than a
+      // legal-but-useless empty list.
+      ? { schema: { type: 'string', enum: ['Member'] } }
+      : { schema: { type: 'string' } };
 }
 
 // What a composite field may be typed with: anything except another
