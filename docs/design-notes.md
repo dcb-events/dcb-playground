@@ -172,8 +172,8 @@ and prune what no longer holds.
   renders the verb as plain text where there is only one, since a
   one-option `<select>` is a control that looks like a choice. This was
   wrong in both directions once: the change adder offered the whole
-  `OPERATION_WORDS` table regardless of type (a boolean was offered
-  "goes up by" and "gains"), and both editors offered "the one after …"
+  operation list regardless of type (a boolean was offered
+  `increment` and `append`), and both editors offered "the one after …"
   for booleans and enums, which stores fine and then fails validation.
   `hasSuccessor` exists so the editor offering an operand and the
   validator refusing it cannot read different rules. A boolean's two
@@ -386,6 +386,34 @@ and prune what no longer holds.
   (`lifecyclePanel`) but is never faded — with nothing designated it is
   the only lifecycle control on the page.
 
+## The projection editor
+
+`projectionFields` (index.html) is the one editor for a projection —
+on Projections, on an entity's page, and in the definition modals.
+
+- **Sections, with what it works out to beside them.** On the left:
+  `value` (type, cardinality, initial), `tags`, `handlers` (or the
+  derived predicate) and `advanced`, each headed in monospace with its
+  one `ⓘ`; on the right, `projectionUsage`: the query, spelled out
+  rather than behind the query popover, the checks count (a way to the
+  Checks tab on an open row) and, behind the switch, who reads it and
+  what binds it. The two columns wrap into one where they do not fit,
+  which is the modal and a phone. This replaced one column of
+  sentence-labels ("it holds", "starting at", "and it moves when one of
+  these is recorded") whose explanations sat inline as prose.
+- **`null` is a value of the initial picker**, beside the type's own
+  values (`false`, `true`; an enum's members), or beside `value…` /
+  `list…` for a type typed in or a list (`initialValueControl`). It
+  used to be a null/value radio pair in front of the value; one picker
+  says the same, and `null` still never hides behind an empty box.
+- **The Advanced switch** (`projectionAdvanced`, remembered per
+  browser) holds what most projections never need: making it scripted
+  (`scripted projection`) or derived (`derived projection`,
+  experimental too), and the `read by` / `bound as` facts. It hides
+  offers, never what is stored — a scripted or derived projection shows
+  its section with the switch off, the way the experimental flag
+  works.
+
 ## Guarded emissions, rejection messages, derived projections
 
 - **Guarded emissions (6.0)**: a `publishes` entry may carry
@@ -452,12 +480,19 @@ and prune what no longer holds.
   writes — and a humanized name inside a dotted path reads as a typo.
   In the open list it is short under an `event` heading; once picked it
   is whole (`pick`'s token options, `.ctx` spans).
-  **Conditions and changes stay English sentences** — `PREDICATE_WORDS`
-  and `OPERATION_WORDS` are untouched, the `·` separates alias from
-  property, and the existence sugar still reads `course exists` (minus
-  its article). Understanding what a command is guarded by is the point
-  of the tool, and an author never typed a predicate to begin with, so
-  there is no stored spelling being hidden.
+  **Conditions stay English sentences** — `PREDICATE_WORDS` is
+  untouched, the `·` separates alias from property, and the existence
+  sugar still reads `course exists` (minus its article). Understanding
+  what a command is guarded by is the point of the tool, and an author
+  never typed a predicate to begin with, so there is no stored spelling
+  being hidden. **Operations are their tokens** — `set`, `increment`,
+  `decrement`, `append`, `remove` — in the handler editor, the change
+  adder and the State changes sentences alike (`Course capacity set
+  event.data.capacity`). They used to be English too ("becomes", "goes
+  up by", `OPERATION_WORDS`); that was dropped when the projection
+  editor was made technical, because an operation is something the
+  author picks and the Code view writes, and one word per operation in
+  both places is one spelling to learn.
   Explanations live in `hint(...)` — one `ⓘ` per section, never one per
   row, in both modes, linking dcb.events only where a page exists.
   Inline field hints are deleted; *derived facts* stay on the page,

@@ -113,6 +113,8 @@ was decided, why, and what was tried and reverted:
   _Tags: events, projections, handlers_
 - the wire format's version — _Wire format versions_
 - entity lifecycles or their UI — _Entity lifecycles_
+- the projection editor's layout, its Advanced switch — _The projection
+  editor_
 - guards, rejection messages, derived projections — _Guarded emissions…_
 - creating or editing a definition from a command page, the definition
   modals — _Inline definitions from a command_

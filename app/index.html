@@ -318,6 +318,8 @@
   .sentence .op { font-family: var(--mono); font-size: 12px; background: var(--type-soft);
                   border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; }
   .sentence .verb { color: var(--muted); }
+  /* An operation is its token, set as code. */
+  .verb.tok { font-family: var(--mono); font-size: 11px; }
   /* A reference, and the row it refers to. */
   .op.ref { cursor: pointer; }
   .op.ref:hover, .op.ref:focus, .op.ref.pinned {
@@ -450,6 +452,43 @@
   .pdetail > .tabs { margin: 4px 0 8px; gap: 0; }
   .pdetail > .tabs .tab { padding: 6px 2px; margin-right: 20px; font-size: 12px; font-weight: 600; }
   .pdetail > .tabs .tab.on { color: var(--entity); border-bottom-color: var(--entity); }
+  /* The projection editor: sections on the left, what the definition
+     works out to on the right — wrapping under them where the two do
+     not fit side by side (a modal, a phone). */
+  .peditor { display: flex; flex-wrap: wrap; gap: 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+  .peditor .pmain { flex: 999 1 480px; min-width: 0; }
+  .peditor .pusage { flex: 1 1 190px; min-width: 0; background: var(--bg); border-left: 1px solid var(--border); border-radius: 0 var(--radius) var(--radius) 0; }
+  .peditor .pk { font-family: var(--mono); font-size: 10px; letter-spacing: .06em; color: var(--muted); }
+  .peditor .phead > .pk, .peditor .pusage-block > .pk { text-transform: uppercase; }
+  .peditor .pbar { display: flex; align-items: center; padding: 6px 12px 0; }
+  .peditor .psection { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  .peditor .psection:last-child { border-bottom: 0; }
+  .peditor .phead { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+  .peditor .phead .grow, .peditor .pbar .grow { flex: 1; }
+  .peditor .pfields { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }
+  .peditor .pfield { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .peditor .pfield select, .peditor .pfield input { width: 100%; max-width: 100%; }
+  .peditor .pinitial { display: flex; gap: 6px; }
+  .peditor .pinitial select { width: auto; flex: none; }
+  .peditor .pinitial input { flex: 1; min-width: 0; }
+  .peditor .pinitial-list { margin-top: 6px; }
+  .peditor .phandler { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 4px 6px; margin-bottom: 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+  .peditor .phandler > .btn.danger { margin-left: auto; }
+  .peditor .pusage-block { padding: 10px 12px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+  .peditor .pusage-block:last-child { border-bottom: 0; }
+  .peditor .pquery { font-family: var(--mono); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+  .peditor .linkish { background: none; border: 0; padding: 0; font: inherit; font-size: 12px; color: var(--text); cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+  .peditor .linkish:hover { color: var(--accent); }
+  .pswitch { display: inline-flex; align-items: center; gap: 6px; background: none; border: 0; padding: 4px 0; font-size: 11px; color: var(--muted); cursor: pointer; }
+  .pswitch .track { position: relative; width: 26px; height: 14px; border-radius: 999px; background: var(--border-strong); }
+  .pswitch .knob { position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; border-radius: 50%; background: var(--surface); transition: left .12s; }
+  .pswitch.on { color: var(--text); }
+  .pswitch.on .track { background: var(--accent); }
+  .pswitch.on .knob { left: 14px; }
+  .pswitch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  @media (max-width: 760px) {
+    .peditor .pusage { border-left: 0; border-top: 1px solid var(--border); border-radius: 0 0 var(--radius) var(--radius); }
+  }
   .pfoot {
     display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
     padding-top: 12px; margin-top: 10px; border-top: 1px dashed var(--border);
@@ -2211,7 +2250,7 @@ function newProjectionQuestion(model, frame, created) {
         type: 'text', value: draft.name, placeholder: 'projection name',
         oninput: (e) => { draft.name = e.target.value; },
       })),
-    h('div', { class: 'card projection' },
+    h('div', { style: 'margin-top:10px' },
       ...projectionFields(model, draft.body, { onNewType: projectionNewTypeOffer(model, frame) })),
     h('div', { class: 'adder', style: 'margin-top:10px' },
       h('button', {
@@ -2244,10 +2283,10 @@ function definitionModalProjection(model, frame, renamed) {
           stateKey: 'renamingProjection', after: renamed,
         })
       : null,
-    h('div', { class: 'card projection' },
+    h('div', {},
       ...projectionFields(model, frame.draft.body, { onNewType: projectionNewTypeOffer(model, frame) })),
     h('div', { class: 'pfoot' },
-      h('span', { class: 'muted tiny' }, 'Saves as you edit — undo takes it back.'),
+      h('span', { class: 'muted tiny' }, 'autosaved · ⌘Z undoes'),
       h('span', { class: 'grow' }),
       h('button', {
         class: 'btn tiny', title: 'Rename the projection',
@@ -6814,8 +6853,8 @@ function stepChanges(model, slice) {
               : h('span', { class: 'muted' }, 'by no tag'),
           ]),
           reads.length ? ' ' : null,
-          h('span', { class: 'verb' }, p.verb), ' ',
-          opRef(effect.handler.value, emission.name, p.object),
+          h('span', { class: 'verb tok' }, p.verb), ' ',
+          scripted ? null : opRef(effect.handler.value, emission.name, p.object),
           // A read the event cannot reach is said, never hidden — it is
           // an advisory on the read, and this is where it shows.
           unreached.length ? h('span', { class: 'muted tiny' },
@@ -6902,9 +6941,9 @@ function changeTargetOf(model, target) {
 function operationControl(operations, draft) {
   if (operations.length === 1) {
     draft.operation = operations[0];
-    return h('span', { class: 'verb' }, OPERATION_WORDS[operations[0]] || operations[0]);
+    return h('span', { class: 'verb tok' }, operations[0]);
   }
-  return pick(operations.map((op) => [op, OPERATION_WORDS[op] || op]), draft.operation,
+  return pick(operations.map((op) => [op, op]), draft.operation,
     (v) => { draft.operation = v; draft.touched = true; render(); });
 }
 
@@ -7022,7 +7061,7 @@ function changeAdder(model, eventName, emission) {
   const targetIsBoolean = targetType === 'boolean' && !targetProjection.isList;
   const offerProperty = (p) => !targetType || p.propertyType === targetType;
   const operations = targetProjection ? operationsFor(model, targetProjection)
-    : Object.keys(OPERATION_WORDS);
+    : OPERATIONS;
   if (!operations.includes(draft.operation)) draft.operation = operations[0];
   const offerSuccessor = !!targetType && draft.operation === 'set'
     && !targetProjection.isList && offersSuccessor(model, targetType);
@@ -8309,7 +8348,7 @@ function partitionCells(model, name) {
 // rename — every read of it moves (`renameMember`) — and happens on the
 // spot; adding, retyping or removing one is part of the draft, and the
 // reads it leaves without a value say so as advisories.
-function projectionTagsEditor(model, draft, savedName) {
+function projectionTagsEditor(model, draft, savedName, info) {
   const types = partitionTypeOptions(model);
   const undecided = draft.tags === null || draft.tags === undefined;
   const tags = draft.tags || [];
@@ -8333,24 +8372,25 @@ function projectionTagsEditor(model, draft, savedName) {
       },
       onkeydown: (e) => { if (e.key === 'Enter') e.target.blur(); },
     }),
-    h('span', { class: 'muted tiny' }, 'a'),
+    h('span', { class: 'pk' }, ':'),
     pick(types, tag.tagType, (v) => { tag.tagType = v; render(); }, types.length ? null : '— no tag type yet —'),
     h('button', {
-      class: 'btn tiny danger', title: 'Drop this tag',
+      class: 'btn tiny danger', title: 'Remove this tag',
       onclick: () => { tags.splice(i, 1); draft.tags = [...tags]; render(); },
     }, '×')));
-  return h('div', { style: 'margin-top:8px' },
-    h('div', { class: 'row' },
-      h('span', { class: 'muted tiny', style: 'min-width:90px' }, 'tagged by'),
-      undecided ? h('span', { class: 'muted tiny' }, '— say what each value is kept per, or that it is one for the whole log —')
-        : (tags.length ? null : h('span', { class: 'chip unset', title: 'One value for the whole log' }, 'untagged'))),
-    h('div', { style: 'margin-left:90px' }, ...rows,
-      h('div', { class: 'adder' },
-        h('button', { class: 'btn ghost tiny', disabled: !types.length, onclick: addTag }, '+ tag'),
-        undecided ? h('button', {
-          class: 'btn ghost tiny', title: 'One value for the whole log — a numbering is one',
-          onclick: () => { draft.tags = []; render(); },
-        }, 'untagged') : null)));
+  // Undecided is a question with two answers, and both are offered;
+  // decided and empty is a fact, and is said.
+  return projectionSection('tags', info,
+    h('button', { class: 'btn ghost tiny', disabled: !types.length, onclick: addTag }, '+ tag'),
+    ...rows,
+    undecided
+      ? h('div', { class: 'adder' },
+          h('span', { class: 'muted tiny' }, 'undecided —'),
+          h('button', {
+            class: 'btn ghost tiny', title: 'One value for the whole log — a numbering is one',
+            onclick: () => { draft.tags = []; render(); },
+          }, 'untagged'))
+      : (tags.length ? null : h('span', { class: 'chip unset', title: 'One value for the whole log' }, 'untagged')));
 }
 
 // A row, and — when it is the one being edited — everything under it.
@@ -8433,9 +8473,6 @@ function projectionDetail(model, entry, { owner }) {
     onclick: () => { state.projTab = key; state.projectionScenarioDraft = null; render(); },
   }, label, extra);
 
-  const readers = projectionReaders(model, projection);
-  const bound = boundAs(model, projection);
-
   // Two names can be changed here, and they are genuinely two: what an
   // entity calls the projection (the binding, which every command
   // reading it names too) and what the projection itself is called.
@@ -8459,24 +8496,10 @@ function projectionDetail(model, entry, { owner }) {
         : null);
 
   const definition = h('div', {},
-    ...projectionFields(model, draft, owner ? { entityName: owner } : {}),
-    h('div', { class: 'row', style: 'margin-top:10px' },
-      h('span', { class: 'muted tiny', style: 'min-width:90px' }, 'read by'),
-      readers.length
-        ? readers.map((command) => h('span', {
-            class: 'chip command linkable', title: 'Open ' + readable(command),
-            onclick: () => { closeForms(); state.slice = command; state.view = 'slice'; render(); },
-          }, readable(command)))
-        : h('span', { class: 'empty' }, 'Nothing reads it.')),
-    h('div', { class: 'row' },
-      h('span', { class: 'muted tiny', style: 'min-width:90px' }, 'bound as'),
-      bound.length
-        ? bound.map((b) => h('span', {
-            class: 'chip entity linkable', title: 'Open ' + readable(b.entity),
-            onclick: () => openEntity(b.entity),
-          }, h('i', { class: 'ic' }, entityIcon(model, b.entity)),
-            memberWords(readable(b.entity), b.property)))
-        : h('span', { class: 'chip unset' }, 'no entity calls it anything')));
+    ...projectionFields(model, draft, {
+      ...(owner ? { entityName: owner } : {}),
+      onChecks: () => { state.projTab = 'checks'; state.projectionScenarioDraft = null; render(); },
+    }));
 
   return h('div', {
     class: 'pdetail',
@@ -8574,7 +8597,7 @@ function scheduleProjectionAutosave() {
 function projectionDetailFoot(model, entry, { owner }) {
   const { projection, binding } = entry;
   return h('div', { class: 'pfoot' },
-    h('span', { class: 'muted tiny' }, 'Saves as you edit — undo takes it back.'),
+    h('span', { class: 'muted tiny' }, 'autosaved · ⌘Z undoes'),
     h('span', { class: 'grow' }),
     h('span', { class: 'tech' }, projection),
     h('button', {
@@ -9121,65 +9144,6 @@ function blankSlotValue(model, valueType) {
   return '';
 }
 
-// Where a projection starts.
-//
-// The first choice is whether there is a value at all, and it is a
-// choice rather than a blank field on purpose: `null` and `""` are
-// different answers, and a single text box cannot tell you which one
-// an empty box means. Naming `null` as its own option is the only way
-// the two stay distinguishable both on the page and in the model.
-//
-// For a list the same choice sits above the elements: `null`, or a
-// list — which may itself be empty, a third answer again.
-function initialValueEditor(model, draft) {
-  const isNull = draft.initialValue === null || draft.initialValue === undefined;
-  const choose = (toNull) => {
-    if (toNull) draft.initialValue = null;
-    else if (draft.isList) draft.initialValue = [];
-    else draft.initialValue = blankSlotValue(model, draft.valueType);
-    render();
-  };
-
-  const radio = (checked, label, title, onPick) => h('label', {
-    class: 'tiny muted', style: 'margin-right:10px', title,
-  }, h('input', {
-    type: 'radio', name: 'initial-' + (state.projDraft ? 'edit' : 'new'),
-    checked, onchange: () => onPick(),
-  }), ' ', label);
-
-  const rows = [h('div', { class: 'adder' },
-    radio(isNull, 'null', 'No value until an event sets one — not the empty string',
-      () => choose(true)),
-    radio(!isNull, draft.isList ? 'list' : 'value',
-      draft.isList ? 'Starts holding these, before anything has happened'
-        : 'Starts at this value', () => choose(false)),
-    !isNull && !draft.isList
-      ? initialValueSlot(model, draft.valueType, draft.initialValue,
-          (v) => { draft.initialValue = v; })
-      : null)];
-
-  if (!isNull && draft.isList) {
-    const elements = Array.isArray(draft.initialValue) ? draft.initialValue : [];
-    rows.push(h('div', { style: 'margin-left:18px' },
-      elements.length
-        ? elements.map((element, i) => h('div', { class: 'adder' },
-            initialValueSlot(model, draft.valueType, element, (v) => { elements[i] = v; }),
-            h('button', {
-              class: 'btn tiny danger', title: 'Drop this one',
-              onclick: () => { elements.splice(i, 1); render(); },
-            }, '×')))
-        : h('div', { class: 'muted tiny' }, '[]'),
-      h('div', { class: 'adder' }, h('button', {
-        class: 'btn ghost tiny',
-        onclick: () => {
-          draft.initialValue = [...elements, blankSlotValue(model, draft.valueType)];
-          render();
-        },
-      }, '+ one it starts with'))));
-  }
-
-  return rows;
-}
 
 // The types a read can be tagged by. Only a tag can narrow a query, so
 // nothing else appears — an entity's own derived identifier as much as
@@ -9449,9 +9413,13 @@ function derivedSideEditor(model, draft, side, { allowLiteral } = {}) {
   return nodes;
 }
 
-// The fields of a projection, wherever one is edited: this page, and
-// an entity's own page for the ones bound as its properties. `draft`
-// is mutated in place and only reaches the model on Save.
+// The editor of a projection, wherever one is edited: this page, an
+// entity's own page for the ones bound as its properties, and the
+// definition modals. Sections on the left — value, tags, handlers (or
+// the derived predicate), advanced — and what it works out to on the
+// right, which wraps under them where there is no room. `draft` is
+// mutated in place; an open row saves it as it changes, a new one on
+// Create.
 //
 // `entityName` says the draft is an entity property's, which the "read
 // by" line says: the entity reads it tagged by its identifier.
@@ -9459,8 +9427,10 @@ function derivedSideEditor(model, draft, side, { allowLiteral } = {}) {
 // kind of thing here to edit differently.
 //
 // `onNewType(choose)`, given in a definition modal, adds a row to the
-// type picker that creates a custom type and hands it to `choose`.
-function projectionFields(model, draft, { entityName, onNewType } = {}) {
+// type picker that creates a custom type and hands it to `choose`;
+// `onChecks`, given by an open row, makes the checks count its way to
+// the Checks tab.
+function projectionFields(model, draft, { entityName, onNewType, onChecks } = {}) {
   const eventNames = Object.keys(model['event-definitions']).sort();
   const enumType = isStringEnumType(model, draft.valueType) ? draft.valueType : null;
 
@@ -9472,42 +9442,76 @@ function projectionFields(model, draft, { entityName, onNewType } = {}) {
     for (const handler of draft.handlers || []) { handler.value = ''; handler.valueText = ''; }
     if (!draft.script) draft.initialValue = defaultInitialValue(model, draft);
   };
-  const heldRow = h('div', { class: 'row' },
-    h('span', { class: 'muted tiny', style: 'min-width:90px' }, 'it holds'),
-    pick([
-      ...projectionTypeOptions(model, { scripted: !!draft.script }),
-      ...(onNewType ? [[NEW_DEFINITION, NEW_TYPE_LABEL]] : []),
-    ], draft.valueType, (v) => {
-      if (v === NEW_DEFINITION) {
-        // Picked from under the new type's modal, against a fresh model.
-        return onNewType((typeName) => retype(typeName));
-      }
-      retype(v);
-      render();
-    }, '— which type? —'),
-    h('label', { class: 'tiny muted' }, h('input', {
-      type: 'checkbox', checked: !!draft.isList,
-      onchange: (e) => {
-        draft.isList = e.target.checked;
-        // A list and a single value do not start from the same shape,
-        // and the operations that advance them differ, so both are
-        // reset rather than left describing the arity it just left.
-        if (!draft.script) {
-          draft.initialValue = defaultInitialValue(model, draft);
-          const allowed = operationsFor(model, draft);
-          for (const handler of draft.handlers || []) {
-            if (!allowed.includes(handler.operation)) handler.operation = 'set';
-          }
+  const advanced = projectionAdvanced();
+  const savedName = state.projDraft && state.projDraft.body === draft ? state.projDraft.name : null;
+  const fieldLabel = (text, control) => h('label', { class: 'pfield' }, h('span', { class: 'pk' }, text), control);
+
+  // ---- value: type, cardinality, initial ----
+
+  const typePicker = pick([
+    ...projectionTypeOptions(model, { scripted: !!draft.script }),
+    ...(onNewType ? [[NEW_DEFINITION, NEW_TYPE_LABEL]] : []),
+  ], draft.valueType, (v) => {
+    if (v === NEW_DEFINITION) {
+      // Picked from under the new type's modal, against a fresh model.
+      return onNewType((typeName) => retype(typeName));
+    }
+    retype(v);
+    render();
+  }, '— type —');
+
+  const cardinalityPicker = pick([['single', 'single'], ['list', 'list']],
+    draft.isList ? 'list' : 'single', (v) => {
+      draft.isList = v === 'list';
+      // A list and a single value do not start from the same shape,
+      // and the operations that advance them differ, so both are
+      // reset rather than left describing the arity it just left.
+      if (!draft.script) {
+        draft.initialValue = defaultInitialValue(model, draft);
+        const allowed = operationsFor(model, draft);
+        for (const handler of draft.handlers || []) {
+          if (!allowed.includes(handler.operation)) handler.operation = 'set';
         }
-        render();
-      },
-    }), ' many'));
+      }
+      render();
+    });
 
-  const enumRow = enumType
-    ? h('div', { class: 'use' }, h('span', { class: 'muted' }, 'can be '), ...enumMemberChips(model, enumType))
-    : null;
+  // A scripted state is any JSON — nothing outside the code reads it
+  // whole, so it is not typed.
+  const scriptInitial = () => h('input', {
+    type: 'text', class: 'mono',
+    value: JSON.stringify(draft.script.initialState),
+    onblur: (e) => {
+      let parsed;
+      try { parsed = JSON.parse(e.target.value); }
+      catch { return toast('That initial state is not valid JSON.', true); }
+      draft.script.initialState = parsed;
+      render();
+    },
+    onkeydown: (e) => { if (e.key === 'Enter') e.target.blur(); },
+  });
 
-  // ---- what it is tagged by ----
+  const initial = draft.derived || draft.script ? null : initialValueControl(model, draft);
+  const valueSection = projectionSection('value', hint('proj-value', 'Value', [
+    'initial is the value before any handled event. For a numbering it is the first number '
+    + 'issued, and the only place a prefix is stated.',
+    'null is no value yet — not the empty string.',
+  ]), null,
+    draft.derived
+      ? h('div', { class: 'pfields' },
+          fieldLabel('type', h('span', { class: 'chip' }, 'boolean')),
+          fieldLabel('initial', h('span', { class: 'muted tiny' }, '— derived')))
+      : h('div', { class: 'pfields' },
+          fieldLabel('type', typePicker),
+          fieldLabel('cardinality', cardinalityPicker),
+          fieldLabel(draft.script ? 'initial state' : 'initial',
+            draft.script ? scriptInitial() : initial.control)),
+    initial ? initial.below : null,
+    enumType && !draft.derived
+      ? h('div', { class: 'use' }, h('span', { class: 'pk' }, 'members '), ...enumMemberChips(model, enumType))
+      : null);
+
+  // ---- tags ----
   //
   // The tags a read of it gives, each named and of a tag type (8.0) —
   // or none, an untagged projection folding the whole log. An entity's
@@ -9515,15 +9519,17 @@ function projectionFields(model, draft, { entityName, onNewType } = {}) {
   // which is what binding it means, so that one is shown, not offered.
   // A new projection has not decided yet (`tags: null`): both doors are
   // open, and it saves once one is taken.
-  const savedName = state.projDraft && state.projDraft.body === draft ? state.projDraft.name : null;
-  const partitionBlock = entityName
-    ? h('div', { class: 'row', style: 'margin-top:8px' },
-        h('span', { class: 'muted tiny', style: 'min-width:90px' }, 'tagged by'),
+  const tagsHint = hint('proj-tags', 'Tags', [
+    'What each value is kept per: a read gives a value for every tag.',
+    'Untagged: one value for the whole log — a numbering is one.',
+  ]);
+  const tagsSection = entityName
+    ? projectionSection('tags', tagsHint, null,
         h('span', { class: 'chip entity' },
           h('i', { class: 'ic' }, entityIcon(model, entityName)), 'each ' + readable(entityName)))
-    : projectionTagsEditor(model, draft, savedName);
+    : projectionTagsEditor(model, draft, savedName, tagsHint);
 
-  // ---- what moves it ----
+  // ---- handlers ----
 
   // One handler per event type is law, so an event another row already
   // claims is simply not offered — the row's own event stays, or the
@@ -9548,26 +9554,29 @@ function projectionFields(model, draft, { entityName, onNewType } = {}) {
       && !values.some(([v]) => v === handler.value)) {
       handler.value = values.length ? values[0][0] : (enumMembers ? '' : LITERAL);
     }
-    return h('div', { class: 'adder' },
+    return h('div', { class: 'phandler' },
+      h('span', { class: 'pk' }, 'on'),
       pick(eventChoicesFor(handler), handler.event,
         (v) => { handler.event = v; handler.value = ''; handler.valueText = ''; render(); },
-        '— which event? —'),
+        '— event —'),
+      h('span', { class: 'pk' }, '⇒'),
       operationControl(operations, handler),
       ...(event
         ? operandPicker(values, handler, 'value', { allowLiteral: !enumMembers })
-        : [pick([], '', () => {}, '— pick an event first —')]),
+        : [pick([], '', () => {}, '— event first —')]),
       h('button', {
-        class: 'btn tiny danger',
+        class: 'btn tiny danger', title: 'Remove this handler',
         onclick: () => { draft.handlers.splice(i, 1); render(); },
       }, '×'));
   });
 
   const scriptedHandlerRows = !draft.script ? [] : (draft.handlers || []).map((handler, i) => h('div', { class: 'script-handler' },
-    h('div', { class: 'tiny' },
+    h('div', { class: 'phandler' },
+      h('span', { class: 'pk' }, 'on'),
       pick(eventChoicesFor(handler), handler.event,
-        (v) => { handler.event = v; render(); }, '— which event? —'),
+        (v) => { handler.event = v; render(); }, '— event —'),
       h('button', {
-        class: 'btn tiny danger', title: 'Stop handling this event',
+        class: 'btn tiny danger', title: 'Remove this handler',
         onclick: () => { draft.handlers.splice(i, 1); render(); },
       }, '×')),
     scriptCodeEditor(scriptEditorKey(draft, i), {
@@ -9576,13 +9585,14 @@ function projectionFields(model, draft, { entityName, onNewType } = {}) {
       onCode: (code) => { handler.code = code; },
     })));
 
-  const movedBlock = h('div', { style: 'margin-top:8px' },
-    h('div', { class: 'muted tiny', style: 'margin-bottom:4px' },
-      'and it moves when one of these is recorded:'),
-    (draft.handlers || []).length
-      ? (draft.script ? scriptedHandlerRows : declaredHandlerRows)
-      : h('div', { class: 'empty' }, 'Nothing moves it — it reads its first value forever.'),
-    h('div', { class: 'adder' }, h('button', {
+  const handlersSection = draft.derived ? null : projectionSection('handlers',
+    hint('proj-handlers', 'Handlers', [
+      'Events that move the value — one handler per event type.',
+      'Without any, it keeps its initial value forever.',
+      ...(draft.script ? ['Scripted: each handler is a body over state, event, args and tags '
+        + '(the values it is read by, by name), returning the next state. Nothing here runs or checks it.'] : []),
+    ]),
+    h('button', {
       class: 'btn ghost tiny',
       onclick: () => {
         (draft.handlers = draft.handlers || []).push(draft.script
@@ -9590,69 +9600,18 @@ function projectionFields(model, draft, { entityName, onNewType } = {}) {
           : { event: '', operation: 'set', value: '' });
         render();
       },
-    }, '+ event that moves it')));
-
-  // ---- where it starts ----
-
-  const startsBlock = draft.script
-    ? h('div', { class: 'row' },
-        h('span', { class: 'muted tiny', style: 'min-width:90px' }, 'starting at'),
-        h('input', {
-          type: 'text', class: 'mono', style: 'width:200px',
-          value: JSON.stringify(draft.script.initialState),
-          title: 'Any JSON — a scripted state is not typed, because nothing outside the code reads it whole',
-          onblur: (e) => {
-            let parsed;
-            try { parsed = JSON.parse(e.target.value); }
-            catch { return toast('That starting state is not valid JSON.', true); }
-            draft.script.initialState = parsed;
-            render();
-          },
-          onkeydown: (e) => { if (e.key === 'Enter') e.target.blur(); },
-        }),
-        h('span', { class: 'muted tiny' }, 'any JSON — the code is what reads it'))
-    : h('div', {},
-        h('div', { class: 'row' },
-          h('span', { class: 'muted tiny', style: 'min-width:90px' }, 'starting at'),
-          h('span', { class: 'muted tiny' },
-            'before anything has happened. For a numbering this is the first value issued, and '
-            + 'the only place a prefix is stated.')),
-        h('div', { style: 'margin-left:90px' }, ...initialValueEditor(model, draft)));
-
-  // ---- the escape hatch ----
-
-  const scriptBlock = draft.script ? h('div', { style: 'margin-top:8px' },
-    h('div', { class: 'tiny muted' },
-      'Scripted. Each handler is a body of code over ',
-      h('code', {}, 'state'), ', ', h('code', {}, 'event'), ', ', h('code', {}, 'args'), ' and ',
-      h('code', {}, 'tags'), ' (the values it is read by, by name), returning the next state. Nothing here runs or checks it.'),
-    h('div', { class: 'row' },
-      h('span', { class: 'muted tiny', style: 'min-width:90px' }, 'reads as'),
-      h('input', {
-        type: 'text', style: 'width:150px', value: draft.script.exposes || '',
-        placeholder: 'the state itself',
-        title: 'Which field of the state a condition reads, when the state is a record',
-        onblur: (e) => {
-          const text = toCamel(e.target.value);
-          if (text) draft.script.exposes = text; else delete draft.script.exposes;
-          render();
-        },
-      }),
-      h('span', { class: 'muted tiny' }, 'one field of the state, when the state is a record')),
-    ...scriptArgumentRows(model, draft)) : null;
+    }, '+ handler'),
+    (draft.handlers || []).length
+      ? (draft.script ? scriptedHandlerRows : declaredHandlerRows)
+      : h('div', { class: 'empty' }, '—'));
 
   // ---- derived: one predicate over other projections ----
 
-  const derivedHeldRow = h('div', { class: 'row' },
-    h('span', { class: 'muted tiny', style: 'min-width:90px' }, 'it holds'),
-    h('span', { class: 'chip' }, 'yes / no'),
-    h('span', { class: 'muted tiny' },
-      'its predicate\'s outcome — a derived projection holds nothing else, and nothing moves it'));
-
-  const derivedBlock = !draft.derived ? null : h('div', { style: 'margin-top:8px' },
-    h('div', { class: 'muted tiny', style: 'margin-bottom:4px' },
-      'worked out from other projections, read by the same tags as it is — their queries are its '
-      + 'query, so reading it guards the append exactly as reading them would:'),
+  const derivedSection = !draft.derived ? null : projectionSection('derived',
+    hint('proj-derived', 'Derived', [
+      'One predicate over other projections, read by the same tags as this one.',
+      'Their queries are its query, so reading it guards the append exactly as reading them would.',
+    ]), null,
     h('div', { class: 'adder' }, ...derivedSideEditor(model, draft, 'leftHandSide', {})),
     h('div', { class: 'adder' },
       h('label', { class: 'tiny muted' }, h('input', {
@@ -9662,121 +9621,176 @@ function projectionFields(model, draft, { entityName, onNewType } = {}) {
           else delete draft.derived.negate;
         },
       }), ' not'),
-      pick(DERIVED_PREDICATES.map((p) => [p, readable(p).toLowerCase()]),
+      pick(DERIVED_PREDICATES.map((p) => [p, p]),
         draft.derived.predicate,
         (v) => { draft.derived.predicate = v; render(); })),
     h('div', { class: 'adder' }, ...derivedSideEditor(model, draft, 'rightHandSide', { allowLiteral: true })));
 
-  const derivedToggle = experimental() ? h('div', { class: 'adder', style: 'margin-top:8px' },
-    h('label', { class: 'tiny muted' }, h('input', {
-      type: 'checkbox', checked: !!draft.derived,
-      title: 'Replace the handlers with one predicate over other projections — logic stated once, as data',
-      onchange: (e) => {
-        if (e.target.checked) {
-          delete draft.script;
-          delete draft.initialValue;
-          draft.handlers = [];
-          draft.valueType = 'boolean';
-          draft.isList = false;
-          draft.derived = {
-            leftHandSide: { projection: '' },
-            predicate: 'equals',
-            rightHandSide: { projection: '' },
-          };
-          toast('Now derived — one yes/no worked out from other projections. The handlers are gone.');
-        } else {
-          delete draft.derived;
-          draft.initialValue = defaultInitialValue(model, draft);
-          draft.handlers = [];
-          toast('Declared again — pick what moves it.');
-        }
-        render();
-      },
-    }), ' derived from other projections')) : null;
+  // ---- advanced ----
+  //
+  // What most projections never need sits behind the switch. A
+  // projection that already uses it shows it anyway: the switch hides
+  // offers, never what is stored.
 
-  const scriptToggle = h('div', { class: 'adder', style: 'margin-top:8px' },
-    h('label', { class: 'tiny muted' }, h('input', {
-      type: 'checkbox', checked: !!draft.script,
-      title: 'Replace the declared handlers with code, for state no operation here can express',
-      onchange: (e) => {
-        if (e.target.checked) {
-          delete draft.derived;
-          const initialState = draft.initialValue === undefined ? null : draft.initialValue;
-          draft.script = { initialState, arguments: [] };
-          delete draft.initialValue;
-          draft.handlers = (draft.handlers || []).map((handler) => ({
-            event: handler.event, code: 'state',
-          }));
-          toast('Now scripted — the declared operations are gone, the events they named are kept.');
-        } else {
-          // A record is a value only code can advance — going declared
-          // with one held would store a projection the advisories flag
-          // on arrival, so the gesture asks for the re-typing first.
-          const cls = classifyType(model, draft.valueType);
-          if (cls.kind === 'value' && cls.composite) {
-            e.target.checked = true;
-            return toast(`It holds ${readable(draft.valueType)}, a record — only code can advance one. Pick a single-value type first.`, true);
-          }
-          draft.initialValue = defaultInitialValue(model, draft);
-          delete draft.script;
-          draft.handlers = (draft.handlers || []).map((handler) => ({
-            event: handler.event, operation: 'set', value: '',
-          }));
-          toast('Declared again — the code is gone, the events it handled are kept.');
-        }
-        render();
-      },
-    }), ' worked out by code'));
+  const derivedToggle = experimental() ? h('label', { class: 'tiny' }, h('input', {
+    type: 'checkbox', checked: !!draft.derived,
+    onchange: (e) => {
+      if (e.target.checked) {
+        delete draft.script;
+        delete draft.initialValue;
+        draft.handlers = [];
+        draft.valueType = 'boolean';
+        draft.isList = false;
+        draft.derived = {
+          leftHandSide: { projection: '' },
+          predicate: 'equals',
+          rightHandSide: { projection: '' },
+        };
+        toast('Now derived — one boolean worked out from other projections. The handlers are gone.');
+      } else {
+        delete draft.derived;
+        draft.initialValue = defaultInitialValue(model, draft);
+        draft.handlers = [];
+        toast('Declared again — add its handlers.');
+      }
+      render();
+    },
+  }), ' derived projection') : null;
 
-  return [
-    draft.derived ? derivedHeldRow : heldRow,
-    draft.derived ? null : enumRow,
-    draft.derived ? null : startsBlock,
-    partitionBlock,
-    draft.derived ? derivedBlock : movedBlock,
-    scriptBlock,
-    derivedToggle,
-    scriptToggle,
-    projectionDcbPreview(model, draft, entityName),
-  ];
+  const scriptToggle = h('label', { class: 'tiny' }, h('input', {
+    type: 'checkbox', checked: !!draft.script,
+    onchange: (e) => {
+      if (e.target.checked) {
+        delete draft.derived;
+        const initialState = draft.initialValue === undefined ? null : draft.initialValue;
+        draft.script = { initialState, arguments: [] };
+        delete draft.initialValue;
+        draft.handlers = (draft.handlers || []).map((handler) => ({
+          event: handler.event, code: 'state',
+        }));
+        toast('Now scripted — the declared operations are gone, the events they named are kept.');
+      } else {
+        // A record is a value only code can advance — going declared
+        // with one held would store a projection the advisories flag
+        // on arrival, so the gesture asks for the re-typing first.
+        const cls = classifyType(model, draft.valueType);
+        if (cls.kind === 'value' && cls.composite) {
+          e.target.checked = true;
+          return toast(`It holds ${readable(draft.valueType)}, a record — only code can advance one. Pick a single-value type first.`, true);
+        }
+        draft.initialValue = defaultInitialValue(model, draft);
+        delete draft.script;
+        draft.handlers = (draft.handlers || []).map((handler) => ({
+          event: handler.event, operation: 'set', value: '',
+        }));
+        toast('Declared again — the code is gone, the events it handled are kept.');
+      }
+      render();
+    },
+  }), ' scripted projection');
+
+  const scriptFields = draft.script ? [
+    h('div', { class: 'pfields' },
+      fieldLabel('exposes', h('input', {
+        type: 'text', class: 'mono', value: draft.script.exposes || '',
+        placeholder: 'the state itself',
+        title: 'Which field of the state a rule reads, when the state is a record',
+        onblur: (e) => {
+          const text = toCamel(e.target.value);
+          if (text) draft.script.exposes = text; else delete draft.script.exposes;
+          render();
+        },
+      }))),
+    ...scriptArgumentRows(model, draft),
+  ] : [];
+
+  const advancedSection = advanced || draft.script || draft.derived
+    ? projectionSection('advanced', null, null,
+        h('div', { class: 'adder' }, scriptToggle, derivedToggle),
+        ...scriptFields)
+    : null;
+
+  const editor = h('div', { class: 'pmain' },
+    h('div', { class: 'pbar' },
+      h('span', { class: 'grow' }),
+      h('button', {
+        type: 'button', class: 'pswitch' + (advanced ? ' on' : ''),
+        'aria-pressed': advanced ? 'true' : 'false',
+        title: 'Show scripted and derived projections, and where it is used',
+        onclick: () => setProjectionAdvanced(!advanced),
+      }, h('span', { class: 'track' }, h('span', { class: 'knob' })), 'Advanced')),
+    valueSection,
+    tagsSection,
+    draft.derived ? derivedSection : handlersSection,
+    advancedSection);
+
+  return [h('div', { class: 'peditor' },
+    editor,
+    projectionUsage(model, draft, savedName, { entityName, advanced, onChecks }))];
 }
 
-// A scripted projection's arguments: values its reader supplies, which
-// reach the code rather than the query. The one typed with the owning
-// entity's identifier is what a property binding fills in, so it is
-// shown as fixed rather than offered for removal.
-function scriptArgumentRows(model, draft) {
-  const args = draft.script.arguments || [];
-  const rows = args.map((argument, i) => h('div', { class: 'adder' },
-    h('input', {
-      type: 'text', value: argument.name || '', placeholder: 'argument name',
-      oninput: (e) => { argument.name = e.target.value; },
-    }),
-    h('span', { class: 'muted tiny' }, 'a'),
-    pick(typeOptions(model), argument.propertyType,
-      (v) => { argument.propertyType = v; render(); }),
-    h('button', {
-      class: 'btn tiny danger',
-      onclick: () => { draft.script.arguments.splice(i, 1); render(); },
-    }, '×')));
-  return [h('div', { style: 'margin-top:6px' },
-    h('div', { class: 'muted tiny', style: 'margin-bottom:4px' },
-      'besides its tags, it asks whoever reads it for:'),
-    rows.length ? rows : h('div', { class: 'muted tiny' }, 'nothing'),
-    h('div', { class: 'adder' }, h('button', {
-      class: 'btn ghost tiny',
-      onclick: () => {
-        (draft.script.arguments = args).push({ name: '', propertyType: 'string' });
-        render();
-      },
-    }, '+ ask for a value')))];
+// The switch behind the rarely used parts of the projection editor,
+// remembered in this browser like the other view choices.
+const PROJECTION_ADVANCED_KEY = 'dcb-playground:projection-advanced';
+function projectionAdvanced() {
+  try { return localStorage.getItem(PROJECTION_ADVANCED_KEY) === 'on'; } catch { return false; }
+}
+function setProjectionAdvanced(on) {
+  try { localStorage.setItem(PROJECTION_ADVANCED_KEY, on ? 'on' : 'off'); } catch { /* per-viewer only */ }
+  render();
+}
+
+// One section of the projection editor: a monospace heading with its
+// ⓘ, an action at the right of the heading, and the body.
+function projectionSection(title, info, action, ...body) {
+  return h('section', { class: 'psection' },
+    h('div', { class: 'phead' },
+      h('span', { class: 'pk' }, title), info, h('span', { class: 'grow' }), action),
+    ...body);
+}
+
+// What the definition works out to and where it is used, beside the
+// editor: the query always, the checks once it is saved, who reads it
+// and what binds it behind the Advanced switch.
+function projectionUsage(model, draft, savedName, { entityName, advanced, onChecks }) {
+  const block = (title, ...body) => h('div', { class: 'pusage-block' }, h('div', { class: 'pk' }, title), ...body);
+  const checks = savedName ? projectionScenariosFor(model, savedName) : [];
+  const trouble = checks.filter((e) => {
+    const status = runProjectionScenario(model, e.body).status;
+    return status === 'drifted' || status === 'broken';
+  }).length;
+  const readers = savedName ? projectionReaders(model, savedName) : [];
+  const bound = savedName ? boundAs(model, savedName) : [];
+  const checksWords = checks.length
+    ? (trouble ? `${trouble} of ${checks.length} failing` : `${checks.length} passing`)
+    : 'none';
+  return h('aside', { class: 'pusage' },
+    block('query', projectionQueryWords(model, draft)),
+    savedName ? block('checks', onChecks
+      ? h('button', { type: 'button', class: 'linkish', onclick: onChecks },
+          checks.length ? h('span', { class: 'badge' + (trouble ? '' : ' clear') }, trouble || checks.length) : null,
+          ' ', checksWords)
+      : h('span', { class: 'tiny' }, checksWords)) : null,
+    advanced && savedName ? block('read by', readers.length
+      ? readers.map((command) => h('span', {
+          class: 'chip command linkable', title: 'Open ' + readable(command),
+          onclick: () => { closeForms(); state.slice = command; state.view = 'slice'; render(); },
+        }, readable(command)))
+      : h('span', { class: 'empty' }, '—')) : null,
+    advanced && savedName && !entityName ? block('bound as', bound.length
+      ? bound.map((b) => h('span', {
+          class: 'chip entity linkable', title: 'Open ' + readable(b.entity),
+          onclick: () => openEntity(b.entity),
+        }, h('i', { class: 'ic' }, entityIcon(model, b.entity)),
+          memberWords(readable(b.entity), b.property)))
+      : h('span', { class: 'empty' }, '—')) : null);
 }
 
 // The DCB this projection derives, as the query it really runs: the
 // tags it declares, each with a placeholder for the value a read gives
 // it, and the events it handles. A derived draft's query is its
 // operands', recursively, as the fold reads.
-function projectionDcbPreview(model, draft, entityName) {
+function projectionQueryWords(model, draft) {
   const derivedReads = draft.derived
     ? derivedOperands(draft.derived)
       .filter((o) => operandSource(o) === 'projection-read' && o.projection)
@@ -9787,17 +9801,108 @@ function projectionDcbPreview(model, draft, entityName) {
   const handledTypes = draft.derived
     ? uniq(derivedReads.flatMap((o) => projectionHandledTypes(model, o.projection)))
     : (draft.handlers || []).map((handler) => handler.event).filter(Boolean);
-  return h('div', { class: 'row dcb', style: 'margin-top:8px' },
-    h('span', { class: 'k' }, 'query'),
-    queryPopover('projdraft',
-      'what this projection queries',
-      h('div', {}, h('span', { class: 'k' }, 'query  '),
-        h('span', { class: 't' }, tags.join(' and ')),
-        tags.length ? h('span', { class: 'k' }, ' and ') : null,
-        h('span', { class: 'y' }, handledTypes.join(', ') || '(nothing)')),
-      h('div', {}, h('span', { class: 'k' }, 'guard  '),
-        h('span', { class: 'k' }, 'readers by the same tags are serialised against each other'))));
+  return h('div', { class: 'dcb pquery' },
+    tags.length ? h('div', {}, h('span', { class: 'k' }, 'tag '),
+      ...tags.flatMap((tag, i) => [i ? h('span', { class: 'k' }, ' and ') : null, h('span', { class: 't' }, tag)])) : null,
+    h('div', {}, tags.length ? h('span', { class: 'k' }, 'and ') : null,
+      h('span', { class: 'y' }, handledTypes.join(', ') || '(nothing)')));
 }
+
+// Where a declared projection starts, as one picker: the values of its
+// type, and `null` — no value yet, a different answer from `""` or
+// `[]`, which is why it is named rather than left to an empty box. A
+// type with no closed set of values picks "value…" and types it; a
+// list picks "list…" and names its elements below.
+const INITIAL_NULL = ' null';
+const INITIAL_TYPED = ' typed';
+function initialValueControl(model, draft) {
+  const isNull = draft.initialValue === null || draft.initialValue === undefined;
+  const members = enumMembersFor(model, draft.valueType);
+  const kind = literalKindOf(model, draft.valueType);
+  const nullRow = [INITIAL_NULL, 'null'];
+
+  if (draft.isList) {
+    const control = pick([[INITIAL_TYPED, 'list…'], nullRow], isNull ? INITIAL_NULL : INITIAL_TYPED, (v) => {
+      draft.initialValue = v === INITIAL_NULL ? null : [];
+      render();
+    });
+    if (isNull) return { control, below: null };
+    const elements = Array.isArray(draft.initialValue) ? draft.initialValue : [];
+    const below = h('div', { class: 'pinitial-list' },
+      elements.length
+        ? elements.map((element, i) => h('div', { class: 'adder' },
+            initialValueSlot(model, draft.valueType, element, (v) => { elements[i] = v; }),
+            h('button', {
+              class: 'btn tiny danger', title: 'Remove this element',
+              onclick: () => { elements.splice(i, 1); render(); },
+            }, '×')))
+        : h('div', { class: 'muted tiny mono' }, '[]'),
+      h('div', { class: 'adder' }, h('button', {
+        class: 'btn ghost tiny',
+        onclick: () => {
+          draft.initialValue = [...elements, blankSlotValue(model, draft.valueType)];
+          render();
+        },
+      }, '+ element')));
+    return { control, below };
+  }
+
+  if (members) {
+    return {
+      control: pick([...members.map((m) => [m, readable(m)]), nullRow],
+        isNull ? INITIAL_NULL : (operandSource(draft.initialValue) === 'enum-member' ? draft.initialValue.enumMember : ''),
+        (v) => { draft.initialValue = v === INITIAL_NULL ? null : { enumMember: v }; render(); }),
+      below: null,
+    };
+  }
+  if (kind === 'boolean') {
+    return {
+      control: pick([['false', 'false'], ['true', 'true'], nullRow],
+        isNull ? INITIAL_NULL : String(draft.initialValue === true),
+        (v) => { draft.initialValue = v === INITIAL_NULL ? null : v === 'true'; render(); }),
+      below: null,
+    };
+  }
+  const control = h('span', { class: 'pinitial' },
+    pick([[INITIAL_TYPED, 'value…'], nullRow], isNull ? INITIAL_NULL : INITIAL_TYPED, (v) => {
+      draft.initialValue = v === INITIAL_NULL ? null : blankSlotValue(model, draft.valueType);
+      render();
+    }),
+    isNull ? null : initialValueSlot(model, draft.valueType, draft.initialValue,
+      (v) => { draft.initialValue = v; }));
+  return { control, below: null };
+}
+
+// A scripted projection's arguments: values its reader supplies, which
+// reach the code rather than the query. The one typed with the owning
+// entity's identifier is what a property binding fills in, so it is
+// shown as fixed rather than offered for removal.
+function scriptArgumentRows(model, draft) {
+  const args = draft.script.arguments || [];
+  const rows = args.map((argument, i) => h('div', { class: 'adder' },
+    h('input', {
+      type: 'text', class: 'mono', value: argument.name || '', placeholder: 'argument name',
+      oninput: (e) => { argument.name = e.target.value; },
+    }),
+    h('span', { class: 'pk' }, ':'),
+    pick(typeOptions(model), argument.propertyType,
+      (v) => { argument.propertyType = v; render(); }),
+    h('button', {
+      class: 'btn tiny danger',
+      onclick: () => { draft.script.arguments.splice(i, 1); render(); },
+    }, '×')));
+  return [h('div', { style: 'margin-top:6px' },
+    h('div', { class: 'pk', style: 'margin-bottom:4px', title: 'Values a read gives besides its tags' }, 'arguments'),
+    rows.length ? rows : h('div', { class: 'empty' }, '—'),
+    h('div', { class: 'adder' }, h('button', {
+      class: 'btn ghost tiny',
+      onclick: () => {
+        (draft.script.arguments = args).push({ name: '', propertyType: 'string' });
+        render();
+      },
+    }, '+ argument')))];
+}
+
 
 function renderProjections(model, main) {
   main.appendChild(h('header', {},
@@ -9841,7 +9946,7 @@ function renderProjections(model, main) {
         type: 'text', value: draft.name, placeholder: 'projection name',
         oninput: (e) => { draft.name = e.target.value; },
       })));
-    card.appendChild(h('div', { class: 'card projection' }, ...projectionFields(model, draft.body)));
+    card.appendChild(h('div', { style: 'margin-top:10px' }, ...projectionFields(model, draft.body)));
     card.appendChild(h('div', { class: 'adder', style: 'margin-top:10px' },
       h('button', {
         class: 'btn primary',

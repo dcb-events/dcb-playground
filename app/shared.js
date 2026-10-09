@@ -1865,11 +1865,6 @@ function ruleSentence(model, body, condition) {
   return (quantifier ? quantifier + ', ' : '') + p.left + ' ' + p.verb + (p.right ? ' ' + p.right : '');
 }
 
-const OPERATION_WORDS = {
-  set: 'becomes', increment: 'goes up by', decrement: 'goes down by',
-  append: 'gains', remove: 'loses',
-};
-
 function effectParts(effect) {
   // A standalone projection (`projectionsHandling`) is its own subject;
   // an entity property is named through its entity.
@@ -1879,11 +1874,13 @@ function effectParts(effect) {
   // A scripted handler has no operation and no operand to name — the
   // code is both, and nothing here reads it.
   if (effect.handler.code !== undefined) {
-    return { subject, verb: 'is worked out by', object: 'a script' };
+    return { subject, verb: 'scripted', object: null };
   }
   return {
     subject,
-    verb: OPERATION_WORDS[effect.handler.operation] || effect.handler.operation,
+    // The operation's own token, as the Code view spells it — see
+    // _The interface register_ in docs/design-notes.md.
+    verb: effect.handler.operation,
     object: operandWords(effect.handler.value),
   };
 }

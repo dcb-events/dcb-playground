@@ -843,9 +843,9 @@ function build(index) {
       }],
     });
     const property = model()['entity-definitions'].Course.properties[1];
-    eq(painted('entity', property.projection).includes('it holds'), true,
+    eq(painted('entity', property.projection).includes('cardinality'), true,
       'the editor, on the entity that binds it');
-    eq(painted('projections', 'CourseNumbering').includes('it holds'), true,
+    eq(painted('projections', 'CourseNumbering').includes('cardinality'), true,
       'and the same editor, on the page for the ones nothing binds');
     // And a brand-new one, which is the form with no stored definition
     // behind it.
@@ -1215,7 +1215,7 @@ function build(index) {
       const text = textOf(main);
       eq(text.includes('Definition') && text.includes('Checks'), true,
         `the ${tab} tab still offers the other`);
-      eq(text.includes('it holds'), tab === 'definition',
+      eq(text.includes('cardinality'), tab === 'definition',
         'and only one of them is showing at a time');
     }
     // The same row, on the page for the ones nothing binds.
@@ -1823,7 +1823,7 @@ function build(index) {
     eq(findAll(main, (n) => n.tag === 'button' && textOf(n) === 'Save').length, 0, 'no Save');
     eq(findAll(main, (n) => n.tag === 'button' && textOf(n) === 'Discard changes').length, 0,
       'no Discard');
-    eq(textOf(main).includes('Saves as you edit'), true, 'the foot says how it works instead');
+    eq(textOf(main).includes('autosaved'), true, 'the foot says how it works instead');
     sandbox.state.projDraft = null;
     sandbox.state.view = 'slice';
   });
@@ -2802,14 +2802,14 @@ function build(index) {
     };
     // The reported bug: a boolean was offered every operation there is.
     const bool = textOf(painted('Student', 'exists'));
-    eq(/goes up by|goes down by|gains|loses/.test(bool), false,
+    eq(/increment|decrement|append|remove/.test(bool), false,
       'nothing an existence flag cannot do is on screen');
-    eq(bool.includes('becomes'), true, 'only "becomes", and it is said rather than picked');
+    eq(bool.includes('set'), true, 'only "set", and it is said rather than picked');
 
     const counted = painted('Student', 'subscriptionCount');
     const ops = findAll(counted, (n) => n.tag === 'select')
       .map((sel) => (sel.children || []).map(textOf).join('|'))
-      .find((text) => text.includes('goes up by'));
+      .find((text) => text.includes('increment'));
     eq(!!ops, true, 'an integer still gets the picker, because it has a choice');
     sandbox.closeForms();
   });
@@ -3449,7 +3449,7 @@ function build(index) {
     findAll(changes(), (n) => n.tag === 'button' && textOf(n) === '+ Record a change')[0].onclick();
     eq(model()['projection-definitions'].Label.handlers.find((x) => x.event === 'Done'),
       { event: 'Done', operation: 'set', value: 'done' }, 'the handler it wrote');
-    eq(/Label tagged document id becomes "done"/.test(textOf(changes())), true,
+    eq(/Label tagged document id set "done"/.test(textOf(changes())), true,
       'said with the read it moves — the document id this command was given');
 
     const editOf = (row) => findAll(row, (n) => n.tag === 'button' && textOf(n) === 'Edit');
@@ -3509,7 +3509,7 @@ function build(index) {
     eq(found.length, 1, 'reported once, on the projection');
     eq(/is tagged by FolderId, but "Done", which it handles, is tagged by no FolderId/.test(found[0].message),
       true, found[0].message);
-    eq(/Folder size goes up by 1 — not for reads tagged Folder id: Done is tagged by none/.test(textOf(changes())), true,
+    eq(/Folder size increment 1 — not for reads tagged Folder id: Done is tagged by none/.test(textOf(changes())), true,
       'and the change row says so where it sits');
     sandbox.updateDefinition('projection-definition', id, 'FolderSize', before);
   });
@@ -4482,7 +4482,7 @@ check('the reference links only anchors the website defines', () => {
     press(modal(), 'Create');
     eq(!!model()['projection-definitions'].CourseSeats, true, 'it is created');
     eq(sandbox.state.defFrames.length, 1, 'and the modal stays, on the projection it made');
-    eq(/Saves as you edit/.test(textOf(modal())), true, 'now its editor');
+    eq(/autosaved/.test(textOf(modal())), true, 'now its editor');
     eq(sandbox.state.projDraft && sandbox.state.projDraft.name, 'CourseSeats', 'editing through its draft');
 
     press(modal(), 'Done');
@@ -4592,6 +4592,81 @@ check('the reference links only anchors the website defines', () => {
   });
 
   sandbox.document.getElementById = realGetElementById;
+}
+
+// ---------------------------------------------------------------
+// The projection editor: sections, the usage beside them, and the
+// Advanced switch over what most projections never need.
+// ---------------------------------------------------------------
+{
+  const { id, model } = build(0);
+  store.set('dcb-playground:model', id);
+  store.set('dcb-playground:experimental', 'off');
+  const ADVANCED = 'dcb-playground:projection-advanced';
+  const editorOf = (name) => {
+    sandbox.closeForms();
+    const body = model()['projection-definitions'][name];
+    sandbox.state.projDraft = { name, body: projectionDraftFrom(body) };
+    const root = sandbox.document.createElement('div');
+    for (const node of sandbox.projectionFields(model(), sandbox.state.projDraft.body)) root.appendChild(node);
+    return root;
+  };
+  const optionsOf = (root, label) => {
+    const field = findAll(root, (n) => n.tag === 'label' && n.className === 'pfield'
+      && textOf(n).startsWith(label))[0];
+    const select = field && findAll(field, (n) => n.tag === 'select')[0];
+    return select ? findAll(select, (n) => n.tag === 'option').map(textOf) : [];
+  };
+
+  check('the initial value is one picker, and null is one of its options', () => {
+    store.set(ADVANCED, 'off');
+    eq(optionsOf(editorOf('StudentExists'), 'initial'), ['false', 'true', 'null'], 'a boolean');
+    eq(optionsOf(editorOf('CourseStatus'), 'initial').includes('null'), true, 'an enum');
+    eq(optionsOf(editorOf('CourseCapacity'), 'initial'), ['value…', 'null'], 'a number is typed');
+    eq(optionsOf(editorOf('CourseSubscribedStudentIds'), 'initial'), ['list…', 'null'], 'a list');
+    sandbox.closeForms();
+  });
+
+  check('picking null stores null, not an empty value', () => {
+    const root = editorOf('StudentExists');
+    const field = findAll(root, (n) => n.className === 'pfield' && textOf(n).startsWith('initial'))[0];
+    findAll(field, (n) => n.tag === 'select')[0].onchange({ target: { value: ' null' } });
+    eq(sandbox.state.projDraft.body.initialValue, null, 'null');
+    eq(cleanProjectionBody(sandbox.state.projDraft.body).initialValue, null, 'and saved as null');
+    sandbox.closeForms();
+  });
+
+  check('the Advanced switch keeps scripting and who reads it out of the way until asked', () => {
+    store.set(ADVANCED, 'off');
+    const off = textOf(editorOf('CourseCapacity'));
+    eq(off.includes('scripted projection'), false, 'no scripting offered');
+    eq(/read by/i.test(off), false, 'no readers');
+    eq(/query/i.test(off), true, 'the query is always there');
+    eq(off.includes('Course defined'), true, 'with the events it handles');
+    store.set(ADVANCED, 'on');
+    const on = textOf(editorOf('CourseCapacity'));
+    eq(on.includes('scripted projection'), true, 'scripting is offered');
+    eq(/read by/i.test(on), true, 'and who reads it is said');
+    store.set(ADVANCED, 'off');
+    sandbox.closeForms();
+  });
+
+  check('a scripted projection shows its scripting with the switch off', () => {
+    store.set(ADVANCED, 'off');
+    const { id: scriptedId, model: scripted } = build(
+      sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'content-decisions-scripted'));
+    store.set('dcb-playground:model', scriptedId);
+    store.set(ADVANCED, 'off');
+    const name = Object.keys(scripted()['projection-definitions'])
+      .find((n) => scripted()['projection-definitions'][n].script);
+    sandbox.state.projDraft = { name, body: projectionDraftFrom(scripted()['projection-definitions'][name]) };
+    const root = sandbox.document.createElement('div');
+    for (const node of sandbox.projectionFields(scripted(), sandbox.state.projDraft.body)) root.appendChild(node);
+    eq(textOf(root).includes('scripted projection'), true, 'the switch hides offers, not what is stored');
+    eq(textOf(root).includes('initial state'), true, 'its state is any JSON');
+    store.set('dcb-playground:model', id);
+    sandbox.closeForms();
+  });
 }
 
 finish();
