@@ -576,9 +576,10 @@ custom type an input needs and the projection a rule or a change reads
 are created, and corrected, from the picker that noticed they were
 missing: "+ New custom type…" in the payload's type pickers, "+ New
 projection…" in a rule's (or guard's) first question and in the change
-adder, and a pencil beside every referenced type or projection a
-command page shows (`openDefinitionModal`, index.html). Events and
-entities keep the inline forms they already had.
+adder, a pencil beside every referenced projection a command page
+shows, and "Edit the type …" in an input's (or an event field's) edit
+mode (`openDefinitionModal`, index.html). Events and entities keep the
+inline forms they already had.
 
 - **A modal, not a page or an inline form.** Naming a new command is a
   page because nothing is half-built yet; here something is — the rule
@@ -616,6 +617,30 @@ entities keep the inline forms they already had.
   flag. "Open its page" is the one way out to the definition's page,
   and it goes through ordinary navigation, which commits or drops the
   command's pending forms as any other move does.
+- **A member's type is edited from the member's edit mode, not its
+  row.** A pencil beside an input's type chip opened the custom type,
+  and read as "edit this input" — which was the click people wanted
+  and was a different one (the type chip, or now `Edit` in the row's
+  reveal). The way to the type now sits inside `memberEditor`, on its
+  own line, worded as the type's ("its type, Course id, is a custom
+  type — Edit the type Course id…"), since a change there reaches
+  every use of it.
+- **New types start in the form they are for.** The forms offered are
+  tag type, record, enum and single value (`newCustomTypeButtons`); a
+  tag type is a single value with `isTag` already set — what a model
+  built from scratch needs first, and a checkbox nothing pointed at
+  before — so it is first and the primary button. A single value's card (`singleValueEditor`) shows
+  its base type, picked (string, integer, number, boolean) — or an
+  enum's members — and, for a tag type, the tag it writes. The JSON
+  Schema, the tag schema and the form (single value | tag type, pinned
+  for an entity's identifier) sit behind an Advanced switch — per card
+  and session-only, unlike the projection editor's: every card opens
+  collapsed, and opening one opens no other. The form replaced a
+  "represented as a tag" checkbox on every card, which asked a question
+  most types never need asked. A schema saying more than `type` is
+  named beside the picker with the switch off (`+ minimum — see
+  Advanced`), so a keyword never hides under a picker that cannot
+  show it.
 - **Other dialogs win.** Help, Problems, Settings, Import & export,
   the models dialog, quick open and the import gate close the
   definition modal (its edits are stored already) and give the page

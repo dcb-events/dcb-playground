@@ -4771,6 +4771,46 @@ check('the reference links only anchors the website defines', () => {
     sandbox.closeForms();
   });
 
+  check('a tag type is one of the forms a new type is offered in, and its value a picked base type', () => {
+    sandbox.state.defFrames = [];
+    sandbox.closeForms();
+    Object.assign(sandbox.state, { view: 'slice', slice: 'DefineCourse' });
+    sandbox.openDefinitionModal(model(), { kind: 'custom-type' });
+    fresh();
+    sandbox.render();
+    press(modal(), '+ New tag type');
+    findAll(modal(), (n) => n.tag === 'input')[0].oninput({ target: { value: 'Seat id' } });
+    press(modal(), 'Add');
+    eq(JSON.stringify(model()['custom-type-definitions'].SeatId),
+      JSON.stringify({ schema: { type: 'string' }, isTag: true }), 'a single value, tagged from the start');
+
+    const base = findAll(modal(), (n) => n.tag === 'select'
+      && findAll(n, (o) => o.tag === 'option' && textOf(o) === 'integer').length)[0];
+    eq(!!base, true, 'its type is picked');
+    eq(/tags every event carrying it as SeatId:…/.test(textOf(modal())), true, 'and the tag it writes is said');
+    eq(!!button(modal(), 'Save'), false, 'the JSON Schema waits behind Advanced');
+    eq(findAll(modal(), (n) => n.tag === 'input' && n.attributes.type === 'checkbox').length, 0,
+      'no tag checkbox');
+    choose(base, 'integer');
+    eq(JSON.stringify(model()['custom-type-definitions'].SeatId.schema), '{"type":"integer"}', 'retyped');
+
+    sandbox.updateDefinition('custom-type-definition', model().id, 'SeatId',
+      { schema: { type: 'integer', minimum: 1 }, isTag: true });
+    fresh();
+    sandbox.render();
+    eq(/\+ minimum — see Advanced/.test(textOf(modal())), true, 'a schema saying more than its type says so');
+
+    press(modal(), 'Advanced');
+    eq(!!button(modal(), 'Save'), true, 'the JSON Schema, behind the switch');
+    eq(/tag schema/.test(textOf(modal())), true, 'the tag schema too');
+    press(modal(), 'single value');
+    eq(model()['custom-type-definitions'].SeatId.isTag, undefined, 'the form is switched there');
+    press(modal(), 'tag type');
+    eq(model()['custom-type-definitions'].SeatId.isTag, true, 'and back');
+    press(modal(), 'Advanced');
+    press(modal(), 'Done');
+  });
+
   check('a projection\'s modal may open a type\'s — one level, and the way back is named', () => {
     sandbox.state.defFrames = [];
     sandbox.closeForms();
@@ -4795,16 +4835,21 @@ check('the reference links only anchors the website defines', () => {
     eq(sandbox.state.defFrames.length, 0, 'and closed');
   });
 
-  check('an existing definition opens from the pencil beside it, without its removal', () => {
+  check('an input\'s custom type opens from its edit mode, without its removal', () => {
     sandbox.state.defFrames = [];
     sandbox.closeForms();
     Object.assign(sandbox.state, { view: 'slice', slice: 'DefineCourse' });
     repaint();
-    const pencil = findAll(screen.main, (n) => n.tag === 'button'
-      && n.attributes['aria-label'] === 'Edit Course id')[0];
-    eq(!!pencil, true, 'beside the input typed with it');
+    eq(findAll(screen.main, (n) => n.tag === 'button'
+      && n.attributes['aria-label'] === 'Edit Course id').length, 0,
+      'no pencil on the row — it read as editing the input');
+    eq(!!button(screen.main, 'Edit the type Course id…'), false, 'not before the input is opened');
+    sandbox.openMember('payload:DefineCourse', 'courseId');
+    repaint();
+    const edit = button(screen.main, 'Edit the type Course id…');
+    eq(!!edit, true, 'offered in the input\'s edit mode, worded as the type\'s');
     fresh();
-    pencil.onclick({ stopPropagation() {} });
+    edit.onclick();
     eq(sandbox.state.defFrames.length, 1, 'opens it');
     eq(!!button(modal(), 'Rename'), true, 'renamed here');
     eq(!!button(modal(), 'Remove'), false, 'but never removed from under the command');

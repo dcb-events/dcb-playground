@@ -314,6 +314,7 @@
   .member-editor { padding: 4px 0 4px 8px; border-left: 2px solid var(--accent);
                    margin: 2px 0; background: var(--surface); }
   .member-editor .adder { flex-wrap: wrap; }
+  .member-editor .member-type { margin-top: 4px; }
   .chip.editable { cursor: pointer; }
   .chip.editable:hover { border-color: var(--accent); color: var(--accent); }
   /* A field offered rather than authored — dashed, like the adders it
@@ -405,6 +406,9 @@
   .hint:hover .hpanel, .hint:focus-within .hpanel, .hint.on .hpanel { display: block; }
   .hpanel .qtitle { color: var(--text); margin-bottom: 3px; }
   .hpanel .hline + .hline { margin-top: 5px; }
+  .hpanel code.hl { font-size: inherit; color: var(--text); background: var(--accent-soft);
+                    border-radius: 3px; padding: 0 3px; }
+  .tag-sample { color: var(--text); }
   .hpanel .hlinks { display: flex; gap: 14px; margin-top: 6px; }
   .hpanel .hlink { font-size: 11px; }
 
@@ -506,6 +510,18 @@
   .pswitch.on { color: var(--text); }
   .pswitch.on .track { background: var(--accent); }
   .pswitch.on .knob { left: 14px; }
+  .ecard .irow { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 4px 0; font-size: 12px; }
+  .ecard .irow > .nm { min-width: 96px; color: var(--muted); font-family: var(--mono); font-size: 11px;
+                       display: inline-flex; align-items: center; gap: 4px; }
+  .ecard .type-advanced { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); }
+  .ecard .type-advanced:empty { display: none; }
+  .seg { display: inline-flex; }
+  .seg .btn { border-radius: 0; }
+  .seg .btn:first-child { border-radius: 6px 0 0 6px; }
+  .seg .btn:last-child { border-radius: 0 6px 6px 0; margin-left: -1px; }
+  .seg .btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); position: relative; }
+  .kind-badge { font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+                color: var(--accent); background: var(--accent-soft); border-radius: 4px; padding: 1px 6px; }
   .pswitch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
   @media (max-width: 760px) {
     .peditor .pusage { border-left: 0; border-top: 1px solid var(--border); border-radius: 0 0 var(--radius) var(--radius); }
@@ -1571,6 +1587,8 @@ const state = {
   queryPop: null,           // key of the pinned DCB-query popover, if any
   hintPop: null,            // key of the pinned concept hint, if any
   lcMenu: null,             // key of the open lifecycle menu in Identity, if any
+  typeAdvanced: {},         // custom type name -> its card's Advanced switch on. Session-only:
+                            // every card starts collapsed.
   lcOpen: {},               // entity name -> its state row unfolded in Identity.
                             // Session-only, like `wizard`: a view choice, not the model.
   wizard: null,             // { slice, upto } — a brand-new command revealing its steps.
@@ -2327,15 +2345,12 @@ function definitionModal(model) {
 // what it is called.
 function newCustomTypeQuestion(model, frame, created) {
   if (!frame.form) {
-    const choose = (form) => () => { frame.form = form; render(); };
     return h('div', { class: 'adder' },
-      h('button', { class: 'btn primary', onclick: choose('composite') }, '+ New record'),
-      h('button', { class: 'btn', onclick: choose('enum') }, '+ New enum'),
-      h('button', { class: 'btn', onclick: choose('scalar') }, '+ New single value'));
+      ...newCustomTypeButtons((form) => { frame.form = form; render(); }));
   }
   return inlineForm({
     question: 'Name',
-    placeholder: frame.form === 'enum' ? 'enum name' : 'type name',
+    placeholder: NEW_TYPE_PLACEHOLDERS[frame.form],
     onSubmit: (v) => {
       const typeName = toPascal(v);
       if (!typeName) return toast('Give the type a name.', true);
@@ -3670,8 +3685,14 @@ function retypeMember(member, changes) {
 // always a single required identifier, so it has no arity to set.
 //
 // `newType(choose)` adds a row to the type picker that creates a custom
-// type and hands it to `choose`.
-function memberEditor(model, { member, where, types, allow = {}, onReplace, onRename, newType = null }) {
+// type and hands it to `choose`. `editType(typeName)`, given, offers to
+// open the custom type the member is of — on a line of its own, worded
+// as the type's, because changing it changes every use of the type and
+// not this member. It is offered here and not on the row: on the row a
+// pencil beside the type read as "edit this input".
+function memberEditor(model, {
+  member, where, types, allow = {}, onReplace, onRename, newType = null, editType = null,
+}) {
   const close = () => { state.editMember = null; render(); };
   let name = member.name;
   const options = types || typeOptions(model);
@@ -3710,7 +3731,17 @@ function memberEditor(model, { member, where, types, allow = {}, onReplace, onRe
           type: 'checkbox', checked: !!member.isOptional,
           onchange: (e) => onReplace(retypeMember(member, { isOptional: e.target.checked })),
         }), ' optional'),
-      h('button', { class: 'btn ghost tiny', onclick: close }, 'Done')));
+      h('button', { class: 'btn ghost tiny', onclick: close }, 'Done')),
+    editType && model['custom-type-definitions'][member.propertyType]
+      ? h('div', { class: 'adder member-type' },
+          h('span', { class: 'muted tiny' }, 'its type, ', h('span', { class: 'chip' }, readable(member.propertyType)),
+            ', is a custom type —'),
+          h('button', {
+            class: 'btn tiny', type: 'button',
+            title: 'Changes ' + readable(member.propertyType) + ' wherever it is used, not only here',
+            onclick: () => editType(member.propertyType),
+          }, 'Edit the type ' + readable(member.propertyType) + '…'))
+      : null);
 }
 
 // Reads a typed literal out of what someone typed. `undefined` means
@@ -5232,6 +5263,7 @@ function stepTrigger(model, slice) {
     if (editingMember(where, p.name)) {
       return memberEditor(model, {
         member: p, where, newType: newTypeHere,
+        editType: (typeName) => openDefinitionModal(model, { kind: 'custom-type', name: typeName }),
         onReplace: (next) => patchSlice((b) => { b.properties[i] = next; }),
         onRename: (name) => renameMember('command-definition', model.id, slice.name, 'property', p.name, name),
       });
@@ -5251,11 +5283,13 @@ function stepTrigger(model, slice) {
           class: 'type-tag', title: 'Rename or retype this input',
           onclick: (e) => { e.stopPropagation(); openMember(where, p.name); },
         }, readable(typeLabel(p))),
-        model['custom-type-definitions'][p.propertyType]
-          ? editDefinitionButton(model, 'custom-type', p.propertyType) : null,
         h('span', { class: 'grow', style: 'flex:1' }),
         reveal(
           h('span', { class: 'tech' }, p.name),
+          h('button', {
+            class: 'btn tiny', title: 'Rename or retype this input',
+            onclick: () => openMember(where, p.name),
+          }, 'Edit'),
           h('button', { class: 'btn tiny danger', onclick: () => dropProperty(i) }, '×'))),
       enumType ? h('div', { class: 'use' },
         h('span', { class: 'muted' }, 'can be '), ...enumMemberChips(model, enumType)) : null,
@@ -9060,8 +9094,7 @@ function renderCustomTypes(model, main) {
     h('div', { class: 'name' }, 'Custom types'),
     h('div', { class: 'muted small' },
       'Records with no identity of their own — a price, an order line — and identifiers: a '
-      + 'scalar type marked "represented as a tag" is what every event carrying it is tagged '
-      + 'with. An entity’s own derived identifier lives here too, created automatically '
+      + 'tag type is a single value every event carrying it is tagged with. An entity’s own derived identifier lives here too, created automatically '
       + 'alongside it, and stays pinned as a tag for as long as the entity owns it.')));
 
   const typeAdvisories = advisoryBanner(model, 'custom-type-definition');
@@ -9077,7 +9110,7 @@ function renderCustomTypes(model, main) {
   if (state.newType) {
     main.appendChild(inlineForm({
       question: 'Name',
-      placeholder: state.newType === 'enum' ? 'enum name' : 'type name',
+      placeholder: NEW_TYPE_PLACEHOLDERS[state.newType],
       onSubmit: (v) => {
         const typeName = toPascal(v);
         const form = state.newType;
@@ -9089,20 +9122,30 @@ function renderCustomTypes(model, main) {
     }));
   } else {
     main.appendChild(h('div', { class: 'adder', style: 'margin-top:14px' },
-      h('button', {
-        class: 'btn primary',
-        onclick: () => { closeForms(); state.newType = 'composite'; render(); },
-      }, '+ New record'),
-      h('button', {
-        class: 'btn',
-        onclick: () => { closeForms(); state.newType = 'enum'; render(); },
-      }, '+ New enum'),
-      h('button', {
-        class: 'btn',
-        onclick: () => { closeForms(); state.newType = 'scalar'; render(); },
-      }, '+ New single value')));
+      ...newCustomTypeButtons((form) => { closeForms(); state.newType = form; render(); })));
   }
 }
+
+// The forms a new custom type can take, offered alike on the page and
+// in a definition modal. A tag type is a single value marked as a tag
+// from the start: it is what a model built from scratch needs first —
+// the thing its events are tagged with — and behind "single value" it
+// was a checkbox away that nothing pointed at. So it comes first and is
+// the primary one — first is also where a dialog puts the keyboard.
+function newCustomTypeButtons(choose) {
+  return [
+    h('button', {
+      class: 'btn primary', onclick: () => choose('tag'),
+      title: 'A single value every event carrying it is tagged with — an identifier',
+    }, '+ New tag type'),
+    h('button', { class: 'btn', onclick: () => choose('composite') }, '+ New record'),
+    h('button', { class: 'btn', onclick: () => choose('enum') }, '+ New enum'),
+    h('button', { class: 'btn', onclick: () => choose('scalar') }, '+ New single value'),
+  ];
+}
+const NEW_TYPE_PLACEHOLDERS = {
+  composite: 'type name', enum: 'enum name', scalar: 'type name', tag: 'tag type name',
+};
 
 // One custom type's card: its head, its fields, members or schema, and
 // its tag switch. The Custom types page lists these, and a definition
@@ -9127,9 +9170,12 @@ function customTypeEditor(model, name, { inModal = false, onRenamed = null } = {
     card.appendChild(qrow('div', { cls: 'ehead', key: 'type:' + name },
       h('span', { class: 'chip' }, readable(name)),
       reveal(h('span', { class: 'tech' }, name)),
-      h('span', { class: 'muted tiny' }, composite
-        ? `${body.properties.length} field${body.properties.length === 1 ? '' : 's'}`
-        : 'one value'),
+      composite
+        ? h('span', { class: 'muted tiny' },
+            `${body.properties.length} field${body.properties.length === 1 ? '' : 's'}`)
+        : body.isTag
+          ? h('span', { class: 'kind-badge' }, 'tag type')
+          : h('span', { class: 'muted tiny' }, 'one value'),
       owner ? h('span', inModal ? { class: 'chip entity' } : {
         class: 'chip entity', title: 'Open ' + readable(owner),
         onclick: () => openEntity(owner),
@@ -9138,6 +9184,12 @@ function customTypeEditor(model, name, { inModal = false, onRenamed = null } = {
         ? h('span', { class: 'muted tiny' }, ' · tags whatever carries it: ' + tags.join(', '))
         : null,
       h('span', { style: 'flex:1' }),
+      composite ? null : h('button', {
+        type: 'button', class: 'pswitch' + (typeAdvanced(name) ? ' on' : ''),
+        'aria-pressed': typeAdvanced(name) ? 'true' : 'false',
+        title: 'Show the JSON Schema, the tag schema and the form',
+        onclick: () => setTypeAdvanced(name, !typeAdvanced(name)),
+      }, h('span', { class: 'track' }, h('span', { class: 'knob' })), 'Advanced'),
       reveal(h('button', {
         class: 'btn tiny',
         onclick: () => { closeForms(); state.renamingType = name; render(); },
@@ -9223,50 +9275,106 @@ function customTypeEditor(model, name, { inModal = false, onRenamed = null } = {
       }, '+ Field'),
       h('span', { style: 'flex:1' }),
       h('span', { class: 'tiny muted' }, 'fields are single and required'))));
-  } else if (isStringEnumType(model, name)) {
-    // An enum is not a distinct form of type — it is a scalar whose
-    // schema carries `enum` — so this is the same card as any other
-    // scalar, just with a chip editor over that one keyword instead
-    // of a raw-text view of the whole schema.
-    card.appendChild(h('div', { class: 'irow' }, ...enumMemberChips(model, name)));
   } else {
-    let text = JSON.stringify(body.schema == null ? { type: 'string' } : body.schema);
-    card.appendChild(h('div', { class: 'adder' },
-      h('input', {
-        type: 'text', value: text, style: 'flex:1;font-family:var(--mono);font-size:11px',
-        oninput: (e) => { text = e.target.value; },
-      }),
-      h('button', {
-        class: 'btn', onclick: () => run(() => {
-          let parsed;
-          try { parsed = JSON.parse(text); }
-          catch (e) { throw new DomainError('That is not valid JSON: ' + e.message); }
-          updateDefinition('custom-type-definition', model.id, name, { ...body, schema: parsed });
-        }),
-      }, 'Save')));
-  }
-
-  // "Represented as a tag" applies only to the scalar form — a
-  // composite is never itself a tag, only whichever of its fields are
-  // (see the field rows above). Pinned on and undisabled for an
-  // entity-owned type: it must stay a tag for the entity to be
-  // bindable at all, so this is where that invariant is enforced in
-  // the UI rather than only caught after the fact by validation.
-  if (!composite) {
-    card.appendChild(h('div', { class: 'irow' },
-      h('span', { class: 'nm' }, 'represented as a tag'),
-      h('label', { class: 'tiny muted' },
-        h('input', {
-          type: 'checkbox', checked: !!body.isTag, disabled: !!owner,
-          onchange: (e) => patch('custom-type-definition', name, (b) => {
-            if (e.target.checked) b.isTag = true; else delete b.isTag;
-          }),
-        }),
-        owner ? ` required — this is ${readable(owner)}’s identifier` : '')));
-    if (body.isTag && !owner) card.appendChild(tagSchemaField(name, body));
+    card.appendChild(singleValueEditor(model, name, body, owner));
   }
 
   return card;
+}
+
+// A single value's card body. By default it is what it mostly is: one
+// of JSON Schema's base types, picked — or an enum's members — and, for
+// a tag type, the tag it writes. Behind the Advanced switch is what
+// most types never need: the raw JSON Schema, the
+// tag schema, and the form — single value or tag type, which used to be
+// a checkbox on every card. The switch is per card and session-only:
+// every card opens collapsed, and opening one opens no other. A schema saying more than its `type` is
+// mentioned with the switch off, never silently hidden, since the
+// picker changes the type under it. Only `type` decides how the
+// playground reads a value (`literalKindOf`); the rest travels with
+// the model and is not checked here.
+//
+// The form is pinned to tag type for an entity's identifier: it must
+// stay a tag for the entity to be bindable at all, so this is where
+// that invariant is held in the UI rather than only caught afterwards
+// by validation.
+const SCALAR_BASE_TYPES = ['string', 'integer', 'number', 'boolean'];
+function typeAdvanced(name) {
+  return !!state.typeAdvanced[name];
+}
+function setTypeAdvanced(name, on) {
+  if (on) state.typeAdvanced[name] = true; else delete state.typeAdvanced[name];
+  render();
+}
+
+function singleValueEditor(model, name, body, owner) {
+  const advanced = typeAdvanced(name);
+  const isEnum = isStringEnumType(model, name);
+  const schema = body.schema == null ? { type: 'string' } : body.schema;
+  const isObject = schema && typeof schema === 'object' && !Array.isArray(schema);
+  const extra = isObject && !isEnum ? Object.keys(schema).filter((key) => key !== 'type') : [];
+  const setSchema = (next) => updateDefinition('custom-type-definition', model.id, name, { ...body, schema: next });
+  const label = (text, info) => h('span', { class: 'nm' }, text, info || null);
+
+  const known = isObject && SCALAR_BASE_TYPES.includes(schema.type);
+  const valueRow = h('div', { class: 'irow' },
+    label('value'),
+    // An enum is not a distinct form of type — it is a scalar whose
+    // schema carries `enum` — so its value is its members, chip-edited.
+    ...(isEnum ? enumMemberChips(model, name) : [
+      pick(SCALAR_BASE_TYPES.map((t) => [t, t]), known ? schema.type : '',
+        (v) => run(() => setSchema({ ...(isObject ? schema : {}), type: v })),
+        known ? null : '— see the schema —'),
+      extra.length && !advanced
+        ? h('span', { class: 'muted tiny' }, '+ ', h('code', {}, extra.join(', ')), ' — see Advanced')
+        : null,
+    ]),
+    body.isTag
+      ? h('span', { class: 'muted tiny' }, 'tags every event carrying it as ',
+          h('code', { class: 'tag-sample' }, renderTag({ name, tagSchema: body.tagSchema || '{type}:{value}' }, '…')))
+      : null);
+  if (!advanced) return valueRow;
+
+  const rows = [];
+  if (!isEnum) {
+    let text = JSON.stringify(schema);
+    const save = () => run(() => {
+      let parsed;
+      try { parsed = JSON.parse(text); }
+      catch (e) { throw new DomainError('That is not valid JSON: ' + e.message); }
+      setSchema(parsed);
+    });
+    rows.push(h('div', { class: 'irow' },
+      label('JSON Schema', hint('schema:' + name, 'JSON Schema', [[
+        'The value’s type plus any constraint on it — ',
+        h('code', { class: 'hl' }, '{"type":"integer","minimum":0}'),
+        '. Only ', h('code', { class: 'hl' }, 'type'),
+        ' changes how the playground reads a value; the rest travels with the model, unchecked.',
+      ]])),
+      h('input', {
+        type: 'text', value: text, style: 'flex:1;font-family:var(--mono);font-size:11px',
+        'aria-label': 'JSON Schema',
+        oninput: (e) => { text = e.target.value; },
+        onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } },
+      }),
+      h('button', { class: 'btn', onclick: save }, 'Save')));
+  }
+  if (body.isTag) rows.push(tagSchemaField(name, body));
+
+  const form = (isTag, text) => h('button', {
+    class: 'btn tiny', type: 'button', disabled: !!owner,
+    'aria-pressed': !!body.isTag === isTag ? 'true' : 'false',
+    onclick: () => patch('custom-type-definition', name, (b) => {
+      if (isTag) b.isTag = true; else delete b.isTag;
+    }),
+  }, text);
+  rows.push(h('div', { class: 'irow' },
+    label('form'),
+    h('span', { class: 'seg', role: 'group', 'aria-label': 'Form' },
+      form(false, 'single value'), form(true, 'tag type')),
+    owner ? h('span', { class: 'muted tiny' }, `pinned — ${readable(owner)} is identified by it`) : null));
+
+  return h('div', {}, valueRow, h('div', { class: 'type-advanced' }, ...rows));
 }
 
 // The body a new custom type starts with, by form.
@@ -9280,7 +9388,9 @@ function newCustomTypeBody(form) {
       // Same for an enum: one member to rename, rather than a
       // legal-but-useless empty list.
       ? { schema: { type: 'string', enum: ['Member'] } }
-      : { schema: { type: 'string' } };
+      : form === 'tag'
+        ? { schema: { type: 'string' }, isTag: true }
+        : { schema: { type: 'string' } };
 }
 
 // What a composite field may be typed with: anything except another
@@ -11352,6 +11462,7 @@ function eventFieldsEditor(model, name, event) {
       // it is simply carried.
       return memberEditor(model, {
         member: p, where,
+        editType: (typeName) => openDefinitionModal(model, { kind: 'custom-type', name: typeName }),
         onReplace: (next) => patch('event-definition', name, (b) => { b.properties[i] = next; }),
         onRename: (newName) => {
           warnScripted(model, name);
@@ -11375,6 +11486,10 @@ function eventFieldsEditor(model, name, event) {
             onclick: () => openMember(where, p.name),
           }, readable(typeLabel(p))),
           h('span', { class: 'tech' }, p.name),
+          h('button', {
+            class: 'btn tiny', title: 'Rename or retype this field',
+            onclick: () => openMember(where, p.name),
+          }, 'Edit'),
           h('button', {
             class: 'btn tiny danger', title: 'Remove this field',
             onclick: dropField,
