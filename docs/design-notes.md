@@ -684,8 +684,8 @@ One breakpoint, 760px (shared.css, _narrow screens_), and a floor of
 ## The sandbox
 
 The page is the viewport, in four fixed bands (`renderSandbox`): the
-header holding the driver, the watched strip, the step at the playhead,
-and the timeline docked at the bottom. Only the step band scrolls.
+header holding the driver, the timeline, the watched strip, and the
+step at the playhead. Only the step band scrolls.
 
 - **Fixed bands, because a run gets long.** It used to be one column:
   driver, a row of event icons that wrapped, every visible event as a
@@ -697,15 +697,33 @@ and the timeline docked at the bottom. Only the step band scrolls.
   steps as rows and watches as columns. The ledger reads a watch's
   history best but turns the timeline into a table. This one keeps a
   timeline and still gives every watch its history.
+  The timeline was first docked at the bottom, and was read last: the
+  thing that decides what every band above shows sat under all of
+  them. It moved under the header, above the watches, in the order
+  cause and effect run. Four placements were drawn (on a design
+  canvas, outside the repo): on top; the run as a filmstrip of step
+  cards, the most obvious but one card per step repeats the Append
+  column; a slim scrubber inside the header, the least height but the
+  other lane modes would need a pop-over; and the dock kept and made
+  louder, still where the eye arrives last. On top won. It is marked
+  as a timeline by name, by a handle on the playhead and by a tint
+  over the part already played, and the transport says in words what
+  the playhead is just after — the marks are icons, and the one that
+  matters should not need a hover.
   Below the narrow breakpoint the bands flow with the page again: a
   phone has no height to split four ways. Above it, the site footer is
   hidden on this page; it was the one thing below the viewport, and so
   the reason the page had a scrollbar at all.
-- **Lanes are tags.** One lane per tag any event carries
+- **Compact by default; lanes are tags.** Compact is the whole run on
+  one lane, in order, which is how a log is first thought of. With
+  one lane there is no label column, so its marks are bigger
+  (`SANDBOX_PITCH_COMPACT`), and since there is no bold label to say a
+  watch follows a tag, the marks carrying one get a dot in the
+  projection colour. By tag is one lane per tag any event carries
   (`sandboxLanes`). A lane holds exactly the events a query for that tag
   gets back, so it is how a boundary sees the log. An event with
   several tags sits on several lanes, and so a subscription shows up on
-  both the course and the student. "By event type" is the other reading,
+  both the course and the student. "By event type" is a third reading,
   for a model whose tags say little. Lanes a projection watch is tagged
   by are bold.
 - **One event is one fixed width** (`SANDBOX_PITCH`). A long run
