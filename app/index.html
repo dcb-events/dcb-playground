@@ -45,6 +45,13 @@
   }
   .rail a:hover { background: var(--accent-soft); }
   .rail a.on { border-left-color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+  /* A place, not a thing: its line icon sits flush left where the
+     feature carets are, muted, and takes the accent with the row —
+     see `RAIL_ICONS`. */
+  .rail a.place { display: flex; align-items: center; gap: 10px; padding-left: 13px; }
+  .rail-icon { display: inline-flex; width: 16px; height: 16px; flex: none; color: var(--muted); }
+  .rail-icon svg { width: 16px; height: 16px; }
+  .rail a.place:hover .rail-icon, .rail a.place.on .rail-icon { color: var(--accent); }
   /* Quiet until wanted, like the in-page adders below: pointing at the
      rail is the "I am about to change this list" gesture. On a touch
      screen the drawer being open is that gesture — see the hover:none
@@ -96,10 +103,9 @@
   .rail a.cmd .grip { opacity: 0; }
   .rail a.cmd:hover .grip, .rail a.cmd .grip:focus { opacity: 1; }
   .rail a.cmd.dragging { opacity: .4; }
-  /* The count used to sit hard against the label — "Sandbox14" — because
-     an <a> lays its children out as text, not as a row. This one alone
-     needs a row: the label on the left, the count held to the right. */
-  .rail a.sandbox { display: flex; align-items: center; gap: 8px; }
+  /* The count used to sit hard against the label — "Sandbox14". As a
+     place the row is already flex (`.rail a.place`); the label grows so
+     the count is held to the right. */
   .rail a.sandbox .grow { flex: 1; }
   /* A thing in the rail is in the colour things are in everywhere else,
      so the rail says which of the two lists you are in without a
@@ -2031,6 +2037,36 @@ const IMPORT_EXPORT_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="cur
   + '<path d="M16 3l4 4-4 4"></path><path d="M20 7H8"></path>'
   + '<path d="M8 21l-4-4 4-4"></path><path d="M4 17h12"></path></svg>';
 function importExportIcon() { return h('span', { html: IMPORT_EXPORT_ICON_SVG }); }
+
+// The rail's places — the pages that are not one command or entity —
+// each carry a line icon, muted until hovered or open. A command's or
+// entity's mark is an authored glyph or emoji in the kind's colour,
+// indented under its group; these are drawn, monochrome and flush left,
+// so a place never reads as one more command. Events borrows the shape
+// of the event mark (↯) as a bolt, drawn in the same line.
+function railIconSvg(shapes) {
+  return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" '
+    + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + shapes + '</svg>';
+}
+const RAIL_ICONS = {
+  overview: railIconSvg('<rect x="3" y="3" width="7" height="9" rx="1"></rect>'
+    + '<rect x="14" y="3" width="7" height="5" rx="1"></rect><rect x="14" y="12" width="7" height="9" rx="1"></rect>'
+    + '<rect x="3" y="16" width="7" height="5" rx="1"></rect>'),
+  types: railIconSvg('<path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5a2 2 0 0 0 2 2h1"></path>'
+    + '<path d="M16 21h1a2 2 0 0 0 2-2v-5a2 2 0 0 1 2-2 2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"></path>'),
+  projections: railIconSvg('<path d="M3 6h4"></path><path d="M3 12h4"></path><path d="M3 18h4"></path>'
+    + '<path d="M7 6l5 6-5 6"></path><path d="M12 12h3"></path><rect x="15" y="8" width="6" height="8" rx="1.5"></rect>'),
+  events: railIconSvg('<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>'),
+  coupling: railIconSvg('<circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle>'
+    + '<circle cx="18" cy="19" r="3"></circle><path d="M8.6 13.5l6.8 4"></path><path d="M15.4 6.5l-6.8 4"></path>'),
+  rulemap: railIconSvg('<path d="M3 7l2 2 4-4"></path><path d="M3 17l2 2 4-4"></path>'
+    + '<path d="M13 6h8"></path><path d="M13 12h8"></path><path d="M13 18h8"></path>'),
+  eventmodel: railIconSvg('<rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M9 3v18"></path>'
+    + '<path d="M15 3v18"></path>'),
+  lifecycles: railIconSvg('<path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"></path><path d="M21 3v5h-5"></path>'),
+  sandbox: railIconSvg('<circle cx="12" cy="12" r="9"></circle><path d="M10 8.5v7l5.5-3.5z"></path>'),
+};
+function railIcon(key) { return h('span', { class: 'rail-icon', html: RAIL_ICONS[key] }); }
 
 // ⌘S keeps its own quick path, unchanged: build the full link, land it
 // in the address bar, copy it, done. The Import & Export modal below
@@ -4479,9 +4515,9 @@ function renderRail() {
   // Coupling and the rest: those read across every command for one
   // question each, this one answers "what is in here" before any other.
   rail.appendChild(h('a', {
-    href: '#', class: state.view === 'overview' ? 'on' : '', style: 'margin-bottom:16px',
+    href: '#', class: 'place' + (state.view === 'overview' ? ' on' : ''), style: 'margin-bottom:16px',
     onclick: (e) => { e.preventDefault(); closeForms(); state.view = 'overview'; render(); },
-  }, 'Overview'));
+  }, railIcon('overview'), 'Overview'));
   rail.appendChild(h('h4', {}, 'Features'));
 
   const groups = featureGroups(model);
@@ -4590,14 +4626,14 @@ function renderRail() {
       rail.appendChild(renderEntityRail(model));
     }
     rail.appendChild(h('a', {
-      href: '#', class: state.view === 'types' ? 'on' : '',
+      href: '#', class: 'place' + (state.view === 'types' ? ' on' : ''),
       title: Object.keys(model['custom-type-definitions']).length + ' declared',
       onclick: (e) => {
         e.preventDefault(); openKindPage('types');
       },
-    }, 'Custom types'));
+    }, railIcon('types'), 'Custom types'));
     rail.appendChild(h('a', {
-      href: '#', class: state.view === 'projections' ? 'on' : '',
+      href: '#', class: 'place' + (state.view === 'projections' ? ' on' : ''),
       // A slice that binds a projection points here: the projection is
       // the source, and it lives nowhere else on that page.
       'data-src': projectionNames.map((n) => 'projection:' + n).join(' ') || null,
@@ -4607,16 +4643,16 @@ function renderRail() {
       onclick: (e) => {
         e.preventDefault(); openKindPage('projections');
       },
-    }, 'Projections'));
+    }, railIcon('projections'), 'Projections'));
     const eventNames = Object.keys(model['event-definitions']);
     rail.appendChild(h('a', {
-      href: '#', class: state.view === 'events' ? 'on' : '',
+      href: '#', class: 'place' + (state.view === 'events' ? ' on' : ''),
       'data-src': eventNames.map((n) => 'event:' + n).join(' ') || null,
       title: eventNames.length ? eventNames.map(readable).join(', ') : 'nothing recorded yet',
       onclick: (e) => {
         e.preventDefault(); openKindPage('events');
       },
-    }, 'Events'));
+    }, railIcon('events'), 'Events'));
   }
 
   // None of these is a definition of its own — each reads across
@@ -4624,27 +4660,27 @@ function renderRail() {
   // the way Events reads across every command that publishes one. They
   // are experimental: none is needed to read a model, only to survey it.
   if (experimental() && Object.keys(model['command-definitions']).length) {
-    rail.appendChild(h('h4', { style: 'margin-top:20px' }, 'Overview'));
+    rail.appendChild(h('h4', { style: 'margin-top:20px' }, 'Diagrams'));
     rail.appendChild(h('a', {
-      href: '#', class: state.view === 'coupling' ? 'on' : '',
+      href: '#', class: 'place' + (state.view === 'coupling' ? ' on' : ''),
       title: 'Which commands write or read back which events',
       onclick: (e) => { e.preventDefault(); closeForms(); state.view = 'coupling'; render(); },
-    }, 'Coupling'));
+    }, railIcon('coupling'), 'Coupling'));
     rail.appendChild(h('a', {
-      href: '#', class: state.view === 'rulemap' ? 'on' : '',
+      href: '#', class: 'place' + (state.view === 'rulemap' ? ' on' : ''),
       title: 'Every command, its rules, and what it records',
       onclick: (e) => { e.preventDefault(); closeForms(); state.view = 'rulemap'; render(); },
-    }, 'Rule map'));
+    }, railIcon('rulemap'), 'Rule map'));
     rail.appendChild(h('a', {
-      href: '#', class: state.view === 'eventmodel' ? 'on' : '',
+      href: '#', class: 'place' + (state.view === 'eventmodel' ? ' on' : ''),
       title: 'The commands on a timeline, with their payloads, events and read models',
       onclick: (e) => { e.preventDefault(); closeForms(); state.view = 'eventmodel'; render(); },
-    }, 'Event model'));
+    }, railIcon('eventmodel'), 'Event model'));
     rail.appendChild(h('a', {
-      href: '#', class: state.view === 'lifecycles' ? 'on' : '',
+      href: '#', class: 'place' + (state.view === 'lifecycles' ? ' on' : ''),
       title: 'Each entity’s status as a state machine',
       onclick: (e) => { e.preventDefault(); closeForms(); state.view = 'lifecycles'; render(); },
-    }, 'Lifecycles'));
+    }, railIcon('lifecycles'), 'Lifecycles'));
   }
 
   // The sandbox belongs to no definition, so it hangs off nothing in
@@ -4652,12 +4688,12 @@ function renderRail() {
   // is something to try.
   rail.appendChild(h('h4', { style: 'margin-top:20px' }, 'Try it'));
   rail.appendChild(h('a', {
-    href: '#', class: 'sandbox' + (state.view === 'sandbox' ? ' on' : ''),
+    href: '#', class: 'place sandbox' + (state.view === 'sandbox' ? ' on' : ''),
     title: session.log.length
       ? session.log.length + ' event' + (session.log.length === 1 ? '' : 's') + ' in this session'
       : 'Drive the commands and watch what happens',
     onclick: (e) => { e.preventDefault(); closeForms(); state.view = 'sandbox'; render(); },
-  }, h('span', { class: 'grow' }, 'Sandbox'), session.log.length
+  }, railIcon('sandbox'), h('span', { class: 'grow' }, 'Sandbox'), session.log.length
     ? h('span', { class: 'gcount' }, session.log.length)
     : null));
 
