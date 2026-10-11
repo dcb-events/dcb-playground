@@ -4480,7 +4480,7 @@ function renderRail() {
   // question each, this one answers "what is in here" before any other.
   rail.appendChild(h('a', {
     href: '#', class: state.view === 'overview' ? 'on' : '', style: 'margin-bottom:16px',
-    onclick: (e) => { e.preventDefault(); openKindPage('overview'); },
+    onclick: (e) => { e.preventDefault(); closeForms(); state.view = 'overview'; render(); },
   }, 'Overview'));
   rail.appendChild(h('h4', {}, 'Features'));
 
@@ -5143,6 +5143,9 @@ function paintBehind(model) {
     main.className = 'slice';
     return renderNewCommand(model, main);
   }
+  // A page shown while the surface is Code: whatever leads back into
+  // the code from here is revealed there, even the definition it was on.
+  if (state.code && !codeShown()) codeView.focus = undefined;
   if (codeShown()) {
     main.className = 'slice wide code-view';
     return renderCode(model, main);
@@ -10608,7 +10611,7 @@ function renderOverview(model, main) {
   }, h('span', { class: 'label' }, label),
     h('span', { class: 'count' }, String(count)),
     sub ? h('span', { class: 'sub' }, sub) : null);
-  const show = (view) => () => { state.view = view; render(); };
+  const show = (view) => () => openKindPage(view);
   const showProblems = () => { state.problems = true; render(); };
   const withScenarios = Object.keys(commands)
     .find((name) => Object.values(model['scenario-definitions'] || {}).some((s) => s.command === name));
@@ -10617,7 +10620,9 @@ function renderOverview(model, main) {
   // The same rule the rail follows: what the experimental flag keeps out
   // of the rail it keeps out of the count, unless the model already has one.
   main.appendChild(h('div', { class: 'overview-stats' },
-    stat('Commands', 'command', bodies.length, plural(ruleCount, 'rule')),
+    // Listed right below on the page; in the code, where they start.
+    stat('Commands', 'command', bodies.length, plural(ruleCount, 'rule'),
+      state.code && bodies.length ? () => { codeView.section = 'command-definition'; openKindPage('slice'); } : null),
     stat('Events', 'event', events.length, unappended ? unappended + ' not appended' : null, show('events')),
     experimental() || entities.length
       ? stat('Entities', 'entity', entities.length, lifecycles ? lifecycles + ' with a lifecycle' : null,
@@ -13724,17 +13729,16 @@ function storedCodeFold() {
   return stored === 'open' || stored === 'all' ? stored : 'scenarios';
 }
 
-// The pages the code stands in for: those about definitions, and the
-// Overview a model opens on — the whole text, from the top. Any other
-// page (the sandbox, the cross-cutting overviews) has no text to show,
-// so it is shown as a page while the surface stays Code: only the
-// Visual button leaves it, and the next of these is code again.
-const CODE_FOLLOWS = ['overview', 'slice', 'entity', 'events', 'projections', 'types'];
+// The pages about definitions — what the code follows. Any other page
+// (the Overview, the sandbox, the cross-cutting overviews) is shown as
+// a page while the surface stays Code: only the Visual button leaves
+// it, and a way from that page to a definition — an Overview card, a
+// chip — lands on it in the code.
+const CODE_FOLLOWS = ['slice', 'entity', 'events', 'projections', 'types'];
 function codeShown() { return !!state.code && CODE_FOLLOWS.includes(state.view); }
 
-// A rail link to a whole kind's page, or to the Overview; in the code,
-// a jump to where that kind's definitions start, or to the top — every
-// click, not only the first.
+// A rail link to a whole kind's page; in the code, a jump to where
+// that kind's definitions start — every click, not only the first.
 function openKindPage(view) {
   closeForms();
   state.view = view;
@@ -13754,6 +13758,8 @@ const codeView = {
   stale: false,         // the model moved under a text with edits
   shownView: null,      // the page state the code was last shown over
   focus: null,          // the definition last revealed for it
+  section: null,        // a kind to reveal the start of, once, over the page's own
+  revealedInEditor: false,
   analysis: null,       // { text, parsed, errors, advisories }
   editor: null,         // { root, editor, model } once Monaco is up
   loading: false,       // writing into Monaco, not the author typing
@@ -14647,12 +14653,21 @@ function renderCode(model, main) {
 
   // Follow the page state: reveal the definition it is about whenever
   // that changed since the code was last shown.
-  const target = pageDefinition();
+  // A section asked for once (`codeView.section`) is revealed over the
+  // page's own definition, which is then taken as shown — so the next
+  // paint stays where the section put the text.
+  const page = pageDefinition();
+  const target = codeView.section ? [codeView.section, null] : page;
+  codeView.section = null;
   const key = target ? target.join(':') : null;
   const shown = codeView.shownView;
   codeView.shownView = state.view;
-  if (key !== codeView.focus || shown === null) {
-    codeView.focus = key;
+  // Monaco loads behind the first paint, which is the textarea; the
+  // paint that brings it in reveals again, in the editor that stays.
+  const intoEditor = !!codeView.editor && !codeView.revealedInEditor;
+  if (key !== codeView.focus || shown === null || intoEditor) {
+    codeView.focus = page ? page.join(':') : null;
+    codeView.revealedInEditor = !!codeView.editor;
     const span = !target ? null : target[1] === null
       ? sourceKindStart(analysis.parsed, target[0], codeView.text)
       : sourceSpanOf(analysis.parsed, target[0], target[1]);
@@ -14660,7 +14675,6 @@ function renderCode(model, main) {
     // a frame, which a background tab never gets.
     setTimeout(() => {
       if (span) revealCodeAt(span.nameLine, span.nameCol, span.line);
-      else if (state.view === 'overview') revealCodeAt(1, 1, 1);
       else if (codeView.editor) codeView.editor.editor.focus();
     }, 0);
   }
