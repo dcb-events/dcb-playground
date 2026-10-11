@@ -1518,15 +1518,32 @@
     .surface .label, .problems-btn .label { display: none; }
     .surface-icon svg { width: 17px; height: 17px; }
   }
-  .code-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 10px; }
-  .code-bar .grow { flex: 1; }
-  .code-controls { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .code-status .code-bad, .code-status .code-stale { color: var(--danger); }
-  .code-status .code-dirty { color: var(--event); }
+  /* The tools over the text, quiet and to the right; what follows the
+     text — status, cursor, Revert and Apply — is the strip under it. */
+  .code-bar { display: flex; align-items: center; justify-content: flex-end; gap: 2px; flex-wrap: wrap; margin: 0 0 8px; }
+  .code-bar .code-tool { display: inline-flex; align-items: center; gap: 6px; background: transparent; }
+  .code-bar .code-tool:hover { border-color: transparent; background: var(--elevated); }
+  .code-tool-icon svg { width: 14px; height: 14px; display: block; }
+  .code-bar .code-ref { color: var(--muted); padding: 4px 10px; text-decoration: none; }
+  .code-bar .code-ref:hover { color: var(--accent); }
+  .code-box { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
   .code-editor, .code-text {
-    width: 100%; height: calc(100vh - var(--topbar-h, 90px) - 230px); min-height: 360px;
-    border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+    width: 100%; height: calc(100vh - var(--topbar-h, 90px) - 260px); min-height: 360px;
+    border: 0; background: var(--surface);
   }
+  .code-strip {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 4px 8px 4px 12px; min-height: 32px;
+    font-size: 12px; color: var(--muted); background: var(--elevated); border-top: 1px solid var(--border);
+  }
+  .code-strip .grow { flex: 1; }
+  .code-strip .code-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
+  .code-strip.dirty { color: var(--event); background: var(--event-soft); }
+  .code-strip.dirty .code-dot { background: var(--event); }
+  .code-strip.bad { color: var(--danger); background: var(--danger-soft); }
+  .code-strip.bad .code-dot { background: var(--danger); }
+  .code-strip .mono { font-size: 11.5px; }
+  .code-strip .btn.tiny { padding: 2px 10px; }
+  .code-strip .kbd { font-family: var(--mono); font-size: 10.5px; opacity: .7; }
   .code-editor { overflow: hidden; }
   .code-editor .code-read-hint { color: var(--muted); }
   /* A scenarios group: a gutter stripe (see `codeScenarioMarks`), the
@@ -4463,7 +4480,7 @@ function renderRail() {
   // question each, this one answers "what is in here" before any other.
   rail.appendChild(h('a', {
     href: '#', class: state.view === 'overview' ? 'on' : '', style: 'margin-bottom:16px',
-    onclick: (e) => { e.preventDefault(); closeForms(); state.view = 'overview'; render(); },
+    onclick: (e) => { e.preventDefault(); openKindPage('overview'); },
   }, 'Overview'));
   rail.appendChild(h('h4', {}, 'Features'));
 
@@ -13697,25 +13714,33 @@ function setCodeSurface(on) {
   localStorage.setItem(SURFACE_KEY, on ? 'code' : 'visual');
 }
 
-// Whether a model's text opens with its scenarios groups folded —
-// remembered per browser, like the surface, and folded unless asked.
+// How folded a model's text opens — nothing, its scenarios groups, or
+// every definition with its scenarios folded inside — remembered per
+// browser, like the surface; scenarios unless asked.
 const SCENARIO_FOLD_KEY = 'dcb-playground:code-scenarios';
+const CODE_FOLDS = ['open', 'scenarios', 'all'];
+function storedCodeFold() {
+  const stored = localStorage.getItem(SCENARIO_FOLD_KEY);
+  return stored === 'open' || stored === 'all' ? stored : 'scenarios';
+}
 
-// The pages about definitions — what the code follows. Any other page
-// (the sandbox, an overview) has no text to show, so it is shown as a
-// page while the surface stays Code: only the Visual button leaves it,
-// and the next definition page is code again.
-const CODE_FOLLOWS = ['slice', 'entity', 'events', 'projections', 'types'];
+// The pages the code stands in for: those about definitions, and the
+// Overview a model opens on — the whole text, from the top. Any other
+// page (the sandbox, the cross-cutting overviews) has no text to show,
+// so it is shown as a page while the surface stays Code: only the
+// Visual button leaves it, and the next of these is code again.
+const CODE_FOLLOWS = ['overview', 'slice', 'entity', 'events', 'projections', 'types'];
 function codeShown() { return !!state.code && CODE_FOLLOWS.includes(state.view); }
 
-// A rail link to a whole kind's page; in the code, a jump to where
-// that kind's definitions start — every click, not only the first.
+// A rail link to a whole kind's page, or to the Overview; in the code,
+// a jump to where that kind's definitions start, or to the top — every
+// click, not only the first.
 function openKindPage(view) {
   closeForms();
   state.view = view;
   if (state.code) {
     if (view === 'events') state.openEvent = null;
-    codeView.focus = null;
+    codeView.focus = undefined;
   }
   render();
 }
@@ -13733,10 +13758,11 @@ const codeView = {
   editor: null,         // { root, editor, model } once Monaco is up
   loading: false,       // writing into Monaco, not the author typing
   timer: null,
-  statusEl: null,
+  statusEl: null,       // the strip under the editor
+  cursorEl: null,
   listEl: null,
   drafts: new Map(),    // model id → a text left unapplied on another model
-  scenariosFolded: localStorage.getItem(SCENARIO_FOLD_KEY) !== 'open',
+  fold: storedCodeFold(),
 };
 
 function codeDirty() { return codeView.text !== codeView.base; }
@@ -13833,7 +13859,7 @@ function refreshCodeChrome() {
     if (!codeView.editor.scenarioMarks) codeView.editor.scenarioMarks = editor.createDecorationsCollection();
     codeView.editor.scenarioMarks.set(codeScenarioMarks(analysis, codeView.editor.model));
   }
-  if (codeView.statusEl) codeView.statusEl.replaceWith(codeView.statusEl = codeControls());
+  if (codeView.statusEl) codeView.statusEl.replaceWith(codeView.statusEl = codeStrip());
   if (codeView.listEl) codeView.listEl.replaceWith(codeView.listEl = codeProblemList(analysis));
   const toggle = document.querySelector('#tools .surface');
   if (toggle) toggle.replaceWith(surfaceToggle(model));
@@ -13920,42 +13946,69 @@ function codeAdvisoryAt(analysis) {
   });
 }
 
+// What the strip under the editor says, and how it is tinted: in step,
+// edited, or blocked — by errors, or by a model that moved under the
+// edits.
 function codeStatus() {
   const analysis = codeView.analysis;
   const errors = analysis ? analysis.errors.length : 0;
   const advisories = analysis ? analysis.advisories.length : 0;
-  const parts = [];
-  if (codeView.stale) {
-    parts.push(h('span', { class: 'code-stale' }, 'The model changed since these edits began — applying puts back what changed. '),
-      h('button', { class: 'btn tiny ghost', onclick: revertCode }, 'Discard my edits'));
-  } else if (errors) {
-    parts.push(h('span', { class: 'code-bad' }, `${errors} error${errors === 1 ? '' : 's'} — nothing can be applied yet`));
-  } else if (codeDirty()) {
-    parts.push(h('span', { class: 'code-dirty' }, 'Edited — not applied yet'));
-  } else {
-    parts.push(h('span', { class: 'muted' }, 'In step with the model'));
-  }
-  if (!errors && advisories) parts.push(h('span', { class: 'muted' }, ` · ${advisories} advisor${advisories === 1 ? 'y' : 'ies'}`));
   const scenarios = analysis ? analysis.scenarios.length : 0;
-  if (!errors && scenarios) {
-    parts.push(h('span', { class: 'code-dirty' }, ` · ${scenarios} scenario${scenarios === 1 ? '' : 's'} broken or drifted`));
+  const parts = [];
+  let tone = 'clean';
+  if (codeView.stale) {
+    tone = 'bad';
+    parts.push('The model changed since these edits began — applying puts back what changed');
+  } else if (errors) {
+    tone = 'bad';
+    parts.push(`${errors} error${errors === 1 ? '' : 's'} — fix ${errors === 1 ? 'it' : 'them'} to apply`);
+  } else if (codeDirty()) {
+    tone = 'dirty';
+    parts.push('Edited, not applied');
+  } else {
+    parts.push('In step with the model');
   }
-  return h('span', { class: 'code-status small' }, parts);
+  if (!errors && advisories) parts.push(`${advisories} advisor${advisories === 1 ? 'y' : 'ies'}`);
+  if (!errors && scenarios) parts.push(`${scenarios} scenario${scenarios === 1 ? '' : 's'} broken or drifted`);
+  return { tone, words: parts.join(' · '), errors };
 }
 
-// Apply, Revert and the status — the part of the bar that follows
-// every keystroke.
-function codeControls() {
-  return h('span', { class: 'code-controls' },
+function codeCursorWords() {
+  const position = codeView.editor && codeView.editor.editor.getPosition();
+  return position ? `Ln ${position.lineNumber}, Col ${position.column}` : '';
+}
+
+// The first error after the cursor, wrapping round to the first one.
+function revealNextCodeError() {
+  const analysis = codeView.analysis;
+  if (!analysis || !analysis.errors.length) return;
+  const line = codeCursorLine() || 0;
+  const next = analysis.errors.find((d) => d.line > line) || analysis.errors[0];
+  revealCodeAt(next.line, next.col);
+}
+
+// The strip under the editor — the part of the page that follows every
+// keystroke: the status, the cursor, and Revert and Apply beside the
+// text they act on.
+function codeStrip() {
+  const { tone, words, errors } = codeStatus();
+  codeView.cursorEl = h('span', { class: 'mono' }, codeCursorWords());
+  return h('div', { class: 'code-strip ' + tone, role: 'status' },
+    h('span', { class: 'code-dot', 'aria-hidden': 'true' }),
+    h('span', { class: 'code-words' }, words),
+    h('span', { class: 'grow' }),
+    codeView.cursorEl,
+    errors ? h('button', {
+      class: 'btn tiny', type: 'button', title: 'The next error after the cursor', onclick: revealNextCodeError,
+    }, 'Next error ↓') : null,
+    codeDirty() ? h('button', {
+      class: 'btn tiny', type: 'button', title: codeView.stale ? 'Discard these edits' : 'Put back what the model says',
+      onclick: revertCode,
+    }, 'Revert') : null,
     h('button', {
       class: 'btn primary tiny', type: 'button', title: 'Apply — ⌘S',
-      disabled: !codeDirty() ? true : null, onclick: applyCode,
-    }, 'Apply'),
-    h('button', {
-      class: 'btn tiny', type: 'button', title: 'Put back what the model says',
-      disabled: !codeDirty() ? true : null, onclick: revertCode,
-    }, 'Revert'),
-    codeStatus());
+      disabled: !codeDirty() || errors ? true : null, onclick: applyCode,
+    }, 'Apply ', h('span', { class: 'kbd' }, '⌘S')));
 }
 
 function codeProblemList(analysis) {
@@ -14445,6 +14498,7 @@ function createCodeEditor() {
   editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, applyCode);
   editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, applyCode);
   model.onDidChangeContent(() => { if (!codeView.loading) onCodeInput(model.getValue()); });
+  editor.onDidChangeCursorPosition(() => { if (codeView.cursorEl) codeView.cursorEl.textContent = codeCursorWords(); });
   // Escape belongs to the editor's own widgets, never to the page.
   root.addEventListener('keydown', (e) => { if (e.key === 'Escape') e.stopPropagation(); });
   return { root, editor, model, textFor: codeView.modelId };
@@ -14474,42 +14528,73 @@ function codeEditorElement() {
   // author folds by hand stays folded across repaints and applies.
   if (codeView.editor.foldedFor !== codeView.modelId) {
     codeView.editor.foldedFor = codeView.modelId;
-    codeView.editor.editor.trigger('scenarios', 'editor.unfoldAll', null);
-    foldScenarioGroups(codeView.scenariosFolded);
+    applyCodeFold(codeView.fold);
   }
   return codeView.editor.root;
 }
 
-// Every scenarios group folded, or every one open. A group holding a
-// fault — an error, a broken or drifted scenario — is left open when
-// folding: a fault is not folded away, though a hand may still fold it.
-// The fold action waits for the folding ranges of the text just loaded.
-function foldScenarioGroups(fold) {
+// The lines to fold for a mode, as 1-based starts of
+// `sourceFoldingRanges`: the scenarios groups, then — for 'all' — every
+// outermost block, so a definition opened by hand still shows its
+// scenarios folded. A block holding a fault — an error, a broken or
+// drifted scenario — is left open: a fault is not folded away, though
+// a hand may still fold it.
+function codeFoldLines(text, mode, faults) {
+  if (mode === 'open') return [];
+  const ranges = sourceFoldingRanges(text);
+  const keep = (r) => !faults.some((line) => line >= r.start && line <= r.end);
+  const groups = ranges.filter((r) => r.scenarios && keep(r)).map((r) => r.start);
+  if (mode !== 'all') return groups;
+  const inside = (r, o) => o !== r && o.start <= r.start && o.end >= r.end;
+  const outermost = ranges.filter((r) => keep(r) && !ranges.some((o) => inside(r, o)));
+  return [...groups, ...outermost.map((r) => r.start)];
+}
+
+// Everything open first, then folded the way the mode says, inner
+// groups before the blocks around them. The fold action waits for the
+// folding ranges of the text just loaded.
+function applyCodeFold(mode) {
   if (!codeView.editor) return;
   const { editor, model: textModel } = codeView.editor;
   const model = activeModel();
   const faults = model
     ? codeDiagnostics(analyseCode(model)).filter((d) => d.error || d.scenario).map((d) => d.line)
     : [];
-  const lines = sourceFoldingRanges(textModel.getValue())
-    .filter((r) => r.scenarios && !(fold && faults.some((line) => line >= r.start && line <= r.end)))
-    .map((r) => r.start - 1);
-  if (!lines.length) return;
-  editor.trigger('scenarios', fold ? 'editor.fold' : 'editor.unfold', { selectionLines: lines, levels: 1, direction: 'up' });
+  editor.trigger('fold', 'editor.unfoldAll', null);
+  for (const line of codeFoldLines(textModel.getValue(), mode, faults)) {
+    editor.trigger('fold', 'editor.fold', { selectionLines: [line - 1], levels: 1, direction: 'up' });
+  }
 }
 
-function scenarioFoldToggle() {
-  const folded = codeView.scenariosFolded;
+const CODE_FOLD_WORDS = { open: 'Nothing folded', scenarios: 'Scenarios folded', all: 'All folded' };
+const CODE_FOLD_ICONS = {
+  open: '<polyline points="7 15 12 20 17 15"></polyline><polyline points="7 9 12 4 17 9"></polyline>',
+  scenarios: '<polyline points="7 20 12 15 17 20"></polyline><polyline points="7 4 12 9 17 4"></polyline>',
+  all: '<polyline points="7 20 12 15 17 20"></polyline><polyline points="7 4 12 9 17 4"></polyline><path d="M4 12h16"></path>',
+};
+
+// One button through the three modes; it names the one in force.
+function codeFoldToggle() {
+  const mode = codeView.fold;
+  const next = CODE_FOLDS[(CODE_FOLDS.indexOf(mode) + 1) % CODE_FOLDS.length];
   return h('button', {
-    class: 'btn ghost tiny', type: 'button',
-    title: folded ? 'Open every scenarios group' : 'Fold every scenarios group to one line',
+    class: 'btn ghost tiny code-tool', type: 'button',
+    title: `${CODE_FOLD_WORDS[mode]} — click for ${CODE_FOLD_WORDS[next].toLowerCase()}`,
     onclick: (e) => {
-      codeView.scenariosFolded = !folded;
-      localStorage.setItem(SCENARIO_FOLD_KEY, folded ? 'open' : 'folded');
-      foldScenarioGroups(!folded);
-      e.currentTarget.replaceWith(scenarioFoldToggle());
+      codeView.fold = next;
+      localStorage.setItem(SCENARIO_FOLD_KEY, next);
+      applyCodeFold(next);
+      e.currentTarget.replaceWith(codeFoldToggle());
     },
-  }, folded ? 'Unfold scenarios' : 'Fold scenarios');
+  }, codeToolIcon(CODE_FOLD_ICONS[mode]), CODE_FOLD_WORDS[mode]);
+}
+
+function codeToolIcon(paths) {
+  return h('span', {
+    class: 'code-tool-icon',
+    html: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" '
+      + 'stroke-linejoin="round" aria-hidden="true">' + paths + '</svg>',
+  });
 }
 
 function downloadCode(model) {
@@ -14530,7 +14615,8 @@ function renderCode(model, main) {
         'Every type, event, entity, projection and command on the other pages, as one text. '
           + 'Edit it and apply with ⌘S; going back to the pages applies it too. An apply is one undo step.',
         'Scenarios sit in a scenarios group at the end of the command or projection they exercise, '
-          + 'folded to one line until opened — Unfold scenarios opens them all. Leave a then out and '
+          + 'folded to one line until opened. The fold button steps through nothing folded, scenarios folded, '
+          + 'and every definition folded with its scenarios still folded inside. Leave a then out and '
           + 'applying records what the model does; a drifted one is marked, with a fix that accepts it. '
           + 'Comments are not stored — they last as long as the text in this editor.',
         'Hover a command\'s name for the consistency boundary it derives; ⌘-click a name to go to it; '
@@ -14539,22 +14625,22 @@ function renderCode(model, main) {
       ], NOTATION_GUIDE_URL, 'notation')),
     h('div', { class: 'muted small' }, 'The same definitions as the pages, written out.')));
 
-  codeView.statusEl = codeControls();
   const editorElement = codeEditorElement();
   main.appendChild(h('div', { class: 'code-bar' },
-    codeView.statusEl,
-    h('span', { class: 'grow' }),
     // Monaco folds; the textarea it falls back to cannot.
-    codeView.editor && editorElement === codeView.editor.root ? scenarioFoldToggle() : null,
-    h('a', { class: 'small', href: NOTATION_REFERENCE_URL, target: '_blank', rel: 'noopener' }, 'Notation reference ↗'),
+    codeView.editor && editorElement === codeView.editor.root ? codeFoldToggle() : null,
     h('button', {
-      class: 'btn ghost tiny', type: 'button',
+      class: 'btn ghost tiny code-tool', type: 'button',
       onclick: () => runAsync(async () => { await navigator.clipboard.writeText(codeView.text); toast('Copied.'); }),
-    }, 'Copy'),
-    h('button', { class: 'btn ghost tiny', type: 'button', onclick: () => downloadCode(model) },
-      'Download ' + SOURCE_EXTENSION)));
+    }, codeToolIcon('<rect x="9" y="9" width="12" height="12" rx="2"></rect>'
+      + '<path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"></path>'), 'Copy'),
+    h('button', { class: 'btn ghost tiny code-tool', type: 'button', onclick: () => downloadCode(model) },
+      codeToolIcon('<path d="M12 3v12"></path><polyline points="7 10 12 15 17 10"></polyline><path d="M5 21h14"></path>'),
+      'Download ' + SOURCE_EXTENSION),
+    h('a', { class: 'small code-ref', href: NOTATION_REFERENCE_URL, target: '_blank', rel: 'noopener' }, 'Notation reference ↗')));
 
-  main.appendChild(editorElement);
+  codeView.statusEl = codeStrip();
+  main.appendChild(h('div', { class: 'code-box' }, editorElement, codeView.statusEl));
   const analysis = analyseCode(model);
   codeView.listEl = codeProblemList(analysis);
   main.appendChild(codeView.listEl);
@@ -14574,6 +14660,7 @@ function renderCode(model, main) {
     // a frame, which a background tab never gets.
     setTimeout(() => {
       if (span) revealCodeAt(span.nameLine, span.nameCol, span.line);
+      else if (state.view === 'overview') revealCodeAt(1, 1, 1);
       else if (codeView.editor) codeView.editor.editor.focus();
     }, 0);
   }

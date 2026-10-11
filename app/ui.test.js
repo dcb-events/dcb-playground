@@ -4445,6 +4445,27 @@ function build(index) {
     state.code = false;
   });
 
+  check('the fold modes: nothing, the scenarios groups, then every definition around them', () => {
+    const text = [
+      'event A { x: integer }',
+      'command Do(x: integer) {',
+      '  emit A { x }',
+      '  scenarios {',
+      '    scenario "one" {',
+      '      when Do { x: 1 }',
+      '    }',
+      '  }',
+      '}',
+      'projection P: integer = 0 {',
+      '  on A => increment 1',
+      '}',
+    ].join('\n');
+    eq(sandbox.codeFoldLines(text, 'open', []), [], 'nothing');
+    eq(sandbox.codeFoldLines(text, 'scenarios', []), [4], 'the group');
+    eq(sandbox.codeFoldLines(text, 'all', []), [4, 2, 10], 'the group first, then each definition');
+    eq(sandbox.codeFoldLines(text, 'all', [6]), [10], 'a fault keeps its group and its definition open');
+  });
+
   check('a text the model moved under stays stale through a model switch, and is never applied', () => {
     const { id, model: m } = build(ENTITIES);
     const other = createDcbModel('Other');
