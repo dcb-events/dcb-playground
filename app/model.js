@@ -206,6 +206,14 @@ const PREDICATE_SYMBOL = {
 // Whatever the predicate, the derived value is one boolean.
 const DERIVED_PREDICATES = BINARY_PREDICATES.filter((p) => p !== 'equalsAny');
 
+// What a derived projection may compute instead (9.0): one operator
+// over two numbers, yielding a number. No `divide` — an integer stays
+// an integer, and there is no division by zero to define. A longer
+// expression is a chain of derived projections, each one value the
+// sandbox can watch.
+const DERIVED_OPERATORS = ['add', 'subtract', 'multiply', 'min', 'max'];
+const DERIVED_OPERATOR_SYMBOL = { add: '+', subtract: '-', multiply: '*' };
+
 const OPERATIONS = ['set', 'increment', 'decrement', 'append', 'remove'];
 
 // ============================================================
@@ -927,6 +935,17 @@ function conditionText(condition) {
   return condition.negate ? `not(${core})` : core;
 }
 
+// A derived value as one line: its comparison, or its computation —
+// `a - b`, `min(a, b)`.
+function derivedText(derived) {
+  if (!derived) return '';
+  if (derived.operator === undefined) return conditionText(derived);
+  const left = operandText(derived.leftHandSide);
+  const right = operandText(derived.rightHandSide);
+  const symbol = DERIVED_OPERATOR_SYMBOL[derived.operator];
+  return symbol ? `${left} ${symbol} ${right}` : `${derived.operator}(${left}, ${right})`;
+}
+
 // What a scenario is called. The stored name wins; without one it is
 // read off the outcome, which is why it changes when the outcome does —
 // and why the interface freezes it the moment a scenario drifts, rather
@@ -968,6 +987,54 @@ function derivedOf(target) {
   return target && target.derived && !target.script ? target.derived : null;
 }
 
+// Whether a derived value computes a number (`operator`, 9.0) rather
+// than comparing (`predicate`, always a boolean). A body carrying both
+// reads as a comparison, and the advisory says both are there.
+function derivedComputes(derived) {
+  return !!derived && derived.operator !== undefined && derived.predicate === undefined;
+}
+
+// What a type is underneath, as arithmetic sees it: 'integer',
+// 'number', or null for anything that is no number. A scalar value
+// type counts as its schema's base, as `operationsFor` counts it — an
+// enum is a set of members, not a number, whatever they are spelled as.
+function numericBaseOf(model, typeName) {
+  if (typeName === 'integer' || typeName === 'number') return typeName;
+  const body = model['custom-type-definitions'][typeName];
+  if (!body || !body.schema || Array.isArray(body.properties) || body.schema.enum) return null;
+  return body.schema.type === 'integer' || body.schema.type === 'number' ? body.schema.type : null;
+}
+
+// What one side of a computation is, as `{base, nullable}` — or null
+// when it is no single number. A literal is what it is; a read is what
+// its projection holds, and may be null while that projection starts
+// at null (declared) or computes from something that may (derived). A
+// script's value is opaque, and taken at its word.
+function derivedInputOf(model, operand, seen = []) {
+  if (typeof operand === 'number') return { base: Number.isInteger(operand) ? 'integer' : 'number', nullable: false };
+  if (operand === null) return { base: null, nullable: true };
+  if (operandSource(operand) !== 'projection-read') return null;
+  const target = model['projection-definitions'][operand.projection];
+  if (!target || target.isList) return null;
+  const base = numericBaseOf(model, target.valueType);
+  if (!base) return null;
+  const inner = derivedOf(target);
+  if (inner) {
+    if (!derivedComputes(inner) || seen.includes(operand.projection)) return { base, nullable: false };
+    const sides = derivedOperands(inner).map((o) => derivedInputOf(model, o, [...seen, operand.projection]));
+    return { base, nullable: sides.some((side) => side && side.nullable) };
+  }
+  return { base, nullable: !scriptOf(target) && (target.initialValue === null || target.initialValue === undefined) };
+}
+
+// The type a computation yields from its two sides: an integer from two
+// integers, a number otherwise — or null when a side is no number.
+function derivedResultBase(model, derived) {
+  const sides = derivedOperands(derived).map((o) => derivedInputOf(model, o));
+  if (sides.some((side) => !side || !side.base)) return null;
+  return sides.every((side) => side.base === 'integer') ? 'integer' : 'number';
+}
+
 // Which experimental features a model uses, as `{feature, where}`
 // pairs in a stable order — `feature` one of EXPERIMENTAL_FEATURES'
 // keys, `where` the definition it was found on. The flag (shared.js)
@@ -978,7 +1045,7 @@ function derivedOf(target) {
 const EXPERIMENTAL_FEATURES = {
   entities: 'entities',
   lifecycles: 'lifecycles',
-  derived: 'derived projections',
+  scripted: 'scripted projections',
   guards: 'guarded emissions',
   optional: 'optional reads',
   excluding: 'excluding',
@@ -1004,7 +1071,7 @@ function experimentalFeatures(model) {
     if (body && body.lifecycle) note('lifecycles', name);
   }
   for (const [name, body] of Object.entries(model['projection-definitions'] || {})) {
-    if (derivedOf(body)) note('derived', name);
+    if (scriptOf(body)) note('scripted', name);
     if (!scriptOf(body) && usesCurrentValue(body && body.handlers)) note('currentValue', name);
   }
   for (const [name, body] of Object.entries(model['command-definitions'] || {})) {
@@ -1737,6 +1804,58 @@ function projectionHandledTypes(model, projectionName, seen = []) {
   return uniq(out);
 }
 
+// The reads a read of `read.projection` comes down to, as `[{read,
+// via}]`: itself for a folded projection, and for a derived one each
+// projection it folds in the end, read by the values this read gave —
+// an operand's `{parameterName}` is the derived projection's own tag,
+// so it takes whatever this read gave that tag; a tag literal stays
+// itself. A derived projection's query is its operands' queries, each
+// under its *own* tags: the weekly budget is kept per developer, the
+// week's allocations per developer and week, and one query ANDing both
+// would miss the registration. `seen` stops a cycle, which the advisory
+// and evaluation report.
+function foldedReads(model, read, seen = []) {
+  const projection = model['projection-definitions'][read.projection];
+  const derived = projection && derivedOf(projection);
+  if (!derived) return [{ read, via: seen.length ? read.projection : null }];
+  if (seen.includes(read.projection)) return [];
+  const held = (read.tags && typeof read.tags === 'object') ? read.tags : {};
+  const out = [];
+  for (const operand of derivedOperands(derived)) {
+    if (operandSource(operand) !== 'projection-read') continue;
+    const tags = {};
+    for (const [name, value] of readTagEntries(operand)) {
+      tags[name] = operandSource(value) === 'parameter' ? held[value.parameterName] : value;
+    }
+    out.push(...foldedReads(model, { projection: operand.projection, tags }, [...seen, read.projection]));
+  }
+  return out;
+}
+
+// One query item per read a command makes — or, for a derived
+// projection, one per projection it folds (`via`), each written under
+// that projection's own tags; the same query reached twice is one.
+function readItems(model, body, read, base) {
+  const items = [];
+  const seen = new Set();
+  for (const { read: folded, via } of foldedReads(model, read)) {
+    const item = {
+      projection: read.projection,
+      ...base,
+      ...(via ? { via } : {}),
+      fannedOut: !!readFanTag(folded),
+      tags: readTagTexts(model, body, folded),
+      types: projectionHandledTypes(model, folded.projection).sort(),
+      readProperties: [],
+    };
+    const key = JSON.stringify([item.tags, item.types, item.fannedOut]);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    items.push(item);
+  }
+  return items;
+}
+
 function deriveDcb(model, body) {
   const items = [];
 
@@ -1751,14 +1870,7 @@ function deriveDcb(model, body) {
       // tag value, one per component for a record — whatever kind of
       // projection it reads: declared, scripted or derived, none of them
       // can hide what it reads.
-      items.push({
-        projection: binding.projection,
-        alias: binding.alias,
-        fannedOut: !!readFanTag(binding),
-        tags: readTagTexts(model, body, binding),
-        types: projectionHandledTypes(model, binding.projection).sort(),
-        readProperties: [],
-      });
+      items.push(...readItems(model, body, binding, { alias: binding.alias }));
       continue;
     }
 
@@ -1792,15 +1904,7 @@ function deriveDcb(model, body) {
   // is written: two rules about `CourseStatus(courseId)` read it once.
   // It has no alias, so its item is known by its spelling.
   for (const { key, read } of inlineReads(body)) {
-    items.push({
-      projection: read.projection,
-      alias: null,
-      inline: key,
-      fannedOut: !!readFanTag(read),
-      tags: readTagTexts(model, body, read),
-      types: projectionHandledTypes(model, read.projection).sort(),
-      readProperties: [],
-    });
+    items.push(...readItems(model, body, read, { alias: null, inline: key }));
   }
 
   const writes = [];
@@ -1998,17 +2102,16 @@ function deriveRounds(body) {
 // cannot disagree.
 function boundarySummary(model, body) {
   const dcb = deriveDcb(model, body);
-  const byAlias = new Map(dcb.items.filter((item) => item.alias).map((item) => [item.alias, item]));
   const rounds = deriveRounds(body);
-  const queries = rounds.map((round) => round.map((entry) => byAlias.get(entry.binding.alias)).filter(Boolean));
+  const queries = rounds.map((round) =>
+    round.flatMap((entry) => dcb.items.filter((item) => item.alias && item.alias === entry.binding.alias)));
   // An inline read sits in the query its depth says: one after the
   // aliases and reads its tags wait for.
   const roundOf = new Map(rounds.flatMap((round, r) => round.map((entry) => [entry.binding.alias, r + 1])));
   for (const { key, read } of inlineReads(body)) {
-    const item = dcb.items.find((i) => i.inline === key);
     const depth = operandDepth(read, roundOf);
     while (queries.length < depth) queries.push([]);
-    if (item) queries[depth - 1].push(item);
+    queries[depth - 1].push(...dcb.items.filter((i) => i.inline === key));
   }
   for (let i = queries.length - 1; i >= 0; i--) if (!queries[i].length) queries.splice(i, 1);
   const items = dcb.items;
@@ -2902,14 +3005,20 @@ function validateProjectionBody(model, projectionName, body) {
   }
 
   if (derivedOf(body)) {
-    // A derived projection is nothing but its predicate: no initial
-    // value (before any event it derives from its operands' initial
-    // values), no handlers (its operands' handlers are its query), and
-    // always one boolean (the predicate's outcome).
-    if (body.valueType !== 'boolean' || body.isList) {
+    // A derived projection is nothing but its predicate or computation:
+    // no initial value (before any event it derives from its operands'
+    // initial values), no handlers (its operands' handlers are its
+    // query), and one value — a comparison's boolean, or a number.
+    if (body.derived.predicate !== undefined && body.derived.operator !== undefined) {
       throw new DomainError(
-        `Projection "${projectionName}" is derived, so it holds its predicate's outcome — ` +
-        `one boolean, never ${body.isList ? 'a list' : `a ${body.valueType}`}.`
+        `Projection "${projectionName}" states both a predicate and an operator — it compares or it ` +
+        'computes, not both. It reads as a comparison until one goes.'
+      );
+    }
+    if (!derivedComputes(body.derived) && (body.valueType !== 'boolean' || body.isList)) {
+      throw new DomainError(
+        `Projection "${projectionName}" is derived by a comparison, so it holds its outcome — ` +
+        `one boolean, never ${body.isList ? 'a list' : `${typeArticle(body.valueType)} ${body.valueType}`}.`
       );
     }
     if (body.initialValue !== undefined) {
@@ -2997,7 +3106,17 @@ function validateProjectionTags(model, projectionName, body) {
 function validateDerived(model, projectionName, body) {
   const derived = body.derived;
   const label = `projection "${projectionName}"`;
-  if (!DERIVED_PREDICATES.includes(derived.predicate)) {
+  if (derivedComputes(derived)) {
+    if (!DERIVED_OPERATORS.includes(derived.operator)) {
+      throw new DomainError(
+        `${label} computes through "${derived.operator}", which is not an operator a derived ` +
+        `projection knows (${DERIVED_OPERATORS.join(', ')}).`
+      );
+    }
+    if (derived.negate !== undefined) {
+      throw new DomainError(`${label} negates a computation — "negate" belongs to a comparison.`);
+    }
+  } else if (!DERIVED_PREDICATES.includes(derived.predicate)) {
     throw new DomainError(
       `${label} derives through "${derived.predicate}", which is not a predicate a derived ` +
       'projection can state.'
@@ -3112,6 +3231,39 @@ function validateDerived(model, projectionName, body) {
     if (members && !members.includes(maybeEnum.enumMember)) {
       throw new DomainError(
         `"${maybeEnum.enumMember}" is not a member of ${target.valueType} (${label}'s predicate).`
+      );
+    }
+  }
+
+  // A computation takes two single numbers and yields one: an integer
+  // from two integers, a number otherwise — and null from a null side,
+  // which an ordering against it then errors on, so a side that may be
+  // null is said here first.
+  if (derivedComputes(derived)) {
+    for (const operand of derivedOperands(derived)) {
+      if (!derivedInputOf(model, operand)) {
+        throw new DomainError(
+          `${label} computes from "${operandText(operand)}", which is not a single number — ` +
+          `"${derived.operator}" takes an integer or a number on each side.`
+        );
+      }
+    }
+    const result = derivedResultBase(model, derived);
+    const declared = numericBaseOf(model, body.valueType);
+    if (!declared || body.isList || (result === 'number' && declared === 'integer')) {
+      throw new DomainError(
+        `${label} computes ${typeArticle(result)} ${result}, but holds ` +
+        `${body.isList ? `a list of ${body.valueType}` : `${typeArticle(body.valueType)} ${body.valueType}`} — ` +
+        `declare it ${result === 'integer' ? 'an integer' : 'a number'}.`
+      );
+    }
+    const nullable = derivedOperands(derived)
+      .find((operand) => (derivedInputOf(model, operand) || {}).nullable);
+    if (nullable !== undefined) {
+      throw new DomainError(
+        `${label} computes from ${operandText(nullable)}, which can be null — a projection it ` +
+        `reads starts at null — so ${projectionName} is null then too, and a rule ordering ` +
+        'against it errors. Start that projection at a number.'
       );
     }
   }
@@ -5093,9 +5245,15 @@ function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
 // name. A 7.x reader would tag what this document leaves untagged, and
 // a 7.x document read here would carry no tag at all — so this build
 // reads 8.x only. Nothing is public yet; there is no upgrader.
-const MODEL_VERSION = '8.0';
-const MODEL_SCHEMA_URL = 'https://dcb.events/schemas/model/v8.json';
-const READABLE_MAJORS = [8];
+// 9.0 let a derived projection compute as well as compare: `operator`
+// (`add`, `subtract`, `multiply`, `min`, `max`) in place of `predicate`,
+// over two numbers, yielding a number. A new member of a closed
+// vocabulary — an 8.x reader finds no predicate and errors — so a
+// major; every 8.x document is a 9.0 document unchanged, so this build
+// reads 8.x whole.
+const MODEL_VERSION = '9.0';
+const MODEL_SCHEMA_URL = 'https://dcb.events/schemas/model/v9.json';
+const READABLE_MAJORS = [8, 9];
 
 const SCHEMA_FIELD = {
   'custom-type-definition': 'customTypeDefinitions',
@@ -6524,6 +6682,197 @@ function seedDerivedPending(modelId) {
   });
 }
 
+// Weekly developer hours: a developer registers with the hours they
+// have per week, and every allocation is subtracted from that week's
+// budget. What is left is *computed*, not folded — a derived
+// projection subtracting the hours allocated that week from the weekly
+// budget — so `AllocateHours` reads one value, and its boundary is
+// still both queries: the developer's registration and that week's
+// allocations.
+function seedDeveloperHours(modelId) {
+  const prop = seedProp;
+  const handler = seedHandler;
+  const param = seedParam;
+  const read = (projection, tags) => ({ projection, tags });
+
+  addDefinition('custom-type-definition', modelId, 'ProjectId', { schema: { type: 'string' }, isTag: true });
+  addDefinition('custom-type-definition', modelId, 'ProjectStatus', seedEnumType('ProjectStatus', ['Active', 'Archived']));
+  addDefinition('custom-type-definition', modelId, 'DeveloperId', { schema: { type: 'string' }, isTag: true });
+  addDefinition('custom-type-definition', modelId, 'WeekNumber', { schema: { type: 'integer' }, isTag: true });
+
+  const event = (name, properties) =>
+    addDefinition('event-definition', modelId, name, { properties, tags: seedTags(modelId, properties) });
+  event('ProjectAdded', [prop('projectId', 'ProjectId'), prop('requiredSeniorityLevel', 'integer')]);
+  event('ProjectArchived', [prop('projectId', 'ProjectId')]);
+  event('DeveloperRegistered', [
+    prop('developerId', 'DeveloperId'), prop('seniorityLevel', 'integer'), prop('availableHoursPerWeek', 'integer'),
+  ]);
+  event('HoursAllocated', [
+    prop('projectId', 'ProjectId'), prop('developerId', 'DeveloperId'), prop('week', 'WeekNumber'),
+    prop('requestedHours', 'integer'),
+  ]);
+
+  const project = [{ name: 'projectId', tagType: 'ProjectId' }];
+  const developer = [{ name: 'developerId', tagType: 'DeveloperId' }];
+  const developerWeek = [...developer, { name: 'week', tagType: 'WeekNumber' }];
+  const projection = (name, tags, valueType, initialValue, handlers) =>
+    addDefinition('projection-definition', modelId, name, { tags, valueType, isList: false, initialValue, handlers });
+  projection('ProjectStatus', project, 'ProjectStatus', null, [
+    handler('ProjectAdded', 'set', { enumMember: 'Active' }),
+    handler('ProjectArchived', 'set', { enumMember: 'Archived' }),
+  ]);
+  projection('ProjectRequiredSeniorityLevel', project, 'integer', null, [
+    handler('ProjectAdded', 'set', { eventProperty: 'requiredSeniorityLevel' }),
+  ]);
+  projection('DeveloperExists', developer, 'boolean', false, [handler('DeveloperRegistered', 'set', true)]);
+  projection('DeveloperSeniorityLevel', developer, 'integer', null, [
+    handler('DeveloperRegistered', 'set', { eventProperty: 'seniorityLevel' }),
+  ]);
+  // Starts at 0, not null: a computation over null is null, and the
+  // remaining hours of a developer nobody registered are better zero
+  // than an ordering that errors.
+  projection('DeveloperAvailableHoursPerWeek', developer, 'integer', 0, [
+    handler('DeveloperRegistered', 'set', { eventProperty: 'availableHoursPerWeek' }),
+  ]);
+  projection('DeveloperAllocatedHoursForWeek', developerWeek, 'integer', 0, [
+    handler('HoursAllocated', 'increment', { eventProperty: 'requestedHours' }),
+  ]);
+  const own = { developerId: param('developerId') };
+  addDefinition('projection-definition', modelId, 'DeveloperRemainingHoursForWeek', {
+    tags: developerWeek,
+    valueType: 'integer',
+    isList: false,
+    derived: {
+      leftHandSide: read('DeveloperAvailableHoursPerWeek', own),
+      operator: 'subtract',
+      rightHandSide: read('DeveloperAllocatedHoursForWeek', { ...own, week: param('week') }),
+    },
+  });
+
+  addDefinition('command-definition', modelId, 'AddProject', {
+    feature: 'Projects',
+    properties: [prop('projectId', 'ProjectId'), prop('requiredSeniorityLevel', 'integer')],
+    boundary: [],
+    conditions: [{
+      leftHandSide: read('ProjectStatus', { projectId: param('projectId') }),
+      predicate: 'equals', rightHandSide: null,
+      rejection: 'Project already exists',
+    }],
+    publishes: [{
+      name: 'ProjectAdded',
+      parameters: { projectId: param('projectId'), requiredSeniorityLevel: param('requiredSeniorityLevel') },
+    }],
+  });
+  addDefinition('command-definition', modelId, 'ArchiveProject', {
+    feature: 'Projects',
+    properties: [prop('projectId', 'ProjectId')],
+    boundary: [],
+    conditions: [{
+      leftHandSide: read('ProjectStatus', { projectId: param('projectId') }),
+      predicate: 'equals', rightHandSide: { enumMember: 'Active' },
+      rejection: 'Project is not active',
+    }],
+    publishes: [{ name: 'ProjectArchived', parameters: { projectId: param('projectId') } }],
+  });
+  addDefinition('command-definition', modelId, 'RegisterDeveloper', {
+    feature: 'Developers',
+    properties: [
+      prop('developerId', 'DeveloperId'), prop('seniorityLevel', 'integer'), prop('availableHoursPerWeek', 'integer'),
+    ],
+    boundary: [],
+    conditions: [{
+      leftHandSide: read('DeveloperExists', { developerId: param('developerId') }),
+      predicate: 'isFalse',
+      rejection: 'Developer is already registered',
+    }],
+    publishes: [{
+      name: 'DeveloperRegistered',
+      parameters: {
+        developerId: param('developerId'), seniorityLevel: param('seniorityLevel'),
+        availableHoursPerWeek: param('availableHoursPerWeek'),
+      },
+    }],
+  });
+  addDefinition('command-definition', modelId, 'AllocateHours', {
+    feature: 'Projects',
+    properties: [
+      prop('projectId', 'ProjectId'), prop('developerId', 'DeveloperId'), prop('week', 'WeekNumber'),
+      prop('requestedHours', 'integer'),
+    ],
+    boundary: [],
+    conditions: [
+      {
+        leftHandSide: read('ProjectStatus', { projectId: param('projectId') }),
+        predicate: 'equals', rightHandSide: { enumMember: 'Active' },
+        rejection: 'Project is not active',
+      },
+      {
+        leftHandSide: read('DeveloperExists', { developerId: param('developerId') }),
+        predicate: 'isTrue',
+        rejection: 'Developer is not registered',
+      },
+      {
+        leftHandSide: read('DeveloperSeniorityLevel', { developerId: param('developerId') }),
+        predicate: 'greaterThanOrEquals',
+        rightHandSide: read('ProjectRequiredSeniorityLevel', { projectId: param('projectId') }),
+        rejection: 'Developer seniority level too low',
+      },
+      {
+        leftHandSide: read('DeveloperRemainingHoursForWeek', { developerId: param('developerId'), week: param('week') }),
+        predicate: 'greaterThanOrEquals', rightHandSide: param('requestedHours'),
+        rejection: 'Developer does not have enough hours left that week',
+      },
+    ],
+    publishes: [{
+      name: 'HoursAllocated',
+      parameters: {
+        projectId: param('projectId'), developerId: param('developerId'), week: param('week'),
+        requestedHours: param('requestedHours'),
+      },
+    }],
+  });
+
+  const added = { event: 'ProjectAdded', data: { projectId: 'p1', requiredSeniorityLevel: 2 } };
+  const registered = { event: 'DeveloperRegistered', data: { developerId: 'd1', seniorityLevel: 3, availableHoursPerWeek: 40 } };
+  const allocated = (week, requestedHours) =>
+    ({ projectId: 'p1', developerId: 'd1', week, requestedHours });
+  const scenario = (id, body) => addDefinition('scenario-definition', modelId, id, { command: 'AllocateHours', ...body });
+  scenario('3b0f6c52-8d1e-4a7f-9c24-6e5d1a8b7f03', {
+    name: 'allocates hours the developer has left that week',
+    given: [added, registered, { event: 'HoursAllocated', data: allocated(12, 30) }],
+    when: { arguments: allocated(12, 10) },
+    then: { outcome: 'published', events: [{ type: 'HoursAllocated', data: allocated(12, 10) }] },
+  });
+  scenario('9e41d7a3-2c6b-4f58-b0e1-7a3c5d9f2e64', {
+    name: 'refuses more hours than are left that week',
+    given: [added, registered, { event: 'HoursAllocated', data: allocated(12, 30) }],
+    when: { arguments: allocated(12, 11) },
+    then: { outcome: 'rejected', events: [], rejection: 'Developer does not have enough hours left that week' },
+  });
+  scenario('c7a2e9f1-5b3d-4e86-a1f4-0d8b6c2e9a75', {
+    name: 'another week starts from the whole weekly budget',
+    given: [added, registered, { event: 'HoursAllocated', data: allocated(12, 40) }],
+    when: { arguments: allocated(13, 40) },
+    then: { outcome: 'published', events: [{ type: 'HoursAllocated', data: allocated(13, 40) }] },
+  });
+  scenario('5d8c1b46-e7f2-4a93-8c05-b2f6e4a1d387', {
+    name: 'refuses a developer nobody registered',
+    given: [added],
+    when: { arguments: allocated(12, 10) },
+    then: { outcome: 'rejected', events: [], rejection: 'Developer is not registered' },
+  });
+  seedProjectionScenario(modelId, '1f6e3a9d-4b72-4c08-9e5a-d3c7b8f2a160', {
+    name: 'is the weekly budget less what that week has allocated',
+    projection: 'DeveloperRemainingHoursForWeek',
+    given: [registered, { event: 'HoursAllocated', data: allocated(12, 30) }],
+    tags: {
+      developerId: { tagType: 'DeveloperId', tagValue: 'd1' },
+      week: { tagType: 'WeekNumber', tagValue: 12 },
+    },
+    then: 10,
+  });
+}
+
 // The decision made at write time and recorded. `UpdateText` carries
 // two guarded emissions — `TextChanged` while the new text differs
 // from the published one, `TextRevertedToPublished` while it does not
@@ -6716,6 +7065,7 @@ const PREDEFINED_MODELS = [
   {
     name: 'Content based decisions (scripted projection)',
     slug: 'content-decisions-scripted',
+    experimental: true,
     description: 'The baseline: a document is Published or PendingChanges depending on whether '
       + 'its current text equals the last published one — a comparison no declared handler can '
       + 'express, so the status projection is scripted, keeps both texts as hidden state and '
@@ -6750,11 +7100,19 @@ const PREDEFINED_MODELS = [
   {
     name: 'Content based decisions (derived projection)',
     slug: 'content-decisions-derived',
-    experimental: true,
     description: 'The comparison declared once: hasPendingChanges is a derived projection — no '
       + 'handlers, one predicate over the two text projections — read by the publish guard, so '
       + 'a frontend could interpret the same declaration.',
     build: (modelId) => { seedDocumentAuthoring(modelId); seedDerivedPending(modelId); seedWithoutEntities(modelId); },
+  },
+  {
+    name: 'Developer hours (derived computation)',
+    slug: 'developer-hours',
+    description: 'Developers register the hours they have per week, and allocations to '
+      + 'projects are subtracted from that week\'s budget. The hours left are a derived '
+      + 'projection — the weekly budget less that week\'s allocations — so allocating reads '
+      + 'one value, and its boundary is still both queries.',
+    build: (modelId) => { seedDeveloperHours(modelId); },
   },
   {
     name: 'Course Example (with entities)',

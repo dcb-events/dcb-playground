@@ -55,9 +55,9 @@
 // by sight. A value has to be of the tag's declared type; a literal
 // says its type anyway, `CourseStatus(CourseId("c1"))`, so the text
 // shows which tag it fills. A scripted projection declares what it
-// takes besides after its tags, `(tag courseId: CourseId, days:
-// integer)`, and a read gives those after the tags too. `each` before a
-// value reads once per element of a list. A read may sit anywhere an
+// takes besides after its tags, `scripted projection X (tag courseId:
+// CourseId, days: integer)`, and a read gives those after the tags
+// too. `each` before a value reads once per element of a list. A read may sit anywhere an
 // operand does — `require CourseStatus(courseId) == Existent`, an
 // emission's `courseId: CourseNumbering()`, another read's value
 // `OwnedCourses(CourseOwner(courseId))` — and an `alias` only names
@@ -133,12 +133,23 @@
 // not only run — what an editor offers per type (`operationsFor`),
 // whether a boolean only ever moves one way (`isMonotoneBoolean`),
 // which event moves a lifecycle — and a keyword shows that edge where
-// an expression would hide it. Arithmetic is what `script` is for: its
-// arms are expressions over `state`, `event` and `args`, behind a door
-// that says analysis stops there. Expect the list to stay short: each
-// new operation is a major (a reader fails on one it does not know)
-// and has to earn its place by being analysable — `max` / `min` and a
-// duplicate-free append are the candidates in sight.
+// an expression would hide it. Arithmetic *between* values is a derived
+// projection's (9.0): `derived projection Left (…): integer { Cap(x) -
+// Taken(x) }`, one operator — `+`, `-`, `*`, `min(a, b)`, `max(a, b)` —
+// over two projections or literals, outside any fold, so the fold arms
+// stay keywords. What neither says is what a script is for (experimental):
+// its arms are expressions over `state`, `event` and `args`, behind a
+// door that says analysis stops there. Expect the list to stay short:
+// each new operation is a major (a reader fails on one it does not
+// know) and has to earn its place by being analysable — a
+// duplicate-free append is the candidate in sight.
+//
+// **What kind a projection is, it says in front**: `derived projection`
+// holds one expression in its block, a comparison or a computation, and
+// no initial value; `scripted projection` takes arguments after its
+// tags and holds `initialState`, `exposes` and code arms. The header
+// already knows what the block may hold, so an argument on anything but
+// a script is an error at the header, not after the block.
 //
 // **Operand names resolve per command.** A bare or dotted lowercase
 // name is an alias when some `alias` in the same command declares it
@@ -256,7 +267,11 @@ const SOURCE_ANNOTATIONS = {
 
 const SOURCE_IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const SOURCE_MEMBER_RE = /^[A-Z][A-Za-z0-9_]*$/;
-const SOURCE_DECL_STARTS = ['@', 'model', 'type', 'tag', 'enum', 'record', 'event', 'entity', 'untagged', 'projection', 'command'];
+const SOURCE_DECL_STARTS = ['@', 'model', 'type', 'tag', 'enum', 'record', 'event', 'entity', 'untagged', 'derived', 'scripted', 'projection', 'command'];
+// What a derived projection computes with, spelled as the symbols a
+// developer would type; `min` and `max` are calls, `min(a, b)`.
+const SOURCE_OPERATORS = { '+': 'add', '-': 'subtract', '*': 'multiply' };
+const SOURCE_OPERATOR_CALLS = ['min', 'max'];
 const SOURCE_WORD_PREDICATES = ['contains', 'containsAny', 'startsWith', 'endsWith'];
 const SOURCE_SYMBOL_PREDICATES = { '==': 'equals', '<': 'lessThan', '<=': 'lessThanOrEquals', '>': 'greaterThan', '>=': 'greaterThanOrEquals' };
 const SOURCE_COUNT_PREDICATES = { '==': 'countEquals', '<': 'countLessThan', '>': 'countGreaterThan' };
@@ -273,9 +288,15 @@ function sourcePut(target, key, value) {
 // Lexing.
 // ============================================================
 
-const SOURCE_PUNCT = ['=>', '==', '!=', '<=', '>=', '<', '>', '=', '{', '}', '(', ')', '[', ']', ',', ':', '.', '?', '@'];
+const SOURCE_PUNCT = ['=>', '==', '!=', '<=', '>=', '<', '>', '=', '{', '}', '(', ')', '[', ']', ',', ':', '.', '?', '@', '+', '-', '*'];
 const SOURCE_NUMBER_RE = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/y;
 const SOURCE_WORD_RE = /[A-Za-z_][A-Za-z0-9_]*/y;
+
+// Whether a token closes a value, so a `-` straight after it subtracts
+// rather than starting a negative number: `A(x) -1`, `3 -1`.
+function endsValue(token) {
+  return !!token && ((token.t === 'punct' && (token.v === ')' || token.v === ']')) || token.t === 'number');
+}
 
 function lexSource(text) {
   const tokens = [];
@@ -330,7 +351,7 @@ function lexSource(text) {
         try { value = JSON.parse(raw); } catch { report('This string has an escape JSON does not know.', start); }
         token = { t: 'string', v: value };
       }
-    } else if ((c >= '0' && c <= '9') || (c === '-' && text[i + 1] >= '0' && text[i + 1] <= '9')) {
+    } else if ((c >= '0' && c <= '9') || (c === '-' && text[i + 1] >= '0' && text[i + 1] <= '9' && !endsValue(tokens[tokens.length - 1]))) {
       SOURCE_NUMBER_RE.lastIndex = i;
       const match = SOURCE_NUMBER_RE.exec(text);
       advanceTo(i + match[0].length);
@@ -443,7 +464,8 @@ function parseModelSource(text, options = {}) {
     if (token.t === 'punct') return token.v === '@' && peek(1).t === 'ident';
     // `tag courseId: CourseId` is an event's property, marked.
     if (token.v === 'tag') return ['type', 'enum', 'record'].includes(peek(1).v);
-    if (token.v === 'untagged') return peek(1).v === 'projection';
+    if (token.v === 'untagged') return ['projection', 'derived', 'scripted'].includes(peek(1).v);
+    if (token.v === 'derived' || token.v === 'scripted') return peek(1).v === 'projection' || peek(1).v === 'untagged';
     return token.t === 'ident' && SOURCE_DECL_STARTS.includes(token.v)
       && (peek(1).t === 'ident' || peek(1).t === 'string');
   };
@@ -634,6 +656,32 @@ function parseModelSource(text, options = {}) {
       return own;
     }
     return literalValue();
+  };
+
+  // What a derived projection derives: `min(a, b)` / `max(a, b)`, an
+  // operand, one of + - *, and another — or else a comparison, read the
+  // way a rule is.
+  const derivedExpression = () => {
+    for (const word of SOURCE_OPERATOR_CALLS) {
+      if (!is(word) || !is('(', 1)) continue;
+      next(); next();
+      const leftHandSide = derivedOperand();
+      expect(',', `"," and the other side of ${word}(…)`);
+      const rightHandSide = derivedOperand();
+      expect(')');
+      return { leftHandSide, operator: word, rightHandSide };
+    }
+    if (!is('not') && !(is('count') && is('(', 1))) {
+      const from = at;
+      const leftHandSide = derivedOperand();
+      const op = peek();
+      if (op.t === 'punct' && SOURCE_OPERATORS[op.v]) {
+        next();
+        return { leftHandSide, operator: SOURCE_OPERATORS[op.v], rightHandSide: derivedOperand() };
+      }
+      at = from;
+    }
+    return condition(derivedOperand);
   };
 
   const handlerOperand = () => {
@@ -977,16 +1025,30 @@ function parseModelSource(text, options = {}) {
   // log; anything else names its tags in its header. Saying neither is
   // an error with both fixes — the partition is too easy to forget for
   // the text to assume one.
-  const projectionDecl = (start, annotations, untagged) => {
+  //
+  // `derived` or `scripted` right before `projection` says what kind it
+  // is, so the header already knows what the block may hold: a script
+  // takes arguments after its tags, a derived projection holds one
+  // expression and no initial value.
+  const projectionDecl = (start, annotations, untagged, kind) => {
     const keyword = next();
     const nameToken = declName('a projection name');
+    const derivedKind = !!kind && kind.v === 'derived';
+    const scriptedKind = !!kind && kind.v === 'scripted';
     if (is('json')) {
       if (untagged) fail('A json body says its own tags — drop "untagged".', untagged);
+      if (kind) fail(`A json body says what it is — drop "${kind.v}".`, kind);
       return define('projection-definition', nameToken, annotate('projection-definition', jsonBody(), annotations), start);
     }
     annotate('projection-definition', {}, annotations);
     const body = {};
     const header = is('(') ? projectionParameterList() : { tags: [], args: [] };
+    // What a read gives besides the tags is what the code takes, so only
+    // a script declares any.
+    if (header.args.length && !scriptedKind) {
+      fail(`Only a scripted projection takes values besides its tags — ${header.args[0].argument.name} is not a tag `
+        + `(scripted projection ${nameToken.v} (…)).`, header.args[0].token);
+    }
     if (untagged && header.tags.length) fail(`${nameToken.v} is declared untagged and tagged by ${header.tags.map((t) => t.name).join(', ')} — one or the other.`, untagged);
     if (!untagged && !header.tags.length) {
       const lowered = nameToken.v.charAt(0).toLowerCase() + nameToken.v.slice(1);
@@ -995,7 +1057,7 @@ function parseModelSource(text, options = {}) {
         message: `Say what ${nameToken.v} is tagged by — projection ${nameToken.v} (tag ${lowered}Id: …) — or that it is untagged.`,
         line: nameToken.line, col: nameToken.col, endLine: nameToken.endLine, endCol: nameToken.endCol,
         fix: {
-          line: keyword.line, col: keyword.col, endLine: keyword.line, endCol: keyword.col,
+          line: (kind || keyword).line, col: (kind || keyword).col, endLine: (kind || keyword).line, endCol: (kind || keyword).col,
           text: 'untagged ', title: 'Declare it untagged', label: 'untagged',
         },
       });
@@ -1006,11 +1068,19 @@ function parseModelSource(text, options = {}) {
     body.valueType = valueType.v;
     mark(body, 'valueType', valueType);
     body.isList = !!(accept('[') && expect(']'));
+    if (is('=') && derivedKind) fail(`A derived projection has no initial value — before any event it is what its operands start at.`);
     if (accept('=')) body.initialValue = literalValue();
-    if (accept('derived')) body.derived = condition(derivedOperand);
-    if (accept('{')) {
+    if (is('derived')) {
+      fail(`"derived" goes in front, and what it derives in the block: derived projection ${nameToken.v} (…): `
+        + `${body.valueType} { … }.`);
+    }
+    if (derivedKind) {
+      expect('{', `"{" and what it derives — derived projection ${nameToken.v} (…): ${body.valueType} { A(…) - B(…) }`);
+      body.derived = derivedExpression();
+    }
+    if (derivedKind || accept('{')) {
       const handlers = [];
-      let script = null;
+      let script = scriptedKind ? {} : null;
       const scriptField = (key, value) => {
         script = script || {};
         if (script[key] !== undefined) fail(`${key} is given twice.`, last());
@@ -1022,6 +1092,12 @@ function parseModelSource(text, options = {}) {
       while (!is('}')) {
         guardBlock('}');
         if (group && !is('scenarios')) fail('The scenarios group comes last — nothing follows it in the block.');
+        if (derivedKind && !is('scenarios') && !is('scenario')) {
+          fail(`A derived projection's block holds what it derives, then its scenarios — found ${describeToken(peek())}.`);
+        }
+        if (!scriptedKind && (is('initialState') || is('exposes'))) {
+          fail(`Only a scripted projection has ${peek().v} — scripted projection ${nameToken.v} (…).`);
+        }
         if (accept('on')) {
           const eventToken = ident('an event name');
           const event = eventToken.v;
@@ -1041,9 +1117,8 @@ function parseModelSource(text, options = {}) {
             if (startsHandlerOperand()) handler.value = handlerOperand();
             handlers.push(handler);
           }
-        } else if (accept('script')) {
-          if (is('(')) fail('A script takes its values in the projection\'s header, after the tags: projection X (tag …, days: integer).');
-          script = script || {};
+        } else if (is('script')) {
+          fail(`"script" goes in front now, as "scripted": scripted projection ${nameToken.v} (…).`);
         } else if (accept('initialState')) {
           mark(body, 'initialState', peek());
           scriptField('initialState', jsonValue());
@@ -1056,21 +1131,18 @@ function parseModelSource(text, options = {}) {
         } else if (is('scenario')) {
           bare.push(scenarioDecl(peek(), owner));
         } else {
-          fail(`Expected "on", scenarios, or one of script, initialState, exposes, found ${describeToken(peek())}.`);
+          fail(`Expected "on"${scriptedKind ? ', initialState, exposes' : ''} or scenarios, found ${describeToken(peek())}.`);
         }
       }
       const endAt = at;
       expect('}');
       ungrouped(bare, endAt);
-      body.handlers = handlers;
+      if (!derivedKind) body.handlers = handlers;
       if (script) body.script = script;
+    } else if (scriptedKind) {
+      body.script = {};
     }
-    // What a read gives besides the tags is what the code takes, so only
-    // a script declares any.
-    if (header.args.length) {
-      if (!body.script) fail(`Only a scripted projection takes values besides its tags — ${header.args[0].argument.name} is not a tag.`, header.args[0].token);
-      body.script = { arguments: header.args.map((a) => a.argument), ...body.script };
-    }
+    if (header.args.length) body.script = { arguments: header.args.map((a) => a.argument), ...body.script };
     return define('projection-definition', nameToken, body, start);
   };
 
@@ -1456,8 +1528,11 @@ function parseModelSource(text, options = {}) {
     }
     if (is('type') || is('enum') || is('record')) return customType(start, annotations, isTag);
     const untagged = accept('untagged');
-    if (untagged && !is('projection')) fail(`Expected projection after "untagged", found ${describeToken(peek())}.`);
-    if (is('projection')) return projectionDecl(start, annotations, untagged);
+    const kind = (is('derived') || is('scripted')) && (is('projection', 1) || is('untagged', 1)) ? next() : null;
+    if (kind && is('untagged')) fail(`"untagged" comes first: untagged ${kind.v} projection …`);
+    const lead = kind || untagged;
+    if (lead && !is('projection')) fail(`Expected projection after "${lead.v}", found ${describeToken(peek())}.`);
+    if (is('projection')) return projectionDecl(start, annotations, untagged, kind);
     if (is('event')) return eventDecl(start, annotations);
     if (is('entity')) return entityDecl(start, annotations);
     if (is('command')) return commandDecl(start, annotations);
@@ -1755,6 +1830,22 @@ function sourceBlock(head, items, { inline = 3, width = 90, separator = ', ' } =
   return `${head} {\n${items.map((i) => '  ' + i.replace(/\n/g, '\n  ')).join('\n')}\n}`;
 }
 
+// A derived projection's expression: a computation — `a - b`,
+// `min(a, b)` — or a comparison, spelled as a rule is.
+function sourceDerived(derived, operand) {
+  if (!derived || typeof derived !== 'object') unprintable('what it derives is not an object');
+  if (derived.operator === undefined) return sourceCondition(derived, operand);
+  if (derived.predicate !== undefined) unprintable('it states both a predicate and an operator');
+  if (derived.negate !== undefined) unprintable('it negates a computation');
+  if (derived.leftHandSide === undefined || derived.rightHandSide === undefined) unprintable('a side of its computation is missing');
+  const symbol = Object.keys(SOURCE_OPERATORS).find((k) => SOURCE_OPERATORS[k] === derived.operator);
+  const left = operand(derived.leftHandSide);
+  const right = operand(derived.rightHandSide);
+  if (symbol) return `${left} ${symbol} ${right}`;
+  if (SOURCE_OPERATOR_CALLS.includes(derived.operator)) return `${derived.operator}(${left}, ${right})`;
+  return unprintable(`its operator ${JSON.stringify(derived.operator)} is not one the code form knows`);
+}
+
 function sourceCondition(condition, operand) {
   if (!condition || typeof condition !== 'object') unprintable('a rule is not an object');
   if (condition.leftHandSide === undefined) unprintable('a rule has no left-hand side');
@@ -1934,9 +2025,11 @@ function printEntity(name, body) {
   return sourceAnnotations(body, ['icon']) + sourceBlock(head, items, { inline: 0 });
 }
 
-// `projection Name (tag courseId: CourseId, days: integer): T = v` — or
-// `untagged projection Name: T = v`. The tags come first, then what a
-// script takes besides, which is the order a read gives them in.
+// `projection Name (tag courseId: CourseId): T = v` — or `untagged
+// projection Name: T = v`, `derived projection Name (…): T { a - b }`,
+// `scripted projection Name (tag courseId: CourseId, days: integer): T
+// { … }`. The tags come first, then what a script takes besides, which
+// is the order a read gives them in.
 function printProjection(name, body, names) {
   const tags = body.tags === undefined ? [] : body.tags;
   if (!Array.isArray(tags)) unprintable('its tags are not a list');
@@ -1949,17 +2042,24 @@ function printProjection(name, body, names) {
     }),
     ...((script && script.arguments) || []).map((p) => `${sourceRef(p.name, 'parameter')}: ${sourceRef(p.propertyType, 'type')}`),
   ];
-  let head = `${tags.length ? '' : 'untagged '}projection ${sourceDeclName(name)}`
+  // The kind is said once, in front; a body that is two kinds at once
+  // has no spelling.
+  if (body.derived !== undefined && script !== undefined) unprintable('it is both derived and scripted');
+  const kind = body.derived !== undefined ? 'derived ' : script !== undefined ? 'scripted ' : '';
+  let head = `${tags.length ? '' : 'untagged '}${kind}projection ${sourceDeclName(name)}`
     + (parameters.length ? ` (${parameters.join(', ')})` : '')
     + `: ${sourceRef(body.valueType, 'value type')}${body.isList ? '[]' : ''}`;
+  if (body.derived !== undefined) {
+    if (body.initialValue !== undefined) unprintable('it is derived and states an initial value');
+    if (body.handlers !== undefined) unprintable('it is derived and states handlers');
+    return `${head} {\n  ${sourceDerived(body.derived, sourceDerivedOperand(names))}\n}`;
+  }
   if (body.initialValue !== undefined) head += ` = ${sourceLiteral(body.initialValue)}`;
   const lines = [head];
-  if (body.derived !== undefined) lines.push(`  derived ${sourceCondition(body.derived, sourceDerivedOperand(names))}`);
   if (body.handlers === undefined && script === undefined) return lines.join('\n');
   const items = [];
   if (script !== undefined) {
     if (script.tagFilter !== undefined) unprintable('its script states a tag filter — a projection declares its tags');
-    items.push('script');
     if (script.initialState !== undefined) items.push(`initialState ${sourceJson(script.initialState, '  ')}`);
     if (script.exposes !== undefined) items.push(`exposes ${sourceRef(script.exposes, 'exposed field')}`);
   }
@@ -2380,8 +2480,15 @@ function sourceReadQueries(model, parsed) {
     } catch { continue; }
     for (const binding of body.boundary || []) {
       const slots = (binding && parsed.marks.get(binding)) || {};
-      const item = dcb.items.find((i) => i.alias === binding.alias);
-      if (!slots.statement || !slots.statementEnd || !item) continue;
+      // A derived read is several queries; the hint says them as one.
+      const parts = dcb.items.filter((i) => i.alias === binding.alias);
+      if (!slots.statement || !slots.statementEnd || !parts.length) continue;
+      const item = {
+        ...parts[0],
+        tags: uniq(parts.flatMap((part) => part.tags)),
+        types: uniq(parts.flatMap((part) => part.types)).sort(),
+        fannedOut: parts.some((part) => part.fannedOut),
+      };
       const entity = binding.entity !== undefined ? draft['entity-definitions'][binding.entity] : null;
       const properties = ((entity && entity.properties) || []).filter((p) => p && p.name);
       const read = properties.filter((p) => item.readProperties.includes(p.name));
@@ -3355,6 +3462,8 @@ const SOURCE_DECLARATION_SNIPPETS = [
   ['entity', 'entity ${1:Name} (tag ${2:nameId}: ${3:NameId}) {\n\t$0\n}'],
   ['projection', 'projection ${1:Name} (tag ${2:id}: ${3:Type}): ${4:integer} = ${5:0} {\n\t$0\n}'],
   ['untagged projection', 'untagged projection ${1:Name}: ${2:integer} = ${3:0} {\n\t$0\n}'],
+  ['derived projection', 'derived projection ${1:Name} (tag ${2:id}: ${3:Type}): ${4:integer} {\n\t$0\n}'],
+  ['scripted projection', 'scripted projection ${1:Name} (tag ${2:id}: ${3:Type}): ${4:integer} {\n\tinitialState ${5:0}\n\t$0\n}'],
   ['enum', 'enum ${1:Name} { $0 }'],
   ['tag type', 'tag type ${1:Name} = string'],
   ['type', 'type ${1:Name} = ${2:string}'],
@@ -3387,7 +3496,7 @@ function sourceOffset(text, line, col) {
 // whole text's parse, with `model`'s definitions filling in for any
 // that fail to parse while being typed.
 // `experimental: false` leaves out what the experimental flag keeps off
-// the pages — entities, lifecycles, derived projections and guards.
+// the pages — entities, lifecycles, scripted projections and guards.
 // A text using them still reads.
 function sourceCompletions(text, line, col, { model = null, experimental = true } = {}) {
   const none = { items: [], slot: false };
@@ -3402,7 +3511,10 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
   const atLineStart = !tokens.length || tokens[tokens.length - 1].endLine < line;
 
   // ---------- where the cursor is ----------
-  const DECL_WORDS = ['model', 'type', 'tag', 'enum', 'record', 'event', 'entity', 'untagged', 'projection', 'command', 'scenarios', 'scenario', '@'];
+  const DECL_WORDS = ['model', 'type', 'tag', 'enum', 'record', 'event', 'entity', 'untagged', 'derived', 'scripted', 'projection', 'command', 'scenarios', 'scenario', '@'];
+  // The words before a declaration's keyword, which say what it is.
+  const LEAD_WORDS = ['tag', 'untagged', 'derived', 'scripted'];
+  const unled = (s) => { let i = 0; while (LEAD_WORDS.includes(v(s[i]))) i += 1; return s.slice(i); };
   const v = (t) => (t ? t.v : undefined);
   const frames = [{ kind: 'top', level: 0, open: -1, stmt: 0 }];
   const level = [];
@@ -3437,10 +3549,8 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
         });
       }
       if (opener === '(') {
-        const head = v(s[0]) === 'untagged' ? s.slice(1) : s;
+        const head = unled(s);
         if (head.length === 2 && (kw === 'command' || kw === 'projection' || kw === 'entity')) return own('params', { header: kw });
-        if (kw === 'projection' && prev === 'count') return own('count');
-        if (kw === 'projection' && s.some((t) => t.v === 'derived') && /^[A-Z]/.test(prev || '')) return own('derivedArgs', { callee: prev });
         return own('json');
       }
       if (kw === 'projection' && prev === '=') return own('list', { valueOf: 'projection' });
@@ -3459,6 +3569,12 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
       if (opener === '{' && v(s[0]) === 'scenarios') return own('scenarios', { block: { kind: 'projection', name: frame.projection } });
       if (opener === '{' && v(s[0]) === 'scenario') return own('scenario', { block: { kind: 'projection', name: frame.projection } });
       if (opener === '(' && prev === 'successor') return own('successor', { event: v(s[1]) });
+      // A derived projection's expression: `min(…)`, `count(…)`, a read.
+      if (opener === '(' && base.decl.derived) {
+        if (SOURCE_OPERATOR_CALLS.includes(prev)) return own('derivedOperands');
+        if (prev === 'count') return own('count');
+        if (/^[A-Z]/.test(prev || '')) return own('derivedArgs', { callee: prev });
+      }
       return own('json');
     }
     if (k === 'scenarios') {
@@ -3475,11 +3591,12 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
       if (opener === '[' && prev === 'in') return own('list', { left: conditionLeft(s.slice(0, -1)) });
       return own('json');
     }
-    if (['emitArgs', 'callArgs', 'count', 'derivedArgs', 'successor'].includes(k)) {
+    if (['emitArgs', 'callArgs', 'count', 'derivedArgs', 'derivedOperands', 'successor'].includes(k)) {
       if (opener === '(' && prev === 'count') return own('count');
       if (opener === '(' && prev === 'successor') return own('successor', { event: frame.event });
-      if (opener === '(' && /^[A-Z]/.test(prev || '') && k === 'derivedArgs') return own('derivedArgs', { callee: prev });
-      if (opener === '(' && /^[A-Z]/.test(prev || '') && k !== 'derivedArgs') return own('callArgs', { callee: prev });
+      const derivedFrame = k === 'derivedArgs' || k === 'derivedOperands';
+      if (opener === '(' && /^[A-Z]/.test(prev || '') && derivedFrame) return own('derivedArgs', { callee: prev });
+      if (opener === '(' && /^[A-Z]/.test(prev || '') && !derivedFrame) return own('callArgs', { callee: prev });
       if (opener === '[' && prev === 'in') return own('list', { left: conditionLeft(s.slice(0, -1)) });
     }
     return own('json');
@@ -3488,7 +3605,7 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
   // `count(course.subscribedStudentIds)` — as the names it is made of.
   function conditionLeft(s) {
     let start = -1;
-    s.forEach((t, i) => { if (SOURCE_CONDITION_STARTS.includes(t.v) || (t.v === 'derived')) start = i; });
+    s.forEach((t, i) => { if (SOURCE_CONDITION_STARTS.includes(t.v)) start = i; });
     let rest = s.slice(start + 1);
     while (v(rest[0]) === 'not') rest = rest.slice(1);
     if (v(rest[0]) === 'count') return { count: true };
@@ -3508,8 +3625,13 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     level[i] = frame.level;
     if (frame.kind === 'top') {
       if (token.first && DECL_WORDS.includes(token.v)) {
-        const lead = token.v === 'tag' || token.v === 'untagged';
-        decl = { keyword: lead ? v(tokens[i + 1]) : token.v, name: v(tokens[i + (lead ? 2 : 1)]), start: i };
+        let j = i;
+        while (LEAD_WORDS.includes(v(tokens[j])) && tokens[j + 1]) j += 1;
+        const words = tokens.slice(i, j).map((t) => t.v);
+        decl = {
+          keyword: v(tokens[j]), name: v(tokens[j + 1]), start: i,
+          derived: words.includes('derived'), scripted: words.includes('scripted'),
+        };
         frame.stmt = i;
       }
     } else if (token.first && token.v !== 'else') frame.stmt = i;
@@ -3762,7 +3884,9 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
   // mid-edit while a handler is typed, and so rarely in the parse.
   const projectionHeader = (start) => {
     const parameters = [];
-    let i = start + (v(tokens[start]) === 'untagged' ? 3 : 2);
+    let i = start;
+    while (['untagged', 'derived', 'scripted'].includes(v(tokens[i]))) i += 1;
+    i += 2;
     if (v(tokens[i]) === '(') {
       for (i += 1; i < tokens.length && v(tokens[i]) !== ')'; i += 1) {
         if (tokens[i].t === 'ident' && v(tokens[i + 1]) === ':') {
@@ -3811,9 +3935,14 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     const kw = decl.keyword;
     if (!s.length) {
       for (const [label, insert] of SOURCE_DECLARATION_SNIPPETS) {
-        if (experimental || label !== 'entity') push(label, 'keyword', 'declaration', { insert, snippet: true, sort: 0 });
+        if (experimental || (label !== 'entity' && label !== 'scripted projection')) push(label, 'keyword', 'declaration', { insert, snippet: true, sort: 0 });
       }
-      if (kw === 'projection' && experimental) push('derived', 'keyword', '', { sort: 1 });
+      return done(false);
+    }
+    // What a lead word is followed by: `untagged derived projection`.
+    if (s.length === 1 && (prev === 'untagged' || prev === 'derived' || prev === 'scripted')) {
+      keywords([['projection', 'projection '], ...(prev === 'untagged' ? [['derived', 'derived '],
+        ...(experimental ? [['scripted', 'scripted ']] : [])] : [])]);
       return done(false);
     }
     if (prev === '@') {
@@ -3829,16 +3958,6 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
       const body = def('projection-definition', ownName);
       const colon = s.findIndex((t) => t.v === ':');
       const valueType = colon >= 0 ? v(s[colon + 1]) : body && body.valueType;
-      const derivedAt = s.findIndex((t) => t.v === 'derived');
-      if (derivedAt >= 0) {
-        const cond = s.slice(derivedAt + 1);
-        const last = v(cond[cond.length - 1]);
-        if (!cond.length || last === 'not' || SOURCE_COMPARISONS.includes(last)) {
-          definitionItems('projection-definition', { exclude: [ownName], sort: 0, call: projectionCall, detail: (n, b) => `${b.valueType}` });
-          return done();
-        }
-        return done(false);
-      }
       if (prev === ':') { typeItems(); return done(); }
       if (prev === '=') {
         valueItems(valueType);
@@ -3890,9 +4009,24 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
       return done();
     };
     if (k === 'successor') return handlerOperands();
+    // A derived projection's block: the expression — reads of other
+    // projections, min / max, a comparison — then its scenarios.
+    if (frame.decl && frame.decl.derived) {
+      const reads = () => {
+        definitionItems('projection-definition', { exclude: [ownName], sort: 0, call: projectionCall, detail: (n, b) => `${b.valueType}` });
+        return done();
+      };
+      if (!s.length) {
+        SOURCE_OPERATOR_CALLS.forEach((word) => push(word, 'keyword', `${word}(a, b)`, { insert: `${word}($1)`, snippet: true, sort: 1 }));
+        keywords([['scenarios', SOURCE_GROUP_SNIPPET, true]], 2);
+        return reads();
+      }
+      if (prev === 'not' || SOURCE_COMPARISONS.includes(prev) || SOURCE_OPERATORS[prev]) return reads();
+      return done(false);
+    }
     if (!s.length) {
       keywords([['on', 'on '], ['scenarios', SOURCE_GROUP_SNIPPET, true]]);
-      keywords([['script'], ['initialState'], ['exposes']], 2);
+      if (frame.decl && frame.decl.scripted) keywords([['initialState'], ['exposes']], 2);
       return done(false);
     }
     if (v(s[0]) === 'on') {
@@ -4002,6 +4136,12 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
       for (const p of projectionParameters(frame.decl.name)) push(p.name, 'projectionParameter', p.propertyType, { sort: 0 });
       definitionItems('projection-definition', { exclude: [frame.decl.name], call: projectionCall });
     }
+    return done();
+  }
+  // Inside `min(…)` / `max(…)`: the two sides, each a read.
+  if (k === 'derivedOperands') {
+    if (segment.length) return done(false);
+    definitionItems('projection-definition', { exclude: [frame.decl && frame.decl.name], sort: 0, call: projectionCall, detail: (n, b) => `${b.valueType}` });
     return done();
   }
   // A derived operand's values: one of this projection's own tags, of
@@ -4132,7 +4272,7 @@ function sourceExperimentalMarks(text) {
     if (v === 'scenario') { scenarioNext = true; return; }
     if (v === 'entity' && next && next.t === 'ident') said(token, 'An entity');
     else if (v === 'lifecycle' && next && next.t === 'ident' && !(prev && prev.v === '=')) said(token, 'A lifecycle');
-    else if (v === 'derived') said(token, 'A derived projection');
+    else if (v === 'scripted' && next && (next.v === 'projection' || next.v === 'untagged')) said(token, 'A scripted projection');
     else if (v === 'excluding') said(token, '"excluding"');
     else if (v === 'currentValue') said(token, 'currentValue');
     else if (v === 'when' && !frames.includes(true)) said(token, 'A guarded emission');
@@ -4269,17 +4409,21 @@ untagged projection LoanNumbering: LoanId = "l1" {
   on BookLent => set successor(event.data.loanId)
 }
 
-// A scripted projection, for what the operations above cannot say.
-// Values after the tags in the header are arguments its readers pass.
-// Each arm is a JavaScript expression in \`\`\` over state, event
-// (event.data.<property>), tags.<name> and args.<name>, returning
-// the next state; "exposes" names the state field the projection holds.
-projection MemberOverLimit (tag memberId: MemberId, limit: integer): boolean {
-  script
-  initialState { loans: 0, over: false }
-  exposes over
-  on BookLent => \`\`\`{ loans: state.loans + 1, over: state.loans + 1 > args.limit }\`\`\`
-  on BookReturned => \`\`\`{ loans: state.loans - 1, over: state.loans - 1 > args.limit }\`\`\`
+// A derived projection handles no events: its block holds one
+// expression over other projections, read with this one's own tags,
+// and it starts from what they start at. It computes a number — a + b,
+// a - b, a * b, min(a, b), max(a, b) — or compares two values, written
+// as a rule is, and holds the boolean. Its query is theirs.
+derived projection MemberLoansLeft (tag memberId: MemberId): integer {
+  5 - MemberLoanCount(memberId)
+}
+
+derived projection MemberAtLimit (tag memberId: MemberId): boolean {
+  MemberLoansLeft(memberId) <= 0
+}
+
+derived projection MemberLoansLeftCapped (tag memberId: MemberId): integer {
+  min(MemberLoansLeft(memberId), 3)
 }
 
 // ---- Commands ----
@@ -4342,7 +4486,7 @@ command LendBook(bookId: BookId, memberId: MemberId) {
     else reject "Book is not available"
   require MemberExists(memberId) is true
     else reject "Not a member"
-  require MemberOverLimit(memberId, 5) is false
+  require MemberAtLimit(memberId) is false
     else reject "Too many loans"
   require BookBorrowers(bookId) not contains memberId
     else reject "Borrowed this book before"
@@ -4470,8 +4614,9 @@ command UnsubscribeStudentFromCourse(courseId: CourseId, studentId: StudentId) {
 // by dsl.test.js.
 const SOURCE_REFERENCE_EXAMPLE_SLUG = 'course-simple';
 
-const SOURCE_REFERENCE_UNOFFERED = 'Not offered to agents: entities, lifecycles, derived projections, guarded '
-  + 'emissions (emit … when …), optional reads (alias x? = …), excluding and currentValue. A text or '
+const SOURCE_REFERENCE_UNOFFERED = 'Not offered to agents: entities, lifecycles, scripted projections (and the '
+  + 'arguments a read passes one), guarded emissions (emit … when …), optional reads (alias x? = …), excluding '
+  + 'and currentValue. A text or '
   + 'definition that adds one is refused. A model that already uses them shows them in get_model_source; keep those parts as they are.';
 
 function sourceLanguageReference() {
@@ -4490,8 +4635,8 @@ function sourceLanguageReference() {
 // ============================================================
 
 const SOURCE_KEYWORDS = [
-  'model', 'type', 'tag', 'enum', 'record', 'event', 'entity', 'lifecycle', 'untagged', 'projection', 'derived',
-  'script', 'initialState', 'exposes', 'on', 'set', 'increment', 'decrement', 'append',
+  'model', 'type', 'tag', 'enum', 'record', 'event', 'entity', 'lifecycle', 'untagged', 'derived', 'scripted',
+  'projection', 'min', 'max', 'initialState', 'exposes', 'on', 'set', 'increment', 'decrement', 'append',
   'remove', 'command', 'alias', 'each', 'excluding', 'require', 'emit', 'when', 'and', 'not', 'is',
   'empty', 'in', 'contains', 'containsAny', 'startsWith', 'endsWith', 'count', 'successor',
   'currentValue', 'json', 'true', 'false', 'null', 'scenarios', 'scenario', 'given', 'then', 'nothing', 'rejected',
@@ -4501,7 +4646,7 @@ const SOURCE_KEYWORDS = [
 // The words a block's statements start with, coloured apart so the
 // shape of a command — what it reads, requires, emits — shows at a
 // glance.
-const SOURCE_STATEMENTS = ['alias', 'require', 'emit', 'when', 'on', 'derived', 'scenarios', 'scenario', 'given', 'then'];
+const SOURCE_STATEMENTS = ['alias', 'require', 'emit', 'when', 'on', 'scenarios', 'scenario', 'given', 'then'];
 
 const SOURCE_MONARCH = {
   keywords: SOURCE_KEYWORDS,
@@ -4517,7 +4662,8 @@ const SOURCE_MONARCH = {
       { include: '@whitespace' },
       [/[{}()[\]]/, '@brackets'],
       [/=>|==|!=|<=|>=|[<>=?:.,]/, 'delimiter'],
-      [/-?\d+(\.\d+)?([eE][+-]?\d+)?/, 'number'],
+      [/\d+(\.\d+)?([eE][+-]?\d+)?/, 'number'],
+      [/[-+*]/, 'operator'],
       [/"([^"\\]|\\.)*$/, 'string.invalid'],
       [/"/, 'string', '@string'],
     ],

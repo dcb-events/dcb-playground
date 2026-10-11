@@ -4538,7 +4538,10 @@ check('the reference links only anchors the website defines', () => {
     eq(sandbox.experimentalFeatures(guarded()).some((f) => f.feature === 'guards' && f.where === 'UpdateText'),
       true, 'a guarded emission, on its command');
     const derived = build(9).model;
-    eq(sandbox.experimentalFeatures(derived()).some((f) => f.feature === 'derived'), true, 'a derived projection');
+    eq(sandbox.experimentalFeatures(derived()), [], 'a derived projection is not experimental');
+    const scripted = build(5).model;
+    eq(sandbox.experimentalFeatures(scripted()).some((f) => f.feature === 'scripted' && f.where === 'DocumentStatus'),
+      true, 'a scripted projection, on itself');
   });
 
   check('a shipped model is marked experimental exactly when it uses something experimental', () => {
@@ -4976,9 +4979,16 @@ check('the reference links only anchors the website defines', () => {
     eq(/query/i.test(off), true, 'the query is always there');
     eq(off.includes('Course defined'), true, 'with the events it handles');
     store.set(ADVANCED, 'on');
+    const flag = store.get('dcb-playground:experimental');
+    store.delete('dcb-playground:experimental');
+    const plain = textOf(editorOf('CourseCapacity'));
+    eq(plain.includes('derived projection'), true, 'deriving is offered');
+    eq(plain.includes('scripted projection'), false, 'scripting is experimental');
+    store.set('dcb-playground:experimental', 'on');
     const on = textOf(editorOf('CourseCapacity'));
-    eq(on.includes('scripted projection'), true, 'scripting is offered');
+    eq(on.includes('scripted projection'), true, 'scripting is offered with the flag on');
     eq(/read by/i.test(on), true, 'and who reads it is said');
+    if (flag === undefined) store.delete('dcb-playground:experimental'); else store.set('dcb-playground:experimental', flag);
     store.set(ADVANCED, 'off');
     sandbox.closeForms();
   });
@@ -4996,6 +5006,29 @@ check('the reference links only anchors the website defines', () => {
     for (const node of sandbox.projectionFields(scripted(), sandbox.state.projDraft.body)) root.appendChild(node);
     eq(textOf(root).includes('scripted projection'), true, 'the switch hides offers, not what is stored');
     eq(textOf(root).includes('initial state'), true, 'its state is any JSON');
+    store.set('dcb-playground:model', id);
+    sandbox.closeForms();
+  });
+
+  check('a computing derived projection edits as one, and stores back unchanged', () => {
+    const { id: hoursId, model: hours } = build(sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'developer-hours'));
+    store.set('dcb-playground:model', hoursId);
+    const stored = hours()['projection-definitions'].DeveloperRemainingHoursForWeek;
+    eq(cleanProjectionBody(projectionDraftFrom(stored)), stored, 'through the editor and back');
+    sandbox.state.projDraft = { name: 'DeveloperRemainingHoursForWeek', body: projectionDraftFrom(stored) };
+    const root = sandbox.document.createElement('div');
+    for (const node of sandbox.projectionFields(hours(), sandbox.state.projDraft.body)) root.appendChild(node);
+    const groups = findAll(root, (node) => node.label !== undefined).map((node) => node.label);
+    eq(groups.includes('compute → number'), true, 'the picker groups computations: ' + groups.join(', '));
+    eq(groups.includes('compare → boolean'), true, 'beside comparisons');
+    eq(findAll(root, (node) => node.tag === 'label' && textOf(node) === ' not').length, 0,
+      'and a computation has nothing to negate');
+    const comparing = sandbox.deepClone(stored);
+    comparing.derived = { ...comparing.derived, predicate: 'equals' };
+    delete comparing.derived.operator;
+    const compareRoot = sandbox.document.createElement('div');
+    for (const node of sandbox.projectionFields(hours(), projectionDraftFrom(comparing))) compareRoot.appendChild(node);
+    eq(findAll(compareRoot, (node) => node.tag === 'label' && textOf(node) === ' not').length, 1, 'where a comparison has');
     store.set('dcb-playground:model', id);
     sandbox.closeForms();
   });

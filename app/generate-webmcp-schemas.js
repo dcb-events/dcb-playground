@@ -21,9 +21,10 @@
 //
 // The experimental members are cut before anything is inlined, since
 // WebMCP does not offer them (see webmcp.js): no entity kind, and no
-// schema so much as mentions an entity binding, a guard, a derived
-// projection or `currentValue`. The
-// canonical schema keeps them — a model using them still imports.
+// schema so much as mentions an entity binding, a guard, a script —
+// its code handlers and the arguments its readers pass included — or
+// `currentValue`. The canonical schema keeps them — a model using them
+// still imports.
 //
 // Run with `node app/generate-webmcp-schemas.js` after changing
 // dcb-model.schema.json. Nothing here runs in the browser; it is a
@@ -40,7 +41,11 @@ const defs = schema.$defs;
 // properties of a $def, and branches of a $def's choice. A name that
 // is not there stops the build — the schema moved, and so must this.
 const EXPERIMENTAL_PROPERTIES = {
-  ProjectionDefinition: ['derived'],
+  ProjectionDefinition: ['script'],
+  PropertyHandler: ['code'],
+  ProjectionBinding: ['arguments'],
+  ProjectionReadValue: ['arguments'],
+  ProjectionScenarioDefinition: ['arguments'],
   EventEmission: ['when'],
 };
 const EXPERIMENTAL_BRANCHES = {
@@ -112,12 +117,10 @@ function inline(value, stack) {
       type: 'object',
       description: ((siblings.description || '') + ' ' + defs[name].description.trim()
         + ' `tags`: one value per tag the projection declares, keyed by its name — an operand of'
-        + ' the tag\'s type, a tag literal {tagType, tagValue}, or {each: operand}. `arguments`:'
-        + ' the values a script takes, keyed by name.').trim(),
+        + ' the tag\'s type, a tag literal {tagType, tagValue}, or {each: operand}.').trim(),
       properties: {
         projection: { type: 'string' },
         tags: { type: 'object' },
-        arguments: { type: 'object' },
       },
       required: ['projection'],
     };

@@ -180,10 +180,14 @@ check('fan-out, exclusion, numbering, membership, guards and derived values have
   eq(guarded.includes('require DocumentStatus(docId) in [Draft, Published, PendingChanges]'), true, 'equalsAny');
   eq(guarded.includes('emit TextChanged { docId, text }\n    when text != DocumentPublishedText(docId)'), true, 'when');
   const derived = modelToSource(build(9).model());
-  eq(derived.includes('projection DocumentHasPendingChanges (tag documentId: DocumentId): boolean\n'
-    + '  derived DocumentCurrentText(documentId) != DocumentPublishedText(documentId)'), true, 'derived, passing its tag on');
+  eq(derived.includes('derived projection DocumentHasPendingChanges (tag documentId: DocumentId): boolean {\n'
+    + '  DocumentCurrentText(documentId) != DocumentPublishedText(documentId)\n}'), true, 'derived, passing its tag on');
+  const hours = modelToSource(build(PREDEFINED_MODELS.findIndex((m) => m.slug === 'developer-hours')).model());
+  eq(hours.includes('derived projection DeveloperRemainingHoursForWeek (tag developerId: DeveloperId, tag week: WeekNumber): integer {\n'
+    + '  DeveloperAvailableHoursPerWeek(developerId) - DeveloperAllocatedHoursForWeek(developerId, week)\n'), true,
+    'a derived computation, its scenarios after it');
   const scripted = modelToSource(build(5).model());
-  eq(scripted.includes('projection DocumentStatus (tag documentId: DocumentId): DocumentStatus {\n  script\n  initialState '), true, 'script');
+  eq(scripted.includes('scripted projection DocumentStatus (tag documentId: DocumentId): DocumentStatus {\n  initialState '), true, 'script');
   eq(scripted.includes('on DocumentAdded => ```{"currentText":"","publishedText":"","status":"Draft"}```'), true, 'code');
   const pricing = modelToSource(build(4).model());
   eq(pricing.includes('record Item { productId: ProductId, price: Money }'), true, 'record');
@@ -832,15 +836,58 @@ check('a projection says what it is tagged by, or that it is untagged', () => {
   const errors = (source) => parseModelSource(source).diagnostics.map((d) => d.message);
   eq(errors('untagged projection P (tag id: CourseId): integer = 0 {}'), ['P is declared untagged and tagged by id — one or the other.'], 'not both');
   eq(errors('projection P (days: integer, tag id: CourseId): integer = 0 {}'), ['Tags come first — a read gives the tags, then the values a script takes.'], 'tags first');
-  eq(errors('projection P (tag id: CourseId, days: integer): integer = 0 {}'), ['Only a scripted projection takes values besides its tags — days is not a tag.'], 'arguments, only for a script');
-  eq(errors('projection P (tag id: CourseId): integer {\n  script(days: integer)\n}'),
-    ['A script takes its values in the projection\'s header, after the tags: projection X (tag …, days: integer).'], 'not in the block');
+  eq(errors('projection P (tag id: CourseId, days: integer): integer = 0 {}'), ['Only a scripted projection takes values besides its tags — days is not a tag (scripted projection P (…)).'], 'arguments, only for a script');
+  eq(errors('projection P (tag id: CourseId): integer {\n  script\n}'),
+    ['"script" goes in front now, as "scripted": scripted projection P (…).'], 'the kind is said in front');
+  eq(errors('projection P (tag id: CourseId): integer = 0 {\n  initialState 0\n}'),
+    ['Only a scripted projection has initialState — scripted projection P (…).'], 'a script\'s state, only on a script');
   eq(errors('command C(courseId: CourseId) {\n  require P tagged courseId == 1 else reject "No"\n}'),
     ['A read gives its values in parentheses, in the order P declares them: P(…).'], 'the draft spelling');
   eq(errors('entity Course tagged CourseId {}'), ['Say what Course is tagged by: entity Course (tag courseId: CourseId).'], 'an entity too');
-  const scripted = parseModelSource('projection P (tag id: CourseId, days: integer): integer {\n  script\n  initialState 0\n}\n');
+  const scripted = parseModelSource('scripted projection P (tag id: CourseId, days: integer): integer {\n  initialState 0\n}\n');
   eq(scripted.diagnostics, [], 'a script\'s arguments follow its tags');
   eq(scripted.collections['projection-definition'].P.script.arguments, [{ name: 'days', propertyType: 'integer' }], 'and are stored as its arguments');
+});
+
+check('a derived projection says so in front, and holds one expression', () => {
+  const head = 'tag type CourseId = string\nprojection Cap (tag courseId: CourseId): integer = 0 {}\n'
+    + 'projection Taken (tag courseId: CourseId): integer = 0 {}\n';
+  const derived = (expression, type = 'integer') => parseModelSource(head
+    + `derived projection Left (tag courseId: CourseId): ${type} {\n  ${expression}\n}\n`);
+  const own = { courseId: { parameterName: 'courseId' } };
+  const read = (projection) => ({ projection, tags: own });
+  for (const [symbol, operator] of [['+', 'add'], ['-', 'subtract'], ['*', 'multiply']]) {
+    const parsed = derived(`Cap(courseId) ${symbol} Taken(courseId)`);
+    eq(parsed.diagnostics, [], `${symbol} parses`);
+    eq(parsed.collections['projection-definition'].Left.derived,
+      { leftHandSide: read('Cap'), operator, rightHandSide: read('Taken') }, `${symbol} is ${operator}`);
+  }
+  for (const operator of ['min', 'max']) {
+    eq(derived(`${operator}(Cap(courseId), 10)`).collections['projection-definition'].Left.derived,
+      { leftHandSide: read('Cap'), operator, rightHandSide: 10 }, `${operator}(…) is ${operator}`);
+  }
+  eq(derived('Cap(courseId) -1').collections['projection-definition'].Left.derived.operator, 'subtract',
+    'a minus straight after a value subtracts');
+  eq(derived('Cap(courseId) == -1', 'boolean').collections['projection-definition'].Left.derived,
+    { leftHandSide: read('Cap'), predicate: 'equals', rightHandSide: -1 }, 'and after a comparison it is a sign');
+  eq(derived('not Cap(courseId) > Taken(courseId)', 'boolean').collections['projection-definition'].Left.derived,
+    { leftHandSide: read('Cap'), predicate: 'greaterThan', rightHandSide: read('Taken'), negate: true }, 'a comparison');
+  const body = derived('Cap(courseId) - Taken(courseId)').collections['projection-definition'].Left;
+  eq(body.handlers, undefined, 'a derived projection has no handlers');
+  eq(body.initialValue, undefined, 'and no initial value');
+  const errors = (source) => parseModelSource(head + source).diagnostics.map((d) => d.message);
+  eq(errors('projection Left (tag courseId: CourseId): boolean\n  derived Cap(courseId) > 1\n'),
+    ['"derived" goes in front, and what it derives in the block: derived projection Left (…): boolean { … }.'], 'the old spelling');
+  eq(errors('derived projection Left (tag courseId: CourseId): integer = 0 {\n  Cap(courseId) - 1\n}\n'),
+    ['A derived projection has no initial value — before any event it is what its operands start at.'], 'no initial value');
+  eq(errors('derived projection Left (tag courseId: CourseId): integer {\n  Cap(courseId) - 1\n  on E => set 1\n}\n'),
+    ['A derived projection\'s block holds what it derives, then its scenarios — found "on".'], 'nothing else in its block');
+  eq(errors('scripted untagged projection Left: integer {\n  initialState 0\n}\n'),
+    ['"untagged" comes first: untagged scripted projection …'], 'untagged leads');
+  eq(parseModelSource('untagged derived projection Total: integer {\n  max(1, 2)\n}\n').diagnostics, [], 'untagged, then derived');
+  const untagged = parseModelSource(head + 'derived projection Left: integer {\n  min(1, 2)\n}\n');
+  eq(parseModelSource(sandbox.sourceApplyEdits(head + 'derived projection Left: integer {\n  min(1, 2)\n}\n',
+    [untagged.diagnostics[0].fix])).diagnostics, [], 'the untagged fix goes in front of the kind');
 });
 
 check('a rule reads a projection in place — no alias needed', () => {
@@ -986,7 +1033,7 @@ check('the code view says what is experimental, and offers none of it with the f
   const guarded = modelToSource(build(PREDEFINED_MODELS.findIndex((m) => m.slug === 'content-decisions-guarded')).model());
   eq(sandbox.sourceExperimentalMarks(guarded).filter((m) => /guarded emission/.test(m.message)).length, 2,
     'each guard, and no scenario\'s when');
-  for (const slug of ['course-simple', 'pricing-simple', 'content-decisions-scripted']) {
+  for (const slug of ['course-simple', 'pricing-simple', 'content-decisions-derived', 'developer-hours']) {
     eq(sandbox.sourceExperimentalMarks(modelToSource(build(PREDEFINED_MODELS.findIndex((m) => m.slug === slug)).model())), [],
       `${slug} uses nothing experimental`);
   }
@@ -1000,6 +1047,20 @@ check('the code view says what is experimental, and offers none of it with the f
   eq(at('|', { experimental: true }).includes('entity'), true, 'offered with the flag on');
   eq(at('|', { experimental: false }).includes('entity'), false, 'and not with it off');
   eq(at('@|', { experimental: false }), ['icon', 'feature', 'tagSchema'], 'no annotation is experimental');
+  const scripted = modelToSource(build(PREDEFINED_MODELS.findIndex((m) => m.slug === 'content-decisions-scripted')).model());
+  eq(sandbox.sourceExperimentalMarks(scripted).map((m) => m.message.split(' is experimental')[0]), ['A scripted projection'],
+    'a scripted projection is marked once, where it says so');
+  eq(at('|', { experimental: false }).includes('derived projection'), true, 'derived projections are offered');
+  eq(at('|', { experimental: false }).includes('scripted projection'), false, 'scripted ones are not');
+  eq(at('|', { experimental: true }).includes('scripted projection'), true, 'unless the flag is on');
+  const head = 'tag type CourseId = string\nprojection Cap (tag courseId: CourseId): integer = 0 {}\n';
+  const derived = (body) => `${head}derived projection Left (tag courseId: CourseId): integer {\n  ${body}\n}\n`;
+  eq(at(derived('|')), ['min', 'max', 'scenarios', 'Cap'], 'a derived block opens with what it derives from');
+  eq(at(derived('Cap(courseId) - |')), ['Cap'], 'either side of an operator is a read');
+  eq(at(derived('min(|')), ['Cap'], 'and either side of min(…)');
+  eq(at(derived('Cap(|')), ['courseId'], 'a read takes this projection\'s own tags');
+  eq(at(`${head}projection S (tag courseId: CourseId): integer = 0 {\n  |\n}\n`), ['on', 'scenarios'],
+    'a script\'s state is offered only on a scripted projection');
 });
 
 check('every name in every shipped text resolves to a symbol', () => {
@@ -1405,9 +1466,10 @@ check('the reference example is the shipped model as printed', () => {
 });
 
 check('every keyword outside the experimental ones is shown to an agent', () => {
-  // Entities, lifecycles, derived projections, excluding, currentValue
-  // and guards (`and` chains them) are not offered over WebMCP.
-  const experimental = ['entity', 'lifecycle', 'derived', 'excluding', 'currentValue', 'and'];
+  // Entities, lifecycles, scripted projections (and their state),
+  // excluding, currentValue and guards (`and` chains them) are not
+  // offered over WebMCP.
+  const experimental = ['entity', 'lifecycle', 'scripted', 'initialState', 'exposes', 'excluding', 'currentValue', 'and'];
   const shown = new Set((sandbox.SOURCE_REFERENCE_TOUR + '\n' + sandbox.SOURCE_REFERENCE_FORMS).match(/[A-Za-z]+/g));
   eq(sandbox.SOURCE_KEYWORDS.filter((word) => !experimental.includes(word) && !shown.has(word)), [],
     'add each to the tour or the forms in dsl.js');

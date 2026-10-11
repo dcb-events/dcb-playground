@@ -37,8 +37,9 @@ and prune what no longer holds.
   What DCB is made of — types, events, projections, commands, the
   derived boundary — is always on screen; what the examples on
   dcb.events do not need is behind the flag: entities and lifecycles,
-  derived projections, guarded emissions, optional reads, `excluding`,
-  `currentValue`, and the Coupling /
+  scripted projections (and the arguments a read passes one), guarded
+  emissions, optional reads, `excluding`, `currentValue`, and the
+  Coupling /
   Rule map / Event model / Lifecycles views. A model that uses any of
   it still loads, renders and evaluates whole; `experimentalFeatures`
   (model.js) names what it uses and `experimentalNotice` says so on
@@ -51,6 +52,19 @@ and prune what no longer holds.
   `&experimental` turns it on for the session without storing it. The
   decisions are in
   `docs/research/2026-10-05-explicit-tags-and-aliases.md`.
+  **Derived and scripted swapped places** (9.0, 2026-10-11): derived
+  projections left the flag when they learned to compute — they are
+  data, analysable, and they cover the case that most often sent an
+  author to a script (a value worked out from two others, e.g. a weekly
+  budget less that week's allocations). Scripts took their place: the
+  escape hatch stays for what neither the operations nor a derivation
+  can say, and stays readable and editable on a model that has one —
+  but it is no longer offered, to authors without the flag or to
+  agents at all. `content-decisions-scripted` ships on as the
+  experimental baseline of the 2026-09-19 comparison; its script-free
+  variants (`-derived`, `-guarded`) already ship beside it, and it is
+  not rewritten — its five-state status needs a case expression, which
+  no real model has asked for yet.
 - **WebMCP offers nothing experimental, flag or no flag.** No entity
   tools, no experimental member in a tool schema (cut by
   `generate-webmcp-schemas.js`), nothing experimental in the language
@@ -298,6 +312,11 @@ and prune what no longer holds.
   both sides, so the importer reads 7.x only (`READABLE_MAJORS`): a
   6.x rule has no message, and none can be invented for it. It always
   writes the current `MODEL_VERSION`.
+  9.0 added `operator` on a derived value (below): a new member of a
+  closed vocabulary, so a major, but nothing an 8.x document says
+  changed, so this build reads 8.x and 9.x (`READABLE_MAJORS = [8,
+  9]`), the first time since 7.0 that an older major is read. No
+  stored shape changed either, so `EVENT_LOG_KEY` did not move.
   **6.1 is the contrast worth knowing**: entity `lifecycle` is additive
   in shape *and* a minor, because a 6.0 reader that ignores it loses a
   derived diagram and misreads nothing — where 4.0's equally additive
@@ -432,9 +451,9 @@ on Projections, on an entity's page, and in the definition modals.
   used to be a null/value radio pair in front of the value; one picker
   says the same, and `null` still never hides behind an empty box.
 - **The Advanced switch** (`projectionAdvanced`, remembered per
-  browser) holds what most projections never need: making it scripted
-  (`scripted projection`) or derived (`derived projection`,
-  experimental too), and the `read by` / `bound as` facts. It hides
+  browser) holds what most projections never need: making it derived
+  (`derived projection`) or scripted (`scripted projection`, behind the
+  experimental flag too), and the `read by` / `bound as` facts. It hides
   offers, never what is stored — a scripted or derived projection shows
   its section with the switch off, the way the experimental flag
   works.
@@ -492,6 +511,42 @@ on Projections, on an entity's page, and in the definition modals.
   script import gate. The exploration that produced both blocks, and
   the case for keeping or dropping them, lives in
   `docs/research/2026-09-19-content-decisions-variant-comparison.md`.
+- **Derived computations (9.0)**: a derived projection may compute
+  instead of compare — `operator` (`add`, `subtract`, `multiply`,
+  `min`, `max`) in place of `predicate`, never both, over two single
+  numbers (reads or literals), holding a number: an integer from two
+  integers (`derivedResultBase`), declared as such or wider. **One
+  operator per projection**: a longer expression is a chain of derived
+  projections, so every intermediate value has a name the sandbox can
+  watch and an editor needs no expression tree. **No `divide`**: an
+  integer stays an integer and there is no division by zero to define.
+  **No internal/external split**: a derived projection keeps no state,
+  so the "private bookkeeping, public value" shape a script gets from
+  `exposes` is composition here — the operands are the bookkeeping.
+  **Null in, null out** (`evApplyOperator`): an unknown side is not
+  zero, and a rule ordering against the null is an evaluation error as
+  any null ordering is; the advisory says so ahead of time when a side
+  may be null (`derivedInputOf` — a declared projection starting at
+  null, or a computation over one), which is why `developer-hours`
+  starts the weekly budget at 0. Picking an operator in the editor
+  sets the type from the operands; a comparison is always `boolean`.
+  No case/conditional expression: it is the one thing that would turn
+  `content-decisions-scripted` into data, and no real model has needed
+  it yet.
+- **A derived read is its operands' queries, each under its own tags**
+  (`foldedReads` / `readItems`, model.js). Until 9.0 a derived read was
+  one query item: the derived projection's own tags ANDed with the
+  union of its operands' event types — right only while every operand
+  is kept per the same tags. A computation made the other case the
+  ordinary one: `DeveloperRemainingHoursForWeek(developer, week)` folds
+  a budget kept per developer and allocations kept per developer *and*
+  week, and one AND of both would never match a registration, leaving
+  it out of the boundary. So `deriveDcb` now emits one item per
+  projection a read folds in the end (`via` names it), each operand's
+  tags filled in from the read through the `{parameterName}`s it passes
+  on; consumers that looked one item up per alias take all of them
+  (the read's query popover, the code view's hint, `boundarySummary`).
+  The sandbox's watch card says the same.
 
 ## The interface register
 
@@ -855,5 +910,18 @@ step at the playhead. Only the step band scrolls.
   don't add syntax that lists them, that is a derived fact authored
   twice. Fold arms stay **keywords, not expressions** (`set`,
   `increment`, …): the vocabulary is closed because it is analysed,
-  `script` is the expression door, and the reasoning is in the
-  `dsl.js` header — read it before adding `=> state + 1`.
+  arithmetic between values is a derived projection's, a script is the
+  door for the rest, and the reasoning is in the `dsl.js` header — read
+  it before adding `=> state + 1`.
+- **A projection's kind is said in front** (9.0): `derived projection
+  X (…): T { <expression> }` and `scripted projection X (…): T {
+  initialState … }`, after `untagged` when both apply. The inner
+  `derived …` line and `script` line are gone; the old spellings are
+  errors naming the new one. In front, the header knows what the
+  block may hold before reading it — an argument on anything but a
+  script fails at the header — and a derived projection, whose body
+  is one expression and its scenarios, prints with a block like
+  every other one. The operators are `+`, `-`, `*` and the calls
+  `min(a, b)` / `max(a, b)`; a `-` straight after a value (`)`, `]`, a
+  number) subtracts, anywhere else it starts a negative number
+  (`endsValue`).

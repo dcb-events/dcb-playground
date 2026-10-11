@@ -1444,8 +1444,8 @@ check('an import missing the definition arrays is refused, not silently accepted
   // from: these two strings are the published contract, and a test that
   // derived them from the source could not notice one of them changing.
   check('an export carries both markers', () => {
-    eq(good.$schema, 'https://dcb.events/schemas/model/v8.json', '$schema');
-    eq(/^8\.\d+$/.test(good.dcbModelVersion), true, 'dcbModelVersion is an 8.x');
+    eq(good.$schema, 'https://dcb.events/schemas/model/v9.json', '$schema');
+    eq(/^9\.\d+$/.test(good.dcbModelVersion), true, 'dcbModelVersion is a 9.x');
   });
 
   check('the definition arrays sit at the top level, under no wrapper', () => {
@@ -1468,7 +1468,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('an import from an unknown major is refused', () => {
-    refuses({ ...good, dcbModelVersion: '9.0' }, 'a newer major');
+    refuses({ ...good, dcbModelVersion: '10.0' }, 'a newer major');
     // 7.x tagged events by property type; read here, it would carry none.
     refuses({ ...good, dcbModelVersion: '7.0' }, 'the last major with implied tags');
     // 6.x has no rejection messages, and none can be invented for it.
@@ -1479,13 +1479,21 @@ check('an import missing the definition arrays is refused, not silently accepted
     refuses({ ...good, dcbModelVersion: '1.0' }, 'and the one before that');
   });
 
+  // 9.0 added computing derived projections and changed nothing an 8.x
+  // document says, so 8.x reads whole — and with nothing to warn about.
+  check('an 8.x import still reads', () => {
+    const older = { ...good, $schema: 'https://dcb.events/schemas/model/v8.json', dcbModelVersion: '8.0' };
+    eq(typeof importModelFromEnvelope(older).modelId, 'string', 'imported');
+    eq(envelopeVersionWarning(older), '', 'nothing dropped');
+  });
+
   check('$schema is required but never read, so a repointed one still imports', () => {
     const local = { ...good, $schema: './dcb-model.schema.json' };
     eq(typeof importModelFromEnvelope(local).modelId, 'string', 'imported anyway');
   });
 
   check('a newer minor imports, and says what it is dropping', () => {
-    const newer = { ...good, dcbModelVersion: '8.99' };
+    const newer = { ...good, dcbModelVersion: '9.99' };
     eq(typeof importModelFromEnvelope(newer).modelId, 'string', 'imported');
     eq(envelopeVersionWarning(newer).length > 0, true, 'warned');
     eq(envelopeVersionWarning(good), '', 'nothing to warn about at the current version');
@@ -2636,9 +2644,11 @@ check('every predefined model ships advisory-clean', () => {
   check('its query is its operands\' union — the predicate hides nothing', () => {
     const model = build(DERIVED);
     const dcb = sandbox.deriveDcb(model, model['command-definitions'].PublishDocument);
-    const derived = dcb.items.find((item) => item.projection === 'DocumentHasPendingChanges');
+    const derived = dcb.items.filter((item) => item.projection === 'DocumentHasPendingChanges');
+    eq(derived.map((item) => item.via).sort(), ['DocumentCurrentText', 'DocumentPublishedText'],
+      'one query per projection it folds');
     for (const type of ['TextUpdated', 'DocumentPublished']) {
-      eq(derived.types.includes(type), true, `${type} reached the query through the derivation`);
+      eq(derived.some((item) => item.types.includes(type)), true, `${type} reached the query through the derivation`);
     }
   });
 
@@ -2678,6 +2688,144 @@ check('every predefined model ships advisory-clean', () => {
   check('derived is data, not code — the import gate stays closed', () => {
     const model = build(DERIVED);
     eq(envelopeHasScript(buildShareEnvelope(model, [])), false, 'nothing to confirm');
+  });
+}
+
+// ---------------------------------------------------------------
+// Derived computations (9.0). A derived projection may compute one
+// number from two — add, subtract, multiply, min, max — in place of
+// comparing. Exercised against the shipped developer-hours model,
+// whose remaining hours are the weekly budget less the week's
+// allocations: two operands kept per different tags.
+// ---------------------------------------------------------------
+{
+  const HOURS = PREDEFINED_INDEX('developer-hours');
+  const registered = { type: 'DeveloperRegistered', data: { developerId: 'd1', seniorityLevel: 3, availableHoursPerWeek: 40 } };
+  const allocated = (week, requestedHours) =>
+    ({ type: 'HoursAllocated', data: { projectId: 'p1', developerId: 'd1', week, requestedHours } });
+  const remaining = (model, log, week) =>
+    foldProjection(model, log, 'DeveloperRemainingHoursForWeek', { tags: { developerId: 'd1', week } });
+
+  check('a computation is its operator over its operands, at every point in the log', () => {
+    const model = build(HOURS);
+    eq(remaining(model, [], 12), 0, 'nothing registered, nothing allocated');
+    eq(remaining(model, [registered], 12), 40, 'the whole weekly budget');
+    eq(remaining(model, [registered, allocated(12, 30)], 12), 10, 'less that week\'s allocations');
+    eq(remaining(model, [registered, allocated(12, 30)], 13), 40, 'another week is untouched');
+  });
+
+  check('each operator computes, and a null side yields null', () => {
+    const { id, model } = openBlank('Arithmetic');
+    addDefinition('custom-type-definition', id, 'AccountId', { schema: { type: 'string' }, isTag: true });
+    addTaggedEvent(id, 'Credited', { properties: [
+      { name: 'accountId', propertyType: 'AccountId', isOptional: false, isList: false },
+      { name: 'amount', propertyType: 'integer', isOptional: false, isList: false },
+    ] });
+    const tags = [{ name: 'accountId', tagType: 'AccountId' }];
+    const own = { accountId: { parameterName: 'accountId' } };
+    addDefinition('projection-definition', id, 'Balance', {
+      tags, valueType: 'integer', isList: false, initialValue: 0,
+      handlers: [{ event: 'Credited', operation: 'increment', value: { eventProperty: 'amount' } }],
+    });
+    addDefinition('projection-definition', id, 'LastCredit', {
+      tags, valueType: 'integer', isList: false, initialValue: null,
+      handlers: [{ event: 'Credited', operation: 'set', value: { eventProperty: 'amount' } }],
+    });
+    const compute = (operator, right) => {
+      addDefinition('projection-definition', id, `By${operator}`, {
+        tags, valueType: 'integer', isList: false,
+        derived: { leftHandSide: { projection: 'Balance', tags: own }, operator, rightHandSide: right },
+      });
+      return (log) => foldProjection(model(), log, `By${operator}`, { tags: { accountId: 'a1' } });
+    };
+    const credit = (amount) => ({ type: 'Credited', data: { accountId: 'a1', amount } });
+    eq(compute('add', 3)([credit(5)]), 8, 'add');
+    eq(compute('subtract', 3)([credit(5)]), 2, 'subtract');
+    eq(compute('multiply', 3)([credit(5)]), 15, 'multiply');
+    eq(compute('min', 3)([credit(5)]), 3, 'min');
+    eq(compute('max', 3)([credit(5)]), 5, 'max');
+    const withLast = (log) => {
+      addDefinition('projection-definition', id, 'BalanceAndLast', {
+        tags, valueType: 'integer', isList: false,
+        derived: { leftHandSide: { projection: 'Balance', tags: own }, operator: 'add',
+          rightHandSide: { projection: 'LastCredit', tags: own } },
+      });
+      return foldProjection(model(), log, 'BalanceAndLast', { tags: { accountId: 'a1' } });
+    };
+    eq(withLast([]), null, 'nothing credited yet: null in, null out');
+    const found = sandbox.modelAdvisories(model()).filter((a) => a.name === 'BalanceAndLast').map((a) => a.message).join('; ');
+    eq(/can be null/.test(found), true, 'and the advisory said so ahead of time: ' + found);
+  });
+
+  check('a rule ordering against a computed null is an error, never a rejection', () => {
+    const { id, model } = open_(HOURS);
+    const body = deepClone(model()['projection-definitions'].DeveloperAvailableHoursPerWeek);
+    body.initialValue = null;
+    updateDefinition('projection-definition', id, 'DeveloperAvailableHoursPerWeek', body);
+    const command = deepClone(model()['command-definitions'].AllocateHours);
+    command.conditions = command.conditions.slice(3);
+    updateDefinition('command-definition', id, 'AllocateHours', command);
+    let broke = null;
+    try {
+      evaluateCommand(model(), [], 'AllocateHours', { projectId: 'p1', developerId: 'd1', week: 12, requestedHours: 1 });
+    } catch (error) { broke = error; }
+    eq(broke && broke.name, 'EvaluationError', 'an ordering needs both sides');
+  });
+
+  check('its boundary is each operand\'s query, under that operand\'s own tags', () => {
+    const model = build(HOURS);
+    const dcb = sandbox.deriveDcb(model, model['command-definitions'].AllocateHours);
+    const derived = dcb.items.filter((item) => item.projection === 'DeveloperRemainingHoursForWeek');
+    eq(derived.map((item) => [item.via, item.tags, item.types]), [
+      ['DeveloperAvailableHoursPerWeek', ['DeveloperId:developerId'], ['DeveloperRegistered']],
+      ['DeveloperAllocatedHoursForWeek', ['DeveloperId:developerId', 'WeekNumber:week'], ['HoursAllocated']],
+    ], 'the registration is not tagged by the week, and is still in the boundary');
+  });
+
+  check('the shipped model is advisory-clean and its scenarios hold', () => {
+    const model = build(HOURS);
+    eq(sandbox.modelAdvisories(model), [], 'no advisories');
+    for (const scenario of Object.values(model['scenario-definitions'])) {
+      eq(sandbox.runScenario(model, scenario).status, 'current', scenario.name);
+    }
+    for (const scenario of Object.values(model['projection-scenario-definitions'])) {
+      eq(sandbox.runProjectionScenario(model, scenario).status, 'current', scenario.name);
+    }
+  });
+
+  const advises = (pattern, what, edit) => check(what, () => {
+    const { id, model } = open_(HOURS);
+    const body = deepClone(model()['projection-definitions'].DeveloperRemainingHoursForWeek);
+    edit(body);
+    updateDefinition('projection-definition', id, 'DeveloperRemainingHoursForWeek', body);
+    const found = sandbox.modelAdvisories(model())
+      .filter((a) => a.name === 'DeveloperRemainingHoursForWeek').map((a) => a.message).join('; ');
+    eq(pattern.test(found), true, `the advisory says so: ${found}`);
+  });
+  advises(/not a single number/, 'a computation over something that is no number is an advisory', (body) => {
+    body.derived.rightHandSide = 'eight';
+  });
+  advises(/computes a number, but holds an integer/, 'a number held as an integer is an advisory', (body) => {
+    body.derived.rightHandSide = 1.5;
+  });
+  advises(/computes an integer, but holds a boolean/, 'a computation held as a boolean is an advisory', (body) => {
+    body.valueType = 'boolean';
+  });
+  advises(/negates a computation/, 'negating a computation is an advisory', (body) => {
+    body.derived.negate = true;
+  });
+  advises(/both a predicate and an operator/, 'a predicate beside an operator is an advisory', (body) => {
+    body.derived.predicate = 'equals';
+  });
+  advises(/not an operator/, 'an unknown operator is an advisory', (body) => {
+    body.derived.operator = 'divide';
+  });
+
+  check('a computation survives an export and an import', () => {
+    const model = build(HOURS);
+    const { modelId } = importModelFromEnvelope(buildShareEnvelope(model, []));
+    eq(sandbox.projectState()[modelId]['projection-definitions'].DeveloperRemainingHoursForWeek.derived.operator,
+      'subtract', 'the operator is carried');
   });
 }
 

@@ -1908,7 +1908,7 @@ const UI_SETTINGS = [
       + 'shows it either way; this decides whether the pages offer to author them.',
     options: [
       ['off', 'Off', 'Types, events, projections, commands and the consistency boundary'],
-      ['on', 'On', 'Also entities and lifecycles, derived projections, guarded emissions, '
+      ['on', 'On', 'Also entities and lifecycles, scripted projections, guarded emissions, '
         + 'optional reads and the overview pages'],
     ],
     get: () => (experimental() ? 'on' : 'off'),
@@ -5508,7 +5508,8 @@ function dcbQueryWords(item) {
 // but never renumber the list underneath them.
 function readCard(model, slice, binding, index, waitsFor) {
   const r = readParts(model, slice.body, binding);
-  const queryItem = (slice.dcb.items || []).find((item) => item.alias === binding.alias);
+  // A derived projection's read is one query per projection it folds.
+  const queryItems = (slice.dcb.items || []).filter((item) => item.alias === binding.alias);
   const sentence = r.projection
     ? h('span', { class: 'sentence' },
         projectionRef(model, r.projection, { cls: 'chip projection' }),
@@ -5568,9 +5569,9 @@ function readCard(model, slice, binding, index, waitsFor) {
       // the read itself, so "what does binding this cost?"
       // is answered where the binding is, not only in the union at the
       // foot of the page.
-      queryItem
+      queryItems.length
         ? queryPopover('read:' + binding.alias, 'what this binding queries',
-            h('div', {}, dcbQueryWords(queryItem)))
+            ...queryItems.map((item) => h('div', {}, dcbQueryWords(item))))
         : null,
       h('span', { class: 'grow' }),
       reveal(
@@ -9547,9 +9548,9 @@ function underlyingSchema(model, typeName) {
 // `nothing yet` is visibly not a value someone typed, and `""` is
 // visibly one they did.
 function initialValueChip(body) {
-  // A derived projection has no start of its own — the predicate is
+  // A derived projection has no start of its own — what it derives is
   // the whole story, so the chip says it.
-  if (body.derived) return h('code', {}, conditionText(body.derived));
+  if (body.derived) return h('code', {}, derivedText(body.derived));
   if (body.script) return h('code', {}, JSON.stringify(body.script.initialState));
   const value = body.initialValue;
   if (value === null || value === undefined) {
@@ -9729,18 +9730,26 @@ function cleanProjectionBody(draft) {
       }
       return cleaned;
     };
-    const derived = {
-      leftHandSide: operand(draft.derived.leftHandSide),
-      predicate: draft.derived.predicate,
-      rightHandSide: operand(draft.derived.rightHandSide),
-    };
-    if (draft.derived.negate) derived.negate = true;
+    const computes = draft.derived.operator !== undefined;
+    const derived = computes
+      ? {
+          leftHandSide: operand(draft.derived.leftHandSide),
+          operator: draft.derived.operator,
+          rightHandSide: operand(draft.derived.rightHandSide),
+        }
+      : {
+          leftHandSide: operand(draft.derived.leftHandSide),
+          predicate: draft.derived.predicate,
+          rightHandSide: operand(draft.derived.rightHandSide),
+        };
+    if (!computes && draft.derived.negate) derived.negate = true;
     return {
       tags,
-      // The one thing a predicate can yield. Stated here rather than
-      // trusted from the draft, so a body that left derived mode
-      // half-way can never store another type against it.
-      valueType: 'boolean',
+      // The one thing a predicate can yield is a boolean — stated here
+      // rather than trusted from the draft, so a body that left derived
+      // mode half-way can never store another type against it. A
+      // computation holds the number its author typed it as.
+      valueType: computes ? draft.valueType : 'boolean',
       isList: false,
       derived,
     };
@@ -9794,11 +9803,11 @@ function blankProjectionDraft(model, entityName) {
   return draft;
 }
 
-// One side of a derived predicate: another projection — read by
-// whatever this one is read by — or, on the right, a typed value to
-// compare against. Enum members are offered exactly when the other
-// side reads an enum-typed projection, the same rule the rule editor
-// follows.
+// One side of a derived predicate or computation: another projection —
+// read by whatever this one is read by — or a typed value: on the right
+// of a comparison, on either side of a computation. Enum members are
+// offered exactly when the other side reads an enum-typed projection,
+// the same rule the rule editor follows.
 function derivedSideEditor(model, draft, side, { allowLiteral } = {}) {
   const derived = draft.derived;
   const current = derived[side];
@@ -9880,7 +9889,7 @@ function derivedSideEditor(model, draft, side, { allowLiteral } = {}) {
 // The editor of a projection, wherever one is edited: this page, an
 // entity's own page for the ones bound as its properties, and the
 // definition modals. Sections on the left — value, tags, handlers (or
-// the derived predicate), advanced — and what it works out to on the
+// what it is derived by), advanced — and what it works out to on the
 // right, which wraps under them where there is no room. `draft` is
 // mutated in place; an open row saves it as it changes, a new one on
 // Create.
@@ -9963,7 +9972,10 @@ function projectionFields(model, draft, { entityName, onNewType, onChecks } = {}
   ]), null,
     draft.derived
       ? h('div', { class: 'pfields' },
-          fieldLabel('type', h('span', { class: 'chip' }, 'boolean')),
+          // A comparison holds a boolean and nothing else; a computation
+          // holds the number its author types it as — set from its
+          // operands when the operator is picked, editable after.
+          fieldLabel('type', draft.derived.operator !== undefined ? typePicker : h('span', { class: 'chip' }, 'boolean')),
           fieldLabel('initial', h('span', { class: 'muted tiny' }, '— derived')))
       : h('div', { class: 'pfields' },
           fieldLabel('type', typePicker),
@@ -10069,25 +10081,51 @@ function projectionFields(model, draft, { entityName, onNewType, onChecks } = {}
       ? (draft.script ? scriptedHandlerRows : declaredHandlerRows)
       : h('div', { class: 'empty' }, '—'));
 
-  // ---- derived: one predicate over other projections ----
+  // ---- derived: one predicate or computation over other projections ----
+
+  // One picker, two groups: what compares (and holds a boolean) and
+  // what computes (and holds a number). Picking one sets the type to
+  // what it yields; a computation's stays editable.
+  const computes = !!draft.derived && draft.derived.operator !== undefined;
+  const derivedChoice = !draft.derived ? '' : computes ? 'o:' + draft.derived.operator : 'p:' + draft.derived.predicate;
+  const derivedChoices = [
+    ...DERIVED_PREDICATES.map((p) => ['p:' + p, `compare → boolean${GROUP_SEP}${p}`]),
+    ...DERIVED_OPERATORS.map((o) => ['o:' + o,
+      `compute → number${GROUP_SEP}${DERIVED_OPERATOR_SYMBOL[o] ? `${DERIVED_OPERATOR_SYMBOL[o]} (${o})` : `${o}(a, b)`}`]),
+  ];
+  const pickDerived = (v) => {
+    const derived = draft.derived;
+    if (v.startsWith('p:')) {
+      derived.predicate = v.slice(2);
+      delete derived.operator;
+      draft.valueType = 'boolean';
+    } else {
+      derived.operator = v.slice(2);
+      delete derived.predicate;
+      delete derived.negate;
+      draft.valueType = derivedResultBase(model, derived)
+        || (numericBaseOf(model, draft.valueType) ? draft.valueType : 'integer');
+    }
+    draft.isList = false;
+    render();
+  };
 
   const derivedSection = !draft.derived ? null : projectionSection('derived',
     hint('proj-derived', 'Derived', [
-      'One predicate over other projections, read by the same tags as this one.',
+      'One comparison or computation over other projections, read by the same tags as this one.',
+      'A comparison holds a boolean; a computation (+, -, *, min, max) a number, null while a side is null.',
       'Their queries are its query, so reading it guards the append exactly as reading them would.',
     ]), null,
-    h('div', { class: 'adder' }, ...derivedSideEditor(model, draft, 'leftHandSide', {})),
+    h('div', { class: 'adder' }, ...derivedSideEditor(model, draft, 'leftHandSide', { allowLiteral: computes })),
     h('div', { class: 'adder' },
-      h('label', { class: 'tiny muted' }, h('input', {
+      computes ? null : h('label', { class: 'tiny muted' }, h('input', {
         type: 'checkbox', checked: !!draft.derived.negate,
         onchange: (e) => {
           if (e.target.checked) draft.derived.negate = true;
           else delete draft.derived.negate;
         },
       }), ' not'),
-      pick(DERIVED_PREDICATES.map((p) => [p, p]),
-        draft.derived.predicate,
-        (v) => { draft.derived.predicate = v; render(); })),
+      pick(derivedChoices, derivedChoice, pickDerived)),
     h('div', { class: 'adder' }, ...derivedSideEditor(model, draft, 'rightHandSide', { allowLiteral: true })));
 
   // ---- advanced ----
@@ -10096,7 +10134,7 @@ function projectionFields(model, draft, { entityName, onNewType, onChecks } = {}
   // projection that already uses it shows it anyway: the switch hides
   // offers, never what is stored.
 
-  const derivedToggle = experimental() ? h('label', { class: 'tiny' }, h('input', {
+  const derivedToggle = h('label', { class: 'tiny' }, h('input', {
     type: 'checkbox', checked: !!draft.derived,
     onchange: (e) => {
       if (e.target.checked) {
@@ -10110,7 +10148,7 @@ function projectionFields(model, draft, { entityName, onNewType, onChecks } = {}
           predicate: 'equals',
           rightHandSide: { projection: '' },
         };
-        toast('Now derived — one boolean worked out from other projections. The handlers are gone.');
+        toast('Now derived — worked out from other projections. The handlers are gone.');
       } else {
         delete draft.derived;
         draft.initialValue = defaultInitialValue(model, draft);
@@ -10119,9 +10157,12 @@ function projectionFields(model, draft, { entityName, onNewType, onChecks } = {}
       }
       render();
     },
-  }), ' derived projection') : null;
+  }), ' derived projection');
 
-  const scriptToggle = h('label', { class: 'tiny' }, h('input', {
+  // Scripted is experimental: offered with the flag on, and shown
+  // regardless on a projection that already is one — so it can be
+  // turned back into a declared one.
+  const scriptToggle = !experimental() && !draft.script ? null : h('label', { class: 'tiny' }, h('input', {
     type: 'checkbox', checked: !!draft.script,
     onchange: (e) => {
       if (e.target.checked) {
@@ -13291,13 +13332,26 @@ function projectionWatchCard(model, watch) {
   // not `<courseId>` but `course:c1`. The sandbox is the one place the
   // arguments are concrete, so it is the one place the query can be
   // shown the way the store would receive it.
+  // A derived projection runs its operands' queries, each under its own
+  // tags (`foldedReads`), so it shows one line per projection it folds.
   const queryIcon = projection ? (() => {
-    let tags;
-    try { tags = projectionQueryTags(model, watch.projection, watchRead(watch)); }
-    catch (error) { return null; }
-    const types = uniq((projection.handlers || []).map((x) => x && x.event).filter(Boolean)).sort();
+    const read = watchRead(watch);
+    let queries;
+    try {
+      queries = foldedReads(model, { projection: watch.projection, tags: read.tags }).map(({ read: folded }) => {
+        const tags = {};
+        for (const [name, value] of Object.entries(folded.tags || {})) {
+          tags[name] = operandSource(value) === 'tag-literal' ? value.tagValue : value;
+        }
+        const target = model['projection-definitions'][folded.projection];
+        return {
+          tags: projectionQueryTags(model, folded.projection, { tags, args: read.args }),
+          types: uniq(((target && target.handlers) || []).map((x) => x && x.event).filter(Boolean)).sort(),
+        };
+      });
+    } catch (error) { return null; }
     return queryPopover('watch:' + watchKey(watch), 'what this watch queries',
-      h('div', {}, dcbQueryWords({ tags, types })));
+      ...queries.map((query) => h('div', {}, dcbQueryWords(query))));
   })() : null;
   const head = (...rest) => h('div', { class: 'card' },
     h('div', { class: 'sc-line' },

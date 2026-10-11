@@ -1,6 +1,6 @@
 {
-  "$schema": "https://dcb.events/schemas/model/v8.json",
-  "dcbModelVersion": "8.0",
+  "$schema": "https://dcb.events/schemas/model/v9.json",
+  "dcbModelVersion": "9.0",
   "name": "Content based decisions (guarded emissions)",
   "customTypeDefinitions": [
     {

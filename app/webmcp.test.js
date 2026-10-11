@@ -116,7 +116,14 @@ async function call(name, args) {
     eq('icon' in command, true, 'a command\'s icon is not experimental');
     eq(Object.keys(command.boundary.items.properties || {}).includes('entity'), false, 'a binding is a projection read');
     eq('when' in command.publishes.items.properties, false, 'no guarded emissions');
-    eq('derived' in offered('add_projection_definition'), false, 'no derived projections');
+    const projection = offered('add_projection_definition');
+    eq('derived' in projection, true, 'derived projections are offered');
+    eq(projection.derived.properties.operator.enum, ['add', 'subtract', 'multiply', 'min', 'max'],
+      'computing ones too');
+    eq('script' in projection, false, 'no scripted projections');
+    eq(JSON.stringify(projection).includes('"code"'), false, 'nor code handlers');
+    eq('arguments' in offered('add_command_definition').boundary.items.properties, false,
+      'nor the arguments a read passes a script');
     eq('icon' in offered('add_event_definition'), true, 'nor is an event\'s');
     eq(JSON.stringify(registered.get('add_projection_definition').inputSchema).includes('"currentValue"'), false,
       'no currentValue operand');

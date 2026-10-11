@@ -1,0 +1,786 @@
+{
+  "$schema": "https://dcb.events/schemas/model/v9.json",
+  "dcbModelVersion": "9.0",
+  "name": "Developer hours (derived computation)",
+  "customTypeDefinitions": [
+    {
+      "name": "ProjectId",
+      "schema": {
+        "type": "string"
+      },
+      "isTag": true
+    },
+    {
+      "name": "ProjectStatus",
+      "schema": {
+        "type": "string",
+        "enum": [
+          "Active",
+          "Archived"
+        ]
+      }
+    },
+    {
+      "name": "DeveloperId",
+      "schema": {
+        "type": "string"
+      },
+      "isTag": true
+    },
+    {
+      "name": "WeekNumber",
+      "schema": {
+        "type": "integer"
+      },
+      "isTag": true
+    }
+  ],
+  "eventDefinitions": [
+    {
+      "name": "ProjectAdded",
+      "properties": [
+        {
+          "name": "projectId",
+          "propertyType": "ProjectId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "requiredSeniorityLevel",
+          "propertyType": "integer",
+          "isOptional": false,
+          "isList": false
+        }
+      ],
+      "tags": [
+        "projectId"
+      ]
+    },
+    {
+      "name": "ProjectArchived",
+      "properties": [
+        {
+          "name": "projectId",
+          "propertyType": "ProjectId",
+          "isOptional": false,
+          "isList": false
+        }
+      ],
+      "tags": [
+        "projectId"
+      ]
+    },
+    {
+      "name": "DeveloperRegistered",
+      "properties": [
+        {
+          "name": "developerId",
+          "propertyType": "DeveloperId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "seniorityLevel",
+          "propertyType": "integer",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "availableHoursPerWeek",
+          "propertyType": "integer",
+          "isOptional": false,
+          "isList": false
+        }
+      ],
+      "tags": [
+        "developerId"
+      ]
+    },
+    {
+      "name": "HoursAllocated",
+      "properties": [
+        {
+          "name": "projectId",
+          "propertyType": "ProjectId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "developerId",
+          "propertyType": "DeveloperId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "week",
+          "propertyType": "WeekNumber",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "requestedHours",
+          "propertyType": "integer",
+          "isOptional": false,
+          "isList": false
+        }
+      ],
+      "tags": [
+        "projectId",
+        "developerId",
+        "week"
+      ]
+    }
+  ],
+  "entityDefinitions": [],
+  "projectionDefinitions": [
+    {
+      "name": "ProjectStatus",
+      "tags": [
+        {
+          "name": "projectId",
+          "tagType": "ProjectId"
+        }
+      ],
+      "valueType": "ProjectStatus",
+      "isList": false,
+      "initialValue": null,
+      "handlers": [
+        {
+          "event": "ProjectAdded",
+          "operation": "set",
+          "value": {
+            "enumMember": "Active"
+          }
+        },
+        {
+          "event": "ProjectArchived",
+          "operation": "set",
+          "value": {
+            "enumMember": "Archived"
+          }
+        }
+      ]
+    },
+    {
+      "name": "ProjectRequiredSeniorityLevel",
+      "tags": [
+        {
+          "name": "projectId",
+          "tagType": "ProjectId"
+        }
+      ],
+      "valueType": "integer",
+      "isList": false,
+      "initialValue": null,
+      "handlers": [
+        {
+          "event": "ProjectAdded",
+          "operation": "set",
+          "value": {
+            "eventProperty": "requiredSeniorityLevel"
+          }
+        }
+      ]
+    },
+    {
+      "name": "DeveloperExists",
+      "tags": [
+        {
+          "name": "developerId",
+          "tagType": "DeveloperId"
+        }
+      ],
+      "valueType": "boolean",
+      "isList": false,
+      "initialValue": false,
+      "handlers": [
+        {
+          "event": "DeveloperRegistered",
+          "operation": "set",
+          "value": true
+        }
+      ]
+    },
+    {
+      "name": "DeveloperSeniorityLevel",
+      "tags": [
+        {
+          "name": "developerId",
+          "tagType": "DeveloperId"
+        }
+      ],
+      "valueType": "integer",
+      "isList": false,
+      "initialValue": null,
+      "handlers": [
+        {
+          "event": "DeveloperRegistered",
+          "operation": "set",
+          "value": {
+            "eventProperty": "seniorityLevel"
+          }
+        }
+      ]
+    },
+    {
+      "name": "DeveloperAvailableHoursPerWeek",
+      "tags": [
+        {
+          "name": "developerId",
+          "tagType": "DeveloperId"
+        }
+      ],
+      "valueType": "integer",
+      "isList": false,
+      "initialValue": 0,
+      "handlers": [
+        {
+          "event": "DeveloperRegistered",
+          "operation": "set",
+          "value": {
+            "eventProperty": "availableHoursPerWeek"
+          }
+        }
+      ]
+    },
+    {
+      "name": "DeveloperAllocatedHoursForWeek",
+      "tags": [
+        {
+          "name": "developerId",
+          "tagType": "DeveloperId"
+        },
+        {
+          "name": "week",
+          "tagType": "WeekNumber"
+        }
+      ],
+      "valueType": "integer",
+      "isList": false,
+      "initialValue": 0,
+      "handlers": [
+        {
+          "event": "HoursAllocated",
+          "operation": "increment",
+          "value": {
+            "eventProperty": "requestedHours"
+          }
+        }
+      ]
+    },
+    {
+      "name": "DeveloperRemainingHoursForWeek",
+      "tags": [
+        {
+          "name": "developerId",
+          "tagType": "DeveloperId"
+        },
+        {
+          "name": "week",
+          "tagType": "WeekNumber"
+        }
+      ],
+      "valueType": "integer",
+      "isList": false,
+      "derived": {
+        "leftHandSide": {
+          "projection": "DeveloperAvailableHoursPerWeek",
+          "tags": {
+            "developerId": {
+              "parameterName": "developerId"
+            }
+          }
+        },
+        "operator": "subtract",
+        "rightHandSide": {
+          "projection": "DeveloperAllocatedHoursForWeek",
+          "tags": {
+            "developerId": {
+              "parameterName": "developerId"
+            },
+            "week": {
+              "parameterName": "week"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "commandDefinitions": [
+    {
+      "name": "AddProject",
+      "feature": "Projects",
+      "properties": [
+        {
+          "name": "projectId",
+          "propertyType": "ProjectId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "requiredSeniorityLevel",
+          "propertyType": "integer",
+          "isOptional": false,
+          "isList": false
+        }
+      ],
+      "boundary": [],
+      "conditions": [
+        {
+          "leftHandSide": {
+            "projection": "ProjectStatus",
+            "tags": {
+              "projectId": {
+                "parameterName": "projectId"
+              }
+            }
+          },
+          "predicate": "equals",
+          "rightHandSide": null,
+          "rejection": "Project already exists"
+        }
+      ],
+      "publishes": [
+        {
+          "name": "ProjectAdded",
+          "parameters": {
+            "projectId": {
+              "parameterName": "projectId"
+            },
+            "requiredSeniorityLevel": {
+              "parameterName": "requiredSeniorityLevel"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ArchiveProject",
+      "feature": "Projects",
+      "properties": [
+        {
+          "name": "projectId",
+          "propertyType": "ProjectId",
+          "isOptional": false,
+          "isList": false
+        }
+      ],
+      "boundary": [],
+      "conditions": [
+        {
+          "leftHandSide": {
+            "projection": "ProjectStatus",
+            "tags": {
+              "projectId": {
+                "parameterName": "projectId"
+              }
+            }
+          },
+          "predicate": "equals",
+          "rightHandSide": {
+            "enumMember": "Active"
+          },
+          "rejection": "Project is not active"
+        }
+      ],
+      "publishes": [
+        {
+          "name": "ProjectArchived",
+          "parameters": {
+            "projectId": {
+              "parameterName": "projectId"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "RegisterDeveloper",
+      "feature": "Developers",
+      "properties": [
+        {
+          "name": "developerId",
+          "propertyType": "DeveloperId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "seniorityLevel",
+          "propertyType": "integer",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "availableHoursPerWeek",
+          "propertyType": "integer",
+          "isOptional": false,
+          "isList": false
+        }
+      ],
+      "boundary": [],
+      "conditions": [
+        {
+          "leftHandSide": {
+            "projection": "DeveloperExists",
+            "tags": {
+              "developerId": {
+                "parameterName": "developerId"
+              }
+            }
+          },
+          "predicate": "isFalse",
+          "rejection": "Developer is already registered"
+        }
+      ],
+      "publishes": [
+        {
+          "name": "DeveloperRegistered",
+          "parameters": {
+            "developerId": {
+              "parameterName": "developerId"
+            },
+            "seniorityLevel": {
+              "parameterName": "seniorityLevel"
+            },
+            "availableHoursPerWeek": {
+              "parameterName": "availableHoursPerWeek"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "AllocateHours",
+      "feature": "Projects",
+      "properties": [
+        {
+          "name": "projectId",
+          "propertyType": "ProjectId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "developerId",
+          "propertyType": "DeveloperId",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "week",
+          "propertyType": "WeekNumber",
+          "isOptional": false,
+          "isList": false
+        },
+        {
+          "name": "requestedHours",
+          "propertyType": "integer",
+          "isOptional": false,
+          "isList": false
+        }
+      ],
+      "boundary": [],
+      "conditions": [
+        {
+          "leftHandSide": {
+            "projection": "ProjectStatus",
+            "tags": {
+              "projectId": {
+                "parameterName": "projectId"
+              }
+            }
+          },
+          "predicate": "equals",
+          "rightHandSide": {
+            "enumMember": "Active"
+          },
+          "rejection": "Project is not active"
+        },
+        {
+          "leftHandSide": {
+            "projection": "DeveloperExists",
+            "tags": {
+              "developerId": {
+                "parameterName": "developerId"
+              }
+            }
+          },
+          "predicate": "isTrue",
+          "rejection": "Developer is not registered"
+        },
+        {
+          "leftHandSide": {
+            "projection": "DeveloperSeniorityLevel",
+            "tags": {
+              "developerId": {
+                "parameterName": "developerId"
+              }
+            }
+          },
+          "predicate": "greaterThanOrEquals",
+          "rightHandSide": {
+            "projection": "ProjectRequiredSeniorityLevel",
+            "tags": {
+              "projectId": {
+                "parameterName": "projectId"
+              }
+            }
+          },
+          "rejection": "Developer seniority level too low"
+        },
+        {
+          "leftHandSide": {
+            "projection": "DeveloperRemainingHoursForWeek",
+            "tags": {
+              "developerId": {
+                "parameterName": "developerId"
+              },
+              "week": {
+                "parameterName": "week"
+              }
+            }
+          },
+          "predicate": "greaterThanOrEquals",
+          "rightHandSide": {
+            "parameterName": "requestedHours"
+          },
+          "rejection": "Developer does not have enough hours left that week"
+        }
+      ],
+      "publishes": [
+        {
+          "name": "HoursAllocated",
+          "parameters": {
+            "projectId": {
+              "parameterName": "projectId"
+            },
+            "developerId": {
+              "parameterName": "developerId"
+            },
+            "week": {
+              "parameterName": "week"
+            },
+            "requestedHours": {
+              "parameterName": "requestedHours"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "scenarioDefinitions": [
+    {
+      "id": "3b0f6c52-8d1e-4a7f-9c24-6e5d1a8b7f03",
+      "command": "AllocateHours",
+      "name": "allocates hours the developer has left that week",
+      "given": [
+        {
+          "event": "ProjectAdded",
+          "data": {
+            "projectId": "p1",
+            "requiredSeniorityLevel": 2
+          }
+        },
+        {
+          "event": "DeveloperRegistered",
+          "data": {
+            "developerId": "d1",
+            "seniorityLevel": 3,
+            "availableHoursPerWeek": 40
+          }
+        },
+        {
+          "event": "HoursAllocated",
+          "data": {
+            "projectId": "p1",
+            "developerId": "d1",
+            "week": 12,
+            "requestedHours": 30
+          }
+        }
+      ],
+      "when": {
+        "arguments": {
+          "projectId": "p1",
+          "developerId": "d1",
+          "week": 12,
+          "requestedHours": 10
+        }
+      },
+      "then": {
+        "outcome": "published",
+        "events": [
+          {
+            "type": "HoursAllocated",
+            "data": {
+              "projectId": "p1",
+              "developerId": "d1",
+              "week": 12,
+              "requestedHours": 10
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "9e41d7a3-2c6b-4f58-b0e1-7a3c5d9f2e64",
+      "command": "AllocateHours",
+      "name": "refuses more hours than are left that week",
+      "given": [
+        {
+          "event": "ProjectAdded",
+          "data": {
+            "projectId": "p1",
+            "requiredSeniorityLevel": 2
+          }
+        },
+        {
+          "event": "DeveloperRegistered",
+          "data": {
+            "developerId": "d1",
+            "seniorityLevel": 3,
+            "availableHoursPerWeek": 40
+          }
+        },
+        {
+          "event": "HoursAllocated",
+          "data": {
+            "projectId": "p1",
+            "developerId": "d1",
+            "week": 12,
+            "requestedHours": 30
+          }
+        }
+      ],
+      "when": {
+        "arguments": {
+          "projectId": "p1",
+          "developerId": "d1",
+          "week": 12,
+          "requestedHours": 11
+        }
+      },
+      "then": {
+        "outcome": "rejected",
+        "events": [],
+        "rejection": "Developer does not have enough hours left that week"
+      }
+    },
+    {
+      "id": "c7a2e9f1-5b3d-4e86-a1f4-0d8b6c2e9a75",
+      "command": "AllocateHours",
+      "name": "another week starts from the whole weekly budget",
+      "given": [
+        {
+          "event": "ProjectAdded",
+          "data": {
+            "projectId": "p1",
+            "requiredSeniorityLevel": 2
+          }
+        },
+        {
+          "event": "DeveloperRegistered",
+          "data": {
+            "developerId": "d1",
+            "seniorityLevel": 3,
+            "availableHoursPerWeek": 40
+          }
+        },
+        {
+          "event": "HoursAllocated",
+          "data": {
+            "projectId": "p1",
+            "developerId": "d1",
+            "week": 12,
+            "requestedHours": 40
+          }
+        }
+      ],
+      "when": {
+        "arguments": {
+          "projectId": "p1",
+          "developerId": "d1",
+          "week": 13,
+          "requestedHours": 40
+        }
+      },
+      "then": {
+        "outcome": "published",
+        "events": [
+          {
+            "type": "HoursAllocated",
+            "data": {
+              "projectId": "p1",
+              "developerId": "d1",
+              "week": 13,
+              "requestedHours": 40
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "5d8c1b46-e7f2-4a93-8c05-b2f6e4a1d387",
+      "command": "AllocateHours",
+      "name": "refuses a developer nobody registered",
+      "given": [
+        {
+          "event": "ProjectAdded",
+          "data": {
+            "projectId": "p1",
+            "requiredSeniorityLevel": 2
+          }
+        }
+      ],
+      "when": {
+        "arguments": {
+          "projectId": "p1",
+          "developerId": "d1",
+          "week": 12,
+          "requestedHours": 10
+        }
+      },
+      "then": {
+        "outcome": "rejected",
+        "events": [],
+        "rejection": "Developer is not registered"
+      }
+    }
+  ],
+  "projectionScenarioDefinitions": [
+    {
+      "id": "1f6e3a9d-4b72-4c08-9e5a-d3c7b8f2a160",
+      "name": "is the weekly budget less what that week has allocated",
+      "projection": "DeveloperRemainingHoursForWeek",
+      "given": [
+        {
+          "event": "DeveloperRegistered",
+          "data": {
+            "developerId": "d1",
+            "seniorityLevel": 3,
+            "availableHoursPerWeek": 40
+          }
+        },
+        {
+          "event": "HoursAllocated",
+          "data": {
+            "projectId": "p1",
+            "developerId": "d1",
+            "week": 12,
+            "requestedHours": 30
+          }
+        }
+      ],
+      "tags": {
+        "developerId": {
+          "tagType": "DeveloperId",
+          "tagValue": "d1"
+        },
+        "week": {
+          "tagType": "WeekNumber",
+          "tagValue": 12
+        }
+      },
+      "then": 10
+    }
+  ]
+}

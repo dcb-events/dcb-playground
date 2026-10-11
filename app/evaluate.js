@@ -434,7 +434,7 @@ function foldProjectionState(model, events, projectionName, read) {
   const projection = model['projection-definitions'][projectionName];
   if (projection && derivedOf(projection)) {
     // A derived projection keeps no bookkeeping: its whole state is
-    // the one boolean its predicate yields.
+    // the one value its predicate or computation yields.
     return evDeriveProjection(model, events, projectionName, read);
   }
   const { compiled, selected, args, tags } = evProjectionFold(model, events, projectionName, read);
@@ -444,7 +444,8 @@ function foldProjectionState(model, events, projectionName, read) {
 // A derived projection is not folded but computed: each operand that
 // reads a projection folds it — by the tags the operand gives it, each
 // one of this read's own (`{parameterName}`) or a literal, with the
-// operand's own literal arguments — and the predicate decides. `seen` is the cycle guard — a value derived through itself
+// operand's own literal arguments — and the predicate decides, or the
+// operator computes. `seen` is the cycle guard — a value derived through itself
 // has nowhere to start, and the advisory said so before this error does.
 function evDeriveProjection(model, events, projectionName, read, seen = []) {
   if (seen.includes(projectionName)) {
@@ -468,7 +469,30 @@ function evDeriveProjection(model, events, projectionName, read, seen = []) {
 
   const left = readOperand(derived.leftHandSide);
   const right = readOperand(derived.rightHandSide);
+  if (derivedComputes(derived)) return evApplyOperator(projectionName, derived, left, right);
   return evApplyPredicate(derived, left, right);
+}
+
+// One computation over two numbers. A null side yields null — "not
+// known yet" stays unknown rather than counting as zero — and a side
+// that is no number at all is an error the advisory named first.
+function evApplyOperator(projectionName, derived, left, right) {
+  const l = evNormalize(left);
+  const r = evNormalize(right);
+  if (l === null || l === undefined || r === null || r === undefined) return null;
+  if (typeof l !== 'number' || typeof r !== 'number') {
+    return fail(`Projection "${projectionName}" computes "${derivedText(derived)}" over `
+      + `${JSON.stringify(typeof l !== 'number' ? l : r)}, which is no number.`);
+  }
+  switch (derived.operator) {
+    case 'add': return l + r;
+    case 'subtract': return l - r;
+    case 'multiply': return l * r;
+    case 'min': return Math.min(l, r);
+    case 'max': return Math.max(l, r);
+    default:
+      return fail(`"${derived.operator}" is not an operator this can compute.`);
+  }
 }
 
 function evProjectionFold(model, events, projectionName, read) {
