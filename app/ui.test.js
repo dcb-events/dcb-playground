@@ -4423,6 +4423,28 @@ function build(index) {
     eq(sandbox.codeDirty(), false, 'and the text is what the model says');
   });
 
+  check('the code stays the surface across pages it cannot show, and a kind page lands on its section', () => {
+    const { id, model: m } = build(ENTITIES);
+    store.set('dcb-playground:model', id);
+    const { state, codeView } = sandbox;
+    Object.assign(state, { view: 'slice', slice: 'ArchiveCourse', code: true, openEvent: null });
+    eq(sandbox.codeShown(), true, 'a command page is code');
+    state.view = 'sandbox';
+    eq([state.code, sandbox.codeShown()], [true, false], 'the sandbox is a page, the surface still Code');
+    state.view = 'projections';
+    eq(sandbox.codeShown(), true, 'and the next definition page is code again');
+    eq(sandbox.pageDefinition(), ['projection-definition', null], 'the whole kind');
+    sandbox.syncCodeView(m());
+    const parsed = sandbox.parseModelSource(codeView.text);
+    const lines = codeView.text.split('\n');
+    for (const [kind, heading] of [['custom-type-definition', '// Types'], ['event-definition', '// Events']]) {
+      const start = sandbox.sourceKindStart(parsed, kind, codeView.text);
+      eq(lines[start.line - 1], heading, kind + ' starts at its section comment');
+    }
+    eq(sandbox.sourceKindStart(parsed, 'no-such-kind', codeView.text), null, 'nothing to land on');
+    state.code = false;
+  });
+
   check('a text the model moved under stays stale through a model switch, and is never applied', () => {
     const { id, model: m } = build(ENTITIES);
     const other = createDcbModel('Other');

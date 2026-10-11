@@ -4576,8 +4576,7 @@ function renderRail() {
       href: '#', class: state.view === 'types' ? 'on' : '',
       title: Object.keys(model['custom-type-definitions']).length + ' declared',
       onclick: (e) => {
-        e.preventDefault(); closeForms();
-        state.view = 'types'; render();
+        e.preventDefault(); openKindPage('types');
       },
     }, 'Custom types'));
     rail.appendChild(h('a', {
@@ -4589,8 +4588,7 @@ function renderRail() {
         ? projectionNames.map(readable).join(', ')
         : 'nothing projected outside an entity yet',
       onclick: (e) => {
-        e.preventDefault(); closeForms();
-        state.view = 'projections'; render();
+        e.preventDefault(); openKindPage('projections');
       },
     }, 'Projections'));
     const eventNames = Object.keys(model['event-definitions']);
@@ -4599,8 +4597,7 @@ function renderRail() {
       'data-src': eventNames.map((n) => 'event:' + n).join(' ') || null,
       title: eventNames.length ? eventNames.map(readable).join(', ') : 'nothing recorded yet',
       onclick: (e) => {
-        e.preventDefault(); closeForms();
-        state.view = 'events'; render();
+        e.preventDefault(); openKindPage('events');
       },
     }, 'Events'));
   }
@@ -5120,14 +5117,6 @@ function paintBehind(model) {
     state.entity = rest[0] || null;
     if (!state.entity) state.view = 'slice';
   }
-  // A rail click on a page that is not one definition — the sandbox,
-  // an overview — is a request for that page, so the code steps aside;
-  // whatever was typed stays, unapplied, for when it comes back.
-  if (state.code && codeView.shownView !== null && state.view !== codeView.shownView
-      && !CODE_FOLLOWS.includes(state.view)) {
-    setCodeSurface(false);
-    if (codeDirty()) toast('Your code edits are kept, unapplied — switch back to Code to finish them.');
-  }
   renderRail();
 
   const main = document.getElementById('main');
@@ -5137,7 +5126,7 @@ function paintBehind(model) {
     main.className = 'slice';
     return renderNewCommand(model, main);
   }
-  if (state.code) {
+  if (codeShown()) {
     main.className = 'slice wide code-view';
     return renderCode(model, main);
   }
@@ -13712,8 +13701,24 @@ function setCodeSurface(on) {
 // remembered per browser, like the surface, and folded unless asked.
 const SCENARIO_FOLD_KEY = 'dcb-playground:code-scenarios';
 
-// The pages that are one definition each — what the code follows.
+// The pages about definitions — what the code follows. Any other page
+// (the sandbox, an overview) has no text to show, so it is shown as a
+// page while the surface stays Code: only the Visual button leaves it,
+// and the next definition page is code again.
 const CODE_FOLLOWS = ['slice', 'entity', 'events', 'projections', 'types'];
+function codeShown() { return !!state.code && CODE_FOLLOWS.includes(state.view); }
+
+// A rail link to a whole kind's page; in the code, a jump to where
+// that kind's definitions start — every click, not only the first.
+function openKindPage(view) {
+  closeForms();
+  state.view = view;
+  if (state.code) {
+    if (view === 'events') state.openEvent = null;
+    codeView.focus = null;
+  }
+  render();
+}
 
 const codeView = {
   modelId: null,
@@ -14044,11 +14049,12 @@ function enterCode() {
 function leaveCode() {
   if (!state.code) return;
   const model = activeModel();
+  const shown = codeShown();
   let at = null;
   if (model) {
     syncCodeView(model);
     const analysis = analyseCode(model);
-    const line = codeCursorLine();
+    const line = shown ? codeCursorLine() : null;
     at = line ? sourceSpanAt(analysis.parsed, line) : null;
     const inScenario = line && analysis.parsed.scenarios.some((r) => r.block && line >= r.span.line && line <= r.span.endLine);
     if (at && inScenario) at = { ...at, scenarios: true };
@@ -14098,7 +14104,22 @@ function pageDefinition() {
   }
   if (state.view === 'entity' && state.entity) return ['entity-definition', state.entity];
   if (state.view === 'events' && state.openEvent) return ['event-definition', state.openEvent];
+  // A whole kind's page: where its definitions start (`sourceKindStart`).
+  if (state.view === 'events') return ['event-definition', null];
+  if (state.view === 'projections') return ['projection-definition', null];
+  if (state.view === 'types') return ['custom-type-definition', null];
   return null;
+}
+
+// Where a kind's definitions start in the text: the first one, from
+// the section comment above it when the line above is one.
+function sourceKindStart(parsed, kind, text) {
+  const spans = parsed.spans.filter((span) => span.kind === kind);
+  if (!spans.length) return null;
+  const first = spans.reduce((a, b) => (b.line < a.line ? b : a));
+  const above = text.split('\n')[first.line - 2];
+  const from = above !== undefined && above.trim().startsWith('//') ? first.line - 1 : first.line;
+  return { ...first, line: from };
 }
 
 function codeCursorLine() {
@@ -14546,7 +14567,9 @@ function renderCode(model, main) {
   codeView.shownView = state.view;
   if (key !== codeView.focus || shown === null) {
     codeView.focus = key;
-    const span = target ? sourceSpanOf(analysis.parsed, target[0], target[1]) : null;
+    const span = !target ? null : target[1] === null
+      ? sourceKindStart(analysis.parsed, target[0], codeView.text)
+      : sourceSpanOf(analysis.parsed, target[0], target[1]);
     // After this paint has attached the editor — a timeout rather than
     // a frame, which a background tab never gets.
     setTimeout(() => {
