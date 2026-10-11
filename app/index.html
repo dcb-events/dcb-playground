@@ -1248,8 +1248,8 @@
 
   /* ---------- overview ----------
      The page a model opens on: what it holds, counted, then every
-     command on one row. Nothing here edits; a name is only the way to
-     its own page. */
+     command on one row. Nothing here edits; a count and a name are
+     only the way to the page that holds them. */
   .overview-stats {
     display: grid; grid-template-columns: repeat(auto-fit, minmax(124px, 1fr));
     gap: 10px; margin-bottom: 26px;
@@ -1259,8 +1259,8 @@
     background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
     padding: 10px 14px; font: inherit; color: inherit;
   }
-  button.overview-stat { cursor: pointer; }
-  button.overview-stat:hover { border-color: var(--border-strong); }
+  a.overview-stat { text-decoration: none; }
+  a.overview-stat:hover { border-color: var(--border-strong); }
   .overview-stat .label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
   /* Only a count of one kind of definition carries that kind's colour. */
   .overview-stat.kind .label::before {
@@ -10551,26 +10551,42 @@ function renderOverview(model, main) {
   const trouble = scenarioTrouble(model).length;
   const found = problems(model);
 
-  const stat = (label, kind, count, sub, onclick) => h(onclick ? 'button' : 'div', {
+  // A count is the way to where those things are listed — the rail's
+  // page for a kind; commands are listed right below. What has no
+  // page of its own goes to the first place that shows one — an entity,
+  // a command's scenarios — or to the Problems panel when something is
+  // wrong with it; a count with nowhere to go stays a plain card.
+  const stat = (label, kind, count, sub, go) => h(go ? 'a' : 'div', {
     class: 'overview-stat' + (kind ? ' kind' : ''), style: kind ? '--kind: var(--' + kind + ')' : null,
-    type: onclick ? 'button' : null, onclick,
+    href: go ? '#' : null,
+    onclick: go ? (e) => { e.preventDefault(); closeForms(); go(); } : null,
   }, h('span', { class: 'label' }, label),
     h('span', { class: 'count' }, String(count)),
     sub ? h('span', { class: 'sub' }, sub) : null);
+  const show = (view) => () => { state.view = view; render(); };
+  const showProblems = () => { state.problems = true; render(); };
+  const withScenarios = Object.keys(commands)
+    .find((name) => Object.values(model['scenario-definitions'] || {}).some((s) => s.command === name));
+  const firstEntity = Object.keys(model['entity-definitions']).sort()[0];
 
   // The same rule the rail follows: what the experimental flag keeps out
   // of the rail it keeps out of the count, unless the model already has one.
   main.appendChild(h('div', { class: 'overview-stats' },
     stat('Commands', 'command', bodies.length, plural(ruleCount, 'rule')),
-    stat('Events', 'event', events.length, unappended ? unappended + ' not appended' : null),
+    stat('Events', 'event', events.length, unappended ? unappended + ' not appended' : null, show('events')),
     experimental() || entities.length
-      ? stat('Entities', 'entity', entities.length, lifecycles ? lifecycles + ' with a lifecycle' : null)
+      ? stat('Entities', 'entity', entities.length, lifecycles ? lifecycles + ' with a lifecycle' : null,
+        firstEntity ? () => openEntity(firstEntity) : null)
       : null,
-    stat('Projections', 'projection', standalone, 'standalone'),
-    stat('Custom types', 'type', types),
-    stat('Scenarios', null, scenarios, trouble ? trouble + ' not current' : null),
-    stat('Problems', null, found.length, null,
-      found.length ? () => { closeForms(); state.problems = true; render(); } : null)));
+    stat('Projections', 'projection', standalone, 'standalone', show('projections')),
+    stat('Custom types', 'type', types, null, show('types')),
+    stat('Scenarios', null, scenarios, trouble ? trouble + ' not current' : null,
+      trouble ? showProblems
+        : withScenarios ? () => {
+          state.view = 'slice'; state.slice = withScenarios; state.tab = 'scenarios'; render();
+        }
+        : null),
+    stat('Problems', null, found.length, null, found.length ? showProblems : null)));
 
   main.appendChild(h('div', { class: 'overview-section' },
     h('h2', {}, 'Commands'), h('span', { class: 'muted small' }, 'by feature')));
