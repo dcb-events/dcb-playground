@@ -3344,4 +3344,18 @@ check('every predefined model ships advisory-clean', () => {
   });
 }
 
+// ---------------------------------------------------------------
+// Small semantic edges: values that look like syntax somewhere else.
+// ---------------------------------------------------------------
+{
+  check('a tag value with a dollar sign is that value, not a replacement pattern', () => {
+    eq(sandbox.renderTag({ name: 'CourseId', tagSchema: '{type}:{value}' }, "a$'"), "CourseId:a$'", '$\' kept');
+    eq(sandbox.renderTag({ name: 'CourseId', tagSchema: '{type}:{value}' }, 'a$&b'), 'CourseId:a$&b', '$& kept');
+    const model = build(ENTITIES);
+    const log = [];
+    drive(model, log, 'DefineCourse', { courseId: 'a', capacity: 1 });
+    eq(foldEntityProperty(model, log, 'Course', 'status', "a$'"), 'NonExistent', 'course a$\' is not course a');
+  });
+}
+
 finish();

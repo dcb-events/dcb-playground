@@ -498,11 +498,13 @@ function identifierTypeOf(model, typeName) {
 
 // Renders one identifier's value into its tag, through that
 // identifier's own `tagSchema` — `{type}` and `{value}`, in whichever
-// order the template states them.
+// order the template states them. Replaced through functions: a string
+// replacement reads `$'` or `$&` in the value as a pattern, and course
+// `a$'` would have been tagged — and read — as course `a`.
 function renderTag(identifierType, valueText) {
   return identifierType.tagSchema
-    .replace('{type}', identifierType.name)
-    .replace('{value}', valueText);
+    .replace('{type}', () => identifierType.name)
+    .replace('{value}', () => valueText);
 }
 
 // The fields of a composite value type, or null for anything else.
