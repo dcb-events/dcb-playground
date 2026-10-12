@@ -2068,8 +2068,8 @@ function typeLabel(member) {
 // An entity's mark is authored and only authored. An unmarked entity
 // carries no glyph: a hashed stand-in was tried and did not earn its
 // place — a shape nobody chose says nothing about the thing, so every
-// page paid a column of noise for a legibility that never arrived. The
-// tables below are the picker's offer, not a fallback.
+// page paid a column of noise for a legibility that never arrived. What
+// the picker offers is `ICON_CHOICES` (index.html).
 //
 // Commands and events are the exception: an unmarked one shows its
 // kind's mark (`COMMAND_FALLBACK_ICON`, `EVENT_FALLBACK_ICON`) — one
@@ -2079,7 +2079,6 @@ function typeLabel(member) {
 // the colour of what it sits in, and `fallbackIconClass` lets a slot
 // that is not already kind-coloured paint it. It is a rendering, never
 // stored: the code view and the wire format see only an authored icon.
-const ENTITY_MARKS = ['◆', '●', '■', '▲', '★', '◇', '○', '□', '△', '✦'];
 
 // The icon a body actually carries, or '' when it carries none worth
 // showing — the one place the trim-or-fall-back rule lives.
@@ -2100,15 +2099,6 @@ function iconPrefix(icon, separator) {
 function entityIcon(model, name) {
   return chosenIcon(model, 'entity-definitions', name);
 }
-
-// An event is a moment, not a thing, so the picker offers it a
-// different family than an entity's — a spark rather than a shape, so
-// that two *authored* marks on one page never read as the wrong kind.
-const EVENT_MARKS = ['✱', '✲', '✳', '✴', '✵', '✶', '✷', '✸', '✹', '✺'];
-
-// A third family again, for the same reason: a tool, not a shape or a
-// spark, since one page can hold all three kinds at once.
-const COMMAND_MARKS = ['▶', '▷', '◈', '◉', '◐', '◑', '◒', '◓', '⬖', '⬗'];
 
 const COMMAND_FALLBACK_ICON = '➜';
 const EVENT_FALLBACK_ICON = '↯';

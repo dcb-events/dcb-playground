@@ -13118,17 +13118,6 @@ function sessionRun(model, commandName, args) {
   render();
 }
 
-// Every instance any visible event is about, as `Entity:id`. Tags are
-// the only thing that says so, which is why this reads them rather
-// than the payloads.
-function sessionInstances(model) {
-  const found = new Set();
-  for (const event of sessionVisible()) {
-    for (const tag of tagsOfEvent(model, event.type, event.data)) found.add(tag);
-  }
-  return [...found].sort();
-}
-
 // One instance, projected over what is visible. A scripted property
 // folds the same way a declared one does: the binding's one
 // identifier-typed argument is the instance itself, which is all this
