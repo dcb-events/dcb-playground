@@ -15,15 +15,21 @@
 
 // ---------- DOM ----------
 
+// Text is always text: a string child becomes a text node and an
+// attribute value an attribute. The two ways a string could become code
+// are refused — markup goes through `svg`, and a handler must be a
+// function (a string `onclick` would be an attribute the browser runs).
 function h(tag, attrs = {}, ...children) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
     if (v === null || v === undefined || v === false) continue;
-    if (k === 'class') el.className = v;
+    if (k === 'html') throw new Error('h(): markup goes through svg(), not an attribute');
+    if (k.startsWith('on')) {
+      if (typeof v !== 'function') throw new Error(`h(): "${k}" must be a function`);
+      el[k.toLowerCase()] = v;
+    } else if (k === 'class') el.className = v;
     else if (k === 'style') el.setAttribute('style', v);
-    else if (k.startsWith('on') && typeof v === 'function') el[k.toLowerCase()] = v;
     else if (k === 'value') el.value = v;
-    else if (k === 'html') el.innerHTML = v;
     else el.setAttribute(k, v === true ? '' : v);
   }
   for (const child of children.flat(4)) {
@@ -31,6 +37,15 @@ function h(tag, attrs = {}, ...children) {
     el.appendChild(typeof child === 'object' ? child : document.createTextNode(String(child)));
   }
   return el;
+}
+
+// The one sink for markup: an icon, a band's wires — SVG written in
+// this code, its only interpolations numbers and fixed ids. Never pass
+// it a string that came from a model. A fragment, appended whole by `h`.
+function svg(markup) {
+  const template = document.createElement('template');
+  template.innerHTML = markup;
+  return template.content || null;
 }
 
 let toastTimer = null;

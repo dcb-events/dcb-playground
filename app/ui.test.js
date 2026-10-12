@@ -5209,6 +5209,17 @@ check('the app is text: no file carries a raw control byte', () => {
     sandbox.moveRow = moveRow;
   });
 
+  check('h() sets no markup and no handler from a string', () => {
+    // Markup goes through svg(), the one sink for trusted markup, and a
+    // handler is a function — a string would become an attribute the
+    // browser runs as code.
+    const refused = (attrs) => { try { sandbox.h('span', attrs); return false; } catch { return true; } };
+    eq(refused({ html: '<b>x</b>' }), true, 'html');
+    eq(refused({ onclick: 'alert(1)' }), true, 'a string handler');
+    eq(refused({ onclick: () => {} }), false, 'a function handler');
+    eq(typeof sandbox.svg, 'function', 'svg() is the way');
+  });
+
   check('a drag lets go of the window however it ends — a touch scroll cancels it', () => {
     for (const end of ['pointerup', 'pointercancel']) {
       let moves = 0;

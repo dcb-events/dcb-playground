@@ -1993,12 +1993,12 @@ function surfaceToggle(model) {
     h('button', {
       type: 'button', class: state.code ? '' : 'on', 'aria-pressed': state.code ? 'false' : 'true',
       title: 'The model as pages', 'aria-label': 'Visual', onclick: leaveCode,
-    }, h('span', { class: 'surface-icon', html: VISUAL_ICON_SVG }), h('span', { class: 'label' }, 'Visual')),
+    }, h('span', { class: 'surface-icon' }, svg(VISUAL_ICON_SVG)), h('span', { class: 'label' }, 'Visual')),
     h('button', {
       type: 'button', class: state.code ? 'on' : '', 'aria-pressed': state.code ? 'true' : 'false',
       title: waiting ? 'The model as code — edited, not applied' : 'The model as code',
       'aria-label': 'Code', onclick: enterCode,
-    }, h('span', { class: 'surface-icon', html: CODE_ICON_SVG }), h('span', { class: 'label' }, 'Code'),
+    }, h('span', { class: 'surface-icon' }, svg(CODE_ICON_SVG)), h('span', { class: 'label' }, 'Code'),
     waiting ? h('span', { class: 'surface-dot' }) : null));
 }
 
@@ -2025,7 +2025,7 @@ function themeButton() {
   const label = isDark() ? 'Switch to light mode' : 'Switch to dark mode';
   return h('button', {
     class: 'icon-btn', type: 'button', title: label, 'aria-label': label, onclick: toggleTheme,
-  }, h('span', { html: isDark() ? SUN_ICON_SVG : MOON_ICON_SVG }));
+  }, h('span', {}, svg(isDark() ? SUN_ICON_SVG : MOON_ICON_SVG)));
 }
 
 function settingsButton() {
@@ -2033,7 +2033,7 @@ function settingsButton() {
     class: 'icon-btn', type: 'button', title: 'Settings — how this interface behaves',
     'aria-label': 'Settings',
     onclick: () => { state.settings = true; render(); },
-  }, h('span', { html: SETTINGS_ICON_SVG }));
+  }, h('span', {}, svg(SETTINGS_ICON_SVG)));
 }
 
 // On a phone the bar has room for what is used while modelling — the
@@ -2048,13 +2048,13 @@ function moreMenu(model) {
   const item = (icon, label, go) => h('button', {
     class: 'more-item', type: 'button', role: 'menuitem',
     onclick: () => { close(); go(); render(); },
-  }, h('span', { class: 'more-icon', html: icon }), label);
+  }, h('span', { class: 'more-icon' }, svg(icon)), label);
   return h('span', { class: 'more' + (open ? ' on' : '') },
     h('button', {
       class: 'icon-btn more-btn', type: 'button', title: 'More', 'aria-label': 'More',
       'aria-haspopup': 'menu', 'aria-expanded': open ? 'true' : 'false',
       onclick: () => { closeForms(); state.moreOpen = !open; render(); },
-    }, h('span', { html: MORE_ICON_SVG })),
+    }, h('span', {}, svg(MORE_ICON_SVG))),
     open ? [
       h('span', { class: 'more-catcher', onclick: () => { close(); render(); } }),
       h('span', { class: 'more-panel', role: 'menu' },
@@ -2071,7 +2071,7 @@ const IMPORT_EXPORT_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="cur
   + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
   + '<path d="M16 3l4 4-4 4"></path><path d="M20 7H8"></path>'
   + '<path d="M8 21l-4-4 4-4"></path><path d="M4 17h12"></path></svg>';
-function importExportIcon() { return h('span', { html: IMPORT_EXPORT_ICON_SVG }); }
+function importExportIcon() { return h('span', {}, svg(IMPORT_EXPORT_ICON_SVG)); }
 
 // The rail's places — the pages that are not one command or entity —
 // each carry a line icon, muted until hovered or open. A command's or
@@ -2101,7 +2101,7 @@ const RAIL_ICONS = {
   lifecycles: railIconSvg('<path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"></path><path d="M21 3v5h-5"></path>'),
   sandbox: railIconSvg('<circle cx="12" cy="12" r="9"></circle><path d="M10 8.5v7l5.5-3.5z"></path>'),
 };
-function railIcon(key) { return h('span', { class: 'rail-icon', html: RAIL_ICONS[key] }); }
+function railIcon(key) { return h('span', { class: 'rail-icon' }, svg(RAIL_ICONS[key])); }
 
 // ⌘S keeps its own quick path, unchanged: build the full link, land it
 // in the address bar, copy it, done. The Import & Export modal below
@@ -2626,7 +2626,7 @@ function helpButton() {
   return h('button', {
     class: 'icon-btn', type: 'button', title: 'About the playground (?)',
     'aria-label': 'Help', onclick: openHelp,
-  }, h('span', { html: HELP_ICON_SVG }));
+  }, h('span', {}, svg(HELP_ICON_SVG)));
 }
 
 function helpModal() {
@@ -5273,7 +5273,7 @@ function paintPage() {
     onclick: () => { closeForms(); state.models = true; render(); },
   }, h('span', { class: 'brand-title' }, 'DCB Playground'),
   model ? [h('span', { class: 'sep', 'aria-hidden': 'true' }, '/'), h('span', { class: 'model-name' }, model.name)] : null,
-  h('span', { class: 'caret', html: CARET_ICON_SVG })));
+  h('span', { class: 'caret' }, svg(CARET_ICON_SVG))));
 
   const tools = document.getElementById('tools');
   tools.innerHTML = '';
@@ -5308,7 +5308,7 @@ function paintPage() {
     class: 'icon-btn menu-btn', type: 'button', title: 'Features and entities',
     'aria-label': 'Menu', 'aria-expanded': state.railOpen ? 'true' : 'false',
     onclick: () => { state.railOpen = !state.railOpen; render(); },
-  }, h('span', { html: MENU_ICON_SVG })));
+  }, h('span', {}, svg(MENU_ICON_SVG))));
 
   // A scenario that no longer agrees with its command, or a loose end
   // nobody has tied — the one count of what needs attention, shown
@@ -5319,7 +5319,7 @@ function paintPage() {
 
   jump.appendChild(h('button', {
     class: 'trigger', type: 'button', onclick: openPalette, 'aria-label': 'Quick open',
-  }, h('span', { html: SEARCH_ICON_SVG }), h('span', { class: 'label' }, 'Quick open…'),
+  }, h('span', {}, svg(SEARCH_ICON_SVG)), h('span', { class: 'label' }, 'Quick open…'),
     h('span', { class: 'kbd' }, '⌘K')));
 
   actions.appendChild(h('button', {
@@ -5621,7 +5621,7 @@ const INFO_MARK = '<svg viewBox="0 0 12 12" aria-hidden="true">'
   + '<line x1="6" y1="5.2" x2="6" y2="8.8" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>'
   + '<circle cx="6" cy="3.5" r=".55" fill="currentColor"/></svg>';
 function infoMark() {
-  return h('span', { class: 'imark', html: INFO_MARK });
+  return h('span', { class: 'imark' }, svg(INFO_MARK));
 }
 
 function hint(key, title, lines, href, anchor) {
@@ -5662,7 +5662,7 @@ function queryPopover(key, title, ...lines) {
         state.queryPop = on ? null : key;
         render();
       },
-    }, h('span', { class: 'qico', html: SEARCH_ICON_SVG })),
+    }, h('span', { class: 'qico' }, svg(SEARCH_ICON_SVG))),
     h('span', { class: 'qpanel dcb', onclick: (e) => e.stopPropagation() },
       title ? h('div', { class: 'k qtitle' }, title) : null,
       ...lines));
@@ -8469,7 +8469,7 @@ function lifecycleFold(model, name) {
       render();
     },
   }, 'state ', h('span', { class: 'p' }, propertyWords(lifecycle.property)), ' · ' + summary,
-  h('span', { class: 'caret', html: FOLD_CARET }));
+  h('span', { class: 'caret' }, svg(FOLD_CARET)));
 }
 
 // The lifecycle's row in Identity — when there is one to show. No
@@ -11294,7 +11294,7 @@ function renderEventModel(model, main) {
     wires += `<path d="${wire.d}" fill="none" stroke="var(--muted)" stroke-width="1.5"`
       + (wire.arrow ? ` marker-end="url(#${ah})"` : '') + '></path>';
   }
-  band.appendChild(h('div', { class: 'em-wires', html: wires + '</svg>' }));
+  band.appendChild(h('div', { class: 'em-wires' }, svg(wires + '</svg>')));
 
   const place = (card) => `left:${card.x}px; top:${card.y}px; width:${card.w}px; height:${card.h}px`;
   for (const card of layout.cards) {
@@ -11655,7 +11655,7 @@ function renderLifecycleMachine(model, main, machine, index) {
       + `stroke="var(--event)" stroke-width="1.5" marker-end="url(#${ah})"></path>`;
   }
   wires += '</svg>';
-  band.appendChild(h('div', { class: 'lc-wires', html: wires }));
+  band.appendChild(h('div', { class: 'lc-wires' }, svg(wires)));
 
   for (const edge of layout.edges) {
     const t = edge.transition;
@@ -13724,11 +13724,9 @@ function watchHistory(model, watch) {
     });
     rest = `<line class="rest" x1="0" x2="100" y1="21" y2="21"/>` + rest;
   }
-  return h('span', {
-    class: 'sbx-hist', 'aria-hidden': 'true',
-    html: `<svg viewBox="0 0 100 24" preserveAspectRatio="none">${rest}${played}`
-      + `<line class="head" x1="${x(position)}" x2="${x(position)}" y1="0" y2="24"/></svg>`,
-  });
+  return h('span', { class: 'sbx-hist', 'aria-hidden': 'true' },
+    svg(`<svg viewBox="0 0 100 24" preserveAspectRatio="none">${rest}${played}`
+      + `<line class="head" x1="${x(position)}" x2="${x(position)}" y1="0" y2="24"/></svg>`));
 }
 
 function watchTile(model, watch) {
@@ -14873,11 +14871,9 @@ function codeFoldToggle() {
 }
 
 function codeToolIcon(paths) {
-  return h('span', {
-    class: 'code-tool-icon',
-    html: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" '
-      + 'stroke-linejoin="round" aria-hidden="true">' + paths + '</svg>',
-  });
+  return h('span', { class: 'code-tool-icon' },
+    svg('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" '
+      + 'stroke-linejoin="round" aria-hidden="true">' + paths + '</svg>'));
 }
 
 function downloadCode(model) {
