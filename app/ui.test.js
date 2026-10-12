@@ -2154,34 +2154,68 @@ function build(index) {
 }
 
 // ---------------------------------------------------------------
-// A full storage: the refusal offers compacting, and compacting
-// starts the history over.
+// The log compacts itself past a size, and nobody is asked because
+// nothing they can see changes: every step this tab can undo is kept,
+// moved the distance the log moved.
 // ---------------------------------------------------------------
 {
   const id = sandbox.createDcbModel('Compaction Probe');
   store.set('dcb-playground:model', id);
+  sessionStore.clear();       // this tab's history starts here
+  const events = () => Object.keys(sandbox.projectState()[id]['event-definitions']);
+  const shifts = [];
+  sandbox.onCompact(({ shift }) => shifts.push(shift));
+  const compacting = (fn) => {
+    sandbox.setLogCompactionThreshold(1);
+    try { fn(); } finally { sandbox.setLogCompactionThreshold(1000 * 1000); }
+  };
 
-  check('a full storage is refused with compacting offered beside it', () => {
-    const setItem = sandbox.localStorage.setItem;
-    sandbox.localStorage.setItem = (key, value) => {
-      if (key !== sandbox.EVENT_LOG_KEY) return setItem(key, value);
-      const error = new Error('quota'); error.name = 'QuotaExceededError'; throw error;
-    };
-    sandbox.document.body.children.length = 0;
-    sandbox.run(() => addTaggedEvent(id, 'NeverStored', { properties: [] }));
-    sandbox.localStorage.setItem = setItem;
-    const shown = sandbox.document.body.children[sandbox.document.body.children.length - 1];
-    eq(/storage for this site is full/.test(textOf(shown)), true, textOf(shown));
-    eq(findAll(shown, (node) => node.tag === 'button').map(textOf), ['Compact history'], 'the way out');
+  check('undo and redo work across a compaction, step by step', () => {
+    compacting(() => {
+      for (const name of ['FirstHappened', 'SecondHappened', 'ThirdHappened']) {
+        sandbox.run(() => addTaggedEvent(id, name, { properties: [] }));
+      }
+    });
+    eq(events(), ['FirstHappened', 'SecondHappened', 'ThirdHappened'], 'all three');
+    eq(shifts.some((shift) => shift < 0), true, `the log really was compacted under the steps: ${shifts}`);
+    sandbox.undo();
+    eq(events(), ['FirstHappened', 'SecondHappened'], 'the last undone');
+    sandbox.undo();
+    eq(events(), ['FirstHappened'], 'then the one before');
+    compacting(() => sandbox.redo());
+    eq(events(), ['FirstHappened', 'SecondHappened'], 'redone');
+    sandbox.undo();
+    eq(events(), ['FirstHappened'], 'and undone again');
   });
 
-  check('compacting keeps the models and starts undo over', () => {
-    sandbox.run(() => addTaggedEvent(id, 'BeforeCompacting', { properties: [] }));
-    sandbox.compactHistory();
-    eq('BeforeCompacting' in sandbox.projectState()[id]['event-definitions'], true, 'kept');
-    const before = sandbox.loadEvents().length;
+  check('once old steps fall off the history, what they built is folded and the rest still undo', () => {
+    // Undo keeps sixty steps; past them, the oldest step's edits are
+    // history nothing can reach, and compaction folds them — moving
+    // every mark still held.
+    sandbox.run(() => addTaggedEvent(id, 'Flip', { properties: [] }));
+    const names = ['Flip', 'Flop'];
+    shifts.length = 0;
+    compacting(() => {
+      for (let i = 0; i < 64; i++) {
+        sandbox.run(() => sandbox.renameDefinition('event-definition', id, names[i % 2], names[(i + 1) % 2]));
+      }
+    });
+    eq(shifts.some((shift) => shift < 0), true, `compacted under held marks: ${shifts}`);
+    eq(events().includes('Flip'), true, 'an even number of renames ends where it began');
     sandbox.undo();
-    eq(sandbox.loadEvents().length, before, 'nothing to undo past it');
+    eq(events().includes('Flop'), true, 'one undo: one rename back');
+    sandbox.undo();
+    eq(events().includes('Flip'), true, 'and the one before it');
+  });
+
+  check('a gesture still being batched is not folded under itself', () => {
+    const before = events();
+    compacting(() => sandbox.run(() => {
+      addTaggedEvent(id, 'BatchedA', { properties: [] });
+      addTaggedEvent(id, 'BatchedB', { properties: [] });
+    }));
+    sandbox.undo();
+    eq(events(), before, 'one undo takes the whole gesture back');
   });
 
   store.delete('dcb-playground:model');

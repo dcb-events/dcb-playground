@@ -264,11 +264,38 @@ const appendListeners = [];
 function onAppend(listener) { appendListeners.push(listener); }
 
 function appendEvents(newEvents) {
-  const log = loadEvents();
-  const startSeq = log.length;
-  const stamped = stampEvents(newEvents, startSeq);
-  writeEventLog([...log, ...stamped]);
-  for (const listener of appendListeners) listener(startSeq, stamped);
+  let log = loadEvents();
+  const append = () => {
+    const startSeq = log.length;
+    const stamped = stampEvents(newEvents, startSeq);
+    const size = writeEventLog([...log, ...stamped]);
+    return { startSeq, stamped, size };
+  };
+  let written;
+  try {
+    written = append();
+  } catch (error) {
+    if (!(error instanceof StorageFullError)) throw error;
+    // Full: make room and try again — first by folding what no undo
+    // step reaches, then, if that is not enough, everything. Only a
+    // change that does not fit even then is refused.
+    for (const keepFrom of [compactionFloor(log), log.length]) {
+      const compacted = compactedLog(log, keepFrom);
+      if (!compacted) continue;
+      try {
+        log = compacted.events;
+        written = append();
+      } catch (retry) {
+        if (!(retry instanceof StorageFullError)) throw retry;
+        continue;
+      }
+      notifyCompacted(compacted);
+      break;
+    }
+    if (!written) throw error;
+  }
+  for (const listener of appendListeners) listener(written.startSeq, written.stamped);
+  if (written.size > logCompactAt) compactLog();
 }
 
 function stampEvents(events, from) {
@@ -282,9 +309,11 @@ function stampEvents(events, from) {
 // for the whole site (on dcb.events, shared with the website), and the
 // log is rewritten whole on every edit: past it, every edit would fail
 // with nothing said but the browser's error name.
+// Returns the length written, in characters.
 function writeEventLog(events) {
+  const text = JSON.stringify(events);
   try {
-    localStorage.setItem(EVENT_LOG_KEY, JSON.stringify(events));
+    localStorage.setItem(EVENT_LOG_KEY, text);
   } catch (error) {
     if (error && (error.name === 'QuotaExceededError' || error.name === 'NS_ERROR_DOM_QUOTA_REACHED')) {
       throw new StorageFullError();
@@ -292,28 +321,85 @@ function writeEventLog(events) {
     throw error;
   }
   bumpLogRevision();
+  return text.length;
 }
 
-// Every model as it stands, written as the shortest history that
-// builds it: per model, its creation and one add per definition, in
-// order. What the edits were is gone — and with it every undo step, in
-// this tab and any other (their marks no longer match the log, see
-// `undo` in the page) — which is the price of the room it makes.
-// Deleted models leave nothing behind. Returns the log's length in
-// characters before and after.
-function compactEventLog() {
-  const before = (localStorage.getItem(EVENT_LOG_KEY) || '').length;
-  const events = [];
-  for (const model of Object.values(projectState())) {
-    events.push({ type: 'dcb-model-created', data: { 'dcb-model-id': model.id, name: model.name } });
+// ---------- compaction ----------
+//
+// The log keeps every edit ever made, and is rewritten whole on every
+// append, so left alone it grows into the quota — a few megabytes for
+// the whole site, on dcb.events shared with the website. Past a size it
+// is compacted, unasked: the events up to a point are replaced by the
+// shortest history that builds the same state — per model, its
+// creation and one add per definition, in order; deleted models leave
+// nothing — and the events after it are kept as they were, renumbered.
+// Nobody is asked because nothing they can see changes: the point is
+// the page's oldest undo step (`setCompactionFloor`), so every step it
+// can still undo survives, moved by the same distance (`onCompact`).
+// Only when storage is full and folding that much is not enough does
+// compaction take everything, undo history included — and says so.
+
+// A megabyte of log: far past any model's own size, and a fifth of the
+// smallest quota a browser gives a site.
+let logCompactAt = 1000 * 1000;
+function setLogCompactionThreshold(chars) { logCompactAt = chars; }
+
+// The first position compaction must keep as it is. Without a page
+// keeping undo marks, nothing needs keeping.
+let compactionFloor = (events) => events.length;
+function setCompactionFloor(floor) { compactionFloor = floor; }
+
+// Told after a compaction: `{ shift, events, dropped }` — an event kept
+// at position `p` is now at `p + shift` of `events`; `dropped` when the
+// fold had to take everything, so no earlier position means anything.
+const compactListeners = [];
+function onCompact(listener) { compactListeners.push(listener); }
+
+function projectEvents(events) {
+  const models = {};
+  for (const event of events) apply(models, event);
+  return models;
+}
+
+// `events` with everything before `keepFrom` folded, and the distance
+// the rest moved — or null when folding would not shorten anything (it
+// already is the shortest history of that state).
+function compactedLog(events, keepFrom) {
+  const head = [];
+  for (const model of Object.values(projectEvents(events.slice(0, keepFrom)))) {
+    head.push({ type: 'dcb-model-created', data: { 'dcb-model-id': model.id, name: model.name } });
     for (const kind of DEF_KINDS) {
       for (const [name, body] of Object.entries(model[DEF_COLLECTIONS[kind]])) {
-        events.push({ type: `${kind}-added`, data: { 'dcb-model-id': model.id, name, body } });
+        head.push({ type: `${kind}-added`, data: { 'dcb-model-id': model.id, name, body } });
       }
     }
   }
-  writeEventLog(stampEvents(events, 0));
-  return { before, after: (localStorage.getItem(EVENT_LOG_KEY) || '').length };
+  if (head.length >= keepFrom) return null;
+  const tail = events.slice(keepFrom).map((event, i) => ({ ...event, sequence: head.length + i }));
+  return {
+    events: [...stampEvents(head, 0), ...tail],
+    shift: head.length - keepFrom,
+    dropped: keepFrom >= events.length,
+  };
+}
+
+function notifyCompacted(compacted) {
+  for (const listener of compactListeners) listener(compacted);
+}
+
+// Compacts the stored log up to the floor, when that shortens it. A
+// compaction that does not fit is no failure — the log as it was is
+// still there, and the next append tries again.
+function compactLog() {
+  const compacted = compactedLog(loadEvents(), compactionFloor(loadEvents()));
+  if (!compacted) return;
+  try {
+    writeEventLog(compacted.events);
+  } catch (error) {
+    if (error instanceof StorageFullError) return;
+    throw error;
+  }
+  notifyCompacted(compacted);
 }
 
 function generateId() {
@@ -2498,12 +2584,12 @@ class DomainError extends Error {
   }
 }
 
-// A refusal like any other, of its own kind so the page can offer the
-// way out beside it (`run`, shared.js).
+// A refusal like any other, of its own kind so the append can tell a
+// full storage from a broken one and make room before giving up.
 class StorageFullError extends DomainError {
   constructor() {
-    super('The browser\'s storage for this site is full, so that change was not saved. '
-      + 'Compacting the history makes room: every model stays as it is, but undo cannot go back past it.');
+    super('The browser\'s storage for this site is full, so that change was not saved — '
+      + 'it does not fit even with the history compacted. Removing a model you no longer need makes room.');
     this.name = 'StorageFullError';
   }
 }

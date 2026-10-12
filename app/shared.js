@@ -50,29 +50,13 @@ function svg(markup) {
 
 let toastTimer = null;
 // A refusal has to be read, not glimpsed, so it stays up well past the
-// acknowledgements. `action`, when given, is the way out offered beside
-// it — `{ label, onClick }` — and keeps the toast up until it is taken
-// or another toast replaces it.
-function toast(message, isError, action) {
+// acknowledgements.
+function toast(message, isError) {
   document.querySelectorAll('#toast').forEach((n) => n.remove());
-  const el = h('div', { id: 'toast', class: isError ? 'err' : '', role: action ? 'alert' : 'status' },
-    h('span', {}, message),
-    action ? h('button', {
-      class: 'btn', type: 'button',
-      onclick: () => { el.remove(); action.onClick(); },
-    }, action.label) : null);
+  const el = h('div', { id: 'toast', class: isError ? 'err' : '' }, message);
   document.body.appendChild(el);
   clearTimeout(toastTimer);
-  if (!action) toastTimer = setTimeout(() => el.remove(), isError ? 8000 : 5000);
-}
-
-// A refusal as a toast — with, for a full storage, the one thing that
-// makes room offered right there (`compactHistory`, index.html).
-function toastRefusal(err) {
-  if (err instanceof StorageFullError && typeof compactHistory === 'function') {
-    return toast(err.message, true, { label: 'Compact history', onClick: compactHistory });
-  }
-  return toast(err.message, true);
+  toastTimer = setTimeout(() => el.remove(), isError ? 8000 : 5000);
 }
 
 // Runs a model command, reports a domain error rather than throwing it
@@ -83,7 +67,7 @@ function run(fn) {
     if (typeof render === 'function') render();
     return out;
   } catch (err) {
-    if (err instanceof DomainError) toastRefusal(err);
+    if (err instanceof DomainError) toast(err.message, true);
     else { console.error(err); toast('Unexpected error: ' + err.message, true); }
   }
 }
@@ -822,7 +806,7 @@ async function runAsync(fn) {
     if (typeof render === 'function') render();
     return out;
   } catch (err) {
-    if (err instanceof DomainError) toastRefusal(err);
+    if (err instanceof DomainError) toast(err.message, true);
     else { console.error(err); toast('Unexpected error: ' + err.message, true); }
   }
 }

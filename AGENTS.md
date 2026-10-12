@@ -180,9 +180,12 @@ was decided, why, and what was tried and reverted:
 - **Every writer of `EVENT_LOG_KEY` must call `bumpLogRevision()`** —
   `writeEventLog` (model.js) does, and appends, undo/redo and compaction
   all write through it; so does the page's `storage` listener for
-  another tab's writes. `writeEventLog` is also where a full storage
-  becomes a `StorageFullError`, which the page answers by offering
-  `compactHistory`. The projected state and the problems
+  another tab's writes. The log compacts itself inside `appendEvents`
+  past a size, and on a full storage before refusing: it folds only
+  what lies before the page's oldest undo step (`setCompactionFloor`)
+  and reports how far the rest moved (`onCompact`), so undo marks are
+  moved, never lost — unless storage is full and only folding
+  everything makes room. The projected state and the problems
   list are cached per revision; a writer that skips its bump is the one way
   those caches go stale. The log is shared between tabs, the undo history
   is per tab (sessionStorage) and refuses once another tab has appended

@@ -21,7 +21,7 @@ const { createSandbox, loadApp, makeChecker } = require('./test-harness.js');
 const { sandbox, store } = createSandbox();
 loadApp(sandbox, ['model.js', 'evaluate.js'], {
   trailer: 'globalThis.PREDEFINED_MODELS = PREDEFINED_MODELS; globalThis.DEF_COLLECTIONS = DEF_COLLECTIONS;'
-    + ' globalThis.DomainError = DomainError;',
+    + ' globalThis.DomainError = DomainError; globalThis.EVENT_LOG_KEY = EVENT_LOG_KEY;',
 });
 const { check, eq, finish } = makeChecker();
 
@@ -3327,41 +3327,90 @@ check('every predefined model ships advisory-clean', () => {
 
 // ---------------------------------------------------------------
 // The log grows with every edit and lives in the browser's storage,
-// whose quota the site shares. A full one is said in words that say
-// what to do, and compacting folds the history down to what it built.
+// whose quota the site shares. Past a size it compacts itself — the
+// history up to the floor folded into what it built — and a full
+// storage makes room the same way before it refuses anything.
 // ---------------------------------------------------------------
 {
-  check('compacting keeps every model as it is, one event per definition', () => {
+  const quotaAbove = (chars) => {
+    const setItem = sandbox.localStorage.setItem;
+    sandbox.localStorage.setItem = (key, value) => {
+      if (String(value).length <= chars) return setItem(key, value);
+      const error = new Error('quota'); error.name = 'QuotaExceededError'; throw error;
+    };
+    return () => { sandbox.localStorage.setItem = setItem; };
+  };
+  const definitionCount = (model) => Object.values(sandbox.DEF_COLLECTIONS)
+    .reduce((n, collection) => n + Object.keys(model[collection]).length, 0);
+
+  check('past the threshold the log compacts itself, and every model stays as it is', () => {
     const { id } = open_(ENTITIES);
-    renameDefinition('event-definition', id, 'CourseDefined', 'CourseCreated');
-    renameDefinition('event-definition', id, 'CourseCreated', 'CourseDefined');
     const doomed = createDcbModel('Doomed');
     sandbox.deleteDcbModel(doomed);
+    renameDefinition('event-definition', id, 'CourseDefined', 'CourseCreated');
     const before = JSON.stringify(sandbox.projectState());
     const length = sandbox.loadEvents().length;
-    sandbox.compactEventLog();
-    eq(JSON.stringify(sandbox.projectState()), before, 'the same models');
+    sandbox.setLogCompactionThreshold(1);
+    try {
+      renameDefinition('event-definition', id, 'CourseCreated', 'CourseDefined');
+    } finally {
+      sandbox.setLogCompactionThreshold(1000 * 1000);
+    }
     const model = sandbox.projectState()[id];
-    const definitions = Object.values(sandbox.DEF_COLLECTIONS)
-      .reduce((n, collection) => n + Object.keys(model[collection]).length, 0);
-    eq(sandbox.loadEvents().length, 1 + definitions, 'a creation and one add per definition');
+    eq('CourseDefined' in model['event-definitions'], true, 'the edit landed');
+    eq(JSON.stringify(sandbox.projectState()), before.split('CourseCreated').join('CourseDefined'), 'the same models');
+    eq(sandbox.loadEvents().length, 1 + definitionCount(model), 'a creation and one add per definition');
     eq(sandbox.loadEvents().length < length, true, 'shorter than the history it replaced');
     eq(sandbox.loadEvents().map((e) => e.sequence), sandbox.loadEvents().map((_, i) => i), 'numbered afresh');
   });
 
-  check('a full storage refuses the edit in words that say what to do', () => {
+  check('compaction keeps the events from the floor on, as they were, and says how far they moved', () => {
+    const { id } = open_(ENTITIES);
+    renameDefinition('event-definition', id, 'CourseDefined', 'CourseCreated');
+    const floor = sandbox.loadEvents().length;
+    renameDefinition('event-definition', id, 'CourseCreated', 'CourseOpened');
+    const kept = sandbox.loadEvents().slice(floor);
+    let told = null;
+    sandbox.onCompact((compacted) => { told = compacted; });
+    sandbox.setCompactionFloor(() => floor);
+    sandbox.setLogCompactionThreshold(1);
+    try {
+      renameDefinition('event-definition', id, 'CourseOpened', 'CourseDefined');
+    } finally {
+      sandbox.setLogCompactionThreshold(1000 * 1000);
+      sandbox.setCompactionFloor((events) => events.length);
+    }
+    const events = sandbox.loadEvents();
+    eq(told !== null && told.dropped, false, 'told, and nothing dropped');
+    const moved = events.slice(floor + told.shift, floor + told.shift + kept.length);
+    eq(moved.map((e) => [e.type, e.data]), kept.map((e) => [e.type, e.data]), 'the kept events, moved by shift');
+    eq('CourseDefined' in sandbox.projectState()[id]['event-definitions'], true, 'and the state they build');
+  });
+
+  check('a full storage compacts and tries again before refusing', () => {
+    const { id, model } = open_(ENTITIES);
+    // History worth folding: four renames that end where they started.
+    const names = ['CourseDefined', 'CourseCreated', 'CourseOpened', 'CourseStarted', 'CourseDefined'];
+    names.slice(1).forEach((name, i) => renameDefinition('event-definition', id, names[i], name));
+    // Room for the log as it is, not for one more event on top of it.
+    const size = (sandbox.localStorage.getItem(sandbox.EVENT_LOG_KEY) || '').length;
+    const restore = quotaAbove(size);
+    try {
+      renameDefinition('event-definition', id, 'CourseDefined', 'CourseCreated');
+    } finally {
+      restore();
+    }
+    eq('CourseCreated' in model()['event-definitions'], true, 'the edit landed, in the room compaction made');
+  });
+
+  check('a change that does not fit even compacted is refused, and nothing is written', () => {
     const { id, model } = open_(ENTITIES);
     const length = sandbox.loadEvents().length;
-    const setItem = sandbox.localStorage.setItem;
-    sandbox.localStorage.setItem = () => {
-      const error = new Error('quota'); error.name = 'QuotaExceededError'; throw error;
-    };
+    const restore = quotaAbove(0);
     let caught;
-    try { renameDefinition('event-definition', id, 'CourseDefined', 'CourseCreated'); } catch (error) { caught = error; }
-    sandbox.localStorage.setItem = setItem;
+    try { renameDefinition('event-definition', id, 'CourseDefined', 'CourseCreated'); } catch (error) { caught = error; } finally { restore(); }
     eq(caught && caught.name, 'StorageFullError', 'a domain error of its own');
     eq(caught instanceof sandbox.DomainError, true, 'shown like any refusal');
-    eq(/compact/i.test(caught.message), true, caught && caught.message);
     eq(sandbox.loadEvents().length, length, 'nothing written');
     eq('CourseDefined' in model()['event-definitions'], true, 'nothing changed');
   });

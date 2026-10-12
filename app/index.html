@@ -1823,7 +1823,7 @@ function modelsModal() {
   const saved = Object.values(projectState()).sort((a, b) => a.name.localeCompare(b.name));
   const close = () => {
     state.models = false;
-    state.newModel = false; state.loadingUrl = false; state.loadingJson = false; state.compacting = false;
+    state.newModel = false; state.loadingUrl = false; state.loadingJson = false;
     render();
   };
 
@@ -1891,31 +1891,12 @@ function modelsModal() {
           }),
         })))) : null,
     h('div', { class: 'setting' }, h('h4', {}, 'Start a new one'), startNew),
-    historySetting(),
     h('div', { class: 'setting muted small' }, 'Looking for inspiration? ',
       h('a', { href: EXAMPLES_URL, target: '_blank', rel: 'noopener' }, 'Browse the examples on dcb.events ↗')),
     activeId ? h('div', { class: 'adder', style: 'margin-top:18px' },
       h('button', { class: 'btn primary', onclick: close }, 'Done')) : null);
   setTimeout(() => modal.focus(), 0);
   return overlayAround(modal, close);
-}
-
-// How much room the history takes, and the way to give it back. The
-// log keeps every edit ever made, and the browser's storage for the
-// site is a few megabytes, shared on dcb.events with the website.
-function historySetting() {
-  const size = (localStorage.getItem(EVENT_LOG_KEY) || '').length;
-  return h('div', { class: 'setting' },
-    h('h4', {}, 'History'),
-    h('div', { class: 'muted small' },
-      `Every edit to every model is kept, taking about ${storageSize(size)} of this browser's storage. `
-      + 'Compacting keeps each model as it is and drops the edits that led there — undo cannot go back past it.'),
-    state.compacting
-      ? h('div', { class: 'adder' },
-          h('button', { class: 'btn primary', onclick: compactHistory }, 'Compact now'),
-          h('button', { class: 'btn', onclick: () => { state.compacting = false; render(); } }, 'Cancel'))
-      : h('div', { class: 'adder' },
-          h('button', { class: 'btn', onclick: () => { state.compacting = true; render(); } }, 'Compact history…')));
 }
 
 const NEW = ' new';         // sentinel row in a picker
@@ -2836,8 +2817,9 @@ function renderImportExportModal() {
 // The model is an append-only log and the state is a fold over it, so
 // the last change is undone by dropping what it appended off the end —
 // not by a second history kept beside the first. The entries that come
-// off are held so redo can put them back exactly as they were, sequence
-// numbers included, which is only sound because they came off the end.
+// off are held so redo can put them back exactly as they were — numbered
+// for where they land, which is where they came from unless a
+// compaction has moved the log since.
 //
 // The log is shared by every tab; the history is not. Each tab keeps
 // its own, in sessionStorage — undoing in one tab used to take back the
@@ -2864,13 +2846,15 @@ function undoLog() {
 }
 function saveUndoLog(next) { sessionStorage.setItem(UNDO_KEY, JSON.stringify(next)); }
 
-const OVERTAKEN = 'The history has changed since — another tab edited, or it was compacted — '
+const OVERTAKEN = 'Another tab has changed this playground since, '
   + 'so there is nothing here to undo or redo any more.';
 
-// The log's last event before position `n`, as a mark remembers it.
+// The log's last event before position `n`, as a mark remembers it —
+// by when it was written and what it was, not by its sequence number,
+// which a compaction renumbers while the event itself is kept.
 function logStampAt(events, n) {
   const event = events[n - 1];
-  return event ? `${event.sequence} ${event.timestamp} ${event.type}` : '';
+  return event ? `${event.timestamp} ${event.type}` : '';
 }
 
 // What a change was, read off what it appended. `event-definition-updated`
@@ -2964,10 +2948,11 @@ function redo() {
     saveUndoLog({ done: [], undone: [] });
     return toast(OVERTAKEN, true);
   }
-  writeEventLog([...events, ...step.events]);
+  const replayed = step.events.map((event, i) => ({ ...event, sequence: events.length + i }));
+  writeEventLog([...events, ...replayed]);
   log.done.push({
-    at: events.length, end: events.length + step.events.length,
-    stamp: logStampAt(step.events, step.events.length), label: step.label,
+    at: events.length, end: events.length + replayed.length,
+    stamp: logStampAt(replayed, replayed.length), label: step.label,
   });
   saveUndoLog(log);
   closeForms();
@@ -2975,23 +2960,41 @@ function redo() {
   render();
 }
 
-// Folds the log down to what it built (`compactEventLog`): offered
-// beside the refusal when storage is full, and in the models dialog
-// before it is. This tab's history goes with it — said in the toast —
-// and other tabs find theirs refused at their next undo.
-function compactHistory() {
-  run(() => {
-    const { before, after } = compactEventLog();
-    saveUndoLog({ done: [], undone: [] });
-    state.compacting = false;
-    toast(`History compacted, from ${storageSize(before)} to ${storageSize(after)}. `
-      + 'Every model is as it was; undo starts again from here.');
-  });
-}
+// Compaction (model.js) folds the log up to this tab's oldest undo
+// step — a gesture still being batched counts — so every step it can
+// undo is kept, and here each is moved the distance the log moved.
+// Another tab's marks are not moved: they no longer match, and its
+// next undo is refused, as after any edit of ours.
+setCompactionFloor((events) => {
+  const ats = undoLog().done.map((mark) => mark.at);
+  if (undoBatch && undoBatch.at !== null) ats.push(undoBatch.at);
+  return Math.min(events.length, ...ats);
+});
 
-function storageSize(chars) {
-  return chars >= 1024 * 1024 ? `${(chars / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(chars / 1024))} KB`;
-}
+onCompact(({ shift, events, dropped }) => {
+  const log = undoLog();
+  if (dropped) {
+    // Storage was full and only folding everything made room.
+    if (log.done.length || log.undone.length) {
+      toast('The browser\'s storage for this site was full, so the history was compacted: '
+        + 'every model is as it was, but undo starts again from here.');
+    }
+    saveUndoLog({ done: [], undone: [] });
+    if (undoBatch && undoBatch.at !== null) undoBatch.at = events.length;
+    return;
+  }
+  for (const mark of log.done) {
+    mark.at += shift;
+    mark.end += shift;
+    mark.stamp = logStampAt(events, mark.end);
+  }
+  for (const step of log.undone) {
+    step.at += shift;
+    step.stamp = logStampAt(events, step.at);
+  }
+  saveUndoLog(log);
+  if (undoBatch && undoBatch.at !== null) undoBatch.at += shift;
+});
 
 // Another tab wrote the log. The caches here are keyed on this tab's
 // revision counter, which that write never moved — so it is moved now,
@@ -14968,7 +14971,7 @@ window.addEventListener('keydown', (e) => {
   if (state.settings) { state.settings = false; return render(); }
   if (state.models) {
     state.models = false;
-    state.newModel = false; state.loadingUrl = false; state.loadingJson = false; state.compacting = false;
+    state.newModel = false; state.loadingUrl = false; state.loadingJson = false;
     return render();
   }
 
