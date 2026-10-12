@@ -2590,6 +2590,36 @@ check('every predefined model ships advisory-clean', () => {
     eq(result.reads.previousInstructor.instances, [], 'zero instances, not a phantom');
   });
 
+  check('an inline read tagged by an optional binding is advised: absent, it is an error', () => {
+    const { id, model } = openAssignment();
+    // An instructor's mentor, another instructor — a value read off the
+    // optional binding, and the tag of a read.
+    addDefinition('projection-definition', id, 'InstructorMentor', {
+      tags: [{ name: 'instructorId', tagType: 'InstructorId' }],
+      valueType: 'InstructorId', isList: false, initialValue: null, handlers: [],
+    });
+    updateDefinition('entity-definition', id, 'Instructor', {
+      properties: [
+        ...model()['entity-definitions'].Instructor.properties,
+        { name: 'mentorId', projection: 'InstructorMentor' },
+      ],
+    });
+    const body = deepClone(model()['command-definitions'].Assign);
+    body.conditions.push({
+      leftHandSide: { projection: 'InstructedCourses',
+        tags: { instructorId: { alias: 'previousInstructor', property: 'mentorId' } } },
+      predicate: 'isNotEmpty', rejection: 'The previous instructor teaches nothing',
+    });
+    updateDefinition('command-definition', id, 'Assign', body);
+    const advisories = sandbox.modelAdvisories(model()).filter((a) => a.name === 'Assign');
+    const advisory = advisories.find((a) => /may be absent/.test(a.message));
+    eq(!!advisory, true, 'advised ahead of time: ' + JSON.stringify(advisories));
+    eq(/previousInstructor/.test(advisory.message) && /InstructedCourses/.test(advisory.message), true, advisory.message);
+    let message = '';
+    try { evaluateCommand(model(), [], 'Assign', { courseId: 'c1', instructorId: 'i1' }); } catch (error) { message = error.message; }
+    eq(message !== '', true, 'and, absent, the evaluation error it said would come');
+  });
+
   check('the condition over the bound previous instructor still decides', () => {
     const { model } = openAssignment();
     const log = [assigned('c1', 'i1')];

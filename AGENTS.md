@@ -200,8 +200,8 @@ was decided, why, and what was tried and reverted:
   evaluation _error_, and so is a null boundary identifier _unless the binding is
   marked `isOptional`_ — then it binds zero instances, conditions over
   the alias hold vacuously, and reading a property of it yields null.
-  The optional-parameter and derived-null advisories say all of this
-  ahead of time.
+  The optional-parameter, derived-null and absent-binding advisories say
+  all of this ahead of time.
 - **Wire format majors**: a new member of a closed vocabulary is a
   _major_, judged from the reader's side; a field an old reader can
   ignore without misreading anything is a minor. The importer reads

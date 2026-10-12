@@ -4084,6 +4084,28 @@ function validateCommandBody(model, body) {
     }
   }
 
+  // The same hazard through a binding marked "may be absent". Absent,
+  // it binds nothing, and a rule over it holds vacuously — but a value
+  // read off it is null, and a read tagged by that null has no tag to
+  // read by: an evaluation error, not a vacuous truth (AGENTS.md, on
+  // null). The flag reads as "this is handled", so it is said here.
+  const mayBeAbsent = new Set(boundary.filter((b) => b && b.isOptional && b.alias).map((b) => b.alias));
+  if (mayBeAbsent.size) {
+    let found = null;
+    forEachCommandOperand(body, (operand, meta) => {
+      if (found || !meta.tag) return;
+      const alias = operandAliases(operand).find((a) => mayBeAbsent.has(a));
+      if (alias) found = { alias, where: meta.where };
+    });
+    if (found) {
+      throw new DomainError(
+        `The read at ${found.where} is tagged by "${found.alias}", a binding that may be absent — `
+        + `when it binds nothing, that tag is null and evaluation errors. Make the binding required, `
+        + `or tag the read by a value that is always set.`
+      );
+    }
+  }
+
   // The derived cousin of the same hazard: an identifier read off
   // another binding's projected property can be unset too — a
   // projection that starts at null reads null until something sets it,
