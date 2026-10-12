@@ -3309,4 +3309,39 @@ check('every predefined model ships advisory-clean', () => {
   });
 }
 
+// ---------------------------------------------------------------
+// A fan-out over a long log: each instance is a read, and a read must
+// not cost a pass over every event's tags. The sandbox evaluates on
+// every repaint, scrubbing included.
+// ---------------------------------------------------------------
+{
+  const pricing = PREDEFINED_INDEX('pricing-simple');
+
+  check('two hundred fanned reads over five thousand events do not rescan the log per read', () => {
+    const model = build(pricing);
+    const log = [];
+    for (let i = 0; i < 200; i++) log.push({ type: 'ProductDefined', data: { productId: 'p' + i, price: 1 } });
+    for (let i = 0; i < 4800; i++) {
+      log.push({ type: 'ProductPriceChanged', data: { productId: 'p' + (i % 200), newPrice: 2 + (i % 7) } });
+    }
+    const items = [];
+    for (let i = 0; i < 200; i++) items.push({ productId: 'p' + i, price: 2 + ((4600 + i) % 7) });
+    const started = Date.now();
+    const result = evaluateCommand(model, log, 'OrderProducts', { orderId: 'o1', items });
+    const took = Date.now() - started;
+    eq(result.outcome, 'published', 'every price read right');
+    // Seconds before the tags were cached and indexed; a bound loose
+    // enough for a slow CI machine.
+    eq(took < 1500, true, `took ${took} ms`);
+  });
+
+  check('a log appended to in place is read whole on the next fold', () => {
+    const model = build(pricing);
+    const log = [{ type: 'ProductDefined', data: { productId: 'p1', price: 1 } }];
+    eq(foldProjection(model, log, 'ProductCurrentPrice', { tags: { productId: 'p1' } }), 1, 'before');
+    log.push({ type: 'ProductPriceChanged', data: { productId: 'p1', newPrice: 3 } });
+    eq(foldProjection(model, log, 'ProductCurrentPrice', { tags: { productId: 'p1' } }), 3, 'after');
+  });
+}
+
 finish();

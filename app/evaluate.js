@@ -200,10 +200,63 @@ function tagsOfEvent(model, eventName, data) {
   return [...tags];
 }
 
+// The tags an event carries, worked out once per model and event. A
+// fold reads the whole log, and a fan-out folds once per instance, so
+// working them out per read made a command over a few thousand events
+// cost seconds. Both keys are stable: the model is the projection's
+// shared object for its revision, and an event in a log is never
+// changed.
+const evTagSets = new WeakMap();
+
+function evTagSetOf(model, event) {
+  let perModel = evTagSets.get(model);
+  if (!perModel) evTagSets.set(model, perModel = new WeakMap());
+  let set = perModel.get(event);
+  if (!set) perModel.set(event, set = new Set(tagsOfEvent(model, event.type, event.data)));
+  return set;
+}
+
 function evMatchesTags(model, event, tags) {
   if (!tags.length) return true;
-  const carried = tagsOfEvent(model, event.type, event.data);
-  return tags.every((tag) => carried.includes(tag));
+  const carried = evTagSetOf(model, event);
+  return tags.every((tag) => carried.has(tag));
+}
+
+// Which of a log's events carry a tag, as positions — so a read starts
+// from the events carrying its rarest tag instead of scanning the log.
+// Kept per model and log array, and rebuilt when the log is no longer
+// the one it was built over — longer, or ending elsewhere (the
+// sandbox's log is appended to in place).
+const evTagIndexes = new WeakMap();
+
+function evTagIndex(model, events) {
+  let perModel = evTagIndexes.get(model);
+  if (!perModel) evTagIndexes.set(model, perModel = new WeakMap());
+  let entry = perModel.get(events);
+  const last = events[events.length - 1];
+  if (!entry || entry.length !== events.length || entry.last !== last) {
+    const index = new Map();
+    events.forEach((event, at) => {
+      for (const tag of evTagSetOf(model, event)) {
+        if (!index.has(tag)) index.set(tag, []);
+        index.get(tag).push(at);
+      }
+    });
+    perModel.set(events, entry = { length: events.length, last, index });
+  }
+  return entry.index;
+}
+
+// The events carrying every one of `tags`, in log order.
+function evEventsTagged(model, events, tags) {
+  if (!tags.length) return events;
+  const index = evTagIndex(model, events);
+  let rarest = null;
+  for (const tag of tags) {
+    const at = index.get(tag) || [];
+    if (!rarest || at.length < rarest.length) rarest = at;
+  }
+  return rarest.map((at) => events[at]).filter((event) => evMatchesTags(model, event, tags));
 }
 
 // ============================================================
@@ -242,7 +295,10 @@ function evCompileHandlerOperand(operand) {
 // repaired. Declared handlers are untouched — this is a way back in,
 // not a mode the app runs in.
 let evScriptsDisabled = false;
-function setScriptsDisabled(disabled) { evScriptsDisabled = !!disabled; }
+function setScriptsDisabled(disabled) {
+  evScriptsDisabled = !!disabled;
+  evCompiled = new WeakMap();
+}
 
 // One handler, as `(state, event, args, tags) => nextState`. `args` are
 // the read's argument values, `tags` the values it is tagged by, keyed
@@ -315,8 +371,22 @@ function evCompileHandler(handler, label, scripted) {
   }
 }
 
-// A projection or entity property, compiled once and folded many times.
+// A projection or entity property, compiled once and folded many times —
+// once per model and target, so a fan-out reading the same projection
+// two hundred times compiles it (scripts included) once. Safe mode
+// changes what a script compiles to, so switching it starts afresh.
+let evCompiled = new WeakMap();
+
 function evCompileTarget(model, target, label) {
+  let perModel = evCompiled.get(model);
+  if (!perModel) evCompiled.set(model, perModel = new WeakMap());
+  let perTarget = perModel.get(target);
+  if (!perTarget) perModel.set(target, perTarget = new Map());
+  if (!perTarget.has(label)) perTarget.set(label, evCompileTargetAfresh(model, target, label));
+  return perTarget.get(label);
+}
+
+function evCompileTargetAfresh(model, target, label) {
   const script = scriptOf(target);
   const steps = new Map();
   for (const handler of target.handlers || []) {
@@ -337,7 +407,9 @@ function evCompileTarget(model, target, label) {
     : (state) => state;
 
   const run = (events, args, tags) => {
-    let state = initial;
+    // A script may change its state in place; the initial one is shared
+    // by every fold of this compiled target, so each starts from a copy.
+    let state = script ? deepClone(initial) : initial;
     for (const event of events) {
       const step = steps.get(event.type);
       if (step) state = step(state, event, args || {}, tags || {});
@@ -541,7 +613,7 @@ function evProjectionFold(model, events, projectionName, read) {
 
   const queryTags = projectionQueryTags(model, projectionName, read);
   const compiled = evCompileTarget(model, projection, `projection "${projectionName}"`);
-  const selected = events.filter((event) => evMatchesTags(model, event, queryTags))
+  const selected = evEventsTagged(model, events, queryTags)
     .map((event) => evWithExplicitOptionals(model, event));
   return {
     compiled,
