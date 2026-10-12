@@ -1225,6 +1225,31 @@ function drive(model, log, command, args) {
 }
 
 {
+  // The gate asks about `script`, so `script` alone decides whether
+  // code runs. A `code` slipped onto a declared handler — by a crafted
+  // link, an agent's edit or a JSON body in the code view — is inert:
+  // the gate rightly lets the envelope through, the declared operation
+  // is what folds, and the validator says the code is there.
+  const envelope = JSON.parse(JSON.stringify(buildShareEnvelope(build(1), [])));
+  const numbering = envelope.projectionDefinitions.find((p) => p.name === 'CourseNumbering');
+  numbering.handlers[0].code = '(globalThis.__declaredCodeRan = true, "x9")';
+
+  check('code on a declared handler does not pass for a script', () => {
+    eq(envelopeHasScript(envelope), false, 'no script, so no question at import');
+    const id = importModelFromEnvelope(envelope).modelId;
+    const model = sandbox.projectState()[id];
+    eq(model['projection-definitions'].CourseNumbering.handlers[0].code !== undefined, true, 'stored as authored');
+    const log = [];
+    drive(model, log, 'DefineCourse', { capacity: 10 });
+    eq(foldProjection(model, log, 'CourseNumbering', {}), 'c2', 'the declared successor folds');
+    eq(sandbox.__declaredCodeRan, undefined, 'the code never ran');
+    eq(sandbox.modelAdvisories(model).some(
+      (a) => a.name === 'CourseNumbering' && /also carries code/.test(a.message)
+    ), true, 'and it is advised');
+  });
+}
+
+{
   // Scenarios are the one kind identified by a generated id rather than
   // a name, so they are the only kind whose identity a round trip could
   // quietly change. It does not: the exported id is what comes back, so

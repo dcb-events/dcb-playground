@@ -2779,6 +2779,15 @@ function validateHandlers(model, label, target, handlers) {
       throw new DomainError(`${label} handles "${handler.event}" twice.`);
     }
     handledEvents.add(handler.event);
+    // The mirror of the scripted check below. Code on a declared
+    // handler never runs (`evCompileHandler`); say so rather than let
+    // it sit in the model looking as if it did.
+    if (handler.code !== undefined) {
+      throw new DomainError(
+        `The handler for "${handler.event}" on ${label} declares an operation and also carries ` +
+        'code. Only a scripted projection runs code.'
+      );
+    }
     if (!allowedOperations.includes(handler.operation)) {
       throw new DomainError(
         `Operation "${handler.operation}" is not available for ${label} ` +

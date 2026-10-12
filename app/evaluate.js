@@ -213,8 +213,13 @@ function setScriptsDisabled(disabled) { evScriptsDisabled = !!disabled; }
 // the read's argument values, `tags` the values it is tagged by, keyed
 // by the names the projection declares (`tags.courseId`) — a script
 // sees what it is read by, but cannot change it.
-function evCompileHandler(handler, label) {
-  if (handler.code !== undefined) {
+//
+// Code runs only on a projection that declares a `script`: that is
+// what the import gate (`envelopeHasScript`) asks about, so it is the
+// one thing that may decide whether authored JavaScript runs. A `code`
+// left on an ordinary handler is inert here — the validator reports it.
+function evCompileHandler(handler, label, scripted) {
+  if (scripted && handler.code !== undefined) {
     if (evScriptsDisabled) {
       return () => fail(
         `The script for "${handler.event}" on ${label} did not run: scripts are off in safe mode. ` +
@@ -281,7 +286,7 @@ function evCompileTarget(model, target, label) {
   const steps = new Map();
   for (const handler of target.handlers || []) {
     if (!handler || !handler.event) continue;
-    steps.set(handler.event, evCompileHandler(handler, label));
+    steps.set(handler.event, evCompileHandler(handler, label, !!script));
   }
 
   const initial = script
