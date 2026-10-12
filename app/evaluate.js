@@ -915,8 +915,10 @@ function evApplyPredicate(condition, left, right) {
     case 'countLessThan': held = evAsList(l).length < r; break;
     case 'countGreaterThan': held = evAsList(l).length > r; break;
     case 'contains':
+      // No value is no text: a string holds no null in it (String(null)
+      // is "null", which "annulled" did). A list may hold one.
       held = typeof l === 'string'
-        ? l.includes(String(r))
+        ? r !== null && r !== undefined && l.includes(String(r))
         : evAsList(l).some((element) => evDeepEqual(element, r));
       break;
     case 'containsAny': {
@@ -939,8 +941,11 @@ function evApplyPredicate(condition, left, right) {
       else if (condition.predicate === 'greaterThan') held = l > r;
       else held = l >= r;
       break;
-    case 'startsWith': held = String(l).startsWith(String(r)); break;
-    case 'endsWith': held = String(l).endsWith(String(r)); break;
+    case 'startsWith':
+    case 'endsWith':
+      held = l !== null && l !== undefined && r !== null && r !== undefined
+        && String(l)[condition.predicate](String(r));
+      break;
     default:
       return fail(`"${condition.predicate}" is not a predicate this can check.`);
   }

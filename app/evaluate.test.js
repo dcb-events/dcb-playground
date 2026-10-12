@@ -449,6 +449,18 @@ function drive(model, log, command, args) {
     eq(holds({ leftHandSide: of('status'), predicate: 'startsWith', rightHandSide: 'Non' }), false, 'startsWith, not');
   });
 
+  check('a string predicate over null holds for nothing', () => {
+    // String(null) is "null": "annulled" contained it, and it started
+    // "nu". No value is no text, so nothing is in it or begins it.
+    const apply = (predicate, left, right) => sandbox.evApplyPredicate({ predicate }, left, right);
+    eq(apply('contains', 'annulled', null), false, 'contains null');
+    eq(apply('startsWith', null, 'nu'), false, 'null startsWith');
+    eq(apply('endsWith', 'null', null), false, 'endsWith null');
+    eq(apply('startsWith', 'nu', null), false, 'startsWith null');
+    eq(apply('contains', null, 'x'), false, 'null contains');
+    eq(apply('contains', ['a', null], null), true, 'a list may still hold a null');
+  });
+
   check('negate inverts whatever it wraps', () => {
     eq(holds({ leftHandSide: of('capacity'), predicate: 'equals', rightHandSide: 5, negate: true }), false, 'negated equals');
     eq(holds({ leftHandSide: of('capacity'), predicate: 'equals', rightHandSide: 9, negate: true }), true, 'negated equals, not');
