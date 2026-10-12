@@ -5164,6 +5164,14 @@ check('the reference links only anchors the website defines', () => {
   });
 }
 
+check('the README names the schema by its own $id', () => {
+  const { $id } = JSON.parse(fs.readFileSync(path.join(APP, '..', 'dcb-model.schema.json'), 'utf8'));
+  const readme = fs.readFileSync(path.join(APP, '..', 'README.md'), 'utf8');
+  eq((readme.match(/https:\/\/dcb\.events\/schemas\/model\/v\d+\.json/g) || []).filter((url) => url !== $id), [],
+    'no other version');
+  eq(readme.includes($id), true, $id);
+});
+
 check('the app is text: no file carries a raw control byte', () => {
   // A literal NUL in index.html once made grep and ripgrep treat the
   // whole page as binary; a separator is spelled '\u0000'.
