@@ -1536,4 +1536,16 @@ check('every keyword outside the experimental ones is shown to an agent', () => 
   });
 }
 
+// The lexer and the messages, at their edges.
+{
+  const messages = (text) => parseModelSource(text).diagnostics.map((d) => d.message);
+
+  check('a number too large to store is a diagnostic, not a silent null', () => {
+    const huge = messages('model "M"\nuntagged projection P: integer = 1e400\n');
+    eq(huge.some((m) => /too large/.test(m)), true, huge.join(' | '));
+    eq(messages('model "M"\nuntagged projection P: integer = 1e300\n'), [], 'a large one is fine');
+  });
+
+}
+
 finish();

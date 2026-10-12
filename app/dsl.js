@@ -356,6 +356,9 @@ function lexSource(text) {
       const match = SOURCE_NUMBER_RE.exec(text);
       advanceTo(i + match[0].length);
       token = { t: 'number', v: Number(match[0]) };
+      // Past what a double holds, a number reads as Infinity — and is
+      // stored as null, JSON having no Infinity.
+      if (!Number.isFinite(token.v)) report('This number is too large to store.', start);
     } else if (/[A-Za-z_]/.test(c)) {
       SOURCE_WORD_RE.lastIndex = i;
       const match = SOURCE_WORD_RE.exec(text);
