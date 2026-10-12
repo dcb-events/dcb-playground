@@ -4358,7 +4358,7 @@ const SOURCE_REFERENCE_GUIDE = `# The DCB model language
 
 The text get_model_source returns, apply_model_source applies and start_model takes as its source.
 
-- A text is the whole model: a model "Name" line, then types, events, projections and commands. A definition left out of an applied text is removed, so to change a model, edit what get_model_source returned and send all of it back.
+- A text is the whole model: a model "Name" line, then types, events, projections and commands. A definition left out of an applied text is removed — apply_model_source refuses that unless told allowRemovals: true — so to change a model, edit what get_model_source returned and send all of it back.
 - A text with any error is refused whole, with each error's line and column; fix them and send it again. What does not stop it (an event nothing emits, a read of a projection nobody declared) comes back as advisories with the result; fix those as well.
 - DCB in brief: events are tagged by identifier values; a projection folds the events that carry its tags into one value; a command reads projections, checks its rules and emits events. Its consistency boundary is exactly what it reads — derived, never declared (derive_boundary shows it).
 - Definitions, enum members and records are PascalCase; properties, parameters, tags and aliases are camelCase.
