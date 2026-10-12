@@ -3360,6 +3360,12 @@ check('every predefined model ships advisory-clean', () => {
 // Small semantic edges: values that look like syntax somewhere else.
 // ---------------------------------------------------------------
 {
+  check('a long digit run steps by exactly one', () => {
+    eq(evSuccessor('inv-12345678901234567891'), 'inv-12345678901234567892', 'past 2^53');
+    eq(evSuccessor('inv-99999999999999999999'), 'inv-100000000000000000000', 'carried');
+    eq(evSuccessor('inv-009'), 'inv-010', 'width kept');
+  });
+
   check('a tag value with a dollar sign is that value, not a replacement pattern', () => {
     eq(sandbox.renderTag({ name: 'CourseId', tagSchema: '{type}:{value}' }, "a$'"), "CourseId:a$'", '$\' kept');
     eq(sandbox.renderTag({ name: 'CourseId', tagSchema: '{type}:{value}' }, 'a$&b'), 'CourseId:a$&b', '$& kept');

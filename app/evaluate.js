@@ -144,7 +144,9 @@ function evSuccessor(value) {
   if (typeof v === 'string') {
     const match = /^(.*?)(\d+)$/.exec(v);
     if (match) {
-      const next = String(Number(match[2]) + 1);
+      // BigInt: past 2^53 a Number rounds, and the successor of
+      // inv-12345678901234567891 came out as …7000.
+      const next = String(BigInt(match[2]) + 1n);
       return match[1] + next.padStart(match[2].length, '0');
     }
   }
