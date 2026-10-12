@@ -33,7 +33,7 @@ loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js', 'shared.js'], {
   trailer: 'globalThis.state = state; globalThis.render = render; globalThis.session = session;'
     + ' globalThis.closeForms = closeForms; globalThis.codeView = codeView; globalThis.UNGROUPED = UNGROUPED;'
     + ' globalThis.PREDEFINED_MODELS = PREDEFINED_MODELS; globalThis.SHARE_LINK_MAX_LENGTH = SHARE_LINK_MAX_LENGTH;'
-    + ' globalThis.EVENT_LOG_KEY = EVENT_LOG_KEY;'
+    + ' globalThis.EVENT_LOG_KEY = EVENT_LOG_KEY; globalThis.PAGE_BEHIND = PAGE_BEHIND;'
     + ' globalThis.NOTATION_GUIDE_URL = NOTATION_GUIDE_URL; globalThis.NOTATION_REFERENCE_URL = NOTATION_REFERENCE_URL;',
 });
 const { check, eq, finish } = makeChecker();
@@ -5173,8 +5173,8 @@ check('the app is text: no file carries a raw control byte', () => {
 });
 
 // ---------------------------------------------------------------
-// Keys and dialogs: Escape closes whichever is up, and the arrow keys
-// never reach the page behind one.
+// Keys and dialogs: Escape closes whichever is up, the arrow keys
+// never reach the page behind one, and that page is inert meanwhile.
 // ---------------------------------------------------------------
 {
   const id = sandbox.createDcbModel('Dialog Probe');
@@ -5207,6 +5207,33 @@ check('the app is text: no file carries a raw control byte', () => {
     key('ArrowDown');
     eq(moved, 1, 'and with nothing open, they do');
     sandbox.moveRow = moveRow;
+  });
+
+  check('a dialog is named by its heading, and its × says what it does', () => {
+    const heading = { id: '' };
+    const attributes = {};
+    const modal = {
+      querySelector: (selector) => (selector === 'header h2' ? heading : null),
+      getAttribute: (name) => attributes[name] || null,
+      setAttribute: (name, value) => { attributes[name] = value; },
+    };
+    sandbox.labelDialog(modal);
+    eq(attributes['aria-labelledby'] !== undefined && attributes['aria-labelledby'] === heading.id, true, 'labelled by its h2');
+    const page = fs.readFileSync(path.join(APP, 'index.html'), 'utf8');
+    eq((page.match(/title: 'Close' \}, '×'\)/g) || []).length, 0, 'every close button is labelled');
+  });
+
+  check('the page behind a dialog is inert, and only then', () => {
+    const page = {};
+    const querySelectorAll = sandbox.document.querySelectorAll;
+    sandbox.document.querySelectorAll = (selector) => (selector === sandbox.PAGE_BEHIND ? [page] : querySelectorAll(selector));
+    sandbox.state.settings = true;
+    sandbox.render();
+    eq(page.inert, true, 'inert behind Settings');
+    sandbox.state.settings = false;
+    sandbox.render();
+    eq(page.inert, false, 'and live again once it closes');
+    sandbox.document.querySelectorAll = querySelectorAll;
   });
 
   store.delete('dcb-playground:model');

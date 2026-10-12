@@ -1860,7 +1860,7 @@ function modelsModal() {
     h('header', {},
       h('h2', {}, 'DCB Playground'),
       h('span', { class: 'grow' }),
-      activeId ? h('button', { class: 'btn ghost', onclick: close, title: 'Close' }, '×') : null),
+      activeId ? h('button', { class: 'btn ghost', onclick: close, title: 'Close', 'aria-label': 'Close' }, '×') : null),
     h('div', { class: 'muted small' }, 'Pick one of your models or start a new one. ',
       h('a', { href: '#', onclick: (e) => { e.preventDefault(); openHelp(); } }, 'What is this?')),
     saved.length ? h('div', { class: 'setting' },
@@ -2184,6 +2184,19 @@ function dialogOpen() {
     || (state.defFrames.length && activeModel()) || state.models || !activeModelId() || state.palette);
 }
 
+// The page behind a dialog — everything but the two hosts.
+const PAGE_BEHIND = '.topbar, .layout, .site-footer';
+
+// A dialog is modal in fact, not only in `aria-modal`: the page behind
+// it is inert while it is up, so Tab cannot walk out of the dialog into
+// controls nobody can see past the overlay, and a screen reader does
+// not read them.
+function renderOverlays() {
+  renderModals();
+  renderPalette();
+  const inert = dialogOpen();
+  document.querySelectorAll(PAGE_BEHIND).forEach((element) => { element.inert = inert; });
+}
 
 function renderModals() {
   const host = document.getElementById('modal-host');
@@ -2212,7 +2225,7 @@ function renderSettingsModal(host) {
     h('header', {},
       h('h2', {}, 'Settings'),
       h('span', { class: 'grow' }),
-      h('button', { class: 'btn ghost', onclick: close, title: 'Close' }, '×')),
+      h('button', { class: 'btn ghost', onclick: close, title: 'Close', 'aria-label': 'Close' }, '×')),
     h('div', { class: 'muted small' }, 'How this interface behaves. Remembered in this browser, '
       + 'and applied as you pick — the page behind this is already showing it.'),
     UI_SETTINGS.map((setting) => h('div', { class: 'setting' },
@@ -2234,12 +2247,24 @@ function renderSettingsModal(host) {
   setTimeout(() => modal.focus(), 0);
 }
 
+// A dialog is named by its heading, unless it names itself: the `h2`
+// in its header gets an id, and the dialog points at it — so a screen
+// reader announces "Settings, dialog" rather than "dialog".
+let dialogHeadingIds = 0;
+function labelDialog(modal) {
+  const heading = modal.querySelector('header h2');
+  if (!heading || modal.getAttribute('aria-label')) return;
+  if (!heading.id) heading.id = 'dialog-heading-' + (dialogHeadingIds += 1);
+  modal.setAttribute('aria-labelledby', heading.id);
+}
+
 // A modal, and the backdrop that closes it — `thin` for one whose
 // changes should be seen landing on the page behind it. Clicking the
 // backdrop only counts when it is the backdrop that was clicked — a
 // click that started inside the modal and drifted out of it is not a
 // dismissal.
 function overlayAround(modal, close, { thin = false } = {}) {
+  labelDialog(modal);
   return h('div', {
     class: 'overlay' + (thin ? ' thin' : ''),
     onclick: (e) => { if (e.target === e.currentTarget) close(); },
@@ -2460,7 +2485,7 @@ function definitionModal(model) {
         '‹ Back to ' + (under.name ? readable(under.name) : 'the new projection')) : null,
       h('h2', {}, exists ? named(frame.name) : 'New ' + noun),
       h('span', { class: 'grow' }),
-      h('button', { class: 'btn ghost', onclick: close, title: 'Close' }, '×')),
+      h('button', { class: 'btn ghost', onclick: close, title: 'Close', 'aria-label': 'Close' }, '×')),
     h('div', { class: 'def-body' }, body),
     h('div', { class: 'adder', style: 'margin-top:18px' },
       h('button', { class: 'btn primary', onclick: close }, 'Done'),
@@ -2610,7 +2635,7 @@ function helpModal() {
     h('header', {},
       h('h2', {}, 'DCB Playground'),
       h('span', { class: 'grow' }),
-      h('button', { class: 'btn ghost', onclick: close, title: 'Close' }, '×')),
+      h('button', { class: 'btn ghost', onclick: close, title: 'Close', 'aria-label': 'Close' }, '×')),
     h('div', { class: 'muted small' }, 'Model consistency boundaries without writing a line of code.'),
     h('p', {},
       'Build a model of events, projections and the commands that guard them, and see the '
@@ -2637,7 +2662,7 @@ function renderImportGate() {
     h('header', {},
       h('h2', {}, 'Import shared model'),
       h('span', { class: 'grow' }),
-      h('button', { class: 'btn ghost', onclick: close, title: 'Close' }, '×')),
+      h('button', { class: 'btn ghost', onclick: close, title: 'Close', 'aria-label': 'Close' }, '×')),
     h('div', { class: 'setting' },
       h('h4', {}, envelope.name || 'Untitled model'),
       h('div', { class: 'why' },
@@ -2781,7 +2806,7 @@ function renderImportExportModal() {
     h('header', {},
       h('h2', {}, 'Import & Export'),
       h('span', { class: 'grow' }),
-      h('button', { class: 'btn ghost', onclick: close, title: 'Close' }, '×')),
+      h('button', { class: 'btn ghost', onclick: close, title: 'Close', 'aria-label': 'Close' }, '×')),
     h('div', { class: 'muted small' }, 'Bring in a model from somewhere else, or send this one out.'),
     h('div', { class: 'ie-tabs' },
       h('button', {
@@ -3118,7 +3143,7 @@ function problemsPanel() {
     h('header', {},
       h('h2', {}, 'Problems'),
       h('span', { class: 'grow' }),
-      h('button', { class: 'btn ghost', onclick: close, title: 'Close' }, '×')),
+      h('button', { class: 'btn ghost', onclick: close, title: 'Close', 'aria-label': 'Close' }, '×')),
     h('div', { class: 'muted small', style: 'margin-bottom:14px' },
       'Loose ends this model has not tied yet, definitions that do not hold together yet, '
       + 'and scenarios it no longer agrees with. Nothing here blocked a save — '
@@ -3300,7 +3325,7 @@ function renderPalette() {
   // Escape and the backdrop are how quick open is left on a desktop; a
   // phone has neither once the palette fills the screen, so it gets the
   // × every other dialog carries — shown only there (shared.css).
-  paletteEl = h('div', { class: 'palette', role: 'dialog', 'aria-modal': 'true' },
+  paletteEl = h('div', { class: 'palette', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Quick open' },
     h('div', { class: 'palette-head' }, input,
       h('button', {
         class: 'btn ghost palette-close', type: 'button', title: 'Close', 'aria-label': 'Close',
@@ -5272,8 +5297,7 @@ function paintPage() {
     const main = document.getElementById('main');
     main.innerHTML = '';
     main.className = '';
-    renderModals();
-    renderPalette();
+    renderOverlays();
     return;
   }
 
@@ -5307,8 +5331,7 @@ function paintPage() {
   actions.appendChild(settingsButton());
   actions.appendChild(moreMenu(model));
 
-  renderModals();
-  renderPalette();
+  renderOverlays();
   behindDefinitionModal(() => paintBehind(model));
 }
 
