@@ -78,8 +78,10 @@ The DOM stub, sandbox, script loader and assertions live once in
 fixture text with `swap(text, from, to)`, which throws when `from` is
 gone — a bare `.replace()` that misses leaves the test checking nothing.
 
-`.githooks/pre-commit` runs the four suites, checks the generated files
-are current and refuses a bare `.replace()` in a suite. Enable it once
+`.githooks/pre-commit` runs the four suites, checks that
+`app/webmcp-schemas.js` is current (the vendored Monaco is regenerated
+only on a version bump, so it is not checked) and refuses a bare
+`.replace()` in a suite. CI runs the same hook. Enable it once
 per clone: `git config core.hooksPath .githooks`.
 
 To see a model as the code view prints it:
