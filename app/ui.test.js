@@ -2154,6 +2154,40 @@ function build(index) {
 }
 
 // ---------------------------------------------------------------
+// A full storage: the refusal offers compacting, and compacting
+// starts the history over.
+// ---------------------------------------------------------------
+{
+  const id = sandbox.createDcbModel('Compaction Probe');
+  store.set('dcb-playground:model', id);
+
+  check('a full storage is refused with compacting offered beside it', () => {
+    const setItem = sandbox.localStorage.setItem;
+    sandbox.localStorage.setItem = (key, value) => {
+      if (key !== sandbox.EVENT_LOG_KEY) return setItem(key, value);
+      const error = new Error('quota'); error.name = 'QuotaExceededError'; throw error;
+    };
+    sandbox.document.body.children.length = 0;
+    sandbox.run(() => addTaggedEvent(id, 'NeverStored', { properties: [] }));
+    sandbox.localStorage.setItem = setItem;
+    const shown = sandbox.document.body.children[sandbox.document.body.children.length - 1];
+    eq(/storage for this site is full/.test(textOf(shown)), true, textOf(shown));
+    eq(findAll(shown, (node) => node.tag === 'button').map(textOf), ['Compact history'], 'the way out');
+  });
+
+  check('compacting keeps the models and starts undo over', () => {
+    sandbox.run(() => addTaggedEvent(id, 'BeforeCompacting', { properties: [] }));
+    sandbox.compactHistory();
+    eq('BeforeCompacting' in sandbox.projectState()[id]['event-definitions'], true, 'kept');
+    const before = sandbox.loadEvents().length;
+    sandbox.undo();
+    eq(sandbox.loadEvents().length, before, 'nothing to undo past it');
+  });
+
+  store.delete('dcb-playground:model');
+}
+
+// ---------------------------------------------------------------
 // Optional properties in the payload editors. "No value" is a state
 // the interface shows — the explicit null — and never the empty
 // string; the save path spells the null out into everything a draft

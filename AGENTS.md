@@ -174,8 +174,11 @@ was decided, why, and what was tried and reverted:
   (`onAppend`), so buttons and agent tools are undoable alike. New editing
   features follow the same path; WebMCP tools already do.
 - **Every writer of `EVENT_LOG_KEY` must call `bumpLogRevision()`** —
-  `appendEvents` does, undo/redo do, and so does the page's `storage`
-  listener for another tab's writes. The projected state and the problems
+  `writeEventLog` (model.js) does, and appends, undo/redo and compaction
+  all write through it; so does the page's `storage` listener for
+  another tab's writes. `writeEventLog` is also where a full storage
+  becomes a `StorageFullError`, which the page answers by offering
+  `compactHistory`. The projected state and the problems
   list are cached per revision; a writer that skips its bump is the one way
   those caches go stale. The log is shared between tabs, the undo history
   is per tab (sessionStorage) and refuses once another tab has appended

@@ -266,15 +266,54 @@ function onAppend(listener) { appendListeners.push(listener); }
 function appendEvents(newEvents) {
   const log = loadEvents();
   const startSeq = log.length;
-  const stamped = newEvents.map((e, i) => ({
-    sequence: startSeq + i,
-    timestamp: new Date().toISOString(),
-    type: e.type,
-    data: e.data,
-  }));
-  localStorage.setItem(EVENT_LOG_KEY, JSON.stringify([...log, ...stamped]));
-  bumpLogRevision();
+  const stamped = stampEvents(newEvents, startSeq);
+  writeEventLog([...log, ...stamped]);
   for (const listener of appendListeners) listener(startSeq, stamped);
+}
+
+function stampEvents(events, from) {
+  const timestamp = new Date().toISOString();
+  return events.map((e, i) => ({ sequence: from + i, timestamp, type: e.type, data: e.data }));
+}
+
+// The one way the whole log is written — an append, undo and redo, a
+// compaction — so the revision is bumped by every writer, and a full
+// storage is reported the same way to each. The quota is the browser's
+// for the whole site (on dcb.events, shared with the website), and the
+// log is rewritten whole on every edit: past it, every edit would fail
+// with nothing said but the browser's error name.
+function writeEventLog(events) {
+  try {
+    localStorage.setItem(EVENT_LOG_KEY, JSON.stringify(events));
+  } catch (error) {
+    if (error && (error.name === 'QuotaExceededError' || error.name === 'NS_ERROR_DOM_QUOTA_REACHED')) {
+      throw new StorageFullError();
+    }
+    throw error;
+  }
+  bumpLogRevision();
+}
+
+// Every model as it stands, written as the shortest history that
+// builds it: per model, its creation and one add per definition, in
+// order. What the edits were is gone — and with it every undo step, in
+// this tab and any other (their marks no longer match the log, see
+// `undo` in the page) — which is the price of the room it makes.
+// Deleted models leave nothing behind. Returns the log's length in
+// characters before and after.
+function compactEventLog() {
+  const before = (localStorage.getItem(EVENT_LOG_KEY) || '').length;
+  const events = [];
+  for (const model of Object.values(projectState())) {
+    events.push({ type: 'dcb-model-created', data: { 'dcb-model-id': model.id, name: model.name } });
+    for (const kind of DEF_KINDS) {
+      for (const [name, body] of Object.entries(model[DEF_COLLECTIONS[kind]])) {
+        events.push({ type: `${kind}-added`, data: { 'dcb-model-id': model.id, name, body } });
+      }
+    }
+  }
+  writeEventLog(stampEvents(events, 0));
+  return { before, after: (localStorage.getItem(EVENT_LOG_KEY) || '').length };
 }
 
 function generateId() {
@@ -2442,6 +2481,16 @@ class DomainError extends Error {
   constructor(message) {
     super(message);
     this.name = 'DomainError';
+  }
+}
+
+// A refusal like any other, of its own kind so the page can offer the
+// way out beside it (`run`, shared.js).
+class StorageFullError extends DomainError {
+  constructor() {
+    super('The browser\'s storage for this site is full, so that change was not saved. '
+      + 'Compacting the history makes room: every model stays as it is, but undo cannot go back past it.');
+    this.name = 'StorageFullError';
   }
 }
 

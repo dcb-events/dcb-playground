@@ -19,7 +19,10 @@
 const { createSandbox, loadApp, makeChecker } = require('./test-harness.js');
 
 const { sandbox, store } = createSandbox();
-loadApp(sandbox, ['model.js', 'evaluate.js'], { trailer: 'globalThis.PREDEFINED_MODELS = PREDEFINED_MODELS;' });
+loadApp(sandbox, ['model.js', 'evaluate.js'], {
+  trailer: 'globalThis.PREDEFINED_MODELS = PREDEFINED_MODELS; globalThis.DEF_COLLECTIONS = DEF_COLLECTIONS;'
+    + ' globalThis.DomainError = DomainError;',
+});
 const { check, eq, finish } = makeChecker();
 
 // Clearing the store is a write `appendEvents` never sees, so the
@@ -3261,6 +3264,48 @@ check('every predefined model ships advisory-clean', () => {
     });
     eq(typeof foldProjection(model(), [{ type: 'Ticked', data: { counterId: 'x1' } }], 'LastMaker', {}), 'undefined',
       'what any absent field reads as, not Object');
+  });
+}
+
+// ---------------------------------------------------------------
+// The log grows with every edit and lives in the browser's storage,
+// whose quota the site shares. A full one is said in words that say
+// what to do, and compacting folds the history down to what it built.
+// ---------------------------------------------------------------
+{
+  check('compacting keeps every model as it is, one event per definition', () => {
+    const { id } = open_(ENTITIES);
+    renameDefinition('event-definition', id, 'CourseDefined', 'CourseCreated');
+    renameDefinition('event-definition', id, 'CourseCreated', 'CourseDefined');
+    const doomed = createDcbModel('Doomed');
+    sandbox.deleteDcbModel(doomed);
+    const before = JSON.stringify(sandbox.projectState());
+    const length = sandbox.loadEvents().length;
+    sandbox.compactEventLog();
+    eq(JSON.stringify(sandbox.projectState()), before, 'the same models');
+    const model = sandbox.projectState()[id];
+    const definitions = Object.values(sandbox.DEF_COLLECTIONS)
+      .reduce((n, collection) => n + Object.keys(model[collection]).length, 0);
+    eq(sandbox.loadEvents().length, 1 + definitions, 'a creation and one add per definition');
+    eq(sandbox.loadEvents().length < length, true, 'shorter than the history it replaced');
+    eq(sandbox.loadEvents().map((e) => e.sequence), sandbox.loadEvents().map((_, i) => i), 'numbered afresh');
+  });
+
+  check('a full storage refuses the edit in words that say what to do', () => {
+    const { id, model } = open_(ENTITIES);
+    const length = sandbox.loadEvents().length;
+    const setItem = sandbox.localStorage.setItem;
+    sandbox.localStorage.setItem = () => {
+      const error = new Error('quota'); error.name = 'QuotaExceededError'; throw error;
+    };
+    let caught;
+    try { renameDefinition('event-definition', id, 'CourseDefined', 'CourseCreated'); } catch (error) { caught = error; }
+    sandbox.localStorage.setItem = setItem;
+    eq(caught && caught.name, 'StorageFullError', 'a domain error of its own');
+    eq(caught instanceof sandbox.DomainError, true, 'shown like any refusal');
+    eq(/compact/i.test(caught.message), true, caught && caught.message);
+    eq(sandbox.loadEvents().length, length, 'nothing written');
+    eq('CourseDefined' in model()['event-definitions'], true, 'nothing changed');
   });
 }
 

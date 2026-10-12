@@ -1823,7 +1823,7 @@ function modelsModal() {
   const saved = Object.values(projectState()).sort((a, b) => a.name.localeCompare(b.name));
   const close = () => {
     state.models = false;
-    state.newModel = false; state.loadingUrl = false; state.loadingJson = false;
+    state.newModel = false; state.loadingUrl = false; state.loadingJson = false; state.compacting = false;
     render();
   };
 
@@ -1891,12 +1891,31 @@ function modelsModal() {
           }),
         })))) : null,
     h('div', { class: 'setting' }, h('h4', {}, 'Start a new one'), startNew),
+    historySetting(),
     h('div', { class: 'setting muted small' }, 'Looking for inspiration? ',
       h('a', { href: EXAMPLES_URL, target: '_blank', rel: 'noopener' }, 'Browse the examples on dcb.events ↗')),
     activeId ? h('div', { class: 'adder', style: 'margin-top:18px' },
       h('button', { class: 'btn primary', onclick: close }, 'Done')) : null);
   setTimeout(() => modal.focus(), 0);
   return overlayAround(modal, close);
+}
+
+// How much room the history takes, and the way to give it back. The
+// log keeps every edit ever made, and the browser's storage for the
+// site is a few megabytes, shared on dcb.events with the website.
+function historySetting() {
+  const size = (localStorage.getItem(EVENT_LOG_KEY) || '').length;
+  return h('div', { class: 'setting' },
+    h('h4', {}, 'History'),
+    h('div', { class: 'muted small' },
+      `Every edit to every model is kept, taking about ${storageSize(size)} of this browser's storage. `
+      + 'Compacting keeps each model as it is and drops the edits that led there — undo cannot go back past it.'),
+    state.compacting
+      ? h('div', { class: 'adder' },
+          h('button', { class: 'btn primary', onclick: compactHistory }, 'Compact now'),
+          h('button', { class: 'btn', onclick: () => { state.compacting = false; render(); } }, 'Cancel'))
+      : h('div', { class: 'adder' },
+          h('button', { class: 'btn', onclick: () => { state.compacting = true; render(); } }, 'Compact history…')));
 }
 
 const NEW = ' new';         // sentinel row in a picker
@@ -2789,9 +2808,10 @@ function renderImportExportModal() {
 // The log is shared by every tab; the history is not. Each tab keeps
 // its own, in sessionStorage — undoing in one tab used to take back the
 // other's last edit. And since undo cuts the log back to a position, a
-// mark is only good while the log still ends where it ended: once
-// another tab has appended past it, cutting there would take that
-// tab's edits too, so the step is refused and the history dropped.
+// mark is only good while the log still ends where it ended — the same
+// length, the same last event: once another tab has appended past it,
+// or the log was compacted, cutting there would take what is not this
+// change's too, so the step is refused and the history dropped.
 
 // Versioned in lockstep with the event log: the stack holds raw
 // events and absolute offsets into that log, so marks taken against
@@ -2810,7 +2830,14 @@ function undoLog() {
 }
 function saveUndoLog(next) { sessionStorage.setItem(UNDO_KEY, JSON.stringify(next)); }
 
-const OVERTAKEN = 'Another tab has changed this playground since — there is nothing here to undo or redo any more.';
+const OVERTAKEN = 'The history has changed since — another tab edited, or it was compacted — '
+  + 'so there is nothing here to undo or redo any more.';
+
+// The log's last event before position `n`, as a mark remembers it.
+function logStampAt(events, n) {
+  const event = events[n - 1];
+  return event ? `${event.sequence} ${event.timestamp} ${event.type}` : '';
+}
 
 // What a change was, read off what it appended. `event-definition-updated`
 // carrying `CourseDefined` becomes "updated event: Course defined".
@@ -2836,7 +2863,10 @@ function takeUndoMark(at, appended) {
   const log = undoLog();
   // `end` is where the log stood after this change: undo is sound only
   // while it still stands there.
-  log.done.push({ at, end: at + appended.length, label: changeLabel(appended) });
+  const last = appended[appended.length - 1];
+  log.done.push({
+    at, end: at + appended.length, stamp: logStampAt([last], 1), label: changeLabel(appended),
+  });
   // Redoing after a new change would mean re-appending entries that no
   // longer sit at the end of the log, so the branch is dropped — on an
   // agent's append exactly as on a button's.
@@ -2877,13 +2907,14 @@ function undo() {
   const mark = log.done.pop();
   if (!mark) return toast('Nothing to undo.');
   const events = loadEvents();
-  if (events.length !== mark.end) {
+  if (events.length !== mark.end || logStampAt(events, mark.end) !== mark.stamp) {
     saveUndoLog({ done: [], undone: [] });
     return toast(OVERTAKEN, true);
   }
-  localStorage.setItem(EVENT_LOG_KEY, JSON.stringify(events.slice(0, mark.at)));
-  bumpLogRevision();
-  log.undone.push({ at: mark.at, events: events.slice(mark.at), label: mark.label });
+  writeEventLog(events.slice(0, mark.at));
+  log.undone.push({
+    at: mark.at, stamp: logStampAt(events, mark.at), events: events.slice(mark.at), label: mark.label,
+  });
   saveUndoLog(log);
   closeForms();
   toast('Undone — ' + mark.label);
@@ -2895,17 +2926,37 @@ function redo() {
   const step = log.undone.pop();
   if (!step) return toast('Nothing to redo.');
   const events = loadEvents();
-  if (events.length !== step.at) {
+  if (events.length !== step.at || logStampAt(events, step.at) !== step.stamp) {
     saveUndoLog({ done: [], undone: [] });
     return toast(OVERTAKEN, true);
   }
-  localStorage.setItem(EVENT_LOG_KEY, JSON.stringify([...events, ...step.events]));
-  bumpLogRevision();
-  log.done.push({ at: events.length, end: events.length + step.events.length, label: step.label });
+  writeEventLog([...events, ...step.events]);
+  log.done.push({
+    at: events.length, end: events.length + step.events.length,
+    stamp: logStampAt(step.events, step.events.length), label: step.label,
+  });
   saveUndoLog(log);
   closeForms();
   toast('Redone — ' + step.label);
   render();
+}
+
+// Folds the log down to what it built (`compactEventLog`): offered
+// beside the refusal when storage is full, and in the models dialog
+// before it is. This tab's history goes with it — said in the toast —
+// and other tabs find theirs refused at their next undo.
+function compactHistory() {
+  run(() => {
+    const { before, after } = compactEventLog();
+    saveUndoLog({ done: [], undone: [] });
+    state.compacting = false;
+    toast(`History compacted, from ${storageSize(before)} to ${storageSize(after)}. `
+      + 'Every model is as it was; undo starts again from here.');
+  });
+}
+
+function storageSize(chars) {
+  return chars >= 1024 * 1024 ? `${(chars / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(chars / 1024))} KB`;
 }
 
 // Another tab wrote the log. The caches here are keyed on this tab's
@@ -14891,7 +14942,7 @@ window.addEventListener('keydown', (e) => {
   if (state.settings) { state.settings = false; return render(); }
   if (state.models) {
     state.models = false;
-    state.newModel = false; state.loadingUrl = false; state.loadingJson = false;
+    state.newModel = false; state.loadingUrl = false; state.loadingJson = false; state.compacting = false;
     return render();
   }
 
@@ -14976,7 +15027,7 @@ window.addEventListener('keydown', (e) => {
       && e.target.closest('input, textarea, select');
     if (inField) return;
     e.preventDefault();
-    if (e.shiftKey) redo(); else undo();
+    run(() => (e.shiftKey ? redo() : undo()));
   }
 });
 
