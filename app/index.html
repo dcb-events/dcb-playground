@@ -10,8 +10,12 @@
 <style>
   /* `minmax(0, …)` so a page wider than the window (Coupling's matrix,
      a lifecycle or event-model band) scrolls inside its own strip
-     instead of stretching the column, and the page, to fit it. */
-  .layout { display: grid; grid-template-columns: 250px minmax(0, 1fr); min-height: calc(100vh - var(--topbar-h)); }
+     instead of stretching the column, and the page, to fit it.
+     The body is a column so .layout fills what the bar and the footer
+     leave of the window: a short page puts the footer at the bottom
+     edge without making the page one footer taller than the window. */
+  body { display: flex; flex-direction: column; min-height: 100vh; min-height: 100dvh; }
+  .layout { flex: 1 0 auto; display: grid; grid-template-columns: 250px minmax(0, 1fr); }
   /* Nothing loaded means no rail to show — the empty page behind the
      models dialog takes the whole row rather than sitting in a column
      sized for a rail that isn't there. */
