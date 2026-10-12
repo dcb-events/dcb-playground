@@ -73,12 +73,18 @@
   // echoes advisories. `mutatesSandbox` marks one that only moves the
   // page's sandbox session: it repaints too, but the model is exactly
   // as it was, so there is nothing advisory to say about it.
-  const register = ({ name, description, inputSchema, mutates, mutatesSandbox, needsModel = true, run }) => {
+  // `destructive` marks a writing tool that overwrites or removes what
+  // is there, rather than only adding to it — said in every writing
+  // tool's annotations, since a client takes an unmarked writer to be
+  // destructive and could not tell the two apart.
+  const register = ({ name, description, inputSchema, mutates, mutatesSandbox, destructive, needsModel = true, run }) => {
     context.registerTool({
       name,
       description,
       inputSchema,
-      annotations: mutates || mutatesSandbox ? undefined : { readOnlyHint: true },
+      annotations: mutates || mutatesSandbox
+        ? { readOnlyHint: false, destructiveHint: !!destructive }
+        : { readOnlyHint: true },
       async execute(args) {
         try {
           const model = activeModel();
@@ -395,6 +401,7 @@
         + 'along instead of stranding them.' + prefer,
       inputSchema: definitionSchema(kind, true),
       mutates: true,
+      destructive: true,
       run: (model, args) => {
         refuseNewExperimental(model, withBody(model, keyOf(args), bodyOf(args)));
         updateDefinition(kind, model.id, keyOf(args), bodyOf(args));
@@ -421,6 +428,7 @@
       required: ['kind', 'name'],
     },
     mutates: true,
+    destructive: true,
     run: (model, { kind, name }) => {
       removeDefinition(kind, model.id, name);
       return { summary: `removed ${humanize(kind)} "${name}"` };
@@ -432,8 +440,9 @@
     description: 'Replace the open model\'s definitions with the ones a whole model text declares '
       + '(the text get_model_source returns, edited; get_model_language explains the language). '
       + 'The way to build or restructure a model: write all of it and send it in one call. Only '
-      + 'what differs is written, as one undoable step; a definition or scenario left out of the '
-      + 'text is removed. A scenario written without a then is recorded with what the model does; '
+      + 'what differs is written, as one undoable step. A definition or scenario left out of the '
+      + 'text is removed — but only with allowRemovals: true; without it, a text that leaves '
+      + 'anything out is refused, naming what it would remove. A scenario written without a then is recorded with what the model does; '
       + 'one with a then asserts it, and a drift is reported by list_problems, never accepted '
       + 'silently. A renamed definition is a removal plus an addition — references to it in the '
       + 'text move only if the text moves them. A text with any error is refused whole, with every '
@@ -442,13 +451,30 @@
       type: 'object',
       properties: {
         source: { type: 'string', description: 'The whole model, as code.' },
+        allowRemovals: {
+          type: 'boolean',
+          description: 'Whether the definitions and scenarios the text leaves out may be '
+            + 'removed. Off by default: send the text without it first, and again with it only '
+            + 'if the removals the refusal names are meant.',
+        },
       },
       required: ['source'],
     },
     mutates: true,
-    run: (model, { source }) => {
+    destructive: true,
+    run: (model, { source, allowRemovals }) => {
       checkedSource(model, source);
-      return { summary: 'applied code: ' + sourceApplySummary(applyModelSource(model.id, source)) };
+      let summary;
+      try {
+        summary = applyModelSource(model.id, source, { refuseRemovals: allowRemovals !== true });
+      } catch (error) {
+        if (error.removed) {
+          throw new DomainError(error.message + ' Send it again with allowRemovals: true if the removals are meant '
+            + '— or, to rename, use rename_definition, which moves the references along.');
+        }
+        throw error;
+      }
+      return { summary: 'applied code: ' + sourceApplySummary(summary) };
     },
   });
 
@@ -581,6 +607,7 @@
       + 'for a fresh example.',
     inputSchema: { type: 'object', properties: {} },
     mutatesSandbox: true,
+    destructive: true,
     run: () => {
       sessionReset();
       if (typeof state === 'object' && state) state.sandboxDraft = null;

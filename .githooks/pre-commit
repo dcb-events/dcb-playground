@@ -23,7 +23,9 @@ done
 rm -rf "$dir"
 
 # 2. The generated file is current: regenerating must change nothing.
-generated() { shasum app/webmcp-schemas.js; }
+# Hashed with node, which the hook needs anyway: shasum is missing on
+# some Linux installs, sha1sum on macOS.
+generated() { node -e "process.stdout.write(require('crypto').createHash('sha1').update(require('fs').readFileSync('app/webmcp-schemas.js')).digest('hex'))"; }
 before=$(generated)
 node app/generate-webmcp-schemas.js >/dev/null
 if [ "$before" != "$(generated)" ]; then

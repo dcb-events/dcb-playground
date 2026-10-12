@@ -63,6 +63,13 @@ function fail(message) {
   throw new EvaluationError(message);
 }
 
+// What a thrown thing says. A script may throw anything at all —
+// `throw null` included — and reading `.message` off that must not be
+// the second, unexplained failure.
+function evErrorText(error) {
+  return String((error && error.message) || error);
+}
+
 // ============================================================
 // Values.
 //
@@ -70,14 +77,42 @@ function fail(message) {
 // `{enumMember: 'Existent'}` in initial values, in handler operands and
 // in conditions alike; carrying that wrapper into the fold would mean
 // every predicate unwrapping it again, so it is unwrapped once, here,
-// and a status is a string everywhere downstream.
+// and a status is a string everywhere downstream. The unwrapping goes
+// all the way down — a list of statuses, a record holding one — and
+// hands a value back untouched when there was nothing to unwrap.
 // ============================================================
 
 function evNormalize(value) {
-  if (value !== null && typeof value === 'object' && value.enumMember !== undefined) {
-    return value.enumMember;
+  if (value === null || typeof value !== 'object') return value;
+  if (value.enumMember !== undefined) return value.enumMember;
+  if (Array.isArray(value)) {
+    let out = value;
+    value.forEach((item, i) => {
+      const normal = evNormalize(item);
+      if (normal !== item) {
+        if (out === value) out = value.slice();
+        out[i] = normal;
+      }
+    });
+    return out;
   }
-  return value;
+  let out = value;
+  for (const key of Object.keys(value)) {
+    const normal = evNormalize(value[key]);
+    if (normal !== value[key]) {
+      if (out === value) out = { ...value };
+      out[key] = normal;
+    }
+  }
+  return out;
+}
+
+// A value held under a key the object itself has — a definition in a
+// collection, a field of a payload, an argument supplied. Never what
+// Object inherits under `constructor` or `toString`; see emptyCollection
+// (model.js) for the projection's side of the same rule.
+function evOwn(object, key) {
+  return object !== null && typeof object === 'object' && Object.hasOwn(object, key) ? object[key] : undefined;
 }
 
 function evDeepEqual(a, b) {
@@ -109,7 +144,9 @@ function evSuccessor(value) {
   if (typeof v === 'string') {
     const match = /^(.*?)(\d+)$/.exec(v);
     if (match) {
-      const next = String(Number(match[2]) + 1);
+      // BigInt: past 2^53 a Number rounds, and the successor of
+      // inv-12345678901234567891 came out as …7000.
+      const next = String(BigInt(match[2]) + 1n);
       return match[1] + next.padStart(match[2].length, '0');
     }
   }
@@ -149,11 +186,11 @@ function evAsNumber(value, where) {
 // ============================================================
 
 function tagsOfEvent(model, eventName, data) {
-  const definition = model['event-definitions'][eventName];
+  const definition = evOwn(model['event-definitions'], eventName);
   if (!definition) return [];
   const tags = new Set();
   for (const leaf of eventTagLeaves(model, definition)) {
-    const held = (data || {})[leaf.property];
+    const held = evOwn(data, leaf.property);
     const elements = leaf.isList ? evAsList(held) : [held];
     for (const element of elements) {
       if (element === null || element === undefined) continue;
@@ -165,10 +202,63 @@ function tagsOfEvent(model, eventName, data) {
   return [...tags];
 }
 
+// The tags an event carries, worked out once per model and event. A
+// fold reads the whole log, and a fan-out folds once per instance, so
+// working them out per read made a command over a few thousand events
+// cost seconds. Both keys are stable: the model is the projection's
+// shared object for its revision, and an event in a log is never
+// changed.
+const evTagSets = new WeakMap();
+
+function evTagSetOf(model, event) {
+  let perModel = evTagSets.get(model);
+  if (!perModel) evTagSets.set(model, perModel = new WeakMap());
+  let set = perModel.get(event);
+  if (!set) perModel.set(event, set = new Set(tagsOfEvent(model, event.type, event.data)));
+  return set;
+}
+
 function evMatchesTags(model, event, tags) {
   if (!tags.length) return true;
-  const carried = tagsOfEvent(model, event.type, event.data);
-  return tags.every((tag) => carried.includes(tag));
+  const carried = evTagSetOf(model, event);
+  return tags.every((tag) => carried.has(tag));
+}
+
+// Which of a log's events carry a tag, as positions — so a read starts
+// from the events carrying its rarest tag instead of scanning the log.
+// Kept per model and log array, and rebuilt when the log is no longer
+// the one it was built over — longer, or ending elsewhere (the
+// sandbox's log is appended to in place).
+const evTagIndexes = new WeakMap();
+
+function evTagIndex(model, events) {
+  let perModel = evTagIndexes.get(model);
+  if (!perModel) evTagIndexes.set(model, perModel = new WeakMap());
+  let entry = perModel.get(events);
+  const last = events[events.length - 1];
+  if (!entry || entry.length !== events.length || entry.last !== last) {
+    const index = new Map();
+    events.forEach((event, at) => {
+      for (const tag of evTagSetOf(model, event)) {
+        if (!index.has(tag)) index.set(tag, []);
+        index.get(tag).push(at);
+      }
+    });
+    perModel.set(events, entry = { length: events.length, last, index });
+  }
+  return entry.index;
+}
+
+// The events carrying every one of `tags`, in log order.
+function evEventsTagged(model, events, tags) {
+  if (!tags.length) return events;
+  const index = evTagIndex(model, events);
+  let rarest = null;
+  for (const tag of tags) {
+    const at = index.get(tag) || [];
+    if (!rarest || at.length < rarest.length) rarest = at;
+  }
+  return rarest.map((at) => events[at]).filter((event) => evMatchesTags(model, event, tags));
 }
 
 // ============================================================
@@ -187,7 +277,7 @@ function evMatchesTags(model, event, tags) {
 function evCompileHandlerOperand(operand) {
   switch (operandSource(operand)) {
     case 'event-property':
-      return (state, event) => (event.data || {})[operand.eventProperty];
+      return (state, event) => evOwn(event.data, operand.eventProperty);
     case 'current-value':
       return (state) => state;
     case 'successor': {
@@ -207,7 +297,31 @@ function evCompileHandlerOperand(operand) {
 // repaired. Declared handlers are untouched — this is a way back in,
 // not a mode the app runs in.
 let evScriptsDisabled = false;
-function setScriptsDisabled(disabled) { evScriptsDisabled = !!disabled; }
+function setScriptsDisabled(disabled) {
+  evScriptsDisabled = !!disabled;
+  evCompiled = new WeakMap();
+}
+
+// What a script is handed of an event: a deep-frozen copy, made once
+// per event. The log is shared by every fold, read and repaint, so an
+// event a script changed in place would change what every later fold
+// sees; a copy keeps the log as it was, and freezing makes the attempt
+// an error the author sees instead of a silent no-op.
+const evFrozenEvents = new WeakMap();
+
+function evFrozenEvent(event) {
+  let frozen = evFrozenEvents.get(event);
+  if (!frozen) evFrozenEvents.set(event, frozen = evDeepFreeze(deepClone(event)));
+  return frozen;
+}
+
+function evDeepFreeze(value) {
+  if (value !== null && typeof value === 'object') {
+    for (const key of Object.keys(value)) evDeepFreeze(value[key]);
+    Object.freeze(value);
+  }
+  return value;
+}
 
 // One handler, as `(state, event, args, tags) => nextState`. `args` are
 // the read's argument values, `tags` the values it is tagged by, keyed
@@ -227,18 +341,19 @@ function evCompileHandler(handler, label, scripted) {
       );
     }
     // The contract the schema states, and the only place in this file
-    // where authored JavaScript runs.
+    // where authored JavaScript runs. In strict mode, so that writing to
+    // the frozen event it is handed throws rather than doing nothing.
     let body;
     try {
-      body = new Function('state', 'event', 'args', 'tags', `return (${handler.code}\n);`);
+      body = new Function('state', 'event', 'args', 'tags', `'use strict'; return (${handler.code}\n);`);
     } catch (error) {
-      fail(`The script for "${handler.event}" on ${label} does not parse: ${error.message}`);
+      fail(`The script for "${handler.event}" on ${label} does not parse: ${evErrorText(error)}`);
     }
     return (state, event, args, tags) => {
       try {
-        return body(state, event, args, tags);
+        return body(state, evFrozenEvent(event), args, tags);
       } catch (error) {
-        return fail(`The script for "${handler.event}" on ${label} threw: ${error.message}`);
+        return fail(`The script for "${handler.event}" on ${label} threw: ${evErrorText(error)}`);
       }
     };
   }
@@ -280,8 +395,22 @@ function evCompileHandler(handler, label, scripted) {
   }
 }
 
-// A projection or entity property, compiled once and folded many times.
+// A projection or entity property, compiled once and folded many times —
+// once per model and target, so a fan-out reading the same projection
+// two hundred times compiles it (scripts included) once. Safe mode
+// changes what a script compiles to, so switching it starts afresh.
+let evCompiled = new WeakMap();
+
 function evCompileTarget(model, target, label) {
+  let perModel = evCompiled.get(model);
+  if (!perModel) evCompiled.set(model, perModel = new WeakMap());
+  let perTarget = perModel.get(target);
+  if (!perTarget) perModel.set(target, perTarget = new Map());
+  if (!perTarget.has(label)) perTarget.set(label, evCompileTargetAfresh(model, target, label));
+  return perTarget.get(label);
+}
+
+function evCompileTargetAfresh(model, target, label) {
   const script = scriptOf(target);
   const steps = new Map();
   for (const handler of target.handlers || []) {
@@ -290,7 +419,7 @@ function evCompileTarget(model, target, label) {
   }
 
   const initial = script
-    ? deepClone(script.initialState)
+    ? deepClone(script.initialState ?? null)
     : (target.initialValue === undefined
       ? evNormalize(defaultInitialValue(model, target))
       : evNormalize(target.initialValue));
@@ -302,7 +431,9 @@ function evCompileTarget(model, target, label) {
     : (state) => state;
 
   const run = (events, args, tags) => {
-    let state = initial;
+    // A script may change its state in place; the initial one is shared
+    // by every fold of this compiled target, so each starts from a copy.
+    let state = script ? deepClone(initial) : initial;
     for (const event of events) {
       const step = steps.get(event.type);
       if (step) state = step(state, event, args || {}, tags || {});
@@ -345,11 +476,11 @@ function evCompileTarget(model, target, label) {
 // One property of one entity instance — the projection it binds, read
 // by its one tag, the instance's identifier.
 function foldEntityProperty(model, events, entityName, propertyName, instanceId, args) {
-  const entity = model['entity-definitions'][entityName];
+  const entity = evOwn(model['entity-definitions'], entityName);
   if (!entity) fail(`This model has no entity "${entityName}".`);
   const binding = (entity.properties || []).find((p) => p && p.name === propertyName);
   if (!binding) fail(`"${entityName}" has no property "${propertyName}".`);
-  const projection = model['projection-definitions'][binding.projection];
+  const projection = evOwn(model['projection-definitions'], binding.projection);
   if (!projection) {
     fail(`"${entityName}.${propertyName}" binds projection "${binding.projection}", which this model no longer defines.`);
   }
@@ -390,11 +521,11 @@ function evReadTagLeaves(model, projectionName, tag, value) {
 // derived projection's operands are read by the tags it passes them, so
 // its query is theirs.
 function projectionQueryTags(model, projectionName, read) {
-  const projection = model['projection-definitions'][projectionName];
+  const projection = evOwn(model['projection-definitions'], projectionName);
   if (!projection) fail(`This model has no projection "${projectionName}".`);
   const held = (read && read.tags) || {};
   return [...new Set(projectionTagParams(projection)
-    .flatMap((tag) => evReadTagLeaves(model, projectionName, tag, held[tag.name]))
+    .flatMap((tag) => evReadTagLeaves(model, projectionName, tag, evOwn(held, tag.name)))
     .map((leaf) => renderTag(identifierTypeOf(model, leaf.type), String(leaf.value))))];
 }
 
@@ -403,8 +534,8 @@ function projectionQueryTags(model, projectionName, read) {
 function evScriptTags(model, projectionName, read) {
   const out = {};
   const held = (read && read.tags) || {};
-  for (const tag of projectionTagParams(model['projection-definitions'][projectionName])) {
-    out[tag.name] = evNormalize(held[tag.name]);
+  for (const tag of projectionTagParams(evOwn(model['projection-definitions'], projectionName))) {
+    out[tag.name] = evNormalize(evOwn(held, tag.name));
   }
   return out;
 }
@@ -416,18 +547,18 @@ function evScriptTags(model, projectionName, read) {
 // either way. Optional lists are exempt (they evaluate as plain
 // lists; the advisories point the combination out).
 function evWithExplicitOptionals(model, event) {
-  const definition = model['event-definitions'][event.type];
+  const definition = evOwn(model['event-definitions'], event.type);
   let data = event.data;
   for (const property of (definition || {}).properties || []) {
     if (!property.isOptional || property.isList) continue;
-    if ((data || {})[property.name] !== undefined) continue;
+    if (evOwn(data, property.name) !== undefined) continue;
     data = { ...(data || {}), [property.name]: null };
   }
   return data === event.data ? event : { ...event, data };
 }
 
 function foldProjection(model, events, projectionName, read, seen = []) {
-  const projection = model['projection-definitions'][projectionName];
+  const projection = evOwn(model['projection-definitions'], projectionName);
   if (projection && derivedOf(projection)) {
     return evDeriveProjection(model, events, projectionName, read, seen);
   }
@@ -436,7 +567,7 @@ function foldProjection(model, events, projectionName, read, seen = []) {
 }
 
 function foldProjectionState(model, events, projectionName, read) {
-  const projection = model['projection-definitions'][projectionName];
+  const projection = evOwn(model['projection-definitions'], projectionName);
   if (projection && derivedOf(projection)) {
     // A derived projection keeps no bookkeeping: its whole state is
     // the one value its predicate or computation yields.
@@ -456,7 +587,7 @@ function evDeriveProjection(model, events, projectionName, read, seen = []) {
   if (seen.includes(projectionName)) {
     fail(`Projection "${projectionName}" derives from itself — a cycle has no value to start from.`);
   }
-  const projection = model['projection-definitions'][projectionName];
+  const projection = evOwn(model['projection-definitions'], projectionName);
   const derived = derivedOf(projection);
 
   const readOperand = (operand) => {
@@ -466,7 +597,7 @@ function evDeriveProjection(model, events, projectionName, read, seen = []) {
     const own = (read && read.tags) || {};
     const tags = {};
     for (const [name, value] of readTagEntries(operand)) {
-      tags[name] = operandSource(value) === 'parameter' ? own[value.parameterName]
+      tags[name] = operandSource(value) === 'parameter' ? evOwn(own, value.parameterName)
         : operandSource(value) === 'tag-literal' ? value.tagValue : evNormalize(value);
     }
     return foldProjection(model, events, operand.projection, { tags, args }, [...seen, projectionName]);
@@ -501,12 +632,12 @@ function evApplyOperator(projectionName, derived, left, right) {
 }
 
 function evProjectionFold(model, events, projectionName, read) {
-  const projection = model['projection-definitions'][projectionName];
+  const projection = evOwn(model['projection-definitions'], projectionName);
   if (!projection) fail(`This model has no projection "${projectionName}".`);
 
   const queryTags = projectionQueryTags(model, projectionName, read);
   const compiled = evCompileTarget(model, projection, `projection "${projectionName}"`);
-  const selected = events.filter((event) => evMatchesTags(model, event, queryTags))
+  const selected = evEventsTagged(model, events, queryTags)
     .map((event) => evWithExplicitOptionals(model, event));
   return {
     compiled,
@@ -551,15 +682,15 @@ function evReadOperand(operand, scope) {
   if (Array.isArray(operand)) return operand.map(evNormalize);
   switch (operandSource(operand)) {
     case 'parameter': {
-      const held = scope.args[operand.parameterName];
+      const held = evOwn(scope.args, operand.parameterName);
       if (held === undefined) {
         fail(`This command was given no value for "${operand.parameterName}".`);
       }
       if (!operand.property) return evNormalize(held);
       const value = evNormalize(held);
       return Array.isArray(value)
-        ? value.map((element) => (element || {})[operand.property])
-        : (value || {})[operand.property];
+        ? value.map((element) => evOwn(element, operand.property))
+        : evOwn(value, operand.property);
     }
     case 'alias-property': {
       const binding = scope.bound[operand.alias];
@@ -645,12 +776,12 @@ function evFanSourceIndexes(operand, scope, count) {
 // in the list's order so a zipped parameter pairs by index — and `value`
 // is then every one of them, in order.
 function evProjectionRead(model, events, body, read, scope, label) {
-  const projection = model['projection-definitions'][read.projection];
+  const projection = evOwn(model['projection-definitions'], read.projection);
   if (!projection) fail(`${label} reads "${read.projection}", which this model does not define.`);
   const held = (read.tags && typeof read.tags === 'object' && !Array.isArray(read.tags)) ? read.tags : {};
   let fanned = null;
   const tags = projectionTagParams(projection).map((tag) => {
-    const operand = held[tag.name];
+    const operand = evOwn(held, tag.name);
     if (operand === undefined) fail(`${label} gives no value for ${read.projection}'s "${tag.name}" tag.`);
     const resolved = tagOperandType(model, body, operand);
     if (resolved && resolved.propertyType !== tag.tagType) {
@@ -705,7 +836,7 @@ function evResolveBinding(model, events, body, binding, scope) {
     return;
   }
 
-  if (!model['entity-definitions'][binding.entity]) {
+  if (!evOwn(model['entity-definitions'], binding.entity)) {
     fail(`Binding "${binding.alias}" reads entity "${binding.entity}", which this model does not define.`);
   }
 
@@ -808,8 +939,10 @@ function evApplyPredicate(condition, left, right) {
     case 'countLessThan': held = evAsList(l).length < r; break;
     case 'countGreaterThan': held = evAsList(l).length > r; break;
     case 'contains':
+      // No value is no text: a string holds no null in it (String(null)
+      // is "null", which "annulled" did). A list may hold one.
       held = typeof l === 'string'
-        ? l.includes(String(r))
+        ? r !== null && r !== undefined && l.includes(String(r))
         : evAsList(l).some((element) => evDeepEqual(element, r));
       break;
     case 'containsAny': {
@@ -832,8 +965,11 @@ function evApplyPredicate(condition, left, right) {
       else if (condition.predicate === 'greaterThan') held = l > r;
       else held = l >= r;
       break;
-    case 'startsWith': held = String(l).startsWith(String(r)); break;
-    case 'endsWith': held = String(l).endsWith(String(r)); break;
+    case 'startsWith':
+    case 'endsWith':
+      held = l !== null && l !== undefined && r !== null && r !== undefined
+        && String(l)[condition.predicate](String(r));
+      break;
     default:
       return fail(`"${condition.predicate}" is not a predicate this can check.`);
   }
@@ -948,16 +1084,18 @@ function evCheckCondition(model, body, condition, scope) {
 // "what did this command see when it decided" is the question a step
 // raises.
 function evaluateCommand(model, events, commandName, args) {
-  const body = model['command-definitions'][commandName];
+  const body = evOwn(model['command-definitions'], commandName);
   if (!body) fail(`This model has no command "${commandName}".`);
 
   const supplied = args || {};
   const log = events || [];
   // `model`, `body` and `events` ride along for an inline read, which is
   // folded from inside an operand; `inline` holds what it folded.
-  const scope = { args: {}, bound: {}, inline: new Map(), model, body, events: log };
+  // `args` and `bound` are keyed by authored names, so have no
+  // prototype (see evOwn).
+  const scope = { args: Object.create(null), bound: Object.create(null), inline: new Map(), model, body, events: log };
   for (const property of body.properties || []) {
-    if (supplied[property.name] === undefined) {
+    if (evOwn(supplied, property.name) === undefined) {
       // An optional property may be unset. `null` is the one spelling
       // of "no value" downstream, so the lenient read normalizes here:
       // an absent key and an explicit null reach every condition and
@@ -969,7 +1107,7 @@ function evaluateCommand(model, events, commandName, args) {
       }
       fail(`"${commandName}" needs a value for "${property.name}".`);
     }
-    scope.args[property.name] = evNormalize(supplied[property.name]);
+    scope.args[property.name] = evNormalize(evOwn(supplied, property.name));
   }
 
   for (const round of deriveRounds(body)) {
@@ -1007,7 +1145,7 @@ function evaluateCommand(model, events, commandName, args) {
   const published = [];
   for (const emission of body.publishes || []) {
     if (!emission || !emission.name) continue;
-    const definition = model['event-definitions'][emission.name];
+    const definition = evOwn(model['event-definitions'], emission.name);
     if (!definition) {
       fail(`"${commandName}" publishes "${emission.name}", which this model does not define.`);
     }
@@ -1023,7 +1161,7 @@ function evaluateCommand(model, events, commandName, args) {
     if (!held) continue;
     const data = {};
     for (const property of definition.properties || []) {
-      const operand = (emission.parameters || {})[property.name];
+      const operand = evOwn(emission.parameters, property.name);
       if (operand === undefined) {
         // An optional event property needs no mapping. The published
         // payload still carries the key, holding the explicit null —
@@ -1143,7 +1281,7 @@ function deriveThen(model, scenario) {
   // and a deleted event would report as agreement rather than as the
   // repair it actually needs.
   (scenario.given || []).forEach((step, index) => {
-    const definition = model['event-definitions'][(step || {}).event];
+    const definition = evOwn(model['event-definitions'], (step || {}).event);
     if (!definition) {
       fail(`Given step ${index + 1} records "${(step || {}).event}", which this model no longer defines.`);
     }
@@ -1151,7 +1289,7 @@ function deriveThen(model, scenario) {
       // An optional property legitimately absent is not an event the
       // scenario has fallen behind — the fold reads it as undefined.
       if (property.isOptional) continue;
-      if (!((step.data || {})[property.name] !== undefined)) {
+      if (evOwn(step.data, property.name) === undefined) {
         fail(
           `Given step ${index + 1} ("${step.event}") carries no value for "${property.name}", ` +
           'which that event has gained since this scenario was written.'
@@ -1179,6 +1317,17 @@ function deriveThen(model, scenario) {
   return { outcome: 'rejected', events: [], rejection };
 }
 
+// Why something could not be worked out. An EvaluationError is a
+// sentence written for the modeller; anything else is a defect in the
+// model this file did not foresee. Both are an *error* — a scenario
+// broken, a card saying so — rather than escaping: the scenario runners
+// and the sandbox evaluate while the page renders, and an imported
+// model must not be able to take that down.
+function evaluationFailure(error) {
+  if (error instanceof EvaluationError) return error.message;
+  return `The model is malformed here: ${evErrorText(error)}`;
+}
+
 // `{ status, expected, actual, reason }`. `reason` is set only when the
 // scenario is broken, and is the sentence to show instead of a
 // difference.
@@ -1188,10 +1337,7 @@ function runScenario(model, scenario) {
   try {
     actual = deriveThen(model, scenario);
   } catch (error) {
-    if (error instanceof EvaluationError) {
-      return { status: 'broken', expected, actual: null, reason: error.message };
-    }
-    throw error;
+    return { status: 'broken', expected, actual: null, reason: evaluationFailure(error) };
   }
   return {
     status: evSameOutcome(actual, expected) ? 'current' : 'drifted',
@@ -1216,7 +1362,7 @@ function deriveProjectionScenarioThen(model, spec) {
   // for why this is checked ahead of the fold rather than left to fall
   // out of it as a silent, empty match.
   (spec.given || []).forEach((step, index) => {
-    const definition = model['event-definitions'][(step || {}).event];
+    const definition = evOwn(model['event-definitions'], (step || {}).event);
     if (!definition) {
       fail(`Given step ${index + 1} records "${(step || {}).event}", which this model no longer defines.`);
     }
@@ -1224,7 +1370,7 @@ function deriveProjectionScenarioThen(model, spec) {
       // An optional property legitimately absent is not an event the
       // scenario has fallen behind — the fold reads it as undefined.
       if (property.isOptional) continue;
-      if (!((step.data || {})[property.name] !== undefined)) {
+      if (evOwn(step.data, property.name) === undefined) {
         fail(
           `Given step ${index + 1} ("${step.event}") carries no value for "${property.name}", ` +
           'which that event has gained since this scenario was written.'
@@ -1233,7 +1379,7 @@ function deriveProjectionScenarioThen(model, spec) {
     }
   });
 
-  if (!model['projection-definitions'][spec.projection]) {
+  if (!evOwn(model['projection-definitions'], spec.projection)) {
     fail(`This scenario is about "${spec.projection}", which this model no longer defines.`);
   }
   const tags = {};
@@ -1251,10 +1397,7 @@ function runProjectionScenario(model, spec) {
   try {
     actual = deriveProjectionScenarioThen(model, spec);
   } catch (error) {
-    if (error instanceof EvaluationError) {
-      return { status: 'broken', expected, actual: null, reason: error.message };
-    }
-    throw error;
+    return { status: 'broken', expected, actual: null, reason: evaluationFailure(error) };
   }
   return {
     status: evSameOutcome(actual, expected) ? 'current' : 'drifted',
@@ -1269,6 +1412,7 @@ function runProjectionScenario(model, spec) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     EvaluationError,
+    evaluationFailure,
     evaluateCommand,
     foldEntityProperty,
     foldProjection,

@@ -36,7 +36,7 @@ const { check, eq, finish } = makeChecker();
 const {
   loadPredefinedModel, projectState, modelToSource, parseModelSource, applyModelSource,
   importModelFromEnvelope, sameDefinition, loadEvents, onAppend, addDefinition, updateDefinition,
-  sourceAdvisories, sourceSpanAt, PREDEFINED_MODELS, SOURCE_KINDS, DEF_COLLECTIONS,
+  sourceAdvisories, sourceSpanAt, PREDEFINED_MODELS, SOURCE_KINDS, DEF_COLLECTIONS, deepClone,
 } = sandbox;
 
 function fresh() {
@@ -90,6 +90,31 @@ check('every predefined model prints without a JSON fallback and parses back equ
   });
 });
 
+// The class of bug the fallback comment once was: a stored string that
+// the printed text does not keep inside its quotes, comment or code
+// fence, and that reads back as something else — a declaration the
+// model never had. Every free-text slot of every shipped model and
+// fixture is filled with what would break out of each of those, and the
+// text must still read back as exactly the model.
+const BREAKOUT = 'x\n}\r\u2028\u2029// "quoted" \\ ``` */ ```\ncommand Smuggled() {}\n';
+
+function withBreakouts(model) {
+  const out = deepClone(model);
+  out.name = 'M ' + BREAKOUT;
+  const walk = (value) => {
+    if (!value || typeof value !== 'object') return;
+    for (const [key, inner] of Object.entries(value)) {
+      if (typeof inner === 'string' && ['rejection', 'code'].includes(key)) value[key] = inner + BREAKOUT;
+      else walk(inner);
+    }
+  };
+  for (const kind of SOURCE_KINDS) walk(out[DEF_COLLECTIONS[kind]]);
+  for (const kind of ['scenario-definition', 'projection-scenario-definition']) {
+    for (const body of Object.values(out[DEF_COLLECTIONS[kind]] || {})) if (typeof body.name === 'string') body.name += BREAKOUT;
+  }
+  return out;
+}
+
 function importFixture(slug) {
   fresh();
   const { modelId, skipped } = importModelFromEnvelope(
@@ -121,6 +146,29 @@ check('every fixture file round-trips, scenarios included', () => {
     const before = loadEvents().length;
     applyModelSource(id, text);
     eq(loadEvents().length, before, `${file}: an untouched text, scenarios and all, applies as nothing`);
+  }
+});
+
+check('no stored string breaks out of the printed text, in any model', () => {
+  const models = PREDEFINED_MODELS.map((entry, index) => [entry.slug, build(index).model()]);
+  for (const file of fs.readdirSync(FIXTURES).filter((f) => f.endsWith('.json'))) {
+    models.push([file, importFixture(file.replace(/\.json$/, '')).model()]);
+  }
+  for (const [label, original] of models) {
+    const model = withBreakouts(original);
+    const parsed = parseModelSource(modelToSource(model));
+    eq(parsed.diagnostics, [], `${label} diagnostics`);
+    eq(parsed.name, model.name, `${label} name`);
+    eq(Object.keys(parsed.collections['command-definition']).includes('Smuggled'), false, `${label}: nothing smuggled`);
+    assertSameModel(model, parsed, label);
+    for (const kind of ['scenario-definition', 'projection-scenario-definition']) {
+      const stored = Object.values(model[DEF_COLLECTIONS[kind]] || {});
+      const read = parsed.scenarios.filter((r) => r.kind === kind);
+      eq(read.length, stored.length, `${label}: ${kind} count`);
+      for (const body of stored) {
+        eq(read.some((r) => sandbox.sameDefinition(r.body, body)), true, `${label}: ${JSON.stringify(body).slice(0, 120)}`);
+      }
+    }
   }
 });
 
@@ -1113,7 +1161,10 @@ check('renaming any declared name and back changes nothing, or is refused over a
     for (const declaration of sandbox.sourceSymbols(parsed).occurrences.filter((o) => o.decl)) {
       const { token, symbol } = declaration;
       const fresh = (/^[A-Z]/.test(token.v) ? 'Zz' : 'zz') + token.v;
-      const there = sandbox.sourceRename(text, token.line, token.col, fresh);
+      // The parses this test already holds are handed on rather than
+      // redone by sourceRename — a few thousand of them were most of
+      // the suite's time.
+      const there = sandbox.sourceRenameSymbol(text, parsed, symbol, fresh);
       if (there.error) {
         eq(/script or JSON/.test(there.error), true, `${slug} ${symbol}: ${there.error}`);
         continue;
@@ -1123,7 +1174,7 @@ check('renaming any declared name and back changes nothing, or is refused over a
       eq(read.diagnostics, [], `${slug} ${symbol} renamed`);
       const back = sandbox.sourceSymbols(read).occurrences.find((o) => o.decl && o.symbol.endsWith(' ' + fresh)
         && o.symbol.split(' ')[0] === symbol.split(' ')[0]);
-      const again = sandbox.sourceRename(renamed, back.token.line, back.token.col, token.v);
+      const again = sandbox.sourceRenameSymbol(renamed, read, back.symbol, token.v);
       eq(again.error, undefined, `${slug} ${symbol} renamed back`);
       const restored = parseModelSource(sandbox.sourceApplyEdits(renamed, again.edits));
       // A type renamed away from its entity pins it, and an identifier
@@ -1500,5 +1551,63 @@ check('every keyword outside the experimental ones is shown to an agent', () => 
   eq(sandbox.SOURCE_KEYWORDS.filter((word) => !experimental.includes(word) && !shown.has(word)), [],
     'add each to the tour or the forms in dsl.js');
 });
+
+// Errors never stop the read — nesting included. Past a depth no model
+// is written at, the parser says so where it happens, instead of
+// running out of stack and taking the code view with it.
+{
+  const nestingDiagnostics = (text) => parseModelSource(text).diagnostics.filter((d) => /nested/.test(d.message));
+
+  check('a JSON value nested past the limit is a diagnostic, not a stack overflow', () => {
+    const deep = 'model "M"\ncommand C json ' + '['.repeat(7033) + ']'.repeat(7033) + '\n';
+    let read;
+    try { read = parseModelSource(deep); } catch (error) { throw new Error('threw ' + error.name); }
+    eq(read.diagnostics.some((d) => /nested/.test(d.message)), true, 'said where');
+    eq(nestingDiagnostics('model "M"\ncommand C json ' + '['.repeat(150) + ']'.repeat(150) + '\n').length, 0,
+      'and a depth anyone writes reads on');
+  });
+
+  check('a scenario payload nested past the limit is a diagnostic too', () => {
+    fresh();
+    const { modelId } = importModelFromEnvelope(
+      JSON.parse(fs.readFileSync(path.join(FIXTURES, 'content-decisions-boundary.json'), 'utf8')));
+    const deep = swap(modelToSource(projectState()[modelId]), 'given DocumentAdded { id: "d1" }',
+      'given DocumentAdded { id: "d1", extra: ' + '['.repeat(3000) + ']'.repeat(3000) + ' }');
+    eq(nestingDiagnostics(deep).length > 0, true, 'reported');
+  });
+
+  check('a read nested past the limit is a diagnostic', () => {
+    const text = modelToSource(build(PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-simple')).model());
+    const deep = swap(text, 'require CourseStatus(courseId) == NonExistent',
+      'require ' + 'CourseStatus('.repeat(3000) + 'courseId' + ')'.repeat(3000) + ' == NonExistent');
+    eq(nestingDiagnostics(deep).length > 0, true, 'reported');
+  });
+}
+
+// The lexer and the messages, at their edges.
+{
+  const messages = (text) => parseModelSource(text).diagnostics.map((d) => d.message);
+
+  check('a number too large to store is a diagnostic, not a silent null', () => {
+    const huge = messages('model "M"\nuntagged projection P: integer = 1e400\n');
+    eq(huge.some((m) => /too large/.test(m)), true, huge.join(' | '));
+    eq(messages('model "M"\nuntagged projection P: integer = 1e300\n'), [], 'a large one is fine');
+  });
+
+  check('a backslash before a line break does not carry a string onto the next line', () => {
+    const text = 'model "M"\nevent A { note: string }\ncommand C { emit A { note: "x\\\nevent B {}\n';
+    const read = parseModelSource(text);
+    eq(read.diagnostics.some((d) => /never closed/.test(d.message) && d.line === 3), true,
+      read.diagnostics.map((d) => `${d.line}: ${d.message}`).join(' | '));
+    eq('B' in read.collections['event-definition'], true, 'the next line is read as the declaration it is');
+  });
+
+  check('a duplicate is named with the right article', () => {
+    eq(messages('model "M"\nevent A {}\nevent A {}\n').some((m) => m.startsWith('An event named "A"')), true,
+      messages('model "M"\nevent A {}\nevent A {}\n').join(' | '));
+    eq(messages('model "M"\ncommand C() {}\ncommand C() {}\n').some((m) => m.startsWith('A command named "C"')), true,
+      'and a consonant keeps "A"');
+  });
+}
 
 finish();

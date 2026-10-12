@@ -338,7 +338,12 @@ function lexSource(text) {
       token = { t: 'code', v: value };
     } else if (c === '"') {
       let j = i + 1;
-      while (j < text.length && text[j] !== '"' && text[j] !== '\n') j += text[j] === '\\' ? 2 : 1;
+      // A backslash escapes the next character — but never a line break:
+      // a string does not run on past the end of its line, or one stray
+      // backslash swallows the declaration below it.
+      while (j < text.length && text[j] !== '"' && text[j] !== '\n') {
+        j += text[j] === '\\' && text[j + 1] !== '\n' ? 2 : 1;
+      }
       if (text[j] !== '"') {
         const value = text.slice(i + 1, j);
         advanceTo(j);
@@ -356,6 +361,9 @@ function lexSource(text) {
       const match = SOURCE_NUMBER_RE.exec(text);
       advanceTo(i + match[0].length);
       token = { t: 'number', v: Number(match[0]) };
+      // Past what a double holds, a number reads as Infinity — and is
+      // stored as null, JSON having no Infinity.
+      if (!Number.isFinite(token.v)) report('This number is too large to store.', start);
     } else if (/[A-Za-z_]/.test(c)) {
       SOURCE_WORD_RE.lastIndex = i;
       const match = SOURCE_WORD_RE.exec(text);
@@ -382,6 +390,9 @@ function lexSource(text) {
 // ============================================================
 // Parsing.
 // ============================================================
+
+// Deeper than any model is written, and far short of the stack.
+const SOURCE_MAX_DEPTH = 200;
 
 class SourceError extends Error {
   constructor(message, token) {
@@ -410,6 +421,25 @@ function describeToken(token) {
 // and skipped to the next line that starts one, so a typo in one
 // command does not hide every other problem below it.
 function parseModelSource(text, options = {}) {
+  // The per-declaration net (see the read loop) covers the parse; this
+  // one covers the passes after it, so no text makes the read throw.
+  try {
+    return parseModelSourceText(text, options);
+  } catch (error) {
+    if (!(error instanceof RangeError)) throw error;
+    const collections = {};
+    for (const kind of SOURCE_KINDS) collections[kind] = {};
+    return {
+      name: null, collections, spans: [], implicit: [], scenarios: [], groups: [], marks: new WeakMap(),
+      diagnostics: [{
+        severity: 'error', message: 'This text could not be read: it is nested too deeply.',
+        line: 1, col: 1, endLine: 1, endCol: 2,
+      }],
+    };
+  }
+}
+
+function parseModelSourceText(text, options) {
   const { tokens, diagnostics } = lexSource(String(text));
   const collections = {};
   for (const kind of SOURCE_KINDS) collections[kind] = {};
@@ -450,6 +480,16 @@ function parseModelSource(text, options = {}) {
   const accept = (v) => (is(v) ? next() : null);
   const fail = (message, token = peek()) => { throw new SourceError(message, token); };
   const expect = (v, what) => accept(v) || fail(`Expected ${what || `"${v}"`}, found ${describeToken(peek())}.`);
+  // How deep the value being read is nested — a list in a list, a read
+  // in a read. Every recursive reader steps in and out through these,
+  // and past SOURCE_MAX_DEPTH the read fails where it happens, as a
+  // diagnostic, long before the stack would. Reset per declaration, so
+  // a failure that skipped its way out leaves no count behind.
+  let depth = 0;
+  const enter = () => {
+    if (++depth > SOURCE_MAX_DEPTH) fail(`This is nested more than ${SOURCE_MAX_DEPTH} levels deep.`);
+  };
+  const leave = (value) => { depth -= 1; return value; };
   const ident = (what) => (peek().t === 'ident' ? next() : fail(`Expected ${what}, found ${describeToken(peek())}.`));
   const declName = (what) => (peek().t === 'ident' || peek().t === 'string'
     ? next() : fail(`Expected ${what}, found ${describeToken(peek())}.`));
@@ -489,6 +529,7 @@ function parseModelSource(text, options = {}) {
     if (accept('false')) return false;
     if (accept('null')) return null;
     if (accept('{')) {
+      enter();
       const out = {};
       while (!is('}')) {
         const key = peek().t === 'string' || peek().t === 'ident'
@@ -498,16 +539,17 @@ function parseModelSource(text, options = {}) {
         if (!accept(',')) break;
       }
       expect('}', '"}" or ","');
-      return out;
+      return leave(out);
     }
     if (accept('[')) {
+      enter();
       const out = [];
       while (!is(']')) {
         out.push(jsonValue());
         if (!accept(',')) break;
       }
       expect(']', '"]" or ","');
-      return out;
+      return leave(out);
     }
     return fail(`Expected a JSON value, found ${describeToken(token)}.`);
   };
@@ -523,9 +565,10 @@ function parseModelSource(text, options = {}) {
       if (accept('null')) return null;
       if (token.v === 'enum' && is('(', 1)) {
         next(); next();
+        enter();
         const member = literalValue();
         expect(')');
-        return { enumMember: member };
+        return leave({ enumMember: member });
       }
       if (SOURCE_MEMBER_RE.test(token.v)) {
         const member = { enumMember: next().v };
@@ -534,13 +577,14 @@ function parseModelSource(text, options = {}) {
       }
     }
     if (accept('[')) {
+      enter();
       const out = [];
       while (!is(']')) {
         out.push(literalValue());
         if (!accept(',')) break;
       }
       expect(']', '"]" or ","');
-      return out;
+      return leave(out);
     }
     return fail(`Expected a value, found ${describeToken(token)}.`);
   };
@@ -600,6 +644,7 @@ function parseModelSource(text, options = {}) {
   };
   const callArguments = (valueOf) => {
     expect('(');
+    enter();
     const out = { values: [] };
     while (!is(')')) {
       guardBlock(')');
@@ -623,7 +668,7 @@ function parseModelSource(text, options = {}) {
       if (!accept(',')) break;
     }
     expect(')', '")" or ","');
-    return out;
+    return leave(out);
   };
 
   // `X tagged …` and `X with (…)` were the draft of 8.0; a read gives
@@ -695,9 +740,10 @@ function parseModelSource(text, options = {}) {
     if (accept('currentValue')) return { currentValue: true };
     if (is('successor') && is('(', 1)) {
       next(); next();
+      enter();
       const inner = handlerOperand();
       expect(')');
-      return { successor: inner };
+      return leave({ successor: inner });
     }
     return literalValue();
   };
@@ -832,7 +878,8 @@ function parseModelSource(text, options = {}) {
     if (Object.prototype.hasOwnProperty.call(coll, name)) {
       diagnostics.push({
         severity: 'error',
-        message: `A ${SOURCE_KEYWORD[kind]} named "${name}" is already defined above — one of the two has to go.`,
+        message: `${sourceArticle(SOURCE_KEYWORD[kind]) === 'an' ? 'An' : 'A'} ${SOURCE_KEYWORD[kind]} named "${name}" `
+          + 'is already defined above — one of the two has to go.',
         line: nameToken.line, col: nameToken.col, endLine: nameToken.endLine, endCol: nameToken.endCol,
       });
       return;
@@ -1256,6 +1303,7 @@ function parseModelSource(text, options = {}) {
     memberToken = null;
     if (token.t === 'ident' && SOURCE_MEMBER_RE.test(token.v)) { memberToken = token; return next().v; }
     if (accept('{')) {
+      enter();
       const out = {};
       while (!is('}')) {
         const keyToken = peek().t === 'string' || peek().t === 'ident'
@@ -1268,9 +1316,10 @@ function parseModelSource(text, options = {}) {
       }
       expect('}', '"}" or ","');
       memberToken = null;
-      return out;
+      return leave(out);
     }
     if (accept('[')) {
+      enter();
       const out = [];
       while (!is(']')) {
         out.push(scenarioValue());
@@ -1279,7 +1328,7 @@ function parseModelSource(text, options = {}) {
       }
       memberToken = null;
       expect(']', '"]" or ","');
-      return out;
+      return leave(out);
     }
     return jsonValue();
   };
@@ -1543,9 +1592,15 @@ function parseModelSource(text, options = {}) {
   const topLevelBare = [];
   while (peek().t !== 'eof') {
     const from = at;
+    depth = 0;
     try {
       declaration();
-    } catch (error) {
+    } catch (caught) {
+      // The depth limit is the guard; a RangeError is the net under it,
+      // for a recursion it does not count — the promise is that errors
+      // never stop the read, and a stack overflow is one.
+      const error = caught instanceof RangeError ? new SourceError(
+        'This could not be read: it is nested too deeply.', tokens[from]) : caught;
       if (!(error instanceof SourceError)) throw error;
       const token = error.token;
       diagnostics.push({
@@ -2707,7 +2762,9 @@ function sourceScenarioReport(model, parsed) {
 // an existing entity whose identifier type is missing keeps it missing,
 // which is a dangling reference the advisories report, not something an
 // apply should quietly repair.
-function applyModelSource(modelId, text) {
+// `options.refuseRemovals` refuses a text that leaves a definition or
+// scenario out, rather than removing it (see replaceDefinitions).
+function applyModelSource(modelId, text, options = {}) {
   const parsed = parseModelSource(text);
   const errors = parsed.diagnostics.filter((d) => d.severity === 'error');
   if (errors.length) {
@@ -2749,6 +2806,7 @@ function applyModelSource(modelId, text) {
   return replaceDefinitions(modelId, {
     name: parsed.name,
     collections: { ...parsed.collections, ...scenarios.collections },
+    refuseRemovals: !!options.refuseRemovals,
   });
 }
 
@@ -4309,7 +4367,7 @@ const SOURCE_REFERENCE_GUIDE = `# The DCB model language
 
 The text get_model_source returns, apply_model_source applies and start_model takes as its source.
 
-- A text is the whole model: a model "Name" line, then types, events, projections and commands. A definition left out of an applied text is removed, so to change a model, edit what get_model_source returned and send all of it back.
+- A text is the whole model: a model "Name" line, then types, events, projections and commands. A definition left out of an applied text is removed — apply_model_source refuses that unless told allowRemovals: true — so to change a model, edit what get_model_source returned and send all of it back.
 - A text with any error is refused whole, with each error's line and column; fix them and send it again. What does not stop it (an event nothing emits, a read of a projection nobody declared) comes back as advisories with the result; fix those as well.
 - DCB in brief: events are tagged by identifier values; a projection folds the events that carry its tags into one value; a command reads projections, checks its rules and emits events. Its consistency boundary is exactly what it reads — derived, never declared (derive_boundary shows it).
 - Definitions, enum members and records are PascalCase; properties, parameters, tags and aliases are camelCase.

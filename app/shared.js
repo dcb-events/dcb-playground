@@ -15,15 +15,21 @@
 
 // ---------- DOM ----------
 
+// Text is always text: a string child becomes a text node and an
+// attribute value an attribute. The two ways a string could become code
+// are refused — markup goes through `svg`, and a handler must be a
+// function (a string `onclick` would be an attribute the browser runs).
 function h(tag, attrs = {}, ...children) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
     if (v === null || v === undefined || v === false) continue;
-    if (k === 'class') el.className = v;
+    if (k === 'html') throw new Error('h(): markup goes through svg(), not an attribute');
+    if (k.startsWith('on')) {
+      if (typeof v !== 'function') throw new Error(`h(): "${k}" must be a function`);
+      el[k.toLowerCase()] = v;
+    } else if (k === 'class') el.className = v;
     else if (k === 'style') el.setAttribute('style', v);
-    else if (k.startsWith('on') && typeof v === 'function') el[k.toLowerCase()] = v;
     else if (k === 'value') el.value = v;
-    else if (k === 'html') el.innerHTML = v;
     else el.setAttribute(k, v === true ? '' : v);
   }
   for (const child of children.flat(4)) {
@@ -31,6 +37,15 @@ function h(tag, attrs = {}, ...children) {
     el.appendChild(typeof child === 'object' ? child : document.createTextNode(String(child)));
   }
   return el;
+}
+
+// The one sink for markup: an icon, a band's wires — SVG written in
+// this code, its only interpolations numbers and fixed ids. Never pass
+// it a string that came from a model. A fragment, appended whole by `h`.
+function svg(markup) {
+  const template = document.createElement('template');
+  template.innerHTML = markup;
+  return template.content || null;
 }
 
 let toastTimer = null;
@@ -224,21 +239,23 @@ function scriptHandlerPreamble(model, body, handler) {
   const event = (model['event-definitions'] || {})[handler.event];
   const eventLines = [];
   if (event) {
+    // Read-only, as at run time (`evFrozenEvent`, evaluate.js): the
+    // editor flags a write before the run refuses it.
     eventLines.push('declare const event: {');
-    eventLines.push('  type: ' + JSON.stringify(handler.event) + ';');
-    eventLines.push('  data: {');
+    eventLines.push('  readonly type: ' + JSON.stringify(handler.event) + ';');
+    eventLines.push('  readonly data: {');
     for (const property of event.properties || []) {
       if (property.isOptional) {
         eventLines.push('    /** optional — null when the event carries no value */');
       } else if (property.propertyType === 'integer') {
         eventLines.push('    /** integer */');
       }
-      eventLines.push('    ' + scriptTsKey(property.name) + ': ' + propertyType(property) + ';');
+      eventLines.push('    readonly ' + scriptTsKey(property.name) + ': ' + propertyType(property) + ';');
     }
     eventLines.push('  };');
     eventLines.push('};');
   } else {
-    eventLines.push('declare const event: { type: string; data: { [key: string]: any } };');
+    eventLines.push('declare const event: { readonly type: string; readonly data: { readonly [key: string]: any } };');
   }
 
   const argFields = (script.arguments || []).filter((argument) => argument && argument.name);
@@ -716,9 +733,38 @@ async function gzipToBase64Url(text) {
   return base64UrlEncode(new Uint8Array(buffer));
 }
 
+// What a model may unpack to, and how long a link to one may be. The
+// largest shipped model is about 20 KB as JSON and under 2 KB as a
+// link; the caps leave room for a hundred times that, and still stop a
+// few hundred kilobytes of gzip from unpacking to gigabytes the moment
+// a link is opened.
+const UNPACKED_MAX_BYTES = 5 * 1024 * 1024;
+const SHARE_LINK_MAX_LENGTH = 1000 * 1000;
+
+// A stream's text, read a chunk at a time and abandoned past the cap —
+// so an oversized one is never held whole.
+async function readCappedText(stream) {
+  const reader = stream.getReader();
+  const chunks = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > UNPACKED_MAX_BYTES) {
+      reader.cancel().catch(() => {});
+      throw new DomainError(`it unpacks to more than ${UNPACKED_MAX_BYTES / 1024 / 1024} MB, far more than any model.`);
+    }
+    chunks.push(value);
+  }
+  return new TextDecoder().decode(await new Blob(chunks).arrayBuffer());
+}
+
 async function gunzipFromBase64Url(encoded) {
-  const stream = new Blob([base64UrlDecode(encoded)]).stream().pipeThrough(new DecompressionStream('gzip'));
-  return new Response(stream).text();
+  if (encoded.length > SHARE_LINK_MAX_LENGTH) {
+    throw new DomainError(`it is too long — over ${SHARE_LINK_MAX_LENGTH / 1000 / 1000} million characters, far more than any model.`);
+  }
+  return readCappedText(new Blob([base64UrlDecode(encoded)]).stream().pipeThrough(new DecompressionStream('gzip')));
 }
 
 async function buildShareLink(model) {
@@ -739,10 +785,15 @@ function decodeShareLink(encoded) {
 async function loadModelFromUrl(url) {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  if (!response.body) throw new Error('the response was empty');
   const contentType = response.headers.get('Content-Type') || '';
-  const text = contentType.includes('gzip')
-    ? await new Response(response.body.pipeThrough(new DecompressionStream('gzip'))).text()
-    : await response.text();
+  const body = contentType.includes('gzip') ? response.body.pipeThrough(new DecompressionStream('gzip')) : response.body;
+  let text;
+  try {
+    text = await readCappedText(body);
+  } catch (error) {
+    throw error instanceof DomainError ? new DomainError('That file was not loaded: ' + error.message) : error;
+  }
   return JSON.parse(text);
 }
 
@@ -2001,8 +2052,8 @@ function typeLabel(member) {
 // An entity's mark is authored and only authored. An unmarked entity
 // carries no glyph: a hashed stand-in was tried and did not earn its
 // place — a shape nobody chose says nothing about the thing, so every
-// page paid a column of noise for a legibility that never arrived. The
-// tables below are the picker's offer, not a fallback.
+// page paid a column of noise for a legibility that never arrived. What
+// the picker offers is `ICON_CHOICES` (index.html).
 //
 // Commands and events are the exception: an unmarked one shows its
 // kind's mark (`COMMAND_FALLBACK_ICON`, `EVENT_FALLBACK_ICON`) — one
@@ -2012,7 +2063,6 @@ function typeLabel(member) {
 // the colour of what it sits in, and `fallbackIconClass` lets a slot
 // that is not already kind-coloured paint it. It is a rendering, never
 // stored: the code view and the wire format see only an authored icon.
-const ENTITY_MARKS = ['◆', '●', '■', '▲', '★', '◇', '○', '□', '△', '✦'];
 
 // The icon a body actually carries, or '' when it carries none worth
 // showing — the one place the trim-or-fall-back rule lives.
@@ -2033,15 +2083,6 @@ function iconPrefix(icon, separator) {
 function entityIcon(model, name) {
   return chosenIcon(model, 'entity-definitions', name);
 }
-
-// An event is a moment, not a thing, so the picker offers it a
-// different family than an entity's — a spark rather than a shape, so
-// that two *authored* marks on one page never read as the wrong kind.
-const EVENT_MARKS = ['✱', '✲', '✳', '✴', '✵', '✶', '✷', '✸', '✹', '✺'];
-
-// A third family again, for the same reason: a tool, not a shape or a
-// spark, since one page can hold all three kinds at once.
-const COMMAND_MARKS = ['▶', '▷', '◈', '◉', '◐', '◑', '◒', '◓', '⬖', '⬗'];
 
 const COMMAND_FALLBACK_ICON = '➜';
 const EVENT_FALLBACK_ICON = '↯';

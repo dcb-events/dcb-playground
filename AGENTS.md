@@ -78,8 +78,10 @@ The DOM stub, sandbox, script loader and assertions live once in
 fixture text with `swap(text, from, to)`, which throws when `from` is
 gone — a bare `.replace()` that misses leaves the test checking nothing.
 
-`.githooks/pre-commit` runs the four suites, checks the generated files
-are current and refuses a bare `.replace()` in a suite. Enable it once
+`.githooks/pre-commit` runs the four suites, checks that
+`app/webmcp-schemas.js` is current (the vendored Monaco is regenerated
+only on a version bump, so it is not checked) and refuses a bare
+`.replace()` in a suite. CI runs the same hook. Enable it once
 per clone: `git config core.hooksPath .githooks`.
 
 To see a model as the code view prints it:
@@ -123,6 +125,8 @@ was decided, why, and what was tried and reverted:
 - the sandbox's layout, its timeline lanes or watches — _The sandbox_
 - the code view's language, its editor or language service — _The code
   view's language_, and the `dsl.js` header
+- what a script can reach, a CSP, sandboxing scripts — _Scripts and the
+  origin_
 
 ## Conventions and gotchas
 
@@ -174,9 +178,18 @@ was decided, why, and what was tried and reverted:
   (`onAppend`), so buttons and agent tools are undoable alike. New editing
   features follow the same path; WebMCP tools already do.
 - **Every writer of `EVENT_LOG_KEY` must call `bumpLogRevision()`** —
-  `appendEvents` does, undo/redo do. The projected state and the problems
+  `writeEventLog` (model.js) does, and appends, undo/redo and compaction
+  all write through it; so does the page's `storage` listener for
+  another tab's writes. The log compacts itself inside `appendEvents`
+  past a size, and on a full storage before refusing: it folds only
+  what lies before the page's oldest undo step (`setCompactionFloor`)
+  and reports how far the rest moved (`onCompact`), so undo marks are
+  moved, never lost — unless storage is full and only folding
+  everything makes room. The projected state and the problems
   list are cached per revision; a writer that skips its bump is the one way
-  those caches go stale.
+  those caches go stale. The log is shared between tabs, the undo history
+  is per tab (sessionStorage) and refuses once another tab has appended
+  past it.
 - **`projectState()` returns one shared object per revision** — never mutate
   it. Editors work on a `deepClone` and route changes through a command
   function (`patch` in index.html is the pattern).
@@ -194,8 +207,8 @@ was decided, why, and what was tried and reverted:
   evaluation _error_, and so is a null boundary identifier _unless the binding is
   marked `isOptional`_ — then it binds zero instances, conditions over
   the alias hold vacuously, and reading a property of it yields null.
-  The optional-parameter and derived-null advisories say all of this
-  ahead of time.
+  The optional-parameter, derived-null and absent-binding advisories say
+  all of this ahead of time.
 - **Wire format majors**: a new member of a closed vocabulary is a
   _major_, judged from the reader's side; a field an old reader can
   ignore without misreading anything is a minor. The importer reads

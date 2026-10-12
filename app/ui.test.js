@@ -22,7 +22,7 @@ const { createSandbox, loadApp, makeChecker, swap, textOf, findAll } = require('
 
 const APP = __dirname;
 
-const { sandbox, store } = createSandbox();
+const { sandbox, store, sessionStore, dispatch, listening } = createSandbox();
 
 // `state` and the page's own functions live in the script's lexical
 // scope, not as properties of the context object — the same as they
@@ -32,7 +32,8 @@ loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js', 'shared.js'], {
   withPage: true,
   trailer: 'globalThis.state = state; globalThis.render = render; globalThis.session = session;'
     + ' globalThis.closeForms = closeForms; globalThis.codeView = codeView; globalThis.UNGROUPED = UNGROUPED;'
-    + ' globalThis.PREDEFINED_MODELS = PREDEFINED_MODELS;'
+    + ' globalThis.PREDEFINED_MODELS = PREDEFINED_MODELS; globalThis.SHARE_LINK_MAX_LENGTH = SHARE_LINK_MAX_LENGTH;'
+    + ' globalThis.EVENT_LOG_KEY = EVENT_LOG_KEY; globalThis.PAGE_BEHIND = PAGE_BEHIND;'
     + ' globalThis.NOTATION_GUIDE_URL = NOTATION_GUIDE_URL; globalThis.NOTATION_REFERENCE_URL = NOTATION_REFERENCE_URL;',
 });
 const { check, eq, finish } = makeChecker();
@@ -2100,6 +2101,127 @@ function build(index) {
 }
 
 // ---------------------------------------------------------------
+// Two tabs share one log. Each sees the other's edits as they land,
+// and each undoes only its own — and only while nothing has been
+// appended past it, since undo cuts the log back to a position.
+// ---------------------------------------------------------------
+{
+  const id = sandbox.createDcbModel('Two Tabs Probe');
+  store.set('dcb-playground:model', id);
+  // Another tab's append: the log grows in storage, behind this tab's
+  // back, and the browser says so with a `storage` event.
+  const otherTabAppends = (name) => {
+    const events = JSON.parse(store.get(sandbox.EVENT_LOG_KEY));
+    events.push({ sequence: events.length, timestamp: '', type: 'event-definition-added',
+      data: { 'dcb-model-id': id, name, body: { properties: [], tags: [] } } });
+    store.set(sandbox.EVENT_LOG_KEY, JSON.stringify(events));
+    dispatch('storage', { key: sandbox.EVENT_LOG_KEY });
+  };
+
+  check('another tab\'s edit shows here as soon as it lands', () => {
+    sandbox.projectState();
+    otherTabAppends('ElsewhereHappened');
+    eq('ElsewhereHappened' in sandbox.projectState()[id]['event-definitions'], true, 'seen without a write here');
+  });
+
+  check('this tab\'s undo history is its own', () => {
+    sandbox.run(() => addTaggedEvent(id, 'HereHappened', { properties: [] }));
+    eq([...store.keys()].some((k) => k.startsWith('dcb-playground:undo')), false, 'not in shared storage');
+    eq([...sessionStore.keys()].some((k) => k.startsWith('dcb-playground:undo')), true, 'in the tab\'s own');
+  });
+
+  check('undo is refused once another tab has appended past it', () => {
+    sandbox.run(() => addTaggedEvent(id, 'MineHappened', { properties: [] }));
+    otherTabAppends('TheirsHappened');
+    const before = sandbox.loadEvents().length;
+    sandbox.undo();
+    eq(sandbox.loadEvents().length, before, 'nothing cut off');
+    const events = sandbox.projectState()[id]['event-definitions'];
+    eq(['MineHappened', 'TheirsHappened'].every((name) => name in events), true, 'both edits kept');
+  });
+
+  check('a redo is dropped once another tab has appended', () => {
+    sandbox.run(() => addTaggedEvent(id, 'UndoneHere', { properties: [] }));
+    sandbox.undo();
+    otherTabAppends('ThenThere');
+    const before = sandbox.loadEvents().length;
+    sandbox.redo();
+    eq(sandbox.loadEvents().length, before, 'nothing re-appended');
+    eq('UndoneHere' in sandbox.projectState()[id]['event-definitions'], false, 'still undone');
+  });
+
+  store.delete('dcb-playground:model');
+}
+
+// ---------------------------------------------------------------
+// The log compacts itself past a size, and nobody is asked because
+// nothing they can see changes: every step this tab can undo is kept,
+// moved the distance the log moved.
+// ---------------------------------------------------------------
+{
+  const id = sandbox.createDcbModel('Compaction Probe');
+  store.set('dcb-playground:model', id);
+  sessionStore.clear();       // this tab's history starts here
+  const events = () => Object.keys(sandbox.projectState()[id]['event-definitions']);
+  const shifts = [];
+  sandbox.onCompact(({ shift }) => shifts.push(shift));
+  const compacting = (fn) => {
+    sandbox.setLogCompactionThreshold(1);
+    try { fn(); } finally { sandbox.setLogCompactionThreshold(1000 * 1000); }
+  };
+
+  check('undo and redo work across a compaction, step by step', () => {
+    compacting(() => {
+      for (const name of ['FirstHappened', 'SecondHappened', 'ThirdHappened']) {
+        sandbox.run(() => addTaggedEvent(id, name, { properties: [] }));
+      }
+    });
+    eq(events(), ['FirstHappened', 'SecondHappened', 'ThirdHappened'], 'all three');
+    eq(shifts.some((shift) => shift < 0), true, `the log really was compacted under the steps: ${shifts}`);
+    sandbox.undo();
+    eq(events(), ['FirstHappened', 'SecondHappened'], 'the last undone');
+    sandbox.undo();
+    eq(events(), ['FirstHappened'], 'then the one before');
+    compacting(() => sandbox.redo());
+    eq(events(), ['FirstHappened', 'SecondHappened'], 'redone');
+    sandbox.undo();
+    eq(events(), ['FirstHappened'], 'and undone again');
+  });
+
+  check('once old steps fall off the history, what they built is folded and the rest still undo', () => {
+    // Undo keeps sixty steps; past them, the oldest step's edits are
+    // history nothing can reach, and compaction folds them — moving
+    // every mark still held.
+    sandbox.run(() => addTaggedEvent(id, 'Flip', { properties: [] }));
+    const names = ['Flip', 'Flop'];
+    shifts.length = 0;
+    compacting(() => {
+      for (let i = 0; i < 64; i++) {
+        sandbox.run(() => sandbox.renameDefinition('event-definition', id, names[i % 2], names[(i + 1) % 2]));
+      }
+    });
+    eq(shifts.some((shift) => shift < 0), true, `compacted under held marks: ${shifts}`);
+    eq(events().includes('Flip'), true, 'an even number of renames ends where it began');
+    sandbox.undo();
+    eq(events().includes('Flop'), true, 'one undo: one rename back');
+    sandbox.undo();
+    eq(events().includes('Flip'), true, 'and the one before it');
+  });
+
+  check('a gesture still being batched is not folded under itself', () => {
+    const before = events();
+    compacting(() => sandbox.run(() => {
+      addTaggedEvent(id, 'BatchedA', { properties: [] });
+      addTaggedEvent(id, 'BatchedB', { properties: [] });
+    }));
+    sandbox.undo();
+    eq(events(), before, 'one undo takes the whole gesture back');
+  });
+
+  store.delete('dcb-playground:model');
+}
+
+// ---------------------------------------------------------------
 // Optional properties in the payload editors. "No value" is a state
 // the interface shows — the explicit null — and never the empty
 // string; the save path spells the null out into everything a draft
@@ -2325,7 +2447,8 @@ function build(index) {
       'enums are literal unions');
     has(text, 'type Money = { amount: number; currency: string };',
       'a composite type carries its fields');
-    has(text, 'type: "CoursePriced";', 'event.type is the name itself');
+    has(text, 'readonly type: "CoursePriced";', 'event.type is the name itself, and read-only');
+    has(text, 'readonly courseId: CourseId;', 'as is every field — the event is frozen at run time');
     has(text, 'courseId: CourseId;', 'event data is typed from the definition');
     has(text, 'seats: number[];', 'a list property is a list');
     has(text, 'note: string | null;', 'an optional property may be the null it publishes');
@@ -2362,7 +2485,7 @@ function build(index) {
 
   check('no event chosen (or a renamed-away one) leaves the data open', () => {
     const text = scriptHandlerPreamble(model, body, { event: '' });
-    has(text, 'declare const event: { type: string; data: { [key: string]: any } };',
+    has(text, 'declare const event: { readonly type: string; readonly data: { readonly [key: string]: any } };',
       'unknown event, unknowable data');
   });
 
@@ -3092,14 +3215,15 @@ function build(index) {
   store.set('dcb-playground:model', id);
   const command = (name) => model()['command-definitions'][name];
 
-  check('the five reasons a read is consulted, on the shipped models', () => {
+  check('the reasons a read is consulted, on the shipped models', () => {
     const refs = sandbox.bindingReferences(model(), command('RescheduleCourse'));
     eq([...refs.get('theirs')], ['rule'], 'a read a rule is about');
     eq([...refs.get('students')], ['chain'],
       'an intermediate hop, wanted only so the next read can be reached');
     const numbering = sandbox.bindingReferences(model(), command('DefineCourse'));
-    eq([...numbering.get('courseNumbering')], ['emission'],
-      'a projection read whose value the event records, with no rule at all');
+    eq([...numbering.get('courseNumbering')], ['emission', 'serialisation'],
+      'a projection read whose value the event records, with no rule at all — and, taking no tags, '
+      + 'one that serialises the command');
     // Coverage is the fifth reason, and it holds only for a *derived*
     // tag. `Assign`'s previous instructor is one: the `Unassigned` tag
     // is taken from `course.instructorId`, a claim about state that was
@@ -5074,4 +5198,160 @@ check('the reference links only anchors the website defines', () => {
   });
 }
 
-finish();
+check('the README names the schema by its own $id', () => {
+  const { $id } = JSON.parse(fs.readFileSync(path.join(APP, '..', 'dcb-model.schema.json'), 'utf8'));
+  const readme = fs.readFileSync(path.join(APP, '..', 'README.md'), 'utf8');
+  eq((readme.match(/https:\/\/dcb\.events\/schemas\/model\/v\d+\.json/g) || []).filter((url) => url !== $id), [],
+    'no other version');
+  eq(readme.includes($id), true, $id);
+});
+
+check('the app is text: no file carries a raw control byte', () => {
+  // A literal NUL in index.html once made grep and ripgrep treat the
+  // whole page as binary; a separator is spelled '\u0000'.
+  for (const file of fs.readdirSync(APP).filter((f) => /\.(js|html|css)$/.test(f))) {
+    eq(/[\u0000-\u0008\u000e-\u001f]/.test(fs.readFileSync(path.join(APP, file), 'utf8')), false, file);
+  }
+});
+
+// ---------------------------------------------------------------
+// Keys and dialogs: Escape closes whichever is up, the arrow keys
+// never reach the page behind one, and that page is inert meanwhile.
+// ---------------------------------------------------------------
+{
+  const id = sandbox.createDcbModel('Dialog Probe');
+  store.set('dcb-playground:model', id);
+  const key = (name) => {
+    const event = { key: name, defaultPrevented: false, target: {}, preventDefault() { this.defaultPrevented = true; } };
+    dispatch('keydown', event);
+    return event;
+  };
+
+  check('Escape closes Import & Export', () => {
+    sandbox.state.importExport = true;
+    key('Escape');
+    eq(sandbox.state.importExport, false, 'closed');
+  });
+
+  check('the arrow keys move no row behind an open dialog', () => {
+    const moveRow = sandbox.moveRow;
+    let moved = 0;
+    sandbox.moveRow = () => { moved += 1; return true; };
+    for (const open of [
+      () => { sandbox.state.importExport = true; },
+      () => { sandbox.state.pendingImport = { envelope: {} }; },
+    ]) {
+      open();
+      key('ArrowDown');
+      sandbox.state.importExport = false; sandbox.state.pendingImport = null;
+    }
+    eq(moved, 0, 'behind Import & Export and the import gate');
+    key('ArrowDown');
+    eq(moved, 1, 'and with nothing open, they do');
+    sandbox.moveRow = moveRow;
+  });
+
+  check('h() sets no markup and no handler from a string', () => {
+    // Markup goes through svg(), the one sink for trusted markup, and a
+    // handler is a function — a string would become an attribute the
+    // browser runs as code.
+    const refused = (attrs) => { try { sandbox.h('span', attrs); return false; } catch { return true; } };
+    eq(refused({ html: '<b>x</b>' }), true, 'html');
+    eq(refused({ onclick: 'alert(1)' }), true, 'a string handler');
+    eq(refused({ onclick: () => {} }), false, 'a function handler');
+    eq(typeof sandbox.svg, 'function', 'svg() is the way');
+  });
+
+  check('a drag lets go of the window however it ends — a touch scroll cancels it', () => {
+    for (const end of ['pointerup', 'pointercancel']) {
+      let moves = 0;
+      sandbox.trackPointer(() => { moves += 1; });
+      dispatch('pointermove', {});
+      dispatch(end, {});
+      dispatch('pointermove', {});
+      eq(moves, 1, `moves after ${end}`);
+      eq(['pointermove', 'pointerup', 'pointercancel'].map(listening), [0, 0, 0], `nothing left listening after ${end}`);
+    }
+  });
+
+  check('a kind colour used as text is one that can be read', () => {
+    // The kind colours are tuned for borders and fills; as text on the
+    // light page, orange and green fell to 2.8:1 and 3.3:1. Text takes
+    // the -text variant, which the dark theme maps back to the kind.
+    const css = fs.readFileSync(path.join(APP, 'shared.css'), 'utf8');
+    const page = fs.readFileSync(path.join(APP, 'index.html'), 'utf8');
+    const bare = (css + page).match(/(^|[^-a-z])color: ?var\(--(event|entity|projection)\)/gm) || [];
+    eq(bare, [], 'no kind colour as text');
+    const root = css.slice(css.indexOf(':root'), css.indexOf('}', css.indexOf(':root')));
+    const value = (name) => (root.match(new RegExp(`--${name}: (#[0-9a-f]{6})`)) || [])[1];
+    const luminance = (hex) => {
+      const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+        .map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const contrast = (a, b) => {
+      const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+      return (hi + 0.05) / (lo + 0.05);
+    };
+    for (const kind of ['event-text', 'entity-text']) {
+      eq(contrast(value(kind), value('bg')) >= 4.5, true, `--${kind} ${value(kind)} on --bg: ${contrast(value(kind), value('bg')).toFixed(2)}`);
+    }
+  });
+
+  check('a dialog is named by its heading, and its × says what it does', () => {
+    const heading = { id: '' };
+    const attributes = {};
+    const modal = {
+      querySelector: (selector) => (selector === 'header h2' ? heading : null),
+      getAttribute: (name) => attributes[name] || null,
+      setAttribute: (name, value) => { attributes[name] = value; },
+    };
+    sandbox.labelDialog(modal);
+    eq(attributes['aria-labelledby'] !== undefined && attributes['aria-labelledby'] === heading.id, true, 'labelled by its h2');
+    const page = fs.readFileSync(path.join(APP, 'index.html'), 'utf8');
+    eq((page.match(/title: 'Close' \}, '×'\)/g) || []).length, 0, 'every close button is labelled');
+  });
+
+  check('the page behind a dialog is inert, and only then', () => {
+    const page = {};
+    const querySelectorAll = sandbox.document.querySelectorAll;
+    sandbox.document.querySelectorAll = (selector) => (selector === sandbox.PAGE_BEHIND ? [page] : querySelectorAll(selector));
+    sandbox.state.settings = true;
+    sandbox.render();
+    eq(page.inert, true, 'inert behind Settings');
+    sandbox.state.settings = false;
+    sandbox.render();
+    eq(page.inert, false, 'and live again once it closes');
+    sandbox.document.querySelectorAll = querySelectorAll;
+  });
+
+  store.delete('dcb-playground:model');
+}
+
+// A share link or a fetched file is unpacked under a cap: a few hundred
+// kilobytes of gzip can stand for gigabytes of whitespace, and the
+// link is unpacked the moment it is opened.
+(async () => {
+  Object.assign(sandbox, { Blob, Response, ReadableStream, CompressionStream, DecompressionStream, atob, btoa });
+
+  await check('a share link round-trips a model', async () => {
+    const encoded = await sandbox.gzipToBase64Url(JSON.stringify({ name: 'M' }));
+    eq(await sandbox.decodeShareLink(encoded), { name: 'M' }, 'read back');
+  });
+
+  await check('a share link that unpacks past the cap is refused, not unpacked', async () => {
+    const encoded = await sandbox.gzipToBase64Url('{"name":"M"' + ' '.repeat(6 * 1024 * 1024) + '}');
+    eq(encoded.length < sandbox.SHARE_LINK_MAX_LENGTH, true, 'small enough to get past the length check');
+    let message = '';
+    try { await sandbox.decodeShareLink(encoded); } catch (error) { message = error.message; }
+    eq(/more than 5 MB/.test(message), true, message || 'refused');
+  });
+
+  await check('a share link longer than any model needs is refused before it is decoded', async () => {
+    let message = '';
+    try { await sandbox.decodeShareLink('A'.repeat(sandbox.SHARE_LINK_MAX_LENGTH + 1)); } catch (error) { message = error.message; }
+    eq(/too long/.test(message), true, message || 'refused');
+  });
+
+  finish();
+})();

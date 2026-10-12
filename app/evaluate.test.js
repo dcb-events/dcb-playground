@@ -19,7 +19,10 @@
 const { createSandbox, loadApp, makeChecker } = require('./test-harness.js');
 
 const { sandbox, store } = createSandbox();
-loadApp(sandbox, ['model.js', 'evaluate.js'], { trailer: 'globalThis.PREDEFINED_MODELS = PREDEFINED_MODELS;' });
+loadApp(sandbox, ['model.js', 'evaluate.js'], {
+  trailer: 'globalThis.PREDEFINED_MODELS = PREDEFINED_MODELS; globalThis.DEF_COLLECTIONS = DEF_COLLECTIONS;'
+    + ' globalThis.DomainError = DomainError; globalThis.EVENT_LOG_KEY = EVENT_LOG_KEY;',
+});
 const { check, eq, finish } = makeChecker();
 
 // Clearing the store is a write `appendEvents` never sees, so the
@@ -444,6 +447,18 @@ function drive(model, log, command, args) {
     eq(holds({ leftHandSide: of('status'), predicate: 'startsWith', rightHandSide: 'Exist' }), true, 'startsWith');
     eq(holds({ leftHandSide: of('status'), predicate: 'endsWith', rightHandSide: 'tent' }), true, 'endsWith');
     eq(holds({ leftHandSide: of('status'), predicate: 'startsWith', rightHandSide: 'Non' }), false, 'startsWith, not');
+  });
+
+  check('a string predicate over null holds for nothing', () => {
+    // String(null) is "null": "annulled" contained it, and it started
+    // "nu". No value is no text, so nothing is in it or begins it.
+    const apply = (predicate, left, right) => sandbox.evApplyPredicate({ predicate }, left, right);
+    eq(apply('contains', 'annulled', null), false, 'contains null');
+    eq(apply('startsWith', null, 'nu'), false, 'null startsWith');
+    eq(apply('endsWith', 'null', null), false, 'endsWith null');
+    eq(apply('startsWith', 'nu', null), false, 'startsWith null');
+    eq(apply('contains', null, 'x'), false, 'null contains');
+    eq(apply('contains', ['a', null], null), true, 'a list may still hold a null');
   });
 
   check('negate inverts whatever it wraps', () => {
@@ -1806,6 +1821,14 @@ check('an import missing the definition arrays is refused, not silently accepted
       'a bare literal where a member reference belongs');
   });
 
+  check('a list of members starts as plain members, the way a handler builds one', () => {
+    // Unwrapped at the top only, `[{enumMember}]` never equalled the
+    // `['Red']` a handler produces, and a rule comparing them refused.
+    add('Palette', { valueType: 'Colour', isList: true, initialValue: [{ enumMember: 'Red' }] });
+    eq(foldProjection(model(), [], 'Palette', {}), ['Red'], 'unwrapped inside the list');
+    eq(sandbox.evDeepEqual([{ enumMember: 'Red' }], ['Red']), true, 'and equal to the built one');
+  });
+
   check('a projection nothing moves yet is legal and reads as where it starts', () => {
     add('Untouched', { valueType: 'integer', initialValue: 41, handlers: [] });
     eq(foldProjection(model(), [{ type: 'Nudged', data: {} }], 'Untouched', {}), 41, 'nothing moved it');
@@ -2567,6 +2590,36 @@ check('every predefined model ships advisory-clean', () => {
     eq(result.reads.previousInstructor.instances, [], 'zero instances, not a phantom');
   });
 
+  check('an inline read tagged by an optional binding is advised: absent, it is an error', () => {
+    const { id, model } = openAssignment();
+    // An instructor's mentor, another instructor — a value read off the
+    // optional binding, and the tag of a read.
+    addDefinition('projection-definition', id, 'InstructorMentor', {
+      tags: [{ name: 'instructorId', tagType: 'InstructorId' }],
+      valueType: 'InstructorId', isList: false, initialValue: null, handlers: [],
+    });
+    updateDefinition('entity-definition', id, 'Instructor', {
+      properties: [
+        ...model()['entity-definitions'].Instructor.properties,
+        { name: 'mentorId', projection: 'InstructorMentor' },
+      ],
+    });
+    const body = deepClone(model()['command-definitions'].Assign);
+    body.conditions.push({
+      leftHandSide: { projection: 'InstructedCourses',
+        tags: { instructorId: { alias: 'previousInstructor', property: 'mentorId' } } },
+      predicate: 'isNotEmpty', rejection: 'The previous instructor teaches nothing',
+    });
+    updateDefinition('command-definition', id, 'Assign', body);
+    const advisories = sandbox.modelAdvisories(model()).filter((a) => a.name === 'Assign');
+    const advisory = advisories.find((a) => /may be absent/.test(a.message));
+    eq(!!advisory, true, 'advised ahead of time: ' + JSON.stringify(advisories));
+    eq(/previousInstructor/.test(advisory.message) && /InstructedCourses/.test(advisory.message), true, advisory.message);
+    let message = '';
+    try { evaluateCommand(model(), [], 'Assign', { courseId: 'c1', instructorId: 'i1' }); } catch (error) { message = error.message; }
+    eq(message !== '', true, 'and, absent, the evaluation error it said would come');
+  });
+
   check('the condition over the bound previous instructor still decides', () => {
     const { model } = openAssignment();
     const log = [assigned('c1', 'i1')];
@@ -3149,6 +3202,299 @@ check('every predefined model ships advisory-clean', () => {
     updateDefinition('command-definition', id, 'ChangeCourseCapacity', body);
     found = advised();
     eq(found.some((m) => /with tags that are not named/.test(m)), true, found.join('; '));
+  });
+}
+
+// ---------------------------------------------------------------
+// A defective model evaluates to an error, never to a crash: the
+// scenario runners are called while the page renders, so anything
+// that escapes them as a TypeError takes the page down with it.
+// ---------------------------------------------------------------
+{
+  check('a null entry among an event\'s or a command\'s properties is skipped', () => {
+    const { id, model } = openScripted();
+    const event = model()['event-definitions'].Ticked;
+    updateDefinition('event-definition', id, 'Ticked', { ...event, properties: [null, ...event.properties] });
+    const command = model()['command-definitions'].Tick;
+    updateDefinition('command-definition', id, 'Tick', { ...command, properties: [null, ...command.properties] });
+    eq(evaluateCommand(model(), [], 'Tick', { counterId: 'x1' }).outcome, 'published', 'evaluates');
+    eq(foldProjection(model(), [{ type: 'Ticked', data: { counterId: 'x1' } }], 'CounterTotal', { tags: { counterId: 'x1' } }),
+      1, 'folds');
+    eq(runScenario(model(), {
+      given: [{ event: 'Ticked', data: { counterId: 'x1' } }], command: 'Tick',
+      when: { arguments: { counterId: 'x1' } }, then: null,
+    }).status, 'drifted', 'and a scenario runs');
+  });
+
+  check('a script with no initial state starts from null', () => {
+    const { id, model } = openScripted();
+    addDefinition('projection-definition', id, 'Unstarted', {
+      valueType: 'integer', isList: false, script: {},
+      handlers: [{ event: 'Ticked', code: '(state || 0) + 1' }],
+    });
+    eq(foldProjection(model(), [], 'Unstarted', {}), null, 'nothing folded');
+  });
+
+  check('a script cannot change the events it folds', () => {
+    // The log is shared — by every fold, every read, every repaint — so
+    // an event a script changed would change what the next fold sees.
+    const { id, model } = openScripted();
+    addDefinition('projection-definition', id, 'Tamperer', {
+      valueType: 'integer', isList: false, script: { initialState: 0 },
+      handlers: [{ event: 'Ticked', code: '(event.data.counterId = "forged", state + 1)' }],
+    });
+    const log = [{ type: 'Ticked', data: { counterId: 'x1' } }];
+    let message = '';
+    try { foldProjection(model(), log, 'Tamperer', {}); } catch (error) { message = error.message; }
+    eq(/threw/.test(message), true, message || 'refused');
+    eq(log[0].data.counterId, 'x1', 'the log as it was');
+    eq(foldProjection(model(), log, 'CounterTotal', { tags: { counterId: 'x1' } }), 1, 'and other folds read it so');
+  });
+
+  check('a script that throws something other than an Error is an evaluation error', () => {
+    const { id, model } = openScripted();
+    addDefinition('projection-definition', id, 'Thrower', {
+      valueType: 'integer', isList: false, script: { initialState: 0 },
+      handlers: [{ event: 'Ticked', code: '(() => { throw null; })()' }],
+    });
+    let caught;
+    try { foldProjection(model(), [{ type: 'Ticked', data: { counterId: 'x1' } }], 'Thrower', {}); } catch (error) { caught = error; }
+    eq(caught && caught.constructor.name, 'EvaluationError', 'an EvaluationError');
+    eq(/threw: null/.test(caught.message), true, caught.message);
+  });
+
+  check('anything unforeseen in a scenario run is that scenario\'s error, not the page\'s', () => {
+    const { model } = openScripted();
+    const broken = deepClone(model());
+    // A shape the write path would never let through, standing in for
+    // whatever a defect the point fixes do not foresee looks like.
+    broken['command-definitions'].Tick.boundary = 7;
+    const run = runScenario(broken, { given: [], command: 'Tick', when: { arguments: { counterId: 'x1' } }, then: null });
+    eq(run.status, 'broken', 'broken, not thrown');
+    eq(typeof run.reason, 'string', 'with a reason');
+    broken['projection-definitions'].CounterTotal.handlers = 7;
+    const projected = runProjectionScenario(broken, { given: [], projection: 'CounterTotal', tags: { counterId: { tagValue: 'x1' } }, then: 0 });
+    eq(projected.status, 'broken', 'a projection scenario too');
+  });
+}
+
+// ---------------------------------------------------------------
+// Names are looked up as a model's own, never through Object's
+// prototype: `constructor`, `toString` and `hasOwnProperty` are names
+// an author may write, and what an empty object inherits under them
+// is not a value anyone supplied.
+// ---------------------------------------------------------------
+{
+  check('a required argument named like a prototype key is still required', () => {
+    const { id, model } = openScripted();
+    addTaggedEvent(id, 'Built', {
+      properties: [{ name: 'constructor', propertyType: 'string', isOptional: false, isList: false }],
+    });
+    addDefinition('command-definition', id, 'Build', {
+      properties: [{ name: 'constructor', propertyType: 'string', isOptional: false, isList: false }],
+      boundary: [], conditions: [],
+      publishes: [{ name: 'Built', parameters: { constructor: { parameterName: 'constructor' } } }],
+    });
+    let message = '';
+    try { evaluateCommand(model(), [], 'Build', {}); } catch (error) { message = error.message; }
+    eq(message, '"Build" needs a value for "constructor".', 'not supplied by Object');
+    eq(evaluateCommand(model(), [], 'Build', { constructor: 'Ada' }).events[0].data, { constructor: 'Ada' },
+      'and published when it is supplied');
+  });
+
+  check('a command or a Given event named like a prototype key is not in the model', () => {
+    const { model } = openScripted();
+    let message = '';
+    try { evaluateCommand(model(), [], 'hasOwnProperty', {}); } catch (error) { message = error.message; }
+    eq(message, 'This model has no command "hasOwnProperty".', 'no such command');
+    const run = runScenario(model(), {
+      given: [{ event: 'toString', data: {} }], command: 'Tick',
+      when: { arguments: { counterId: 'x1' } }, then: null,
+    });
+    eq(run.status, 'broken', 'a Given naming no event is broken, not drifted');
+  });
+
+  check('an event without a field reads nothing there, whatever the field is called', () => {
+    const { id, model } = openScripted();
+    addDefinition('projection-definition', id, 'LastMaker', {
+      valueType: 'string', isList: false, initialValue: null,
+      handlers: [{ event: 'Ticked', operation: 'set', value: { eventProperty: 'constructor' } }],
+    });
+    eq(typeof foldProjection(model(), [{ type: 'Ticked', data: { counterId: 'x1' } }], 'LastMaker', {}), 'undefined',
+      'what any absent field reads as, not Object');
+  });
+}
+
+// ---------------------------------------------------------------
+// The log grows with every edit and lives in the browser's storage,
+// whose quota the site shares. Past a size it compacts itself — the
+// history up to the floor folded into what it built — and a full
+// storage makes room the same way before it refuses anything.
+// ---------------------------------------------------------------
+{
+  const quotaAbove = (chars) => {
+    const setItem = sandbox.localStorage.setItem;
+    sandbox.localStorage.setItem = (key, value) => {
+      if (String(value).length <= chars) return setItem(key, value);
+      const error = new Error('quota'); error.name = 'QuotaExceededError'; throw error;
+    };
+    return () => { sandbox.localStorage.setItem = setItem; };
+  };
+  const definitionCount = (model) => Object.values(sandbox.DEF_COLLECTIONS)
+    .reduce((n, collection) => n + Object.keys(model[collection]).length, 0);
+
+  check('past the threshold the log compacts itself, and every model stays as it is', () => {
+    const { id } = open_(ENTITIES);
+    const doomed = createDcbModel('Doomed');
+    sandbox.deleteDcbModel(doomed);
+    renameDefinition('event-definition', id, 'CourseDefined', 'CourseCreated');
+    const before = JSON.stringify(sandbox.projectState());
+    const length = sandbox.loadEvents().length;
+    sandbox.setLogCompactionThreshold(1);
+    try {
+      renameDefinition('event-definition', id, 'CourseCreated', 'CourseDefined');
+    } finally {
+      sandbox.setLogCompactionThreshold(1000 * 1000);
+    }
+    const model = sandbox.projectState()[id];
+    eq('CourseDefined' in model['event-definitions'], true, 'the edit landed');
+    eq(JSON.stringify(sandbox.projectState()), before.split('CourseCreated').join('CourseDefined'), 'the same models');
+    eq(sandbox.loadEvents().length, 1 + definitionCount(model), 'a creation and one add per definition');
+    eq(sandbox.loadEvents().length < length, true, 'shorter than the history it replaced');
+    eq(sandbox.loadEvents().map((e) => e.sequence), sandbox.loadEvents().map((_, i) => i), 'numbered afresh');
+  });
+
+  check('compaction keeps the events from the floor on, as they were, and says how far they moved', () => {
+    const { id } = open_(ENTITIES);
+    renameDefinition('event-definition', id, 'CourseDefined', 'CourseCreated');
+    const floor = sandbox.loadEvents().length;
+    renameDefinition('event-definition', id, 'CourseCreated', 'CourseOpened');
+    const kept = sandbox.loadEvents().slice(floor);
+    let told = null;
+    sandbox.onCompact((compacted) => { told = compacted; });
+    sandbox.setCompactionFloor(() => floor);
+    sandbox.setLogCompactionThreshold(1);
+    try {
+      renameDefinition('event-definition', id, 'CourseOpened', 'CourseDefined');
+    } finally {
+      sandbox.setLogCompactionThreshold(1000 * 1000);
+      sandbox.setCompactionFloor((events) => events.length);
+    }
+    const events = sandbox.loadEvents();
+    eq(told !== null && told.dropped, false, 'told, and nothing dropped');
+    const moved = events.slice(floor + told.shift, floor + told.shift + kept.length);
+    eq(moved.map((e) => [e.type, e.data]), kept.map((e) => [e.type, e.data]), 'the kept events, moved by shift');
+    eq('CourseDefined' in sandbox.projectState()[id]['event-definitions'], true, 'and the state they build');
+  });
+
+  check('a full storage compacts and tries again before refusing', () => {
+    const { id, model } = open_(ENTITIES);
+    // History worth folding: four renames that end where they started.
+    const names = ['CourseDefined', 'CourseCreated', 'CourseOpened', 'CourseStarted', 'CourseDefined'];
+    names.slice(1).forEach((name, i) => renameDefinition('event-definition', id, names[i], name));
+    // Room for the log as it is, not for one more event on top of it.
+    const size = (sandbox.localStorage.getItem(sandbox.EVENT_LOG_KEY) || '').length;
+    const restore = quotaAbove(size);
+    try {
+      renameDefinition('event-definition', id, 'CourseDefined', 'CourseCreated');
+    } finally {
+      restore();
+    }
+    eq('CourseCreated' in model()['event-definitions'], true, 'the edit landed, in the room compaction made');
+  });
+
+  check('a change that does not fit even compacted is refused, and nothing is written', () => {
+    const { id, model } = open_(ENTITIES);
+    const length = sandbox.loadEvents().length;
+    const restore = quotaAbove(0);
+    let caught;
+    try { renameDefinition('event-definition', id, 'CourseDefined', 'CourseCreated'); } catch (error) { caught = error; } finally { restore(); }
+    eq(caught && caught.name, 'StorageFullError', 'a domain error of its own');
+    eq(caught instanceof sandbox.DomainError, true, 'shown like any refusal');
+    eq(sandbox.loadEvents().length, length, 'nothing written');
+    eq('CourseDefined' in model()['event-definitions'], true, 'nothing changed');
+  });
+}
+
+// ---------------------------------------------------------------
+// A fan-out over a long log: each instance is a read, and a read must
+// not cost a pass over every event's tags. The sandbox evaluates on
+// every repaint, scrubbing included.
+// ---------------------------------------------------------------
+{
+  const pricing = PREDEFINED_INDEX('pricing-simple');
+
+  check('two hundred fanned reads over five thousand events do not rescan the log per read', () => {
+    const model = build(pricing);
+    const log = [];
+    for (let i = 0; i < 200; i++) log.push({ type: 'ProductDefined', data: { productId: 'p' + i, price: 1 } });
+    for (let i = 0; i < 4800; i++) {
+      log.push({ type: 'ProductPriceChanged', data: { productId: 'p' + (i % 200), newPrice: 2 + (i % 7) } });
+    }
+    const items = [];
+    for (let i = 0; i < 200; i++) items.push({ productId: 'p' + i, price: 2 + ((4600 + i) % 7) });
+    const started = Date.now();
+    const result = evaluateCommand(model, log, 'OrderProducts', { orderId: 'o1', items });
+    const took = Date.now() - started;
+    eq(result.outcome, 'published', 'every price read right');
+    // Seconds before the tags were cached and indexed; a bound loose
+    // enough for a slow CI machine.
+    eq(took < 1500, true, `took ${took} ms`);
+  });
+
+  check('a log appended to in place is read whole on the next fold', () => {
+    const model = build(pricing);
+    const log = [{ type: 'ProductDefined', data: { productId: 'p1', price: 1 } }];
+    eq(foldProjection(model, log, 'ProductCurrentPrice', { tags: { productId: 'p1' } }), 1, 'before');
+    log.push({ type: 'ProductPriceChanged', data: { productId: 'p1', newPrice: 3 } });
+    eq(foldProjection(model, log, 'ProductCurrentPrice', { tags: { productId: 'p1' } }), 3, 'after');
+  });
+}
+
+// ---------------------------------------------------------------
+// Small semantic edges: values that look like syntax somewhere else.
+// ---------------------------------------------------------------
+{
+  check('a long digit run steps by exactly one', () => {
+    eq(evSuccessor('inv-12345678901234567891'), 'inv-12345678901234567892', 'past 2^53');
+    eq(evSuccessor('inv-99999999999999999999'), 'inv-100000000000000000000', 'carried');
+    eq(evSuccessor('inv-009'), 'inv-010', 'width kept');
+  });
+
+  check('a tag value with a dollar sign is that value, not a replacement pattern', () => {
+    eq(sandbox.renderTag({ name: 'CourseId', tagSchema: '{type}:{value}' }, "a$'"), "CourseId:a$'", '$\' kept');
+    eq(sandbox.renderTag({ name: 'CourseId', tagSchema: '{type}:{value}' }, 'a$&b'), 'CourseId:a$&b', '$& kept');
+    const model = build(ENTITIES);
+    const log = [];
+    drive(model, log, 'DefineCourse', { courseId: 'a', capacity: 1 });
+    eq(foldEntityProperty(model, log, 'Course', 'status', "a$'"), 'NonExistent', 'course a$\' is not course a');
+  });
+}
+
+// ---------------------------------------------------------------
+// Binding a projection that takes no tags is how a command with no
+// conditions is strictly serialised (dcb-model.schema.json says so):
+// its read is the append condition, and nothing else need consult it.
+// ---------------------------------------------------------------
+{
+  check('a binding to a parameterless projection is kept, as the command\'s serialisation', () => {
+    const { id, model } = openBlank('Serialised');
+    addTaggedEvent(id, 'Ticked', { properties: [] });
+    addDefinition('projection-definition', id, 'TickCount', {
+      tags: [], valueType: 'integer', isList: false, initialValue: 0,
+      handlers: [{ event: 'Ticked', operation: 'increment', value: 1 }],
+    });
+    addDefinition('command-definition', id, 'Tick', {
+      properties: [], boundary: [{ alias: 'ticks', projection: 'TickCount' }], conditions: [],
+      publishes: [{ name: 'Ticked', parameters: {} }],
+    });
+    const body = model()['command-definitions'].Tick;
+    eq([...sandbox.bindingReferences(model(), body).get('ticks')], ['serialisation'], 'consulted as the serialisation');
+    updateDefinition('command-definition', id, 'Tick', { ...body, properties: [] });
+    eq(model()['command-definitions'].Tick.boundary.map((b) => b.alias), ['ticks'], 'not pruned by the next edit');
+    eq(sandbox.modelAdvisories(model()).filter((a) => /nothing consults/.test(a.message)), [], 'and not advised against');
+    eq(sandbox.deriveDcb(model(), model()['command-definitions'].Tick).items.some((item) => item.alias === 'ticks'), true,
+      'the read is in the append condition');
   });
 }
 

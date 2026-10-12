@@ -248,9 +248,8 @@ function loadEvents() {
 // redo in the page, the corrupt-log move-aside below — so a cache can
 // ask "has anything changed?" without parsing the log to find out.
 // A writer that skips its bump is the one way the caches below go
-// stale; nothing re-reads storage to double-check, which also means a
-// second tab's writes are unseen until this one writes (the two were
-// never coordinated before either — each replayed its own reads).
+// stale; nothing re-reads storage to double-check. Another tab's write
+// is a writer too: the page bumps on its `storage` event.
 let logRevision = 0;
 function bumpLogRevision() { logRevision += 1; }
 function logRevisionNow() { return logRevision; }
@@ -265,17 +264,142 @@ const appendListeners = [];
 function onAppend(listener) { appendListeners.push(listener); }
 
 function appendEvents(newEvents) {
-  const log = loadEvents();
-  const startSeq = log.length;
-  const stamped = newEvents.map((e, i) => ({
-    sequence: startSeq + i,
-    timestamp: new Date().toISOString(),
-    type: e.type,
-    data: e.data,
-  }));
-  localStorage.setItem(EVENT_LOG_KEY, JSON.stringify([...log, ...stamped]));
+  let log = loadEvents();
+  const append = () => {
+    const startSeq = log.length;
+    const stamped = stampEvents(newEvents, startSeq);
+    const size = writeEventLog([...log, ...stamped]);
+    return { startSeq, stamped, size };
+  };
+  let written;
+  try {
+    written = append();
+  } catch (error) {
+    if (!(error instanceof StorageFullError)) throw error;
+    // Full: make room and try again — first by folding what no undo
+    // step reaches, then, if that is not enough, everything. Only a
+    // change that does not fit even then is refused.
+    for (const keepFrom of [compactionFloor(log), log.length]) {
+      const compacted = compactedLog(log, keepFrom);
+      if (!compacted) continue;
+      try {
+        log = compacted.events;
+        written = append();
+      } catch (retry) {
+        if (!(retry instanceof StorageFullError)) throw retry;
+        continue;
+      }
+      notifyCompacted(compacted);
+      break;
+    }
+    if (!written) throw error;
+  }
+  for (const listener of appendListeners) listener(written.startSeq, written.stamped);
+  if (written.size > logCompactAt) compactLog();
+}
+
+function stampEvents(events, from) {
+  const timestamp = new Date().toISOString();
+  return events.map((e, i) => ({ sequence: from + i, timestamp, type: e.type, data: e.data }));
+}
+
+// The one way the whole log is written — an append, undo and redo, a
+// compaction — so the revision is bumped by every writer, and a full
+// storage is reported the same way to each. The quota is the browser's
+// for the whole site (on dcb.events, shared with the website), and the
+// log is rewritten whole on every edit: past it, every edit would fail
+// with nothing said but the browser's error name.
+// Returns the length written, in characters.
+function writeEventLog(events) {
+  const text = JSON.stringify(events);
+  try {
+    localStorage.setItem(EVENT_LOG_KEY, text);
+  } catch (error) {
+    if (error && (error.name === 'QuotaExceededError' || error.name === 'NS_ERROR_DOM_QUOTA_REACHED')) {
+      throw new StorageFullError();
+    }
+    throw error;
+  }
   bumpLogRevision();
-  for (const listener of appendListeners) listener(startSeq, stamped);
+  return text.length;
+}
+
+// ---------- compaction ----------
+//
+// The log keeps every edit ever made, and is rewritten whole on every
+// append, so left alone it grows into the quota — a few megabytes for
+// the whole site, on dcb.events shared with the website. Past a size it
+// is compacted, unasked: the events up to a point are replaced by the
+// shortest history that builds the same state — per model, its
+// creation and one add per definition, in order; deleted models leave
+// nothing — and the events after it are kept as they were, renumbered.
+// Nobody is asked because nothing they can see changes: the point is
+// the page's oldest undo step (`setCompactionFloor`), so every step it
+// can still undo survives, moved by the same distance (`onCompact`).
+// Only when storage is full and folding that much is not enough does
+// compaction take everything, undo history included — and says so.
+
+// A megabyte of log: far past any model's own size, and a fifth of the
+// smallest quota a browser gives a site.
+let logCompactAt = 1000 * 1000;
+function setLogCompactionThreshold(chars) { logCompactAt = chars; }
+
+// The first position compaction must keep as it is. Without a page
+// keeping undo marks, nothing needs keeping.
+let compactionFloor = (events) => events.length;
+function setCompactionFloor(floor) { compactionFloor = floor; }
+
+// Told after a compaction: `{ shift, events, dropped }` — an event kept
+// at position `p` is now at `p + shift` of `events`; `dropped` when the
+// fold had to take everything, so no earlier position means anything.
+const compactListeners = [];
+function onCompact(listener) { compactListeners.push(listener); }
+
+function projectEvents(events) {
+  const models = {};
+  for (const event of events) apply(models, event);
+  return models;
+}
+
+// `events` with everything before `keepFrom` folded, and the distance
+// the rest moved — or null when folding would not shorten anything (it
+// already is the shortest history of that state).
+function compactedLog(events, keepFrom) {
+  const head = [];
+  for (const model of Object.values(projectEvents(events.slice(0, keepFrom)))) {
+    head.push({ type: 'dcb-model-created', data: { 'dcb-model-id': model.id, name: model.name } });
+    for (const kind of DEF_KINDS) {
+      for (const [name, body] of Object.entries(model[DEF_COLLECTIONS[kind]])) {
+        head.push({ type: `${kind}-added`, data: { 'dcb-model-id': model.id, name, body } });
+      }
+    }
+  }
+  if (head.length >= keepFrom) return null;
+  const tail = events.slice(keepFrom).map((event, i) => ({ ...event, sequence: head.length + i }));
+  return {
+    events: [...stampEvents(head, 0), ...tail],
+    shift: head.length - keepFrom,
+    dropped: keepFrom >= events.length,
+  };
+}
+
+function notifyCompacted(compacted) {
+  for (const listener of compactListeners) listener(compacted);
+}
+
+// Compacts the stored log up to the floor, when that shortens it. A
+// compaction that does not fit is no failure — the log as it was is
+// still there, and the next append tries again.
+function compactLog() {
+  const compacted = compactedLog(loadEvents(), compactionFloor(loadEvents()));
+  if (!compacted) return;
+  try {
+    writeEventLog(compacted.events);
+  } catch (error) {
+    if (error instanceof StorageFullError) return;
+    throw error;
+  }
+  notifyCompacted(compacted);
 }
 
 function generateId() {
@@ -291,9 +415,18 @@ function generateId() {
 // Mirrors `dcb-model-overview` in the ESDM model.
 // ============================================================
 
+// A collection is keyed by names an author writes, and `constructor`
+// or `toString` is one an author may write: on a plain object every
+// lookup of a name the model does not define would find what Object
+// inherits under it instead. The projection's collections have no
+// prototype, so a missing name reads as missing everywhere.
+function emptyCollection() {
+  return Object.create(null);
+}
+
 function emptyModel(id, name) {
   const model = { id, name };
-  for (const kind of DEF_KINDS) model[DEF_COLLECTIONS[kind]] = {};
+  for (const kind of DEF_KINDS) model[DEF_COLLECTIONS[kind]] = emptyCollection();
   return model;
 }
 
@@ -311,6 +444,22 @@ function projectState() {
   // bumps the revision while we are standing here.
   projectionCache = { revision: logRevision, models };
   return models;
+}
+
+// A `null` entry in a body's list says nothing, and the structural
+// gate lets it through. Every reader would otherwise have to step
+// over it — the ones that did not crashed the fold and the render — so
+// it is dropped once, here, for every writer and every log already
+// stored. The event itself keeps what was written.
+function withoutNullEntries(body) {
+  if (body === null || typeof body !== 'object') return body;
+  let out = body;
+  for (const field of STORABLE_LIST_FIELDS) {
+    if (!Array.isArray(body[field]) || !body[field].includes(null)) continue;
+    if (out === body) out = { ...body };
+    out[field] = body[field].filter((entry) => entry !== null);
+  }
+  return out;
 }
 
 function apply(models, event) {
@@ -337,9 +486,9 @@ function apply(models, event) {
 
   for (const kind of DEF_KINDS) {
     const coll = model[DEF_COLLECTIONS[kind]];
-    if (type === `${kind}-added`) { coll[data.name] = data.body; return; }
+    if (type === `${kind}-added`) { coll[data.name] = withoutNullEntries(data.body); return; }
     if (type === `${kind}-updated`) {
-      if (coll[data.name] !== undefined) coll[data.name] = data.body;
+      if (coll[data.name] !== undefined) coll[data.name] = withoutNullEntries(data.body);
       return;
     }
     if (type === `${kind}-renamed`) {
@@ -352,7 +501,7 @@ function apply(models, event) {
     }
     if (type === `${kind}-removed`) { delete coll[data.name]; return; }
     if (type === `${kind}-reordered`) {
-      const next = {};
+      const next = emptyCollection();
       for (const key of data.order) if (coll[key] !== undefined) next[key] = coll[key];
       model[DEF_COLLECTIONS[kind]] = next;
       return;
@@ -435,11 +584,13 @@ function identifierTypeOf(model, typeName) {
 
 // Renders one identifier's value into its tag, through that
 // identifier's own `tagSchema` — `{type}` and `{value}`, in whichever
-// order the template states them.
+// order the template states them. Replaced through functions: a string
+// replacement reads `$'` or `$&` in the value as a pattern, and course
+// `a$'` would have been tagged — and read — as course `a`.
 function renderTag(identifierType, valueText) {
   return identifierType.tagSchema
-    .replace('{type}', identifierType.name)
-    .replace('{value}', valueText);
+    .replace('{type}', () => identifierType.name)
+    .replace('{value}', () => valueText);
 }
 
 // The fields of a composite value type, or null for anything else.
@@ -2277,12 +2428,19 @@ function coverageIssues(model, body) {
 // the invariant that every binding is consulted by something, which
 // reference counting gives exactly.
 //
-// The five reasons are the five places an alias can be named. Four are
-// operands (`forEachCommandOperand` walks the same set); the fifth is
-// write coverage, which can demand a binding no operand mentions — but
-// only for a *derived* tag value, never for one the caller asserted
-// (see `emittedTagRequirements`).
-const REFERENCE_REASONS = ['rule', 'guard', 'emission', 'coverage', 'chain'];
+// The first five reasons are the five places an alias can be named.
+// Four are operands (`forEachCommandOperand` walks the same set); the
+// fifth is write coverage, which can demand a binding no operand
+// mentions — but only for a *derived* tag value, never for one the
+// caller asserted (see `emittedTagRequirements`).
+//
+// The sixth names no alias at all: a binding to a projection that
+// takes no tags is the read of every event that projection folds, so
+// it serialises the command against all of them — the way a command
+// with no conditions is made strictly serial, which the schema
+// promises. Nothing else need consult it for it to matter, so it is
+// never pruned as unreferenced.
+const REFERENCE_REASONS = ['rule', 'guard', 'emission', 'coverage', 'chain', 'serialisation'];
 
 function bindingReferences(model, body) {
   const found = new Map();
@@ -2327,6 +2485,11 @@ function bindingReferences(model, body) {
     for (const operand of Object.values(binding.arguments || {})) {
       noteOperand(operand, 'chain');
     }
+  }
+  for (const binding of body.boundary || []) {
+    if (!binding || binding.projection === undefined) continue;
+    const projection = (model['projection-definitions'] || {})[binding.projection];
+    if (projection && !projectionTagParams(projection).length) note(binding.alias, 'serialisation');
   }
   // Coverage names no alias — it names the instance an emitted tag
   // writes, and is satisfied by whichever binding consults it. So the
@@ -2418,6 +2581,16 @@ class DomainError extends Error {
   constructor(message) {
     super(message);
     this.name = 'DomainError';
+  }
+}
+
+// A refusal like any other, of its own kind so the append can tell a
+// full storage from a broken one and make room before giving up.
+class StorageFullError extends DomainError {
+  constructor() {
+    super('The browser\'s storage for this site is full, so that change was not saved — '
+      + 'it does not fit even with the history compacted. Removing a model you no longer need makes room.');
+    this.name = 'StorageFullError';
   }
 }
 
@@ -3997,6 +4170,28 @@ function validateCommandBody(model, body) {
     }
   }
 
+  // The same hazard through a binding marked "may be absent". Absent,
+  // it binds nothing, and a rule over it holds vacuously — but a value
+  // read off it is null, and a read tagged by that null has no tag to
+  // read by: an evaluation error, not a vacuous truth (AGENTS.md, on
+  // null). The flag reads as "this is handled", so it is said here.
+  const mayBeAbsent = new Set(boundary.filter((b) => b && b.isOptional && b.alias).map((b) => b.alias));
+  if (mayBeAbsent.size) {
+    let found = null;
+    forEachCommandOperand(body, (operand, meta) => {
+      if (found || !meta.tag) return;
+      const alias = operandAliases(operand).find((a) => mayBeAbsent.has(a));
+      if (alias) found = { alias, where: meta.where };
+    });
+    if (found) {
+      throw new DomainError(
+        `The read at ${found.where} is tagged by "${found.alias}", a binding that may be absent — `
+        + `when it binds nothing, that tag is null and evaluation errors. Make the binding required, `
+        + `or tag the read by a value that is always set.`
+      );
+    }
+  }
+
   // The derived cousin of the same hazard: an identifier read off
   // another binding's projected property can be unset too — a
   // projection that starts at null reads null until something sets it,
@@ -5156,8 +5351,25 @@ function replaceDefinitions(modelId, next) {
       summary.reordered.push({ kind });
     }
   }
+  // A caller that may not remove — an agent that did not say it means
+  // to — is refused whole, told what the text left out.
+  if (next.refuseRemovals && summary.removed.length) {
+    const error = new DomainError(`This would remove ${removalWords(summary.removed)}, which the text leaves out `
+      + '— nothing was applied.');
+    error.removed = summary.removed;
+    throw error;
+  }
   if (events.length) appendEvents(events);
   return summary;
+}
+
+// `event A, command B and 3 scenarios`, for a refusal to say what goes.
+function removalWords(removed) {
+  const named = removed.filter((item) => !isIdKeyed(item.kind))
+    .map((item) => `${item.kind.replace(/-definition$/, '').replace(/-/g, ' ')} ${item.name}`);
+  const scenarios = removed.length - named.length;
+  const parts = [...named, ...(scenarios ? [`${scenarios} scenario${scenarios === 1 ? '' : 's'}`] : [])];
+  return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0];
 }
 
 // ============================================================

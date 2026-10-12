@@ -353,7 +353,7 @@
   /* A read in place: the projection's name, muted brackets, and each
      value a reference chip of its own. */
   .sentence .op.read { background: none; border: none; padding: 0; }
-  .op.read .read-name { color: var(--projection); font-weight: 600; }
+  .op.read .read-name { color: var(--projection-text); font-weight: 600; }
   .op.read .read-punct { color: var(--muted); }
   .read-alias { font-family: var(--mono); font-size: 12px; width: 150px; }
   .read-alias.invalid { border-color: var(--danger); }
@@ -373,8 +373,8 @@
   .adder { display: flex; gap: 9px; align-items: center; margin-top: 7px; flex-wrap: wrap; }
   .dcb { font-family: var(--mono); font-size: 11.5px; line-height: 1.75; }
   .dcb .k { color: var(--muted); }
-  .dcb .t { color: var(--entity); }
-  .dcb .y { color: var(--event); }
+  .dcb .t { color: var(--entity-text); }
+  .dcb .y { color: var(--event-text); }
   .dcb .al { color: var(--command); }
   /* The query glyph and its popover: a mark where a line used to be.
      Hover and focus peek; `.on` is the pinned state. */
@@ -498,7 +498,7 @@
   }
   .pdetail > .tabs { margin: 4px 0 8px; gap: 0; }
   .pdetail > .tabs .tab { padding: 6px 2px; margin-right: 20px; font-size: 12px; font-weight: 600; }
-  .pdetail > .tabs .tab.on { color: var(--entity); border-bottom-color: var(--entity); }
+  .pdetail > .tabs .tab.on { color: var(--entity-text); border-bottom-color: var(--entity); }
   /* The projection editor: sections on the left, what the definition
      works out to on the right — wrapping under them where the two do
      not fit side by side (a modal, a phone). */
@@ -586,7 +586,7 @@
     border-radius: var(--radius); background: var(--entity-soft);
     padding: 11px 14px 12px; margin-bottom: 22px;
   }
-  .ident > h4 { color: var(--entity); }
+  .ident > h4 { color: var(--entity-text); }
   .ident .irow {
     display: flex; align-items: center; flex-wrap: wrap; gap: 7px;
     padding: 5px 0; font-size: 12px;
@@ -623,7 +623,7 @@
   .lctrack .hop { position: relative; display: inline-flex; align-items: center; }
   .lctrack .hop .ev {
     position: absolute; left: 50%; bottom: calc(100% + 1px); transform: translateX(-50%);
-    font-family: var(--mono); font-size: 9.5px; color: var(--event); white-space: nowrap;
+    font-family: var(--mono); font-size: 9.5px; color: var(--event-text); white-space: nowrap;
   }
   .ident .irow.lcrow { padding-top: 12px; }
   .lctrack .wire { display: inline-flex; align-items: center; }
@@ -696,7 +696,7 @@
   /* A kind's fallback mark is a text glyph, so the colour is ours to
      give: the kind's, where the slot is not kind-coloured already. */
   .fallback-command { color: var(--command); }
-  .fallback-event { color: var(--event); }
+  .fallback-event { color: var(--event-text); }
   .chip .fallback-command, .chip .fallback-event { color: inherit; }
   .icon-btn {
     font: inherit; font-size: 20px; line-height: 1; cursor: pointer;
@@ -1003,7 +1003,7 @@
     display: inline-flex; align-items: center; justify-content: center;
     font-size: 11px; font-weight: 700; border: 1px solid;
   }
-  .sc-mark.s-current { color: var(--entity); border-color: var(--entity); background: var(--entity-soft); }
+  .sc-mark.s-current { color: var(--entity-text); border-color: var(--entity); background: var(--entity-soft); }
   .sc-mark.s-drifted { color: var(--danger); border-color: var(--danger); background: var(--danger-soft); }
   /* A scenario that no longer agrees with the model is the thing on
      this tab that needs doing, so the whole card says so, not only its
@@ -1043,13 +1043,13 @@
 
   .sc-body { margin-top: 9px; padding-top: 9px; border-top: 1px dashed var(--border); }
   .sc-line { font-family: var(--mono); font-size: 11.5px; line-height: 1.7; }
-  .sc-line .y { color: var(--event); }
+  .sc-line .y { color: var(--event-text); }
   .sc-line .c { color: var(--command); }
   .sc-line .k { color: var(--muted); }
   .sc-body .card { font-family: var(--mono); font-size: 11.5px; line-height: 1.7; margin-top: 4px; }
   .sc-body .card .k { color: var(--muted); }
-  .sc-body .card .t { color: var(--entity); }
-  .sc-body .card .y { color: var(--event); }
+  .sc-body .card .t { color: var(--entity-text); }
+  .sc-body .card .y { color: var(--event-text); }
 
   /* Two outcomes side by side, because the question is which of them
      you meant — not which of them is correct. */
@@ -1195,7 +1195,7 @@
     display: inline-flex; align-items: center; justify-content: center;
     font-size: 11px; line-height: 1; color: var(--text); border: 1px solid var(--event);
   }
-  .smark.fallback-event { color: var(--event); }
+  .smark.fallback-event { color: var(--event-text); }
   .smark.current { border-color: var(--accent); }
   .slanes-in.compact .smark.current { border-width: 2px; }
   /* In one lane, a watch's tags have no bold label to show they are
@@ -1246,8 +1246,8 @@
     background: none; border: none; cursor: pointer; padding: 0 5px 0 0;
     color: var(--muted); font-size: 12px;
   }
-  .pin:hover { color: var(--event); }
-  .pin.on { color: var(--event); }
+  .pin:hover { color: var(--event-text); }
+  .pin.on { color: var(--event-text); }
 
   /* The two overview pages read across every command at once rather
      than down one of them, so they earn more width than an ordinary
@@ -1401,10 +1401,10 @@
      fall short of legible, so light mode takes the darker shade the
      chips use, and dark mode the token, which is already light. */
   .em-card.read .title { color: #15803d; }
-  body.f-dark .em-card.read .title { color: var(--entity); }
+  body.f-dark .em-card.read .title { color: var(--entity-text); }
   .em-card.event { background: var(--surface); border-color: var(--event); }
   .em-card.event .title { color: #c2410c; }
-  body.f-dark .em-card.event .title { color: var(--event); }
+  body.f-dark .em-card.event .title { color: var(--event-text); }
   .em-card.event .line { font-family: var(--mono); font-size: 11px; }
 
   /* ---------- lifecycles ----------
@@ -1419,7 +1419,7 @@
     border: 0; background: none; padding: 0; font: inherit;
     font-size: 15px; font-weight: 600; color: inherit; cursor: pointer;
   }
-  .lc-cluster .lc-ename:hover { color: var(--entity); }
+  .lc-cluster .lc-ename:hover { color: var(--entity-text); }
   .lc-scroll { overflow-x: auto; }
   .lc-band { position: relative; }
   .lc-wires, .lc-wires svg { position: absolute; inset: 0; width: 100%; height: 100%; }
@@ -1460,7 +1460,7 @@
   }
   .lc-loop {
     position: absolute; transform: translateX(-50%);
-    font-size: 10px; font-family: var(--mono); color: var(--event); white-space: nowrap;
+    font-size: 10px; font-family: var(--mono); color: var(--event-text); white-space: nowrap;
   }
   .lc-dot {
     display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 50%;
@@ -1491,7 +1491,7 @@
     color: var(--command); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .lc-prow .cmd:hover { text-decoration: underline; }
-  .lc-prow .to { flex: none; color: var(--event); font-weight: 600; }
+  .lc-prow .to { flex: none; color: var(--event-text); font-weight: 600; }
   .lc-none { font-size: 12px; color: var(--muted); font-style: italic; white-space: nowrap; }
   .lc-warn { font-size: 10.5px; font-family: inherit; color: var(--rule); white-space: nowrap; }
 
@@ -1559,7 +1559,7 @@
   }
   .code-strip .grow { flex: 1; }
   .code-strip .code-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
-  .code-strip.dirty { color: var(--event); background: var(--event-soft); }
+  .code-strip.dirty { color: var(--event-text); background: var(--event-soft); }
   .code-strip.dirty .code-dot { background: var(--event); }
   .code-strip.bad { color: var(--danger); background: var(--danger-soft); }
   .code-strip.bad .code-dot { background: var(--danger); }
@@ -1620,7 +1620,7 @@
 <script src="shared.js"></script>
 <script src="webmcp-schemas.js"></script>
 <script src="webmcp.js"></script>
-<script>
+<script data-page>
 // ============================================================
 // A · Slices
 //
@@ -1860,7 +1860,7 @@ function modelsModal() {
     h('header', {},
       h('h2', {}, 'DCB Playground'),
       h('span', { class: 'grow' }),
-      activeId ? h('button', { class: 'btn ghost', onclick: close, title: 'Close' }, '×') : null),
+      activeId ? h('button', { class: 'btn ghost', onclick: close, title: 'Close', 'aria-label': 'Close' }, '×') : null),
     h('div', { class: 'muted small' }, 'Pick one of your models or start a new one. ',
       h('a', { href: '#', onclick: (e) => { e.preventDefault(); openHelp(); } }, 'What is this?')),
     saved.length ? h('div', { class: 'setting' },
@@ -1974,12 +1974,12 @@ function surfaceToggle(model) {
     h('button', {
       type: 'button', class: state.code ? '' : 'on', 'aria-pressed': state.code ? 'false' : 'true',
       title: 'The model as pages', 'aria-label': 'Visual', onclick: leaveCode,
-    }, h('span', { class: 'surface-icon', html: VISUAL_ICON_SVG }), h('span', { class: 'label' }, 'Visual')),
+    }, h('span', { class: 'surface-icon' }, svg(VISUAL_ICON_SVG)), h('span', { class: 'label' }, 'Visual')),
     h('button', {
       type: 'button', class: state.code ? 'on' : '', 'aria-pressed': state.code ? 'true' : 'false',
       title: waiting ? 'The model as code — edited, not applied' : 'The model as code',
       'aria-label': 'Code', onclick: enterCode,
-    }, h('span', { class: 'surface-icon', html: CODE_ICON_SVG }), h('span', { class: 'label' }, 'Code'),
+    }, h('span', { class: 'surface-icon' }, svg(CODE_ICON_SVG)), h('span', { class: 'label' }, 'Code'),
     waiting ? h('span', { class: 'surface-dot' }) : null));
 }
 
@@ -2006,7 +2006,7 @@ function themeButton() {
   const label = isDark() ? 'Switch to light mode' : 'Switch to dark mode';
   return h('button', {
     class: 'icon-btn', type: 'button', title: label, 'aria-label': label, onclick: toggleTheme,
-  }, h('span', { html: isDark() ? SUN_ICON_SVG : MOON_ICON_SVG }));
+  }, h('span', {}, svg(isDark() ? SUN_ICON_SVG : MOON_ICON_SVG)));
 }
 
 function settingsButton() {
@@ -2014,7 +2014,7 @@ function settingsButton() {
     class: 'icon-btn', type: 'button', title: 'Settings — how this interface behaves',
     'aria-label': 'Settings',
     onclick: () => { state.settings = true; render(); },
-  }, h('span', { html: SETTINGS_ICON_SVG }));
+  }, h('span', {}, svg(SETTINGS_ICON_SVG)));
 }
 
 // On a phone the bar has room for what is used while modelling — the
@@ -2029,13 +2029,13 @@ function moreMenu(model) {
   const item = (icon, label, go) => h('button', {
     class: 'more-item', type: 'button', role: 'menuitem',
     onclick: () => { close(); go(); render(); },
-  }, h('span', { class: 'more-icon', html: icon }), label);
+  }, h('span', { class: 'more-icon' }, svg(icon)), label);
   return h('span', { class: 'more' + (open ? ' on' : '') },
     h('button', {
       class: 'icon-btn more-btn', type: 'button', title: 'More', 'aria-label': 'More',
       'aria-haspopup': 'menu', 'aria-expanded': open ? 'true' : 'false',
       onclick: () => { closeForms(); state.moreOpen = !open; render(); },
-    }, h('span', { html: MORE_ICON_SVG })),
+    }, h('span', {}, svg(MORE_ICON_SVG))),
     open ? [
       h('span', { class: 'more-catcher', onclick: () => { close(); render(); } }),
       h('span', { class: 'more-panel', role: 'menu' },
@@ -2052,7 +2052,7 @@ const IMPORT_EXPORT_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="cur
   + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
   + '<path d="M16 3l4 4-4 4"></path><path d="M20 7H8"></path>'
   + '<path d="M8 21l-4-4 4-4"></path><path d="M4 17h12"></path></svg>';
-function importExportIcon() { return h('span', { html: IMPORT_EXPORT_ICON_SVG }); }
+function importExportIcon() { return h('span', {}, svg(IMPORT_EXPORT_ICON_SVG)); }
 
 // The rail's places — the pages that are not one command or entity —
 // each carry a line icon, muted until hovered or open. A command's or
@@ -2082,7 +2082,7 @@ const RAIL_ICONS = {
   lifecycles: railIconSvg('<path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"></path><path d="M21 3v5h-5"></path>'),
   sandbox: railIconSvg('<circle cx="12" cy="12" r="9"></circle><path d="M10 8.5v7l5.5-3.5z"></path>'),
 };
-function railIcon(key) { return h('span', { class: 'rail-icon', html: RAIL_ICONS[key] }); }
+function railIcon(key) { return h('span', { class: 'rail-icon' }, svg(RAIL_ICONS[key])); }
 
 // ⌘S keeps its own quick path, unchanged: build the full link, land it
 // in the address bar, copy it, done. The Import & Export modal below
@@ -2157,6 +2157,28 @@ function openImportExport() {
   refreshExportLink();
 }
 
+// Whatever is in front of the page: a dialog, the import gate, quick
+// open. The same conditions `renderModals` paints by, after it has
+// settled them.
+function dialogOpen() {
+  return !!(state.pendingImport || state.problems || state.settings || state.importExport || state.help
+    || (state.defFrames.length && activeModel()) || state.models || !activeModelId() || state.palette);
+}
+
+// The page behind a dialog — everything but the two hosts.
+const PAGE_BEHIND = '.topbar, .layout, .site-footer';
+
+// A dialog is modal in fact, not only in `aria-modal`: the page behind
+// it is inert while it is up, so Tab cannot walk out of the dialog into
+// controls nobody can see past the overlay, and a screen reader does
+// not read them.
+function renderOverlays() {
+  renderModals();
+  renderPalette();
+  const inert = dialogOpen();
+  document.querySelectorAll(PAGE_BEHIND).forEach((element) => { element.inert = inert; });
+}
+
 function renderModals() {
   const host = document.getElementById('modal-host');
   host.innerHTML = '';
@@ -2184,7 +2206,7 @@ function renderSettingsModal(host) {
     h('header', {},
       h('h2', {}, 'Settings'),
       h('span', { class: 'grow' }),
-      h('button', { class: 'btn ghost', onclick: close, title: 'Close' }, '×')),
+      h('button', { class: 'btn ghost', onclick: close, title: 'Close', 'aria-label': 'Close' }, '×')),
     h('div', { class: 'muted small' }, 'How this interface behaves. Remembered in this browser, '
       + 'and applied as you pick — the page behind this is already showing it.'),
     UI_SETTINGS.map((setting) => h('div', { class: 'setting' },
@@ -2206,12 +2228,24 @@ function renderSettingsModal(host) {
   setTimeout(() => modal.focus(), 0);
 }
 
+// A dialog is named by its heading, unless it names itself: the `h2`
+// in its header gets an id, and the dialog points at it — so a screen
+// reader announces "Settings, dialog" rather than "dialog".
+let dialogHeadingIds = 0;
+function labelDialog(modal) {
+  const heading = modal.querySelector('header h2');
+  if (!heading || modal.getAttribute('aria-label')) return;
+  if (!heading.id) heading.id = 'dialog-heading-' + (dialogHeadingIds += 1);
+  modal.setAttribute('aria-labelledby', heading.id);
+}
+
 // A modal, and the backdrop that closes it — `thin` for one whose
 // changes should be seen landing on the page behind it. Clicking the
 // backdrop only counts when it is the backdrop that was clicked — a
 // click that started inside the modal and drifted out of it is not a
 // dismissal.
 function overlayAround(modal, close, { thin = false } = {}) {
+  labelDialog(modal);
   return h('div', {
     class: 'overlay' + (thin ? ' thin' : ''),
     onclick: (e) => { if (e.target === e.currentTarget) close(); },
@@ -2432,7 +2466,7 @@ function definitionModal(model) {
         '‹ Back to ' + (under.name ? readable(under.name) : 'the new projection')) : null,
       h('h2', {}, exists ? named(frame.name) : 'New ' + noun),
       h('span', { class: 'grow' }),
-      h('button', { class: 'btn ghost', onclick: close, title: 'Close' }, '×')),
+      h('button', { class: 'btn ghost', onclick: close, title: 'Close', 'aria-label': 'Close' }, '×')),
     h('div', { class: 'def-body' }, body),
     h('div', { class: 'adder', style: 'margin-top:18px' },
       h('button', { class: 'btn primary', onclick: close }, 'Done'),
@@ -2573,7 +2607,7 @@ function helpButton() {
   return h('button', {
     class: 'icon-btn', type: 'button', title: 'About the playground (?)',
     'aria-label': 'Help', onclick: openHelp,
-  }, h('span', { html: HELP_ICON_SVG }));
+  }, h('span', {}, svg(HELP_ICON_SVG)));
 }
 
 function helpModal() {
@@ -2582,7 +2616,7 @@ function helpModal() {
     h('header', {},
       h('h2', {}, 'DCB Playground'),
       h('span', { class: 'grow' }),
-      h('button', { class: 'btn ghost', onclick: close, title: 'Close' }, '×')),
+      h('button', { class: 'btn ghost', onclick: close, title: 'Close', 'aria-label': 'Close' }, '×')),
     h('div', { class: 'muted small' }, 'Model consistency boundaries without writing a line of code.'),
     h('p', {},
       'Build a model of events, projections and the commands that guard them, and see the '
@@ -2609,7 +2643,7 @@ function renderImportGate() {
     h('header', {},
       h('h2', {}, 'Import shared model'),
       h('span', { class: 'grow' }),
-      h('button', { class: 'btn ghost', onclick: close, title: 'Close' }, '×')),
+      h('button', { class: 'btn ghost', onclick: close, title: 'Close', 'aria-label': 'Close' }, '×')),
     h('div', { class: 'setting' },
       h('h4', {}, envelope.name || 'Untitled model'),
       h('div', { class: 'why' },
@@ -2753,7 +2787,7 @@ function renderImportExportModal() {
     h('header', {},
       h('h2', {}, 'Import & Export'),
       h('span', { class: 'grow' }),
-      h('button', { class: 'btn ghost', onclick: close, title: 'Close' }, '×')),
+      h('button', { class: 'btn ghost', onclick: close, title: 'Close', 'aria-label': 'Close' }, '×')),
     h('div', { class: 'muted small' }, 'Bring in a model from somewhere else, or send this one out.'),
     h('div', { class: 'ie-tabs' },
       h('button', {
@@ -2783,23 +2817,45 @@ function renderImportExportModal() {
 // The model is an append-only log and the state is a fold over it, so
 // the last change is undone by dropping what it appended off the end —
 // not by a second history kept beside the first. The entries that come
-// off are held so redo can put them back exactly as they were, sequence
-// numbers included, which is only sound because they came off the end.
+// off are held so redo can put them back exactly as they were — numbered
+// for where they land, which is where they came from unless a
+// compaction has moved the log since.
+//
+// The log is shared by every tab; the history is not. Each tab keeps
+// its own, in sessionStorage — undoing in one tab used to take back the
+// other's last edit. And since undo cuts the log back to a position, a
+// mark is only good while the log still ends where it ended — the same
+// length, the same last event: once another tab has appended past it,
+// or the log was compacted, cutting there would take what is not this
+// change's too, so the step is refused and the history dropped.
 
 // Versioned in lockstep with the event log: the stack holds raw
 // events and absolute offsets into that log, so marks taken against
 // one log version must never replay against another. Deriving the
 // suffix keeps the two keys impossible to bump apart.
 const UNDO_KEY = 'dcb-playground:undo:' + EVENT_LOG_KEY.split(':').pop();
+// Where the history was kept while it was shared; nothing reads it.
+localStorage.removeItem(UNDO_KEY);
 
 function undoLog() {
   try {
-    const stored = JSON.parse(localStorage.getItem(UNDO_KEY));
+    const stored = JSON.parse(sessionStorage.getItem(UNDO_KEY));
     if (stored && Array.isArray(stored.done) && Array.isArray(stored.undone)) return stored;
   } catch (e) { /* a corrupt stack is an empty one */ }
   return { done: [], undone: [] };
 }
-function saveUndoLog(next) { localStorage.setItem(UNDO_KEY, JSON.stringify(next)); }
+function saveUndoLog(next) { sessionStorage.setItem(UNDO_KEY, JSON.stringify(next)); }
+
+const OVERTAKEN = 'Another tab has changed this playground since, '
+  + 'so there is nothing here to undo or redo any more.';
+
+// The log's last event before position `n`, as a mark remembers it —
+// by when it was written and what it was, not by its sequence number,
+// which a compaction renumbers while the event itself is kept.
+function logStampAt(events, n) {
+  const event = events[n - 1];
+  return event ? `${event.timestamp} ${event.type}` : '';
+}
 
 // What a change was, read off what it appended. `event-definition-updated`
 // carrying `CourseDefined` becomes "updated event: Course defined".
@@ -2823,7 +2879,12 @@ let undoBatch = null;
 
 function takeUndoMark(at, appended) {
   const log = undoLog();
-  log.done.push({ at, label: changeLabel(appended) });
+  // `end` is where the log stood after this change: undo is sound only
+  // while it still stands there.
+  const last = appended[appended.length - 1];
+  log.done.push({
+    at, end: at + appended.length, stamp: logStampAt([last], 1), label: changeLabel(appended),
+  });
   // Redoing after a new change would mean re-appending entries that no
   // longer sit at the end of the log, so the branch is dropped — on an
   // agent's append exactly as on a button's.
@@ -2864,9 +2925,14 @@ function undo() {
   const mark = log.done.pop();
   if (!mark) return toast('Nothing to undo.');
   const events = loadEvents();
-  localStorage.setItem(EVENT_LOG_KEY, JSON.stringify(events.slice(0, mark.at)));
-  bumpLogRevision();
-  log.undone.push({ events: events.slice(mark.at), label: mark.label });
+  if (events.length !== mark.end || logStampAt(events, mark.end) !== mark.stamp) {
+    saveUndoLog({ done: [], undone: [] });
+    return toast(OVERTAKEN, true);
+  }
+  writeEventLog(events.slice(0, mark.at));
+  log.undone.push({
+    at: mark.at, stamp: logStampAt(events, mark.at), events: events.slice(mark.at), label: mark.label,
+  });
   saveUndoLog(log);
   closeForms();
   toast('Undone — ' + mark.label);
@@ -2878,14 +2944,67 @@ function redo() {
   const step = log.undone.pop();
   if (!step) return toast('Nothing to redo.');
   const events = loadEvents();
-  localStorage.setItem(EVENT_LOG_KEY, JSON.stringify([...events, ...step.events]));
-  bumpLogRevision();
-  log.done.push({ at: events.length, label: step.label });
+  if (events.length !== step.at || logStampAt(events, step.at) !== step.stamp) {
+    saveUndoLog({ done: [], undone: [] });
+    return toast(OVERTAKEN, true);
+  }
+  const replayed = step.events.map((event, i) => ({ ...event, sequence: events.length + i }));
+  writeEventLog([...events, ...replayed]);
+  log.done.push({
+    at: events.length, end: events.length + replayed.length,
+    stamp: logStampAt(replayed, replayed.length), label: step.label,
+  });
   saveUndoLog(log);
   closeForms();
   toast('Redone — ' + step.label);
   render();
 }
+
+// Compaction (model.js) folds the log up to this tab's oldest undo
+// step — a gesture still being batched counts — so every step it can
+// undo is kept, and here each is moved the distance the log moved.
+// Another tab's marks are not moved: they no longer match, and its
+// next undo is refused, as after any edit of ours.
+setCompactionFloor((events) => {
+  const ats = undoLog().done.map((mark) => mark.at);
+  if (undoBatch && undoBatch.at !== null) ats.push(undoBatch.at);
+  return Math.min(events.length, ...ats);
+});
+
+onCompact(({ shift, events, dropped }) => {
+  const log = undoLog();
+  if (dropped) {
+    // Storage was full and only folding everything made room.
+    if (log.done.length || log.undone.length) {
+      toast('The browser\'s storage for this site was full, so the history was compacted: '
+        + 'every model is as it was, but undo starts again from here.');
+    }
+    saveUndoLog({ done: [], undone: [] });
+    if (undoBatch && undoBatch.at !== null) undoBatch.at = events.length;
+    return;
+  }
+  for (const mark of log.done) {
+    mark.at += shift;
+    mark.end += shift;
+    mark.stamp = logStampAt(events, mark.end);
+  }
+  for (const step of log.undone) {
+    step.at += shift;
+    step.stamp = logStampAt(events, step.at);
+  }
+  saveUndoLog(log);
+  if (undoBatch && undoBatch.at !== null) undoBatch.at += shift;
+});
+
+// Another tab wrote the log. The caches here are keyed on this tab's
+// revision counter, which that write never moved — so it is moved now,
+// and the page repaints from what is really stored. Nothing else is
+// needed: the history here is checked against the log at undo time.
+window.addEventListener('storage', (e) => {
+  if (e.key !== EVENT_LOG_KEY && e.key !== null) return;
+  bumpLogRevision();
+  render();
+});
 
 // ---------- loose ends ----------
 //
@@ -3027,7 +3146,7 @@ function problemsPanel() {
     h('header', {},
       h('h2', {}, 'Problems'),
       h('span', { class: 'grow' }),
-      h('button', { class: 'btn ghost', onclick: close, title: 'Close' }, '×')),
+      h('button', { class: 'btn ghost', onclick: close, title: 'Close', 'aria-label': 'Close' }, '×')),
     h('div', { class: 'muted small', style: 'margin-bottom:14px' },
       'Loose ends this model has not tied yet, definitions that do not hold together yet, '
       + 'and scenarios it no longer agrees with. Nothing here blocked a save — '
@@ -3209,7 +3328,7 @@ function renderPalette() {
   // Escape and the backdrop are how quick open is left on a desktop; a
   // phone has neither once the palette fills the screen, so it gets the
   // × every other dialog carries — shown only there (shared.css).
-  paletteEl = h('div', { class: 'palette', role: 'dialog', 'aria-modal': 'true' },
+  paletteEl = h('div', { class: 'palette', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Quick open' },
     h('div', { class: 'palette-head' }, input,
       h('button', {
         class: 'btn ghost palette-close', type: 'button', title: 'Close', 'aria-label': 'Close',
@@ -5157,7 +5276,7 @@ function paintPage() {
     onclick: () => { closeForms(); state.models = true; render(); },
   }, h('span', { class: 'brand-title' }, 'DCB Playground'),
   model ? [h('span', { class: 'sep', 'aria-hidden': 'true' }, '/'), h('span', { class: 'model-name' }, model.name)] : null,
-  h('span', { class: 'caret', html: CARET_ICON_SVG })));
+  h('span', { class: 'caret' }, svg(CARET_ICON_SVG))));
 
   const tools = document.getElementById('tools');
   tools.innerHTML = '';
@@ -5181,8 +5300,7 @@ function paintPage() {
     const main = document.getElementById('main');
     main.innerHTML = '';
     main.className = '';
-    renderModals();
-    renderPalette();
+    renderOverlays();
     return;
   }
 
@@ -5193,7 +5311,7 @@ function paintPage() {
     class: 'icon-btn menu-btn', type: 'button', title: 'Features and entities',
     'aria-label': 'Menu', 'aria-expanded': state.railOpen ? 'true' : 'false',
     onclick: () => { state.railOpen = !state.railOpen; render(); },
-  }, h('span', { html: MENU_ICON_SVG })));
+  }, h('span', {}, svg(MENU_ICON_SVG))));
 
   // A scenario that no longer agrees with its command, or a loose end
   // nobody has tied — the one count of what needs attention, shown
@@ -5204,7 +5322,7 @@ function paintPage() {
 
   jump.appendChild(h('button', {
     class: 'trigger', type: 'button', onclick: openPalette, 'aria-label': 'Quick open',
-  }, h('span', { html: SEARCH_ICON_SVG }), h('span', { class: 'label' }, 'Quick open…'),
+  }, h('span', {}, svg(SEARCH_ICON_SVG)), h('span', { class: 'label' }, 'Quick open…'),
     h('span', { class: 'kbd' }, '⌘K')));
 
   actions.appendChild(h('button', {
@@ -5216,8 +5334,7 @@ function paintPage() {
   actions.appendChild(settingsButton());
   actions.appendChild(moreMenu(model));
 
-  renderModals();
-  renderPalette();
+  renderOverlays();
   behindDefinitionModal(() => paintBehind(model));
 }
 
@@ -5507,7 +5624,7 @@ const INFO_MARK = '<svg viewBox="0 0 12 12" aria-hidden="true">'
   + '<line x1="6" y1="5.2" x2="6" y2="8.8" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>'
   + '<circle cx="6" cy="3.5" r=".55" fill="currentColor"/></svg>';
 function infoMark() {
-  return h('span', { class: 'imark', html: INFO_MARK });
+  return h('span', { class: 'imark' }, svg(INFO_MARK));
 }
 
 function hint(key, title, lines, href, anchor) {
@@ -5548,7 +5665,7 @@ function queryPopover(key, title, ...lines) {
         state.queryPop = on ? null : key;
         render();
       },
-    }, h('span', { class: 'qico', html: SEARCH_ICON_SVG })),
+    }, h('span', { class: 'qico' }, svg(SEARCH_ICON_SVG))),
     h('span', { class: 'qpanel dcb', onclick: (e) => e.stopPropagation() },
       title ? h('div', { class: 'k qtitle' }, title) : null,
       ...lines));
@@ -8355,7 +8472,7 @@ function lifecycleFold(model, name) {
       render();
     },
   }, 'state ', h('span', { class: 'p' }, propertyWords(lifecycle.property)), ' · ' + summary,
-  h('span', { class: 'caret', html: FOLD_CARET }));
+  h('span', { class: 'caret' }, svg(FOLD_CARET)));
 }
 
 // The lifecycle's row in Identity — when there is one to show. No
@@ -11180,7 +11297,7 @@ function renderEventModel(model, main) {
     wires += `<path d="${wire.d}" fill="none" stroke="var(--muted)" stroke-width="1.5"`
       + (wire.arrow ? ` marker-end="url(#${ah})"` : '') + '></path>';
   }
-  band.appendChild(h('div', { class: 'em-wires', html: wires + '</svg>' }));
+  band.appendChild(h('div', { class: 'em-wires' }, svg(wires + '</svg>')));
 
   const place = (card) => `left:${card.x}px; top:${card.y}px; width:${card.w}px; height:${card.h}px`;
   for (const card of layout.cards) {
@@ -11310,7 +11427,7 @@ function lifecycleLayout(machine) {
       const from = at[source];
       const to = at[t.target];
       if (!from || !to) continue;
-      const pairKey = source + ' ' + t.target;
+      const pairKey = source + '\u0000' + t.target;
       const lane = pairSeen[pairKey] || 0;
       pairSeen[pairKey] = lane + 1;
       const edge = { transition: t, from: source, to: t.target };
@@ -11541,7 +11658,7 @@ function renderLifecycleMachine(model, main, machine, index) {
       + `stroke="var(--event)" stroke-width="1.5" marker-end="url(#${ah})"></path>`;
   }
   wires += '</svg>';
-  band.appendChild(h('div', { class: 'lc-wires', html: wires }));
+  band.appendChild(h('div', { class: 'lc-wires' }, svg(wires)));
 
   for (const edge of layout.edges) {
     const t = edge.transition;
@@ -11889,9 +12006,7 @@ function saveScenarioOf(kind, model) {
   try {
     then = k.deriveThen(model, body);
   } catch (error) {
-    return toast(error instanceof EvaluationError
-      ? error.message
-      : 'That could not be worked out: ' + error.message, true);
+    return toast(evaluationFailure(error), true);
   }
   body.then = then;
   run(() => {
@@ -12997,25 +13112,13 @@ function sessionRun(model, commandName, args) {
   try {
     result = sessionDrive(model, commandName, args);
   } catch (error) {
-    if (error instanceof EvaluationError) return toast(error.message, true);
-    throw error;
+    return toast(evaluationFailure(error), true);
   }
   if (result.outcome === 'rejected') {
     const rule = result.failedRule;
     return toast(`${readable(commandName)} was refused: ${rule.rejection || rule.text}`, true);
   }
   render();
-}
-
-// Every instance any visible event is about, as `Entity:id`. Tags are
-// the only thing that says so, which is why this reads them rather
-// than the payloads.
-function sessionInstances(model) {
-  const found = new Set();
-  for (const event of sessionVisible()) {
-    for (const tag of tagsOfEvent(model, event.type, event.data)) found.add(tag);
-  }
-  return [...found].sort();
 }
 
 // One instance, projected over what is visible. A scripted property
@@ -13036,8 +13139,7 @@ function sessionInstanceState(model, tag, log = sessionVisible()) {
           value: foldEntityProperty(model, log, entityName, property.name, id),
         };
       } catch (error) {
-        if (error instanceof EvaluationError) return { name: property.name, error: error.message };
-        throw error;
+        return { name: property.name, error: evaluationFailure(error) };
       }
     }),
   };
@@ -13152,6 +13254,20 @@ function scrubToPointer(e, goTo) {
   return true;
 }
 
+// Follows the pointer across the window until the drag ends — a
+// release, or a cancel: a touch that turns into a scroll never sends
+// `pointerup`, and the listeners stayed on the window for good.
+function trackPointer(onMove) {
+  const stop = () => {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', stop);
+    window.removeEventListener('pointercancel', stop);
+  };
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', stop);
+  window.addEventListener('pointercancel', stop);
+}
+
 function sandboxTimeline(model) {
   const total = session.log.length;
   const position = sessionPosition();
@@ -13164,13 +13280,7 @@ function sandboxTimeline(model) {
   const mode = state.sandboxLanes;
   const startDrag = (e) => {
     if (e.button !== 0 || !scrubToPointer(e, goTo)) return;
-    const onMove = (ev) => scrubToPointer(ev, goTo);
-    const onUp = () => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-    };
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
+    trackPointer((ev) => scrubToPointer(ev, goTo));
   };
 
   // The step the playhead is inside — its events are the ones the page
@@ -13323,10 +13433,9 @@ function sandboxDecision(model) {
   try {
     result = evaluateCommand(model, session.log.slice(0, step.from), step.command, step.args);
   } catch (error) {
-    if (!(error instanceof EvaluationError)) throw error;
     return h('div', { class: 'card', style: 'border-color:var(--danger)' },
       h('div', { class: 'small' },
-        readable(step.command) + ' can no longer be worked out here: ' + error.message));
+        readable(step.command) + ' can no longer be worked out here: ' + evaluationFailure(error)));
   }
 
   const stale = result.outcome === 'rejected'
@@ -13468,8 +13577,7 @@ function foldWatch(model, watch, fold, log = sessionVisible()) {
   try {
     return { value: (fold || foldProjection)(model, log, watch.projection, watchRead(watch)) };
   } catch (error) {
-    if (error instanceof EvaluationError) return { error: error.message };
-    throw error;
+    return { error: evaluationFailure(error) };
   }
 }
 
@@ -13608,11 +13716,9 @@ function watchHistory(model, watch) {
     });
     rest = `<line class="rest" x1="0" x2="100" y1="21" y2="21"/>` + rest;
   }
-  return h('span', {
-    class: 'sbx-hist', 'aria-hidden': 'true',
-    html: `<svg viewBox="0 0 100 24" preserveAspectRatio="none">${rest}${played}`
-      + `<line class="head" x1="${x(position)}" x2="${x(position)}" y1="0" y2="24"/></svg>`,
-  });
+  return h('span', { class: 'sbx-hist', 'aria-hidden': 'true' },
+    svg(`<svg viewBox="0 0 100 24" preserveAspectRatio="none">${rest}${played}`
+      + `<line class="head" x1="${x(position)}" x2="${x(position)}" y1="0" y2="24"/></svg>`));
 }
 
 function watchTile(model, watch) {
@@ -13743,7 +13849,6 @@ function sandboxNow(model) {
   try {
     then = evaluateCommand(model, session.log.slice(0, step.from), step.command, step.args);
   } catch (error) {
-    if (!(error instanceof EvaluationError)) throw error;
     return h('div', { class: 'card' },
       h('div', { class: 'empty' }, 'See Reads.'));
   }
@@ -14758,11 +14863,9 @@ function codeFoldToggle() {
 }
 
 function codeToolIcon(paths) {
-  return h('span', {
-    class: 'code-tool-icon',
-    html: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" '
-      + 'stroke-linejoin="round" aria-hidden="true">' + paths + '</svg>',
-  });
+  return h('span', { class: 'code-tool-icon' },
+    svg('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" '
+      + 'stroke-linejoin="round" aria-hidden="true">' + paths + '</svg>'));
 }
 
 function downloadCode(model) {
@@ -14862,6 +14965,7 @@ window.addEventListener('keydown', (e) => {
   if (state.lcMenu) { state.lcMenu = null; return render(); }
   if (state.moreOpen) { state.moreOpen = false; return render(); }
   if (state.pendingImport) { state.pendingImport = null; return render(); }
+  if (state.importExport) { state.importExport = false; return render(); }
   if (state.help) { state.help = false; return render(); }
   if (state.problems) { state.problems = false; return render(); }
   if (state.settings) { state.settings = false; return render(); }
@@ -14952,7 +15056,7 @@ window.addEventListener('keydown', (e) => {
       && e.target.closest('input, textarea, select');
     if (inField) return;
     e.preventDefault();
-    if (e.shiftKey) redo(); else undo();
+    run(() => (e.shiftKey ? redo() : undo()));
   }
 });
 
@@ -14974,8 +15078,7 @@ window.addEventListener('keydown', (e) => {
   if (e.defaultPrevented) return;
   const inField = e.target instanceof Element
     && e.target.closest('input, textarea, select');
-  if (!inField && !state.palette && !state.settings && !state.problems && !state.models && !state.help
-      && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+  if (!inField && !dialogOpen() && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
     if (moveRow(e.key === 'ArrowDown' ? 1 : -1)) e.preventDefault();
   }
 });

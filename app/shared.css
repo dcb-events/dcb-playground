@@ -19,6 +19,14 @@
      colour would suggest a distinction the model does not make. */
   --projection: var(--entity);
   --projection-soft: var(--entity-soft);
+  /* A kind's colour as text. The kind colours above are tuned for
+     borders and fills, and as text on the light page orange and green
+     fall below a readable contrast (2.8:1, 3.3:1); text takes the
+     chips' own darker shades instead. The dark theme maps these back to
+     the kind colours, which read fine on dark. */
+  --event-text: #9a3412;
+  --entity-text: #166534;
+  --projection-text: var(--entity-text);
   /* Constraints. Fuchsia rather than a shade of the entity green: a
      rule is not a kind of thing in the model, it is the gate in front
      of one, and it should not read as belonging to whatever it guards. */
@@ -66,6 +74,13 @@ body.f-dark {
   --event-soft: #2d1c0d;
   --entity: #4ade80;
   --entity-soft: #0f2a1c;
+  --event-text: var(--event);
+  --entity-text: var(--entity);
+  /* An alias resolves where it is declared, on :root — restated here,
+     or the dark page would get the light values behind it. */
+  --projection: var(--entity);
+  --projection-soft: var(--entity-soft);
+  --projection-text: var(--entity-text);
   --rule: #e879f9;
   --rule-soft: #2a1130;
   --type: #94a3b8;

@@ -58,14 +58,20 @@ const findAll = (node, pred, out = []) => {
 // "not there" would only be testing that. Nothing runs at load beyond
 // that — the app boots on DOMContentLoaded, and this never fires one.
 function createSandbox() {
+  const storage = (map) => ({
+    getItem: (k) => (map.has(k) ? map.get(k) : null),
+    setItem: (k, v) => map.set(k, String(v)),
+    removeItem: (k) => map.delete(k),
+  });
   const store = new Map();
+  const sessionStore = new Map();
+  // What the page listens for on `window`, kept so a suite can play the
+  // part of the browser — another tab's `storage` event, say.
+  const listeners = {};
   const sandbox = {
     console,
-    localStorage: {
-      getItem: (k) => (store.has(k) ? store.get(k) : null),
-      setItem: (k, v) => store.set(k, String(v)),
-      removeItem: (k) => store.delete(k),
-    },
+    localStorage: storage(store),
+    sessionStorage: storage(sessionStore),
     document: {
       createElement: (t) => element(undefined, t), createTextNode: (t) => element(t), body: element(),
       documentElement: element(),
@@ -78,24 +84,41 @@ function createSandbox() {
     history: { replaceState: noop },
     navigator: { clipboard: {} },
     matchMedia: () => ({ matches: false, addEventListener: noop }),
-    setTimeout, clearTimeout, setInterval, clearInterval,
+    // The page's own timers (a toast's 8 s dismissal) are unref'd: no
+    // suite waits on one, and a live one only kept Node idling after
+    // the tally. `finish` guards the other side — see makeChecker.
+    setTimeout: (fn, ms, ...rest) => {
+      const timer = setTimeout(fn, ms, ...rest);
+      if (timer && timer.unref) timer.unref();
+      return timer;
+    },
+    clearTimeout, setInterval, clearInterval,
     requestAnimationFrame: noop,
     TextEncoder, TextDecoder, URL, Blob: class {},
+    // What `e.target instanceof Element` asks of a key event's target;
+    // the inert nodes are not instances, so a stub target is no field.
+    Element: class {},
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  sandbox.window.addEventListener = noop;
+  sandbox.window.addEventListener = (type, fn) => { (listeners[type] = listeners[type] || []).push(fn); };
+  sandbox.window.removeEventListener = (type, fn) => {
+    listeners[type] = (listeners[type] || []).filter((other) => other !== fn);
+  };
   vm.createContext(sandbox);
-  return { sandbox, store };
+  const dispatch = (type, event) => { for (const fn of listeners[type] || []) fn(event); };
+  const listening = (type) => (listeners[type] || []).length;
+  return { sandbox, store, sessionStore, dispatch, listening };
 }
 
-// The page's own inline script — the long block; the short ones are
-// the tiny loaders that pull in the files `loadApp` concatenates.
+// The page's own inline script, marked `data-page` — named rather than
+// guessed at, since the host injects inline scripts of its own (the
+// theme hook) and any other inline block would be a candidate too.
 function pageScript() {
   const html = fs.readFileSync(path.join(APP, 'index.html'), 'utf8');
-  const blocks = [...html.matchAll(/<script(?![^>]*\ssrc=)[^>]*>([\s\S]*?)<\/script>/g)]
-    .map((m) => m[1]);
-  return blocks.sort((a, b) => b.length - a.length)[0];
+  const blocks = [...html.matchAll(/<script data-page>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+  if (blocks.length !== 1) throw new Error(`index.html: expected one <script data-page>, found ${blocks.length}`);
+  return blocks[0];
 }
 
 // Concatenates the way index.html loads: the named files in <script>
@@ -130,8 +153,20 @@ function swap(text, from, to) {
 function makeChecker() {
   let passed = 0;
   const failures = [];
+  // Page timers do not hold the process open (createSandbox), so a
+  // suite that awaited one would end without its tally — and with a
+  // zero exit. Ending without `finish` is a failure.
+  let finished = false;
+  process.on('exit', (code) => {
+    if (!finished && code === 0) {
+      console.log('the suite ended before finish() — an awaited page timer?');
+      process.exitCode = 1;
+    }
+  });
+  // STACK=1 in the environment reports a failure with its stack — for
+  // the TypeError deep in a fold, where the message alone says little.
   const record = (name, error) => {
-    if (error) failures.push(`${name}\n    ${error.message}`);
+    if (error) failures.push(`${name}\n    ${process.env.STACK ? error.stack : error.message}`);
     else passed += 1;
   };
   const check = (name, fn) => {
@@ -152,6 +187,7 @@ function makeChecker() {
     if (a !== b) throw new Error(`${what || 'value'}: expected ${b}, got ${a}`);
   };
   const finish = () => {
+    finished = true;
     console.log(`${passed} passed, ${failures.length} failed`);
     if (failures.length) {
       console.log('\n' + failures.map((f) => '  ✗ ' + f).join('\n'));
