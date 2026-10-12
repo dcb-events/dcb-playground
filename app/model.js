@@ -1884,20 +1884,62 @@ function deriveDcb(model, body) {
     // The boundary binding's own id operand is not a read of the entity.
     const entity = model['entity-definitions'][binding.entity];
     const types = new Set();
+    // A derived property is read the way a derived projection is
+    // (`foldedReads`): each projection it folds, under that one's own
+    // tags. Those read by the instance's identifier alone share the
+    // entity's item; any other — untagged, a tag literal, a second tag —
+    // is a query of its own. ANDing it with the instance's tag would
+    // leave out events the decision depends on.
+    const apart = [];
     if (entity) {
       for (const property of entity.properties || []) {
-        if (!readProperties.has(property.name)) continue;
-        for (const type of projectionHandledTypes(model, property.projection)) types.add(type);
+        if (!property || !readProperties.has(property.name)) continue;
+        const projection = model['projection-definitions'][property.projection];
+        const [tag] = projectionTagParams(projection);
+        if (!derivedOf(projection) || !tag) {
+          for (const type of projectionHandledTypes(model, property.projection)) types.add(type);
+          continue;
+        }
+        for (const { read } of foldedReads(model, { projection: property.projection, tags: { [tag.name]: binding.id } })) {
+          const held = Object.values((read.tags && typeof read.tags === 'object') ? read.tags : {});
+          if (held.length === 1 && held[0] === binding.id) {
+            for (const type of projectionHandledTypes(model, read.projection)) types.add(type);
+          } else {
+            apart.push({ read, property: property.name });
+          }
+        }
       }
     }
     const fannedOut = isFannedOut(model, body, binding);
-    items.push({
-      alias: binding.alias,
-      tags: entityBindingTags(model, binding.entity, binding.id, binding.excluding, fannedOut),
-      fannedOut,
-      types: [...types].sort(),
-      readProperties: [...readProperties].sort(),
-    });
+    const apartItems = [];
+    const seenApart = new Set();
+    for (const { read, property } of apart) {
+      const item = {
+        alias: binding.alias,
+        via: read.projection,
+        fannedOut: !!readFanTag(read),
+        tags: readTagTexts(model, body, read),
+        types: projectionHandledTypes(model, read.projection).sort(),
+        readProperties: [property],
+      };
+      const key = JSON.stringify([item.tags, item.types, item.fannedOut]);
+      if (seenApart.has(key)) continue;
+      seenApart.add(key);
+      apartItems.push(item);
+    }
+    // The instance's own item stays unless every property read went
+    // elsewhere: with no types it would match every event tagged by
+    // the instance, a read nothing here makes.
+    if (types.size || !apartItems.length) {
+      items.push({
+        alias: binding.alias,
+        tags: entityBindingTags(model, binding.entity, binding.id, binding.excluding, fannedOut),
+        fannedOut,
+        types: [...types].sort(),
+        readProperties: [...readProperties].sort(),
+      });
+    }
+    items.push(...apartItems);
   }
 
   // Every inline read (8.0) is a query item too, once however often it

@@ -2807,6 +2807,52 @@ check('every predefined model ships advisory-clean', () => {
     ], 'the registration is not tagged by the week, and is still in the boundary');
   });
 
+  check('read through an entity, a derived property is the same queries', () => {
+    // `Course.full` compares the course's subscriptions with a limit
+    // kept for all courses. Read as a projection, the limit is a query
+    // of its own; read through the entity, it used to be ANDed with the
+    // course's tag — and the untagged event that changes it fell out of
+    // the append condition the decision depends on.
+    const { id, model } = openBlank('Derived through an entity');
+    addDefinition('entity-definition', id, 'Course', { properties: [] });
+    const courseId = { name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false };
+    addTaggedEvent(id, 'Subscribed', { properties: [courseId] });
+    addTaggedEvent(id, 'LimitSet', { properties: [{ name: 'max', propertyType: 'integer', isOptional: false, isList: false }] });
+    const own = { courseId: { parameterName: 'courseId' } };
+    addDefinition('projection-definition', id, 'SubscriptionCount', {
+      tags: [{ name: 'courseId', tagType: 'CourseId' }], valueType: 'integer', isList: false, initialValue: 0,
+      handlers: [{ event: 'Subscribed', operation: 'increment', value: 1 }],
+    });
+    addDefinition('projection-definition', id, 'Limit', {
+      tags: [], valueType: 'integer', isList: false, initialValue: 10,
+      handlers: [{ event: 'LimitSet', operation: 'set', value: { eventProperty: 'max' } }],
+    });
+    addDefinition('projection-definition', id, 'CourseFull', {
+      tags: [{ name: 'courseId', tagType: 'CourseId' }], valueType: 'boolean', isList: false,
+      derived: { leftHandSide: { projection: 'SubscriptionCount', tags: own }, predicate: 'greaterThanOrEquals',
+        rightHandSide: { projection: 'Limit', tags: {} } },
+    });
+    updateDefinition('entity-definition', id, 'Course', { properties: [{ name: 'full', projection: 'CourseFull' }] });
+    const subscribe = (boundary, leftHandSide) => ({
+      properties: [courseId], boundary,
+      conditions: [{ leftHandSide, predicate: 'isFalse', rejection: 'The course is full.' }],
+      publishes: [{ name: 'Subscribed', parameters: { courseId: { parameterName: 'courseId' } } }],
+    });
+    addDefinition('command-definition', id, 'SubscribeThroughEntity',
+      subscribe([{ alias: 'course', entity: 'Course', id: { parameterName: 'courseId' } }], { alias: 'course', property: 'full' }));
+    addDefinition('command-definition', id, 'SubscribeThroughProjection',
+      subscribe([{ alias: 'full', projection: 'CourseFull', tags: own }], { alias: 'full' }));
+
+    const queries = (name) => sandbox.deriveDcb(model(), model()['command-definitions'][name]).items
+      .map((item) => JSON.stringify([item.tags, item.types])).sort();
+    eq(queries('SubscribeThroughEntity'), queries('SubscribeThroughProjection'), 'one boundary, however it is read');
+    eq(queries('SubscribeThroughEntity').includes(JSON.stringify([[], ['LimitSet']])), true, 'the limit is read untagged');
+
+    const log = [{ type: 'Subscribed', data: { courseId: 'c1' } }, { type: 'LimitSet', data: { max: 1 } }];
+    eq(evaluateCommand(model(), log, 'SubscribeThroughEntity', { courseId: 'c1' }).outcome, 'rejected',
+      'and the decision does depend on it');
+  });
+
   check('the shipped model is advisory-clean and its scenarios hold', () => {
     const model = build(HOURS);
     eq(sandbox.modelAdvisories(model), [], 'no advisories');
