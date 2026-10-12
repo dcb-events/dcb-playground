@@ -341,6 +341,32 @@ check('what the grammar cannot say is written as JSON, says why, and still round
   eq(loadEvents().length, before, 'an untouched fallback applies as no change');
 });
 
+check('a fallback\'s reason stays a comment, whatever the stored strings it quotes', () => {
+  // A reason quotes stored strings. A line break in one used to end the
+  // comment and print the rest as code, so a crafted predicate could
+  // smuggle in a scripted projection the import gate never saw, added
+  // the moment the untouched text was applied.
+  const { id, model } = build(ENTITIES);
+  const body = JSON.parse(JSON.stringify(model()['command-definitions'].ArchiveCourse));
+  body.conditions.push({
+    leftHandSide: 1, rejection: 'No', // no right-hand side: the reason quotes the predicate raw
+    predicate: 'x\nuntagged scripted projection Smuggled: integer {\n  initialState 0\n'
+      + '  on CourseDefined => ```(globalThis.__smuggled = true, state)```\n}\r\u2028//',
+  });
+  updateDefinition('command-definition', id, 'ArchiveCourse', body);
+  const text = modelToSource(model());
+  const reason = text.split('\n').find((line) => line.startsWith('// Written as JSON: a "x '));
+  eq(reason !== undefined && reason.includes('Smuggled'), true, 'the predicate is quoted on the comment\'s line');
+  const parsed = parseModelSource(text);
+  eq(parsed.diagnostics, [], 'diagnostics');
+  eq(Object.keys(parsed.collections['projection-definition']).includes('Smuggled'), false, 'nothing is declared by it');
+  assertSameModel(model(), parsed, 'fallback');
+  const before = loadEvents().length;
+  applyModelSource(id, text);
+  eq(loadEvents().length, before, 'an untouched text applies as no change');
+  eq(model()['projection-definitions'].Smuggled, undefined, 'and adds no projection');
+});
+
 // ---------------------------------------------------------------
 // Applying a text.
 // ---------------------------------------------------------------
