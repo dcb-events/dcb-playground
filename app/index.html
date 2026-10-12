@@ -2176,6 +2176,15 @@ function openImportExport() {
   refreshExportLink();
 }
 
+// Whatever is in front of the page: a dialog, the import gate, quick
+// open. The same conditions `renderModals` paints by, after it has
+// settled them.
+function dialogOpen() {
+  return !!(state.pendingImport || state.problems || state.settings || state.importExport || state.help
+    || (state.defFrames.length && activeModel()) || state.models || !activeModelId() || state.palette);
+}
+
+
 function renderModals() {
   const host = document.getElementById('modal-host');
   host.innerHTML = '';
@@ -14937,6 +14946,7 @@ window.addEventListener('keydown', (e) => {
   if (state.lcMenu) { state.lcMenu = null; return render(); }
   if (state.moreOpen) { state.moreOpen = false; return render(); }
   if (state.pendingImport) { state.pendingImport = null; return render(); }
+  if (state.importExport) { state.importExport = false; return render(); }
   if (state.help) { state.help = false; return render(); }
   if (state.problems) { state.problems = false; return render(); }
   if (state.settings) { state.settings = false; return render(); }
@@ -15049,8 +15059,7 @@ window.addEventListener('keydown', (e) => {
   if (e.defaultPrevented) return;
   const inField = e.target instanceof Element
     && e.target.closest('input, textarea, select');
-  if (!inField && !state.palette && !state.settings && !state.problems && !state.models && !state.help
-      && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+  if (!inField && !dialogOpen() && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
     if (moveRow(e.key === 'ArrowDown' ? 1 : -1)) e.preventDefault();
   }
 });

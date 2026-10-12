@@ -5172,6 +5172,46 @@ check('the app is text: no file carries a raw control byte', () => {
   }
 });
 
+// ---------------------------------------------------------------
+// Keys and dialogs: Escape closes whichever is up, and the arrow keys
+// never reach the page behind one.
+// ---------------------------------------------------------------
+{
+  const id = sandbox.createDcbModel('Dialog Probe');
+  store.set('dcb-playground:model', id);
+  const key = (name) => {
+    const event = { key: name, defaultPrevented: false, target: {}, preventDefault() { this.defaultPrevented = true; } };
+    dispatch('keydown', event);
+    return event;
+  };
+
+  check('Escape closes Import & Export', () => {
+    sandbox.state.importExport = true;
+    key('Escape');
+    eq(sandbox.state.importExport, false, 'closed');
+  });
+
+  check('the arrow keys move no row behind an open dialog', () => {
+    const moveRow = sandbox.moveRow;
+    let moved = 0;
+    sandbox.moveRow = () => { moved += 1; return true; };
+    for (const open of [
+      () => { sandbox.state.importExport = true; },
+      () => { sandbox.state.pendingImport = { envelope: {} }; },
+    ]) {
+      open();
+      key('ArrowDown');
+      sandbox.state.importExport = false; sandbox.state.pendingImport = null;
+    }
+    eq(moved, 0, 'behind Import & Export and the import gate');
+    key('ArrowDown');
+    eq(moved, 1, 'and with nothing open, they do');
+    sandbox.moveRow = moveRow;
+  });
+
+  store.delete('dcb-playground:model');
+}
+
 // A share link or a fetched file is unpacked under a cap: a few hundred
 // kilobytes of gzip can stand for gigabytes of whitespace, and the
 // link is unpacked the moment it is opened.

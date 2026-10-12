@@ -95,6 +95,9 @@ function createSandbox() {
     clearTimeout, setInterval, clearInterval,
     requestAnimationFrame: noop,
     TextEncoder, TextDecoder, URL, Blob: class {},
+    // What `e.target instanceof Element` asks of a key event's target;
+    // the inert nodes are not instances, so a stub target is no field.
+    Element: class {},
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
