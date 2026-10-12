@@ -2076,6 +2076,77 @@ check('an import missing the definition arrays is refused, not silently accepted
 }
 
 // ---------------------------------------------------------------
+// A fan chained off another fan (`Course(each student.courses)`)
+// inherits its list: a parameter zipped with it pairs each course with
+// the element its *student* came from — not with the course's own
+// position in the flattened list, which runs past the list as soon as
+// a student holds more than one course, or shifts when `excluding`
+// leaves a student out.
+// ---------------------------------------------------------------
+{
+  const { id, model } = openBlank('Chained fan');
+  addDefinition('entity-definition', id, 'Student', { properties: [] });
+  addDefinition('entity-definition', id, 'Course', { properties: [] });
+  addDefinition('custom-type-definition', id, 'Requirement', {
+    properties: [{ name: 'studentId', propertyType: 'StudentId' }, { name: 'minimum', propertyType: 'integer' }],
+  });
+  const prop = (name, propertyType, isList = false) => ({ name, propertyType, isOptional: false, isList });
+  addTaggedEvent(id, 'Enrolled', { properties: [prop('studentId', 'StudentId'), prop('courseId', 'CourseId')] });
+  addTaggedEvent(id, 'CapacitySet', { properties: [prop('courseId', 'CourseId'), prop('capacity', 'integer')] });
+  addTaggedEvent(id, 'Checked', { properties: [prop('requirements', 'Requirement', true)] });
+  addDefinition('projection-definition', id, 'StudentCourses', {
+    tags: [{ name: 'studentId', tagType: 'StudentId' }], valueType: 'CourseId', isList: true, initialValue: [],
+    handlers: [{ event: 'Enrolled', operation: 'append', value: { eventProperty: 'courseId' } }],
+  });
+  addDefinition('projection-definition', id, 'CourseCapacity', {
+    tags: [{ name: 'courseId', tagType: 'CourseId' }], valueType: 'integer', isList: false, initialValue: 0,
+    handlers: [{ event: 'CapacitySet', operation: 'set', value: { eventProperty: 'capacity' } }],
+  });
+  updateDefinition('entity-definition', id, 'Student', { properties: [{ name: 'courses', projection: 'StudentCourses' }] });
+  updateDefinition('entity-definition', id, 'Course', { properties: [{ name: 'capacity', projection: 'CourseCapacity' }] });
+  addDefinition('command-definition', id, 'Check', {
+    properties: [prop('requirements', 'Requirement', true), { ...prop('skip', 'StudentId'), isOptional: true }],
+    boundary: [
+      { alias: 'student', entity: 'Student', id: { each: { parameterName: 'requirements', property: 'studentId' } } },
+      { alias: 'course', entity: 'Course', id: { each: { alias: 'student', property: 'courses' } } },
+    ],
+    conditions: [{
+      leftHandSide: { alias: 'course', property: 'capacity' }, predicate: 'greaterThanOrEquals',
+      rightHandSide: { parameterName: 'requirements', property: 'minimum' }, rejection: 'A course is too small.',
+    }],
+    publishes: [{ name: 'Checked', parameters: { requirements: { parameterName: 'requirements' } } }],
+  });
+  const log = [
+    { type: 'Enrolled', data: { studentId: 's1', courseId: 'cA' } },
+    { type: 'Enrolled', data: { studentId: 's1', courseId: 'cB' } },
+    { type: 'Enrolled', data: { studentId: 's3', courseId: 'cA' } },
+    { type: 'CapacitySet', data: { courseId: 'cA', capacity: 10 } },
+    { type: 'CapacitySet', data: { courseId: 'cB', capacity: 3 } },
+  ];
+
+  check('a chained fan pairs a zipped parameter by the element it came from', () => {
+    eq(sandbox.isZipped(model(), model()['command-definitions'].Check, model()['command-definitions'].Check.conditions[0],
+      { parameterName: 'requirements', property: 'minimum' }), true, 'the minimum is zipped with the courses');
+    // s1's courses are cA (10) and cB (3) and s1 asks for 5; s2 holds none.
+    const result = evaluateCommand(model(), log, 'Check', {
+      requirements: [{ studentId: 's1', minimum: 5 }, { studentId: 's2', minimum: 1 }], skip: null,
+    });
+    eq(result.outcome, 'rejected', 'cB is checked against s1\'s minimum, not s2\'s');
+  });
+
+  check('and excluding a student does not shift the pairing', () => {
+    const body = deepClone(model()['command-definitions'].Check);
+    body.boundary[0].excluding = { parameterName: 'skip' };
+    updateDefinition('command-definition', id, 'Check', body);
+    // s1 is left out; s3's one course, cA (10), meets s3's 5.
+    const result = evaluateCommand(model(), log, 'Check', {
+      requirements: [{ studentId: 's1', minimum: 100 }, { studentId: 's3', minimum: 5 }], skip: 's1',
+    });
+    eq(result.outcome, 'published', 'cA is checked against s3\'s minimum, not s1\'s');
+  });
+}
+
+// ---------------------------------------------------------------
 // The event store: an unreadable log is moved aside, never sat on
 // where the next append would overwrite the only copy.
 // ---------------------------------------------------------------
