@@ -125,6 +125,8 @@ was decided, why, and what was tried and reverted:
 - the sandbox's layout, its timeline lanes or watches — _The sandbox_
 - the code view's language, its editor or language service — _The code
   view's language_, and the `dsl.js` header
+- what a script can reach, a CSP, sandboxing scripts — _Scripts and the
+  origin_
 
 ## Conventions and gotchas
 

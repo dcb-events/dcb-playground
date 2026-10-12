@@ -944,3 +944,35 @@ step at the playhead. Only the step band scrolls.
   `min(a, b)` / `max(a, b)`; a `-` straight after a value (`)`, `]`, a
   number) subtracts, anywhere else it starts a negative number
   (`endsValue`).
+
+## Scripts and the origin
+
+- **What a script can reach.** A scripted handler is compiled with
+  `new Function` and runs on the main thread, in the page's own
+  origin (`evCompileHandler`, evaluate.js). It can read and rewrite
+  all of localStorage, call the registered WebMCP tools, call
+  `window.DCB_PLAYGROUND_HOST.theme`, and fetch anywhere. On
+  dcb.events the playground is served at `/playground/` of the
+  website's origin, so its storage, and its quota, are the website's
+  too. What stands between an imported model and that is the import
+  gate and `?safe` (AGENTS.md); there is no sandbox.
+- **No Content-Security-Policy, for now.** One was weighed and
+  dropped (2026-10). Scripts need `'unsafe-eval'`, so a CSP does not
+  stop one from running. The one restriction worth having,
+  `connect-src 'self'` (no sending data elsewhere), would break
+  "From a URL", which fetches whatever URL the reader types. The page
+  also needs `style-src 'unsafe-inline'` (inline `style` attributes,
+  Monaco's runtime `<style>`). And the host's theme hook is an inline
+  `<script>` whose content depends on the site's configuration
+  (`hooks/playground.py` in the website), so it cannot be hashed; it
+  would only run because a `<meta>` CSP does not reach back to
+  content before it. What would be left — `object-src`, `base-uri`,
+  `form-action` — guards nothing this page does.
+- **The real fix is a sandbox, not a policy.** Compile and run
+  handlers in a Worker, or in an iframe sandboxed without
+  `allow-same-origin`, posting plain JSON in and out: a handler's
+  inputs (state, a frozen event, arguments, tags) and its output are
+  JSON already. The cost is that evaluation becomes asynchronous,
+  and every render path that evaluates — the scenario runners, the
+  sandbox's decision card, the watches — calls it synchronously
+  today. That is a change of the evaluation seam, not a patch.
