@@ -78,7 +78,15 @@ function createSandbox() {
     history: { replaceState: noop },
     navigator: { clipboard: {} },
     matchMedia: () => ({ matches: false, addEventListener: noop }),
-    setTimeout, clearTimeout, setInterval, clearInterval,
+    // The page's own timers (a toast's 8 s dismissal) are unref'd: no
+    // suite waits on one, and a live one only kept Node idling after
+    // the tally. `finish` guards the other side — see makeChecker.
+    setTimeout: (fn, ms, ...rest) => {
+      const timer = setTimeout(fn, ms, ...rest);
+      if (timer && timer.unref) timer.unref();
+      return timer;
+    },
+    clearTimeout, setInterval, clearInterval,
     requestAnimationFrame: noop,
     TextEncoder, TextDecoder, URL, Blob: class {},
   };
@@ -130,6 +138,16 @@ function swap(text, from, to) {
 function makeChecker() {
   let passed = 0;
   const failures = [];
+  // Page timers do not hold the process open (createSandbox), so a
+  // suite that awaited one would end without its tally — and with a
+  // zero exit. Ending without `finish` is a failure.
+  let finished = false;
+  process.on('exit', (code) => {
+    if (!finished && code === 0) {
+      console.log('the suite ended before finish() — an awaited page timer?');
+      process.exitCode = 1;
+    }
+  });
   const record = (name, error) => {
     if (error) failures.push(`${name}\n    ${error.message}`);
     else passed += 1;
@@ -152,6 +170,7 @@ function makeChecker() {
     if (a !== b) throw new Error(`${what || 'value'}: expected ${b}, got ${a}`);
   };
   const finish = () => {
+    finished = true;
     console.log(`${passed} passed, ${failures.length} failed`);
     if (failures.length) {
       console.log('\n' + failures.map((f) => '  ✗ ' + f).join('\n'));
