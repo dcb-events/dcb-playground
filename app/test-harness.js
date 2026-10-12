@@ -97,13 +97,14 @@ function createSandbox() {
   return { sandbox, store };
 }
 
-// The page's own inline script — the long block; the short ones are
-// the tiny loaders that pull in the files `loadApp` concatenates.
+// The page's own inline script, marked `data-page` — named rather than
+// guessed at, since the host injects inline scripts of its own (the
+// theme hook) and any other inline block would be a candidate too.
 function pageScript() {
   const html = fs.readFileSync(path.join(APP, 'index.html'), 'utf8');
-  const blocks = [...html.matchAll(/<script(?![^>]*\ssrc=)[^>]*>([\s\S]*?)<\/script>/g)]
-    .map((m) => m[1]);
-  return blocks.sort((a, b) => b.length - a.length)[0];
+  const blocks = [...html.matchAll(/<script data-page>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+  if (blocks.length !== 1) throw new Error(`index.html: expected one <script data-page>, found ${blocks.length}`);
+  return blocks[0];
 }
 
 // Concatenates the way index.html loads: the named files in <script>
