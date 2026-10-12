@@ -1113,7 +1113,10 @@ check('renaming any declared name and back changes nothing, or is refused over a
     for (const declaration of sandbox.sourceSymbols(parsed).occurrences.filter((o) => o.decl)) {
       const { token, symbol } = declaration;
       const fresh = (/^[A-Z]/.test(token.v) ? 'Zz' : 'zz') + token.v;
-      const there = sandbox.sourceRename(text, token.line, token.col, fresh);
+      // The parses this test already holds are handed on rather than
+      // redone by sourceRename — a few thousand of them were most of
+      // the suite's time.
+      const there = sandbox.sourceRenameSymbol(text, parsed, symbol, fresh);
       if (there.error) {
         eq(/script or JSON/.test(there.error), true, `${slug} ${symbol}: ${there.error}`);
         continue;
@@ -1123,7 +1126,7 @@ check('renaming any declared name and back changes nothing, or is refused over a
       eq(read.diagnostics, [], `${slug} ${symbol} renamed`);
       const back = sandbox.sourceSymbols(read).occurrences.find((o) => o.decl && o.symbol.endsWith(' ' + fresh)
         && o.symbol.split(' ')[0] === symbol.split(' ')[0]);
-      const again = sandbox.sourceRename(renamed, back.token.line, back.token.col, token.v);
+      const again = sandbox.sourceRenameSymbol(renamed, read, back.symbol, token.v);
       eq(again.error, undefined, `${slug} ${symbol} renamed back`);
       const restored = parseModelSource(sandbox.sourceApplyEdits(renamed, again.edits));
       // A type renamed away from its entity pins it, and an identifier
