@@ -440,12 +440,18 @@
      differ between one projection and the next; everything else waits
      until a row is opened. The columns are set per page rather than
      here — an entity's page already states what its rows are kept per,
-     so it drops that one and passes a narrower template. */
+     so it drops that one and passes a narrower template.
+     On a phone the name is the column that gives nothing up: the tags
+     fold away (the opened row still states them), the other two
+     narrow, and a long name wraps rather than ellipsizes. */
   .ledger {
     border: 1px solid var(--border); border-radius: var(--radius);
     background: var(--surface); overflow: hidden;
   }
-  .lhead, .lrow { display: grid; align-items: center; gap: 12px; padding: 0 12px; }
+  .lhead, .lrow {
+    display: grid; grid-template-columns: var(--cols);
+    align-items: center; gap: 12px; padding: 0 12px;
+  }
   .lhead { height: 30px; border-bottom: 1px solid var(--border); background: var(--type-soft); }
   .lhead > span {
     font-size: 10px; text-transform: uppercase; letter-spacing: .07em;
@@ -468,6 +474,12 @@
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .lcell.ty { color: var(--type); }
+  .lstart { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  @media (max-width: 760px) {
+    .lhead, .lrow { grid-template-columns: minmax(0,1fr) 88px 76px; gap: 8px; }
+    .ledger .lpart { display: none; }
+    .lrow .nm .txt { white-space: normal; overflow-wrap: anywhere; padding: 6px 0; }
+  }
   .lcaret { flex: none; width: 10px; font-size: 10px; color: var(--muted); }
   .ledger .addrow { padding: 9px 12px; }
 
@@ -8764,11 +8776,11 @@ const LIFECYCLE_REFUSAL_WORDS = {
 // fixed rather than offered, because being folded per that entity's
 // identifier is the whole of what makes a projection its property.
 function projectionLedger(model, { owner, entries, nameHead, add }) {
-  const cols = owner ? '1fr 150px 150px' : '1fr 156px 140px 132px';
+  const cols = '--cols:' + (owner ? 'minmax(0,1fr) 150px 150px' : 'minmax(0,1fr) 156px 140px 132px');
   return h('div', { class: 'ledger' },
-    h('div', { class: 'lhead', style: 'grid-template-columns:' + cols },
+    h('div', { class: 'lhead', style: cols },
       h('span', {}, nameHead),
-      owner ? null : h('span', {}, 'tagged by'),
+      owner ? null : h('span', { class: 'lpart' }, 'tagged by'),
       h('span', {}, 'holds'),
       h('span', {}, 'starts at')),
     entries.length
@@ -8852,7 +8864,7 @@ function projectionLedgerRow(model, entry, { owner, cols }) {
   const body = model['projection-definitions'][projection];
 
   if (!body) {
-    return h('div', { class: 'lrow dead', style: 'grid-template-columns:' + cols },
+    return h('div', { class: 'lrow dead', style: cols },
       h('span', { class: 'nm' }, h('span', { class: 'txt' }, label)),
       h('span', { class: 'muted tiny' },
         `binds “${projection}”, which this model does not define`),
@@ -8874,19 +8886,19 @@ function projectionLedgerRow(model, entry, { owner, cols }) {
 
   const row = h('div', {
     class: 'lrow' + (open ? ' on' : '') + (dead ? ' dead' : ''),
-    style: 'grid-template-columns:' + cols,
+    style: cols,
     title: dead ? 'Nothing moves it and nothing reads it' : null,
     onclick: () => toggleProjectionRow(model, projection),
   },
     h('span', { class: 'nm' },
       h('span', { class: 'lcaret' }, open ? '▾' : '▸'),
       h('span', { class: 'txt' }, label)),
-    owner ? null : h('span', {}, ...partitionCells(model, projection)),
+    owner ? null : h('span', { class: 'lpart' }, ...partitionCells(model, projection)),
     h('span', { class: 'lcell ty', title: typeLabel(body) },
       referenced ? h('i', { class: 'ic' }, entityIcon(model, referenced)) : null,
       readable(typeLabel(body)),
       scriptLabel(body) ? ' · ' + scriptLabel(body) : null),
-    h('span', {}, initialValueChip(body)));
+    h('span', { class: 'lstart' }, initialValueChip(body)));
 
   return h('div', {}, row, open ? projectionDetail(model, entry, { owner }) : null);
 }
