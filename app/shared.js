@@ -716,9 +716,38 @@ async function gzipToBase64Url(text) {
   return base64UrlEncode(new Uint8Array(buffer));
 }
 
+// What a model may unpack to, and how long a link to one may be. The
+// largest shipped model is about 20 KB as JSON and under 2 KB as a
+// link; the caps leave room for a hundred times that, and still stop a
+// few hundred kilobytes of gzip from unpacking to gigabytes the moment
+// a link is opened.
+const UNPACKED_MAX_BYTES = 5 * 1024 * 1024;
+const SHARE_LINK_MAX_LENGTH = 1000 * 1000;
+
+// A stream's text, read a chunk at a time and abandoned past the cap —
+// so an oversized one is never held whole.
+async function readCappedText(stream) {
+  const reader = stream.getReader();
+  const chunks = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > UNPACKED_MAX_BYTES) {
+      reader.cancel().catch(() => {});
+      throw new DomainError(`it unpacks to more than ${UNPACKED_MAX_BYTES / 1024 / 1024} MB, far more than any model.`);
+    }
+    chunks.push(value);
+  }
+  return new TextDecoder().decode(await new Blob(chunks).arrayBuffer());
+}
+
 async function gunzipFromBase64Url(encoded) {
-  const stream = new Blob([base64UrlDecode(encoded)]).stream().pipeThrough(new DecompressionStream('gzip'));
-  return new Response(stream).text();
+  if (encoded.length > SHARE_LINK_MAX_LENGTH) {
+    throw new DomainError(`it is too long — over ${SHARE_LINK_MAX_LENGTH / 1000 / 1000} million characters, far more than any model.`);
+  }
+  return readCappedText(new Blob([base64UrlDecode(encoded)]).stream().pipeThrough(new DecompressionStream('gzip')));
 }
 
 async function buildShareLink(model) {
@@ -739,10 +768,15 @@ function decodeShareLink(encoded) {
 async function loadModelFromUrl(url) {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  if (!response.body) throw new Error('the response was empty');
   const contentType = response.headers.get('Content-Type') || '';
-  const text = contentType.includes('gzip')
-    ? await new Response(response.body.pipeThrough(new DecompressionStream('gzip'))).text()
-    : await response.text();
+  const body = contentType.includes('gzip') ? response.body.pipeThrough(new DecompressionStream('gzip')) : response.body;
+  let text;
+  try {
+    text = await readCappedText(body);
+  } catch (error) {
+    throw error instanceof DomainError ? new DomainError('That file was not loaded: ' + error.message) : error;
+  }
   return JSON.parse(text);
 }
 

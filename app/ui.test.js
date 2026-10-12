@@ -32,7 +32,7 @@ loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js', 'shared.js'], {
   withPage: true,
   trailer: 'globalThis.state = state; globalThis.render = render; globalThis.session = session;'
     + ' globalThis.closeForms = closeForms; globalThis.codeView = codeView; globalThis.UNGROUPED = UNGROUPED;'
-    + ' globalThis.PREDEFINED_MODELS = PREDEFINED_MODELS;'
+    + ' globalThis.PREDEFINED_MODELS = PREDEFINED_MODELS; globalThis.SHARE_LINK_MAX_LENGTH = SHARE_LINK_MAX_LENGTH;'
     + ' globalThis.NOTATION_GUIDE_URL = NOTATION_GUIDE_URL; globalThis.NOTATION_REFERENCE_URL = NOTATION_REFERENCE_URL;',
 });
 const { check, eq, finish } = makeChecker();
@@ -5082,4 +5082,30 @@ check('the app is text: no file carries a raw control byte', () => {
   }
 });
 
-finish();
+// A share link or a fetched file is unpacked under a cap: a few hundred
+// kilobytes of gzip can stand for gigabytes of whitespace, and the
+// link is unpacked the moment it is opened.
+(async () => {
+  Object.assign(sandbox, { Blob, Response, ReadableStream, CompressionStream, DecompressionStream, atob, btoa });
+
+  await check('a share link round-trips a model', async () => {
+    const encoded = await sandbox.gzipToBase64Url(JSON.stringify({ name: 'M' }));
+    eq(await sandbox.decodeShareLink(encoded), { name: 'M' }, 'read back');
+  });
+
+  await check('a share link that unpacks past the cap is refused, not unpacked', async () => {
+    const encoded = await sandbox.gzipToBase64Url('{"name":"M"' + ' '.repeat(6 * 1024 * 1024) + '}');
+    eq(encoded.length < sandbox.SHARE_LINK_MAX_LENGTH, true, 'small enough to get past the length check');
+    let message = '';
+    try { await sandbox.decodeShareLink(encoded); } catch (error) { message = error.message; }
+    eq(/more than 5 MB/.test(message), true, message || 'refused');
+  });
+
+  await check('a share link longer than any model needs is refused before it is decoded', async () => {
+    let message = '';
+    try { await sandbox.decodeShareLink('A'.repeat(sandbox.SHARE_LINK_MAX_LENGTH + 1)); } catch (error) { message = error.message; }
+    eq(/too long/.test(message), true, message || 'refused');
+  });
+
+  finish();
+})();
