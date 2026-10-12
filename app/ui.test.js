@@ -22,7 +22,7 @@ const { createSandbox, loadApp, makeChecker, swap, textOf, findAll } = require('
 
 const APP = __dirname;
 
-const { sandbox, store, sessionStore, dispatch } = createSandbox();
+const { sandbox, store, sessionStore, dispatch, listening } = createSandbox();
 
 // `state` and the page's own functions live in the script's lexical
 // scope, not as properties of the context object — the same as they
@@ -5207,6 +5207,18 @@ check('the app is text: no file carries a raw control byte', () => {
     key('ArrowDown');
     eq(moved, 1, 'and with nothing open, they do');
     sandbox.moveRow = moveRow;
+  });
+
+  check('a drag lets go of the window however it ends — a touch scroll cancels it', () => {
+    for (const end of ['pointerup', 'pointercancel']) {
+      let moves = 0;
+      sandbox.trackPointer(() => { moves += 1; });
+      dispatch('pointermove', {});
+      dispatch(end, {});
+      dispatch('pointermove', {});
+      eq(moves, 1, `moves after ${end}`);
+      eq(['pointermove', 'pointerup', 'pointercancel'].map(listening), [0, 0, 0], `nothing left listening after ${end}`);
+    }
   });
 
   check('a kind colour used as text is one that can be read', () => {

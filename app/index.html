@@ -13262,6 +13262,20 @@ function scrubToPointer(e, goTo) {
   return true;
 }
 
+// Follows the pointer across the window until the drag ends — a
+// release, or a cancel: a touch that turns into a scroll never sends
+// `pointerup`, and the listeners stayed on the window for good.
+function trackPointer(onMove) {
+  const stop = () => {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', stop);
+    window.removeEventListener('pointercancel', stop);
+  };
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', stop);
+  window.addEventListener('pointercancel', stop);
+}
+
 function sandboxTimeline(model) {
   const total = session.log.length;
   const position = sessionPosition();
@@ -13274,13 +13288,7 @@ function sandboxTimeline(model) {
   const mode = state.sandboxLanes;
   const startDrag = (e) => {
     if (e.button !== 0 || !scrubToPointer(e, goTo)) return;
-    const onMove = (ev) => scrubToPointer(ev, goTo);
-    const onUp = () => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-    };
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
+    trackPointer((ev) => scrubToPointer(ev, goTo));
   };
 
   // The step the playhead is inside — its events are the ones the page

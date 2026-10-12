@@ -102,9 +102,13 @@ function createSandbox() {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   sandbox.window.addEventListener = (type, fn) => { (listeners[type] = listeners[type] || []).push(fn); };
+  sandbox.window.removeEventListener = (type, fn) => {
+    listeners[type] = (listeners[type] || []).filter((other) => other !== fn);
+  };
   vm.createContext(sandbox);
   const dispatch = (type, event) => { for (const fn of listeners[type] || []) fn(event); };
-  return { sandbox, store, sessionStore, dispatch };
+  const listening = (type) => (listeners[type] || []).length;
+  return { sandbox, store, sessionStore, dispatch, listening };
 }
 
 // The page's own inline script, marked `data-page` — named rather than
