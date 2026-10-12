@@ -213,8 +213,13 @@ function setScriptsDisabled(disabled) { evScriptsDisabled = !!disabled; }
 // the read's argument values, `tags` the values it is tagged by, keyed
 // by the names the projection declares (`tags.courseId`) — a script
 // sees what it is read by, but cannot change it.
-function evCompileHandler(handler, label) {
-  if (handler.code !== undefined) {
+//
+// Code runs only on a projection that declares a `script`: that is
+// what the import gate (`envelopeHasScript`) asks about, so it is the
+// one thing that may decide whether authored JavaScript runs. A `code`
+// left on an ordinary handler is inert here — the validator reports it.
+function evCompileHandler(handler, label, scripted) {
+  if (scripted && handler.code !== undefined) {
     if (evScriptsDisabled) {
       return () => fail(
         `The script for "${handler.event}" on ${label} did not run: scripts are off in safe mode. ` +
@@ -281,7 +286,7 @@ function evCompileTarget(model, target, label) {
   const steps = new Map();
   for (const handler of target.handlers || []) {
     if (!handler || !handler.event) continue;
-    steps.set(handler.event, evCompileHandler(handler, label));
+    steps.set(handler.event, evCompileHandler(handler, label, !!script));
   }
 
   const initial = script
@@ -602,6 +607,30 @@ function evReadOperand(operand, scope) {
 // The boundary.
 // ============================================================
 
+// Where each element of a fan came from, as an index into the list the
+// fan is rooted in — what a zipped parameter is read at. Fanned from a
+// list, an element is its own index. Fanned from an alias that is
+// itself fanned out (`Course(each student.courses)`), it is the index
+// the instance it was read off came from: every course of the first
+// student pairs with the first element the students were fanned from,
+// however many courses each holds and whichever students `excluding`
+// left out. The values are flattened the way reading the alias whole
+// flattens them, a list per instance into its elements.
+function evFanSourceIndexes(operand, scope, count) {
+  const parent = operandSource(operand) === 'alias-property' ? scope.bound[operand.alias] : null;
+  if (parent && parent.fanned && parent.instances) {
+    const out = [];
+    parent.instances.forEach((instance, j) => {
+      const value = parent.kind === 'projection' ? instance.value : instance.read(operand.property);
+      const root = parent.sourceIndexes && parent.sourceIndexes[j] !== undefined ? parent.sourceIndexes[j] : j;
+      const many = Array.isArray(value) ? value.length : 1;
+      for (let k = 0; k < many; k++) out.push(root);
+    });
+    if (out.length === count) return out;
+  }
+  return Array.from({ length: count }, (_, i) => i);
+}
+
 // One projection read — an alias's or an inline one — resolved in the
 // command's scope: a value for each tag the projection declares, which
 // has to be of the declared type (the tag's key — the advisory said so
@@ -630,7 +659,8 @@ function evProjectionRead(model, events, body, read, scope, label) {
         `${typeArticle(tag.tagType)} ${tag.tagType}.`);
     }
     if (operandSource(operand) === 'each') {
-      fanned = { name: tag.name, values: evAsList(evReadOperand(operand.each, scope)) };
+      const values = evAsList(evReadOperand(operand.each, scope));
+      fanned = { name: tag.name, values, roots: evFanSourceIndexes(operand.each, scope, values.length) };
       return { name: tag.name, type: tag.tagType, value: null };
     }
     const value = operandSource(operand) === 'tag-literal' ? operand.tagValue : evReadOperand(operand, scope);
@@ -664,7 +694,7 @@ function evProjectionRead(model, events, body, read, scope, label) {
     tags,
     arguments: args,
     instances,
-    sourceIndexes: instances.map((_, i) => i),
+    sourceIndexes: fanned.roots,
     value: instances.map((instance) => instance.value),
   };
 }
@@ -718,12 +748,13 @@ function evResolveBinding(model, events, body, binding, scope) {
   // collapsing it would silently pair a line of the cart with the wrong
   // one's price.
   const ids = fanned ? evAsList(held) : [held];
+  const roots = fanned ? evFanSourceIndexes(entityIdOperand(binding), scope, ids.length) : [0];
 
   // Each instance remembers the index it was fanned out from, because
   // a zipped parameter is read at *that* index — `excluding` compacts
   // the instance list, but it must not shift the pairing against the
   // list the fan came from.
-  let entries = ids.map((id, sourceIndex) => ({ id, sourceIndex }));
+  let entries = ids.map((id, i) => ({ id, sourceIndex: roots[i] }));
   if (binding.excluding !== undefined) {
     const excludedHeld = evReadOperand(binding.excluding, scope);
     // Same rule as the identifier above: null is not "exclude

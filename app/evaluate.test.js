@@ -1225,6 +1225,31 @@ function drive(model, log, command, args) {
 }
 
 {
+  // The gate asks about `script`, so `script` alone decides whether
+  // code runs. A `code` slipped onto a declared handler — by a crafted
+  // link, an agent's edit or a JSON body in the code view — is inert:
+  // the gate rightly lets the envelope through, the declared operation
+  // is what folds, and the validator says the code is there.
+  const envelope = JSON.parse(JSON.stringify(buildShareEnvelope(build(1), [])));
+  const numbering = envelope.projectionDefinitions.find((p) => p.name === 'CourseNumbering');
+  numbering.handlers[0].code = '(globalThis.__declaredCodeRan = true, "x9")';
+
+  check('code on a declared handler does not pass for a script', () => {
+    eq(envelopeHasScript(envelope), false, 'no script, so no question at import');
+    const id = importModelFromEnvelope(envelope).modelId;
+    const model = sandbox.projectState()[id];
+    eq(model['projection-definitions'].CourseNumbering.handlers[0].code !== undefined, true, 'stored as authored');
+    const log = [];
+    drive(model, log, 'DefineCourse', { capacity: 10 });
+    eq(foldProjection(model, log, 'CourseNumbering', {}), 'c2', 'the declared successor folds');
+    eq(sandbox.__declaredCodeRan, undefined, 'the code never ran');
+    eq(sandbox.modelAdvisories(model).some(
+      (a) => a.name === 'CourseNumbering' && /also carries code/.test(a.message)
+    ), true, 'and it is advised');
+  });
+}
+
+{
   // Scenarios are the one kind identified by a generated id rather than
   // a name, so they are the only kind whose identity a round trip could
   // quietly change. It does not: the exported id is what comes back, so
@@ -2051,6 +2076,77 @@ check('an import missing the definition arrays is refused, not silently accepted
 }
 
 // ---------------------------------------------------------------
+// A fan chained off another fan (`Course(each student.courses)`)
+// inherits its list: a parameter zipped with it pairs each course with
+// the element its *student* came from — not with the course's own
+// position in the flattened list, which runs past the list as soon as
+// a student holds more than one course, or shifts when `excluding`
+// leaves a student out.
+// ---------------------------------------------------------------
+{
+  const { id, model } = openBlank('Chained fan');
+  addDefinition('entity-definition', id, 'Student', { properties: [] });
+  addDefinition('entity-definition', id, 'Course', { properties: [] });
+  addDefinition('custom-type-definition', id, 'Requirement', {
+    properties: [{ name: 'studentId', propertyType: 'StudentId' }, { name: 'minimum', propertyType: 'integer' }],
+  });
+  const prop = (name, propertyType, isList = false) => ({ name, propertyType, isOptional: false, isList });
+  addTaggedEvent(id, 'Enrolled', { properties: [prop('studentId', 'StudentId'), prop('courseId', 'CourseId')] });
+  addTaggedEvent(id, 'CapacitySet', { properties: [prop('courseId', 'CourseId'), prop('capacity', 'integer')] });
+  addTaggedEvent(id, 'Checked', { properties: [prop('requirements', 'Requirement', true)] });
+  addDefinition('projection-definition', id, 'StudentCourses', {
+    tags: [{ name: 'studentId', tagType: 'StudentId' }], valueType: 'CourseId', isList: true, initialValue: [],
+    handlers: [{ event: 'Enrolled', operation: 'append', value: { eventProperty: 'courseId' } }],
+  });
+  addDefinition('projection-definition', id, 'CourseCapacity', {
+    tags: [{ name: 'courseId', tagType: 'CourseId' }], valueType: 'integer', isList: false, initialValue: 0,
+    handlers: [{ event: 'CapacitySet', operation: 'set', value: { eventProperty: 'capacity' } }],
+  });
+  updateDefinition('entity-definition', id, 'Student', { properties: [{ name: 'courses', projection: 'StudentCourses' }] });
+  updateDefinition('entity-definition', id, 'Course', { properties: [{ name: 'capacity', projection: 'CourseCapacity' }] });
+  addDefinition('command-definition', id, 'Check', {
+    properties: [prop('requirements', 'Requirement', true), { ...prop('skip', 'StudentId'), isOptional: true }],
+    boundary: [
+      { alias: 'student', entity: 'Student', id: { each: { parameterName: 'requirements', property: 'studentId' } } },
+      { alias: 'course', entity: 'Course', id: { each: { alias: 'student', property: 'courses' } } },
+    ],
+    conditions: [{
+      leftHandSide: { alias: 'course', property: 'capacity' }, predicate: 'greaterThanOrEquals',
+      rightHandSide: { parameterName: 'requirements', property: 'minimum' }, rejection: 'A course is too small.',
+    }],
+    publishes: [{ name: 'Checked', parameters: { requirements: { parameterName: 'requirements' } } }],
+  });
+  const log = [
+    { type: 'Enrolled', data: { studentId: 's1', courseId: 'cA' } },
+    { type: 'Enrolled', data: { studentId: 's1', courseId: 'cB' } },
+    { type: 'Enrolled', data: { studentId: 's3', courseId: 'cA' } },
+    { type: 'CapacitySet', data: { courseId: 'cA', capacity: 10 } },
+    { type: 'CapacitySet', data: { courseId: 'cB', capacity: 3 } },
+  ];
+
+  check('a chained fan pairs a zipped parameter by the element it came from', () => {
+    eq(sandbox.isZipped(model(), model()['command-definitions'].Check, model()['command-definitions'].Check.conditions[0],
+      { parameterName: 'requirements', property: 'minimum' }), true, 'the minimum is zipped with the courses');
+    // s1's courses are cA (10) and cB (3) and s1 asks for 5; s2 holds none.
+    const result = evaluateCommand(model(), log, 'Check', {
+      requirements: [{ studentId: 's1', minimum: 5 }, { studentId: 's2', minimum: 1 }], skip: null,
+    });
+    eq(result.outcome, 'rejected', 'cB is checked against s1\'s minimum, not s2\'s');
+  });
+
+  check('and excluding a student does not shift the pairing', () => {
+    const body = deepClone(model()['command-definitions'].Check);
+    body.boundary[0].excluding = { parameterName: 'skip' };
+    updateDefinition('command-definition', id, 'Check', body);
+    // s1 is left out; s3's one course, cA (10), meets s3's 5.
+    const result = evaluateCommand(model(), log, 'Check', {
+      requirements: [{ studentId: 's1', minimum: 100 }, { studentId: 's3', minimum: 5 }], skip: 's1',
+    });
+    eq(result.outcome, 'published', 'cA is checked against s3\'s minimum, not s1\'s');
+  });
+}
+
+// ---------------------------------------------------------------
 // The event store: an unreadable log is moved aside, never sat on
 // where the next append would overwrite the only copy.
 // ---------------------------------------------------------------
@@ -2780,6 +2876,52 @@ check('every predefined model ships advisory-clean', () => {
       ['DeveloperAvailableHoursPerWeek', ['DeveloperId:developerId'], ['DeveloperRegistered']],
       ['DeveloperAllocatedHoursForWeek', ['DeveloperId:developerId', 'WeekNumber:week'], ['HoursAllocated']],
     ], 'the registration is not tagged by the week, and is still in the boundary');
+  });
+
+  check('read through an entity, a derived property is the same queries', () => {
+    // `Course.full` compares the course's subscriptions with a limit
+    // kept for all courses. Read as a projection, the limit is a query
+    // of its own; read through the entity, it used to be ANDed with the
+    // course's tag — and the untagged event that changes it fell out of
+    // the append condition the decision depends on.
+    const { id, model } = openBlank('Derived through an entity');
+    addDefinition('entity-definition', id, 'Course', { properties: [] });
+    const courseId = { name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false };
+    addTaggedEvent(id, 'Subscribed', { properties: [courseId] });
+    addTaggedEvent(id, 'LimitSet', { properties: [{ name: 'max', propertyType: 'integer', isOptional: false, isList: false }] });
+    const own = { courseId: { parameterName: 'courseId' } };
+    addDefinition('projection-definition', id, 'SubscriptionCount', {
+      tags: [{ name: 'courseId', tagType: 'CourseId' }], valueType: 'integer', isList: false, initialValue: 0,
+      handlers: [{ event: 'Subscribed', operation: 'increment', value: 1 }],
+    });
+    addDefinition('projection-definition', id, 'Limit', {
+      tags: [], valueType: 'integer', isList: false, initialValue: 10,
+      handlers: [{ event: 'LimitSet', operation: 'set', value: { eventProperty: 'max' } }],
+    });
+    addDefinition('projection-definition', id, 'CourseFull', {
+      tags: [{ name: 'courseId', tagType: 'CourseId' }], valueType: 'boolean', isList: false,
+      derived: { leftHandSide: { projection: 'SubscriptionCount', tags: own }, predicate: 'greaterThanOrEquals',
+        rightHandSide: { projection: 'Limit', tags: {} } },
+    });
+    updateDefinition('entity-definition', id, 'Course', { properties: [{ name: 'full', projection: 'CourseFull' }] });
+    const subscribe = (boundary, leftHandSide) => ({
+      properties: [courseId], boundary,
+      conditions: [{ leftHandSide, predicate: 'isFalse', rejection: 'The course is full.' }],
+      publishes: [{ name: 'Subscribed', parameters: { courseId: { parameterName: 'courseId' } } }],
+    });
+    addDefinition('command-definition', id, 'SubscribeThroughEntity',
+      subscribe([{ alias: 'course', entity: 'Course', id: { parameterName: 'courseId' } }], { alias: 'course', property: 'full' }));
+    addDefinition('command-definition', id, 'SubscribeThroughProjection',
+      subscribe([{ alias: 'full', projection: 'CourseFull', tags: own }], { alias: 'full' }));
+
+    const queries = (name) => sandbox.deriveDcb(model(), model()['command-definitions'][name]).items
+      .map((item) => JSON.stringify([item.tags, item.types])).sort();
+    eq(queries('SubscribeThroughEntity'), queries('SubscribeThroughProjection'), 'one boundary, however it is read');
+    eq(queries('SubscribeThroughEntity').includes(JSON.stringify([[], ['LimitSet']])), true, 'the limit is read untagged');
+
+    const log = [{ type: 'Subscribed', data: { courseId: 'c1' } }, { type: 'LimitSet', data: { max: 1 } }];
+    eq(evaluateCommand(model(), log, 'SubscribeThroughEntity', { courseId: 'c1' }).outcome, 'rejected',
+      'and the decision does depend on it');
   });
 
   check('the shipped model is advisory-clean and its scenarios hold', () => {

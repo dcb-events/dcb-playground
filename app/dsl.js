@@ -2188,6 +2188,14 @@ const SOURCE_PRINTERS = {
   'command-definition': printCommand,
 };
 
+// The line saying why a definition is written as JSON. A reason can
+// quote stored strings (a predicate, a tag key, an alias), and a line
+// break in one would end the comment and print the rest as code — code
+// an untouched text would then apply. So the reason is one line, always.
+function sourceFallbackComment(reason) {
+  return `// Written as JSON: ${String(reason).replace(/[\r\n\u2028\u2029]+/g, ' ')}.`;
+}
+
 function printJsonDefinition(kind, name, body) {
   return `${SOURCE_KEYWORD[kind]} ${sourceDeclName(name)} json ${JSON.stringify(body, null, 2)}`;
 }
@@ -2212,7 +2220,7 @@ function printDefinitionSource(kind, name, body, names = {}) {
   } catch (error) {
     reason = error instanceof SourceUnprintable ? error.message : 'it is not shaped the way the code form expects';
   }
-  return `// Written as JSON: ${reason}.\n${printJsonDefinition(kind, name, body)}`;
+  return `${sourceFallbackComment(reason)}\n${printJsonDefinition(kind, name, body)}`;
 }
 
 // ---------- scenarios ----------
@@ -2348,7 +2356,7 @@ function printScenarioSource(model, kind, body) {
   } catch (error) {
     reason = error instanceof SourceUnprintable ? error.message : 'it is not shaped the way the code form expects';
   }
-  return `// Written as JSON: ${reason}.\nscenario json ${JSON.stringify(body, null, 2)}`;
+  return `${sourceFallbackComment(reason)}\nscenario json ${JSON.stringify(body, null, 2)}`;
 }
 
 const sourceIndent = (text) => text.split('\n').map((line) => (line ? '  ' + line : line)).join('\n');
