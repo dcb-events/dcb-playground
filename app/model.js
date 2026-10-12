@@ -313,6 +313,22 @@ function projectState() {
   return models;
 }
 
+// A `null` entry in a body's list says nothing, and the structural
+// gate lets it through. Every reader would otherwise have to step
+// over it — the ones that did not crashed the fold and the render — so
+// it is dropped once, here, for every writer and every log already
+// stored. The event itself keeps what was written.
+function withoutNullEntries(body) {
+  if (body === null || typeof body !== 'object') return body;
+  let out = body;
+  for (const field of STORABLE_LIST_FIELDS) {
+    if (!Array.isArray(body[field]) || !body[field].includes(null)) continue;
+    if (out === body) out = { ...body };
+    out[field] = body[field].filter((entry) => entry !== null);
+  }
+  return out;
+}
+
 function apply(models, event) {
   const { type, data } = event;
   const modelId = data['dcb-model-id'];
@@ -337,9 +353,9 @@ function apply(models, event) {
 
   for (const kind of DEF_KINDS) {
     const coll = model[DEF_COLLECTIONS[kind]];
-    if (type === `${kind}-added`) { coll[data.name] = data.body; return; }
+    if (type === `${kind}-added`) { coll[data.name] = withoutNullEntries(data.body); return; }
     if (type === `${kind}-updated`) {
-      if (coll[data.name] !== undefined) coll[data.name] = data.body;
+      if (coll[data.name] !== undefined) coll[data.name] = withoutNullEntries(data.body);
       return;
     }
     if (type === `${kind}-renamed`) {

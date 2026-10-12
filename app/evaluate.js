@@ -63,6 +63,13 @@ function fail(message) {
   throw new EvaluationError(message);
 }
 
+// What a thrown thing says. A script may throw anything at all —
+// `throw null` included — and reading `.message` off that must not be
+// the second, unexplained failure.
+function evErrorText(error) {
+  return String((error && error.message) || error);
+}
+
 // ============================================================
 // Values.
 //
@@ -252,13 +259,13 @@ function evCompileHandler(handler, label, scripted) {
     try {
       body = new Function('state', 'event', 'args', 'tags', `return (${handler.code}\n);`);
     } catch (error) {
-      fail(`The script for "${handler.event}" on ${label} does not parse: ${error.message}`);
+      fail(`The script for "${handler.event}" on ${label} does not parse: ${evErrorText(error)}`);
     }
     return (state, event, args, tags) => {
       try {
         return body(state, event, args, tags);
       } catch (error) {
-        return fail(`The script for "${handler.event}" on ${label} threw: ${error.message}`);
+        return fail(`The script for "${handler.event}" on ${label} threw: ${evErrorText(error)}`);
       }
     };
   }
@@ -310,7 +317,7 @@ function evCompileTarget(model, target, label) {
   }
 
   const initial = script
-    ? deepClone(script.initialState)
+    ? deepClone(script.initialState ?? null)
     : (target.initialValue === undefined
       ? evNormalize(defaultInitialValue(model, target))
       : evNormalize(target.initialValue));
@@ -1199,6 +1206,17 @@ function deriveThen(model, scenario) {
   return { outcome: 'rejected', events: [], rejection };
 }
 
+// Why something could not be worked out. An EvaluationError is a
+// sentence written for the modeller; anything else is a defect in the
+// model this file did not foresee. Both are an *error* — a scenario
+// broken, a card saying so — rather than escaping: the scenario runners
+// and the sandbox evaluate while the page renders, and an imported
+// model must not be able to take that down.
+function evaluationFailure(error) {
+  if (error instanceof EvaluationError) return error.message;
+  return `The model is malformed here: ${evErrorText(error)}`;
+}
+
 // `{ status, expected, actual, reason }`. `reason` is set only when the
 // scenario is broken, and is the sentence to show instead of a
 // difference.
@@ -1208,10 +1226,7 @@ function runScenario(model, scenario) {
   try {
     actual = deriveThen(model, scenario);
   } catch (error) {
-    if (error instanceof EvaluationError) {
-      return { status: 'broken', expected, actual: null, reason: error.message };
-    }
-    throw error;
+    return { status: 'broken', expected, actual: null, reason: evaluationFailure(error) };
   }
   return {
     status: evSameOutcome(actual, expected) ? 'current' : 'drifted',
@@ -1271,10 +1286,7 @@ function runProjectionScenario(model, spec) {
   try {
     actual = deriveProjectionScenarioThen(model, spec);
   } catch (error) {
-    if (error instanceof EvaluationError) {
-      return { status: 'broken', expected, actual: null, reason: error.message };
-    }
-    throw error;
+    return { status: 'broken', expected, actual: null, reason: evaluationFailure(error) };
   }
   return {
     status: evSameOutcome(actual, expected) ? 'current' : 'drifted',
@@ -1289,6 +1301,7 @@ function runProjectionScenario(model, spec) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     EvaluationError,
+    evaluationFailure,
     evaluateCommand,
     foldEntityProperty,
     foldProjection,

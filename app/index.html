@@ -11889,9 +11889,7 @@ function saveScenarioOf(kind, model) {
   try {
     then = k.deriveThen(model, body);
   } catch (error) {
-    return toast(error instanceof EvaluationError
-      ? error.message
-      : 'That could not be worked out: ' + error.message, true);
+    return toast(evaluationFailure(error), true);
   }
   body.then = then;
   run(() => {
@@ -12997,8 +12995,7 @@ function sessionRun(model, commandName, args) {
   try {
     result = sessionDrive(model, commandName, args);
   } catch (error) {
-    if (error instanceof EvaluationError) return toast(error.message, true);
-    throw error;
+    return toast(evaluationFailure(error), true);
   }
   if (result.outcome === 'rejected') {
     const rule = result.failedRule;
@@ -13036,8 +13033,7 @@ function sessionInstanceState(model, tag, log = sessionVisible()) {
           value: foldEntityProperty(model, log, entityName, property.name, id),
         };
       } catch (error) {
-        if (error instanceof EvaluationError) return { name: property.name, error: error.message };
-        throw error;
+        return { name: property.name, error: evaluationFailure(error) };
       }
     }),
   };
@@ -13323,10 +13319,9 @@ function sandboxDecision(model) {
   try {
     result = evaluateCommand(model, session.log.slice(0, step.from), step.command, step.args);
   } catch (error) {
-    if (!(error instanceof EvaluationError)) throw error;
     return h('div', { class: 'card', style: 'border-color:var(--danger)' },
       h('div', { class: 'small' },
-        readable(step.command) + ' can no longer be worked out here: ' + error.message));
+        readable(step.command) + ' can no longer be worked out here: ' + evaluationFailure(error)));
   }
 
   const stale = result.outcome === 'rejected'
@@ -13468,8 +13463,7 @@ function foldWatch(model, watch, fold, log = sessionVisible()) {
   try {
     return { value: (fold || foldProjection)(model, log, watch.projection, watchRead(watch)) };
   } catch (error) {
-    if (error instanceof EvaluationError) return { error: error.message };
-    throw error;
+    return { error: evaluationFailure(error) };
   }
 }
 
@@ -13743,7 +13737,6 @@ function sandboxNow(model) {
   try {
     then = evaluateCommand(model, session.log.slice(0, step.from), step.command, step.args);
   } catch (error) {
-    if (!(error instanceof EvaluationError)) throw error;
     return h('div', { class: 'card' },
       h('div', { class: 'empty' }, 'See Reads.'));
   }

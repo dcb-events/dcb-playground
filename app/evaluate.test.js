@@ -3160,4 +3160,61 @@ check('every predefined model ships advisory-clean', () => {
   });
 }
 
+// ---------------------------------------------------------------
+// A defective model evaluates to an error, never to a crash: the
+// scenario runners are called while the page renders, so anything
+// that escapes them as a TypeError takes the page down with it.
+// ---------------------------------------------------------------
+{
+  check('a null entry among an event\'s or a command\'s properties is skipped', () => {
+    const { id, model } = openScripted();
+    const event = model()['event-definitions'].Ticked;
+    updateDefinition('event-definition', id, 'Ticked', { ...event, properties: [null, ...event.properties] });
+    const command = model()['command-definitions'].Tick;
+    updateDefinition('command-definition', id, 'Tick', { ...command, properties: [null, ...command.properties] });
+    eq(evaluateCommand(model(), [], 'Tick', { counterId: 'x1' }).outcome, 'published', 'evaluates');
+    eq(foldProjection(model(), [{ type: 'Ticked', data: { counterId: 'x1' } }], 'CounterTotal', { tags: { counterId: 'x1' } }),
+      1, 'folds');
+    eq(runScenario(model(), {
+      given: [{ event: 'Ticked', data: { counterId: 'x1' } }], command: 'Tick',
+      when: { arguments: { counterId: 'x1' } }, then: null,
+    }).status, 'drifted', 'and a scenario runs');
+  });
+
+  check('a script with no initial state starts from null', () => {
+    const { id, model } = openScripted();
+    addDefinition('projection-definition', id, 'Unstarted', {
+      valueType: 'integer', isList: false, script: {},
+      handlers: [{ event: 'Ticked', code: '(state || 0) + 1' }],
+    });
+    eq(foldProjection(model(), [], 'Unstarted', {}), null, 'nothing folded');
+  });
+
+  check('a script that throws something other than an Error is an evaluation error', () => {
+    const { id, model } = openScripted();
+    addDefinition('projection-definition', id, 'Thrower', {
+      valueType: 'integer', isList: false, script: { initialState: 0 },
+      handlers: [{ event: 'Ticked', code: '(() => { throw null; })()' }],
+    });
+    let caught;
+    try { foldProjection(model(), [{ type: 'Ticked', data: { counterId: 'x1' } }], 'Thrower', {}); } catch (error) { caught = error; }
+    eq(caught && caught.constructor.name, 'EvaluationError', 'an EvaluationError');
+    eq(/threw: null/.test(caught.message), true, caught.message);
+  });
+
+  check('anything unforeseen in a scenario run is that scenario\'s error, not the page\'s', () => {
+    const { model } = openScripted();
+    const broken = deepClone(model());
+    // A shape the write path would never let through, standing in for
+    // whatever a defect the point fixes do not foresee looks like.
+    broken['command-definitions'].Tick.boundary = 7;
+    const run = runScenario(broken, { given: [], command: 'Tick', when: { arguments: { counterId: 'x1' } }, then: null });
+    eq(run.status, 'broken', 'broken, not thrown');
+    eq(typeof run.reason, 'string', 'with a reason');
+    broken['projection-definitions'].CounterTotal.handlers = 7;
+    const projected = runProjectionScenario(broken, { given: [], projection: 'CounterTotal', tags: { counterId: { tagValue: 'x1' } }, then: 0 });
+    eq(projected.status, 'broken', 'a projection scenario too');
+  });
+}
+
 finish();
