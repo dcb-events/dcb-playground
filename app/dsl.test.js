@@ -1554,6 +1554,12 @@ check('every keyword outside the experimental ones is shown to an agent', () => 
     eq('B' in read.collections['event-definition'], true, 'the next line is read as the declaration it is');
   });
 
+  check('a duplicate is named with the right article', () => {
+    eq(messages('model "M"\nevent A {}\nevent A {}\n').some((m) => m.startsWith('An event named "A"')), true,
+      messages('model "M"\nevent A {}\nevent A {}\n').join(' | '));
+    eq(messages('model "M"\ncommand C() {}\ncommand C() {}\n').some((m) => m.startsWith('A command named "C"')), true,
+      'and a consonant keeps "A"');
+  });
 }
 
 finish();

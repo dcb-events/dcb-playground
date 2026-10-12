@@ -878,7 +878,8 @@ function parseModelSourceText(text, options) {
     if (Object.prototype.hasOwnProperty.call(coll, name)) {
       diagnostics.push({
         severity: 'error',
-        message: `A ${SOURCE_KEYWORD[kind]} named "${name}" is already defined above — one of the two has to go.`,
+        message: `${sourceArticle(SOURCE_KEYWORD[kind]) === 'an' ? 'An' : 'A'} ${SOURCE_KEYWORD[kind]} named "${name}" `
+          + 'is already defined above — one of the two has to go.',
         line: nameToken.line, col: nameToken.col, endLine: nameToken.endLine, endCol: nameToken.endCol,
       });
       return;
