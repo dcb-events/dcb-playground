@@ -149,8 +149,10 @@ function makeChecker() {
       process.exitCode = 1;
     }
   });
+  // STACK=1 in the environment reports a failure with its stack — for
+  // the TypeError deep in a fold, where the message alone says little.
   const record = (name, error) => {
-    if (error) failures.push(`${name}\n    ${error.message}`);
+    if (error) failures.push(`${name}\n    ${process.env.STACK ? error.stack : error.message}`);
     else passed += 1;
   };
   const check = (name, fn) => {
