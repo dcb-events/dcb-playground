@@ -291,9 +291,18 @@ function generateId() {
 // Mirrors `dcb-model-overview` in the ESDM model.
 // ============================================================
 
+// A collection is keyed by names an author writes, and `constructor`
+// or `toString` is one an author may write: on a plain object every
+// lookup of a name the model does not define would find what Object
+// inherits under it instead. The projection's collections have no
+// prototype, so a missing name reads as missing everywhere.
+function emptyCollection() {
+  return Object.create(null);
+}
+
 function emptyModel(id, name) {
   const model = { id, name };
-  for (const kind of DEF_KINDS) model[DEF_COLLECTIONS[kind]] = {};
+  for (const kind of DEF_KINDS) model[DEF_COLLECTIONS[kind]] = emptyCollection();
   return model;
 }
 
@@ -368,7 +377,7 @@ function apply(models, event) {
     }
     if (type === `${kind}-removed`) { delete coll[data.name]; return; }
     if (type === `${kind}-reordered`) {
-      const next = {};
+      const next = emptyCollection();
       for (const key of data.order) if (coll[key] !== undefined) next[key] = coll[key];
       model[DEF_COLLECTIONS[kind]] = next;
       return;

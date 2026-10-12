@@ -107,6 +107,14 @@ function evNormalize(value) {
   return out;
 }
 
+// A value held under a key the object itself has — a definition in a
+// collection, a field of a payload, an argument supplied. Never what
+// Object inherits under `constructor` or `toString`; see emptyCollection
+// (model.js) for the projection's side of the same rule.
+function evOwn(object, key) {
+  return object !== null && typeof object === 'object' && Object.hasOwn(object, key) ? object[key] : undefined;
+}
+
 function evDeepEqual(a, b) {
   const x = evNormalize(a);
   const y = evNormalize(b);
@@ -176,11 +184,11 @@ function evAsNumber(value, where) {
 // ============================================================
 
 function tagsOfEvent(model, eventName, data) {
-  const definition = model['event-definitions'][eventName];
+  const definition = evOwn(model['event-definitions'], eventName);
   if (!definition) return [];
   const tags = new Set();
   for (const leaf of eventTagLeaves(model, definition)) {
-    const held = (data || {})[leaf.property];
+    const held = evOwn(data, leaf.property);
     const elements = leaf.isList ? evAsList(held) : [held];
     for (const element of elements) {
       if (element === null || element === undefined) continue;
@@ -214,7 +222,7 @@ function evMatchesTags(model, event, tags) {
 function evCompileHandlerOperand(operand) {
   switch (operandSource(operand)) {
     case 'event-property':
-      return (state, event) => (event.data || {})[operand.eventProperty];
+      return (state, event) => evOwn(event.data, operand.eventProperty);
     case 'current-value':
       return (state) => state;
     case 'successor': {
@@ -372,11 +380,11 @@ function evCompileTarget(model, target, label) {
 // One property of one entity instance — the projection it binds, read
 // by its one tag, the instance's identifier.
 function foldEntityProperty(model, events, entityName, propertyName, instanceId, args) {
-  const entity = model['entity-definitions'][entityName];
+  const entity = evOwn(model['entity-definitions'], entityName);
   if (!entity) fail(`This model has no entity "${entityName}".`);
   const binding = (entity.properties || []).find((p) => p && p.name === propertyName);
   if (!binding) fail(`"${entityName}" has no property "${propertyName}".`);
-  const projection = model['projection-definitions'][binding.projection];
+  const projection = evOwn(model['projection-definitions'], binding.projection);
   if (!projection) {
     fail(`"${entityName}.${propertyName}" binds projection "${binding.projection}", which this model no longer defines.`);
   }
@@ -417,11 +425,11 @@ function evReadTagLeaves(model, projectionName, tag, value) {
 // derived projection's operands are read by the tags it passes them, so
 // its query is theirs.
 function projectionQueryTags(model, projectionName, read) {
-  const projection = model['projection-definitions'][projectionName];
+  const projection = evOwn(model['projection-definitions'], projectionName);
   if (!projection) fail(`This model has no projection "${projectionName}".`);
   const held = (read && read.tags) || {};
   return [...new Set(projectionTagParams(projection)
-    .flatMap((tag) => evReadTagLeaves(model, projectionName, tag, held[tag.name]))
+    .flatMap((tag) => evReadTagLeaves(model, projectionName, tag, evOwn(held, tag.name)))
     .map((leaf) => renderTag(identifierTypeOf(model, leaf.type), String(leaf.value))))];
 }
 
@@ -430,8 +438,8 @@ function projectionQueryTags(model, projectionName, read) {
 function evScriptTags(model, projectionName, read) {
   const out = {};
   const held = (read && read.tags) || {};
-  for (const tag of projectionTagParams(model['projection-definitions'][projectionName])) {
-    out[tag.name] = evNormalize(held[tag.name]);
+  for (const tag of projectionTagParams(evOwn(model['projection-definitions'], projectionName))) {
+    out[tag.name] = evNormalize(evOwn(held, tag.name));
   }
   return out;
 }
@@ -443,18 +451,18 @@ function evScriptTags(model, projectionName, read) {
 // either way. Optional lists are exempt (they evaluate as plain
 // lists; the advisories point the combination out).
 function evWithExplicitOptionals(model, event) {
-  const definition = model['event-definitions'][event.type];
+  const definition = evOwn(model['event-definitions'], event.type);
   let data = event.data;
   for (const property of (definition || {}).properties || []) {
     if (!property.isOptional || property.isList) continue;
-    if ((data || {})[property.name] !== undefined) continue;
+    if (evOwn(data, property.name) !== undefined) continue;
     data = { ...(data || {}), [property.name]: null };
   }
   return data === event.data ? event : { ...event, data };
 }
 
 function foldProjection(model, events, projectionName, read, seen = []) {
-  const projection = model['projection-definitions'][projectionName];
+  const projection = evOwn(model['projection-definitions'], projectionName);
   if (projection && derivedOf(projection)) {
     return evDeriveProjection(model, events, projectionName, read, seen);
   }
@@ -463,7 +471,7 @@ function foldProjection(model, events, projectionName, read, seen = []) {
 }
 
 function foldProjectionState(model, events, projectionName, read) {
-  const projection = model['projection-definitions'][projectionName];
+  const projection = evOwn(model['projection-definitions'], projectionName);
   if (projection && derivedOf(projection)) {
     // A derived projection keeps no bookkeeping: its whole state is
     // the one value its predicate or computation yields.
@@ -483,7 +491,7 @@ function evDeriveProjection(model, events, projectionName, read, seen = []) {
   if (seen.includes(projectionName)) {
     fail(`Projection "${projectionName}" derives from itself — a cycle has no value to start from.`);
   }
-  const projection = model['projection-definitions'][projectionName];
+  const projection = evOwn(model['projection-definitions'], projectionName);
   const derived = derivedOf(projection);
 
   const readOperand = (operand) => {
@@ -493,7 +501,7 @@ function evDeriveProjection(model, events, projectionName, read, seen = []) {
     const own = (read && read.tags) || {};
     const tags = {};
     for (const [name, value] of readTagEntries(operand)) {
-      tags[name] = operandSource(value) === 'parameter' ? own[value.parameterName]
+      tags[name] = operandSource(value) === 'parameter' ? evOwn(own, value.parameterName)
         : operandSource(value) === 'tag-literal' ? value.tagValue : evNormalize(value);
     }
     return foldProjection(model, events, operand.projection, { tags, args }, [...seen, projectionName]);
@@ -528,7 +536,7 @@ function evApplyOperator(projectionName, derived, left, right) {
 }
 
 function evProjectionFold(model, events, projectionName, read) {
-  const projection = model['projection-definitions'][projectionName];
+  const projection = evOwn(model['projection-definitions'], projectionName);
   if (!projection) fail(`This model has no projection "${projectionName}".`);
 
   const queryTags = projectionQueryTags(model, projectionName, read);
@@ -578,15 +586,15 @@ function evReadOperand(operand, scope) {
   if (Array.isArray(operand)) return operand.map(evNormalize);
   switch (operandSource(operand)) {
     case 'parameter': {
-      const held = scope.args[operand.parameterName];
+      const held = evOwn(scope.args, operand.parameterName);
       if (held === undefined) {
         fail(`This command was given no value for "${operand.parameterName}".`);
       }
       if (!operand.property) return evNormalize(held);
       const value = evNormalize(held);
       return Array.isArray(value)
-        ? value.map((element) => (element || {})[operand.property])
-        : (value || {})[operand.property];
+        ? value.map((element) => evOwn(element, operand.property))
+        : evOwn(value, operand.property);
     }
     case 'alias-property': {
       const binding = scope.bound[operand.alias];
@@ -672,12 +680,12 @@ function evFanSourceIndexes(operand, scope, count) {
 // in the list's order so a zipped parameter pairs by index — and `value`
 // is then every one of them, in order.
 function evProjectionRead(model, events, body, read, scope, label) {
-  const projection = model['projection-definitions'][read.projection];
+  const projection = evOwn(model['projection-definitions'], read.projection);
   if (!projection) fail(`${label} reads "${read.projection}", which this model does not define.`);
   const held = (read.tags && typeof read.tags === 'object' && !Array.isArray(read.tags)) ? read.tags : {};
   let fanned = null;
   const tags = projectionTagParams(projection).map((tag) => {
-    const operand = held[tag.name];
+    const operand = evOwn(held, tag.name);
     if (operand === undefined) fail(`${label} gives no value for ${read.projection}'s "${tag.name}" tag.`);
     const resolved = tagOperandType(model, body, operand);
     if (resolved && resolved.propertyType !== tag.tagType) {
@@ -732,7 +740,7 @@ function evResolveBinding(model, events, body, binding, scope) {
     return;
   }
 
-  if (!model['entity-definitions'][binding.entity]) {
+  if (!evOwn(model['entity-definitions'], binding.entity)) {
     fail(`Binding "${binding.alias}" reads entity "${binding.entity}", which this model does not define.`);
   }
 
@@ -975,16 +983,18 @@ function evCheckCondition(model, body, condition, scope) {
 // "what did this command see when it decided" is the question a step
 // raises.
 function evaluateCommand(model, events, commandName, args) {
-  const body = model['command-definitions'][commandName];
+  const body = evOwn(model['command-definitions'], commandName);
   if (!body) fail(`This model has no command "${commandName}".`);
 
   const supplied = args || {};
   const log = events || [];
   // `model`, `body` and `events` ride along for an inline read, which is
   // folded from inside an operand; `inline` holds what it folded.
-  const scope = { args: {}, bound: {}, inline: new Map(), model, body, events: log };
+  // `args` and `bound` are keyed by authored names, so have no
+  // prototype (see evOwn).
+  const scope = { args: Object.create(null), bound: Object.create(null), inline: new Map(), model, body, events: log };
   for (const property of body.properties || []) {
-    if (supplied[property.name] === undefined) {
+    if (evOwn(supplied, property.name) === undefined) {
       // An optional property may be unset. `null` is the one spelling
       // of "no value" downstream, so the lenient read normalizes here:
       // an absent key and an explicit null reach every condition and
@@ -996,7 +1006,7 @@ function evaluateCommand(model, events, commandName, args) {
       }
       fail(`"${commandName}" needs a value for "${property.name}".`);
     }
-    scope.args[property.name] = evNormalize(supplied[property.name]);
+    scope.args[property.name] = evNormalize(evOwn(supplied, property.name));
   }
 
   for (const round of deriveRounds(body)) {
@@ -1034,7 +1044,7 @@ function evaluateCommand(model, events, commandName, args) {
   const published = [];
   for (const emission of body.publishes || []) {
     if (!emission || !emission.name) continue;
-    const definition = model['event-definitions'][emission.name];
+    const definition = evOwn(model['event-definitions'], emission.name);
     if (!definition) {
       fail(`"${commandName}" publishes "${emission.name}", which this model does not define.`);
     }
@@ -1050,7 +1060,7 @@ function evaluateCommand(model, events, commandName, args) {
     if (!held) continue;
     const data = {};
     for (const property of definition.properties || []) {
-      const operand = (emission.parameters || {})[property.name];
+      const operand = evOwn(emission.parameters, property.name);
       if (operand === undefined) {
         // An optional event property needs no mapping. The published
         // payload still carries the key, holding the explicit null —
@@ -1170,7 +1180,7 @@ function deriveThen(model, scenario) {
   // and a deleted event would report as agreement rather than as the
   // repair it actually needs.
   (scenario.given || []).forEach((step, index) => {
-    const definition = model['event-definitions'][(step || {}).event];
+    const definition = evOwn(model['event-definitions'], (step || {}).event);
     if (!definition) {
       fail(`Given step ${index + 1} records "${(step || {}).event}", which this model no longer defines.`);
     }
@@ -1178,7 +1188,7 @@ function deriveThen(model, scenario) {
       // An optional property legitimately absent is not an event the
       // scenario has fallen behind — the fold reads it as undefined.
       if (property.isOptional) continue;
-      if (!((step.data || {})[property.name] !== undefined)) {
+      if (evOwn(step.data, property.name) === undefined) {
         fail(
           `Given step ${index + 1} ("${step.event}") carries no value for "${property.name}", ` +
           'which that event has gained since this scenario was written.'
@@ -1251,7 +1261,7 @@ function deriveProjectionScenarioThen(model, spec) {
   // for why this is checked ahead of the fold rather than left to fall
   // out of it as a silent, empty match.
   (spec.given || []).forEach((step, index) => {
-    const definition = model['event-definitions'][(step || {}).event];
+    const definition = evOwn(model['event-definitions'], (step || {}).event);
     if (!definition) {
       fail(`Given step ${index + 1} records "${(step || {}).event}", which this model no longer defines.`);
     }
@@ -1259,7 +1269,7 @@ function deriveProjectionScenarioThen(model, spec) {
       // An optional property legitimately absent is not an event the
       // scenario has fallen behind — the fold reads it as undefined.
       if (property.isOptional) continue;
-      if (!((step.data || {})[property.name] !== undefined)) {
+      if (evOwn(step.data, property.name) === undefined) {
         fail(
           `Given step ${index + 1} ("${step.event}") carries no value for "${property.name}", ` +
           'which that event has gained since this scenario was written.'
@@ -1268,7 +1278,7 @@ function deriveProjectionScenarioThen(model, spec) {
     }
   });
 
-  if (!model['projection-definitions'][spec.projection]) {
+  if (!evOwn(model['projection-definitions'], spec.projection)) {
     fail(`This scenario is about "${spec.projection}", which this model no longer defines.`);
   }
   const tags = {};

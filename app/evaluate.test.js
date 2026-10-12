@@ -3217,4 +3217,51 @@ check('every predefined model ships advisory-clean', () => {
   });
 }
 
+// ---------------------------------------------------------------
+// Names are looked up as a model's own, never through Object's
+// prototype: `constructor`, `toString` and `hasOwnProperty` are names
+// an author may write, and what an empty object inherits under them
+// is not a value anyone supplied.
+// ---------------------------------------------------------------
+{
+  check('a required argument named like a prototype key is still required', () => {
+    const { id, model } = openScripted();
+    addTaggedEvent(id, 'Built', {
+      properties: [{ name: 'constructor', propertyType: 'string', isOptional: false, isList: false }],
+    });
+    addDefinition('command-definition', id, 'Build', {
+      properties: [{ name: 'constructor', propertyType: 'string', isOptional: false, isList: false }],
+      boundary: [], conditions: [],
+      publishes: [{ name: 'Built', parameters: { constructor: { parameterName: 'constructor' } } }],
+    });
+    let message = '';
+    try { evaluateCommand(model(), [], 'Build', {}); } catch (error) { message = error.message; }
+    eq(message, '"Build" needs a value for "constructor".', 'not supplied by Object');
+    eq(evaluateCommand(model(), [], 'Build', { constructor: 'Ada' }).events[0].data, { constructor: 'Ada' },
+      'and published when it is supplied');
+  });
+
+  check('a command or a Given event named like a prototype key is not in the model', () => {
+    const { model } = openScripted();
+    let message = '';
+    try { evaluateCommand(model(), [], 'hasOwnProperty', {}); } catch (error) { message = error.message; }
+    eq(message, 'This model has no command "hasOwnProperty".', 'no such command');
+    const run = runScenario(model(), {
+      given: [{ event: 'toString', data: {} }], command: 'Tick',
+      when: { arguments: { counterId: 'x1' } }, then: null,
+    });
+    eq(run.status, 'broken', 'a Given naming no event is broken, not drifted');
+  });
+
+  check('an event without a field reads nothing there, whatever the field is called', () => {
+    const { id, model } = openScripted();
+    addDefinition('projection-definition', id, 'LastMaker', {
+      valueType: 'string', isList: false, initialValue: null,
+      handlers: [{ event: 'Ticked', operation: 'set', value: { eventProperty: 'constructor' } }],
+    });
+    eq(typeof foldProjection(model(), [{ type: 'Ticked', data: { counterId: 'x1' } }], 'LastMaker', {}), 'undefined',
+      'what any absent field reads as, not Object');
+  });
+}
+
 finish();
