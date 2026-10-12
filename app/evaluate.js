@@ -302,6 +302,27 @@ function setScriptsDisabled(disabled) {
   evCompiled = new WeakMap();
 }
 
+// What a script is handed of an event: a deep-frozen copy, made once
+// per event. The log is shared by every fold, read and repaint, so an
+// event a script changed in place would change what every later fold
+// sees; a copy keeps the log as it was, and freezing makes the attempt
+// an error the author sees instead of a silent no-op.
+const evFrozenEvents = new WeakMap();
+
+function evFrozenEvent(event) {
+  let frozen = evFrozenEvents.get(event);
+  if (!frozen) evFrozenEvents.set(event, frozen = evDeepFreeze(deepClone(event)));
+  return frozen;
+}
+
+function evDeepFreeze(value) {
+  if (value !== null && typeof value === 'object') {
+    for (const key of Object.keys(value)) evDeepFreeze(value[key]);
+    Object.freeze(value);
+  }
+  return value;
+}
+
 // One handler, as `(state, event, args, tags) => nextState`. `args` are
 // the read's argument values, `tags` the values it is tagged by, keyed
 // by the names the projection declares (`tags.courseId`) — a script
@@ -320,16 +341,17 @@ function evCompileHandler(handler, label, scripted) {
       );
     }
     // The contract the schema states, and the only place in this file
-    // where authored JavaScript runs.
+    // where authored JavaScript runs. In strict mode, so that writing to
+    // the frozen event it is handed throws rather than doing nothing.
     let body;
     try {
-      body = new Function('state', 'event', 'args', 'tags', `return (${handler.code}\n);`);
+      body = new Function('state', 'event', 'args', 'tags', `'use strict'; return (${handler.code}\n);`);
     } catch (error) {
       fail(`The script for "${handler.event}" on ${label} does not parse: ${evErrorText(error)}`);
     }
     return (state, event, args, tags) => {
       try {
-        return body(state, event, args, tags);
+        return body(state, evFrozenEvent(event), args, tags);
       } catch (error) {
         return fail(`The script for "${handler.event}" on ${label} threw: ${evErrorText(error)}`);
       }

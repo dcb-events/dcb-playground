@@ -2413,7 +2413,8 @@ function build(index) {
       'enums are literal unions');
     has(text, 'type Money = { amount: number; currency: string };',
       'a composite type carries its fields');
-    has(text, 'type: "CoursePriced";', 'event.type is the name itself');
+    has(text, 'readonly type: "CoursePriced";', 'event.type is the name itself, and read-only');
+    has(text, 'readonly courseId: CourseId;', 'as is every field — the event is frozen at run time');
     has(text, 'courseId: CourseId;', 'event data is typed from the definition');
     has(text, 'seats: number[];', 'a list property is a list');
     has(text, 'note: string | null;', 'an optional property may be the null it publishes');
@@ -2450,7 +2451,7 @@ function build(index) {
 
   check('no event chosen (or a renamed-away one) leaves the data open', () => {
     const text = scriptHandlerPreamble(model, body, { event: '' });
-    has(text, 'declare const event: { type: string; data: { [key: string]: any } };',
+    has(text, 'declare const event: { readonly type: string; readonly data: { readonly [key: string]: any } };',
       'unknown event, unknowable data');
   });
 

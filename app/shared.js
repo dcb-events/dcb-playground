@@ -240,21 +240,23 @@ function scriptHandlerPreamble(model, body, handler) {
   const event = (model['event-definitions'] || {})[handler.event];
   const eventLines = [];
   if (event) {
+    // Read-only, as at run time (`evFrozenEvent`, evaluate.js): the
+    // editor flags a write before the run refuses it.
     eventLines.push('declare const event: {');
-    eventLines.push('  type: ' + JSON.stringify(handler.event) + ';');
-    eventLines.push('  data: {');
+    eventLines.push('  readonly type: ' + JSON.stringify(handler.event) + ';');
+    eventLines.push('  readonly data: {');
     for (const property of event.properties || []) {
       if (property.isOptional) {
         eventLines.push('    /** optional — null when the event carries no value */');
       } else if (property.propertyType === 'integer') {
         eventLines.push('    /** integer */');
       }
-      eventLines.push('    ' + scriptTsKey(property.name) + ': ' + propertyType(property) + ';');
+      eventLines.push('    readonly ' + scriptTsKey(property.name) + ': ' + propertyType(property) + ';');
     }
     eventLines.push('  };');
     eventLines.push('};');
   } else {
-    eventLines.push('declare const event: { type: string; data: { [key: string]: any } };');
+    eventLines.push('declare const event: { readonly type: string; readonly data: { readonly [key: string]: any } };');
   }
 
   const argFields = (script.arguments || []).filter((argument) => argument && argument.name);

@@ -3205,6 +3205,22 @@ check('every predefined model ships advisory-clean', () => {
     eq(foldProjection(model(), [], 'Unstarted', {}), null, 'nothing folded');
   });
 
+  check('a script cannot change the events it folds', () => {
+    // The log is shared — by every fold, every read, every repaint — so
+    // an event a script changed would change what the next fold sees.
+    const { id, model } = openScripted();
+    addDefinition('projection-definition', id, 'Tamperer', {
+      valueType: 'integer', isList: false, script: { initialState: 0 },
+      handlers: [{ event: 'Ticked', code: '(event.data.counterId = "forged", state + 1)' }],
+    });
+    const log = [{ type: 'Ticked', data: { counterId: 'x1' } }];
+    let message = '';
+    try { foldProjection(model(), log, 'Tamperer', {}); } catch (error) { message = error.message; }
+    eq(/threw/.test(message), true, message || 'refused');
+    eq(log[0].data.counterId, 'x1', 'the log as it was');
+    eq(foldProjection(model(), log, 'CounterTotal', { tags: { counterId: 'x1' } }), 1, 'and other folds read it so');
+  });
+
   check('a script that throws something other than an Error is an evaluation error', () => {
     const { id, model } = openScripted();
     addDefinition('projection-definition', id, 'Thrower', {
