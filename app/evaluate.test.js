@@ -1806,6 +1806,14 @@ check('an import missing the definition arrays is refused, not silently accepted
       'a bare literal where a member reference belongs');
   });
 
+  check('a list of members starts as plain members, the way a handler builds one', () => {
+    // Unwrapped at the top only, `[{enumMember}]` never equalled the
+    // `['Red']` a handler produces, and a rule comparing them refused.
+    add('Palette', { valueType: 'Colour', isList: true, initialValue: [{ enumMember: 'Red' }] });
+    eq(foldProjection(model(), [], 'Palette', {}), ['Red'], 'unwrapped inside the list');
+    eq(sandbox.evDeepEqual([{ enumMember: 'Red' }], ['Red']), true, 'and equal to the built one');
+  });
+
   check('a projection nothing moves yet is legal and reads as where it starts', () => {
     add('Untouched', { valueType: 'integer', initialValue: 41, handlers: [] });
     eq(foldProjection(model(), [{ type: 'Nudged', data: {} }], 'Untouched', {}), 41, 'nothing moved it');

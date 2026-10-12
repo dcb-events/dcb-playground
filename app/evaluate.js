@@ -70,14 +70,34 @@ function fail(message) {
 // `{enumMember: 'Existent'}` in initial values, in handler operands and
 // in conditions alike; carrying that wrapper into the fold would mean
 // every predicate unwrapping it again, so it is unwrapped once, here,
-// and a status is a string everywhere downstream.
+// and a status is a string everywhere downstream. The unwrapping goes
+// all the way down — a list of statuses, a record holding one — and
+// hands a value back untouched when there was nothing to unwrap.
 // ============================================================
 
 function evNormalize(value) {
-  if (value !== null && typeof value === 'object' && value.enumMember !== undefined) {
-    return value.enumMember;
+  if (value === null || typeof value !== 'object') return value;
+  if (value.enumMember !== undefined) return value.enumMember;
+  if (Array.isArray(value)) {
+    let out = value;
+    value.forEach((item, i) => {
+      const normal = evNormalize(item);
+      if (normal !== item) {
+        if (out === value) out = value.slice();
+        out[i] = normal;
+      }
+    });
+    return out;
   }
-  return value;
+  let out = value;
+  for (const key of Object.keys(value)) {
+    const normal = evNormalize(value[key]);
+    if (normal !== value[key]) {
+      if (out === value) out = { ...value };
+      out[key] = normal;
+    }
+  }
+  return out;
 }
 
 function evDeepEqual(a, b) {
