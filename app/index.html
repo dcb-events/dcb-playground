@@ -14021,7 +14021,8 @@ function storedCodeFold() {
 // (the Overview, the sandbox, the cross-cutting overviews) is shown as
 // a page while the surface stays Code: only the Visual button leaves
 // it, and a way from that page to a definition — an Overview card, a
-// chip — lands on it in the code.
+// chip — lands on it in the code. Switching to Code on the Overview
+// itself goes to the code (`enterCode`).
 const CODE_FOLLOWS = ['slice', 'entity', 'events', 'projections', 'types'];
 function codeShown() { return !!state.code && CODE_FOLLOWS.includes(state.view); }
 
@@ -14387,6 +14388,13 @@ function enterCode() {
   setCodeSurface(true);
   codeView.shownView = null;
   codeView.focus = null;
+  // The Overview has no definition of its own to stay on, and staying
+  // on it would make the toggle look like it did nothing: the code
+  // opens where the commands start, as the Overview's Commands card does.
+  if (state.view === 'overview') {
+    codeView.section = 'command-definition';
+    state.view = 'slice';
+  }
   render();
 }
 
