@@ -1504,4 +1504,36 @@ check('every keyword outside the experimental ones is shown to an agent', () => 
     'add each to the tour or the forms in dsl.js');
 });
 
+// Errors never stop the read — nesting included. Past a depth no model
+// is written at, the parser says so where it happens, instead of
+// running out of stack and taking the code view with it.
+{
+  const nestingDiagnostics = (text) => parseModelSource(text).diagnostics.filter((d) => /nested/.test(d.message));
+
+  check('a JSON value nested past the limit is a diagnostic, not a stack overflow', () => {
+    const deep = 'model "M"\ncommand C json ' + '['.repeat(7033) + ']'.repeat(7033) + '\n';
+    let read;
+    try { read = parseModelSource(deep); } catch (error) { throw new Error('threw ' + error.name); }
+    eq(read.diagnostics.some((d) => /nested/.test(d.message)), true, 'said where');
+    eq(nestingDiagnostics('model "M"\ncommand C json ' + '['.repeat(150) + ']'.repeat(150) + '\n').length, 0,
+      'and a depth anyone writes reads on');
+  });
+
+  check('a scenario payload nested past the limit is a diagnostic too', () => {
+    fresh();
+    const { modelId } = importModelFromEnvelope(
+      JSON.parse(fs.readFileSync(path.join(FIXTURES, 'content-decisions-boundary.json'), 'utf8')));
+    const deep = swap(modelToSource(projectState()[modelId]), 'given DocumentAdded { id: "d1" }',
+      'given DocumentAdded { id: "d1", extra: ' + '['.repeat(3000) + ']'.repeat(3000) + ' }');
+    eq(nestingDiagnostics(deep).length > 0, true, 'reported');
+  });
+
+  check('a read nested past the limit is a diagnostic', () => {
+    const text = modelToSource(build(PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-simple')).model());
+    const deep = swap(text, 'require CourseStatus(courseId) == NonExistent',
+      'require ' + 'CourseStatus('.repeat(3000) + 'courseId' + ')'.repeat(3000) + ' == NonExistent');
+    eq(nestingDiagnostics(deep).length > 0, true, 'reported');
+  });
+}
+
 finish();

@@ -383,6 +383,9 @@ function lexSource(text) {
 // Parsing.
 // ============================================================
 
+// Deeper than any model is written, and far short of the stack.
+const SOURCE_MAX_DEPTH = 200;
+
 class SourceError extends Error {
   constructor(message, token) {
     super(message);
@@ -410,6 +413,25 @@ function describeToken(token) {
 // and skipped to the next line that starts one, so a typo in one
 // command does not hide every other problem below it.
 function parseModelSource(text, options = {}) {
+  // The per-declaration net (see the read loop) covers the parse; this
+  // one covers the passes after it, so no text makes the read throw.
+  try {
+    return parseModelSourceText(text, options);
+  } catch (error) {
+    if (!(error instanceof RangeError)) throw error;
+    const collections = {};
+    for (const kind of SOURCE_KINDS) collections[kind] = {};
+    return {
+      name: null, collections, spans: [], implicit: [], scenarios: [], groups: [], marks: new WeakMap(),
+      diagnostics: [{
+        severity: 'error', message: 'This text could not be read: it is nested too deeply.',
+        line: 1, col: 1, endLine: 1, endCol: 2,
+      }],
+    };
+  }
+}
+
+function parseModelSourceText(text, options) {
   const { tokens, diagnostics } = lexSource(String(text));
   const collections = {};
   for (const kind of SOURCE_KINDS) collections[kind] = {};
@@ -450,6 +472,16 @@ function parseModelSource(text, options = {}) {
   const accept = (v) => (is(v) ? next() : null);
   const fail = (message, token = peek()) => { throw new SourceError(message, token); };
   const expect = (v, what) => accept(v) || fail(`Expected ${what || `"${v}"`}, found ${describeToken(peek())}.`);
+  // How deep the value being read is nested — a list in a list, a read
+  // in a read. Every recursive reader steps in and out through these,
+  // and past SOURCE_MAX_DEPTH the read fails where it happens, as a
+  // diagnostic, long before the stack would. Reset per declaration, so
+  // a failure that skipped its way out leaves no count behind.
+  let depth = 0;
+  const enter = () => {
+    if (++depth > SOURCE_MAX_DEPTH) fail(`This is nested more than ${SOURCE_MAX_DEPTH} levels deep.`);
+  };
+  const leave = (value) => { depth -= 1; return value; };
   const ident = (what) => (peek().t === 'ident' ? next() : fail(`Expected ${what}, found ${describeToken(peek())}.`));
   const declName = (what) => (peek().t === 'ident' || peek().t === 'string'
     ? next() : fail(`Expected ${what}, found ${describeToken(peek())}.`));
@@ -489,6 +521,7 @@ function parseModelSource(text, options = {}) {
     if (accept('false')) return false;
     if (accept('null')) return null;
     if (accept('{')) {
+      enter();
       const out = {};
       while (!is('}')) {
         const key = peek().t === 'string' || peek().t === 'ident'
@@ -498,16 +531,17 @@ function parseModelSource(text, options = {}) {
         if (!accept(',')) break;
       }
       expect('}', '"}" or ","');
-      return out;
+      return leave(out);
     }
     if (accept('[')) {
+      enter();
       const out = [];
       while (!is(']')) {
         out.push(jsonValue());
         if (!accept(',')) break;
       }
       expect(']', '"]" or ","');
-      return out;
+      return leave(out);
     }
     return fail(`Expected a JSON value, found ${describeToken(token)}.`);
   };
@@ -523,9 +557,10 @@ function parseModelSource(text, options = {}) {
       if (accept('null')) return null;
       if (token.v === 'enum' && is('(', 1)) {
         next(); next();
+        enter();
         const member = literalValue();
         expect(')');
-        return { enumMember: member };
+        return leave({ enumMember: member });
       }
       if (SOURCE_MEMBER_RE.test(token.v)) {
         const member = { enumMember: next().v };
@@ -534,13 +569,14 @@ function parseModelSource(text, options = {}) {
       }
     }
     if (accept('[')) {
+      enter();
       const out = [];
       while (!is(']')) {
         out.push(literalValue());
         if (!accept(',')) break;
       }
       expect(']', '"]" or ","');
-      return out;
+      return leave(out);
     }
     return fail(`Expected a value, found ${describeToken(token)}.`);
   };
@@ -600,6 +636,7 @@ function parseModelSource(text, options = {}) {
   };
   const callArguments = (valueOf) => {
     expect('(');
+    enter();
     const out = { values: [] };
     while (!is(')')) {
       guardBlock(')');
@@ -623,7 +660,7 @@ function parseModelSource(text, options = {}) {
       if (!accept(',')) break;
     }
     expect(')', '")" or ","');
-    return out;
+    return leave(out);
   };
 
   // `X tagged …` and `X with (…)` were the draft of 8.0; a read gives
@@ -695,9 +732,10 @@ function parseModelSource(text, options = {}) {
     if (accept('currentValue')) return { currentValue: true };
     if (is('successor') && is('(', 1)) {
       next(); next();
+      enter();
       const inner = handlerOperand();
       expect(')');
-      return { successor: inner };
+      return leave({ successor: inner });
     }
     return literalValue();
   };
@@ -1256,6 +1294,7 @@ function parseModelSource(text, options = {}) {
     memberToken = null;
     if (token.t === 'ident' && SOURCE_MEMBER_RE.test(token.v)) { memberToken = token; return next().v; }
     if (accept('{')) {
+      enter();
       const out = {};
       while (!is('}')) {
         const keyToken = peek().t === 'string' || peek().t === 'ident'
@@ -1268,9 +1307,10 @@ function parseModelSource(text, options = {}) {
       }
       expect('}', '"}" or ","');
       memberToken = null;
-      return out;
+      return leave(out);
     }
     if (accept('[')) {
+      enter();
       const out = [];
       while (!is(']')) {
         out.push(scenarioValue());
@@ -1279,7 +1319,7 @@ function parseModelSource(text, options = {}) {
       }
       memberToken = null;
       expect(']', '"]" or ","');
-      return out;
+      return leave(out);
     }
     return jsonValue();
   };
@@ -1543,9 +1583,15 @@ function parseModelSource(text, options = {}) {
   const topLevelBare = [];
   while (peek().t !== 'eof') {
     const from = at;
+    depth = 0;
     try {
       declaration();
-    } catch (error) {
+    } catch (caught) {
+      // The depth limit is the guard; a RangeError is the net under it,
+      // for a recursion it does not count — the promise is that errors
+      // never stop the read, and a stack overflow is one.
+      const error = caught instanceof RangeError ? new SourceError(
+        'This could not be read: it is nested too deeply.', tokens[from]) : caught;
       if (!(error instanceof SourceError)) throw error;
       const token = error.token;
       diagnostics.push({
