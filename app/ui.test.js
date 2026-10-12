@@ -3181,14 +3181,15 @@ function build(index) {
   store.set('dcb-playground:model', id);
   const command = (name) => model()['command-definitions'][name];
 
-  check('the five reasons a read is consulted, on the shipped models', () => {
+  check('the reasons a read is consulted, on the shipped models', () => {
     const refs = sandbox.bindingReferences(model(), command('RescheduleCourse'));
     eq([...refs.get('theirs')], ['rule'], 'a read a rule is about');
     eq([...refs.get('students')], ['chain'],
       'an intermediate hop, wanted only so the next read can be reached');
     const numbering = sandbox.bindingReferences(model(), command('DefineCourse'));
-    eq([...numbering.get('courseNumbering')], ['emission'],
-      'a projection read whose value the event records, with no rule at all');
+    eq([...numbering.get('courseNumbering')], ['emission', 'serialisation'],
+      'a projection read whose value the event records, with no rule at all — and, taking no tags, '
+      + 'one that serialises the command');
     // Coverage is the fifth reason, and it holds only for a *derived*
     // tag. `Assign`'s previous instructor is one: the `Unassigned` tag
     // is taken from `course.instructorId`, a claim about state that was

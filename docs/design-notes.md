@@ -121,16 +121,23 @@ and prune what no longer holds.
   (`projectionReadChoices`): with no bindings to put a second projection
   in scope, two projections could otherwise never be compared
   (`DeveloperSeniority(developerId) >= RequiredSeniority(projectId)`).
-  `bindingReferences` / `unreferencedBindings` (model.js) name the five
-  reasons a read is consulted — rule, guard, emission, coverage, chain —
+  `bindingReferences` / `unreferencedBindings` (model.js) name the six
+  reasons a read is consulted — rule, guard, emission, coverage, chain,
+  serialisation —
   and `updateDefinitions` prunes what nothing consults, transitively, in
   the same append: deleting the last rule about `theirs` takes the
   `students` hop with it. Pruning is deliberately *not* in
   `addDefinition`: a body arriving whole, from a file or a WebMCP tool,
   keeps what it came with and earns an advisory instead, and the next
-  edit to that command is what drops it. All five reasons are
+  edit to that command is what drops it. All six reasons are
   load-bearing in the shipped models, and a test holds them free of
-  unreferenced reads. The `boundary` stays authoritative in the wire
+  unreferenced reads. Serialisation is the one that names no alias: a
+  binding to a projection that takes no tags reads every event that
+  projection folds, so it serialises the command against all of them —
+  which is how a command with no conditions is made strictly serial, as
+  the schema promises. It was once pruned as unreferenced on the next
+  edit, leaving an empty append condition where the schema said there
+  would be one; such a binding is now kept whatever else consults it. The `boundary` stays authoritative in the wire
   format and cannot be recomputed from the rules — a rule names an
   alias, and only the binding records the path that alias stands for —
   which is why this is reference counting and not derivation.

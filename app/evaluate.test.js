@@ -3392,4 +3392,31 @@ check('every predefined model ships advisory-clean', () => {
   });
 }
 
+// ---------------------------------------------------------------
+// Binding a projection that takes no tags is how a command with no
+// conditions is strictly serialised (dcb-model.schema.json says so):
+// its read is the append condition, and nothing else need consult it.
+// ---------------------------------------------------------------
+{
+  check('a binding to a parameterless projection is kept, as the command\'s serialisation', () => {
+    const { id, model } = openBlank('Serialised');
+    addTaggedEvent(id, 'Ticked', { properties: [] });
+    addDefinition('projection-definition', id, 'TickCount', {
+      tags: [], valueType: 'integer', isList: false, initialValue: 0,
+      handlers: [{ event: 'Ticked', operation: 'increment', value: 1 }],
+    });
+    addDefinition('command-definition', id, 'Tick', {
+      properties: [], boundary: [{ alias: 'ticks', projection: 'TickCount' }], conditions: [],
+      publishes: [{ name: 'Ticked', parameters: {} }],
+    });
+    const body = model()['command-definitions'].Tick;
+    eq([...sandbox.bindingReferences(model(), body).get('ticks')], ['serialisation'], 'consulted as the serialisation');
+    updateDefinition('command-definition', id, 'Tick', { ...body, properties: [] });
+    eq(model()['command-definitions'].Tick.boundary.map((b) => b.alias), ['ticks'], 'not pruned by the next edit');
+    eq(sandbox.modelAdvisories(model()).filter((a) => /nothing consults/.test(a.message)), [], 'and not advised against');
+    eq(sandbox.deriveDcb(model(), model()['command-definitions'].Tick).items.some((item) => item.alias === 'ticks'), true,
+      'the read is in the append condition');
+  });
+}
+
 finish();

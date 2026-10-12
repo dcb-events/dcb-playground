@@ -2342,12 +2342,19 @@ function coverageIssues(model, body) {
 // the invariant that every binding is consulted by something, which
 // reference counting gives exactly.
 //
-// The five reasons are the five places an alias can be named. Four are
-// operands (`forEachCommandOperand` walks the same set); the fifth is
-// write coverage, which can demand a binding no operand mentions — but
-// only for a *derived* tag value, never for one the caller asserted
-// (see `emittedTagRequirements`).
-const REFERENCE_REASONS = ['rule', 'guard', 'emission', 'coverage', 'chain'];
+// The first five reasons are the five places an alias can be named.
+// Four are operands (`forEachCommandOperand` walks the same set); the
+// fifth is write coverage, which can demand a binding no operand
+// mentions — but only for a *derived* tag value, never for one the
+// caller asserted (see `emittedTagRequirements`).
+//
+// The sixth names no alias at all: a binding to a projection that
+// takes no tags is the read of every event that projection folds, so
+// it serialises the command against all of them — the way a command
+// with no conditions is made strictly serial, which the schema
+// promises. Nothing else need consult it for it to matter, so it is
+// never pruned as unreferenced.
+const REFERENCE_REASONS = ['rule', 'guard', 'emission', 'coverage', 'chain', 'serialisation'];
 
 function bindingReferences(model, body) {
   const found = new Map();
@@ -2392,6 +2399,11 @@ function bindingReferences(model, body) {
     for (const operand of Object.values(binding.arguments || {})) {
       noteOperand(operand, 'chain');
     }
+  }
+  for (const binding of body.boundary || []) {
+    if (!binding || binding.projection === undefined) continue;
+    const projection = (model['projection-definitions'] || {})[binding.projection];
+    if (projection && !projectionTagParams(projection).length) note(binding.alias, 'serialisation');
   }
   // Coverage names no alias — it names the instance an emitted tag
   // writes, and is satisfied by whichever binding consults it. So the
