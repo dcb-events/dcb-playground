@@ -463,6 +463,24 @@ async function call(name, args) {
     eq(text.includes('Advisories'), false, 'clean, and not judged against the model open before');
   });
 
+  await check('an agent\'s scenario without a then is recorded, and the result says which', async () => {
+    const source = swap(LIBRARY, /\n}$/, '') + [
+      '',
+      '  scenarios {',
+      '    scenario "added once" {',
+      '      given BookAdded { bookId: "b1" }',
+      '      when AddBook { bookId: "b1" }',
+      '    }',
+      '  }',
+      '}',
+    ].join('\n');
+    const { value, isError, text } = await call('start_model', { name: 'Outcomes', source });
+    eq(isError, false, text);
+    eq(value.applied.includes('recorded the outcome of the scenario written without a then (line 10, AddBook "added once")'), true, text);
+    const [stored] = Object.values(projectState()[value.id]['scenario-definitions']);
+    eq(stored.then, { outcome: 'rejected', events: [], rejection: 'Book already exists' }, 'recorded');
+  });
+
   await check('start_model without code points the agent at the language', async () => {
     const { value } = await call('start_model', { name: 'Empty Again' });
     eq(value.next.includes('get_model_language') && value.next.includes('apply_model_source'), true, value.next);

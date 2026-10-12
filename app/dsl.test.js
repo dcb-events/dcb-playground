@@ -605,7 +605,81 @@ check('a scenario reads as given, when and then, nested in its command', () => {
   eq(guarded.includes('then DocumentStatus(DocumentId("d1")) == NonExistent'), true, 'a tag literal');
 });
 
-check('a scenario written without a then is recorded with what the model does', () => {
+// A text with its edits made, last first — what a fix with `edits` does.
+const withEdits = (text, edits) => {
+  const lines = text.split('\n');
+  const offset = (line, col) => lines.slice(0, line - 1).reduce((sum, l) => sum + l.length + 1, 0) + col - 1;
+  let out = text;
+  for (const e of [...edits].sort((a, b) => offset(b.line, b.col) - offset(a.line, a.col))) {
+    out = out.slice(0, offset(e.line, e.col)) + e.text + out.slice(offset(e.endLine, e.endCol));
+  }
+  return out;
+};
+
+check('a scenario written without a then is an error whose fix writes the outcome in', () => {
+  const { id, model } = importFixture('course-simple');
+  const text = swap(modelToSource(model()), '  emit CourseArchived { courseId }\n\n  scenarios {\n', [
+    '  emit CourseArchived { courseId }',
+    '',
+    '  scenarios {',
+    '    scenario "archiving a defined course" {',
+    '      given CourseDefined { courseId: "c9", capacity: 3 }',
+    '      when ArchiveCourse { courseId: "c9" }',
+    '    }',
+    '',
+    '    scenario "archiving nothing" {',
+    '      when ArchiveCourse { courseId: "c8" }',
+    '    }',
+    '',
+  ].join('\n'));
+  const report = sandbox.sourceScenarioReport(model(), parseModelSource(text));
+  eq(report.errors.map((e) => e.message), [
+    'No outcome yet — the model now does:\nthen CourseArchived { courseId: "c9" }',
+    'No outcome yet — the model now does:\nthen rejected "Course is not active"',
+  ], 'each says what it would be');
+  eq(report.errors.map((e) => e.fix.title), ['Write actual outcome', 'Write actual outcome'], 'each with its fix');
+  const before = loadEvents().length;
+  let refused = null;
+  try { applyModelSource(id, text); } catch (error) { refused = error; }
+  eq(refused instanceof sandbox.DomainError && /2 scenarios have no then/.test(refused.message), true, String(refused));
+  eq(loadEvents().length, before, 'nothing appended');
+
+  const one = withEdits(text, [report.errors[0].fix]);
+  eq(one.includes('      when ArchiveCourse { courseId: "c9" }\n      then CourseArchived { courseId: "c9" }\n    }'), true,
+    'written under the last line, at its indent');
+  eq(sandbox.sourceScenarioReport(model(), parseModelSource(one)).errors.length, 1, 'the other still missing');
+
+  eq(report.errors[0].fixAll.title, 'Write all actual outcomes', 'and a fix for all of them');
+  const all = withEdits(text, report.errors[0].fixAll.edits);
+  const after = sandbox.sourceScenarioReport(model(), parseModelSource(all));
+  eq([after.errors, after.warnings], [[], []], 'clean');
+  applyModelSource(id, all);
+  const stored = Object.values(model()['scenario-definitions']).find((b) => b.name === 'archiving nothing');
+  eq(stored.then, { outcome: 'rejected', events: [], rejection: 'Course is not active' }, 'stored as written');
+});
+
+check('a projection scenario without its value is fixed the same way', () => {
+  const { model } = importFixture('course-sequence');
+  const text = swap(modelToSource(model()), 'then CourseNumbering() == "c1"', 'then CourseNumbering()');
+  const [error] = sandbox.sourceScenarioReport(model(), parseModelSource(text)).errors;
+  eq(error.message, 'No outcome yet — the model now does:\nthen CourseNumbering() == "c1"', error.message);
+  eq(withEdits(text, [error.fix]), modelToSource(model()), 'the line written whole');
+  eq(error.fixAll, undefined, 'one missing, no fix for all');
+});
+
+check('a keyword said twice is joined with and', () => {
+  const head = 'command A() {\n  scenarios {\n    scenario {\n';
+  const tail = '\n    }\n  }\n}';
+  const text = head + '      given E {}\n      given F {}\n      when A {}' + tail;
+  const [d] = parseModelSource(text).diagnostics;
+  eq(d.message, 'A scenario says given once — what follows continues with "and".', 'reported');
+  eq([d.line, d.col, d.fix.title], [5, 7, 'Join with and'], 'on the second');
+  eq(withEdits(text, [d.fix]), head + '      given E {}\n      and F {}\n      when A {}' + tail, 'fixed');
+  const apart = parseModelSource(head + '      given E {}\n      when A {}\n      given F {}' + tail).diagnostics;
+  eq([apart.length, apart[0].fix], [1, undefined], 'no fix where it does not follow its own kind');
+});
+
+check('an agent\'s scenario written without a then is recorded with what the model does', () => {
   const { id, model } = importFixture('course-simple');
   const text = swap(modelToSource(model()), '  emit CourseArchived { courseId }\n\n  scenarios {\n', [
     '  emit CourseArchived { courseId }',
@@ -623,10 +697,12 @@ check('a scenario written without a then is recorded with what the model does', 
     '',
   ].join('\n'));
   const before = appends;
-  const summary = applyModelSource(id, text);
+  eq(sandbox.sourceScenarioReport(model(), parseModelSource(text), { recordOutcomes: true }).errors, [], 'no error for an agent');
+  const summary = applyModelSource(id, text, { recordOutcomes: true });
   eq(appends - before, 1, 'one append');
   // Written ahead of the command's other scenarios, so they move up.
-  eq(sandbox.sourceApplySummary(summary), 'added 2 scenarios, reordered', 'reported');
+  eq(sandbox.sourceApplySummary(summary), 'added 2 scenarios, reordered, recorded the outcome of the scenario written '
+    + 'without a then (line 208, ArchiveCourse "archiving a defined course")', 'reported');
   const stored = Object.values(model()['scenario-definitions']);
   const recorded = stored.find((b) => b.name === 'archiving a defined course');
   eq(recorded.then, { outcome: 'published', events: [{ type: 'CourseArchived', data: { courseId: 'c9' } }] }, 'recorded');
@@ -661,8 +737,8 @@ check('a written then is asserted: a drift is reported with its fix, and applyin
 check('an edited scenario keeps its id and place; a renamed command takes its scenarios along', () => {
   const { id, model } = importFixture('course-simple');
   const ids = Object.keys(model()['scenario-definitions']);
-  const text = swap(modelToSource(model()), 'given CourseDefined { courseId: "c11", capacity: 123 }',
-    'given CourseDefined { courseId: "c11", capacity: 124 }');
+  const text = swap(modelToSource(model()), 'and CourseDefined { courseId: "c11", capacity: 123 }',
+    'and CourseDefined { courseId: "c11", capacity: 124 }');
   let summary = applyModelSource(id, text);
   eq(sandbox.sourceApplySummary(summary), 'updated 1 scenario', 'one scenario');
   eq(Object.keys(model()['scenario-definitions']), ids, 'same ids, same order');
@@ -759,7 +835,11 @@ check('scenarios refuse what they cannot mean', () => {
     'A read gives its values in parentheses, in the order Ghost declares them: Ghost(…).', 'the draft spelling');
   eq(loose('scenario {\n  then Ghost == 1\n}')[0],
     'A projection is read with its values in parentheses: Ghost(…) — empty for an untagged one.', 'parentheses, always');
-  eq(loose('scenario {\n  when A {}\n  then nothing\n  then E {}\n}')[0], '"then nothing" is the whole outcome — it stands alone.', 'nothing and more');
+  eq(loose('scenario {\n  when A {}\n  then nothing\n  and E {}\n}')[0], '"then nothing" is the whole outcome — it stands alone.', 'nothing and more');
+  eq(loose('scenario {\n  when A {}\n  then rejected "no"\n  and E {}\n}')[0], 'A rejection is the whole outcome — it stands alone.', 'a rejection and more');
+  eq(loose('scenario {\n  when A {}\n  and B {}\n}')[0], 'A scenario runs one command — one when.', 'one when, even by and');
+  eq(loose('scenario {\n  and E {}\n}')[0], 'Expected given, when or then, found "and".', 'and continues something');
+  eq(loose('scenario {\n  given E {}\n  then P() == 1\n  and P() == 2\n}')[0], 'A projection scenario asserts one value — one then.', 'one value, even by and');
   eq(loose('scenario {\n  then E {}\n}')[0], 'A scenario ending in events, nothing or a rejection needs a when — the command it runs.', 'no when');
   eq(loose('scenario {\n  then Ghost(GhostId("1"), 1) == 1\n}'), [], 'an orphan, read');
   const { id, model } = importFixture('course-simple');
@@ -767,7 +847,8 @@ check('scenarios refuse what they cannot mean', () => {
     '  emit CourseArchived { courseId }\n\n  scenarios {\n    scenario {\n      given CourseBurnt { courseId: "c1" }\n      when ArchiveCourse { courseId: "c1" }\n    }\n\n');
   const report = sandbox.sourceScenarioReport(model(), parseModelSource(text));
   eq(report.errors.length, 1, 'a scenario with nothing to record');
-  eq(report.errors[0].message.startsWith('This scenario cannot run, so there is no outcome to record'), true, report.errors[0].message);
+  eq(report.errors[0].message.startsWith('No outcome — cannot run: Given step 1 records "CourseBurnt"'), true, report.errors[0].message);
+  eq(report.errors[0].fix, undefined, 'nothing to write in');
   const before = loadEvents().length;
   let refused = null;
   try { applyModelSource(id, text); } catch (error) { refused = error; }
@@ -814,11 +895,11 @@ function renameAt(text, needle, offset, to) {
 }
 
 // The text up to a cursor written as `|`, completed there.
-function completeAt(source) {
+function completeAt(source, options) {
   const at = source.indexOf('|');
   const text = source.slice(0, at) + source.slice(at + 1);
   const before = text.slice(0, at);
-  const result = sandbox.sourceCompletions(text, before.split('\n').length, at - before.lastIndexOf('\n'));
+  const result = sandbox.sourceCompletions(text, before.split('\n').length, at - before.lastIndexOf('\n'), options);
   return { labels: result.items.map((i) => i.label), items: result.items, slot: result.slot };
 }
 
@@ -1430,6 +1511,37 @@ check('completion knows scenarios, declarations, and when to stay quiet', () => 
   eq(block('when |').labels[0], 'ArchiveCourse', 'the block\'s command first');
   eq(block('then |').items.filter((i) => i.sort === '0').map((i) => i.label), ['CourseArchived'], 'what it emits, first');
   eq(block('then rejected |').labels, ['"Course is not active"'], 'a refusal, by the messages the command has');
+  eq(block('given CourseDefined { courseId: "c1", capacity: 1 }\n      |').labels, ['when', 'then', 'and'], 'what is said is continued');
+  eq(block('when ArchiveCourse { courseId: "c1" }\n      |').labels, ['given', 'then'], 'a when is not');
+  eq(block('given CourseDefined { courseId: "c1", capacity: 1 }\n      and CourseDefined { |}').labels, ['courseId', 'capacity'],
+    'an and line, by the keyword above');
+  eq(block('when ArchiveCourse { courseId: "c1" }\n      then CourseArchived { courseId: "c1" }\n      and |').items
+    .filter((i) => i.sort === '0').map((i) => i.label), ['CourseArchived'], 'a then continued');
+  const outcome = (insert, source = text) => completeAt(swap(source, '  emit CourseArchived { courseId }\n\n  scenarios {\n',
+    `  emit CourseArchived { courseId }\n\n  scenarios {\n    scenario {\n      when ArchiveCourse { courseId: "c8" }\n      ${insert}\n    }\n\n`),
+  { model: model() }).items[0];
+  eq([outcome('then |').label, outcome('then |').insert], ['rejected "Course is not active"', 'rejected "Course is not active"'],
+    'what the model does, first, where the then is written');
+  eq(outcome('|').insert, 'then rejected "Course is not active"', 'and on the line after the when, keyword and all');
+  eq(outcome('th|').insert, 'then rejected "Course is not active"', 'or once it is begun');
+  const two = swap(text, 'emit CourseArchived { courseId }\n', 'emit CourseArchived { courseId }\n  emit CourseArchived { courseId }\n');
+  const both = completeAt(swap(two, '  emit CourseArchived { courseId }\n\n  scenarios {\n',
+    '  emit CourseArchived { courseId }\n\n  scenarios {\n    scenario {\n      given CourseDefined { courseId: "c9", capacity: 3 }\n'
+    + '      when ArchiveCourse { courseId: "c9" }\n      |\n    }\n\n'), { model: model() }).items[0];
+  eq([both.label, both.insert], ['then CourseArchived { courseId: "c9" } …',
+    'then CourseArchived { courseId: "c9" }\nand CourseArchived { courseId: "c9" }'], 'several events, their and lines included');
+  const read = (insert) => completeAt(swap(text, /(projection CourseStatus [^\n]*\n(?:  on [^\n]*\n)+)/,
+    `$1\n  scenarios {\n    scenario {\n      given CourseDefined { courseId: "c1", capacity: 3 }\n      and CourseArchived { courseId: "c2" }\n${insert}\n    }\n  }\n`),
+  { model: model() }).items.filter((i) => i.detail === 'what the model does').map((i) => i.insert);
+  eq(read('      |'), ['then CourseStatus(CourseId("c1")) == Existent', 'then CourseStatus(CourseId("c2")) == Archived'],
+    'a projection read with each tag value the given events carry');
+  eq(read('      then |'), ['CourseStatus(CourseId("c1")) == Existent', 'CourseStatus(CourseId("c2")) == Archived'], 'after then');
+  eq(read('      then CourseStatus(CourseId("c2")) |'), ['== Archived'], 'after a read written out');
+  eq(read('      then CourseStatus(CourseId("c2")) == |'), ['Archived'], 'and after its ==');
+  const sequence = importFixture('course-sequence').model();
+  const untagged = completeAt(swap(modelToSource(sequence), 'then CourseNumbering() == "c1"', 'then CourseNumbering() == |'),
+    { model: sequence }).items[0];
+  eq(untagged && untagged.insert, '"c1"', 'an untagged one');
   eq(completeAt(swap(text, '// Commands', '// Commands\n@|')).labels, ['icon', 'feature', 'tagSchema'], 'annotations');
   eq(completeAt(swap(text, 'command DefineCourse(courseId: CourseId', 'command DefineCourse(courseId: |')).labels
     .slice(0, 3), ['boolean', 'integer', 'string'], 'a type');

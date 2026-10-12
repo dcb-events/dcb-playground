@@ -179,11 +179,19 @@
 //     }
 //
 //     scenario {
-//       when DefineCourse { courseId: "c1", capacity: 1 }
-//       then CourseDefined { courseId: "c1", capacity: 1 }
+//       given CourseDefined { courseId: "c1", capacity: 2 }
+//       and StudentSubscribed { courseId: "c1", studentId: "s1" }
+//       when SubscribeStudent { courseId: "c1", studentId: "s2" }
+//       then StudentSubscribed { courseId: "c1", studentId: "s2" }
+//       and CourseFullyBooked { courseId: "c1" }
 //     }
 //   }
 //
+// Each of given, when and then is said once, and what follows it
+// continues with `and`, so a scenario reads as the sentence it is. A
+// keyword said again is an error whose fix is `and`. There is still one
+// command per scenario — `and` after a when is the same error as a
+// second when.
 // The group is syntax only — the wire format has no such thing — and
 // it is required, because it is what the editor folds: a model's
 // examples can outweigh its definitions many times over, and one fold
@@ -194,9 +202,13 @@
 // The subject is named (`when DefineCourse`, `then CourseStatus(…)`)
 // and must be the block's — a scenario moved into the wrong block is an
 // error, not a reassignment; one whose subject is gone sits in a group
-// at the top level. A Then is the scenario's assertion and is stored as written;
-// leave it out and an apply records what the text's definitions make
-// of it, the way the page's save does. A refusal is named by its
+// at the top level. A Then is the scenario's assertion and is stored as written.
+// Left out, it is an error that says what the text's definitions make
+// of the scenario, and whose fix writes that in — one scenario, or all
+// of them at once: the text says everything the model stores, so an
+// apply never records an outcome nobody saw. An agent is the exception
+// (`recordOutcomes`): it is not asked to predict an outcome, so its
+// apply records one and says which. A refusal is named by its
 // rule's message and by nothing else — not the condition, not what it
 // read: rules sharing a message are one outcome, and the message is
 // what the command is refused with. A Then that disagrees with
@@ -1398,28 +1410,60 @@ function parseModelSourceText(text, options) {
       record.body = body;
     } else {
       expect('{');
+      record.bodyCol = peek().col;
       const given = [];
       let when = null;
       const thens = [];
+      // Each keyword is said once; what follows it continues with `and`.
+      // Said again, it is read anyway and reported, with a fix when it
+      // follows its own kind — `and` is what it means.
+      const said = new Set();
+      let previous = null;
+      const once = (token) => {
+        if (said.has(token.v)) {
+          diagnostics.push({
+            severity: 'error', message: `A scenario says ${token.v} once — what follows continues with "and".`,
+            line: token.line, col: token.col, endLine: token.endLine, endCol: token.endCol,
+            fix: previous === token.v ? {
+              line: token.line, col: token.col, endLine: token.endLine, endCol: token.endCol,
+              text: 'and', title: 'Join with and', label: 'and',
+            } : undefined,
+          });
+        }
+        said.add(token.v);
+      };
       while (!is('}')) {
         guardBlock('}');
-        if (accept('given')) {
+        const continued = is('and') ? previous : null;
+        if (is('and') && !previous) fail(`Expected given, when or then, found ${describeToken(peek())}.`);
+        if (is('given') || continued === 'given') {
+          if (!continued) once(peek());
+          next();
           const event = ident('the event it was given');
           const step = { event: event.v, data: payload('the event\'s payload') };
           mark(step, 'event', event);
           given.push(step);
-        } else if (is('when')) {
+          previous = 'given';
+        } else if (is('when') || continued === 'when') {
           const token = next();
           if (when) fail('A scenario runs one command — one when.', token);
           const command = ident('the command it runs');
           when = { command: command.v, arguments: payload('the command\'s arguments'), token: command };
-        } else if (is('then')) {
+          previous = 'when';
+        } else if (is('then') || continued === 'then') {
+          if (!continued) once(peek());
           const token = next();
           const item = thenItem();
           thens.push({ ...item, token, end: last() });
+          previous = 'then';
         } else {
           fail(`Expected given, when or then, found ${describeToken(peek())}.`);
         }
+      }
+      // Where a `then` the text leaves out would go: after the last line.
+      if (previous) {
+        const end = last();
+        record.bodyEnd = { line: end.endLine, col: end.endCol };
       }
       expect('}');
       if (thens.length) {
@@ -2332,9 +2376,9 @@ function sourceCommandThen(model, commandName, then) {
   if (then.outcome === 'published') {
     const events = then.events || [];
     if (!events.length) return ['then nothing'];
-    return events.map((e) => {
+    return events.map((e, i) => {
       if (!e || typeof e !== 'object' || Object.keys(e).some((k) => k !== 'type' && k !== 'data')) unprintable('an event of its outcome is not { type, data }');
-      return `then ${sourceRef(e.type, 'event')} ${sourceEventPayload(model, e.type, e.data)}`;
+      return `${i ? 'and' : 'then'} ${sourceRef(e.type, 'event')} ${sourceEventPayload(model, e.type, e.data)}`;
     });
   }
   if (then.outcome !== 'rejected') unprintable(`its outcome ${JSON.stringify(then.outcome)} is not one the code form knows`);
@@ -2372,11 +2416,11 @@ function printScenario(model, kind, body) {
     : ['name', 'given', 'projection', 'tags', 'arguments', 'then'];
   if (Object.keys(body).some((key) => !known.includes(key))) unprintable('it carries fields the code form does not know');
   if (body.name !== undefined && typeof body.name !== 'string') unprintable('its name is not a string');
-  const lines = (body.given || []).map((step) => {
+  const lines = (body.given || []).map((step, i) => {
     if (!step || typeof step !== 'object' || Object.keys(step).some((k) => k !== 'event' && k !== 'data')) {
       unprintable('a Given step is not { event, data }');
     }
-    return `given ${sourceRef(step.event, 'event')} ${sourceEventPayload(model, step.event, step.data)}`;
+    return `${i ? 'and' : 'given'} ${sourceRef(step.event, 'event')} ${sourceEventPayload(model, step.event, step.data)}`;
   });
   let label = '';
   if (kind === 'scenario-definition') {
@@ -2640,7 +2684,7 @@ function completeScenario(draft, record) {
     reason = error && error.message ? error.message : String(error);
   }
   if (!('then' in body)) {
-    if (reason) return { body, error: `This scenario cannot run, so there is no outcome to record: ${reason}` };
+    if (reason) return { body, reason, error: `This scenario cannot run, so there is no outcome to record: ${reason}` };
     body.then = actual;
     return { body, status: 'recorded', actual };
   }
@@ -2663,6 +2707,7 @@ const SCENARIO_SUBJECT = { 'scenario-definition': 'command', 'projection-scenari
 function sourceScenarioCollections(model, parsed) {
   const draft = sourceDraftModel(model, parsed);
   const errors = [];
+  const recorded = [];
   const collections = {};
   for (const kind of ID_KEYED_KINDS) {
     const field = SCENARIO_SUBJECT[kind];
@@ -2670,6 +2715,7 @@ function sourceScenarioCollections(model, parsed) {
     const written = parsed.scenarios.filter((r) => r.kind === kind).map((record) => {
       const done = completeScenario(draft, record);
       if (done.error) errors.push({ record, message: done.error });
+      if (done.status === 'recorded') recorded.push(record);
       return { record, body: done.body };
     });
     const free = new Set(Object.keys(stored));
@@ -2713,32 +2759,139 @@ function sourceScenarioCollections(model, parsed) {
     for (const i of order) sourcePut(out, ids[i], written[i].body);
     collections[kind] = out;
   }
-  return { collections, errors };
+  return { collections, errors, recorded };
+}
+
+// A scenario's outcome as its `then` lines, or null where it cannot be
+// written — then there is no fix to offer.
+function sourceThenLines(draft, record, actual) {
+  try {
+    return record.kind === 'scenario-definition'
+      ? sourceCommandThen(draft, record.body.command, actual)
+      : [sourceProjectionThen(draft, { ...record.body, then: actual })];
+  } catch { return null; }
+}
+
+// The outcomes the scenario a line sits in could be written with, when
+// it has no Then yet — what completion offers where its Then is being
+// written. The line being typed is left out of the parse, since half a
+// then does not read; the rest of the text has to, as far as that
+// scenario. A command's scenario has one outcome. A projection's is a
+// value read with tag values, so the read the line already names is
+// the one asked, and where it names none, each read the given events
+// can tag — their properties of each tag's type — is tried. A script
+// that takes arguments is not guessed at. Each outcome is its lines,
+// and for a projection its read and its value apart (`call`, `value`).
+function sourceOutcomesAt(model, text, line) {
+  const lines = String(text).split('\n');
+  const typed = lines[line - 1];
+  const indent = typed.match(/^\s*/)[0];
+  const at = (lineText) => {
+    lines[line - 1] = lineText;
+    const parsed = parseModelSource(lines.join('\n'));
+    const record = parsed.scenarios.find((r) => r.span && r.span.line < line && line <= r.span.endLine);
+    return { parsed, record };
+  };
+  const outcome = (parsed, record) => {
+    if (!record || 'then' in record.body) return null;
+    const draft = sourceDraftModel(model, parsed);
+    const done = completeScenario(draft, record);
+    if (done.status !== 'recorded') return null;
+    const then = sourceThenLines(draft, record, done.actual);
+    if (!then) return null;
+    if (record.kind === 'scenario-definition') return { lines: then };
+    let head;
+    try { head = sourceProjectionThen(draft, record.body) + ' == '; } catch { return { lines: then }; }
+    return then[0].startsWith(head) ? { lines: then, call: head.slice('then '.length, -' == '.length), value: then[0].slice(head.length) } : { lines: then };
+  };
+  const { parsed, record } = at('');
+  if (!record || 'then' in record.body) return [];
+  if (record.kind === 'scenario-definition') {
+    const one = outcome(parsed, record);
+    return one ? [one] : [];
+  }
+  const named = typed.match(/^\s*then\s+([A-Za-z_]\w*\s*\(.*\))\s*(==\s*)?$/);
+  const draft = sourceDraftModel(model, parsed);
+  let calls;
+  if (named) {
+    calls = [named[1]];
+  } else {
+    const name = record.subject;
+    const projection = draft['projection-definitions'][name];
+    if (!projection || (projection.script && (projection.script.arguments || []).length)) return [];
+    const valuesOf = (tagType) => {
+      const found = [];
+      for (const step of record.body.given || []) {
+        const event = step && draft['event-definitions'][step.event];
+        for (const property of (event && event.properties) || []) {
+          const value = step.data && step.data[property.name];
+          if (property && property.propertyType === tagType && !property.isList
+            && (typeof value === 'string' || typeof value === 'number') && !found.includes(value)) found.push(value);
+        }
+      }
+      return found;
+    };
+    let combos = [[]];
+    for (const tag of projection.tags || []) {
+      combos = combos.flatMap((combo) => valuesOf(tag.tagType).map((value) => [...combo, `${tag.tagType}(${JSON.stringify(value)})`]));
+    }
+    calls = combos.slice(0, 8).map((combo) => `${name}(${combo.join(', ')})`);
+  }
+  return calls.map((call) => {
+    const { parsed: withCall, record: asked } = at(`${indent}then ${call}`);
+    return outcome(withCall, asked);
+  }).filter(Boolean);
 }
 
 // What the editor says about each scenario of a draft: an error where
 // one cannot be recorded, a warning where it is broken or drifted, and
 // for a drift the `then` lines that would accept what the model now
 // does — the quick fix.
-function sourceScenarioReport(model, parsed) {
+// A scenario the text writes without a Then is an error too: the text
+// says everything the model stores, so the outcome is written in, by
+// its fix — or by one that writes every missing outcome at once —
+// never recorded unseen by an apply. `recordOutcomes` is the agent's
+// path, where an omitted Then is recorded and only one that cannot
+// run is refused (`applyModelSource`).
+function sourceScenarioReport(model, parsed, { recordOutcomes = false } = {}) {
   const draft = sourceDraftModel(model, parsed);
   const errors = [];
   const warnings = [];
+  const missing = [];
+  const thenLines = (record, done) => sourceThenLines(draft, record, done.actual);
   for (const record of parsed.scenarios) {
     const done = completeScenario(draft, record);
     const at = { line: record.head.line, col: record.head.col, endLine: record.head.endLine, endCol: record.head.endCol };
-    if (done.error) { errors.push({ severity: 'error', message: done.error, ...at }); continue; }
+    if (done.error) {
+      errors.push({ severity: 'error', message: recordOutcomes ? done.error : `No outcome — cannot run: ${done.reason}`, ...at });
+      continue;
+    }
+    if (done.status === 'recorded') {
+      if (recordOutcomes) continue;
+      const lines = thenLines(record, done);
+      const error = {
+        severity: 'error',
+        message: 'No outcome yet — the model now does:\n' + (lines ? lines.join('\n') : JSON.stringify(done.actual)),
+        ...at,
+      };
+      if (lines && record.thenRange) {
+        // A projection read with no value: the line is written whole.
+        error.fix = { ...record.thenRange, text: lines.join('\n' + ' '.repeat(record.thenRange.col - 1)) };
+      } else if (lines && record.bodyEnd) {
+        const indent = '\n' + ' '.repeat(record.bodyCol - 1);
+        error.fix = { ...record.bodyEnd, endLine: record.bodyEnd.line, endCol: record.bodyEnd.col, text: indent + lines.join(indent) };
+      }
+      if (error.fix) Object.assign(error.fix, { title: 'Write actual outcome', label: 'Write' });
+      if (error.fix) missing.push(error);
+      errors.push(error);
+      continue;
+    }
     if (done.status === 'broken') {
       warnings.push({ message: `Broken — ${done.reason}`, ...at });
       continue;
     }
     if (done.status !== 'drifted') continue;
-    let lines = null;
-    try {
-      lines = record.kind === 'scenario-definition'
-        ? sourceCommandThen(draft, done.body.command, done.actual)
-        : [sourceProjectionThen(draft, { ...done.body, then: done.actual })];
-    } catch { /* no fix to offer when the outcome cannot be written */ }
+    const lines = thenLines(record, done);
     const warning = { message: 'Drifted — the model now does:\n' + (lines ? lines.join('\n') : JSON.stringify(done.actual)), ...at };
     if (lines && record.thenRange) {
       warning.fix = {
@@ -2748,6 +2901,10 @@ function sourceScenarioReport(model, parsed) {
       };
     }
     warnings.push(warning);
+  }
+  if (missing.length > 1) {
+    const edits = missing.map(({ fix }) => ({ line: fix.line, col: fix.col, endLine: fix.endLine, endCol: fix.endCol, text: fix.text }));
+    for (const error of missing) error.fixAll = { edits, title: 'Write all actual outcomes', label: 'All' };
   }
   return { errors, warnings };
 }
@@ -2764,6 +2921,10 @@ function sourceScenarioReport(model, parsed) {
 // apply should quietly repair.
 // `options.refuseRemovals` refuses a text that leaves a definition or
 // scenario out, rather than removing it (see replaceDefinitions).
+// A scenario written without a Then is refused, as the editor refuses
+// it — unless `options.recordOutcomes`, the agent's path: no one is
+// asked to predict an outcome there, so it is recorded, and the summary
+// says which (`recorded`).
 function applyModelSource(modelId, text, options = {}) {
   const parsed = parseModelSource(text);
   const errors = parsed.diagnostics.filter((d) => d.severity === 'error');
@@ -2803,11 +2964,20 @@ function applyModelSource(modelId, text, options = {}) {
     throw new DomainError(`${scenarios.errors.length} scenario${scenarios.errors.length === 1 ? '' : 's'} cannot be `
       + `recorded — nothing was applied. Line ${first.record.head.line}: ${first.message}`);
   }
-  return replaceDefinitions(modelId, {
+  if (scenarios.recorded.length && !options.recordOutcomes) {
+    const [first] = scenarios.recorded;
+    throw new DomainError(`${scenarios.recorded.length} scenario${scenarios.recorded.length === 1 ? ' has' : 's have'} `
+      + `no then — nothing was applied. Line ${first.head.line}: write the outcome in.`);
+  }
+  const summary = replaceDefinitions(modelId, {
     name: parsed.name,
     collections: { ...parsed.collections, ...scenarios.collections },
     refuseRemovals: !!options.refuseRemovals,
   });
+  summary.recorded = scenarios.recorded.map((record) => ({
+    line: record.head.line, subject: record.subject, name: record.body.name === undefined ? null : record.body.name,
+  }));
+  return summary;
 }
 
 // What an apply did, in a line.
@@ -2825,6 +2995,11 @@ function sourceApplySummary(summary) {
   count(summary.removed, 'removed');
   if (summary.reordered.length) parts.push('reordered');
   if (summary.renamed) parts.push(`renamed the model to "${summary.renamed}"`);
+  const recorded = summary.recorded || [];
+  if (recorded.length) {
+    parts.push(`recorded the outcome of ${recorded.length === 1 ? 'the scenario' : `${recorded.length} scenarios`} written without a then (`
+      + recorded.map((r) => `line ${r.line}, ${r.subject}${r.name === null ? '' : ` "${r.name}"`}`).join('; ') + ')');
+  }
   return parts.length ? parts.join(', ') : 'nothing changed';
 }
 
@@ -3590,6 +3765,15 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     for (let i = frame.stmt; i < end; i += 1) if (level[i] === frame.level) out.push(tokens[i]);
     return out;
   };
+  // A scenario's statement, by the keyword it is under: an `and` line
+  // continues the given, when or then above it.
+  const scenarioLead = (frame, s) => {
+    if (v(s[0]) !== 'and') return v(s[0]);
+    for (let i = frame.stmt - 1; i > frame.open; i -= 1) {
+      if (level[i] === frame.level && tokens[i].first && ['given', 'when', 'then'].includes(tokens[i].v)) return tokens[i].v;
+    }
+    return undefined;
+  };
   const classify = (frame, s, opener) => {
     const prev = v(s[s.length - 1]);
     const base = {
@@ -3649,10 +3833,11 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     }
     if (k === 'scenario') {
       const block = frame.block;
-      if (opener === '{' && v(s[0]) === 'given' && s.length === 2) return own('payload', { event: v(s[1]), block });
-      if (opener === '{' && v(s[0]) === 'when' && s.length === 2) return own('payload', { command: v(s[1]), block });
-      if (opener === '{' && v(s[0]) === 'then' && s.length === 2) return own('payload', { event: v(s[1]), block });
-      if (opener === '(' && v(s[0]) === 'then' && s.length === 2) return own('thenArgs', { callee: v(s[1]), block });
+      const lead = scenarioLead(frame, s);
+      if (opener === '{' && lead === 'given' && s.length === 2) return own('payload', { event: v(s[1]), block });
+      if (opener === '{' && lead === 'when' && s.length === 2) return own('payload', { command: v(s[1]), block });
+      if (opener === '{' && lead === 'then' && s.length === 2) return own('payload', { event: v(s[1]), block });
+      if (opener === '(' && lead === 'then' && s.length === 2) return own('thenArgs', { callee: v(s[1]), block });
       if (opener === '(' && prev === 'count') return own('count');
       if (opener === '[' && prev === 'in') return own('list', { left: conditionLeft(s.slice(0, -1)) });
       return own('json');
@@ -4229,11 +4414,31 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
   }
   if (k === 'scenario') {
     const block = frame.block;
+    // Where the Then is being written, what the model makes of the
+    // scenario — each whole outcome, its `and` lines included, as one
+    // item, from where the cursor is: the line's start, after `then`,
+    // or after a projection's read and its `==` (`sourceOutcomesAt`).
+    const outcome = (from) => {
+      for (const found of model ? sourceOutcomesAt(model, text, line) : []) {
+        let written = found.lines;
+        if (from === 'then') written = [written[0].replace(/^then /, ''), ...written.slice(1)];
+        if (from === 'read' || from === '==') {
+          if (found.value === undefined) continue;
+          written = [from === 'read' ? `== ${found.value}` : found.value];
+        }
+        push(written[0] + (written.length > 1 ? ' …' : ''), 'text', 'what the model does', { insert: written.join('\n'), sort: 0 });
+      }
+    };
     if (!s.length) {
-      keywords([['given', 'given '], ['when', 'when '], ['then', 'then ']]);
+      // What is already said is continued, not said again.
+      const said = new Set(tokens.filter((t, i) => i > frame.open && level[i] === frame.level && t.first).map((t) => t.v));
+      if (!said.has('then')) outcome('line');
+      keywords([['given', 'given '], ['when', 'when '], ['then', 'then ']].filter(([word]) => !said.has(word)));
+      const above = scenarioLead(frame, statement(frame, tokens.length));
+      if (above === 'given' || above === 'then') keywords([['and', 'and ']]);
       return done(false);
     }
-    const first = v(s[0]);
+    const first = scenarioLead(frame, s);
     if (first === 'given' && s.length === 1) { definitionItems('event-definition', { sort: 0, call: (n) => `${n} { $1 }` }); return done(); }
     if (first === 'when' && s.length === 1) {
       if (block && block.kind === 'command') push(block.name, 'command', 'this command', { insert: `${block.name} { $1 }`, snippet: true, sort: 0 });
@@ -4241,6 +4446,7 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
       return done();
     }
     if (first === 'then' && s.length === 1) {
+      if (v(s[0]) === 'then') outcome('then');
       if (block && block.kind === 'projection') {
         push(block.name, 'projection', 'its value', { insert: `${projectionCall(block.name)} == $0`, snippet: true, sort: 0 });
         return done();
@@ -4252,6 +4458,10 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     }
     if (first === 'then' && v(s[1]) === 'rejected') {
       if (s.length === 2 && commandName) { rejectionItems(commandName); return done(); }
+    }
+    if (v(s[0]) === 'then' && (prev === ')' || prev === '==') && v(s[2]) === '(') {
+      outcome(prev === ')' ? 'read' : '==');
+      return done();
     }
     return done(false);
   }
@@ -4390,9 +4600,10 @@ a tag literal naming its type (CourseId("c1")).
 
 Scenarios sit in one scenarios { … } group at the end of the block of the command or
 projection they exercise, and name it:
-  scenario "<what it shows>" { given E { … }  when C { … }  then E { … } }
+  scenario "<what it shows>" { given E { … }  and E2 { … }  when C { … }  then E { … }  and E3 { … } }
   then rejected "<rule message>"    then nothing    then P(CourseId("c1")) == <value>
-Leave then out and applying records what the model does.
+Say given, when and then once each, one command per scenario; further events continue with and.
+Leave then out and applying records what the model does, and the result says which scenarios it recorded.
 
 A definition printed as command X json { … } is stored JSON the language cannot spell.
 Leave it as it is, or rewrite it in the language.`;

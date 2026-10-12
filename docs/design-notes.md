@@ -873,9 +873,26 @@ step at the playhead. Only the step band scrolls.
   matched to stored ones by content, then by place in their block, so
   a command renamed in the text keeps them. Scenarios nest in the block
   of their subject (a mismatch is an error); a written Then is an
-  assertion stored as written, an omitted one is recorded at apply
-  (`completeScenario`), and drift is reported with a fix but never
-  accepted by applying — the pages' rules, in text.
+  assertion stored as written, and drift is reported with a fix but
+  never accepted by applying — the pages' rules, in text. **An omitted
+  Then is an error**, not something an apply records unseen: it says
+  what the model now does, and its fix writes that in, for one scenario
+  or for all of them at once. Completion offers the same lines where
+  the Then is being written (`sourceOutcomesAt`), so it needs no trip to
+  the `scenario` keyword the error sits on. A projection's outcome is a
+  read with tag values, which the text may not have yet: completion
+  tries each read the given events can tag (their properties of each
+  tag's type), and once the read is written, offers its value. Recording it at apply was the first
+  design; it let a text store an assertion it never showed. Agents are
+  the exception (`recordOutcomes`): the schema asks no one to predict
+  an outcome, so their apply records it and its result names each
+  scenario it recorded.
+  **Given, when and then are each said once**, and what follows
+  continues with `and` (`given A … and B … when C … then D … and E …`),
+  so a scenario reads as a sentence; a keyword said again is an error
+  whose fix is `and`. `when C and D` was weighed and left out: a
+  scenario runs one command in the wire format, and several would be a
+  major — earlier commands are written as given events.
   **Scenarios sit in one `scenarios { … }` group**, the block's last
   statement (at the top level too, for those whose subject is gone).
   The group is syntax only, not wire format, and it is required

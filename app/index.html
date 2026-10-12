@@ -14315,28 +14315,35 @@ function codeProblemList(analysis) {
   }, h('span', { class: 'diag-mark' + (d.error ? ' err' : '') }, d.error ? '✕' : '⚠'),
     h('span', { class: 'mono' }, `${d.line}:${d.col}`),
     h('span', { class: 'why' }, d.name ? `${readable(d.name)} — ${d.message}` : d.message),
-    d.fix ? h('button', {
-      class: 'btn tiny', type: 'button', title: d.fix.title,
-      onclick: (e) => { e.stopPropagation(); applyCodeFix(d.fix); },
-    }, d.fix.label) : null)));
+    ...[d.fix, d.fixAll].filter(Boolean).map((fix) => h('button', {
+      class: 'btn tiny', type: 'button', title: fix.title,
+      onclick: (e) => { e.stopPropagation(); applyCodeFix(fix); },
+    }, fix.label)))));
 }
 
 // A quick fix — a drift's then lines rewritten to what the model now
-// does, an ungrouped scenario wrapped in its group. An edit like any
-// other — it still has to be applied.
+// does, a missing outcome written in, an ungrouped scenario wrapped in
+// its group. An edit like any other — it still has to be applied. A
+// fix that writes several places at once carries them as `edits`.
+const codeFixEdits = (fix) => fix.edits || [fix];
+
 function applyCodeFix(fix) {
+  const edits = codeFixEdits(fix);
   if (codeView.editor) {
     const { editor } = codeView.editor;
-    editor.executeEdits('fix', [{
-      range: new monaco.Range(fix.line, fix.col, fix.endLine, fix.endCol), text: fix.text,
-    }]);
+    editor.executeEdits('fix', edits.map((e) => ({
+      range: new monaco.Range(e.line, e.col, e.endLine, e.endCol), text: e.text,
+    })));
     editor.focus();
     return;
   }
   const lines = codeView.text.split('\n');
   const offset = (line, col) => lines.slice(0, line - 1).reduce((sum, l) => sum + l.length + 1, 0) + col - 1;
-  const text = codeView.text.slice(0, offset(fix.line, fix.col)) + fix.text
-    + codeView.text.slice(offset(fix.endLine, fix.endCol));
+  // Last first, so each edit's place is still where it was read.
+  let text = codeView.text;
+  for (const e of [...edits].sort((a, b) => offset(b.line, b.col) - offset(a.line, a.col))) {
+    text = text.slice(0, offset(e.line, e.col)) + e.text + text.slice(offset(e.endLine, e.endCol));
+  }
   onCodeInput(text);
   render();
 }
@@ -14686,17 +14693,16 @@ function registerSourceLanguage() {
         .filter((m) => typeof m.code === 'string' && m.code.startsWith('fix:'))
         .map((m) => {
           const diagnostic = diagnostics[Number(m.code.slice('fix:'.length))];
-          if (!diagnostic || !diagnostic.fix) return null;
-          const { fix } = diagnostic;
-          return {
-            title: fix.title, kind: 'quickfix', diagnostics: [m], isPreferred: true,
-            edit: { edits: [{
+          if (!diagnostic || !diagnostic.fix) return [];
+          return [diagnostic.fix, diagnostic.fixAll].filter(Boolean).map((fix) => ({
+            title: fix.title, kind: 'quickfix', diagnostics: [m], isPreferred: fix === diagnostic.fix,
+            edit: { edits: codeFixEdits(fix).map((e) => ({
               resource: textModel.uri, versionId: textModel.getVersionId(),
-              textEdit: { range: new monaco.Range(fix.line, fix.col, fix.endLine, fix.endCol), text: fix.text },
-            }] },
-          };
+              textEdit: { range: new monaco.Range(e.line, e.col, e.endLine, e.endCol), text: e.text },
+            })) },
+          }));
         })
-        .filter(Boolean);
+        .flat();
       // A read in place, named by an alias (sourceIntroduceAlias, dsl.js)
       // — offered under the cursor, not on a marker, and followed by a
       // rename on the new name, so it is named as it is introduced.

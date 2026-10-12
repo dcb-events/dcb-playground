@@ -160,9 +160,11 @@
   // A whole model text, checked against the model it would replace:
   // refused whole on any error, or on an experimental construct the
   // model does not already use. Answers the parse, ready to apply.
+  // A scenario written without a then is no error here: an agent is not
+  // asked to predict an outcome, so the apply records it and says so.
   const checkedSource = (model, source) => {
     const parsed = parseModelSource(source);
-    const errors = parsed.diagnostics.length ? parsed.diagnostics : sourceScenarioReport(model, parsed).errors;
+    const errors = parsed.diagnostics.length ? parsed.diagnostics : sourceScenarioReport(model, parsed, { recordOutcomes: true }).errors;
     if (errors.length) {
       throw new DomainError('Nothing was applied — the text has '
         + `${errors.length} error${errors.length === 1 ? '' : 's'}:\n`
@@ -337,7 +339,7 @@
       const id = openNewModel(name);
       if (typeof state === 'object' && state) state.models = false;
       if (source !== undefined) {
-        const applied = sourceApplySummary(applyModelSource(id, source));
+        const applied = sourceApplySummary(applyModelSource(id, source, { recordOutcomes: true }));
         return { summary: `started model "${name.trim()}" from code: ${applied}`, payload: { id, applied } };
       }
       return {
@@ -466,7 +468,7 @@
       checkedSource(model, source);
       let summary;
       try {
-        summary = applyModelSource(model.id, source, { refuseRemovals: allowRemovals !== true });
+        summary = applyModelSource(model.id, source, { refuseRemovals: allowRemovals !== true, recordOutcomes: true });
       } catch (error) {
         if (error.removed) {
           throw new DomainError(error.message + ' Send it again with allowRemovals: true if the removals are meant '
