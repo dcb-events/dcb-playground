@@ -1546,6 +1546,14 @@ check('every keyword outside the experimental ones is shown to an agent', () => 
     eq(messages('model "M"\nuntagged projection P: integer = 1e300\n'), [], 'a large one is fine');
   });
 
+  check('a backslash before a line break does not carry a string onto the next line', () => {
+    const text = 'model "M"\nevent A { note: string }\ncommand C { emit A { note: "x\\\nevent B {}\n';
+    const read = parseModelSource(text);
+    eq(read.diagnostics.some((d) => /never closed/.test(d.message) && d.line === 3), true,
+      read.diagnostics.map((d) => `${d.line}: ${d.message}`).join(' | '));
+    eq('B' in read.collections['event-definition'], true, 'the next line is read as the declaration it is');
+  });
+
 }
 
 finish();

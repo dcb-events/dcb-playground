@@ -338,7 +338,12 @@ function lexSource(text) {
       token = { t: 'code', v: value };
     } else if (c === '"') {
       let j = i + 1;
-      while (j < text.length && text[j] !== '"' && text[j] !== '\n') j += text[j] === '\\' ? 2 : 1;
+      // A backslash escapes the next character — but never a line break:
+      // a string does not run on past the end of its line, or one stray
+      // backslash swallows the declaration below it.
+      while (j < text.length && text[j] !== '"' && text[j] !== '\n') {
+        j += text[j] === '\\' && text[j + 1] !== '\n' ? 2 : 1;
+      }
       if (text[j] !== '"') {
         const value = text.slice(i + 1, j);
         advanceTo(j);
