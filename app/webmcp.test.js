@@ -407,6 +407,38 @@ async function call(name, args) {
     eq(sandbox.loadEvents().length, after, 'nothing appended');
   });
 
+  await check('a tool that overwrites or removes says so; one that only adds or reads does not', () => {
+    const destructive = [...registered.values()].filter((tool) => tool.annotations && tool.annotations.destructiveHint)
+      .map((tool) => tool.name).sort();
+    eq(destructive, [
+      'apply_model_source', 'remove_definition', 'reset_sandbox',
+      ...[...registered.keys()].filter((name) => name.startsWith('update_')),
+    ].sort(), 'destructive');
+    for (const tool of registered.values()) {
+      const { readOnlyHint, destructiveHint } = tool.annotations || {};
+      eq(readOnlyHint === true || typeof destructiveHint === 'boolean', true,
+        `${tool.name} says what it does — the default for a writing tool is destructive`);
+    }
+  });
+
+  await check('apply_model_source removes nothing unless it is told it may', async () => {
+    const previous = store.get('dcb-playground:model');
+    store.set('dcb-playground:model', loadPredefinedModel(sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-simple')));
+    const { text: source } = await call('get_model_source');
+    const before = sandbox.loadEvents().length;
+    const refused = await call('apply_model_source', { source: 'model "x"' });
+    eq(refused.isError, true, 'refused');
+    eq(/would remove/.test(refused.text) && /allowRemovals/.test(refused.text), true, refused.text);
+    eq(/CourseDefined/.test(refused.text), true, 'naming what would go');
+    eq(sandbox.loadEvents().length, before, 'nothing applied');
+    const additive = await call('apply_model_source', { source: source + '\nevent ExtraHappened { note: string }\n' });
+    eq(additive.isError, false, 'an apply that removes nothing needs no flag: ' + additive.text);
+    const allowed = await call('apply_model_source', { source: 'model "x"', allowRemovals: true });
+    eq(allowed.isError, false, allowed.text);
+    eq(Object.keys(sandbox.activeModel()['event-definitions']), [], 'removed when allowed');
+    store.set('dcb-playground:model', previous);
+  });
+
   // A model written whole, the way an agent should build one.
   const LIBRARY = [
     'model "Library"',

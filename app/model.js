@@ -5229,8 +5229,25 @@ function replaceDefinitions(modelId, next) {
       summary.reordered.push({ kind });
     }
   }
+  // A caller that may not remove — an agent that did not say it means
+  // to — is refused whole, told what the text left out.
+  if (next.refuseRemovals && summary.removed.length) {
+    const error = new DomainError(`This would remove ${removalWords(summary.removed)}, which the text leaves out `
+      + '— nothing was applied.');
+    error.removed = summary.removed;
+    throw error;
+  }
   if (events.length) appendEvents(events);
   return summary;
+}
+
+// `event A, command B and 3 scenarios`, for a refusal to say what goes.
+function removalWords(removed) {
+  const named = removed.filter((item) => !isIdKeyed(item.kind))
+    .map((item) => `${item.kind.replace(/-definition$/, '').replace(/-/g, ' ')} ${item.name}`);
+  const scenarios = removed.length - named.length;
+  const parts = [...named, ...(scenarios ? [`${scenarios} scenario${scenarios === 1 ? '' : 's'}`] : [])];
+  return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0];
 }
 
 // ============================================================

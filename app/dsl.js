@@ -2753,7 +2753,9 @@ function sourceScenarioReport(model, parsed) {
 // an existing entity whose identifier type is missing keeps it missing,
 // which is a dangling reference the advisories report, not something an
 // apply should quietly repair.
-function applyModelSource(modelId, text) {
+// `options.refuseRemovals` refuses a text that leaves a definition or
+// scenario out, rather than removing it (see replaceDefinitions).
+function applyModelSource(modelId, text, options = {}) {
   const parsed = parseModelSource(text);
   const errors = parsed.diagnostics.filter((d) => d.severity === 'error');
   if (errors.length) {
@@ -2795,6 +2797,7 @@ function applyModelSource(modelId, text) {
   return replaceDefinitions(modelId, {
     name: parsed.name,
     collections: { ...parsed.collections, ...scenarios.collections },
+    refuseRemovals: !!options.refuseRemovals,
   });
 }
 
