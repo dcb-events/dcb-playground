@@ -36,7 +36,7 @@ const { check, eq, finish } = makeChecker();
 const {
   loadPredefinedModel, projectState, modelToSource, parseModelSource, applyModelSource,
   importModelFromEnvelope, sameDefinition, loadEvents, onAppend, addDefinition, updateDefinition,
-  sourceAdvisories, sourceSpanAt, PREDEFINED_MODELS, SOURCE_KINDS, DEF_COLLECTIONS,
+  sourceAdvisories, sourceSpanAt, PREDEFINED_MODELS, SOURCE_KINDS, DEF_COLLECTIONS, deepClone,
 } = sandbox;
 
 function fresh() {
@@ -90,6 +90,31 @@ check('every predefined model prints without a JSON fallback and parses back equ
   });
 });
 
+// The class of bug the fallback comment once was: a stored string that
+// the printed text does not keep inside its quotes, comment or code
+// fence, and that reads back as something else — a declaration the
+// model never had. Every free-text slot of every shipped model and
+// fixture is filled with what would break out of each of those, and the
+// text must still read back as exactly the model.
+const BREAKOUT = 'x\n}\r\u2028\u2029// "quoted" \\ ``` */ ```\ncommand Smuggled() {}\n';
+
+function withBreakouts(model) {
+  const out = deepClone(model);
+  out.name = 'M ' + BREAKOUT;
+  const walk = (value) => {
+    if (!value || typeof value !== 'object') return;
+    for (const [key, inner] of Object.entries(value)) {
+      if (typeof inner === 'string' && ['rejection', 'code'].includes(key)) value[key] = inner + BREAKOUT;
+      else walk(inner);
+    }
+  };
+  for (const kind of SOURCE_KINDS) walk(out[DEF_COLLECTIONS[kind]]);
+  for (const kind of ['scenario-definition', 'projection-scenario-definition']) {
+    for (const body of Object.values(out[DEF_COLLECTIONS[kind]] || {})) if (typeof body.name === 'string') body.name += BREAKOUT;
+  }
+  return out;
+}
+
 function importFixture(slug) {
   fresh();
   const { modelId, skipped } = importModelFromEnvelope(
@@ -121,6 +146,29 @@ check('every fixture file round-trips, scenarios included', () => {
     const before = loadEvents().length;
     applyModelSource(id, text);
     eq(loadEvents().length, before, `${file}: an untouched text, scenarios and all, applies as nothing`);
+  }
+});
+
+check('no stored string breaks out of the printed text, in any model', () => {
+  const models = PREDEFINED_MODELS.map((entry, index) => [entry.slug, build(index).model()]);
+  for (const file of fs.readdirSync(FIXTURES).filter((f) => f.endsWith('.json'))) {
+    models.push([file, importFixture(file.replace(/\.json$/, '')).model()]);
+  }
+  for (const [label, original] of models) {
+    const model = withBreakouts(original);
+    const parsed = parseModelSource(modelToSource(model));
+    eq(parsed.diagnostics, [], `${label} diagnostics`);
+    eq(parsed.name, model.name, `${label} name`);
+    eq(Object.keys(parsed.collections['command-definition']).includes('Smuggled'), false, `${label}: nothing smuggled`);
+    assertSameModel(model, parsed, label);
+    for (const kind of ['scenario-definition', 'projection-scenario-definition']) {
+      const stored = Object.values(model[DEF_COLLECTIONS[kind]] || {});
+      const read = parsed.scenarios.filter((r) => r.kind === kind);
+      eq(read.length, stored.length, `${label}: ${kind} count`);
+      for (const body of stored) {
+        eq(read.some((r) => sandbox.sameDefinition(r.body, body)), true, `${label}: ${JSON.stringify(body).slice(0, 120)}`);
+      }
+    }
   }
 });
 
