@@ -5209,6 +5209,30 @@ check('the app is text: no file carries a raw control byte', () => {
     sandbox.moveRow = moveRow;
   });
 
+  check('a kind colour used as text is one that can be read', () => {
+    // The kind colours are tuned for borders and fills; as text on the
+    // light page, orange and green fell to 2.8:1 and 3.3:1. Text takes
+    // the -text variant, which the dark theme maps back to the kind.
+    const css = fs.readFileSync(path.join(APP, 'shared.css'), 'utf8');
+    const page = fs.readFileSync(path.join(APP, 'index.html'), 'utf8');
+    const bare = (css + page).match(/(^|[^-a-z])color: ?var\(--(event|entity|projection)\)/gm) || [];
+    eq(bare, [], 'no kind colour as text');
+    const root = css.slice(css.indexOf(':root'), css.indexOf('}', css.indexOf(':root')));
+    const value = (name) => (root.match(new RegExp(`--${name}: (#[0-9a-f]{6})`)) || [])[1];
+    const luminance = (hex) => {
+      const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+        .map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const contrast = (a, b) => {
+      const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+      return (hi + 0.05) / (lo + 0.05);
+    };
+    for (const kind of ['event-text', 'entity-text']) {
+      eq(contrast(value(kind), value('bg')) >= 4.5, true, `--${kind} ${value(kind)} on --bg: ${contrast(value(kind), value('bg')).toFixed(2)}`);
+    }
+  });
+
   check('a dialog is named by its heading, and its × says what it does', () => {
     const heading = { id: '' };
     const attributes = {};

@@ -353,7 +353,7 @@
   /* A read in place: the projection's name, muted brackets, and each
      value a reference chip of its own. */
   .sentence .op.read { background: none; border: none; padding: 0; }
-  .op.read .read-name { color: var(--projection); font-weight: 600; }
+  .op.read .read-name { color: var(--projection-text); font-weight: 600; }
   .op.read .read-punct { color: var(--muted); }
   .read-alias { font-family: var(--mono); font-size: 12px; width: 150px; }
   .read-alias.invalid { border-color: var(--danger); }
@@ -373,8 +373,8 @@
   .adder { display: flex; gap: 9px; align-items: center; margin-top: 7px; flex-wrap: wrap; }
   .dcb { font-family: var(--mono); font-size: 11.5px; line-height: 1.75; }
   .dcb .k { color: var(--muted); }
-  .dcb .t { color: var(--entity); }
-  .dcb .y { color: var(--event); }
+  .dcb .t { color: var(--entity-text); }
+  .dcb .y { color: var(--event-text); }
   .dcb .al { color: var(--command); }
   /* The query glyph and its popover: a mark where a line used to be.
      Hover and focus peek; `.on` is the pinned state. */
@@ -498,7 +498,7 @@
   }
   .pdetail > .tabs { margin: 4px 0 8px; gap: 0; }
   .pdetail > .tabs .tab { padding: 6px 2px; margin-right: 20px; font-size: 12px; font-weight: 600; }
-  .pdetail > .tabs .tab.on { color: var(--entity); border-bottom-color: var(--entity); }
+  .pdetail > .tabs .tab.on { color: var(--entity-text); border-bottom-color: var(--entity); }
   /* The projection editor: sections on the left, what the definition
      works out to on the right — wrapping under them where the two do
      not fit side by side (a modal, a phone). */
@@ -586,7 +586,7 @@
     border-radius: var(--radius); background: var(--entity-soft);
     padding: 11px 14px 12px; margin-bottom: 22px;
   }
-  .ident > h4 { color: var(--entity); }
+  .ident > h4 { color: var(--entity-text); }
   .ident .irow {
     display: flex; align-items: center; flex-wrap: wrap; gap: 7px;
     padding: 5px 0; font-size: 12px;
@@ -623,7 +623,7 @@
   .lctrack .hop { position: relative; display: inline-flex; align-items: center; }
   .lctrack .hop .ev {
     position: absolute; left: 50%; bottom: calc(100% + 1px); transform: translateX(-50%);
-    font-family: var(--mono); font-size: 9.5px; color: var(--event); white-space: nowrap;
+    font-family: var(--mono); font-size: 9.5px; color: var(--event-text); white-space: nowrap;
   }
   .ident .irow.lcrow { padding-top: 12px; }
   .lctrack .wire { display: inline-flex; align-items: center; }
@@ -696,7 +696,7 @@
   /* A kind's fallback mark is a text glyph, so the colour is ours to
      give: the kind's, where the slot is not kind-coloured already. */
   .fallback-command { color: var(--command); }
-  .fallback-event { color: var(--event); }
+  .fallback-event { color: var(--event-text); }
   .chip .fallback-command, .chip .fallback-event { color: inherit; }
   .icon-btn {
     font: inherit; font-size: 20px; line-height: 1; cursor: pointer;
@@ -1003,7 +1003,7 @@
     display: inline-flex; align-items: center; justify-content: center;
     font-size: 11px; font-weight: 700; border: 1px solid;
   }
-  .sc-mark.s-current { color: var(--entity); border-color: var(--entity); background: var(--entity-soft); }
+  .sc-mark.s-current { color: var(--entity-text); border-color: var(--entity); background: var(--entity-soft); }
   .sc-mark.s-drifted { color: var(--danger); border-color: var(--danger); background: var(--danger-soft); }
   /* A scenario that no longer agrees with the model is the thing on
      this tab that needs doing, so the whole card says so, not only its
@@ -1043,13 +1043,13 @@
 
   .sc-body { margin-top: 9px; padding-top: 9px; border-top: 1px dashed var(--border); }
   .sc-line { font-family: var(--mono); font-size: 11.5px; line-height: 1.7; }
-  .sc-line .y { color: var(--event); }
+  .sc-line .y { color: var(--event-text); }
   .sc-line .c { color: var(--command); }
   .sc-line .k { color: var(--muted); }
   .sc-body .card { font-family: var(--mono); font-size: 11.5px; line-height: 1.7; margin-top: 4px; }
   .sc-body .card .k { color: var(--muted); }
-  .sc-body .card .t { color: var(--entity); }
-  .sc-body .card .y { color: var(--event); }
+  .sc-body .card .t { color: var(--entity-text); }
+  .sc-body .card .y { color: var(--event-text); }
 
   /* Two outcomes side by side, because the question is which of them
      you meant — not which of them is correct. */
@@ -1195,7 +1195,7 @@
     display: inline-flex; align-items: center; justify-content: center;
     font-size: 11px; line-height: 1; color: var(--text); border: 1px solid var(--event);
   }
-  .smark.fallback-event { color: var(--event); }
+  .smark.fallback-event { color: var(--event-text); }
   .smark.current { border-color: var(--accent); }
   .slanes-in.compact .smark.current { border-width: 2px; }
   /* In one lane, a watch's tags have no bold label to show they are
@@ -1246,8 +1246,8 @@
     background: none; border: none; cursor: pointer; padding: 0 5px 0 0;
     color: var(--muted); font-size: 12px;
   }
-  .pin:hover { color: var(--event); }
-  .pin.on { color: var(--event); }
+  .pin:hover { color: var(--event-text); }
+  .pin.on { color: var(--event-text); }
 
   /* The two overview pages read across every command at once rather
      than down one of them, so they earn more width than an ordinary
@@ -1401,10 +1401,10 @@
      fall short of legible, so light mode takes the darker shade the
      chips use, and dark mode the token, which is already light. */
   .em-card.read .title { color: #15803d; }
-  body.f-dark .em-card.read .title { color: var(--entity); }
+  body.f-dark .em-card.read .title { color: var(--entity-text); }
   .em-card.event { background: var(--surface); border-color: var(--event); }
   .em-card.event .title { color: #c2410c; }
-  body.f-dark .em-card.event .title { color: var(--event); }
+  body.f-dark .em-card.event .title { color: var(--event-text); }
   .em-card.event .line { font-family: var(--mono); font-size: 11px; }
 
   /* ---------- lifecycles ----------
@@ -1419,7 +1419,7 @@
     border: 0; background: none; padding: 0; font: inherit;
     font-size: 15px; font-weight: 600; color: inherit; cursor: pointer;
   }
-  .lc-cluster .lc-ename:hover { color: var(--entity); }
+  .lc-cluster .lc-ename:hover { color: var(--entity-text); }
   .lc-scroll { overflow-x: auto; }
   .lc-band { position: relative; }
   .lc-wires, .lc-wires svg { position: absolute; inset: 0; width: 100%; height: 100%; }
@@ -1460,7 +1460,7 @@
   }
   .lc-loop {
     position: absolute; transform: translateX(-50%);
-    font-size: 10px; font-family: var(--mono); color: var(--event); white-space: nowrap;
+    font-size: 10px; font-family: var(--mono); color: var(--event-text); white-space: nowrap;
   }
   .lc-dot {
     display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 50%;
@@ -1491,7 +1491,7 @@
     color: var(--command); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .lc-prow .cmd:hover { text-decoration: underline; }
-  .lc-prow .to { flex: none; color: var(--event); font-weight: 600; }
+  .lc-prow .to { flex: none; color: var(--event-text); font-weight: 600; }
   .lc-none { font-size: 12px; color: var(--muted); font-style: italic; white-space: nowrap; }
   .lc-warn { font-size: 10.5px; font-family: inherit; color: var(--rule); white-space: nowrap; }
 
@@ -1559,7 +1559,7 @@
   }
   .code-strip .grow { flex: 1; }
   .code-strip .code-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
-  .code-strip.dirty { color: var(--event); background: var(--event-soft); }
+  .code-strip.dirty { color: var(--event-text); background: var(--event-soft); }
   .code-strip.dirty .code-dot { background: var(--event); }
   .code-strip.bad { color: var(--danger); background: var(--danger-soft); }
   .code-strip.bad .code-dot { background: var(--danger); }
