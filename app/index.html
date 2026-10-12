@@ -2785,21 +2785,32 @@ function renderImportExportModal() {
 // not by a second history kept beside the first. The entries that come
 // off are held so redo can put them back exactly as they were, sequence
 // numbers included, which is only sound because they came off the end.
+//
+// The log is shared by every tab; the history is not. Each tab keeps
+// its own, in sessionStorage — undoing in one tab used to take back the
+// other's last edit. And since undo cuts the log back to a position, a
+// mark is only good while the log still ends where it ended: once
+// another tab has appended past it, cutting there would take that
+// tab's edits too, so the step is refused and the history dropped.
 
 // Versioned in lockstep with the event log: the stack holds raw
 // events and absolute offsets into that log, so marks taken against
 // one log version must never replay against another. Deriving the
 // suffix keeps the two keys impossible to bump apart.
 const UNDO_KEY = 'dcb-playground:undo:' + EVENT_LOG_KEY.split(':').pop();
+// Where the history was kept while it was shared; nothing reads it.
+localStorage.removeItem(UNDO_KEY);
 
 function undoLog() {
   try {
-    const stored = JSON.parse(localStorage.getItem(UNDO_KEY));
+    const stored = JSON.parse(sessionStorage.getItem(UNDO_KEY));
     if (stored && Array.isArray(stored.done) && Array.isArray(stored.undone)) return stored;
   } catch (e) { /* a corrupt stack is an empty one */ }
   return { done: [], undone: [] };
 }
-function saveUndoLog(next) { localStorage.setItem(UNDO_KEY, JSON.stringify(next)); }
+function saveUndoLog(next) { sessionStorage.setItem(UNDO_KEY, JSON.stringify(next)); }
+
+const OVERTAKEN = 'Another tab has changed this playground since — there is nothing here to undo or redo any more.';
 
 // What a change was, read off what it appended. `event-definition-updated`
 // carrying `CourseDefined` becomes "updated event: Course defined".
@@ -2823,7 +2834,9 @@ let undoBatch = null;
 
 function takeUndoMark(at, appended) {
   const log = undoLog();
-  log.done.push({ at, label: changeLabel(appended) });
+  // `end` is where the log stood after this change: undo is sound only
+  // while it still stands there.
+  log.done.push({ at, end: at + appended.length, label: changeLabel(appended) });
   // Redoing after a new change would mean re-appending entries that no
   // longer sit at the end of the log, so the branch is dropped — on an
   // agent's append exactly as on a button's.
@@ -2864,9 +2877,13 @@ function undo() {
   const mark = log.done.pop();
   if (!mark) return toast('Nothing to undo.');
   const events = loadEvents();
+  if (events.length !== mark.end) {
+    saveUndoLog({ done: [], undone: [] });
+    return toast(OVERTAKEN, true);
+  }
   localStorage.setItem(EVENT_LOG_KEY, JSON.stringify(events.slice(0, mark.at)));
   bumpLogRevision();
-  log.undone.push({ events: events.slice(mark.at), label: mark.label });
+  log.undone.push({ at: mark.at, events: events.slice(mark.at), label: mark.label });
   saveUndoLog(log);
   closeForms();
   toast('Undone — ' + mark.label);
@@ -2878,14 +2895,28 @@ function redo() {
   const step = log.undone.pop();
   if (!step) return toast('Nothing to redo.');
   const events = loadEvents();
+  if (events.length !== step.at) {
+    saveUndoLog({ done: [], undone: [] });
+    return toast(OVERTAKEN, true);
+  }
   localStorage.setItem(EVENT_LOG_KEY, JSON.stringify([...events, ...step.events]));
   bumpLogRevision();
-  log.done.push({ at: events.length, label: step.label });
+  log.done.push({ at: events.length, end: events.length + step.events.length, label: step.label });
   saveUndoLog(log);
   closeForms();
   toast('Redone — ' + step.label);
   render();
 }
+
+// Another tab wrote the log. The caches here are keyed on this tab's
+// revision counter, which that write never moved — so it is moved now,
+// and the page repaints from what is really stored. Nothing else is
+// needed: the history here is checked against the log at undo time.
+window.addEventListener('storage', (e) => {
+  if (e.key !== EVENT_LOG_KEY && e.key !== null) return;
+  bumpLogRevision();
+  render();
+});
 
 // ---------- loose ends ----------
 //

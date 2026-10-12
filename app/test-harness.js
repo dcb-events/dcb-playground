@@ -58,14 +58,20 @@ const findAll = (node, pred, out = []) => {
 // "not there" would only be testing that. Nothing runs at load beyond
 // that — the app boots on DOMContentLoaded, and this never fires one.
 function createSandbox() {
+  const storage = (map) => ({
+    getItem: (k) => (map.has(k) ? map.get(k) : null),
+    setItem: (k, v) => map.set(k, String(v)),
+    removeItem: (k) => map.delete(k),
+  });
   const store = new Map();
+  const sessionStore = new Map();
+  // What the page listens for on `window`, kept so a suite can play the
+  // part of the browser — another tab's `storage` event, say.
+  const listeners = {};
   const sandbox = {
     console,
-    localStorage: {
-      getItem: (k) => (store.has(k) ? store.get(k) : null),
-      setItem: (k, v) => store.set(k, String(v)),
-      removeItem: (k) => store.delete(k),
-    },
+    localStorage: storage(store),
+    sessionStorage: storage(sessionStore),
     document: {
       createElement: (t) => element(undefined, t), createTextNode: (t) => element(t), body: element(),
       documentElement: element(),
@@ -92,9 +98,10 @@ function createSandbox() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  sandbox.window.addEventListener = noop;
+  sandbox.window.addEventListener = (type, fn) => { (listeners[type] = listeners[type] || []).push(fn); };
   vm.createContext(sandbox);
-  return { sandbox, store };
+  const dispatch = (type, event) => { for (const fn of listeners[type] || []) fn(event); };
+  return { sandbox, store, sessionStore, dispatch };
 }
 
 // The page's own inline script, marked `data-page` — named rather than

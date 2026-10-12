@@ -22,7 +22,7 @@ const { createSandbox, loadApp, makeChecker, swap, textOf, findAll } = require('
 
 const APP = __dirname;
 
-const { sandbox, store } = createSandbox();
+const { sandbox, store, sessionStore, dispatch } = createSandbox();
 
 // `state` and the page's own functions live in the script's lexical
 // scope, not as properties of the context object — the same as they
@@ -33,6 +33,7 @@ loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js', 'shared.js'], {
   trailer: 'globalThis.state = state; globalThis.render = render; globalThis.session = session;'
     + ' globalThis.closeForms = closeForms; globalThis.codeView = codeView; globalThis.UNGROUPED = UNGROUPED;'
     + ' globalThis.PREDEFINED_MODELS = PREDEFINED_MODELS; globalThis.SHARE_LINK_MAX_LENGTH = SHARE_LINK_MAX_LENGTH;'
+    + ' globalThis.EVENT_LOG_KEY = EVENT_LOG_KEY;'
     + ' globalThis.NOTATION_GUIDE_URL = NOTATION_GUIDE_URL; globalThis.NOTATION_REFERENCE_URL = NOTATION_REFERENCE_URL;',
 });
 const { check, eq, finish } = makeChecker();
@@ -2094,6 +2095,59 @@ function build(index) {
     eq(sandbox.loadEvents().length, before, 'one undo drops the whole gesture');
     const model = sandbox.projectState()[id];
     eq(Object.keys(model['event-definitions']), [], 'both definitions gone');
+  });
+
+  store.delete('dcb-playground:model');
+}
+
+// ---------------------------------------------------------------
+// Two tabs share one log. Each sees the other's edits as they land,
+// and each undoes only its own — and only while nothing has been
+// appended past it, since undo cuts the log back to a position.
+// ---------------------------------------------------------------
+{
+  const id = sandbox.createDcbModel('Two Tabs Probe');
+  store.set('dcb-playground:model', id);
+  // Another tab's append: the log grows in storage, behind this tab's
+  // back, and the browser says so with a `storage` event.
+  const otherTabAppends = (name) => {
+    const events = JSON.parse(store.get(sandbox.EVENT_LOG_KEY));
+    events.push({ sequence: events.length, timestamp: '', type: 'event-definition-added',
+      data: { 'dcb-model-id': id, name, body: { properties: [], tags: [] } } });
+    store.set(sandbox.EVENT_LOG_KEY, JSON.stringify(events));
+    dispatch('storage', { key: sandbox.EVENT_LOG_KEY });
+  };
+
+  check('another tab\'s edit shows here as soon as it lands', () => {
+    sandbox.projectState();
+    otherTabAppends('ElsewhereHappened');
+    eq('ElsewhereHappened' in sandbox.projectState()[id]['event-definitions'], true, 'seen without a write here');
+  });
+
+  check('this tab\'s undo history is its own', () => {
+    sandbox.run(() => addTaggedEvent(id, 'HereHappened', { properties: [] }));
+    eq([...store.keys()].some((k) => k.startsWith('dcb-playground:undo')), false, 'not in shared storage');
+    eq([...sessionStore.keys()].some((k) => k.startsWith('dcb-playground:undo')), true, 'in the tab\'s own');
+  });
+
+  check('undo is refused once another tab has appended past it', () => {
+    sandbox.run(() => addTaggedEvent(id, 'MineHappened', { properties: [] }));
+    otherTabAppends('TheirsHappened');
+    const before = sandbox.loadEvents().length;
+    sandbox.undo();
+    eq(sandbox.loadEvents().length, before, 'nothing cut off');
+    const events = sandbox.projectState()[id]['event-definitions'];
+    eq(['MineHappened', 'TheirsHappened'].every((name) => name in events), true, 'both edits kept');
+  });
+
+  check('a redo is dropped once another tab has appended', () => {
+    sandbox.run(() => addTaggedEvent(id, 'UndoneHere', { properties: [] }));
+    sandbox.undo();
+    otherTabAppends('ThenThere');
+    const before = sandbox.loadEvents().length;
+    sandbox.redo();
+    eq(sandbox.loadEvents().length, before, 'nothing re-appended');
+    eq('UndoneHere' in sandbox.projectState()[id]['event-definitions'], false, 'still undone');
   });
 
   store.delete('dcb-playground:model');

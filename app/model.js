@@ -248,9 +248,8 @@ function loadEvents() {
 // redo in the page, the corrupt-log move-aside below — so a cache can
 // ask "has anything changed?" without parsing the log to find out.
 // A writer that skips its bump is the one way the caches below go
-// stale; nothing re-reads storage to double-check, which also means a
-// second tab's writes are unseen until this one writes (the two were
-// never coordinated before either — each replayed its own reads).
+// stale; nothing re-reads storage to double-check. Another tab's write
+// is a writer too: the page bumps on its `storage` event.
 let logRevision = 0;
 function bumpLogRevision() { logRevision += 1; }
 function logRevisionNow() { return logRevision; }

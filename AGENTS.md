@@ -174,9 +174,12 @@ was decided, why, and what was tried and reverted:
   (`onAppend`), so buttons and agent tools are undoable alike. New editing
   features follow the same path; WebMCP tools already do.
 - **Every writer of `EVENT_LOG_KEY` must call `bumpLogRevision()`** —
-  `appendEvents` does, undo/redo do. The projected state and the problems
+  `appendEvents` does, undo/redo do, and so does the page's `storage`
+  listener for another tab's writes. The projected state and the problems
   list are cached per revision; a writer that skips its bump is the one way
-  those caches go stale.
+  those caches go stale. The log is shared between tabs, the undo history
+  is per tab (sessionStorage) and refuses once another tab has appended
+  past it.
 - **`projectState()` returns one shared object per revision** — never mutate
   it. Editors work on a `deepClone` and route changes through a command
   function (`patch` in index.html is the pattern).
