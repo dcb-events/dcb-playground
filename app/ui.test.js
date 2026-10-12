@@ -2198,6 +2198,39 @@ function build(index) {
     eq(spansOf(single[0]), [['label', 'student · name'], ['icon', '🧑‍🎓']],
       'a group of one stays a full-text option, mark trailing');
   });
+
+  check('a placeholder is asked, never offered', () => {
+    const sel = sandbox.pick([['a', 'A'], ['b', 'B']], '', () => {}, 'event');
+    const [first] = findAll(sel, (n) => n.tag === 'option');
+    eq([first.value, first.className, textOf(first)], ['', 'placeholder', 'event'], 'it leads, valued ""');
+    eq(['disabled', 'hidden', 'selected'].map((k) => k in first.attributes), [true, true, true],
+      'out of the list, and the face while nothing is chosen');
+    const chosen = sandbox.pick([['a', 'A']], 'a', () => {}, 'event');
+    eq('selected' in findAll(chosen, (n) => n.tag === 'option')[0].attributes, false,
+      'not once something is');
+    eq('disabled' in sandbox.pick([], '', () => {}, 'pick an event first').attributes, true,
+      'a picker with nothing to offer is disabled');
+  });
+
+  check('"none" and the actions are ruled off from the values', () => {
+    // ' new' is `NEW`, the sentinel a "+ New…" row carries.
+    const sel = sandbox.pick([['', 'none'], ['a', 'A'], [' new', '+ New member…']], 'a', () => {});
+    eq(sel.children.slice(1).map((n) => n.tag === 'hr' ? 'hr' : n.className || n.value),
+      ['none', 'hr', 'a', 'hr', 'action'], 'a rule after the none, one before the action');
+    const action = sel.children[sel.children.length - 1];
+    eq(textOf(action), '+ New member…', 'the action reads whole');
+  });
+
+  check('custom types section the type list; built-ins alone do not', () => {
+    const { model } = build(0);
+    const sel = sandbox.pick(sandbox.typeOptions(model()), 'integer', () => {});
+    const groups = findAll(sel, (n) => n.tag === 'optgroup');
+    eq(groups.map((g) => g.label), ['Built-in', 'Custom'], 'two sections');
+    eq(findAll(groups[1], (n) => n.tag === 'option').map(textOf),
+      ['Course id tag', 'Course status enum', 'Student id tag'], 'each custom type says what it is');
+    const bare = sandbox.typeRows(model(), ['boolean', 'integer', 'string']);
+    eq(bare.every((row) => row.length === 2), true, 'no sections while nothing is custom');
+  });
 }
 
 // ---------------------------------------------------------------
@@ -3871,14 +3904,19 @@ function build(index) {
   const has = (text, part, why) =>
     eq(text.includes(part), true, why + ' — expected the page to contain: ' + part);
 
-  const paint = (view, model, before) => {
+  const paintTree = (view, model, before) => {
     const main = sandbox.document.createElement('div');
     sandbox.state.view = view;
     if (before) before();
     if (view === 'lifecycles') sandbox.renderLifecycles(model, main);
     else sandbox.renderEntity(model, main);
-    return textOf(main);
+    return main;
   };
+  const paint = (view, model, before) => textOf(paintTree(view, model, before));
+  // "none" as a row of its own — valued '', drawn as no value — rather
+  // than as a word somewhere on the page.
+  const offersNone = (tree) => findAll(tree, (n) => n.tag === 'option'
+    && n.value === '' && n.className === 'none' && textOf(n) === 'none').length > 0;
 
   for (const [index, slug] of [[0, 'course-simple'], [4, 'pricing-simple'],
     [5, 'content-decisions-scripted'], [2, 'course-tenant']]) {
@@ -4033,12 +4071,13 @@ function build(index) {
   check('the promotion form paints for a boolean lifecycle', () => {
     const { model } = build(ENTITIES);
     store.set('dcb-playground:model', model().id);
-    const text = paint('entity', model(), () => {
+    const tree = paintTree('entity', model(), () => {
       sandbox.state.entity = 'Student';
       sandbox.state.promoting = 'Student';
     });
+    const text = textOf(tree);
     has(text, 'Give it more than two states', 'the form is open');
-    has(text, '— none —', 'a state with no boolean behind it is expressible');
+    eq(offersNone(tree), true, 'a state with no boolean behind it is expressible');
     has(text, 'the enum these states belong to', 'and naming is what it asks for');
     sandbox.closeForms();
   });
@@ -4086,12 +4125,13 @@ function build(index) {
       'a count is not a lifecycle; a boolean is');
     eq(sandbox.lifecycleCandidates(model(), 'Course'), ['status'],
       'an enum property is offered too');
-    const text = paint('entity', model(), () => {
+    const tree = paintTree('entity', model(), () => {
       sandbox.state.entity = 'Student';
       sandbox.state.designating = 'Student';
     });
+    const text = textOf(tree);
     has(text, 'the state is', 'the picker is open');
-    has(text, '— none —', 'and un-designating is possible wherever designating is');
+    eq(offersNone(tree), true, 'and un-designating is possible wherever designating is');
     sandbox.closeForms();
   });
 

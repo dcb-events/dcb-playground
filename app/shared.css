@@ -302,6 +302,21 @@ input[type=text], select, textarea {
 input[type=text]:focus, select:focus, textarea:focus {
   outline: none; border-color: var(--accent);
 }
+/* What is not a value does not look like one (`pick`): an unanswered
+   placeholder and a chosen "none" are muted in the closed face, the
+   none italic too, and a picker with nothing to offer is a slot — a
+   dashed edge on the page's ground — not a control. The options are
+   reset so a native list does not inherit the muting. */
+select:has(> option.placeholder:checked),
+select:has(> option.none:checked) { color: var(--muted); }
+select:has(> option.none:checked) { font-style: italic; }
+select:disabled {
+  color: var(--muted); background: var(--bg);
+  border-style: dashed; cursor: not-allowed;
+}
+select option { color: var(--text); font-style: normal; }
+select option.none { color: var(--muted); font-style: italic; }
+select option.action { color: var(--accent); }
 /* Every dropdown is a customizable <select> where the browser has one
    (`appearance: base-select`) — all of them, not just the ones with
    something to show, because a styled picker beside a native one in
@@ -323,16 +338,40 @@ input[type=text]:focus, select:focus, textarea:focus {
   option { display: flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 4px; }
   option:hover, option:focus-visible { background: var(--accent-soft); outline: none; }
   option:checked { font-weight: 600; }
-  option::checkmark { color: var(--accent); }
+  /* A fixed checkmark column, so every name — and every heading over
+     them — starts at the same x: 8px padding, 14px column, 4px gap.
+     A heading's label carries 4px of the browser's own, hence 22. */
+  option::checkmark { color: var(--accent); width: 14px; flex: none; }
   option:disabled { color: var(--muted); }
+  /* `hidden` alone does not keep an option out of this picker. */
+  option.placeholder { display: none; }
+  /* A heading sits over the names, not over the checkmark column, so
+     the eye runs straight down them, and is set apart from them in
+     every way at once — small capitals, muted, tracked — since an
+     alias heading ("already read", "course") is otherwise a word like
+     the rows under it. Groups and the rows ruled off with an <hr>
+     (`pick`: a leading none, the actions) share one hairline. */
   optgroup {
-    font-size: 10px; font-weight: 400; text-transform: uppercase;
-    letter-spacing: .06em; color: var(--muted); padding-top: 4px;
+    font-size: 10.5px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .08em; color: var(--muted); padding: 8px 0 2px 22px;
   }
+  optgroup option {
+    margin-left: -22px; font-size: 13px; font-weight: 400;
+    text-transform: none; letter-spacing: normal; color: var(--text);
+  }
+  optgroup option:checked { font-weight: 600; }
   optgroup + optgroup, option + optgroup, optgroup + option {
-    border-top: 1px dashed var(--border); margin-top: 4px;
+    border-top: 1px solid var(--border); margin-top: 4px;
   }
-  optgroup option { font-size: 13px; text-transform: none; letter-spacing: normal; color: var(--text); }
+  select hr { border: 0; border-top: 1px solid var(--border); margin: 4px 2px; }
+  option.action { font-weight: 500; }
+  option.action::checkmark { display: none; }
+  option.action .plus { display: inline-block; width: 14px; flex: none; font-weight: 600; }
+  option .hint {
+    margin-left: auto; padding-left: 12px;
+    font-family: var(--mono); font-size: 11px; font-weight: 400; color: var(--muted);
+  }
+  selectedcontent .hint { display: none; }
   selectedcontent { display: flex; align-items: center; gap: 4px; }
   option .icon, selectedcontent .icon { order: -1; }
   /* A token option (`pick`'s fourth element): monospace, short in the

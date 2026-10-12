@@ -4284,7 +4284,27 @@ function typeChoices(model) {
   return allTypeNames(model);
 }
 function typeOptions(model) {
-  return typeChoices(model).map((t) => [t, readable(t)]);
+  return typeRows(model, typeChoices(model));
+}
+
+// Type names as picker rows. Once a custom type is among them the rows
+// fall into two sections, Built-in and Custom, each custom row trailed
+// by what it is; while none is, the built-ins stay one flat list — a
+// heading over everything tells nothing apart.
+function typeRows(model, names) {
+  if (names.every((t) => SIMPLE_TYPES.includes(t))) return names.map((t) => [t, readable(t)]);
+  return names.map((t) => (SIMPLE_TYPES.includes(t)
+    ? [t, readable(t), null, { section: 'Built-in' }]
+    : [t, readable(t), null, { section: 'Custom', hint: customTypeWord(model, t) }]));
+}
+
+// The word a custom type is created under (`newCustomTypeButtons`).
+function customTypeWord(model, typeName) {
+  const cls = classifyType(model, typeName);
+  if (cls.kind !== 'value') return null;
+  if (cls.composite) return 'record';
+  if (cls.isTag) return 'tag';
+  return enumMembersFor(model, typeName) ? 'enum' : 'value';
 }
 
 // An option built as "🔖 Name" reads fine, but a native <option> has
@@ -4321,67 +4341,104 @@ const GROUP_SEP = ' · ';
 // open list and shows in the closed face. Without that CSS the
 // option's text is the whole token, which is also what type-ahead
 // and a screen reader get.
+//
+// A section option — a fourth element `{ section, hint }` — groups by a
+// heading the caller names (`typeRows`: Built-in, Custom) and may carry
+// a hint, a word trailing the name in the open list (`tag`, `enum`) that
+// the closed face leaves out.
+//
+// Three rows are not values and are drawn so: the placeholder (a
+// question not answered yet) is muted in the closed face and absent from
+// the open list, since choosing it would answer nothing; a row valued
+// '' (`none`, `nothing` — no value, on purpose) is a real choice, muted
+// and ruled off from the values; and a `NEW`/`NEW_DEFINITION` row is an
+// action, ruled off and in the accent. A picker with nothing to offer is
+// disabled — its placeholder says what it waits on.
 function pick(options, value, onchange, placeholder) {
-  const sel = h('select', { onchange: (e) => onchange(e.target.value) });
-  if (placeholder) sel.appendChild(h('option', { value: '' }, placeholder));
-
-  const buckets = new Map(); // prefix -> [{v, suffix, icon}]
-  const sequence = []; // {text} | {prefix} | {token group}, in first-seen order
-  for (const o of options) {
-    const [v, text, icon, token] = Array.isArray(o) ? o : [o, o];
-    if (token) {
-      const key = '\0' + token.group;
-      if (!buckets.has(key)) { buckets.set(key, []); sequence.push({ token: token.group, key }); }
-      buckets.get(key).push({ v, suffix: text, icon, token });
-      continue;
-    }
-    const at = text.indexOf(GROUP_SEP);
-    if (at === -1) { sequence.push({ v, text, icon }); continue; }
-    const prefix = text.slice(0, at);
-    if (!buckets.has(prefix)) { buckets.set(prefix, []); sequence.push({ prefix }); }
-    buckets.get(prefix).push({ v, suffix: text.slice(at + GROUP_SEP.length), icon });
+  const rows = options.map((o) => (Array.isArray(o) ? o : [o, o]));
+  const sel = h('select', { onchange: (e) => onchange(e.target.value), disabled: !rows.length });
+  // Selected outright when nothing else is: left unselected, a disabled
+  // first option hands the selection to the first real one.
+  if (placeholder) {
+    sel.appendChild(h('option', {
+      value: '', class: 'placeholder', disabled: true, hidden: true,
+      selected: !rows.some(([v]) => v === value),
+    }, placeholder));
   }
 
-  const appendOption = (parent, v, text, icon, token) => {
+  const buckets = new Map(); // key -> [{v, text, icon, token, hint}]
+  const sequence = []; // {row} | {prefix} | {token group} | {section}, in first-seen order
+  const bucket = (key, entry) => {
+    if (!buckets.has(key)) { buckets.set(key, []); sequence.push({ ...entry, key }); }
+    return buckets.get(key);
+  };
+  for (const [v, text, icon, extra] of rows) {
+    if (extra && extra.group !== undefined) {
+      bucket('\0' + extra.group, { token: extra.group }).push({ v, text, icon, token: extra });
+      continue;
+    }
+    if (extra && extra.section !== undefined) {
+      bucket('\0\0' + extra.section, { section: extra.section }).push({ v, text, icon, hint: extra.hint });
+      continue;
+    }
+    const at = v === NEW || v === NEW_DEFINITION ? -1 : text.indexOf(GROUP_SEP);
+    if (at === -1) { sequence.push({ row: { v, text, icon } }); continue; }
+    const prefix = text.slice(0, at);
+    bucket(prefix, { prefix }).push({ v, text: text.slice(at + GROUP_SEP.length), icon });
+  }
+
+  const appendOption = (parent, { v, text, icon, token, hint }) => {
+    const action = v === NEW || v === NEW_DEFINITION;
     const label = token
       ? h('span', { class: 'token' },
           token.before ? h('span', { class: 'ctx' }, token.before) : null,
           text,
           token.after ? h('span', { class: 'ctx' }, token.after) : null)
-      : text;
-    if (icon) {
-      parent.appendChild(h('option', { value: v, selected: v === value },
-        token ? label : h('span', { class: 'label' }, text),
-        h('span', { class: 'icon' }, icon)));
-    } else {
-      parent.appendChild(h('option', { value: v, selected: v === value }, label));
-    }
+      : action && text.startsWith('+ ')
+        ? [h('span', { class: 'plus' }, '+ '), h('span', { class: 'label' }, text.slice(2))]
+        : icon || hint ? h('span', { class: 'label' }, text) : text;
+    parent.appendChild(h('option', {
+      value: v, selected: v === value, class: action ? 'action' : v === '' ? 'none' : null,
+    },
+    label,
+    hint ? h('span', { class: 'hint' }, ' ' + hint) : null,
+    icon ? h('span', { class: 'icon' }, icon) : null));
   };
 
-  for (const entry of sequence) {
-    if ('text' in entry) { appendOption(sel, entry.v, entry.text, entry.icon); continue; }
+  let actions = false;
+  sequence.forEach((entry, i) => {
+    if (entry.row) {
+      const action = entry.row.v === NEW || entry.row.v === NEW_DEFINITION;
+      // One rule above the actions, one below a leading "none".
+      if (action && !actions && i > 0) sel.appendChild(h('hr'));
+      actions = actions || action;
+      appendOption(sel, entry.row);
+      if (entry.row.v === '' && i === 0 && sequence.length > 1) sel.appendChild(h('hr'));
+      return;
+    }
+    const group = buckets.get(entry.key);
     // A token group is a group even with one row in it: its label is
     // the context the short option leans on, not a prefix it repeats.
-    if ('token' in entry) {
-      const group = h('optgroup', { label: entry.token });
-      for (const row of buckets.get(entry.key)) appendOption(group, row.v, row.suffix, row.icon, row.token);
-      sel.appendChild(group);
-      continue;
+    // A section is too, being the caller's own heading.
+    if (entry.token !== undefined || entry.section !== undefined) {
+      const node = h('optgroup', { label: entry.token !== undefined ? entry.token : entry.section });
+      for (const row of group) appendOption(node, row);
+      sel.appendChild(node);
+      return;
     }
-    const rows = buckets.get(entry.prefix);
-    if (rows.length === 1) {
-      appendOption(sel, rows[0].v, entry.prefix + GROUP_SEP + rows[0].suffix, rows[0].icon);
-      continue;
+    if (group.length === 1) {
+      appendOption(sel, { ...group[0], text: entry.prefix + GROUP_SEP + group[0].text });
+      return;
     }
     // The rows under one alias all carry that entity's mark, so it
     // moves up into the group label — a label is not an option, so it
     // sits outside type-ahead's reach and is free to lead with the mark.
-    const group = h('optgroup', {
-      label: (rows[0].icon ? rows[0].icon + ' ' : '') + entry.prefix,
+    const node = h('optgroup', {
+      label: (group[0].icon ? group[0].icon + ' ' : '') + entry.prefix,
     });
-    for (const { v, suffix } of rows) appendOption(group, v, suffix);
-    sel.appendChild(group);
-  }
+    for (const { v, text } of group) appendOption(node, { v, text });
+    sel.appendChild(node);
+  });
 
   // The face a customizable <select> shows when closed: a copy of the
   // picked option's markup rather than its flattened text. Every select
@@ -5736,7 +5793,7 @@ function bindingEditor(model, slice, binding, index) {
 
     !experimental() || binding.projection || !fanned ? null : h('div', { class: 'adder' },
       h('span', { class: 'muted tiny' }, 'except'),
-      ...operandPicker(excludingChoices, draft, 'excluding', { placeholder: '— nothing —', allowLiteral: false }),
+      ...operandPicker([['', 'nothing'], ...excludingChoices], draft, 'excluding', { allowLiteral: false }),
       h('button', {
         class: 'btn tiny', onclick: () => {
           const operand = draftOperand(draft, 'excluding');
@@ -6699,12 +6756,12 @@ function ruleEditor(model, slice, index, target) {
           draft.left = '';
           draft.touched = true;
           render();
-        }, '— what? —'),
+        }, 'what?'),
         ...(choice && !chosenProjection
           ? [
               h('span', { class: 'muted tiny' }, 'identified by'),
               pick(idSources, choice.source, (v) => { choice.source = v; draft.touched = true; render(); },
-                idSources.length ? null : `— no ${propertyWords(idTypeOf(model, choice.entity))} in scope yet —`),
+                idSources.length ? null : `no ${propertyWords(idTypeOf(model, choice.entity))} in scope yet`),
             ]
           : []),
         ...(chosenProjection
@@ -6751,8 +6808,8 @@ function ruleEditor(model, slice, index, target) {
     : stageRow('Which of its values?',
         ...operandPicker(leftRows, draft, 'left',
           {
-            placeholder: leftRows.length ? '— what? —'
-              : (aboutAlias ? '— it has no values yet —' : '— pick something to look at —'),
+            placeholder: leftRows.length ? 'what?'
+              : (aboutAlias ? 'it has no values yet' : 'something to look at'),
             onNew: boundEntities.length
               ? () => { state.addingProp = { at: 'rule' }; render(); }
               : undefined,
@@ -6794,7 +6851,7 @@ function ruleEditor(model, slice, index, target) {
               ...(fromData ? [] : membershipControls(draft, enumMembers)),
             ]
           : operandPicker(rightRows, draft, 'right',
-            { placeholder: '— what? —', allowLiteral: !enums.length })));
+            { placeholder: 'what?', allowLiteral: !enums.length })));
 
   // ---------- and what is it refused with? ----------
   //
@@ -7143,14 +7200,15 @@ function eventFields(model, emission, event) {
       h('span', { class: 'nm' }, propertyWords(p.name)),
       h('span', { class: 'muted tiny' }, readable(typeLabel(p))),
       h('span', { class: 'muted tiny' }, '←'),
-      pick(fieldOptions, bound === undefined ? '' : JSON.stringify(bound),
+      pick([['', 'unset'], ...fieldOptions], bound === undefined ? '' : JSON.stringify(bound),
         (v) => patchSlice((b) => {
           const e = b.publishes.find((x) => x.name === emission.name);
           e.parameters = e.parameters || {};
-          // The placeholder's value is '' — unset, not an operand.
+          // '' is unset, not an operand — a choice like any other, so a
+          // bound property can be unbound again.
           if (v === '') delete e.parameters[p.name];
           else e.parameters[p.name] = JSON.parse(v);
-        }), '— unset —'));
+        })));
   });
 
   // What the command was given but this event does not yet carry. A
@@ -8534,7 +8592,7 @@ function designationPicker(model, name, entity) {
   });
   return h('div', { class: 'irow' },
     h('span', { class: 'nm' }, 'the state is'),
-    pick([['', '— none —'], ...choices.map((c) => [c, propertyWords(c)])], current, set),
+    pick([['', 'none'], ...choices.map((c) => [c, propertyWords(c)])], current, set),
     h('span', { class: 'tiny muted' }, 'single-valued boolean or enum only'));
 }
 
@@ -8624,7 +8682,7 @@ function promoteLifecycleForm(model, entityName) {
       oninput: (e) => { step.state = e.target.value; },
     }),
     h('span', { class: 'tiny muted' }, 'once'),
-    pick([['', '— none —'],
+    pick([['', 'none'],
       ...candidates.filter((c) => c === step.from || !taken.includes(c))
         .map((c) => [c, propertyWords(c)])],
     step.from || '', (value) => {
@@ -8766,7 +8824,7 @@ function projectionTagsEditor(model, draft, savedName, info) {
       onkeydown: (e) => { if (e.key === 'Enter') e.target.blur(); },
     }),
     h('span', { class: 'pk' }, ':'),
-    pick(types, tag.tagType, (v) => { tag.tagType = v; render(); }, types.length ? null : '— no tag type yet —'),
+    pick(types, tag.tagType, (v) => { tag.tagType = v; render(); }, types.length ? null : 'no tag type yet'),
     h('button', {
       class: 'btn tiny danger', title: 'Remove this tag',
       onclick: () => { tags.splice(i, 1); draft.tags = [...tags]; render(); },
@@ -9413,7 +9471,7 @@ function singleValueEditor(model, name, body, owner) {
     ...(isEnum ? enumMemberChips(model, name) : [
       pick(SCALAR_BASE_TYPES.map((t) => [t, t]), known ? schema.type : '',
         (v) => run(() => setSchema({ ...(isObject ? schema : {}), type: v })),
-        known ? null : '— see the schema —'),
+        known ? null : 'see the schema'),
       extra.length && !advanced
         ? h('span', { class: 'muted tiny' }, '+ ', h('code', {}, extra.join(', ')), ' — see Advanced')
         : null,
@@ -9485,12 +9543,11 @@ function newCustomTypeBody(form) {
 // What a composite field may be typed with: anything except another
 // composite, since records do not nest.
 function fieldTypeOptions(model) {
-  return typeChoices(model)
+  return typeRows(model, typeChoices(model)
     .filter((t) => {
       const cls = classifyType(model, t);
       return !(cls.kind === 'value' && cls.composite);
-    })
-    .map((t) => [t, readable(t)]);
+    }));
 }
 
 // ---------- projections ----------
@@ -9525,12 +9582,11 @@ function fieldTypeOptions(model) {
 // act on a single value and there is none in a record of fields, but
 // code has no such limit.
 function projectionTypeOptions(model, { scripted } = {}) {
-  return allTypeNames(model)
+  return typeRows(model, allTypeNames(model)
     .filter((t) => {
       const cls = classifyType(model, t);
       return cls.kind === 'value' ? (scripted || !cls.composite) : cls.kind === 'simple';
-    })
-    .map((t) => [t, readable(t)]);
+    }));
 }
 
 // The JSON Schema a type bottoms out in, so the first value can be read
@@ -9583,7 +9639,7 @@ function initialValueSlot(model, valueType, value, onSet) {
   if (members) {
     return pick(members.map((m) => [m, readable(m)]),
       operandSource(value) === 'enum-member' ? value.enumMember : '',
-      (v) => onSet({ enumMember: v }), '— which one? —');
+      (v) => onSet({ enumMember: v }), 'which one?');
   }
   if (literalKindOf(model, valueType) === 'boolean') {
     return pick([['true', 'yes'], ['false', 'no']], String(value === true),
@@ -9827,7 +9883,7 @@ function derivedSideEditor(model, draft, side, { allowLiteral } = {}) {
     if (v === LITERAL) derived[side] = '';
     else derived[side] = { projection: v };
     render();
-  }, '— which projection? —')];
+  }, 'which projection?')];
 
   // Each tag the operand's projection declares, given one of this
   // projection's own tags of that type — the partition flows down, so a
@@ -9845,7 +9901,7 @@ function derivedSideEditor(model, draft, side, { allowLiteral } = {}) {
         pick(options, held === undefined && options.length ? options[0][0] : value, (v) => {
           current.tags = { ...(current.tags || {}), [tag.name]: JSON.parse(v) };
           render();
-        }, options.length ? null : `— this projection has no ${readable(tag.tagType)} tag —`));
+        }, options.length ? null : `this projection has no ${readable(tag.tagType)} tag`));
     }
     // A script's arguments, as literals: nothing else is in scope here.
     for (const slot of projectionSlots(model['projection-definitions'][current.projection])) {
@@ -9870,7 +9926,7 @@ function derivedSideEditor(model, draft, side, { allowLiteral } = {}) {
     if (members) {
       nodes.push(pick(members.map((m) => [m, readable(m)]),
         operandSource(current) === 'enum-member' ? current.enumMember : '',
-        (v) => { derived[side] = { enumMember: v }; render(); }, '— which one? —'));
+        (v) => { derived[side] = { enumMember: v }; render(); }, 'which one?'));
     } else {
       nodes.push(h('input', {
         type: 'text', style: 'width:140px',
@@ -9935,7 +9991,7 @@ function projectionFields(model, draft, { entityName, onNewType, onChecks } = {}
     }
     retype(v);
     render();
-  }, '— type —');
+  }, 'type');
 
   const cardinalityPicker = pick([['single', 'single'], ['list', 'list']],
     draft.isList ? 'list' : 'single', (v) => {
@@ -10038,12 +10094,12 @@ function projectionFields(model, draft, { entityName, onNewType, onChecks } = {}
       h('span', { class: 'pk' }, 'on'),
       pick(eventChoicesFor(handler), handler.event,
         (v) => { handler.event = v; handler.value = ''; handler.valueText = ''; render(); },
-        '— event —'),
+        'event'),
       h('span', { class: 'pk' }, '⇒'),
       operationControl(operations, handler),
       ...(event
         ? operandPicker(values, handler, 'value', { allowLiteral: !enumMembers })
-        : [pick([], '', () => {}, '— event first —')]),
+        : [pick([], '', () => {}, 'pick an event first')]),
       h('button', {
         class: 'btn tiny danger', title: 'Remove this handler',
         onclick: () => { draft.handlers.splice(i, 1); render(); },
@@ -10054,7 +10110,7 @@ function projectionFields(model, draft, { entityName, onNewType, onChecks } = {}
     h('div', { class: 'phandler' },
       h('span', { class: 'pk' }, 'on'),
       pick(eventChoicesFor(handler), handler.event,
-        (v) => { handler.event = v; render(); }, '— event —'),
+        (v) => { handler.event = v; render(); }, 'event'),
       h('button', {
         class: 'btn tiny danger', title: 'Remove this handler',
         onclick: () => { draft.handlers.splice(i, 1); render(); },
@@ -12033,7 +12089,7 @@ function valueEditor(model, property, path, where) {
       return h('span', { class: 'vwrap' },
         pick(enumMembers.map((m) => [m, readable(m)]),
           held === undefined || held === null ? '' : String(held),
-          (v) => setAtPath(draft(), at, v), '— choose —'));
+          (v) => setAtPath(draft(), at, v), 'choose'));
     }
     const listId = suggestsIdentifiers(model, property.propertyType) ? `sug-${++suggestionSeq}` : null;
     const options = () => where.suggest(property.propertyType);

@@ -572,6 +572,18 @@ on Projections, on an entity's page, and in the definition modals.
   writes — and a humanized name inside a dotted path reads as a typo.
   In the open list it is short under an `event` heading; once picked it
   is whole (`pick`'s token options, `.ctx` spans).
+  **A picker row that is not a value does not look like one.** The
+  placeholder names what goes there — `event`, `type`, `which one?`,
+  muted, lower case, no `— x —` dashes — and is out of the open list,
+  since choosing it would answer nothing. A deliberate no-value
+  (`none`, `nothing`, `unset`) is a real row valued `''`: first, muted
+  italic, ruled off. `+ New…` rows are actions, ruled off and in the
+  accent. A picker with nothing to offer is disabled, its placeholder
+  saying what it waits on (`pick an event first`). Type pickers split
+  into Built-in and Custom, each custom type trailed by its form (`tag`,
+  `enum`, `record`, `value`) — but only once a custom type exists: a
+  heading over everything tells nothing apart. Every group heading —
+  an alias's too — is small muted capitals, aligned with the names.
   **Conditions stay English sentences** — `PREDICATE_WORDS` is
   untouched, the `·` separates alias from property, and the existence
   sugar still reads `course exists` (minus its article). Understanding
