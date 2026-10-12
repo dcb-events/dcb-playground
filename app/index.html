@@ -800,6 +800,14 @@
   .setting { margin-top: 18px; }
   .setting > h4 { margin-bottom: 3px; }
   .setting .why { font-size: 11.5px; color: var(--muted); margin-bottom: 8px; }
+  .gate-script { border: 1px solid var(--border); border-radius: 7px; margin-bottom: 6px; }
+  .gate-script > summary { cursor: pointer; padding: 6px 10px; font-family: var(--mono); font-size: 12px; }
+  .gate-script > div { padding: 0 10px 8px; }
+  .gate-script pre {
+    margin: 2px 0 0; padding: 6px 8px; max-height: 14em; overflow: auto;
+    font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap;
+    background: var(--bg); border-radius: 5px;
+  }
   .opt {
     display: flex; gap: 10px; align-items: flex-start; width: 100%; text-align: left;
     font: inherit; color: inherit; cursor: pointer;
@@ -2649,7 +2657,17 @@ function renderImportGate() {
       h('div', { class: 'why' },
         'This model includes custom code that will run in your browser as soon as it is '
         + 'imported — its projections and scenarios evaluate automatically. Only import it if '
-        + 'you trust where this came from.')),
+        + 'you trust where this came from.'),
+      h('div', { class: 'why' },
+        'Should it hang the page, open the playground with "?safe" at the end of its address '
+        + '— scripts stay off there, so the model can be fixed or deleted.'),
+      ...envelopeScripts(envelope).map(({ projection, handlers }) =>
+        h('details', { class: 'gate-script' },
+          h('summary', {}, projection, h('span', { class: 'muted' },
+            ` · ${handlers.length} handler${handlers.length === 1 ? '' : 's'}`)),
+          ...handlers.map(({ event, code }) => h('div', {},
+            h('div', { class: 'muted small' }, 'on ' + event),
+            h('pre', {}, code)))))),
     h('div', { class: 'adder', style: 'margin-top:18px' },
       h('button', {
         class: 'btn primary',
@@ -2834,6 +2852,8 @@ function renderImportExportModal() {
 // one log version must never replay against another. Deriving the
 // suffix keeps the two keys impossible to bump apart.
 const UNDO_KEY = 'dcb-playground:undo:' + EVENT_LOG_KEY.split(':').pop();
+// Set while a load is rendering for the first time — see `boot`.
+const BOOT_KEY = 'dcb-playground:booting';
 // Where the history was kept while it was shared; nothing reads it.
 localStorage.removeItem(UNDO_KEY);
 
@@ -11920,8 +11940,9 @@ function stepConsistency(model, slice) {
 // Every scenario runs on every repaint, the way the whole model is
 // already reprojected on every repaint — scripted reads included.
 // What keeps a script that loops forever from hanging the page on
-// every reload is not a gate here but safe mode: `?safe` on the URL
-// compiles script handlers to throwers (see `setScriptsDisabled` in
+// every reload is not a gate here but safe mode: `?safe` on the URL,
+// or a reload after a load that never finished (`boot`), compiles
+// script handlers to throwers (see `setScriptsDisabled` in
 // evaluate.js), so the model loads and the script can be fixed.
 // The placement switch itself sits with the other interface switches
 // near the top of this file. Everything below is what it chooses
@@ -15118,12 +15139,33 @@ document.getElementById('rail').addEventListener('click', (e) => {
 async function boot() {
   // Safe mode — the way back into a model whose script hangs the page
   // on load, now that scripts run unprompted like everything else.
-  // Nothing in the interface sets it; typing `?safe` into the address
-  // is the gesture, and every script handler then compiles to a
-  // thrower instead of running (see evaluate.js).
+  // Typing `?safe` into the address is the gesture (the import gate
+  // names it), and every script handler then compiles to a thrower
+  // instead of running (see evaluate.js). A reload after a load that
+  // never painted takes it unasked: the flag below is set before the
+  // first render and cleared once that render has returned, so finding
+  // it still set means the last load hung. That lasts one load — a
+  // plain reload runs scripts again, so a reload that merely
+  // interrupted a slow page costs nothing more. A tab closed instead
+  // of reloaded loses the flag with its sessionStorage; the gate's
+  // mention of `?safe` is for that case.
+  let lastLoadHung = false;
+  try {
+    lastLoadHung = sessionStorage.getItem(BOOT_KEY) !== null;
+    sessionStorage.setItem(BOOT_KEY, '1');
+  } catch { /* no sessionStorage: no detection, ?safe still works */ }
+  // Not requestAnimationFrame: a tab opened in the background paints
+  // nothing until shown, and would read as hung. Boot runs the first
+  // render synchronously below, so this timer fires only after it.
+  setTimeout(() => {
+    try { sessionStorage.removeItem(BOOT_KEY); } catch { /* as above */ }
+  }, 0);
   if (new URLSearchParams(location.search).has('safe')) {
     setScriptsDisabled(true);
     toast('Safe mode — scripts are off. Remove "?safe" from the address to run them.', true);
+  } else if (lastLoadHung) {
+    setScriptsDisabled(true);
+    toast('The last load did not finish, so scripts are off for this one. Reload to run them again.', true);
   }
   const hash = location.hash;
   // Entering without a model link starts at the models dialog, over

@@ -33,8 +33,8 @@
 // confirmation — index.html), and what stands between a hanging
 // script and a page that hangs again on every reload is safe mode:
 // `setScriptsDisabled(true)` — flipped by the interface for a `?safe`
-// URL — compiles every script handler to a thrower instead, so the
-// model still loads and the script can be reached and fixed.
+// URL, or after a load that hung — compiles every script handler to a
+// thrower instead, so the model still loads and the script can be reached and fixed.
 //
 // **Failure has two kinds and they are not the same.** A command whose
 // conditions do not hold is *rejected* — an ordinary, expected outcome
@@ -291,8 +291,8 @@ function evCompileHandlerOperand(operand) {
   }
 }
 
-// Safe mode. Flipped by the interface for a `?safe` URL (and by tests
-// directly): every script handler compiles to a thrower, so a model
+// Safe mode. Flipped by the interface for a `?safe` URL or after a
+// load that hung (and by tests directly): every script handler compiles to a thrower, so a model
 // whose script hangs the tab on load can still be opened, edited and
 // repaired. Declared handlers are untouched — this is a way back in,
 // not a mode the app runs in.

@@ -976,3 +976,27 @@ step at the playhead. Only the step band scrolls.
   and every render path that evaluates — the scenario runners, the
   sandbox's decision card, the watches — calls it synchronously
   today. That is a change of the evaluation seam, not a patch.
+- **Not now (2026-10).** Weighed and shelved. A Worker is
+  feasible: `evaluate.js` is pure, and a data:-URL worker's opaque
+  origin would shut out storage, WebMCP and the host hook, and could
+  be terminated on a hang (it would still have `fetch`). But handlers
+  cannot be sent over one at a time — a fold calls them in sequence —
+  so a whole evaluation moves, and with it some seventeen synchronous
+  render paths and the code view's apply. If reopened, the shape
+  settled on was one evaluation API that answers at once for a
+  declared-only model and through the worker for a scripted one, with
+  render drawing from a cache ("running…" until the answer, then an
+  ordinary repaint; stale answers dropped in that one place), and a
+  switch to force the worker everywhere so its path stays exercised.
+  Against that cost the exposure is small: authoring a script is
+  experimental, and no external script loads without the gate.
+  Reopen when scripts leave the experimental flag, or on a real
+  report of a hang or of abuse.
+- **What stands in for it.** The gate lists every scripted
+  projection with its handlers' code (`envelopeScripts`, model.js),
+  so the reader consents to something they can read, and names
+  `?safe`. And a load that never finished turns safe mode on for the
+  next one by itself (`boot`, index.html): a flag in sessionStorage
+  is set before the first render and cleared after it, and found still
+  set means the last load hung. One load only, so a reload that merely
+  interrupted a slow page costs a reload.

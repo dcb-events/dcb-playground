@@ -155,9 +155,13 @@ was decided, why, and what was tried and reverted:
   What stands between an untrusted model and that is the import gate (every
   external load pauses on `envelopeHasScript`; cancelling loads nothing), and
   the way back into a page a hanging script would otherwise brick on every
-  reload is `?safe` on the URL: `setScriptsDisabled` (evaluate.js) compiles
-  every script handler to a thrower, so the model loads and the script can be
-  fixed. Keep both intact — together they are why unprompted is safe.
+  reload is `?safe` on the URL — or, unasked, a reload after a load that
+  never finished (`boot`, index.html): `setScriptsDisabled` (evaluate.js)
+  compiles every script handler to a thrower, so the model loads and the
+  script can be fixed. Keep both intact — together they are why unprompted
+  is safe. The gate shows the code it asks about (`envelopeScripts`,
+  model.js). A Worker sandbox was weighed and shelved; see _Scripts and the
+  origin_.
 - **Two failure kinds** in evaluation, never conflated: a command whose
   conditions do not hold is _rejected_ (an ordinary outcome); a scenario that
   cannot run at all (missing event, missing argument, throwing script) is an

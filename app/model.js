@@ -5605,10 +5605,24 @@ function modelMatchingEnvelope(envelope) {
 // both compile through the same unsandboxed path (see `evCompileHandler`
 // in evaluate.js). This is what gates the confirmation before import.
 function envelopeHasScript(envelope) {
-  if (!envelope || typeof envelope !== 'object') return false;
-  // Scripts live only on projections — an entity property is a binding
-  // and carries none of its own.
-  return (envelope.projectionDefinitions || []).some((p) => !!p.script);
+  return envelopeScripts(envelope).length > 0;
+}
+
+// The code that would run, per scripted projection, as the gate shows
+// it: a confirmation that only says *that* there is code asks for
+// trust it gives the reader no way to check. Scripts live only on
+// projections — an entity property is a binding and carries none of
+// its own. Handlers are listed as they stand, `code` or not, so the
+// list is what `evCompileHandler` would compile.
+function envelopeScripts(envelope) {
+  if (!envelope || typeof envelope !== 'object') return [];
+  return (envelope.projectionDefinitions || [])
+    .filter((p) => p && !!p.script)
+    .map((p) => ({
+      projection: String(p.name),
+      handlers: (Array.isArray(p.handlers) ? p.handlers : [])
+        .map((handler) => ({ event: String(handler && handler.event), code: String((handler && handler.code) ?? '') })),
+    }));
 }
 
 // An entity, stripped down to what can exist before the projections

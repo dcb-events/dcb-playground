@@ -59,7 +59,7 @@ const {
   addDefinition, updateDefinition, removeDefinition, renameDefinition, renameMember, reorderDefinitions,
   createDcbModel,
   generateId, scenarioName, deepClone, evSuccessor,
-  definitionsToSchema, buildShareEnvelope, importModelFromEnvelope, envelopeHasScript,
+  definitionsToSchema, buildShareEnvelope, importModelFromEnvelope, envelopeHasScript, envelopeScripts,
   envelopeVersionWarning, modelMatchingEnvelope, commandRejections,
 } = sandbox;
 
@@ -1236,6 +1236,12 @@ function drive(model, log, command, args) {
   });
   check('envelopeHasScript is true for a scripted (standalone) projection', () => {
     eq(envelopeHasScript(buildShareEnvelope(model(), [])), true, 'scripted projection');
+  });
+  check('envelopeScripts lists the code the gate asks about, and nothing else', () => {
+    eq(envelopeScripts(buildShareEnvelope(model(), [])),
+      [{ projection: 'OpenRegionCount', handlers: [{ event: 'RegionOpened', code: '(state || 0) + 1' }] }],
+      'the one scripted projection, with its handler');
+    eq(envelopeScripts(buildShareEnvelope(plain, [])), [], 'nothing for a plain model');
   });
 }
 
