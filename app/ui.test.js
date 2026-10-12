@@ -5074,4 +5074,12 @@ check('the reference links only anchors the website defines', () => {
   });
 }
 
+check('the app is text: no file carries a raw control byte', () => {
+  // A literal NUL in index.html once made grep and ripgrep treat the
+  // whole page as binary; a separator is spelled '\u0000'.
+  for (const file of fs.readdirSync(APP).filter((f) => /\.(js|html|css)$/.test(f))) {
+    eq(/[\u0000-\u0008\u000e-\u001f]/.test(fs.readFileSync(path.join(APP, file), 'utf8')), false, file);
+  }
+});
+
 finish();

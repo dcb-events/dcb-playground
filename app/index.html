@@ -11310,7 +11310,7 @@ function lifecycleLayout(machine) {
       const from = at[source];
       const to = at[t.target];
       if (!from || !to) continue;
-      const pairKey = source + ' ' + t.target;
+      const pairKey = source + '\u0000' + t.target;
       const lane = pairSeen[pairKey] || 0;
       pairSeen[pairKey] = lane + 1;
       const edge = { transition: t, from: source, to: t.target };
