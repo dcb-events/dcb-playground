@@ -28,30 +28,75 @@
       "components": [],
       "drafts": {
         "b6f7e33f-1db1-4d37-a624-919a00e4d7a9": {
-          "title": "Current \u2014 Command page",
+          "title": "Current — Command page",
           "visualDirection": "pixel-perfect reproduction of the live Archive course page (ground truth)",
           "currentVersion": 2
         },
         "cf87a99a-ee40-4d86-9d16-4059909eba93": {
-          "title": "DCB Playground \u2014 Archive Course (Variant A - Quiet Reveal)",
-          "visualDirection": "Variant A 'Quiet reveal': hover-revealed adders + mobile FAB bottom sheet, type chips on fields, red-tinted diagnostic style for problems \u2014 SELECTED by user for implementation in the app",
+          "title": "DCB Playground — Archive Course (Variant A - Quiet Reveal)",
+          "visualDirection": "Variant A 'Quiet reveal': hover-revealed adders + mobile FAB bottom sheet, type chips on fields, red-tinted diagnostic style for problems — SELECTED by user for implementation in the app",
           "parentDraftId": "b6f7e33f-1db1-4d37-a624-919a00e4d7a9",
           "currentVersion": 3
         },
         "5c029d06-d139-4c4c-aa24-bee2cbf9ba37": {
-          "title": "DCB Playground \u2014 Variant B (Edit Mode)",
+          "title": "DCB Playground — Variant B (Edit Mode)",
           "visualDirection": "Variant B 'Edit mode': View/Edit toggle hides all adders in View mode, name:Type inline fields, dark slate diagnostics strip + right-side Problems panel",
           "parentDraftId": "b6f7e33f-1db1-4d37-a624-919a00e4d7a9",
           "currentVersion": 3
         },
         "bb049254-ef53-433f-92db-88d18d6c26a1": {
-          "title": "DCB Playground \u2014 Archive Course (Variant C)",
-          "visualDirection": "Variant C 'Focus follows selection': contextual action bar on selected block, two-column fields with dotted leaders, IDE-style squiggle diagnostics + console-style Problems modal \u2014 SELECTED by user; v2 = direct-edit fix scoping the .trigger topbar-button CSS rule to .app-bar (it collided with the 'step trigger' section and squeezed it to 30px flex)",
+          "title": "DCB Playground — Archive Course (Variant C)",
+          "visualDirection": "Variant C 'Focus follows selection': contextual action bar on selected block, two-column fields with dotted leaders, IDE-style squiggle diagnostics + console-style Problems modal — SELECTED by user; v2 = direct-edit fix scoping the .trigger topbar-button CSS rule to .app-bar (it collided with the 'step trigger' section and squeezed it to 30px flex)",
           "parentDraftId": "b6f7e33f-1db1-4d37-a624-919a00e4d7a9",
           "currentVersion": 2
         }
       },
       "updatedAt": "2026-09-21T09:00:00Z"
+    },
+    "help-modal": {
+      "targetKind": "existing-ui",
+      "projectId": "5d00367a-7395-4a63-acd7-b4050ecad7a7",
+      "baselineDraftId": "31d2bd48-231f-4dd1-98e2-3b108d57cadb",
+      "activeDraftId": "060a3176-070c-49f7-b6ad-09650b879029",
+      "designSystemPath": ".superdesign/design-system.md",
+      "contextFiles": [
+        ".superdesign/design-system.md",
+        "app/shared.css",
+        "app/index.html:731:810",
+        "app/index.html:2590:2715"
+      ],
+      "fingerprints": {
+        ".superdesign/design-system.md": "6614d4130338ac32193bb9eb5474b2d3336e39829d34742393337da445a26616",
+        "app/shared.css": "c1278a5193f6824b212ccbdc677595ad67d48e6d37a6298050e3eafa61610334",
+        "app/index.html": "f26bf38cd24706e6644aed507078c527143afdd17aedf3ef6fa267a2101b66aa"
+      },
+      "components": [],
+      "drafts": {
+        "31d2bd48-231f-4dd1-98e2-3b108d57cadb": {
+          "title": "Current — Help modal",
+          "visualDirection": "pixel-perfect reproduction of the current help modal (ground truth)",
+          "currentVersion": 1
+        },
+        "6ef34b23-e27a-48b8-a6e7-4e22d80f6e77": {
+          "title": "Help modal — Variant A (Tabs)",
+          "visualDirection": "760px, Overview/Guides/Shortcuts tabs, fixed-height body, video on Overview",
+          "parentDraftId": "31d2bd48-231f-4dd1-98e2-3b108d57cadb",
+          "currentVersion": 1
+        },
+        "060a3176-070c-49f7-b6ad-09650b879029": {
+          "title": "Help modal — Variant B (Sidebar)",
+          "visualDirection": "820px two-pane, left topic nav with shortcuts at bottom, Getting started page with video + feature cards — SELECTED by user, implemented in the app",
+          "parentDraftId": "31d2bd48-231f-4dd1-98e2-3b108d57cadb",
+          "currentVersion": 1
+        },
+        "1c1fab27-e6b6-4135-9858-aa176427e389": {
+          "title": "Help modal — Variant C (Single page + shortcut panel)",
+          "visualDirection": "700px single scroll, video top, collapsible More help topics, boxed shortcuts panel at end",
+          "parentDraftId": "31d2bd48-231f-4dd1-98e2-3b108d57cadb",
+          "currentVersion": 1
+        }
+      },
+      "updatedAt": "2026-10-13T08:10:33.706854+00:00"
     }
   }
 }

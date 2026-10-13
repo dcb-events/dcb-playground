@@ -591,6 +591,14 @@ const NOTATION_REFERENCE_URL = 'https://dcb.events/notation/reference/';
 // The example models live on dcb.events too, each page opening its
 // model here through a share link.
 const EXAMPLES_URL = 'https://dcb.events/examples/';
+// Where to reach us: feedback through the site's About page, issues in
+// the website's repository — the playground's own takes pull requests
+// only. The title prefix tells playground issues apart in the shared
+// tracker; the label sticks only for those allowed to triage. The page
+// footer and the disclaimer spell the same two links in index.html.
+const FEEDBACK_URL = 'https://dcb.events/about/';
+const ISSUES_URL = 'https://github.com/dcb-events/dcb-events.github.io/issues/new'
+  + '?labels=playground&title=%5BPlayground%5D%20';
 const NOTATION_ANCHORS = [
   'model', 'comments', 'literals', 'annotations', 'json', 'tag-type', 'type', 'enum', 'record', 'event',
   'projection', 'on', 'event-data', 'successor', 'current-value', 'entity', 'lifecycle', 'require',

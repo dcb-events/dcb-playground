@@ -34,7 +34,9 @@ loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js', 'shared.js'], {
     + ' globalThis.closeForms = closeForms; globalThis.codeView = codeView; globalThis.UNGROUPED = UNGROUPED;'
     + ' globalThis.PREDEFINED_MODELS = PREDEFINED_MODELS; globalThis.SHARE_LINK_MAX_LENGTH = SHARE_LINK_MAX_LENGTH;'
     + ' globalThis.EVENT_LOG_KEY = EVENT_LOG_KEY; globalThis.PAGE_BEHIND = PAGE_BEHIND;'
-    + ' globalThis.NOTATION_GUIDE_URL = NOTATION_GUIDE_URL; globalThis.NOTATION_REFERENCE_URL = NOTATION_REFERENCE_URL;',
+    + ' globalThis.NOTATION_GUIDE_URL = NOTATION_GUIDE_URL; globalThis.NOTATION_REFERENCE_URL = NOTATION_REFERENCE_URL;'
+    + ' globalThis.HELP_FEATURES = HELP_FEATURES; globalThis.HELP_CLAIM = HELP_CLAIM;'
+    + ' globalThis.FEEDBACK_URL = FEEDBACK_URL; globalThis.ISSUES_URL = ISSUES_URL;',
 });
 const { check, eq, finish } = makeChecker();
 
@@ -4667,10 +4669,12 @@ function build(index) {
 }
 
 // The help explains the playground and leaves the notation to the
-// reference on dcb.events — its one link, in a new tab.
-check('the help modal links the notation reference, and nothing else', () => {
+// reference on dcb.events; beside it, where to send feedback and
+// issues — each in a new tab, and nothing else.
+check('the help modal links the notation reference, feedback and issues, and nothing else', () => {
   const links = findAll(sandbox.helpModal(), (n) => n.tag === 'a');
-  eq(links.map((a) => [a.attributes.href, a.attributes.target]), [[sandbox.NOTATION_REFERENCE_URL, '_blank']]);
+  eq(links.map((a) => [a.attributes.href, a.attributes.target]), [
+    [sandbox.NOTATION_REFERENCE_URL, '_blank'], [sandbox.FEEDBACK_URL, '_blank'], [sandbox.ISSUES_URL, '_blank']]);
 });
 
 // Shortcuts read the way the keyboard in front of the reader labels
@@ -4694,13 +4698,31 @@ check('a shortcut is spelled for the platform it is read on', () => {
   }
 });
 
-check('the help modal lists the keyboard shortcuts, as kbd', () => {
+// The help is a sidebar of pages: it opens on Getting started, every
+// feature has a page of its own, and the shortcuts are kept apart on
+// theirs.
+check('the help modal opens on Getting started, with a page per feature', () => {
+  sandbox.state.helpPage = 'start';
+  const modal = sandbox.helpModal();
+  const nav = findAll(modal, (n) => n.tag === 'button' && /help-nav-item/.test(n.className)).map(textOf);
+  eq(nav, ['Getting started', ...sandbox.HELP_FEATURES.map((item) => item.name), '⌨ Keyboard shortcuts'], 'the sidebar');
+  eq(textOf(modal).includes(sandbox.HELP_CLAIM), true, 'the claim');
+  eq(findAll(modal, (n) => n.tag === 'kbd').length, 0, 'no shortcuts on it');
+  const button = (label) => findAll(modal, (n) => n.tag === 'button' && textOf(n) === label)[0];
+  eq(!!button('Close'), true, 'closed with Close');
+  button('Sandbox').onclick();
+  eq(sandbox.state.helpPage, 'sandbox', 'a feature is a page');
+  sandbox.state.helpPage = 'start';
+});
+
+check('the help modal lists the keyboard shortcuts, as kbd, on a page of their own', () => {
   const platform = sandbox.navigator.platform;
   try {
     sandbox.navigator.platform = 'Win32';
+    sandbox.state.helpPage = 'keys';
     const modal = sandbox.helpModal();
     const text = textOf(modal);
-    eq(text.includes('Keyboard shortcuts'), true, 'a section of its own');
+    eq(text.includes('Keyboard shortcuts'), true, 'a page of its own');
     eq(text.includes('⌘'), false, 'no Mac glyph off a Mac');
     const keys = findAll(modal, (n) => n.tag === 'kbd').map(textOf);
     for (const key of ['Ctrl+K', 'Ctrl+S', 'Ctrl+Z', 'Ctrl+Shift+Z', '?', 'Esc', 'Ctrl+Enter', 'F2']) {
@@ -4708,6 +4730,7 @@ check('the help modal lists the keyboard shortcuts, as kbd', () => {
     }
   } finally {
     sandbox.navigator.platform = platform;
+    sandbox.state.helpPage = 'start';
   }
 });
 

@@ -75,6 +75,21 @@ None at runtime besides [Monaco](https://microsoft.github.io/monaco-editor/)
 (0.52.2), which is vendored under `app/vendor/monaco/` and loaded only when a
 scripted handler's editor is shown. A plain textarea is the fallback.
 
+## Contributing
+
+Feedback is welcome — reach us through [dcb.events/about](https://dcb.events/about/).
+
+Bugs and suggestions are tracked in the website's repository: please
+[open an issue in dcb-events/dcb-events.github.io](https://github.com/dcb-events/dcb-events.github.io/issues/new?labels=playground&title=%5BPlayground%5D%20)
+with the `playground` label.
+
+Pull requests for the playground itself are welcome here, in
+[dcb-events/dcb-playground](https://github.com/dcb-events/dcb-playground). Before opening one:
+
+- enable the pre-commit hook once per clone: `git config core.hooksPath .githooks`
+- run the four test suites (see [Tests](#tests))
+- read the section of [`docs/design-notes.md`](docs/design-notes.md) for the area you are changing
+
 ## License
 
 [MIT](LICENSE)
