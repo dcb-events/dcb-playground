@@ -226,10 +226,7 @@ body.f-dark .disclaimer { background: #2d2408; color: #fcd34d; border-bottom-col
 .app-bar .trigger:hover { border-color: var(--border-strong); color: var(--text); background: var(--surface); }
 .app-bar .trigger svg { flex: none; width: 14px; height: 14px; }
 .app-bar .trigger .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.app-bar .trigger .kbd {
-  margin-left: auto; flex: none; font-family: var(--mono); font-size: 10px; color: var(--muted);
-  border: 1px solid var(--border); border-radius: 4px; padding: 0 4px;
-}
+.app-bar .trigger kbd { margin-left: auto; flex: none; font-size: 10px; color: var(--muted); }
 
 /* ---------- narrow screens ----------
    One breakpoint, everything the bar and the rail need to keep working
@@ -263,10 +260,16 @@ body.f-dark .disclaimer { background: #2d2408; color: #fcd34d; border-bottom-col
   .app-bar .icon-btn svg { width: 18px; height: 18px; }
   .app-bar .trigger { padding: 0; justify-content: center; }
   .app-bar .trigger svg { width: 17px; height: 17px; }
-  .app-bar .trigger .label, .app-bar .trigger .kbd { display: none; }
+  .app-bar .trigger .label, .app-bar .trigger kbd { display: none; }
 }
 
 /* ---------- generic bits ---------- */
+
+/* A shortcut, as `kbd` in index.html spells it for this platform. */
+kbd {
+  font-family: var(--mono); font-size: .85em; white-space: nowrap;
+  border: 1px solid var(--border); border-radius: 4px; padding: 0 4px;
+}
 
 .btn {
   font: inherit; font-size: 13px;

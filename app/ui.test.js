@@ -4673,6 +4673,44 @@ check('the help modal links the notation reference, and nothing else', () => {
   eq(links.map((a) => [a.attributes.href, a.attributes.target]), [[sandbox.NOTATION_REFERENCE_URL, '_blank']]);
 });
 
+// Shortcuts read the way the keyboard in front of the reader labels
+// them: glyphs in Apple's order on a Mac, Ctrl and words elsewhere.
+check('a shortcut is spelled for the platform it is read on', () => {
+  const platform = sandbox.navigator.platform;
+  try {
+    sandbox.navigator.platform = 'MacIntel';
+    eq(['Mod+K', 'Mod+Shift+Z', 'Ctrl+Space', 'Mod+Enter', 'Mod+click', 'Shift+F12', 'Esc'].map(sandbox.shortcutText),
+      ['⌘K', '⇧⌘Z', '⌃Space', '⌘↩', '⌘-click', '⇧F12', 'Esc'], 'a Mac');
+    sandbox.navigator.platform = 'Win32';
+    eq(['Mod+K', 'Mod+Shift+Z', 'Ctrl+Space', 'Mod+Enter', 'Mod+click', 'Shift+F12', 'Esc'].map(sandbox.shortcutText),
+      ['Ctrl+K', 'Ctrl+Shift+Z', 'Ctrl+Space', 'Ctrl+Enter', 'Ctrl+click', 'Shift+F12', 'Esc'], 'anything else');
+    sandbox.navigator.platform = 'Linux x86_64';
+    eq(sandbox.shortcutText('Mod+S'), 'Ctrl+S', 'Linux is anything else');
+    sandbox.navigator.userAgentData = { platform: 'macOS' };
+    eq(sandbox.shortcutText('Mod+S'), '⌘S', 'the client hint wins over the legacy platform');
+  } finally {
+    sandbox.navigator.platform = platform;
+    delete sandbox.navigator.userAgentData;
+  }
+});
+
+check('the help modal lists the keyboard shortcuts, as kbd', () => {
+  const platform = sandbox.navigator.platform;
+  try {
+    sandbox.navigator.platform = 'Win32';
+    const modal = sandbox.helpModal();
+    const text = textOf(modal);
+    eq(text.includes('Keyboard shortcuts'), true, 'a section of its own');
+    eq(text.includes('⌘'), false, 'no Mac glyph off a Mac');
+    const keys = findAll(modal, (n) => n.tag === 'kbd').map(textOf);
+    for (const key of ['Ctrl+K', 'Ctrl+S', 'Ctrl+Z', 'Ctrl+Shift+Z', '?', 'Esc', 'Ctrl+Enter', 'F2']) {
+      eq(keys.includes(key), true, key);
+    }
+  } finally {
+    sandbox.navigator.platform = platform;
+  }
+});
+
 // The anchors an `ⓘ` links are a contract with dcb.events, whose build
 // checks every one of them exists.
 check('the reference links only anchors the website defines', () => {
