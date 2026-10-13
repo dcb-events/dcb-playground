@@ -4611,6 +4611,31 @@ function build(index) {
     state.code = false;
   });
 
+  check('the toggle is muted where the code does not follow, and Code on the Overview always opens the code', () => {
+    const { id, model: m } = build(ENTITIES);
+    store.set('dcb-playground:model', id);
+    const { state, codeView } = sandbox;
+    Object.assign(state, { view: 'sandbox', code: true });
+    eq(sandbox.codeFollowsPage(), false, 'the sandbox has no code view');
+    state.view = 'overview';
+    eq(sandbox.codeFollowsPage(), true, 'the Overview has, through its Code');
+    codeView.last = null;
+    sandbox.enterCode();
+    eq([state.code, state.view, sandbox.codeShown()], [true, 'slice', true], 'already Code, and the code opens');
+    Object.assign(state, { view: 'overview', slice: null });
+    codeView.last = { modelId: id, kind: 'command-definition', name: 'ArchiveCourse' };
+    sandbox.enterCode();
+    eq([state.view, state.slice], ['slice', 'ArchiveCourse'], 'where the code was left');
+    codeView.last = { modelId: id, kind: 'event-definition', name: 'NoSuchEvent' };
+    state.view = 'overview';
+    sandbox.enterCode();
+    eq(state.view, 'slice', 'a definition gone since: where the commands start');
+    state.view = 'sandbox';
+    sandbox.enterCode();
+    eq(state.view, 'sandbox', 'elsewhere, Code when it is the surface does nothing');
+    state.code = false;
+  });
+
   check('the fold modes: nothing, the scenarios groups, then every definition around them', () => {
     const text = [
       'event A { x: integer }',

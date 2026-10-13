@@ -1609,7 +1609,13 @@
   }
   .surface button + button { border-left: 1px solid var(--border); }
   .surface button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .surface.muted button { opacity: .55; }
+  .surface.muted button.on { background: var(--bg); color: var(--muted); }
   .surface button:not(.on):hover { color: var(--text); background: var(--bg); }
+  /* Each label is as wide as its bold self, so turning on does not
+     shift the bar: a hidden bold copy holds the width. */
+  .surface .label { display: inline-grid; }
+  .surface .label::after { content: attr(data-text); font-weight: 600; visibility: hidden; height: 0; overflow: hidden; }
   .surface-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--event); }
   .surface-icon { display: flex; }
   .surface-icon svg { width: 14px; height: 14px; display: block; }
@@ -2052,18 +2058,22 @@ const CODE_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor
 
 // Pages or code — two surfaces over one model, see `renderCode`. The
 // dot says a text is waiting to be applied, wherever you are.
+// On a page the code does not follow it is muted, not gone: it still
+// says and sets the surface, and still carries the dot.
 function surfaceToggle(model) {
   const waiting = codeView.modelId === model.id && codeDirty();
-  return h('span', { class: 'surface', role: 'group', 'aria-label': 'Show the model as' },
+  const muted = !codeFollowsPage();
+  const hint = muted ? ' — no code view for this page; applies on definition pages' : '';
+  return h('span', { class: 'surface' + (muted ? ' muted' : ''), role: 'group', 'aria-label': 'Show the model as' },
     h('button', {
       type: 'button', class: state.code ? '' : 'on', 'aria-pressed': state.code ? 'false' : 'true',
-      title: 'The model as pages', 'aria-label': 'Visual', onclick: leaveCode,
-    }, h('span', { class: 'surface-icon' }, svg(VISUAL_ICON_SVG)), h('span', { class: 'label' }, 'Visual')),
+      title: 'The model as pages' + hint, 'aria-label': 'Visual', onclick: leaveCode,
+    }, h('span', { class: 'surface-icon' }, svg(VISUAL_ICON_SVG)), h('span', { class: 'label', 'data-text': 'Visual' }, 'Visual')),
     h('button', {
       type: 'button', class: state.code ? 'on' : '', 'aria-pressed': state.code ? 'true' : 'false',
-      title: waiting ? 'The model as code — edited, not applied' : 'The model as code',
+      title: (waiting ? 'The model as code — edited, not applied' : 'The model as code') + hint,
       'aria-label': 'Code', onclick: enterCode,
-    }, h('span', { class: 'surface-icon' }, svg(CODE_ICON_SVG)), h('span', { class: 'label' }, 'Code'),
+    }, h('span', { class: 'surface-icon' }, svg(CODE_ICON_SVG)), h('span', { class: 'label', 'data-text': 'Code' }, 'Code'),
     waiting ? h('span', { class: 'surface-dot' }) : null));
 }
 
@@ -5572,6 +5582,8 @@ function paintBehind(model) {
   renderRail();
 
   const main = document.getElementById('main');
+  // Leaving the code, before its textarea goes: where the cursor was.
+  if ((main.className || '').includes('code-view') && !codeShown()) rememberCodePlace(model);
   main.innerHTML = '';
   // Over every page, the code included — see `beginNewCommand`.
   if (state.namingCommand) {
@@ -14214,6 +14226,18 @@ function storedCodeFold() {
 // itself goes to the code (`enterCode`).
 const CODE_FOLLOWS = ['slice', 'entity', 'events', 'projections', 'types'];
 function codeShown() { return !!state.code && CODE_FOLLOWS.includes(state.view); }
+// Where the toggle does something: the definition pages, and the
+// Overview, whose Code always opens the code (`enterCode`).
+function codeFollowsPage() { return CODE_FOLLOWS.includes(state.view) || state.view === 'overview'; }
+
+// The definition under the cursor as the code is left, to come back to
+// from the Overview.
+function rememberCodePlace(model) {
+  syncCodeView(model);
+  const line = codeCursorLine();
+  const at = line ? sourceSpanAt(analyseCode(model).parsed, line) : null;
+  if (at) codeView.last = { modelId: model.id, kind: at.kind, name: at.name };
+}
 
 // A rail link to a whole kind's page; in the code, a jump to where
 // that kind's definitions start — every click, not only the first.
@@ -14237,6 +14261,8 @@ const codeView = {
   shownView: null,      // the page state the code was last shown over
   focus: null,          // the definition last revealed for it
   section: null,        // a kind to reveal the start of, once, over the page's own
+                        // — or a [kind, name] to reveal that definition
+  last: null,           // { modelId, kind, name } under the cursor as the code was left
   revealedInEditor: false,
   analysis: null,       // { text, parsed, errors, advisories }
   editor: null,         // { root, editor, model } once Monaco is up
@@ -14579,15 +14605,23 @@ function revertCode() {
 
 // Into the code view, revealing what the page was about.
 function enterCode() {
-  if (state.code) return;
+  // The Overview has no definition of its own to stay on, and staying
+  // on it would make the toggle look like it did nothing: Code opens the
+  // code — even when it is the surface already — where it was left, or
+  // where the commands start, as the Overview's Commands card does.
+  const fromOverview = state.view === 'overview';
+  if (state.code && !fromOverview) return;
   closeForms(); // commits whatever a page had half-typed
   setCodeSurface(true);
   codeView.shownView = null;
   codeView.focus = null;
-  // The Overview has no definition of its own to stay on, and staying
-  // on it would make the toggle look like it did nothing: the code
-  // opens where the commands start, as the Overview's Commands card does.
-  if (state.view === 'overview') {
+  if (fromOverview) {
+    const model = activeModel();
+    const last = codeView.last;
+    if (model && last && last.modelId === model.id && model[DEF_COLLECTIONS[last.kind]][last.name] !== undefined) {
+      codeView.section = [last.kind, last.name];
+      return openDefinition(last.kind, last.name);
+    }
     codeView.section = 'command-definition';
     state.view = 'slice';
   }
@@ -15147,7 +15181,8 @@ function renderCode(model, main) {
   // page's own definition, which is then taken as shown — so the next
   // paint stays where the section put the text.
   const page = pageDefinition();
-  const target = codeView.section ? [codeView.section, null] : page;
+  const target = Array.isArray(codeView.section) ? codeView.section
+    : codeView.section ? [codeView.section, null] : page;
   codeView.section = null;
   const key = target ? target.join(':') : null;
   const shown = codeView.shownView;
