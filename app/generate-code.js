@@ -8,6 +8,7 @@
 //   node app/generate-code.js path/to/model.json      # an envelope file
 //   node app/generate-code.js course-simple --tests   # with its scenarios as node:test tests
 //   node app/generate-code.js course-simple --no-adapter --no-docs
+//   node app/generate-code.js course-simple --target=php
 //
 // An envelope's sandbox steps, when it carries any, are replayable with
 // --sandbox. Stubs — what the export could not translate — go to stderr.
@@ -48,6 +49,7 @@ if (index >= 0) {
 
 const { text, stubs } = generateCode(projectState()[id], {
   includeTests: flag('--tests'),
+  target: (args.find((arg) => arg.startsWith('--target=')) || '--target=js').slice(9),
   includeAdapter: !flag('--no-adapter'),
   docComments: !flag('--no-docs'),
   sandboxSteps: flag('--sandbox') ? sandboxSteps : [],

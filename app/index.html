@@ -2366,7 +2366,7 @@ function exportCode(model) {
 }
 
 function downloadExportedCode(model, exported) {
-  const blob = new Blob([exported.text], { type: 'text/javascript' });
+  const blob = new Blob([exported.text], { type: exported.mediaType });
   const link = h('a', {
     href: URL.createObjectURL(blob),
     download: (toCamel(model.name) || 'model') + exported.extension,
@@ -3199,7 +3199,7 @@ function renderImportExportModal() {
         h('select', { onchange: (e) => setCodeExportOption('target', e.target.value) },
           ...Object.entries(CODE_TARGETS).map(([key, target]) =>
             h('option', { value: key, selected: key === codeOptions.target }, target.label)))),
-      h('label', { class: 'ie-check', title: state.ieIncludeScenarios ? 'The tests need it' : '' },
+      CODE_TARGETS[codeOptions.target].adapterOption && h('label', { class: 'ie-check', title: state.ieIncludeScenarios ? 'The tests need it' : '' },
         h('input', {
           type: 'checkbox', checked: codeOptions.adapter || state.ieIncludeScenarios, disabled: state.ieIncludeScenarios,
           onchange: (e) => setCodeExportOption('adapter', e.target.checked),
@@ -3213,7 +3213,7 @@ function renderImportExportModal() {
       h('textarea', { class: 'mono', rows: '12', wrap: 'off', readonly: true, value: exported.text }),
       h('div', { class: 'why' },
         'Each command decides against a DCB event store and appends under the condition its reads made. '
-        + (state.ieIncludeScenarios ? 'Scenarios come along as tests: node --test on the file. ' : '')
+        + (state.ieIncludeScenarios ? `Scenarios come along as tests: ${CODE_TARGETS[codeOptions.target].testsRun}. ` : '')
         + (exported.stubs.length
           ? `Not exported yet: ${exported.stubs.map((stub) => stub.name).join(', ')} — each throws when used.`
           : 'Everything in this model is exported.'))),

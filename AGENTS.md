@@ -57,8 +57,9 @@ documentation; read it before editing the file:
   re-renders after every editing command.
 - `codegen.js` — the model as _implementation source_ (experimental):
   a language-neutral plan (`codePlan`) spelled by one printer per
-  target (`CODE_TARGETS`; JavaScript so far) into a module that
-  decides each command against a DCB event store port. Scripted
+  target (`CODE_TARGETS`: JavaScript, and PHP against
+  wwwision/dcb-eventstore) into a module that decides each command
+  against a DCB event store. Scripted
   handlers go in verbatim where the target runs JavaScript. What it
   cannot translate becomes a stub that throws `NotExported`. No DOM. Held to
   `evaluate.js` by `codegen.test.js`.
@@ -81,7 +82,7 @@ node app/evaluate.test.js   # semantics, against the shipped example models
 node app/ui.test.js         # the pure layer under the interface
 node app/webmcp.test.js     # WebMCP tool seam
 node app/dsl.test.js        # the code view's language: round trips, apply
-node app/codegen.test.js    # code export, against the evaluator, scenario by scenario
+node app/codegen.test.js    # code export, against the evaluator, scenario by scenario (PHP parts need php + composer)
 ```
 
 The DOM stub, sandbox, script loader and assertions live once in
@@ -108,6 +109,7 @@ To see what the code export makes of a model:
 ```
 node app/generate-code.js course-simple           # as JavaScript (stubs to stderr)
 node app/generate-code.js course-simple --tests   # with its scenarios as node:test tests
+node app/generate-code.js course-simple --target=php
 ```
 
 Generated files — regenerate, never hand-edit:

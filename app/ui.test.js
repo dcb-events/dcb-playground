@@ -5517,6 +5517,11 @@ check('the app is text: no file carries a raw control byte', () => {
     modal = exportOf();
     eq(pill(modal), 1, 'the pill with it');
     eq(code(modal).includes('export function createApp(store)'), true, 'and the export');
+    store.set('dcb-playground:code-export', JSON.stringify({ target: 'php' }));
+    modal = exportOf();
+    eq(code(modal).startsWith('<?php'), true, 'in the language chosen');
+    eq(textOf(modal).includes('In-memory event store'), false, 'with no adapter option where the target has none');
+    store.delete('dcb-playground:code-export');
     store.delete('dcb-playground:experimental');
   });
 

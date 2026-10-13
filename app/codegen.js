@@ -500,25 +500,37 @@ function codePlanCommand(model, name, body, stubbedProjections) {
 // Printers.
 //
 // One per target language, each `{ label, extension, print(plan,
-// options) }`. Only the plan is read: a printer that needed the model
+// options) }` and what the interface asks of it: whether it can run a
+// scripted handler, whether its in-memory store is an option, how its
+// tests are run. Only the plan is read: a printer that needed the model
 // would be deciding semantics.
 // ============================================================
 
 const CODE_TARGETS = {
-  js: { label: 'JavaScript', extension: '.js', runsScripts: true, print: (plan, options) => codePrintJs(plan, options) },
+  js: {
+    label: 'JavaScript', extension: '.js', mediaType: 'text/javascript', runsScripts: true,
+    // The in-memory store is the export's own and can be left out.
+    adapterOption: true, testsRun: 'node --test on the file',
+    print: (plan, options) => codePrintJs(plan, options),
+  },
+  php: {
+    label: 'PHP', extension: '.php', mediaType: 'text/x-php', runsScripts: false,
+    adapterOption: false, testsRun: 'php on the file',
+    print: (plan, options) => codePrintPhp(plan, options),
+  },
 };
 
 // The export: `{ text, extension, stubs }`. Options, all optional:
-//   target          'js' (the only one so far)
+//   target          'js' or 'php'
 //   includeTests    the model's scenarios as node:test tests
-//   includeAdapter  the in-memory event store (implied by tests)
+//   includeAdapter  the in-memory event store (JS; implied by tests)
 //   docComments     each command's derived boundary, as a comment
 //   sandboxSteps    `[{ command, args }]` to replay into a store
 function generateCode(model, options = {}) {
   const target = CODE_TARGETS[options.target || 'js'];
   if (!target) throw new Error(`No code target "${options.target}".`);
   const plan = codePlan(model, { ...options, scripts: !!target.runsScripts });
-  return { text: target.print(plan, options), extension: target.extension, stubs: plan.stubs };
+  return { text: target.print(plan, options), extension: target.extension, mediaType: target.mediaType, stubs: plan.stubs };
 }
 
 // ============================================================
@@ -1330,6 +1342,1126 @@ export function createInMemoryEventStore(events = []) {
     },
   };
 }`;
+
+// ============================================================
+// The PHP printer.
+//
+// One file per model, in its own namespace, against
+// wwwision/dcb-eventstore — its EventStore, queries and append
+// conditions, and its in-memory store for the scenarios. An event is a
+// final readonly class; a command a static method deciding Accepted or
+// Rejected; a projection a fold built once. Scripts are JavaScript, so
+// this target stubs them (`runsScripts` is false).
+//
+// The library reads no head position, so a command reading in one
+// round appends after the last event it saw, and one reading in
+// several first reads the store's head — every round then sees the
+// store as it stood then, and the append is after that head.
+// ============================================================
+
+const CODE_PHP_LIBRARY = 'wwwision/dcb-eventstore:^5.0';
+
+// Case-insensitively reserved as class names in PHP, and the names the
+// generated file defines or imports itself.
+const CODE_PHP_RESERVED = new Set((
+  'abstract and array as break callable case catch class clone const continue declare default do echo else elseif '
+  + 'empty enddeclare endfor endforeach endif endswitch endwhile enum eval exit extends final finally fn for foreach '
+  + 'function global goto if implements include include_once instanceof insteadof interface isset list match '
+  + 'namespace new or print private protected public readonly require require_once return static switch throw trait '
+  + 'try unset use var while xor yield int float bool string true false null void iterable object mixed never self '
+  + 'parent'
+).split(' '));
+const CODE_PHP_OWN_CLASSES = [
+  'App', 'Model', 'Runtime', 'Projections', 'Commands', 'Scenarios', 'Sandbox', 'DomainEvent', 'ProjectionDefinition',
+  'Projection', 'Derived', 'NotExportedProjection', 'Read', 'DecisionModel', 'Accepted', 'Rejected',
+  'EvaluationError', 'NotExported', 'Folded',
+  'DcbEventStore', 'DcbEvent', 'DcbEvents', 'DcbQuery', 'DcbQueryItem', 'DcbAppendCondition', 'DcbReadOptions',
+  'DcbSequencedEvent', 'DcbInMemoryEventStore',
+];
+
+function codePhpNamer(reserved, caseless) {
+  const key = (name) => (caseless ? name.toLowerCase() : name);
+  const taken = new Set([...reserved].map(key));
+  return (wanted) => {
+    let name = String(wanted || '_').replace(/[^A-Za-z0-9_]/g, '_');
+    if (/^\d/.test(name)) name = '_' + name;
+    while (taken.has(key(name)) || CODE_PHP_RESERVED.has(name.toLowerCase())) name += '_';
+    taken.add(key(name));
+    return name;
+  };
+}
+
+function codePhpString(text) {
+  return "'" + String(text).replace(/\\/g, '\\\\').replace(/'/g, "\\'") + "'";
+}
+
+function codePhpLiteral(value) {
+  if (value === undefined || value === null) return 'null';
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (typeof value === 'number') return Number.isInteger(value) ? String(value) : JSON.stringify(value);
+  if (typeof value === 'string') return codePhpString(value);
+  if (Array.isArray(value)) return `[${value.map(codePhpLiteral).join(', ')}]`;
+  const entries = Object.entries(value);
+  return `[${entries.map(([k, v]) => `${codePhpString(k)} => ${codePhpLiteral(v)}`).join(', ')}]`;
+}
+
+function codePhpArray(entries) {
+  return `[${entries.map(([key, code]) => `${codePhpString(key)} => ${code}`).join(', ')}]`;
+}
+
+// A property's PHP type: the base a JSON value of it decodes to.
+function codePhpType(ref, model) {
+  let base;
+  if (ref.isList) base = 'array';
+  else if (ref.type === 'integer') base = 'int';
+  else if (ref.type === 'string') base = 'string';
+  else if (ref.type === 'boolean') base = 'bool';
+  else {
+    const type = model.types.find((t) => t.name === ref.type);
+    if (!type) base = 'mixed';
+    else if (type.kind === 'record') base = 'array';
+    else if (type.kind === 'enum') {
+      const kinds = new Set(type.members.map((m) => typeof m));
+      base = kinds.size === 1 && kinds.has('string') ? 'string' : kinds.size === 1 && kinds.has('number') ? 'int|float' : 'mixed';
+    } else base = type.base === 'number' ? 'int|float' : type.base === 'boolean' ? 'bool' : 'string';
+  }
+  if (ref.isOptional && !ref.isList && base !== 'mixed') return base.includes('|') ? `${base}|null` : `?${base}`;
+  return base;
+}
+
+function codePhpExpr(expr, scope) {
+  switch (expr.k) {
+    case 'lit': return codePhpLiteral(expr.value);
+    case 'arg': {
+      const name = '$' + scope.args.get(expr.name);
+      return expr.property ? `Runtime::field(${name}, ${codePhpString(expr.property)})` : name;
+    }
+    case 'argAt': return `(Runtime::asList(${codePhpExpr({ ...expr, k: 'arg' }, scope)})[$i] ?? null)`;
+    case 'read': return expr.flatten ? `Runtime::flat($${scope.reads.get(expr.read)})` : '$' + scope.reads.get(expr.read);
+    case 'readAt': return `$${scope.reads.get(expr.read)}[$i]`;
+    case 'eventProperty': return `$event->${scope.eventProps.get(expr.name) || expr.name}`;
+    case 'state': return '$state';
+    case 'successor': return `Runtime::successor(${codePhpExpr(expr.of, scope)})`;
+    case 'tag': return `($t[${codePhpString(expr.name)}] ?? null)`;
+    default: throw new Error(`No PHP for expression "${expr.k}".`);
+  }
+}
+
+function codePhpPredicate(predicate, l, r) {
+  const call = (fn, ...a) => ({ code: `Runtime::${fn}(${a.join(', ')})`, atomic: true });
+  const op = (code) => ({ code, atomic: false });
+  switch (predicate) {
+    case 'isEmpty': return call('isEmpty', l);
+    case 'isNotEmpty': return codeJsNot(call('isEmpty', l));
+    case 'isTrue': return op(`${l} === true`);
+    case 'isFalse': return op(`${l} === false`);
+    case 'countEquals': return op(`Runtime::count(${l}) === ${r}`);
+    case 'countLessThan': return op(`Runtime::count(${l}) < ${r}`);
+    case 'countGreaterThan': return op(`Runtime::count(${l}) > ${r}`);
+    default: return call(predicate, l, r);
+  }
+}
+
+function codePhpHeld(c, scope) {
+  const l = codePhpExpr(c.left, scope);
+  const r = c.right ? codePhpExpr(c.right, scope) : null;
+  const base = codePhpPredicate(c.predicate, l, r);
+  const held = c.negate ? codeJsNot(base) : base;
+  if (!c.quantified || !c.quantified.length) return held;
+  const lists = c.quantified.map((read) => '$' + scope.reads.get(read));
+  return { code: `Runtime::every([${lists.join(', ')}], fn (int $i): bool => ${held.code})`, atomic: true };
+}
+
+function codePhpNamespace(name) {
+  const studly = String(name || '').split(/[^A-Za-z0-9]+/).filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+  return 'DcbModel\\' + (/^[A-Za-z]/.test(studly) ? studly : 'Model' + studly);
+}
+
+function codePrintPhp(plan, options) {
+  const withTests = !!options.includeTests;
+  const withDocs = options.docComments !== false;
+  const out = [];
+  const className = codePhpNamer(CODE_PHP_OWN_CLASSES, true);
+  const eventClass = new Map(plan.events.map((e) => [e.name, className(e.name)]));
+  const projectionMethod = codePhpNamer(['get', 'byName'], true);
+  const projectionName = new Map(plan.projections.map((p) => [p.name, projectionMethod(p.name)]));
+  const commandMethod = codePhpNamer(['decide'], true);
+  const commandName = new Map(plan.commands.map((c) => [c.name, commandMethod(c.name)]));
+  const eventProps = new Map(plan.events.map((e) => {
+    const name = codePhpNamer(['this'], false);
+    return [e.name, new Map(e.properties.map((p) => [p.name, name(p.name)]))];
+  }));
+  const projectionRef = (name) => `Projections::${projectionName.get(name)}()`;
+
+  out.push('<?php');
+  out.push('');
+  out.push(codePhpHeader(plan, withTests));
+  out.push('');
+  out.push('declare(strict_types=1);');
+  out.push('');
+  out.push(`namespace ${codePhpNamespace(plan.name)};`);
+  out.push('');
+  out.push(CODE_PHP_USES);
+  out.push(CODE_PHP_RUNTIME);
+
+  // ---- Events
+  out.push(codePhpSection('Events'));
+  for (const event of plan.events) {
+    const cls = eventClass.get(event.name);
+    const props = eventProps.get(event.name);
+    const params = event.properties.map((p) => `        public ${codePhpType(p, plan)} $${props.get(p.name)}${p.isOptional && !p.isList ? ' = null' : ''},`);
+    const from = event.properties.map((p) => `            ${props.get(p.name)}: $data[${codePhpString(p.name)}]${p.isOptional && !p.isList ? ' ?? null' : ''},`);
+    const to = event.properties.map((p) => `${codePhpString(p.name)} => $this->${props.get(p.name)}`);
+    out.push(`final readonly class ${cls} implements DomainEvent`);
+    out.push('{');
+    out.push(`    public const TYPE = ${codePhpString(event.name)};`);
+    out.push('');
+    if (params.length) {
+      out.push('    public function __construct(');
+      out.push(...params);
+      out.push('    ) {}');
+    } else {
+      out.push('    public function __construct() {}');
+    }
+    out.push('');
+    out.push('    public static function fromArray(array $data): self');
+    out.push('    {');
+    if (from.length) {
+      out.push('        return new self(');
+      out.push(...from);
+      out.push('        );');
+    } else out.push('        return new self();');
+    out.push('    }');
+    out.push('');
+    out.push('    public function toArray(): array');
+    out.push('    {');
+    out.push(`        return [${to.join(', ')}];`);
+    out.push('    }');
+    out.push('}');
+    out.push('');
+  }
+
+  // ---- The model's tables
+  out.push('final class Model');
+  out.push('{');
+  out.push('    /** Each event type\'s class. */');
+  out.push(`    public const EVENT_CLASSES = ${codePhpArray(plan.events.map((e) => [e.name, `${eventClass.get(e.name)}::class`]))};`);
+  out.push('');
+  out.push('    /** The tags each event carries, read off its payload. */');
+  out.push('    public const EVENT_TAGS = [');
+  for (const event of plan.events) {
+    const leaves = event.tags.map((leaf) => codePhpLiteral({
+      tagType: leaf.tagType, property: leaf.property, field: leaf.field || null, isList: !!leaf.isList,
+    }));
+    out.push(`        ${codePhpString(event.name)} => [${leaves.join(', ')}],`);
+  }
+  out.push('    ];');
+  out.push('');
+  out.push(`    public const TAG_SCHEMAS = ${codePhpLiteral(plan.tagSchemas)};`);
+  out.push('');
+  out.push(CODE_PHP_MODEL_METHODS);
+  out.push('}');
+
+  // ---- Projections
+  out.push(codePhpSection('Projections'));
+  out.push('final class Projections');
+  out.push('{');
+  out.push('    /** @var array<string, ProjectionDefinition> */');
+  out.push('    private static array $built = [];');
+  out.push('');
+  out.push(`    public const NAMES = ${codePhpArray(plan.projections.map((p) => [p.name, codePhpString(projectionName.get(p.name))]))};`);
+  out.push('');
+  out.push('    public static function byName(string $name): ProjectionDefinition');
+  out.push('    {');
+  out.push('        if (!array_key_exists($name, self::NAMES)) {');
+  out.push('            throw new EvaluationError(sprintf(\'This model has no projection "%s".\', $name));');
+  out.push('        }');
+  out.push('        return self::{self::NAMES[$name]}();');
+  out.push('    }');
+  for (const p of plan.projections) {
+    out.push('');
+    out.push(codePhpProjection(p, projectionName, projectionRef, eventClass, eventProps));
+  }
+  out.push('}');
+
+  // ---- Commands
+  out.push(codePhpSection('Commands'));
+  out.push('/**');
+  out.push(' * Each decides against the store and returns what it decided — nothing');
+  out.push(' * is appended here (App::handle does that). A rule refusing is a');
+  out.push(' * Rejected; anything that cannot be decided at all throws an');
+  out.push(' * EvaluationError.');
+  out.push(' */');
+  out.push('final class Commands');
+  out.push('{');
+  out.push(`    public const NAMES = ${codePhpArray(plan.commands.map((c) => [c.name, codePhpString(commandName.get(c.name))]))};`);
+  out.push('');
+  out.push('    public static function decide(DcbEventStore $store, string $command, array $args): Accepted|Rejected');
+  out.push('    {');
+  out.push('        if (!array_key_exists($command, self::NAMES)) {');
+  out.push('            throw new EvaluationError(sprintf(\'This model has no command "%s".\', $command));');
+  out.push('        }');
+  out.push('        return self::{self::NAMES[$command]}($store, $args);');
+  out.push('    }');
+  for (const command of plan.commands) {
+    out.push('');
+    out.push(codePhpCommand(command, plan, commandName, projectionRef, eventClass, eventProps, withDocs));
+  }
+  out.push('}');
+
+  out.push(CODE_PHP_APP);
+  if (plan.sandboxSteps.length) out.push(codePhpSandbox(plan));
+  if (withTests) out.push(codePhpTests(plan));
+  return out.join('\n') + '\n';
+}
+
+function codePhpSection(title) {
+  return `\n// ---- ${title} ${'-'.repeat(Math.max(4, 66 - title.length))}\n`;
+}
+
+function codePhpHeader(plan, withTests) {
+  const lines = [
+    `${plan.name} — exported from the DCB Playground as PHP.`,
+    '',
+    'Experimental, and generated: change the model and export again rather',
+    'than editing this. Needs PHP 8.3 and the event store library:',
+    `  composer require ${CODE_PHP_LIBRARY}`,
+    'Each command decides against its EventStore and appends what it',
+    'publishes under the append condition its reads made: every query it',
+    'ran, ORed.',
+    '',
+    'Usage:',
+    '  $app = new App(InMemoryEventStore::create());',
+    "  $app->handle('<Command>', [...]);   // Accepted or Rejected",
+    "  $app->project('<Projection>', [...]); // its current value",
+  ];
+  if (withTests) lines.push('', 'Run the model\'s scenarios with `php <this file>` from the directory', 'holding vendor/.');
+  lines.push(
+    '',
+    'An append whose condition fails throws ConditionalAppendFailed: someone',
+    'else wrote into this decision\'s boundary first. Deciding again on the',
+    'new state is usually right, and left to the caller.',
+  );
+  if (plan.stubs.length) {
+    lines.push('', 'Not exported — each throws NotExported when used:');
+    for (const stub of plan.stubs) lines.push(`  - ${stub.kind} ${stub.name}: ${stub.reason}`);
+  }
+  return ['/**', ...lines.map((l) => ` *${l ? ' ' + l : ''}`), ' */'].join('\n');
+}
+
+function codePhpProjection(p, projectionName, projectionRef, eventClass, eventProps) {
+  const method = projectionName.get(p.name);
+  const lines = [];
+  const ind = '        ';
+  lines.push(`    public static function ${method}(): ProjectionDefinition`);
+  lines.push('    {');
+  if (p.kind === 'stub') {
+    lines.push(`${ind}return self::$built[${codePhpString(p.name)}] ??= new NotExportedProjection(${codePhpString(`projection ${p.name}`)}, ${codePhpString(p.reason)});`);
+    lines.push('    }');
+    return lines.join('\n');
+  }
+  const tagList = p.tags.flatMap((tag) => tag.leaves.map((leaf) =>
+    `Runtime::tag(${codePhpString(leaf.tagType)}, $t[${codePhpString(tag.name)}] ?? null, ${codePhpString(`${p.name}'s "${tag.name}" tag`)}`
+    + `${leaf.field ? ', ' + codePhpString(leaf.field) : ''})`));
+  const tags = `static fn (array $t): array => [${tagList.join(', ')}]`;
+  if (p.kind === 'fold') {
+    lines.push(`${ind}return self::$built[${codePhpString(p.name)}] ??= new Projection(`);
+    lines.push(`${ind}    name: ${codePhpString(p.name)},`);
+    lines.push(`${ind}    tags: ${tags},`);
+    lines.push(`${ind}    initialState: ${codePhpLiteral(p.initial)},`);
+    lines.push(`${ind}    when: [`);
+    for (const h of p.handlers) {
+      const cls = eventClass.get(h.event);
+      const scope = { eventProps: eventProps.get(h.event) || new Map() };
+      const value = codePhpExpr(h.value, scope);
+      const body = h.operation === 'set' ? value : `Runtime::${h.operation}($state, ${value})`;
+      lines.push(`${ind}        ${codePhpString(h.event)} => static fn (mixed $state, ${cls || 'DomainEvent'} $event): mixed => ${body},`);
+    }
+    lines.push(`${ind}    ],`);
+    lines.push(`${ind});`);
+    lines.push('    }');
+    return lines.join('\n');
+  }
+  // derived
+  const scope = { eventProps: new Map() };
+  const operand = (o) => (o.k === 'projectionRead'
+    ? `Runtime::read(${projectionRef(o.projection)}, ${codePhpArray(o.tags.map((tag) => [tag.name, codePhpExpr(tag.value, scope)]))}`
+      + `${o.args.length ? ', ' + codePhpArray(o.args.map((a) => [a.name, codePhpExpr(a.value, scope)])) : ''})`
+    : codePhpExpr(o, scope));
+  const value = p.operator
+    ? `Runtime::${p.operator}($left, $right)`
+    : (p.negate ? codeJsNot(codePhpPredicate(p.predicate, '$left', '$right')) : codePhpPredicate(p.predicate, '$left', '$right')).code;
+  lines.push(`${ind}return self::$built[${codePhpString(p.name)}] ??= new Derived(`);
+  lines.push(`${ind}    name: ${codePhpString(p.name)},`);
+  lines.push(`${ind}    tags: ${tags},`);
+  lines.push(`${ind}    operands: static fn (array $t): array => [${operand(p.left)}, ${operand(p.right)}],`);
+  lines.push(`${ind}    value: static fn (mixed $left, mixed $right): mixed => ${value},`);
+  lines.push(`${ind});`);
+  lines.push('    }');
+  return lines.join('\n');
+}
+
+function codePhpCommand(command, plan, commandName, projectionRef, eventClass, eventProps, withDocs) {
+  const method = commandName.get(command.name);
+  const lines = [];
+  const ind = '        ';
+  if (command.kind === 'stub') {
+    lines.push(`    /** Not exported: ${command.reason.replace(/\*\//g, '* /')} */`);
+    lines.push(`    public static function ${method}(DcbEventStore $store, array $args): Accepted|Rejected`);
+    lines.push('    {');
+    lines.push(`${ind}throw new NotExported(${codePhpString(`command ${command.name}`)}, ${codePhpString(command.reason)});`);
+    lines.push('    }');
+    return lines.join('\n');
+  }
+  const local = codePhpNamer(['this', 'store', 'args', 'decision', 'events', 'i', 't', 'state', 'event'], false);
+  const scope = { args: new Map(), reads: new Map(), eventProps: new Map() };
+  for (const param of command.params) scope.args.set(param.name, local(param.name));
+  for (const round of command.rounds) {
+    for (const read of round) {
+      scope.reads.set(read, local(read.name || read.projection.charAt(0).toLowerCase() + read.projection.slice(1)));
+    }
+  }
+
+  const doc = [];
+  if (withDocs && command.boundary) {
+    doc.push(`${command.name} — ${command.boundary.words}.`);
+    command.boundary.queries.forEach((items, i) => {
+      if (command.boundary.queries.length > 1) doc.push(`Query ${i + 1}:`);
+      for (const item of items) {
+        doc.push(`  ${item.label}: ${item.types.length ? item.types.join(', ') : 'any type'}`
+          + `${item.tags.length ? ` tagged ${item.tags.join(' & ')}` : ''}`);
+      }
+    });
+    doc.push('');
+  }
+  doc.push(`@param array{${command.params.map((p) => `${p.name}${p.defaultsToNull ? '?' : ''}: ${codePhpType(p, plan)}`).join(', ')}} $args`);
+  lines.push('    /**');
+  for (const line of doc) lines.push(`     *${line ? ' ' + line.replace(/\*\//g, '* /') : ''}`);
+  lines.push('     */');
+  lines.push(`    public static function ${method}(DcbEventStore $store, array $args): Accepted|Rejected`);
+  lines.push('    {');
+  for (const param of command.params) {
+    lines.push(`${ind}$${scope.args.get(param.name)} = Runtime::argument($args, ${codePhpString(param.name)}, ${param.defaultsToNull ? 'null' : codePhpString(command.name)});`);
+  }
+  if (command.rounds.length) lines.push(`${ind}$decision = new DecisionModel($store, rounds: ${command.rounds.length});`);
+  for (const round of command.rounds) {
+    const names = round.map((read) => `${codePhpString(scope.reads.get(read))} => $${scope.reads.get(read)}`);
+    lines.push(`${ind}[${names.join(', ')}] = $decision->read([`);
+    for (const read of round) {
+      const fanned = read.tags.find((tag) => tag.each);
+      const tags = codePhpArray(read.tags.map((tag) => [tag.name, tag.each ? '$each' : codePhpExpr(tag.value, scope)]));
+      const args = read.args.length ? ', ' + codePhpArray(read.args.map((a) => [a.name, codePhpExpr(a.value, scope)])) : '';
+      const call = fanned
+        ? `Runtime::readEach(${projectionRef(read.projection)}, ${codePhpExpr(fanned.each, scope)}, fn (mixed $each): array => ${tags}${args})`
+        : `Runtime::read(${projectionRef(read.projection)}, ${tags}${args})`;
+      lines.push(`${ind}    ${codePhpString(scope.reads.get(read))} => ${call},`);
+    }
+    lines.push(`${ind}]);`);
+  }
+  for (const rule of command.rules) {
+    const failing = codeJsNot(codePhpHeld(rule, scope));
+    lines.push(`${ind}if (${failing.code}) {`);
+    lines.push(`${ind}    return new Rejected(${rule.rejection === null ? 'null' : codePhpString(rule.rejection)});`);
+    lines.push(`${ind}}`);
+  }
+  lines.push(`${ind}$events = [];`);
+  for (const emission of command.emissions) {
+    if (emission.error && !emission.guards) {
+      lines.push(`${ind}throw new EvaluationError(${codePhpString(emission.error)});`);
+      continue;
+    }
+    let push;
+    if (emission.error) push = `throw new EvaluationError(${codePhpString(emission.error)});`;
+    else {
+      const props = eventProps.get(emission.event);
+      const named = emission.data.map((d) => `${props.get(d.name)}: ${codePhpExpr(d.value, scope)}`);
+      push = `$events[] = new ${eventClass.get(emission.event)}(${named.join(', ')});`;
+    }
+    if (!emission.guards.length) { lines.push(`${ind}${push}`); continue; }
+    const guard = emission.guards.map((g) => {
+      const held = codePhpHeld(g, scope);
+      return emission.guards.length > 1 && !held.atomic ? `(${held.code})` : held.code;
+    }).join(' && ');
+    lines.push(`${ind}if (${guard}) {`);
+    lines.push(`${ind}    ${push}`);
+    lines.push(`${ind}}`);
+  }
+  lines.push(`${ind}return new Accepted($events, ${command.rounds.length ? '$decision->appendCondition()' : 'null'});`);
+  lines.push('    }');
+  return lines.join('\n');
+}
+
+function codePhpSandbox(plan) {
+  return [
+    codePhpSection('Sandbox'),
+    '/** The steps the playground\'s sandbox ran, in order: `Sandbox::replay($app)`. */',
+    'final class Sandbox',
+    '{',
+    '    public const STEPS = [',
+    ...plan.sandboxSteps.map((step) => `        [${codePhpString(step.command)}, ${codePhpLiteral(step.args)}],`),
+    '    ];',
+    '',
+    '    /** @return list<Accepted|Rejected> */',
+    '    public static function replay(App $app): array',
+    '    {',
+    '        return array_map(static fn (array $step) => $app->handle($step[0], $step[1]), self::STEPS);',
+    '    }',
+    '}',
+  ].join('\n');
+}
+
+function codePhpGiven(events, indent) {
+  if (!events.length) return '[]';
+  return `[\n${events.map((e) => `${indent}    [${codePhpString(e.type)}, ${codePhpLiteral(e.data)}],`).join('\n')}\n${indent}]`;
+}
+
+function codePhpTests(plan) {
+  const lines = [
+    codePhpSection('Scenarios'),
+    '/** The model\'s scenarios, as checks: `php <this file>` runs them. */',
+    'final class Scenarios',
+    '{',
+    '    /** @return list<array{string, ?string, \\Closure}> name, why skipped, check */',
+    '    public static function all(): array',
+    '    {',
+    '        return [',
+  ];
+  for (const s of plan.commandScenarios) {
+    const name = `${s.command}: ${s.name}`;
+    if (!s.then) { lines.push(`            [${codePhpString(name)}, 'never run in the playground', static fn () => null],`); continue; }
+    const expected = s.then.outcome === 'rejected'
+      ? { rejected: s.then.rejection === undefined ? null : s.then.rejection }
+      : { published: (s.then.events || []).map((e) => ({ type: e.type, data: e.data })) };
+    lines.push(`            [${codePhpString(name)}, ${s.skip ? codePhpString(s.skip) : 'null'}, static fn () => self::same(`);
+    lines.push(`                self::decided(self::given(${codePhpGiven(s.given, '                ')}), ${codePhpString(s.command)}, ${codePhpLiteral(s.args)}),`);
+    lines.push(`                ${codePhpLiteral(expected)},`);
+    lines.push('            )],');
+  }
+  for (const s of plan.projectionScenarios) {
+    const name = `${s.projection}: ${s.name}`;
+    if (s.then === undefined) { lines.push(`            [${codePhpString(name)}, 'never run in the playground', static fn () => null],`); continue; }
+    lines.push(`            [${codePhpString(name)}, ${s.skip ? codePhpString(s.skip) : 'null'}, static fn () => self::same(`);
+    lines.push(`                self::given(${codePhpGiven(s.given, '                ')})->project(${codePhpString(s.projection)}, ${codePhpLiteral(s.tags)}${Object.keys(s.args).length ? ', ' + codePhpLiteral(s.args) : ''}),`);
+    lines.push(`                ${codePhpLiteral(s.then)},`);
+    lines.push('            )],');
+  }
+  lines.push('        ];');
+  lines.push('    }');
+  lines.push(CODE_PHP_SCENARIO_RUNNER);
+  lines.push('}');
+  lines.push('');
+  lines.push('if (PHP_SAPI === \'cli\' && realpath($_SERVER[\'SCRIPT_FILENAME\'] ?? \'\') === __FILE__) {');
+  lines.push('    foreach ([getcwd() . \'/vendor/autoload.php\', __DIR__ . \'/vendor/autoload.php\'] as $autoload) {');
+  lines.push('        if (is_file($autoload)) {');
+  lines.push('            require_once $autoload;');
+  lines.push('            break;');
+  lines.push('        }');
+  lines.push('    }');
+  lines.push('    exit(Scenarios::run());');
+  lines.push('}');
+  return lines.join('\n');
+}
+
+// ============================================================
+// The fixed parts of the PHP output.
+// ============================================================
+
+const CODE_PHP_USES = `use Wwwision\\DCBEventStore\\AppendCondition\\AppendCondition as DcbAppendCondition;
+use Wwwision\\DCBEventStore\\Event\\Event as DcbEvent;
+use Wwwision\\DCBEventStore\\Event\\Events as DcbEvents;
+use Wwwision\\DCBEventStore\\EventStore as DcbEventStore;
+use Wwwision\\DCBEventStore\\InMemoryEventStore\\InMemoryEventStore as DcbInMemoryEventStore;
+use Wwwision\\DCBEventStore\\Query\\Query as DcbQuery;
+use Wwwision\\DCBEventStore\\Query\\QueryItem as DcbQueryItem;
+use Wwwision\\DCBEventStore\\ReadOptions as DcbReadOptions;
+use Wwwision\\DCBEventStore\\SequencedEvent\\SequencedEvent as DcbSequencedEvent;`;
+
+const CODE_PHP_RUNTIME = `
+// ---- Runtime ------------------------------------------------------
+
+/** A command or read that cannot be decided at all. A rule refusing a command is no error: it is a Rejected. */
+final class EvaluationError extends \\RuntimeException {}
+
+/** A definition the export could not translate (see the list at the top). */
+final class NotExported extends \\LogicException
+{
+    public function __construct(string $what, string $reason)
+    {
+        parent::__construct("{$what} is not exported: {$reason}");
+    }
+}
+
+interface DomainEvent
+{
+    public static function fromArray(array $data): self;
+
+    public function toArray(): array;
+}
+
+/** The command was accepted: these events, appended under this condition. */
+final readonly class Accepted
+{
+    /** @param list<DomainEvent> $events */
+    public function __construct(public array $events, public ?DcbAppendCondition $appendCondition) {}
+}
+
+/** A rule refused the command. */
+final readonly class Rejected
+{
+    public function __construct(public ?string $reason) {}
+}
+
+final class Runtime
+{
+    /** Values compare by content, a record's key order aside. */
+    public static function canonical(mixed $value): mixed
+    {
+        if (!is_array($value)) {
+            return $value;
+        }
+        $out = array_map(self::canonical(...), $value);
+        if (!array_is_list($out)) {
+            ksort($out, SORT_STRING);
+        }
+        return $out;
+    }
+
+    public static function equals(mixed $a, mixed $b): bool
+    {
+        return json_encode(self::canonical($a)) === json_encode(self::canonical($b));
+    }
+
+    /** A record (an array with keys) is one value; null is none. */
+    public static function asList(mixed $value): array
+    {
+        if ($value === null) {
+            return [];
+        }
+        return is_array($value) && array_is_list($value) ? $value : [$value];
+    }
+
+    public static function isEmpty(mixed $value): bool
+    {
+        return $value === null || $value === '' || $value === [];
+    }
+
+    private static function number(mixed $value, string $what): int|float
+    {
+        if (!is_int($value) && !is_float($value)) {
+            throw new EvaluationError(sprintf('%s needs a number but got %s.', $what, json_encode($value)));
+        }
+        return $value;
+    }
+
+    public static function increment(mixed $state, mixed $by): int|float
+    {
+        return self::number($state, 'An increment') + self::number($by, 'An increment');
+    }
+
+    public static function decrement(mixed $state, mixed $by): int|float
+    {
+        return self::number($state, 'A decrement') - self::number($by, 'A decrement');
+    }
+
+    /** The next identifier: a number plus one, or a string's trailing digits stepped at their width (c1 → c2, inv-009 → inv-010). */
+    public static function successor(mixed $value): mixed
+    {
+        if (is_int($value) || is_float($value)) {
+            return $value + 1;
+        }
+        if (!is_string($value) || preg_match('/^(.*?)(\\d+)$/', $value, $match) !== 1) {
+            throw new EvaluationError(sprintf('No successor is defined for %s.', json_encode($value)));
+        }
+        $digits = $match[2];
+        for ($i = strlen($digits) - 1; $i >= 0; $i--) {
+            if ($digits[$i] !== '9') {
+                $digits[$i] = (string) ((int) $digits[$i] + 1);
+                return $match[1] . $digits;
+            }
+            $digits[$i] = '0';
+        }
+        return $match[1] . '1' . $digits;
+    }
+
+    /** Appending a list appends its elements. */
+    public static function append(mixed $list, mixed $value): array
+    {
+        return [...self::asList($list), ...(is_array($value) && array_is_list($value) ? $value : [$value])];
+    }
+
+    /** Removes the first match only. */
+    public static function remove(mixed $list, mixed $value): array
+    {
+        $out = self::asList($list);
+        foreach ($out as $i => $element) {
+            if (self::equals($element, $value)) {
+                array_splice($out, $i, 1);
+                break;
+            }
+        }
+        return $out;
+    }
+
+    /** A field of a record — of each record, read off a list. */
+    public static function field(mixed $value, string $name): mixed
+    {
+        if (is_array($value) && array_is_list($value)) {
+            return array_map(static fn (mixed $element) => is_array($element) ? ($element[$name] ?? null) : null, $value);
+        }
+        return is_array($value) ? ($value[$name] ?? null) : null;
+    }
+
+    public static function equalsAny(mixed $value, mixed $list): bool
+    {
+        foreach (self::asList($list) as $entry) {
+            if (self::equals($value, $entry)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static function count(mixed $value): int
+    {
+        return \\count(self::asList($value));
+    }
+
+    public static function contains(mixed $value, mixed $part): bool
+    {
+        if (is_string($value)) {
+            return $part !== null && str_contains($value, self::text($part));
+        }
+        return self::equalsAny($part, $value);
+    }
+
+    public static function containsAny(mixed $value, mixed $parts): bool
+    {
+        foreach (self::asList($value) as $element) {
+            if (self::equalsAny($element, $parts)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** An ordering needs both sides (null is not zero); strings order as text. */
+    private static function compare(mixed $a, mixed $b): int
+    {
+        if ($a === null || $b === null) {
+            throw new EvaluationError('An ordering against no value (null) — it needs both sides.');
+        }
+        return is_string($a) && is_string($b) ? strcmp($a, $b) : $a <=> $b;
+    }
+
+    public static function lessThan(mixed $a, mixed $b): bool { return self::compare($a, $b) < 0; }
+    public static function lessThanOrEquals(mixed $a, mixed $b): bool { return self::compare($a, $b) <= 0; }
+    public static function greaterThan(mixed $a, mixed $b): bool { return self::compare($a, $b) > 0; }
+    public static function greaterThanOrEquals(mixed $a, mixed $b): bool { return self::compare($a, $b) >= 0; }
+
+    public static function startsWith(mixed $a, mixed $b): bool
+    {
+        return $a !== null && $b !== null && str_starts_with(self::text($a), self::text($b));
+    }
+
+    public static function endsWith(mixed $a, mixed $b): bool
+    {
+        return $a !== null && $b !== null && str_ends_with(self::text($a), self::text($b));
+    }
+
+    /** Arithmetic of a derived projection: an unknown side keeps it unknown. */
+    private static function arithmetic(mixed $a, mixed $b, \\Closure $fn): int|float|null
+    {
+        if ($a === null || $b === null) {
+            return null;
+        }
+        return $fn(self::number($a, 'A computation'), self::number($b, 'A computation'));
+    }
+
+    public static function add(mixed $a, mixed $b): int|float|null { return self::arithmetic($a, $b, static fn ($x, $y) => $x + $y); }
+    public static function subtract(mixed $a, mixed $b): int|float|null { return self::arithmetic($a, $b, static fn ($x, $y) => $x - $y); }
+    public static function multiply(mixed $a, mixed $b): int|float|null { return self::arithmetic($a, $b, static fn ($x, $y) => $x * $y); }
+    public static function min(mixed $a, mixed $b): int|float|null { return self::arithmetic($a, $b, static fn ($x, $y) => \\min($x, $y)); }
+    public static function max(mixed $a, mixed $b): int|float|null { return self::arithmetic($a, $b, static fn ($x, $y) => \\max($x, $y)); }
+
+    /** A value as text, the way a tag or a string comparison reads it. */
+    public static function text(mixed $value): string
+    {
+        return match (true) {
+            is_string($value) => $value,
+            is_bool($value) => $value ? 'true' : 'false',
+            $value === null => 'null',
+            is_int($value), is_float($value) => (string) $value,
+            default => (string) json_encode($value),
+        };
+    }
+
+    /** One tag, written through its type's tag schema — a read needs a value for it. */
+    public static function tag(string $type, mixed $value, string $what, ?string $field = null): string
+    {
+        if ($value === null) {
+            throw new EvaluationError("{$what} has no value (null).");
+        }
+        if (is_array($value) && array_is_list($value)) {
+            throw new EvaluationError("{$what} takes one value, not a list.");
+        }
+        return Model::renderTag($type, $field !== null ? ($value[$field] ?? null) : $value);
+    }
+
+    public static function read(ProjectionDefinition $projection, array $tags, array $args = []): Read
+    {
+        return new Read($projection, $tags, $args);
+    }
+
+    /** A read made once per element of a list — one fold, and one query item, each. */
+    public static function readEach(ProjectionDefinition $projection, mixed $elements, \\Closure $tagsOf, array $args = []): Read
+    {
+        return new Read($projection, [], $args, array_map($tagsOf, self::asList($elements)));
+    }
+
+    /** A rule over fanned reads holds for every instance — vacuously for none. */
+    public static function every(array $lists, \\Closure $held): bool
+    {
+        if (\\count(array_unique(array_map(\\count(...), $lists))) > 1) {
+            throw new EvaluationError('A rule reads fanned-out lists of different lengths, so there is no pairing to check.');
+        }
+        for ($i = 0; $i < \\count($lists[0] ?? []); $i++) {
+            if (!$held($i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** A fanned read, read whole: a list of lists flattens. */
+    public static function flat(array $values): array
+    {
+        foreach ($values as $value) {
+            if (is_array($value) && array_is_list($value)) {
+                return array_merge(...array_map(self::asList(...), $values));
+            }
+        }
+        return $values;
+    }
+
+    public static function argument(array $args, string $name, ?string $command): mixed
+    {
+        if (array_key_exists($name, $args)) {
+            return $args[$name];
+        }
+        if ($command === null) {
+            return null;
+        }
+        throw new EvaluationError(sprintf('"%s" needs a value for "%s".', $command, $name));
+    }
+}
+
+/** An event as a fold reads it: its type, its object and its tags. */
+final readonly class Folded
+{
+    /** @param list<string> $tags */
+    public function __construct(public string $type, public DomainEvent $event, public array $tags) {}
+}
+
+interface ProjectionDefinition
+{
+    /** @return list<DcbQueryItem> the query a read by these tags makes */
+    public function queryItems(array $tags): array;
+
+    /** @param list<Folded> $events */
+    public function fold(array $events, array $tags, array $args = []): mixed;
+}
+
+/** A projection folds the events its own query matches: one of its handled types, carrying all of its tags. */
+final readonly class Projection implements ProjectionDefinition
+{
+    /** @param array<string, \\Closure(mixed, DomainEvent): mixed> $when */
+    public function __construct(
+        public string $name,
+        private \\Closure $tags,
+        private mixed $initialState,
+        private array $when,
+    ) {}
+
+    public function queryItems(array $tags): array
+    {
+        $wanted = ($this->tags)($tags);
+        if ($this->when === []) {
+            return [];
+        }
+        return [DcbQueryItem::create(eventTypes: array_keys($this->when), tags: $wanted === [] ? null : $wanted)];
+    }
+
+    public function fold(array $events, array $tags, array $args = []): mixed
+    {
+        $wanted = ($this->tags)($tags);
+        $state = $this->initialState;
+        foreach ($events as $folded) {
+            if (!array_key_exists($folded->type, $this->when) || array_diff($wanted, $folded->tags) !== []) {
+                continue;
+            }
+            $state = ($this->when[$folded->type])($state, $folded->event);
+        }
+        return $state;
+    }
+}
+
+/** A derived projection reads its operands and makes one value of them; its query is theirs, each under its own tags. */
+final readonly class Derived implements ProjectionDefinition
+{
+    public function __construct(
+        public string $name,
+        private \\Closure $tags,
+        private \\Closure $operands,
+        private \\Closure $value,
+    ) {}
+
+    public function queryItems(array $tags): array
+    {
+        ($this->tags)($tags);
+        $items = [];
+        foreach (($this->operands)($tags) as $operand) {
+            if ($operand instanceof Read) {
+                array_push($items, ...$operand->queryItems());
+            }
+        }
+        return $items;
+    }
+
+    public function fold(array $events, array $tags, array $args = []): mixed
+    {
+        ($this->tags)($tags);
+        $values = array_map(static fn (mixed $o) => $o instanceof Read ? $o->fold($events) : $o, ($this->operands)($tags));
+        return ($this->value)(...$values);
+    }
+}
+
+final readonly class NotExportedProjection implements ProjectionDefinition
+{
+    public function __construct(private string $what, private string $reason) {}
+
+    public function queryItems(array $tags): array { throw new NotExported($this->what, $this->reason); }
+
+    public function fold(array $events, array $tags, array $args = []): mixed { throw new NotExported($this->what, $this->reason); }
+}
+
+/** One read of a projection — by tags, or once per element of a list. */
+final readonly class Read
+{
+    public function __construct(
+        public ProjectionDefinition $projection,
+        public array $tags,
+        public array $args = [],
+        public ?array $each = null,
+    ) {}
+
+    /** @return list<DcbQueryItem> */
+    public function queryItems(): array
+    {
+        $items = [];
+        foreach ($this->each ?? [$this->tags] as $tags) {
+            array_push($items, ...$this->projection->queryItems($tags));
+        }
+        return $items;
+    }
+
+    public function fold(array $events): mixed
+    {
+        if ($this->each === null) {
+            return $this->projection->fold($events, $this->tags, $this->args);
+        }
+        return array_map(fn (array $tags) => $this->projection->fold($events, $tags, $this->args), $this->each);
+    }
+}
+
+/**
+ * The reads of one decision, in rounds — a later round's tags may be an
+ * earlier round's answers. Every query it ran becomes the append
+ * condition, ORed. One round appends after the last event it saw; more
+ * read the store's head first, see the store only up to it, and append
+ * after it — so the decision reads one state.
+ */
+final class DecisionModel
+{
+    /** @var list<DcbQueryItem> */
+    private array $items = [];
+    private ?int $after = null;
+    private bool $headRead = false;
+
+    public function __construct(private readonly DcbEventStore $store, private readonly int $rounds) {}
+
+    /** @param array<string, Read> $reads */
+    public function read(array $reads): array
+    {
+        $items = [];
+        foreach ($reads as $read) {
+            array_push($items, ...$read->queryItems());
+        }
+        $events = [];
+        if ($items !== []) {
+            if ($this->rounds > 1 && !$this->headRead) {
+                $this->headRead = true;
+                $this->after = $this->store->read(DcbQuery::all(), DcbReadOptions::create(limit: 1, backwards: true))->first()?->position->value;
+            }
+            foreach ($this->store->read(DcbQuery::fromItems(...$items)) as $sequenced) {
+                $position = $sequenced->position->value;
+                if ($this->rounds > 1 && ($this->after === null || $position > $this->after)) {
+                    continue;
+                }
+                if ($this->rounds === 1) {
+                    $this->after = max($this->after ?? 0, $position);
+                }
+                $folded = Model::decode($sequenced);
+                if ($folded !== null) {
+                    $events[] = $folded;
+                }
+            }
+            array_push($this->items, ...$items);
+        }
+        return array_map(static fn (Read $read) => $read->fold($events), $reads);
+    }
+
+    public function appendCondition(): ?DcbAppendCondition
+    {
+        return $this->items === [] ? null : DcbAppendCondition::create(DcbQuery::fromItems(...$this->items), $this->after);
+    }
+}`;
+
+const CODE_PHP_MODEL_METHODS = `    public static function renderTag(string $type, mixed $value): string
+    {
+        $schema = self::TAG_SCHEMAS[$type] ?? '{type}:{value}';
+        foreach (['{type}' => $type, '{value}' => Runtime::text($value)] as $placeholder => $text) {
+            $at = strpos($schema, $placeholder);
+            if ($at !== false) {
+                $schema = substr_replace($schema, $text, $at, strlen($placeholder));
+            }
+        }
+        return $schema;
+    }
+
+    /** @return list<string> the tags an event of \`$type\` carries, read off its payload */
+    public static function tagsOf(string $type, array $data): array
+    {
+        $tags = [];
+        foreach (self::EVENT_TAGS[$type] ?? [] as $leaf) {
+            $held = $data[$leaf['property']] ?? null;
+            foreach ($leaf['isList'] ? Runtime::asList($held) : [$held] as $element) {
+                $value = $leaf['field'] !== null ? (is_array($element) ? ($element[$leaf['field']] ?? null) : null) : $element;
+                if ($value !== null) {
+                    $tags[] = self::renderTag($leaf['tagType'], $value);
+                }
+            }
+        }
+        return array_values(array_unique($tags));
+    }
+
+    public static function toStoreEvent(DomainEvent $event): DcbEvent
+    {
+        $data = $event->toArray();
+        return DcbEvent::create($event::TYPE, $data === [] ? '{}' : $data, self::tagsOf($event::TYPE, $data));
+    }
+
+    /** A stored event as a fold reads it, or null for a type this model does not define. */
+    public static function decode(DcbSequencedEvent $sequenced): ?Folded
+    {
+        $type = $sequenced->event->type->value;
+        $class = self::EVENT_CLASSES[$type] ?? null;
+        if ($class === null) {
+            return null;
+        }
+        return new Folded($type, $class::fromArray($sequenced->event->data->jsonDecode()), $sequenced->event->tags->toStrings());
+    }`;
+
+const CODE_PHP_APP = `
+// ---- The application ----------------------------------------------
+
+/** The model, driven against an event store. */
+final readonly class App
+{
+    public function __construct(private DcbEventStore $store) {}
+
+    public function decide(string $command, array $args = []): Accepted|Rejected
+    {
+        return Commands::decide($this->store, $command, $args);
+    }
+
+    /** Decides, and appends what was published under the decision's append condition. */
+    public function handle(string $command, array $args = []): Accepted|Rejected
+    {
+        $decision = $this->decide($command, $args);
+        if ($decision instanceof Accepted && $decision->events !== []) {
+            $this->store->append(DcbEvents::fromArray(array_map(Model::toStoreEvent(...), $decision->events)), $decision->appendCondition);
+        }
+        return $decision;
+    }
+
+    /** A projection's current value, read by its tags. */
+    public function project(string $name, array $tags = [], array $args = []): mixed
+    {
+        $read = Runtime::read(Projections::byName($name), $tags, $args);
+        $items = $read->queryItems();
+        $events = [];
+        if ($items !== []) {
+            foreach ($this->store->read(DcbQuery::fromItems(...$items)) as $sequenced) {
+                $folded = Model::decode($sequenced);
+                if ($folded !== null) {
+                    $events[] = $folded;
+                }
+            }
+        }
+        return $read->fold($events);
+    }
+}`;
+
+const CODE_PHP_SCENARIO_RUNNER = `
+    private static function given(array $events): App
+    {
+        $store = DcbInMemoryEventStore::create();
+        foreach ($events as [$type, $data]) {
+            $store->append(DcbEvent::create($type, $data === [] ? '{}' : $data, Model::tagsOf($type, $data)));
+        }
+        return new App($store);
+    }
+
+    private static function decided(App $app, string $command, array $args): array
+    {
+        $decision = $app->handle($command, $args);
+        if ($decision instanceof Rejected) {
+            return ['rejected' => $decision->reason];
+        }
+        return ['published' => array_map(static fn (DomainEvent $e) => ['type' => $e::TYPE, 'data' => $e->toArray()], $decision->events)];
+    }
+
+    private static function same(mixed $actual, mixed $expected): ?string
+    {
+        return Runtime::equals($actual, $expected) ? null : sprintf('expected %s, got %s', json_encode($expected), json_encode($actual));
+    }
+
+    /** Runs every scenario, TAP-style; the exit code is the number that failed. */
+    public static function run(): int
+    {
+        $failed = 0;
+        foreach (self::all() as $n => [$name, $skip, $check]) {
+            $label = ($n + 1) . ' - ' . $name;
+            if ($skip !== null) {
+                echo "ok {$label} # SKIP {$skip}\\n";
+                continue;
+            }
+            try {
+                $problem = $check();
+            } catch (\\Throwable $e) {
+                $problem = get_class($e) . ': ' . $e->getMessage();
+            }
+            if ($problem === null) {
+                echo "ok {$label}\\n";
+            } else {
+                $failed++;
+                echo "not ok {$label}\\n  # {$problem}\\n";
+            }
+        }
+        echo '1..' . \\count(self::all()) . "\\n";
+        return min($failed, 255);
+    }`;
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { codePlan, generateCode, CODE_TARGETS };

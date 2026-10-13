@@ -1188,8 +1188,9 @@ step at the playhead. Only the step band scrolls.
 ## Code export
 
 - **What it is** (experimental, 2026-10). The model exported as
-  implementation source, for someone to take away: one dependency-free
-  ES module per model (`codegen.js`). Each command decides against an
+  implementation source, for someone to take away (`codegen.js`). In
+  JavaScript it is one dependency-free ES module per model; PHP is
+  below. Each command decides against an
   `EventStore` port in the shape of the DCB specification (`read`
   answering the matching events and the store's head position,
   `append` under a condition). It then appends what it publishes
@@ -1228,6 +1229,29 @@ step at the playhead. Only the step band scrolls.
   file's header lists every stub. Nothing is approximated. Fan-out over a
   projection read is translated (`readEach`, `every`), because
   `pricing-simple` needs it and is not experimental.
+- **PHP, against wwwision/dcb-eventstore** (`^5.0`). Written
+  against the library directly rather than a port of our own: it is
+  a real store to take the export to, and its in-memory store runs the
+  scenarios. The output is one file in its own namespace
+  (`DcbModel\<Name>`): a final readonly class per event
+  (`fromArray`/`toArray`, the wire names kept), the projections built
+  once, the commands as static methods deciding `Accepted` or
+  `Rejected`, and an `App` that appends. The library's `read` answers
+  no head position. So a command reading in one round appends after
+  the last event it saw. One reading in more first reads the head
+  (`Query::all()`, backwards, limit 1), sees the store only up to it,
+  and appends after it. A projection with no handlers sends no query
+  item, since the library refuses one with neither types nor tags.
+  Scripts are JavaScript, so they are stubbed. The scenarios run
+  without PHPUnit: `php <file>` prints TAP and exits with the number
+  that failed, so the export needs nothing beyond the library.
+  Known divergences: the library refuses a tag outside
+  `[alnum-_:]`, and `strict_types` refuses a value an event's
+  property type does not take (a null for a required one). The
+  playground accepts both. The suite's PHP checks need `php` and
+  `composer`: the library is installed once into a cache under the
+  temporary directory. Without them the checks are skipped, except
+  in CI (`DCB_REQUIRE_PHP`).
 - **Options.** The model's scenarios become `node:test` tests in the
   same file, behind `import.meta.main`, so importing the module runs
   nothing. The other options are the bundled in-memory store, each
