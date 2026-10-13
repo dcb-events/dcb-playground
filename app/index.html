@@ -750,13 +750,15 @@
   .modal a { color: var(--accent); font-weight: 600; text-decoration: none; }
   .modal a:hover { text-decoration: underline; }
   .modal > header .grow { flex: 1; }
+  .modal > footer { display: flex; align-items: center; gap: 8px; margin-top: 18px; }
+  .modal > footer .grow { flex: 1; }
   /* On a phone every dialog is the whole screen — Settings and quick
      open included. A card with a margin round it spends width the
      content needs, and its height was 100vh, which on a phone is taller
      than what is visible; dvh is what is visible (vh stays as the
      fallback). The header holds the × and stays put while the body
      scrolls, since with no backdrop left to tap the × and Escape are
-     the ways out; a closing "Done" stays where the content ends. The
+     the ways out; the footer's Close stays where the content ends. The
      thin backdrop Settings uses to show its changes landing has
      nothing to show through here — the one change worth watching, the
      theme, sits in the bar's ⋯ menu. */
@@ -839,10 +841,7 @@
   }
   .help-features dt { font-weight: 600; }
   .help-features dd { margin: 0; color: var(--muted); }
-  .help-modal > footer {
-    display: flex; align-items: center; justify-content: space-between; gap: 12px;
-    padding: 12px 18px; border-top: 1px solid var(--border);
-  }
+  .help-modal > footer { gap: 12px; margin: 0; padding: 12px 18px; border-top: 1px solid var(--border); }
   .help-links { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 13px; }
   /* A keyboard's shortcuts mean nothing on a phone. */
   @media (hover: none) and (pointer: coarse) {
@@ -863,7 +862,7 @@
     .help-nav-item.active { box-shadow: inset 0 -2px 0 var(--accent); }
     .help-nav hr { display: none; }
     .help-body { padding: 16px; }
-    .help-modal > footer { flex-wrap: wrap; justify-content: flex-end; }
+    .help-modal > footer { flex-wrap: wrap; }
     .help-links { flex-basis: 100%; }
   }
   @media (max-width: 560px) {
@@ -1979,8 +1978,7 @@ function modelsModal() {
     h('div', { class: 'setting' }, h('h4', {}, 'Start a new one'), startNew),
     h('div', { class: 'setting muted small' }, 'Looking for inspiration? ',
       h('a', { href: EXAMPLES_URL, target: '_blank', rel: 'noopener' }, 'Browse the examples on dcb.events ↗')),
-    activeId ? h('div', { class: 'adder', style: 'margin-top:18px' },
-      h('button', { class: 'btn primary', onclick: close }, 'Done')) : null);
+    activeId ? modalFooter(close) : null);
   setTimeout(() => modal.focus(), 0);
   return overlayAround(modal, close);
 }
@@ -2307,8 +2305,7 @@ function renderSettingsModal(host) {
           h('div', { class: 'label' }, label),
           h('div', { class: 'desc' }, description)));
       }))),
-    h('div', { class: 'adder', style: 'margin-top:18px' },
-      h('button', { class: 'btn primary', onclick: close }, 'Done')));
+    modalFooter(close));
 
   host.appendChild(overlayAround(modal, close, { thin: true }));
   setTimeout(() => modal.focus(), 0);
@@ -2330,6 +2327,13 @@ function labelDialog(modal) {
 // backdrop only counts when it is the backdrop that was clicked — a
 // click that started inside the modal and drifted out of it is not a
 // dismissal.
+// Every dialog ends the same way: whatever else it offers on the left,
+// Close on the right.
+function modalFooter(close, ...before) {
+  return h('footer', {}, ...before, h('span', { class: 'grow' }),
+    h('button', { class: 'btn', onclick: close }, 'Close'));
+}
+
 function overlayAround(modal, close, { thin = false } = {}) {
   labelDialog(modal);
   return h('div', {
@@ -2554,9 +2558,7 @@ function definitionModal(model) {
       h('span', { class: 'grow' }),
       h('button', { class: 'btn ghost', onclick: close, title: 'Close', 'aria-label': 'Close' }, '×')),
     h('div', { class: 'def-body' }, body),
-    h('div', { class: 'adder', style: 'margin-top:18px' },
-      h('button', { class: 'btn primary', onclick: close }, 'Done'),
-      h('span', { class: 'grow' }),
+    modalFooter(close,
       exists ? h('button', {
         class: 'btn ghost tiny', title: `Leave the command for this ${noun}’s own page`,
         onclick: () => {
@@ -2819,12 +2821,11 @@ function helpModal() {
         h('hr', { class: 'help-keys' }),
         navItem('keys', '⌨ Keyboard shortcuts', ' help-keys')),
       h('div', { class: 'help-body' }, page)),
-    h('footer', {},
+    modalFooter(close,
       h('div', { class: 'help-links' },
         h('a', { href: NOTATION_REFERENCE_URL, target: '_blank', rel: 'noopener' }, 'Notation reference ↗'),
         h('a', { href: FEEDBACK_URL, target: '_blank', rel: 'noopener' }, 'Feedback ↗'),
-        h('a', { href: ISSUES_URL, target: '_blank', rel: 'noopener' }, 'Report an issue ↗')),
-      h('button', { class: 'btn primary', onclick: close }, 'Close')));
+        h('a', { href: ISSUES_URL, target: '_blank', rel: 'noopener' }, 'Report an issue ↗'))));
   setTimeout(() => modal.focus(), 0);
   return overlayAround(modal, close);
 }
@@ -2857,12 +2858,13 @@ function renderImportGate() {
           ...handlers.map(({ event, code }) => h('div', {},
             h('div', { class: 'muted small' }, 'on ' + event),
             h('pre', {}, code)))))),
-    h('div', { class: 'adder', style: 'margin-top:18px' },
+    h('footer', {},
+      h('span', { class: 'grow' }),
+      h('button', { class: 'btn ghost', onclick: close }, 'Cancel'),
       h('button', {
         class: 'btn primary',
         onclick: () => { state.pendingImport = null; finishImport(envelope); },
-      }, 'Import anyway'),
-      h('button', { class: 'btn ghost', onclick: close }, 'Cancel')));
+      }, 'Import anyway')));
   setTimeout(() => modal.focus(), 0);
   return overlayAround(modal, close);
 }
@@ -3006,8 +3008,7 @@ function renderImportExportModal() {
         onclick: () => { state.ieTab = 'export'; render(); },
       }, 'Export')),
     state.ieTab === 'import' ? importPanel : exportPanel,
-    h('div', { class: 'adder', style: 'margin-top:18px' },
-      h('button', { class: 'btn', onclick: close }, 'Done')));
+    modalFooter(close));
 
   setTimeout(() => modal.focus(), 0);
   return overlayAround(modal, close);
@@ -3365,8 +3366,7 @@ function problemsPanel() {
       onclick: () => { close(); p.go(); render(); },
     }, h('span', { class: 'diag-mark' }, '⚠'),
       h('span', {}, p.what), h('span', { class: 'why' }, p.why))),
-    h('div', { class: 'adder', style: 'margin-top:14px' },
-      h('button', { class: 'btn primary', onclick: close }, 'Done')));
+    modalFooter(close));
   const overlay = overlayAround(modal, close);
   setTimeout(() => modal.focus(), 0);
   return overlay;

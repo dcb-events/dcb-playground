@@ -5000,8 +5000,8 @@ check('the reference links only anchors the website defines', () => {
     eq(/autosaved/.test(textOf(modal())), true, 'now its editor');
     eq(sandbox.state.projDraft && sandbox.state.projDraft.name, 'CourseSeats', 'editing through its draft');
 
-    press(modal(), 'Done');
-    eq(sandbox.state.defFrames.length, 0, 'Done closes it');
+    press(modal(), 'Close');
+    eq(sandbox.state.defFrames.length, 0, 'Close closes it');
     eq(sandbox.state.ruleDraft, rule, 'the very rule that asked is back');
     eq(rule.target, 'projection:CourseSeats', 'with the new projection as its answer');
     eq(sandbox.state.adder, 'rule', 'and its adder still open');
@@ -5035,7 +5035,7 @@ check('the reference links only anchors the website defines', () => {
     eq(!!model()['custom-type-definitions'].Seat, true, 'the type is created');
     eq(/value/.test(textOf(modal())), true, 'and its editor shows, with the field it starts with');
     eq(sandbox.state.fieldDraft, null, 'the input row is still set aside');
-    press(modal(), 'Done');
+    press(modal(), 'Close');
     eq(sandbox.state.fieldDraft, field, 'the half-typed input is back');
     eq(field.propertyType, 'Seat', 'typed with the new type');
     eq(field.name, 'seat', 'its name untouched');
@@ -5079,7 +5079,7 @@ check('the reference links only anchors the website defines', () => {
     press(modal(), 'tag type');
     eq(model()['custom-type-definitions'].SeatId.isTag, true, 'and back');
     press(modal(), 'Advanced');
-    press(modal(), 'Done');
+    press(modal(), 'Close');
   });
 
   check('a projection\'s modal may open a type\'s — one level, and the way back is named', () => {
@@ -5124,7 +5124,7 @@ check('the reference links only anchors the website defines', () => {
     eq(sandbox.state.defFrames.length, 1, 'opens it');
     eq(!!button(modal(), 'Rename'), true, 'renamed here');
     eq(!!button(modal(), 'Remove'), false, 'but never removed from under the command');
-    press(modal(), 'Done');
+    press(modal(), 'Close');
   });
 
   check('another dialog closes it and gives the page its forms back', () => {
