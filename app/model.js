@@ -471,7 +471,7 @@ function apply(models, event) {
     return;
   }
   // Appended by `replaceDefinitions` when the code view's `model "…"`
-  // header changed — the one way to rename a model.
+  // header changed, and by `renameDcbModel` from the bar's name field.
   if (type === 'dcb-model-renamed') {
     if (models[modelId]) models[modelId].name = data.name;
     return;
@@ -2634,6 +2634,16 @@ function createDcbModel(name) {
 function deleteDcbModel(id) {
   if (!projectState()[id]) throw new DomainError('Model does not exist.');
   appendEvents([{ type: 'dcb-model-deleted', data: { 'dcb-model-id': id } }]);
+}
+
+// The same event the code view's `model "…"` header appends (see
+// `replaceDefinitions`), for the bar's name field. A name that is
+// already the model's appends nothing.
+function renameDcbModel(id, name) {
+  const model = getCtxOrThrow(id);
+  const trimmed = validateModelName(name);
+  if (trimmed === model.name) return;
+  appendEvents([{ type: 'dcb-model-renamed', data: { 'dcb-model-id': id, name: trimmed } }]);
 }
 
 // Definitions ------------------------------------------------------------

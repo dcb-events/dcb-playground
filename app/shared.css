@@ -139,6 +139,7 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
   background: #fef3c7; color: #92400e; border-bottom: 1px solid #fde68a;
 }
 body.f-dark .disclaimer { background: #2d2408; color: #fcd34d; border-bottom-color: #4a3b0f; }
+.disclaimer a { color: inherit; margin-left: 4px; }
 
 .app-bar {
   display: flex; align-items: center; gap: 16px;
@@ -167,6 +168,27 @@ body.f-dark .disclaimer { background: #2d2408; color: #fcd34d; border-bottom-col
 .model-switch:hover .brand-title, .model-switch:hover .model-name, .model-switch:hover .caret { color: var(--accent); }
 .model-switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .brand-mark { flex: none; width: 22px; height: 22px; display: block; }
+
+/* The name as a field, on a linked copy's first change — see
+   `namePromptField`. In the accent, so the bar's one changed part
+   reads as the thing being asked about; the note under it is an
+   anchored card, not a dialog, because nothing waits on it. */
+.name-prompt { position: relative; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.name-prompt .brand-title { font-size: 16px; font-weight: 600; white-space: nowrap; }
+.name-prompt .sep { color: var(--border-strong); }
+.app-bar .name-prompt-input {
+  width: 240px; min-width: 0; padding: 4px 8px; font-size: 14px; font-weight: 500;
+  border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.name-prompt-pop {
+  position: absolute; top: calc(100% + 10px); left: 0; z-index: 21;
+  width: 340px; max-width: calc(100vw - 20px); box-sizing: border-box;
+  padding: 14px 16px; background: var(--elevated);
+  border: 1px solid var(--border-strong); border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, .25);
+}
+.name-prompt-pop p { margin: 4px 0 12px; font-size: 13px; color: var(--muted); }
+.name-prompt-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
 .app-bar #model-switch, .app-bar #tools, .app-bar #jump, .app-bar #actions {
   display: flex; align-items: center; gap: 4px;
@@ -226,10 +248,7 @@ body.f-dark .disclaimer { background: #2d2408; color: #fcd34d; border-bottom-col
 .app-bar .trigger:hover { border-color: var(--border-strong); color: var(--text); background: var(--surface); }
 .app-bar .trigger svg { flex: none; width: 14px; height: 14px; }
 .app-bar .trigger .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.app-bar .trigger .kbd {
-  margin-left: auto; flex: none; font-family: var(--mono); font-size: 10px; color: var(--muted);
-  border: 1px solid var(--border); border-radius: 4px; padding: 0 4px;
-}
+.app-bar .trigger kbd { margin-left: auto; flex: none; font-size: 10px; color: var(--muted); }
 
 /* ---------- narrow screens ----------
    One breakpoint, everything the bar and the rail need to keep working
@@ -250,6 +269,12 @@ body.f-dark .disclaimer { background: #2d2408; color: #fcd34d; border-bottom-col
      the bar a gap for a box that is empty. */
   .app-bar .spacer { display: none; }
   .app-bar #model-switch { margin-right: auto; }
+  /* The name field gives like the name does; its note spans the
+     screen under the bar rather than hanging off a field that may sit
+     anywhere in it. */
+  .name-prompt .brand-title, .name-prompt .sep { display: none; }
+  .app-bar .name-prompt-input { width: 100%; }
+  .name-prompt-pop { position: fixed; top: calc(var(--topbar-h) + 6px); left: 10px; right: 10px; width: auto; }
   .model-switch .brand-title:has(+ .sep), .model-switch .sep { display: none; }
   /* The name is the one part of the bar that gives: everything else
      keeps its size and the name ellipsizes into whatever is left. Flex
@@ -263,10 +288,16 @@ body.f-dark .disclaimer { background: #2d2408; color: #fcd34d; border-bottom-col
   .app-bar .icon-btn svg { width: 18px; height: 18px; }
   .app-bar .trigger { padding: 0; justify-content: center; }
   .app-bar .trigger svg { width: 17px; height: 17px; }
-  .app-bar .trigger .label, .app-bar .trigger .kbd { display: none; }
+  .app-bar .trigger .label, .app-bar .trigger kbd { display: none; }
 }
 
 /* ---------- generic bits ---------- */
+
+/* A shortcut, as `kbd` in index.html spells it for this platform. */
+kbd {
+  font-family: var(--mono); font-size: .85em; white-space: nowrap;
+  border: 1px solid var(--border); border-radius: 4px; padding: 0 4px;
+}
 
 .btn {
   font: inherit; font-size: 13px;

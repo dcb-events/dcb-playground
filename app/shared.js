@@ -591,6 +591,14 @@ const NOTATION_REFERENCE_URL = 'https://dcb.events/notation/reference/';
 // The example models live on dcb.events too, each page opening its
 // model here through a share link.
 const EXAMPLES_URL = 'https://dcb.events/examples/';
+// Where to reach us: feedback through the site's About page, issues in
+// the website's repository — the playground's own takes pull requests
+// only. The title prefix tells playground issues apart in the shared
+// tracker; the label sticks only for those allowed to triage. The page
+// footer and the disclaimer spell the same two links in index.html.
+const FEEDBACK_URL = 'https://dcb.events/about/';
+const ISSUES_URL = 'https://github.com/dcb-events/dcb-events.github.io/issues/new'
+  + '?labels=playground&title=%5BPlayground%5D%20';
 const NOTATION_ANCHORS = [
   'model', 'comments', 'literals', 'annotations', 'json', 'tag-type', 'type', 'enum', 'record', 'event',
   'projection', 'on', 'event-data', 'successor', 'current-value', 'entity', 'lifecycle', 'require',
@@ -678,6 +686,57 @@ function activeModelId() {
 function activeModel() {
   const id = activeModelId();
   return id ? projectState()[id] : null;
+}
+
+// ---------- copies opened from a link ----------
+//
+// A link — an example's "Open in Playground" on dcb.events, a shared
+// model — imports a copy, and nothing here ever writes back to where
+// it came from. Testers took their first edit of an example for an
+// edit of the example itself, so a copy's first change is where the
+// page says otherwise and offers to name it (`namePromptField`,
+// index.html). Kept per browser and outside the event log: it is a
+// fact about how this browser came by the model, not part of it.
+const LINKED_COPIES_KEY = 'dcb-playground:linked-copies';
+
+function linkedCopies() {
+  try {
+    const ids = JSON.parse(localStorage.getItem(LINKED_COPIES_KEY));
+    return Array.isArray(ids) ? ids : [];
+  } catch {
+    return [];
+  }
+}
+
+function setLinkedCopies(ids) {
+  if (ids.length) localStorage.setItem(LINKED_COPIES_KEY, JSON.stringify(ids));
+  else localStorage.removeItem(LINKED_COPIES_KEY);
+}
+
+// Marked once its import has landed, so the import is not its own
+// first change. Ids of models gone since are dropped on the way.
+function markLinkedCopy(id) {
+  const models = projectState();
+  setLinkedCopies([...linkedCopies().filter((other) => other !== id && models[other]), id]);
+}
+
+// The linked copy these appended events first change, if any — and
+// every copy they touch is unmarked, so each is asked about once. A
+// rename or a delete unmarks without asking: the one has answered the
+// question already, the other has made it moot.
+function takeFirstChange(appended) {
+  const marked = linkedCopies();
+  if (!marked.length) return null;
+  const left = new Set(marked);
+  let changed = null;
+  for (const event of appended) {
+    const id = event.data && event.data['dcb-model-id'];
+    if (!left.has(id)) continue;
+    left.delete(id);
+    if (!changed && !event.type.startsWith('dcb-model-')) changed = id;
+  }
+  if (left.size !== marked.length) setLinkedCopies([...left]);
+  return changed;
 }
 
 // A model with nothing in it at all — no entities, no events, no

@@ -750,13 +750,15 @@
   .modal a { color: var(--accent); font-weight: 600; text-decoration: none; }
   .modal a:hover { text-decoration: underline; }
   .modal > header .grow { flex: 1; }
+  .modal > footer { display: flex; align-items: center; gap: 8px; margin-top: 18px; }
+  .modal > footer .grow { flex: 1; }
   /* On a phone every dialog is the whole screen — Settings and quick
      open included. A card with a margin round it spends width the
      content needs, and its height was 100vh, which on a phone is taller
      than what is visible; dvh is what is visible (vh stays as the
      fallback). The header holds the × and stays put while the body
      scrolls, since with no backdrop left to tap the × and Escape are
-     the ways out; a closing "Done" stays where the content ends. The
+     the ways out; the footer's Close stays where the content ends. The
      thin backdrop Settings uses to show its changes landing has
      nothing to show through here — the one change worth watching, the
      theme, sits in the bar's ⋯ menu. */
@@ -786,15 +788,86 @@
   .btn.def-edit { padding: 0 4px; margin-left: 2px; color: var(--muted); }
   .btn.def-edit::before { content: '✎'; }
   .btn.def-edit:hover { color: var(--accent); }
-  .help-modal p { font-size: 13.5px; line-height: 1.6; margin: 12px 0; }
+  /* The help: a sidebar of pages and the page beside it, a fixed
+     height so moving between pages does not resize the dialog, and a
+     footer that stays put while the page scrolls. */
+  .modal.help-modal {
+    width: 820px; height: 640px; max-height: calc(100vh - 100px);
+    display: flex; flex-direction: column; padding: 0; overflow: hidden;
+  }
+  .help-modal > header { padding: 14px 18px 12px; margin: 0; border-bottom: 1px solid var(--border); }
+  .help-panes { display: flex; flex: 1; min-height: 0; }
+  .help-nav {
+    width: 190px; flex: none; display: flex; flex-direction: column; gap: 1px;
+    padding: 12px 10px; overflow-y: auto;
+    background: var(--bg); border-right: 1px solid var(--border);
+  }
+  .help-nav-item {
+    font: inherit; font-size: 13px; text-align: left; padding: 7px 10px;
+    border: 0; border-radius: 6px; background: transparent; color: var(--text); cursor: pointer;
+  }
+  .help-nav-item:hover { background: var(--accent-soft); color: var(--accent-strong); }
+  .help-nav-item.active { background: var(--surface); font-weight: 600; box-shadow: inset 3px 0 0 var(--accent); }
+  .help-nav hr { border: 0; border-top: 1px solid var(--border); margin: auto 4px 8px; }
+  .help-body { flex: 1; min-width: 0; overflow-y: auto; padding: 20px 24px; }
+  .help-body > :first-child { margin-top: 0; }
+  .help-body p { font-size: 13.5px; line-height: 1.6; margin: 12px 0; }
+  .help-body h3 { font-size: 15px; margin: 0 0 4px; }
+  .help-body h4 {
+    font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .07em;
+    color: var(--muted); margin: 18px 0 0;
+  }
+  .help-body .help-claim { font-size: 17px; font-weight: 600; line-height: 1.4; }
+  .help-video {
+    position: relative; display: flex; align-items: center; justify-content: center;
+    aspect-ratio: 16 / 9; border-radius: var(--radius); background: linear-gradient(135deg, #0f172a, #1e293b);
+  }
+  .help-video:hover { text-decoration: none; }
+  .help-play {
+    width: 56px; height: 56px; border-radius: 50%; padding-left: 4px;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(255, 255, 255, .92); color: var(--accent-strong); font-size: 20px;
+  }
+  .help-video-caption { position: absolute; left: 12px; bottom: 10px; color: #fff; font-size: 12px; }
+  .help-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 16px 0 0; }
+  .help-cards > div {
+    padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+  }
+  .help-cards dt { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
+  .help-cards dd { margin: 0; font-size: 12px; line-height: 1.45; color: var(--muted); }
   .help-features {
     display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px;
-    margin: 16px 0; font-size: 12.5px; line-height: 1.5;
+    margin: 6px 0 0; font-size: 12.5px; line-height: 1.5;
   }
   .help-features dt { font-weight: 600; }
   .help-features dd { margin: 0; color: var(--muted); }
+  .help-modal > footer { gap: 12px; margin: 0; padding: 12px 18px; border-top: 1px solid var(--border); }
+  .help-links { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 13px; }
+  /* A keyboard's shortcuts mean nothing on a phone. */
+  @media (hover: none) and (pointer: coarse) {
+    .help-keys { display: none; }
+  }
+  /* On a phone the sidebar becomes a strip of pages above the page,
+     scrolling sideways, and the dialog is the whole screen like every
+     other. */
+  @media (max-width: 760px) {
+    .modal.help-modal { width: 100%; height: 100vh; height: 100dvh; max-height: none; padding: 0; }
+    .help-modal > header { margin: 0; padding: 10px 8px 10px 16px; }
+    .help-panes { flex-direction: column; }
+    .help-nav {
+      width: auto; flex-direction: row; gap: 4px; padding: 8px 12px; overflow-x: auto;
+      border-right: 0; border-bottom: 1px solid var(--border);
+    }
+    .help-nav-item { flex: none; white-space: nowrap; }
+    .help-nav-item.active { box-shadow: inset 0 -2px 0 var(--accent); }
+    .help-nav hr { display: none; }
+    .help-body { padding: 16px; }
+    .help-modal > footer { flex-wrap: wrap; }
+    .help-links { flex-basis: 100%; }
+  }
   @media (max-width: 560px) {
-    .help-features { grid-template-columns: 1fr; gap: 2px; }
+    .help-cards, .help-features { grid-template-columns: 1fr; }
+    .help-features { gap: 2px; }
     .help-features dd { margin-bottom: 8px; }
   }
   .setting { margin-top: 18px; }
@@ -1536,7 +1609,13 @@
   }
   .surface button + button { border-left: 1px solid var(--border); }
   .surface button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .surface.muted button { opacity: .55; }
+  .surface.muted button.on { background: var(--bg); color: var(--muted); }
   .surface button:not(.on):hover { color: var(--text); background: var(--bg); }
+  /* Each label is as wide as its bold self, so turning on does not
+     shift the bar: a hidden bold copy holds the width. */
+  .surface .label { display: inline-grid; }
+  .surface .label::after { content: attr(data-text); font-weight: 600; visibility: hidden; height: 0; overflow: hidden; }
   .surface-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--event); }
   .surface-icon { display: flex; }
   .surface-icon svg { width: 14px; height: 14px; display: block; }
@@ -1573,7 +1652,7 @@
   .code-strip.bad .code-dot { background: var(--danger); }
   .code-strip .mono { font-size: 11.5px; }
   .code-strip .btn.tiny { padding: 2px 10px; }
-  .code-strip .kbd { font-family: var(--mono); font-size: 10.5px; opacity: .7; }
+  .code-strip kbd { font-size: 10.5px; opacity: .7; border: 0; padding: 0; }
   .code-editor { overflow: hidden; }
   .code-editor .code-read-hint { color: var(--muted); }
   /* A scenarios group: a gutter stripe (see `codeScenarioMarks`), the
@@ -1594,7 +1673,8 @@
 <body>
 
 <div class="topbar">
-  <div class="disclaimer">Experimental — everything here is subject to change.</div>
+  <div class="disclaimer">Experimental — everything here is subject to change.
+    <a href="https://dcb.events/about/" target="_blank" rel="noopener">Feedback welcome ↗</a></div>
   <div class="app-bar">
     <span id="menu-toggle"></span>
     <a class="brand-home" href="https://dcb.events/" target="_blank" rel="noopener" title="dcb.events">
@@ -1617,7 +1697,9 @@
   © <span id="footer-year"></span> – Except where otherwise noted, content on this site is licensed under a
   <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener">Creative Commons
   Attribution-ShareAlike 4.0 International</a> license. ·
-  <a href="https://dcb.events" target="_blank" rel="noopener">dcb.events ↗</a>
+  <a href="https://dcb.events" target="_blank" rel="noopener">dcb.events ↗</a> ·
+  <a href="https://dcb.events/about/" target="_blank" rel="noopener">Feedback ↗</a> ·
+  <a href="https://github.com/dcb-events/dcb-events.github.io/issues/new?labels=playground&amp;title=%5BPlayground%5D%20" target="_blank" rel="noopener">Report an issue ↗</a>
 </footer>
 <div id="modal-host"></div>
 <div id="palette-host"></div>
@@ -1702,9 +1784,11 @@ const state = {
   pendingImport: null,      // a decoded share envelope waiting on the scripted-code confirm
   settings: false,          // the settings modal
   help: false,              // the help modal — see `helpModal`
+  helpPage: 'start',        // within the help modal: the page its sidebar has open
   problems: false,         // the loose-ends-and-drifted-scenarios panel
   railOpen: false,          // the rail, as an off-canvas drawer on a narrow screen
   moreOpen: false,          // the bar's ⋯ menu, on a narrow screen — see `moreMenu`
+  namePrompt: null,         // { id, draft } — a linked copy's first change, asking for a name; see `namePromptField`
   importExport: false,      // the Import & Export modal
   ieTab: 'import',          // within it: 'import' | 'export'
   ieImportMode: 'url',      // within Import: 'url' | 'json'
@@ -1744,6 +1828,11 @@ function beginImport(envelope) {
   finishImport(envelope);
 }
 
+// Envelopes that came in through a link rather than the models dialog
+// — what `markLinkedCopy` (shared.js) is told about once they land,
+// across the script gate if there is one.
+const linkedEnvelopes = new WeakSet();
+
 // What opening a different stored model means, wherever it happens —
 // the models dialog, an import, the fallback after a delete. The
 // sandbox session and the pending feature groups are browser-global,
@@ -1753,6 +1842,7 @@ function switchToModel(id) {
   localStorage.setItem(MODEL_KEY, id);
   sessionReset();
   setPendingFeatures([]);
+  state.namePrompt = null;
   state.slice = null;
   state.view = 'overview';
 }
@@ -1760,6 +1850,7 @@ function switchToModel(id) {
 function finishImport(envelope) {
   run(() => {
     const { modelId, skipped } = importModelFromEnvelope(envelope);
+    if (linkedEnvelopes.has(envelope)) markLinkedCopy(modelId);
     switchToModel(modelId);
     // A model is now loaded, so whatever opened the models dialog — a
     // click on the bar, or entering the page without a model link — is
@@ -1901,8 +1992,7 @@ function modelsModal() {
     h('div', { class: 'setting' }, h('h4', {}, 'Start a new one'), startNew),
     h('div', { class: 'setting muted small' }, 'Looking for inspiration? ',
       h('a', { href: EXAMPLES_URL, target: '_blank', rel: 'noopener' }, 'Browse the examples on dcb.events ↗')),
-    activeId ? h('div', { class: 'adder', style: 'margin-top:18px' },
-      h('button', { class: 'btn primary', onclick: close }, 'Done')) : null);
+    activeId ? modalFooter(close) : null);
   setTimeout(() => modal.focus(), 0);
   return overlayAround(modal, close);
 }
@@ -1976,18 +2066,22 @@ const CODE_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor
 
 // Pages or code — two surfaces over one model, see `renderCode`. The
 // dot says a text is waiting to be applied, wherever you are.
+// On a page the code does not follow it is muted, not gone: it still
+// says and sets the surface, and still carries the dot.
 function surfaceToggle(model) {
   const waiting = codeView.modelId === model.id && codeDirty();
-  return h('span', { class: 'surface', role: 'group', 'aria-label': 'Show the model as' },
+  const muted = !codeFollowsPage();
+  const hint = muted ? ' — no code view for this page; applies on definition pages' : '';
+  return h('span', { class: 'surface' + (muted ? ' muted' : ''), role: 'group', 'aria-label': 'Show the model as' },
     h('button', {
       type: 'button', class: state.code ? '' : 'on', 'aria-pressed': state.code ? 'false' : 'true',
-      title: 'The model as pages', 'aria-label': 'Visual', onclick: leaveCode,
-    }, h('span', { class: 'surface-icon' }, svg(VISUAL_ICON_SVG)), h('span', { class: 'label' }, 'Visual')),
+      title: 'The model as pages' + hint, 'aria-label': 'Visual', onclick: leaveCode,
+    }, h('span', { class: 'surface-icon' }, svg(VISUAL_ICON_SVG)), h('span', { class: 'label', 'data-text': 'Visual' }, 'Visual')),
     h('button', {
       type: 'button', class: state.code ? 'on' : '', 'aria-pressed': state.code ? 'true' : 'false',
-      title: waiting ? 'The model as code — edited, not applied' : 'The model as code',
+      title: (waiting ? 'The model as code — edited, not applied' : 'The model as code') + hint,
       'aria-label': 'Code', onclick: enterCode,
-    }, h('span', { class: 'surface-icon' }, svg(CODE_ICON_SVG)), h('span', { class: 'label' }, 'Code'),
+    }, h('span', { class: 'surface-icon' }, svg(CODE_ICON_SVG)), h('span', { class: 'label', 'data-text': 'Code' }, 'Code'),
     waiting ? h('span', { class: 'surface-dot' }) : null));
 }
 
@@ -2229,8 +2323,7 @@ function renderSettingsModal(host) {
           h('div', { class: 'label' }, label),
           h('div', { class: 'desc' }, description)));
       }))),
-    h('div', { class: 'adder', style: 'margin-top:18px' },
-      h('button', { class: 'btn primary', onclick: close }, 'Done')));
+    modalFooter(close));
 
   host.appendChild(overlayAround(modal, close, { thin: true }));
   setTimeout(() => modal.focus(), 0);
@@ -2252,6 +2345,13 @@ function labelDialog(modal) {
 // backdrop only counts when it is the backdrop that was clicked — a
 // click that started inside the modal and drifted out of it is not a
 // dismissal.
+// Every dialog ends the same way: whatever else it offers on the left,
+// Close on the right.
+function modalFooter(close, ...before) {
+  return h('footer', {}, ...before, h('span', { class: 'grow' }),
+    h('button', { class: 'btn', onclick: close }, 'Close'));
+}
+
 function overlayAround(modal, close, { thin = false } = {}) {
   labelDialog(modal);
   return h('div', {
@@ -2476,9 +2576,7 @@ function definitionModal(model) {
       h('span', { class: 'grow' }),
       h('button', { class: 'btn ghost', onclick: close, title: 'Close', 'aria-label': 'Close' }, '×')),
     h('div', { class: 'def-body' }, body),
-    h('div', { class: 'adder', style: 'margin-top:18px' },
-      h('button', { class: 'btn primary', onclick: close }, 'Done'),
-      h('span', { class: 'grow' }),
+    modalFooter(close,
       exists ? h('button', {
         class: 'btn ghost tiny', title: `Leave the command for this ${noun}’s own page`,
         onclick: () => {
@@ -2567,7 +2665,7 @@ function definitionModalProjection(model, frame, renamed) {
     h('div', {},
       ...projectionFields(model, frame.draft.body, { onNewType: projectionNewTypeOffer(model, frame) })),
     h('div', { class: 'pfoot' },
-      h('span', { class: 'muted tiny' }, 'autosaved · ⌘Z undoes'),
+      h('span', { class: 'muted tiny' }, 'autosaved · ', kbd('Mod+Z'), ' undoes'),
       h('span', { class: 'grow' }),
       h('button', {
         class: 'btn tiny', title: 'Rename the projection',
@@ -2580,34 +2678,107 @@ function definitionModalProjection(model, frame, renamed) {
 // What the playground is, said once, in a modal: the bar's button, the
 // `?` key and the models dialog's "What is this?" open it. It explains
 // the playground, not the notation — that is the reference on
-// dcb.events, the one place it links to, in a new tab.
+// dcb.events, linked from its footer in a new tab beside where to send
+// feedback and issues. A sidebar of pages,
+// not one long page: each feature gets a page its help text can grow
+// into, and the shortcuts sit apart at the bottom, out of the way of
+// someone reading about the playground.
 const HELP_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
   + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
   + '<circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>'
   + '<line x1="12" y1="17" x2="12.01" y2="17"></line></svg>';
 
+// The help's claim. Not "without code": the notation is code.
+const HELP_CLAIM = 'Model events and commands — see the boundary each one needs.';
+
+// The introductory video, once there is one: `{ url }`, opened on
+// dcb.events in a new tab rather than played here — the playground
+// fetches nothing at runtime. Until then the slot is left out.
+const HELP_VIDEO = null;
+
 // What the playground does, one line each — not how to use it; the
-// pages say that where it is done.
+// pages say that where it is done. Each is a page of the help, reached
+// from its sidebar; `id` keeps a page open across re-renders.
 const HELP_FEATURES = [
-  { name: 'Visual and Code',
+  { id: 'visual-code', name: 'Visual and Code',
     what: 'Edit a model through its pages, or as text in the Code view — two spellings of the same model.' },
-  { name: 'Derived boundaries',
+  { id: 'boundaries', name: 'Derived boundaries',
     what: 'Every command shows the queries it issues and the append condition its rules lead to.' },
-  { name: 'Scenarios',
+  { id: 'scenarios', name: 'Scenarios',
     what: 'Given / When / Then for commands and projections — flagged when a change makes one drift.' },
-  { name: 'Sandbox',
+  { id: 'sandbox', name: 'Sandbox',
     what: 'Drive commands against a hypothetical event log and watch what they append or why they refuse.' },
-  { name: 'Problems',
+  { id: 'problems', name: 'Problems',
     what: 'Dangling references, uncovered tags and other loose ends — a defective model still loads and runs.' },
-  { name: 'Import & export',
-    what: 'Models live in this browser only. Export one as JSON, or copy a link that reopens it as it is (⌘S).' },
-  { name: 'Quick open',
-    what: 'Jump to any definition or action from the keyboard (⌘K).' },
+  { id: 'import-export', name: 'Import & export',
+    what: 'Models live in this browser only. Export one as JSON, or copy a link that reopens it as it is.' },
+  { id: 'quick-open', name: 'Quick open',
+    what: 'Jump to any definition or action from the keyboard.' },
 ];
+
+// The keys worth knowing, by where they work. Keys that belong to one
+// widget — Enter in a form, the arrows in quick open — are left to it.
+// Spelled the platform-neutral way `shortcutText` reads.
+const HELP_SHORTCUTS = [
+  { where: 'Anywhere', keys: [
+    { keys: ['Mod+K'], what: 'Quick open' },
+    { keys: ['Mod+S'], what: 'Copy a link to the model' },
+    { keys: ['Mod+Z'], what: 'Undo' },
+    { keys: ['Mod+Shift+Z'], what: 'Redo' },
+    { keys: ['?'], what: 'This help' },
+    { keys: ['Esc'], what: 'Close what is open, or step back out of it' },
+    { keys: ['↑', '↓'], what: 'Move between rows' },
+  ] },
+  { where: 'Code view', keys: [
+    { keys: ['Mod+S', 'Mod+Enter'], what: 'Apply the text' },
+    { keys: ['Mod+click'], what: 'Go to a definition' },
+    { keys: ['Mod+Shift+O'], what: 'List every definition' },
+    { keys: ['Ctrl+Space'], what: 'Suggest what fits at the cursor' },
+    { keys: ['F2'], what: 'Rename everywhere it means the same thing' },
+    { keys: ['Shift+F12'], what: 'List where a name is used' },
+  ] },
+];
+
+// A shortcut the way this machine's keyboard labels it. Written once,
+// platform-neutral — `Mod` is ⌘ on a Mac and Ctrl everywhere else, the
+// way the handlers read `metaKey || ctrlKey` — and spelled per platform:
+// glyphs in Apple's order (⌃⌥⇧⌘) on a Mac, words joined by `+` in
+// Ctrl, Alt, Shift order elsewhere. Asked each time rather than at load,
+// so a test can play either platform.
+function onMac() {
+  const platform = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '';
+  return /mac|iphone|ipad/i.test(platform);
+}
+
+const SHORTCUT_MODIFIERS = {
+  mac: { Ctrl: '⌃', Alt: '⌥', Shift: '⇧', Mod: '⌘' },
+  other: { Mod: 'Ctrl', Ctrl: 'Ctrl', Alt: 'Alt', Shift: 'Shift' },
+};
+const SHORTCUT_ORDER = {
+  mac: ['Ctrl', 'Alt', 'Shift', 'Mod'],
+  other: ['Mod', 'Ctrl', 'Alt', 'Shift'],
+};
+
+function shortcutText(combo) {
+  const platform = onMac() ? 'mac' : 'other';
+  const parts = combo.split('+');
+  const key = parts.pop();
+  const modifiers = SHORTCUT_ORDER[platform].filter((m) => parts.includes(m))
+    .map((m) => SHORTCUT_MODIFIERS[platform][m]);
+  if (platform === 'other') return [...modifiers, key].join('+');
+  // A click is a gesture, not a key, and a Mac writes it ⌘-click.
+  if (key === 'click') return modifiers.join('') + '-click';
+  return modifiers.join('') + (key === 'Enter' ? '↩' : key);
+}
+
+function kbd(combo) {
+  return h('kbd', {}, shortcutText(combo));
+}
 
 function openHelp() {
   closeForms();
   state.help = true;
+  state.helpPage = 'start';
   render();
 }
 
@@ -2618,24 +2789,61 @@ function helpButton() {
   }, h('span', {}, svg(HELP_ICON_SVG)));
 }
 
+function helpStartPage() {
+  return [
+    h('p', { class: 'help-claim' }, HELP_CLAIM),
+    HELP_VIDEO ? h('a', {
+      class: 'help-video', href: HELP_VIDEO.url, target: '_blank', rel: 'noopener',
+    }, h('span', { class: 'help-play', 'aria-hidden': 'true' }, '▶'),
+      h('span', { class: 'help-video-caption' }, 'Watch on dcb.events ↗')) : null,
+    h('p', {},
+      'Build a model of events, projections and the commands that guard them, and see the '
+        + 'consistency boundary each command derives.'),
+    h('dl', { class: 'help-cards' }, HELP_FEATURES.map((item) => h('div', {},
+      h('dt', {}, item.name),
+      h('dd', {}, item.what)))),
+  ];
+}
+
+function helpKeysPage() {
+  return [
+    h('h3', {}, 'Keyboard shortcuts'),
+    HELP_SHORTCUTS.map((group) => [
+      h('h4', {}, group.where),
+      h('dl', { class: 'help-features' }, group.keys.map((item) => [
+        h('dt', {}, item.keys.map((combo, i) => [i ? ' ' : null, kbd(combo)])),
+        h('dd', {}, item.what)]))]),
+  ];
+}
+
 function helpModal() {
   const close = () => { state.help = false; render(); };
+  const go = (page) => { state.helpPage = page; render(); };
+  const feature = HELP_FEATURES.find((item) => item.id === state.helpPage);
+  const page = state.helpPage === 'keys' ? helpKeysPage()
+    : feature ? [h('h3', {}, feature.name), h('p', {}, feature.what)]
+      : helpStartPage();
+  const navItem = (id, label, cls = '') => h('button', {
+    type: 'button', class: 'help-nav-item' + (state.helpPage === id ? ' active' : '') + cls,
+    'aria-current': state.helpPage === id ? 'page' : null, onclick: () => go(id),
+  }, label);
   const modal = h('div', { class: 'modal help-modal', tabindex: '-1', role: 'dialog', 'aria-modal': 'true' },
     h('header', {},
       h('h2', {}, 'DCB Playground'),
       h('span', { class: 'grow' }),
       h('button', { class: 'btn ghost', onclick: close, title: 'Close', 'aria-label': 'Close' }, '×')),
-    h('div', { class: 'muted small' }, 'Model consistency boundaries without writing a line of code.'),
-    h('p', {},
-      'Build a model of events, projections and the commands that guard them, and see the '
-        + 'consistency boundary each command derives.'),
-    h('dl', { class: 'help-features' }, HELP_FEATURES.map((item) => [
-      h('dt', {}, item.name),
-      h('dd', {}, item.what)])),
-    h('p', {}, 'Everything a model can say is described in the ',
-      h('a', { href: NOTATION_REFERENCE_URL, target: '_blank', rel: 'noopener' }, 'notation reference ↗'), '.'),
-    h('div', { class: 'adder', style: 'margin-top:18px' },
-      h('button', { class: 'btn primary', onclick: close }, 'Done')));
+    h('div', { class: 'help-panes' },
+      h('nav', { class: 'help-nav', 'aria-label': 'Help pages' },
+        navItem('start', 'Getting started'),
+        HELP_FEATURES.map((item) => navItem(item.id, item.name)),
+        h('hr', { class: 'help-keys' }),
+        navItem('keys', '⌨ Keyboard shortcuts', ' help-keys')),
+      h('div', { class: 'help-body' }, page)),
+    modalFooter(close,
+      h('div', { class: 'help-links' },
+        h('a', { href: NOTATION_REFERENCE_URL, target: '_blank', rel: 'noopener' }, 'Notation reference ↗'),
+        h('a', { href: FEEDBACK_URL, target: '_blank', rel: 'noopener' }, 'Feedback ↗'),
+        h('a', { href: ISSUES_URL, target: '_blank', rel: 'noopener' }, 'Report an issue ↗'))));
   setTimeout(() => modal.focus(), 0);
   return overlayAround(modal, close);
 }
@@ -2668,12 +2876,13 @@ function renderImportGate() {
           ...handlers.map(({ event, code }) => h('div', {},
             h('div', { class: 'muted small' }, 'on ' + event),
             h('pre', {}, code)))))),
-    h('div', { class: 'adder', style: 'margin-top:18px' },
+    h('footer', {},
+      h('span', { class: 'grow' }),
+      h('button', { class: 'btn ghost', onclick: close }, 'Cancel'),
       h('button', {
         class: 'btn primary',
         onclick: () => { state.pendingImport = null; finishImport(envelope); },
-      }, 'Import anyway'),
-      h('button', { class: 'btn ghost', onclick: close }, 'Cancel')));
+      }, 'Import anyway')));
   setTimeout(() => modal.focus(), 0);
   return overlayAround(modal, close);
 }
@@ -2817,8 +3026,7 @@ function renderImportExportModal() {
         onclick: () => { state.ieTab = 'export'; render(); },
       }, 'Export')),
     state.ieTab === 'import' ? importPanel : exportPanel,
-    h('div', { class: 'adder', style: 'margin-top:18px' },
-      h('button', { class: 'btn', onclick: close }, 'Done')));
+    modalFooter(close));
 
   setTimeout(() => modal.focus(), 0);
   return overlayAround(modal, close);
@@ -2922,6 +3130,13 @@ onAppend((at, appended) => {
   // An append outside any gesture — an agent's tool call — is its own
   // undo step; the tool repaints for itself afterwards.
   takeUndoMark(at, appended);
+});
+
+// A linked copy's first change asks for a name — only while it is the
+// model on screen, since the question is about what was just done.
+onAppend((at, appended) => {
+  const id = takeFirstChange(appended);
+  if (id && id === activeModelId()) state.namePrompt = { id, draft: projectState()[id].name };
 });
 
 const runOnce = run;
@@ -3176,8 +3391,7 @@ function problemsPanel() {
       onclick: () => { close(); p.go(); render(); },
     }, h('span', { class: 'diag-mark' }, '⚠'),
       h('span', {}, p.what), h('span', { class: 'why' }, p.why))),
-    h('div', { class: 'adder', style: 'margin-top:14px' },
-      h('button', { class: 'btn primary', onclick: close }, 'Done')));
+    modalFooter(close));
   const overlay = overlayAround(modal, close);
   setTimeout(() => modal.focus(), 0);
   return overlay;
@@ -5281,6 +5495,39 @@ function render() {
   landOn(selector);
 }
 
+// A linked copy's first change (`takeFirstChange`, shared.js): the
+// bar's name becomes a field, prefilled with the name it has, over a
+// word on where that change went. It takes no focus — the change was
+// made somewhere on the page, perhaps mid-word — and blocks nothing:
+// editing goes on under it until Save name, Keep name, Enter or Escape.
+function namePromptField(model) {
+  const prompt = state.namePrompt;
+  const close = () => { state.namePrompt = null; render(); };
+  const save = () => {
+    run(() => { renameDcbModel(model.id, prompt.draft); state.namePrompt = null; });
+  };
+  return h('div', { class: 'name-prompt' },
+    h('span', { class: 'brand-title' }, 'DCB Playground'),
+    h('span', { class: 'sep', 'aria-hidden': 'true' }, '/'),
+    h('input', {
+      class: 'name-prompt-input', type: 'text', value: prompt.draft, 'aria-label': 'Name of this copy',
+      'aria-describedby': 'name-prompt-note', maxlength: 100,
+      oninput: (e) => { prompt.draft = e.target.value; },
+      onkeydown: (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); save(); }
+        if (e.key === 'Escape') { e.preventDefault(); close(); }
+      },
+    }),
+    h('div', { class: 'name-prompt-pop', role: 'status' },
+      h('strong', {}, 'First change saved to your copy'),
+      h('p', { id: 'name-prompt-note' },
+        'This model is a copy kept in this browser — the example or link it came from is unchanged. '
+        + 'Name it to tell the two apart.'),
+      h('div', { class: 'name-prompt-actions' },
+        h('button', { class: 'btn', type: 'button', onclick: close }, 'Keep name'),
+        h('button', { class: 'btn primary', type: 'button', onclick: save }, 'Save name'))));
+}
+
 function paintPage() {
   const model = activeModel();
 
@@ -5289,8 +5536,17 @@ function paintPage() {
   // The playground's name and the model that is open, as one button:
   // the way to switch models, start one, or load one — see `modelsModal`.
   const modelSwitch = document.getElementById('model-switch');
+  const naming = !!(model && state.namePrompt && state.namePrompt.id === model.id);
+  const focused = document.activeElement;
+  const typing = focused && focused.classList && focused.classList.contains('name-prompt-input')
+    ? [focused.selectionStart, focused.selectionEnd] : null;
   modelSwitch.innerHTML = '';
-  modelSwitch.appendChild(h('button', {
+  if (naming) {
+    modelSwitch.appendChild(namePromptField(model));
+    // A repaint while the name is being typed keeps the caret where it was.
+    const input = typing && modelSwitch.querySelector('.name-prompt-input');
+    if (input) { input.focus(); input.setSelectionRange(typing[0], typing[1]); }
+  } else modelSwitch.appendChild(h('button', {
     class: 'model-switch', type: 'button',
     title: model ? 'Switch, start or load a model' : 'Start or load a model',
     onclick: () => { closeForms(); state.models = true; render(); },
@@ -5343,10 +5599,10 @@ function paintPage() {
   jump.appendChild(h('button', {
     class: 'trigger', type: 'button', onclick: openPalette, 'aria-label': 'Quick open',
   }, h('span', {}, svg(SEARCH_ICON_SVG)), h('span', { class: 'label' }, 'Quick open…'),
-    h('span', { class: 'kbd' }, '⌘K')));
+    kbd('Mod+K')));
 
   actions.appendChild(h('button', {
-    class: 'icon-btn', type: 'button', title: 'Import & export — ⌘S copies a link',
+    class: 'icon-btn', type: 'button', title: `Import & export — ${shortcutText('Mod+S')} copies a link`,
     'aria-label': 'Import and export', onclick: openImportExport,
   }, importExportIcon()));
   actions.appendChild(helpButton());
@@ -5383,6 +5639,8 @@ function paintBehind(model) {
   renderRail();
 
   const main = document.getElementById('main');
+  // Leaving the code, before its textarea goes: where the cursor was.
+  if ((main.className || '').includes('code-view') && !codeShown()) rememberCodePlace(model);
   main.innerHTML = '';
   // Over every page, the code included — see `beginNewCommand`.
   if (state.namingCommand) {
@@ -9197,7 +9455,7 @@ function scheduleProjectionAutosave() {
 function projectionDetailFoot(model, entry, { owner }) {
   const { projection, binding } = entry;
   return h('div', { class: 'pfoot' },
-    h('span', { class: 'muted tiny' }, 'autosaved · ⌘Z undoes'),
+    h('span', { class: 'muted tiny' }, 'autosaved · ', kbd('Mod+Z'), ' undoes'),
     h('span', { class: 'grow' }),
     h('span', { class: 'tech' }, projection),
     h('button', {
@@ -14025,6 +14283,18 @@ function storedCodeFold() {
 // itself goes to the code (`enterCode`).
 const CODE_FOLLOWS = ['slice', 'entity', 'events', 'projections', 'types'];
 function codeShown() { return !!state.code && CODE_FOLLOWS.includes(state.view); }
+// Where the toggle does something: the definition pages, and the
+// Overview, whose Code always opens the code (`enterCode`).
+function codeFollowsPage() { return CODE_FOLLOWS.includes(state.view) || state.view === 'overview'; }
+
+// The definition under the cursor as the code is left, to come back to
+// from the Overview.
+function rememberCodePlace(model) {
+  syncCodeView(model);
+  const line = codeCursorLine();
+  const at = line ? sourceSpanAt(analyseCode(model).parsed, line) : null;
+  if (at) codeView.last = { modelId: model.id, kind: at.kind, name: at.name };
+}
 
 // A rail link to a whole kind's page; in the code, a jump to where
 // that kind's definitions start — every click, not only the first.
@@ -14048,6 +14318,8 @@ const codeView = {
   shownView: null,      // the page state the code was last shown over
   focus: null,          // the definition last revealed for it
   section: null,        // a kind to reveal the start of, once, over the page's own
+                        // — or a [kind, name] to reveal that definition
+  last: null,           // { modelId, kind, name } under the cursor as the code was left
   revealedInEditor: false,
   analysis: null,       // { text, parsed, errors, advisories }
   editor: null,         // { root, editor, model } once Monaco is up
@@ -14301,9 +14573,9 @@ function codeStrip() {
       onclick: revertCode,
     }, 'Revert') : null,
     h('button', {
-      class: 'btn primary tiny', type: 'button', title: 'Apply — ⌘S',
+      class: 'btn primary tiny', type: 'button', title: `Apply — ${shortcutText('Mod+S')}`,
       disabled: !codeDirty() || errors ? true : null, onclick: applyCode,
-    }, 'Apply ', h('span', { class: 'kbd' }, '⌘S')));
+    }, 'Apply ', kbd('Mod+S')));
 }
 
 function codeProblemList(analysis) {
@@ -14390,15 +14662,23 @@ function revertCode() {
 
 // Into the code view, revealing what the page was about.
 function enterCode() {
-  if (state.code) return;
+  // The Overview has no definition of its own to stay on, and staying
+  // on it would make the toggle look like it did nothing: Code opens the
+  // code — even when it is the surface already — where it was left, or
+  // where the commands start, as the Overview's Commands card does.
+  const fromOverview = state.view === 'overview';
+  if (state.code && !fromOverview) return;
   closeForms(); // commits whatever a page had half-typed
   setCodeSurface(true);
   codeView.shownView = null;
   codeView.focus = null;
-  // The Overview has no definition of its own to stay on, and staying
-  // on it would make the toggle look like it did nothing: the code
-  // opens where the commands start, as the Overview's Commands card does.
-  if (state.view === 'overview') {
+  if (fromOverview) {
+    const model = activeModel();
+    const last = codeView.last;
+    if (model && last && last.modelId === model.id && model[DEF_COLLECTIONS[last.kind]][last.name] !== undefined) {
+      codeView.section = [last.kind, last.name];
+      return openDefinition(last.kind, last.name);
+    }
     codeView.section = 'command-definition';
     state.view = 'slice';
   }
@@ -14918,16 +15198,17 @@ function renderCode(model, main) {
   main.appendChild(h('header', {},
     h('div', { class: 'name' }, 'Code',
       hint('code', 'The model as code', [
-        'Every type, event, entity, projection and command on the other pages, as one text. '
-          + 'Edit it and apply with ⌘S; going back to the pages applies it too. An apply is one undo step.',
+        ['Every type, event, entity, projection and command on the other pages, as one text. '
+          + 'Edit it and apply with ', kbd('Mod+S'), '; going back to the pages applies it too. An apply is one undo step.'],
         'Scenarios sit in a scenarios group at the end of the command or projection they exercise, '
           + 'folded to one line until opened. The fold button steps through nothing folded, scenarios folded, '
           + 'and every definition folded with its scenarios still folded inside. Leave a then out and '
           + 'applying records what the model does; a drifted one is marked, with a fix that accepts it. '
           + 'Comments are not stored — they last as long as the text in this editor.',
-        'Hover a command\'s name for the consistency boundary it derives; ⌘-click a name to go to it; '
-          + '⇧⌘O lists every definition. ⌃Space suggests what fits where the cursor is; F2 renames a name '
-          + 'everywhere it means the same thing, and ⇧F12 lists where it is used.',
+        ['Hover a command\'s name for the consistency boundary it derives; ', kbd('Mod+click'),
+          ' a name to go to it; ', kbd('Mod+Shift+O'), ' lists every definition. ', kbd('Ctrl+Space'),
+          ' suggests what fits where the cursor is; ', kbd('F2'), ' renames a name everywhere it means '
+          + 'the same thing, and ', kbd('Shift+F12'), ' lists where it is used.'],
       ], NOTATION_GUIDE_URL, 'notation')),
     h('div', { class: 'muted small' }, 'The same definitions as the pages, written out.')));
 
@@ -14957,7 +15238,8 @@ function renderCode(model, main) {
   // page's own definition, which is then taken as shown — so the next
   // paint stays where the section put the text.
   const page = pageDefinition();
-  const target = codeView.section ? [codeView.section, null] : page;
+  const target = Array.isArray(codeView.section) ? codeView.section
+    : codeView.section ? [codeView.section, null] : page;
   codeView.section = null;
   const key = target ? target.join(':') : null;
   const shown = codeView.shownView;
@@ -15204,15 +15486,19 @@ async function boot() {
   }
   // Opened before and unchanged since: back to that copy rather than a
   // second one beside it (`modelMatchingEnvelope`). The script gate is
-  // not asked again for code it already let in.
+  // not asked again for code it already let in. Unchanged, it is still
+  // a linked copy waiting on its first change — even one opened before
+  // copies were marked at all.
   const existing = modelMatchingEnvelope(envelope);
   if (existing) {
+    markLinkedCopy(existing);
     switchToModel(existing);
     state.models = false;
     render();
     toast('This model was opened before — switched to it.');
     return;
   }
+  linkedEnvelopes.add(envelope);
   beginImport(envelope);
 }
 

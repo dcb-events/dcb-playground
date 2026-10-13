@@ -34,7 +34,9 @@ loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js', 'shared.js'], {
     + ' globalThis.closeForms = closeForms; globalThis.codeView = codeView; globalThis.UNGROUPED = UNGROUPED;'
     + ' globalThis.PREDEFINED_MODELS = PREDEFINED_MODELS; globalThis.SHARE_LINK_MAX_LENGTH = SHARE_LINK_MAX_LENGTH;'
     + ' globalThis.EVENT_LOG_KEY = EVENT_LOG_KEY; globalThis.PAGE_BEHIND = PAGE_BEHIND;'
-    + ' globalThis.NOTATION_GUIDE_URL = NOTATION_GUIDE_URL; globalThis.NOTATION_REFERENCE_URL = NOTATION_REFERENCE_URL;',
+    + ' globalThis.NOTATION_GUIDE_URL = NOTATION_GUIDE_URL; globalThis.NOTATION_REFERENCE_URL = NOTATION_REFERENCE_URL;'
+    + ' globalThis.HELP_FEATURES = HELP_FEATURES; globalThis.HELP_CLAIM = HELP_CLAIM;'
+    + ' globalThis.FEEDBACK_URL = FEEDBACK_URL; globalThis.ISSUES_URL = ISSUES_URL;',
 });
 const { check, eq, finish } = makeChecker();
 
@@ -4609,6 +4611,31 @@ function build(index) {
     state.code = false;
   });
 
+  check('the toggle is muted where the code does not follow, and Code on the Overview always opens the code', () => {
+    const { id, model: m } = build(ENTITIES);
+    store.set('dcb-playground:model', id);
+    const { state, codeView } = sandbox;
+    Object.assign(state, { view: 'sandbox', code: true });
+    eq(sandbox.codeFollowsPage(), false, 'the sandbox has no code view');
+    state.view = 'overview';
+    eq(sandbox.codeFollowsPage(), true, 'the Overview has, through its Code');
+    codeView.last = null;
+    sandbox.enterCode();
+    eq([state.code, state.view, sandbox.codeShown()], [true, 'slice', true], 'already Code, and the code opens');
+    Object.assign(state, { view: 'overview', slice: null });
+    codeView.last = { modelId: id, kind: 'command-definition', name: 'ArchiveCourse' };
+    sandbox.enterCode();
+    eq([state.view, state.slice], ['slice', 'ArchiveCourse'], 'where the code was left');
+    codeView.last = { modelId: id, kind: 'event-definition', name: 'NoSuchEvent' };
+    state.view = 'overview';
+    sandbox.enterCode();
+    eq(state.view, 'slice', 'a definition gone since: where the commands start');
+    state.view = 'sandbox';
+    sandbox.enterCode();
+    eq(state.view, 'sandbox', 'elsewhere, Code when it is the surface does nothing');
+    state.code = false;
+  });
+
   check('the fold modes: nothing, the scenarios groups, then every definition around them', () => {
     const text = [
       'event A { x: integer }',
@@ -4667,10 +4694,69 @@ function build(index) {
 }
 
 // The help explains the playground and leaves the notation to the
-// reference on dcb.events — its one link, in a new tab.
-check('the help modal links the notation reference, and nothing else', () => {
+// reference on dcb.events; beside it, where to send feedback and
+// issues — each in a new tab, and nothing else.
+check('the help modal links the notation reference, feedback and issues, and nothing else', () => {
   const links = findAll(sandbox.helpModal(), (n) => n.tag === 'a');
-  eq(links.map((a) => [a.attributes.href, a.attributes.target]), [[sandbox.NOTATION_REFERENCE_URL, '_blank']]);
+  eq(links.map((a) => [a.attributes.href, a.attributes.target]), [
+    [sandbox.NOTATION_REFERENCE_URL, '_blank'], [sandbox.FEEDBACK_URL, '_blank'], [sandbox.ISSUES_URL, '_blank']]);
+});
+
+// Shortcuts read the way the keyboard in front of the reader labels
+// them: glyphs in Apple's order on a Mac, Ctrl and words elsewhere.
+check('a shortcut is spelled for the platform it is read on', () => {
+  const platform = sandbox.navigator.platform;
+  try {
+    sandbox.navigator.platform = 'MacIntel';
+    eq(['Mod+K', 'Mod+Shift+Z', 'Ctrl+Space', 'Mod+Enter', 'Mod+click', 'Shift+F12', 'Esc'].map(sandbox.shortcutText),
+      ['⌘K', '⇧⌘Z', '⌃Space', '⌘↩', '⌘-click', '⇧F12', 'Esc'], 'a Mac');
+    sandbox.navigator.platform = 'Win32';
+    eq(['Mod+K', 'Mod+Shift+Z', 'Ctrl+Space', 'Mod+Enter', 'Mod+click', 'Shift+F12', 'Esc'].map(sandbox.shortcutText),
+      ['Ctrl+K', 'Ctrl+Shift+Z', 'Ctrl+Space', 'Ctrl+Enter', 'Ctrl+click', 'Shift+F12', 'Esc'], 'anything else');
+    sandbox.navigator.platform = 'Linux x86_64';
+    eq(sandbox.shortcutText('Mod+S'), 'Ctrl+S', 'Linux is anything else');
+    sandbox.navigator.userAgentData = { platform: 'macOS' };
+    eq(sandbox.shortcutText('Mod+S'), '⌘S', 'the client hint wins over the legacy platform');
+  } finally {
+    sandbox.navigator.platform = platform;
+    delete sandbox.navigator.userAgentData;
+  }
+});
+
+// The help is a sidebar of pages: it opens on Getting started, every
+// feature has a page of its own, and the shortcuts are kept apart on
+// theirs.
+check('the help modal opens on Getting started, with a page per feature', () => {
+  sandbox.state.helpPage = 'start';
+  const modal = sandbox.helpModal();
+  const nav = findAll(modal, (n) => n.tag === 'button' && /help-nav-item/.test(n.className)).map(textOf);
+  eq(nav, ['Getting started', ...sandbox.HELP_FEATURES.map((item) => item.name), '⌨ Keyboard shortcuts'], 'the sidebar');
+  eq(textOf(modal).includes(sandbox.HELP_CLAIM), true, 'the claim');
+  eq(findAll(modal, (n) => n.tag === 'kbd').length, 0, 'no shortcuts on it');
+  const button = (label) => findAll(modal, (n) => n.tag === 'button' && textOf(n) === label)[0];
+  eq(!!button('Close'), true, 'closed with Close');
+  button('Sandbox').onclick();
+  eq(sandbox.state.helpPage, 'sandbox', 'a feature is a page');
+  sandbox.state.helpPage = 'start';
+});
+
+check('the help modal lists the keyboard shortcuts, as kbd, on a page of their own', () => {
+  const platform = sandbox.navigator.platform;
+  try {
+    sandbox.navigator.platform = 'Win32';
+    sandbox.state.helpPage = 'keys';
+    const modal = sandbox.helpModal();
+    const text = textOf(modal);
+    eq(text.includes('Keyboard shortcuts'), true, 'a page of its own');
+    eq(text.includes('⌘'), false, 'no Mac glyph off a Mac');
+    const keys = findAll(modal, (n) => n.tag === 'kbd').map(textOf);
+    for (const key of ['Ctrl+K', 'Ctrl+S', 'Ctrl+Z', 'Ctrl+Shift+Z', '?', 'Esc', 'Ctrl+Enter', 'F2']) {
+      eq(keys.includes(key), true, key);
+    }
+  } finally {
+    sandbox.navigator.platform = platform;
+    sandbox.state.helpPage = 'start';
+  }
 });
 
 // The anchors an `ⓘ` links are a contract with dcb.events, whose build
@@ -4939,8 +5025,8 @@ check('the reference links only anchors the website defines', () => {
     eq(/autosaved/.test(textOf(modal())), true, 'now its editor');
     eq(sandbox.state.projDraft && sandbox.state.projDraft.name, 'CourseSeats', 'editing through its draft');
 
-    press(modal(), 'Done');
-    eq(sandbox.state.defFrames.length, 0, 'Done closes it');
+    press(modal(), 'Close');
+    eq(sandbox.state.defFrames.length, 0, 'Close closes it');
     eq(sandbox.state.ruleDraft, rule, 'the very rule that asked is back');
     eq(rule.target, 'projection:CourseSeats', 'with the new projection as its answer');
     eq(sandbox.state.adder, 'rule', 'and its adder still open');
@@ -4974,7 +5060,7 @@ check('the reference links only anchors the website defines', () => {
     eq(!!model()['custom-type-definitions'].Seat, true, 'the type is created');
     eq(/value/.test(textOf(modal())), true, 'and its editor shows, with the field it starts with');
     eq(sandbox.state.fieldDraft, null, 'the input row is still set aside');
-    press(modal(), 'Done');
+    press(modal(), 'Close');
     eq(sandbox.state.fieldDraft, field, 'the half-typed input is back');
     eq(field.propertyType, 'Seat', 'typed with the new type');
     eq(field.name, 'seat', 'its name untouched');
@@ -5018,7 +5104,7 @@ check('the reference links only anchors the website defines', () => {
     press(modal(), 'tag type');
     eq(model()['custom-type-definitions'].SeatId.isTag, true, 'and back');
     press(modal(), 'Advanced');
-    press(modal(), 'Done');
+    press(modal(), 'Close');
   });
 
   check('a projection\'s modal may open a type\'s — one level, and the way back is named', () => {
@@ -5063,7 +5149,7 @@ check('the reference links only anchors the website defines', () => {
     eq(sandbox.state.defFrames.length, 1, 'opens it');
     eq(!!button(modal(), 'Rename'), true, 'renamed here');
     eq(!!button(modal(), 'Remove'), false, 'but never removed from under the command');
-    press(modal(), 'Done');
+    press(modal(), 'Close');
   });
 
   check('another dialog closes it and gives the page its forms back', () => {
@@ -5323,6 +5409,67 @@ check('the app is text: no file carries a raw control byte', () => {
     sandbox.render();
     eq(page.inert, false, 'and live again once it closes');
     sandbox.document.querySelectorAll = querySelectorAll;
+  });
+
+  store.delete('dcb-playground:model');
+}
+
+// A model opened from a link is a copy; its first change says so and
+// offers a name, once, and only for the model on screen.
+{
+  const button = (node, label) => findAll(node, (n) => n.tag === 'button' && textOf(n) === label)[0];
+
+  check('a linked copy\'s first change asks for a name, prefilled, once', () => {
+    const id = sandbox.openNewModel('Course subscriptions');
+    sandbox.markLinkedCopy(id);
+    sandbox.state.namePrompt = null;
+    addTaggedEvent(id, 'CourseDefined', { properties: [] });
+    eq(sandbox.state.namePrompt, { id, draft: 'Course subscriptions' }, 'asked, with the name it has');
+    sandbox.state.namePrompt = null;
+    addTaggedEvent(id, 'CourseRenamed', { properties: [] });
+    eq(sandbox.state.namePrompt, null, 'not asked again');
+    eq(sandbox.linkedCopies().includes(id), false, 'no longer marked');
+  });
+
+  check('a model not opened from a link, or not on screen, is not asked about', () => {
+    const own = sandbox.openNewModel('Own');
+    addTaggedEvent(own, 'Started', { properties: [] });
+    eq(sandbox.state.namePrompt, null, 'never linked');
+    const linked = sandbox.createDcbModel('Elsewhere');
+    sandbox.markLinkedCopy(linked);
+    addTaggedEvent(linked, 'Started', { properties: [] });
+    eq(sandbox.state.namePrompt, null, 'linked, but another model is open');
+    eq(sandbox.linkedCopies().includes(linked), false, 'and its chance has passed');
+  });
+
+  check('renaming a linked copy answers the question before it is asked', () => {
+    const id = sandbox.openNewModel('Example');
+    sandbox.markLinkedCopy(id);
+    sandbox.renameDcbModel(id, 'Mine');
+    eq(sandbox.state.namePrompt, null, 'not asked');
+    eq(sandbox.linkedCopies().includes(id), false, 'unmarked');
+    eq(sandbox.projectState()[id].name, 'Mine', 'renamed');
+  });
+
+  check('Save name renames the copy, Keep name leaves it', () => {
+    const id = sandbox.openNewModel('Example');
+    sandbox.state.namePrompt = { id, draft: '  My course model ' };
+    button(sandbox.namePromptField(sandbox.activeModel()), 'Save name').onclick();
+    eq(sandbox.projectState()[id].name, 'My course model', 'trimmed and saved');
+    eq(sandbox.state.namePrompt, null, 'closed');
+    sandbox.state.namePrompt = { id, draft: 'Something else' };
+    button(sandbox.namePromptField(sandbox.activeModel()), 'Keep name').onclick();
+    eq(sandbox.projectState()[id].name, 'My course model', 'kept');
+    eq(sandbox.state.namePrompt, null, 'closed');
+  });
+
+  check('an empty name is refused and the question stays open', () => {
+    const id = sandbox.openNewModel('Example');
+    sandbox.state.namePrompt = { id, draft: '   ' };
+    button(sandbox.namePromptField(sandbox.activeModel()), 'Save name').onclick();
+    eq(sandbox.projectState()[id].name, 'Example', 'unchanged');
+    eq(sandbox.state.namePrompt, { id, draft: '   ' }, 'still asking');
+    sandbox.state.namePrompt = null;
   });
 
   store.delete('dcb-playground:model');

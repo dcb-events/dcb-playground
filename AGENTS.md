@@ -132,8 +132,11 @@ was decided, why, and what was tried and reverted:
 
 - **The help modal explains the playground, not the notation**
   (`helpModal`, index.html): the bar's button, the `?` key and the
-  models dialog open it, and its one link is the notation reference on
-  dcb.events, in a new tab. An `ⓘ` keeps its one line and links the
+  models dialog open it. A sidebar of pages — Getting started, one per
+  `HELP_FEATURES` entry, the shortcuts apart at the bottom; its links
+  are the notation reference on dcb.events, feedback (`FEEDBACK_URL`),
+  issues (`ISSUES_URL`) and, once `HELP_VIDEO` is set, the video, all
+  in a new tab. Issues go to the website's repository, not this one. An `ⓘ` keeps its one line and links the
   reference's anchor for it. The anchors (`NOTATION_ANCHORS`) are a
   contract with the website: its build fails on a link
   `helpReferenceLinks()` lists that it does not define, so an anchor is

@@ -676,7 +676,7 @@ inline forms they already had.
   field or a new projection's handlers are rarely right first time.
   Closing before Create changes nothing. A rename inside the modal
   carries the selection with it.
-- **Edits commit as they are made**, as on the pages: Done, × and
+- **Edits commit as they are made**, as on the pages: Close, × and
   Escape only close. Escape backs out of a field, then a form inside
   the modal, then the modal — the top one only.
 - **One stacked level, and only projection → custom type.** The other
