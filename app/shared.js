@@ -688,6 +688,57 @@ function activeModel() {
   return id ? projectState()[id] : null;
 }
 
+// ---------- copies opened from a link ----------
+//
+// A link — an example's "Open in Playground" on dcb.events, a shared
+// model — imports a copy, and nothing here ever writes back to where
+// it came from. Testers took their first edit of an example for an
+// edit of the example itself, so a copy's first change is where the
+// page says otherwise and offers to name it (`namePromptField`,
+// index.html). Kept per browser and outside the event log: it is a
+// fact about how this browser came by the model, not part of it.
+const LINKED_COPIES_KEY = 'dcb-playground:linked-copies';
+
+function linkedCopies() {
+  try {
+    const ids = JSON.parse(localStorage.getItem(LINKED_COPIES_KEY));
+    return Array.isArray(ids) ? ids : [];
+  } catch {
+    return [];
+  }
+}
+
+function setLinkedCopies(ids) {
+  if (ids.length) localStorage.setItem(LINKED_COPIES_KEY, JSON.stringify(ids));
+  else localStorage.removeItem(LINKED_COPIES_KEY);
+}
+
+// Marked once its import has landed, so the import is not its own
+// first change. Ids of models gone since are dropped on the way.
+function markLinkedCopy(id) {
+  const models = projectState();
+  setLinkedCopies([...linkedCopies().filter((other) => other !== id && models[other]), id]);
+}
+
+// The linked copy these appended events first change, if any — and
+// every copy they touch is unmarked, so each is asked about once. A
+// rename or a delete unmarks without asking: the one has answered the
+// question already, the other has made it moot.
+function takeFirstChange(appended) {
+  const marked = linkedCopies();
+  if (!marked.length) return null;
+  const left = new Set(marked);
+  let changed = null;
+  for (const event of appended) {
+    const id = event.data && event.data['dcb-model-id'];
+    if (!left.has(id)) continue;
+    left.delete(id);
+    if (!changed && !event.type.startsWith('dcb-model-')) changed = id;
+  }
+  if (left.size !== marked.length) setLinkedCopies([...left]);
+  return changed;
+}
+
 // A model with nothing in it at all — no entities, no events, no
 // commands. Everything downstream has to cope with that, because it is
 // where a real model actually starts.

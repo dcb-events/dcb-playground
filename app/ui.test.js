@@ -5414,6 +5414,67 @@ check('the app is text: no file carries a raw control byte', () => {
   store.delete('dcb-playground:model');
 }
 
+// A model opened from a link is a copy; its first change says so and
+// offers a name, once, and only for the model on screen.
+{
+  const button = (node, label) => findAll(node, (n) => n.tag === 'button' && textOf(n) === label)[0];
+
+  check('a linked copy\'s first change asks for a name, prefilled, once', () => {
+    const id = sandbox.openNewModel('Course subscriptions');
+    sandbox.markLinkedCopy(id);
+    sandbox.state.namePrompt = null;
+    addTaggedEvent(id, 'CourseDefined', { properties: [] });
+    eq(sandbox.state.namePrompt, { id, draft: 'Course subscriptions' }, 'asked, with the name it has');
+    sandbox.state.namePrompt = null;
+    addTaggedEvent(id, 'CourseRenamed', { properties: [] });
+    eq(sandbox.state.namePrompt, null, 'not asked again');
+    eq(sandbox.linkedCopies().includes(id), false, 'no longer marked');
+  });
+
+  check('a model not opened from a link, or not on screen, is not asked about', () => {
+    const own = sandbox.openNewModel('Own');
+    addTaggedEvent(own, 'Started', { properties: [] });
+    eq(sandbox.state.namePrompt, null, 'never linked');
+    const linked = sandbox.createDcbModel('Elsewhere');
+    sandbox.markLinkedCopy(linked);
+    addTaggedEvent(linked, 'Started', { properties: [] });
+    eq(sandbox.state.namePrompt, null, 'linked, but another model is open');
+    eq(sandbox.linkedCopies().includes(linked), false, 'and its chance has passed');
+  });
+
+  check('renaming a linked copy answers the question before it is asked', () => {
+    const id = sandbox.openNewModel('Example');
+    sandbox.markLinkedCopy(id);
+    sandbox.renameDcbModel(id, 'Mine');
+    eq(sandbox.state.namePrompt, null, 'not asked');
+    eq(sandbox.linkedCopies().includes(id), false, 'unmarked');
+    eq(sandbox.projectState()[id].name, 'Mine', 'renamed');
+  });
+
+  check('Save name renames the copy, Keep name leaves it', () => {
+    const id = sandbox.openNewModel('Example');
+    sandbox.state.namePrompt = { id, draft: '  My course model ' };
+    button(sandbox.namePromptField(sandbox.activeModel()), 'Save name').onclick();
+    eq(sandbox.projectState()[id].name, 'My course model', 'trimmed and saved');
+    eq(sandbox.state.namePrompt, null, 'closed');
+    sandbox.state.namePrompt = { id, draft: 'Something else' };
+    button(sandbox.namePromptField(sandbox.activeModel()), 'Keep name').onclick();
+    eq(sandbox.projectState()[id].name, 'My course model', 'kept');
+    eq(sandbox.state.namePrompt, null, 'closed');
+  });
+
+  check('an empty name is refused and the question stays open', () => {
+    const id = sandbox.openNewModel('Example');
+    sandbox.state.namePrompt = { id, draft: '   ' };
+    button(sandbox.namePromptField(sandbox.activeModel()), 'Save name').onclick();
+    eq(sandbox.projectState()[id].name, 'Example', 'unchanged');
+    eq(sandbox.state.namePrompt, { id, draft: '   ' }, 'still asking');
+    sandbox.state.namePrompt = null;
+  });
+
+  store.delete('dcb-playground:model');
+}
+
 // A share link or a fetched file is unpacked under a cap: a few hundred
 // kilobytes of gzip can stand for gigabytes of whitespace, and the
 // link is unpacked the moment it is opened.

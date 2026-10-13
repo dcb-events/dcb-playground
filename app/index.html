@@ -1788,6 +1788,7 @@ const state = {
   problems: false,         // the loose-ends-and-drifted-scenarios panel
   railOpen: false,          // the rail, as an off-canvas drawer on a narrow screen
   moreOpen: false,          // the bar's ⋯ menu, on a narrow screen — see `moreMenu`
+  namePrompt: null,         // { id, draft } — a linked copy's first change, asking for a name; see `namePromptField`
   importExport: false,      // the Import & Export modal
   ieTab: 'import',          // within it: 'import' | 'export'
   ieImportMode: 'url',      // within Import: 'url' | 'json'
@@ -1827,6 +1828,11 @@ function beginImport(envelope) {
   finishImport(envelope);
 }
 
+// Envelopes that came in through a link rather than the models dialog
+// — what `markLinkedCopy` (shared.js) is told about once they land,
+// across the script gate if there is one.
+const linkedEnvelopes = new WeakSet();
+
 // What opening a different stored model means, wherever it happens —
 // the models dialog, an import, the fallback after a delete. The
 // sandbox session and the pending feature groups are browser-global,
@@ -1836,6 +1842,7 @@ function switchToModel(id) {
   localStorage.setItem(MODEL_KEY, id);
   sessionReset();
   setPendingFeatures([]);
+  state.namePrompt = null;
   state.slice = null;
   state.view = 'overview';
 }
@@ -1843,6 +1850,7 @@ function switchToModel(id) {
 function finishImport(envelope) {
   run(() => {
     const { modelId, skipped } = importModelFromEnvelope(envelope);
+    if (linkedEnvelopes.has(envelope)) markLinkedCopy(modelId);
     switchToModel(modelId);
     // A model is now loaded, so whatever opened the models dialog — a
     // click on the bar, or entering the page without a model link — is
@@ -3122,6 +3130,13 @@ onAppend((at, appended) => {
   // An append outside any gesture — an agent's tool call — is its own
   // undo step; the tool repaints for itself afterwards.
   takeUndoMark(at, appended);
+});
+
+// A linked copy's first change asks for a name — only while it is the
+// model on screen, since the question is about what was just done.
+onAppend((at, appended) => {
+  const id = takeFirstChange(appended);
+  if (id && id === activeModelId()) state.namePrompt = { id, draft: projectState()[id].name };
 });
 
 const runOnce = run;
@@ -5480,6 +5495,39 @@ function render() {
   landOn(selector);
 }
 
+// A linked copy's first change (`takeFirstChange`, shared.js): the
+// bar's name becomes a field, prefilled with the name it has, over a
+// word on where that change went. It takes no focus — the change was
+// made somewhere on the page, perhaps mid-word — and blocks nothing:
+// editing goes on under it until Save name, Keep name, Enter or Escape.
+function namePromptField(model) {
+  const prompt = state.namePrompt;
+  const close = () => { state.namePrompt = null; render(); };
+  const save = () => {
+    run(() => { renameDcbModel(model.id, prompt.draft); state.namePrompt = null; });
+  };
+  return h('div', { class: 'name-prompt' },
+    h('span', { class: 'brand-title' }, 'DCB Playground'),
+    h('span', { class: 'sep', 'aria-hidden': 'true' }, '/'),
+    h('input', {
+      class: 'name-prompt-input', type: 'text', value: prompt.draft, 'aria-label': 'Name of this copy',
+      'aria-describedby': 'name-prompt-note', maxlength: 100,
+      oninput: (e) => { prompt.draft = e.target.value; },
+      onkeydown: (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); save(); }
+        if (e.key === 'Escape') { e.preventDefault(); close(); }
+      },
+    }),
+    h('div', { class: 'name-prompt-pop', role: 'status' },
+      h('strong', {}, 'First change saved to your copy'),
+      h('p', { id: 'name-prompt-note' },
+        'This model is a copy kept in this browser — the example or link it came from is unchanged. '
+        + 'Name it to tell the two apart.'),
+      h('div', { class: 'name-prompt-actions' },
+        h('button', { class: 'btn', type: 'button', onclick: close }, 'Keep name'),
+        h('button', { class: 'btn primary', type: 'button', onclick: save }, 'Save name'))));
+}
+
 function paintPage() {
   const model = activeModel();
 
@@ -5488,8 +5536,17 @@ function paintPage() {
   // The playground's name and the model that is open, as one button:
   // the way to switch models, start one, or load one — see `modelsModal`.
   const modelSwitch = document.getElementById('model-switch');
+  const naming = !!(model && state.namePrompt && state.namePrompt.id === model.id);
+  const focused = document.activeElement;
+  const typing = focused && focused.classList && focused.classList.contains('name-prompt-input')
+    ? [focused.selectionStart, focused.selectionEnd] : null;
   modelSwitch.innerHTML = '';
-  modelSwitch.appendChild(h('button', {
+  if (naming) {
+    modelSwitch.appendChild(namePromptField(model));
+    // A repaint while the name is being typed keeps the caret where it was.
+    const input = typing && modelSwitch.querySelector('.name-prompt-input');
+    if (input) { input.focus(); input.setSelectionRange(typing[0], typing[1]); }
+  } else modelSwitch.appendChild(h('button', {
     class: 'model-switch', type: 'button',
     title: model ? 'Switch, start or load a model' : 'Start or load a model',
     onclick: () => { closeForms(); state.models = true; render(); },
@@ -15429,15 +15486,19 @@ async function boot() {
   }
   // Opened before and unchanged since: back to that copy rather than a
   // second one beside it (`modelMatchingEnvelope`). The script gate is
-  // not asked again for code it already let in.
+  // not asked again for code it already let in. Unchanged, it is still
+  // a linked copy waiting on its first change — even one opened before
+  // copies were marked at all.
   const existing = modelMatchingEnvelope(envelope);
   if (existing) {
+    markLinkedCopy(existing);
     switchToModel(existing);
     state.models = false;
     render();
     toast('This model was opened before — switched to it.');
     return;
   }
+  linkedEnvelopes.add(envelope);
   beginImport(envelope);
 }
 
