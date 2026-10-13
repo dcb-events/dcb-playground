@@ -1184,3 +1184,50 @@ step at the playhead. Only the step band scrolls.
 - **Held by a test.** Every scenario's arguments, and every event the
   evaluator publishes for it, validate against these schemas
   (evaluate.test.js, with a validator for the keywords in use).
+
+## Code export
+
+- **What it is** (experimental, 2026-10). The model exported as
+  implementation source, for someone to take away: one dependency-free
+  ES module per model (`codegen.js`). Each command decides against an
+  `EventStore` port in the shape of the DCB specification (`read`
+  answering the matching events and the store's head position,
+  `append` under a condition). It then appends what it publishes
+  under the condition its reads made: every query it ran, ORed, after
+  the head the first round saw. Later rounds ignore anything past that
+  head, so a decision reads one state. `createApp(store)` gives
+  `handle`, `decide` and `project`. A rule refusing is returned
+  (`{ rejected }`); a decision that cannot be made throws, as the
+  evaluator separates rejected from broken. A failed append throws
+  `AppendConditionFailed` and is not retried: a retry loop is shown in
+  the header, so the DCB mechanics stay visible.
+- **A plan, then printers.** `codePlan` decides every semantic
+  question once, as language-neutral data; a printer
+  (`CODE_TARGETS`) only spells it. A second language is a second
+  printer, not a second reading of the model. JavaScript with JSDoc
+  types came first: it is what dcb.events writes its examples in and
+  runs with no build step. A scripted handler is JavaScript too, so
+  it is the next construct a JS target can take verbatim.
+- **The third copy of the semantics, on purpose.** The evaluator
+  avoids emitting source because generated folds are a copy nobody can
+  read (its header). The export is that copy, for a reader outside the
+  playground, and `codegen.test.js` holds it to the evaluator. Every
+  scenario of every shipped model and fixture is run both ways and
+  must agree. The models without experimental constructs must export
+  without a stub. Known divergence: the export makes its reads
+  eagerly, a round at a time, and the evaluator folds an inline read
+  where a rule first needs it. So an *error* in a read no earlier
+  rule reached is raised by the export only. Outcomes never differ.
+- **What it does not translate, it stubs.** Entities, scripted
+  projections and a fan-out over a fan-out (`excluding` comes only
+  with entities). A stub throws `NotExported` with the reason, a
+  command reading a stubbed projection is stubbed too, and the file's
+  header lists every stub. Nothing is approximated. Fan-out over a
+  projection read is translated (`readEach`, `every`), because
+  `pricing-simple` needs it and is not experimental.
+- **Options.** The model's scenarios become `node:test` tests in the
+  same file, behind `import.meta.main`, so importing the module runs
+  nothing. The other options are the bundled in-memory store, each
+  command's derived boundary as a doc comment (`boundarySummary`), and
+  the sandbox's steps as a replayable list. The export is offered
+  only behind the experimental flag, and WebMCP has no tool for it.
