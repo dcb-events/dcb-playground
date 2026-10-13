@@ -1229,5 +1229,10 @@ step at the playhead. Only the step band scrolls.
   same file, behind `import.meta.main`, so importing the module runs
   nothing. The other options are the bundled in-memory store, each
   command's derived boundary as a doc comment (`boundarySummary`), and
-  the sandbox's steps as a replayable list. The export is offered
-  only behind the experimental flag, and WebMCP has no tool for it.
+  the sandbox's steps as a replayable list. In the interface it is
+  the Export tab's third pill, **As code**, offered only behind the
+  experimental flag. It reuses the tab's Include row, so Scenarios
+  become tests and Sandbox steps a replay list. The language, the
+  in-memory store and the boundary comments are remembered per
+  browser (`CODE_EXPORT_KEY`). WebMCP has no tool for it, and the
+  help has no page for it while it is experimental.

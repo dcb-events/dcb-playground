@@ -1737,6 +1737,7 @@
 <script src="model.js"></script>
 <script src="evaluate.js"></script>
 <script src="dsl.js"></script>
+<script src="codegen.js"></script>
 <script src="shared.js"></script>
 <script src="webmcp-schemas.js"></script>
 <script src="webmcp.js"></script>
@@ -1824,12 +1825,13 @@ const state = {
   importExport: false,      // the Import & Export modal
   ieTab: 'import',          // within it: 'import' | 'export'
   ieImportMode: 'url',      // within Import: 'url' | 'json'
-  ieExportMode: 'json',     // within Export: 'json' | 'link'
+  ieExportMode: 'json',     // within Export: 'json' | 'link' | 'code' (experimental)
   ieIncludeScenarios: true, // within Export: leave scenarios out of what is sent
   ieIncludeSandbox: true,   // within Export: leave the recorded sandbox steps out
   ieLink: null,             // within Export: the computed share link, once it resolves
   ieCopiedJson: false,      // brief "Copied ✓" state on the Copy JSON button
   ieCopiedLink: false,      // brief "Copied ✓" state on the Copy link button
+  ieCopiedCode: false,      // brief "Copied ✓" state on the Copy code button
   palette: false,           // quick open is up
   lit: null,                // a reference pinned to its source
   land: null,               // a row to bring on screen after the repaint
@@ -2326,8 +2328,51 @@ function openImportExport() {
   state.ieLink = null;
   state.ieCopiedJson = false;
   state.ieCopiedLink = false;
+  state.ieCopiedCode = false;
   render();
   refreshExportLink();
+}
+
+// The code export's own options, remembered in this browser like the
+// other view choices; what to include (scenarios as tests, sandbox
+// steps to replay) is the Export tab's shared row. See codegen.js.
+const CODE_EXPORT_KEY = 'dcb-playground:code-export';
+function codeExportOptions() {
+  const defaults = { target: 'js', adapter: true, docs: true };
+  try {
+    const stored = JSON.parse(localStorage.getItem(CODE_EXPORT_KEY) || '{}');
+    const out = { ...defaults, ...stored };
+    return CODE_TARGETS[out.target] ? out : { ...out, target: defaults.target };
+  } catch {
+    return defaults;
+  }
+}
+function setCodeExportOption(key, value) {
+  try {
+    localStorage.setItem(CODE_EXPORT_KEY, JSON.stringify({ ...codeExportOptions(), [key]: value }));
+  } catch { /* per-viewer only */ }
+  render();
+}
+
+function exportCode(model) {
+  const options = codeExportOptions();
+  return generateCode(model, {
+    target: options.target,
+    includeTests: state.ieIncludeScenarios,
+    includeAdapter: options.adapter,
+    docComments: options.docs,
+    sandboxSteps: state.ieIncludeSandbox ? session.steps.map(({ command, args }) => ({ command, args })) : [],
+  });
+}
+
+function downloadExportedCode(model, exported) {
+  const blob = new Blob([exported.text], { type: 'text/javascript' });
+  const link = h('a', {
+    href: URL.createObjectURL(blob),
+    download: (toCamel(model.name) || 'model') + exported.extension,
+  });
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 }
 
 // Whatever is in front of the page: a dialog, the import gate, quick
@@ -3142,21 +3187,62 @@ function renderImportExportModal() {
     includeScenarios: state.ieIncludeScenarios, includeSandbox: state.ieIncludeSandbox,
   }), null, 2) : '';
 
+  // Offered behind the experimental flag only; a mode left on it when
+  // the flag goes off reads as JSON.
+  const codeOffered = experimental();
+  const exportMode = state.ieExportMode === 'code' && !codeOffered ? 'json' : state.ieExportMode;
+  const codeOptions = codeExportOptions();
+  const exported = model && exportMode === 'code' ? exportCode(model) : null;
+  const codePanel = exported && h('div', {},
+    h('div', { class: 'ie-check-row' },
+      h('label', { class: 'ie-check' }, 'Language',
+        h('select', { onchange: (e) => setCodeExportOption('target', e.target.value) },
+          ...Object.entries(CODE_TARGETS).map(([key, target]) =>
+            h('option', { value: key, selected: key === codeOptions.target }, target.label)))),
+      h('label', { class: 'ie-check', title: state.ieIncludeScenarios ? 'The tests need it' : '' },
+        h('input', {
+          type: 'checkbox', checked: codeOptions.adapter || state.ieIncludeScenarios, disabled: state.ieIncludeScenarios,
+          onchange: (e) => setCodeExportOption('adapter', e.target.checked),
+        }),
+        'In-memory event store'),
+      h('label', { class: 'ie-check' },
+        h('input', { type: 'checkbox', checked: codeOptions.docs, onchange: (e) => setCodeExportOption('docs', e.target.checked) }),
+        'Boundary comments')),
+    h('div', { class: 'ie-field' },
+      h('label', {}, 'Exported code'),
+      h('textarea', { class: 'mono', rows: '12', wrap: 'off', readonly: true, value: exported.text }),
+      h('div', { class: 'why' },
+        'Each command decides against a DCB event store and appends under the condition its reads made. '
+        + (state.ieIncludeScenarios ? 'Scenarios come along as tests: node --test on the file. ' : '')
+        + (exported.stubs.length
+          ? `Not exported yet: ${exported.stubs.map((stub) => stub.name).join(', ')} — each throws when used.`
+          : 'Everything in this model is exported.'))),
+    h('div', { class: 'ie-actions' },
+      h('button', { class: 'btn', onclick: () => downloadExportedCode(model, exported) }, 'Download ' + exported.extension),
+      h('button', {
+        class: 'btn primary', onclick: () => copyToClipboard(exported.text, 'ieCopiedCode'),
+      }, state.ieCopiedCode ? 'Copied ✓' : 'Copy code')));
+
   const exportPanel = h('div', {},
     optionsRow,
     h('div', { class: 'ie-subtoggle' },
       h('button', {
-        class: 'ie-pill' + (state.ieExportMode === 'json' ? ' on' : ''),
+        class: 'ie-pill' + (exportMode === 'json' ? ' on' : ''),
         onclick: () => { state.ieExportMode = 'json'; render(); },
       }, 'As JSON'),
       h('button', {
-        class: 'ie-pill' + (state.ieExportMode === 'link' ? ' on' : ''),
+        class: 'ie-pill' + (exportMode === 'link' ? ' on' : ''),
         onclick: () => {
           state.ieExportMode = 'link'; render();
           if (!state.ieLink) refreshExportLink();
         },
-      }, 'As a link')),
-    state.ieExportMode === 'json'
+      }, 'As a link'),
+      codeOffered && h('button', {
+        class: 'ie-pill' + (exportMode === 'code' ? ' on' : ''),
+        onclick: () => { state.ieExportMode = 'code'; render(); },
+      }, 'As code')),
+    exportMode === 'code' ? codePanel
+    : exportMode === 'json'
       ? h('div', {},
           h('div', { class: 'ie-field' },
             h('label', {}, 'Exported model'),

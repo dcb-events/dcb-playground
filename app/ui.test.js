@@ -28,7 +28,7 @@ const { sandbox, store, sessionStore, dispatch, listening } = createSandbox();
 // scope, not as properties of the context object – the same as they
 // would on `window` in a browser. The trailer hands out the few this
 // drives, the way `print-model.js` reaches `PREDEFINED_MODELS`.
-loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js', 'shared.js'], {
+loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js', 'codegen.js', 'shared.js'], {
   withPage: true,
   trailer: 'globalThis.state = state; globalThis.render = render; globalThis.session = session;'
     + ' globalThis.closeForms = closeForms; globalThis.codeView = codeView; globalThis.UNGROUPED = UNGROUPED;'
@@ -5497,6 +5497,28 @@ check('the app is text: no file carries a raw control byte', () => {
     dispatch('keydown', event);
     return event;
   };
+
+  // The code export is an experimental offer: its pill is there with
+  // the flag only, and a mode left on it reads as JSON without.
+  check('Export offers the model as code behind the experimental flag', () => {
+    const exportOf = () => {
+      Object.assign(sandbox.state, { importExport: true, ieTab: 'export', ieExportMode: 'code' });
+      const modal = sandbox.renderImportExportModal();
+      sandbox.state.importExport = false;
+      return modal;
+    };
+    const pill = (modal) => findAll(modal, (n) => n.tag === 'button' && textOf(n) === 'As code').length;
+    const code = (modal) => findAll(modal, (n) => n.tag === 'textarea').map((n) => n.value || '').join('');
+    store.set('dcb-playground:experimental', 'off');
+    let modal = exportOf();
+    eq(pill(modal), 0, 'no pill without the flag');
+    eq(code(modal).includes('createApp'), false, 'and no code');
+    store.set('dcb-playground:experimental', 'on');
+    modal = exportOf();
+    eq(pill(modal), 1, 'the pill with it');
+    eq(code(modal).includes('export function createApp(store)'), true, 'and the export');
+    store.delete('dcb-playground:experimental');
+  });
 
   check('Escape closes Import & Export', () => {
     sandbox.state.importExport = true;
