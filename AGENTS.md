@@ -58,8 +58,9 @@ documentation; read it before editing the file:
 - `codegen.js` — the model as _implementation source_ (experimental):
   a language-neutral plan (`codePlan`) spelled by one printer per
   target (`CODE_TARGETS`; JavaScript so far) into a module that
-  decides each command against a DCB event store port. What it cannot
-  translate becomes a stub that throws `NotExported`. No DOM. Held to
+  decides each command against a DCB event store port. Scripted
+  handlers go in verbatim where the target runs JavaScript. What it
+  cannot translate becomes a stub that throws `NotExported`. No DOM. Held to
   `evaluate.js` by `codegen.test.js`.
 - `webmcp.js` — registers WebMCP tools on `document.modelContext` so an
   in-browser agent can inspect and edit the open model through the same

@@ -1206,8 +1206,11 @@ step at the playhead. Only the step band scrolls.
   (`CODE_TARGETS`) only spells it. A second language is a second
   printer, not a second reading of the model. JavaScript with JSDoc
   types came first: it is what dcb.events writes its examples in and
-  runs with no build step. A scripted handler is JavaScript too, so
-  it is the next construct a JS target can take verbatim.
+  runs with no build step. A scripted handler is JavaScript too, so a
+  target that runs it (`runsScripts`) takes it verbatim, under the
+  evaluator's contract: a frozen copy of the event, a fresh state per
+  fold, `exposes`. Any other target stubs it. The page never runs an
+  exported script, so the import gate has nothing to add here.
 - **The third copy of the semantics, on purpose.** The evaluator
   avoids emitting source because generated folds are a copy nobody can
   read (its header). The export is that copy, for a reader outside the
@@ -1218,11 +1221,11 @@ step at the playhead. Only the step band scrolls.
   eagerly, a round at a time, and the evaluator folds an inline read
   where a rule first needs it. So an *error* in a read no earlier
   rule reached is raised by the export only. Outcomes never differ.
-- **What it does not translate, it stubs.** Entities, scripted
-  projections and a fan-out over a fan-out (`excluding` comes only
-  with entities). A stub throws `NotExported` with the reason, a
-  command reading a stubbed projection is stubbed too, and the file's
-  header lists every stub. Nothing is approximated. Fan-out over a
+- **What it does not translate, it stubs.** Entities and a fan-out
+  over a fan-out (`excluding` comes only with entities). A stub
+  throws `NotExported` with the reason. Whatever reads a stubbed
+  projection, a command or a derived projection, is stubbed too. The
+  file's header lists every stub. Nothing is approximated. Fan-out over a
   projection read is translated (`readEach`, `every`), because
   `pricing-simple` needs it and is not experimental.
 - **Options.** The model's scenarios become `node:test` tests in the

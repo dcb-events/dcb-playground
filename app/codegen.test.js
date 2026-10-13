@@ -138,7 +138,7 @@ async function main() {
         let value;
         let thrown = null;
         try {
-          value = await app.project(scenario.projection, tags);
+          value = await app.project(scenario.projection, tags, plain(scenario.arguments || {}));
         } catch (error) {
           thrown = error;
         }
@@ -256,6 +256,51 @@ async function main() {
       if (!text.includes(`${stub.kind} ${stub.name}: ${stub.reason}`)) throw new Error(`the header does not list ${stub.name}`);
     }
     if (!stubs.some((s) => /entities are not exported yet/.test(s.reason))) throw new Error('no entity stub');
+  });
+
+  // Scripts go into the export verbatim, under the evaluator's
+  // contract: a frozen event, a fresh state per fold, `exposes`.
+  await check('a scripted projection runs its own code, and an event it writes to throws', async () => {
+    const model = {
+      name: 'Scripts',
+      'custom-type-definitions': { DocumentId: { schema: { type: 'string' }, isTag: true } },
+      'entity-definitions': {},
+      'event-definitions': {
+        Touched: { properties: [{ name: 'documentId', propertyType: 'DocumentId', isOptional: false, isList: false }], tags: ['documentId'] },
+      },
+      'projection-definitions': {
+        Touches: {
+          tags: [{ name: 'documentId', tagType: 'DocumentId' }], valueType: 'integer', isList: false,
+          script: { initialState: { n: 0, seen: [] }, exposes: 'n' },
+          handlers: [{ event: 'Touched', code: '(state.seen.push(tags.documentId), { ...state, n: state.n + 1 })' }],
+        },
+        Vandal: {
+          tags: [], valueType: 'integer', isList: false,
+          script: { initialState: 0 },
+          handlers: [{ event: 'Touched', code: '(event.data.documentId = "x", 1)' }],
+        },
+      },
+      'command-definitions': {},
+    };
+    const { text, stubs } = generateCode(model, {});
+    eq(stubs, [], 'stubs');
+    const mod = await importExport(text);
+    const app = mod.createApp(mod.createInMemoryEventStore([
+      { type: 'Touched', data: { documentId: 'd1' } }, { type: 'Touched', data: { documentId: 'd1' } },
+    ]));
+    eq(await app.project('Touches', { documentId: 'd1' }), 2, 'exposed');
+    eq(await app.project('Touches', { documentId: 'd1' }), 2, 'from a fresh state');
+    let thrown = null;
+    try { await app.project('Vandal', {}); } catch (error) { thrown = error; }
+    eq(thrown instanceof mod.EvaluationError, true, 'the frozen event refused the write');
+  });
+
+  check('a target that cannot run JavaScript stubs a scripted projection, and what reads it', () => {
+    fresh();
+    const id = importModelFromEnvelope(JSON.parse(fs.readFileSync(path.join(FIXTURES, 'content-decisions-scripted.json'), 'utf8'))).modelId;
+    const plan = sandbox.codePlan(projectState()[id], { scripts: false });
+    eq(plan.stubs.some((s) => s.kind === 'projection' && /JavaScript/.test(s.reason)), true, 'the script');
+    eq(plan.stubs.some((s) => s.kind === 'command'), true, 'and a command reading it');
   });
 
   check('options: no adapter, no doc comments, sandbox steps', () => {

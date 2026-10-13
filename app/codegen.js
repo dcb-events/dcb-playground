@@ -24,7 +24,8 @@
 // there.
 //
 // **What cannot be translated says so.** A construct the plan does not
-// cover yet — entities, scripted projections, a fan-out over a fan-out — makes
+// cover yet — entities, a fan-out over a fan-out, a scripted projection
+// for a target that cannot run JavaScript — makes
 // its definition a stub that throws `NotExported` with the reason, and
 // the generated file's header lists every stub. Nothing is approximated:
 // a stub fails loudly where a guess would fail wrongly.
@@ -80,11 +81,26 @@ function codePlan(model, options = {}) {
   const projections = model['projection-definitions'] || {};
   for (const [name, body] of Object.entries(projections)) {
     try {
-      plan.projections.push(codePlanProjection(model, name, body));
+      plan.projections.push(codePlanProjection(model, name, body, !!options.scripts));
     } catch (error) {
       if (!(error instanceof CodeUnsupported)) throw error;
       plan.projections.push({ kind: 'stub', name, reason: error.message });
       stubs.push({ kind: 'projection', name, reason: error.message });
+    }
+  }
+  // A derived projection over a stubbed one is stubbed too, until
+  // nothing more falls.
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const [i, p] of plan.projections.entries()) {
+      if (p.kind !== 'derived') continue;
+      const gone = [p.left, p.right].find((o) => o.k === 'projectionRead'
+        && plan.projections.some((q) => q.name === o.projection && q.kind === 'stub'));
+      if (!gone) continue;
+      const reason = `it reads ${gone.projection}, which is not exported`;
+      plan.projections[i] = { kind: 'stub', name: p.name, reason };
+      stubs.push({ kind: 'projection', name: p.name, reason });
+      changed = true;
     }
   }
   const stubbed = new Set(stubs.map((s) => s.name));
@@ -126,6 +142,7 @@ function codePlan(model, options = {}) {
         projection: scenario.projection,
         given: codeGivenEvents(scenario),
         tags,
+        args: evNormalize(scenario.arguments || {}),
         then: 'then' in scenario ? evNormalize(scenario.then) : undefined,
         skip: !projections[scenario.projection]
           ? `the model defines no projection "${scenario.projection}"`
@@ -201,8 +218,9 @@ function codeProjectionTags(model, name, body) {
   });
 }
 
-function codePlanProjection(model, name, body) {
-  if (scriptOf(body)) codeUnsupported('scripted projections are not exported yet');
+function codePlanProjection(model, name, body, scripts) {
+  const script = scriptOf(body);
+  if (script) return codePlanScript(model, name, body, script, scripts);
   const derived = derivedOf(body);
   if (derived) return codePlanDerived(model, name, body, derived);
 
@@ -223,6 +241,28 @@ function codePlanProjection(model, name, body) {
     tags,
     initial: evNormalize(body.initialValue === undefined ? defaultInitialValue(model, body) : body.initialValue),
     handlers: [...steps.values()],
+  };
+}
+
+// A scripted projection's handlers are JavaScript expressions, taken
+// verbatim by a target that runs JavaScript — `scripts` says whether
+// this one does — under the contract the evaluator compiles them to:
+// `(state, event, args, tags) => nextState`.
+function codePlanScript(model, name, body, script, scripts) {
+  if (!scripts) codeUnsupported('its handlers are JavaScript, which this language cannot run');
+  const handlers = new Map();
+  for (const handler of body.handlers || []) {
+    if (!handler || !handler.event) continue;
+    if (handler.code === undefined) codeUnsupported(`its handler for ${handler.event} has no script`);
+    handlers.set(handler.event, { event: handler.event, code: String(handler.code) });
+  }
+  return {
+    kind: 'script',
+    name,
+    tags: codeProjectionTags(model, name, body),
+    initial: script.initialState ?? null,
+    exposes: script.exposes === undefined ? null : script.exposes,
+    handlers: [...handlers.values()],
   };
 }
 
@@ -253,11 +293,11 @@ function codePlanDerived(model, name, body, derived) {
     if (operandSource(value) !== 'projection-read') return { k: 'lit', value: evNormalize(value) };
     const target = projections[value.projection];
     if (!target) codeUnsupported(`it reads "${value.projection}", which this model does not define`);
-    if (scriptOf(target)) codeUnsupported(`it reads ${value.projection}, which is not exported`);
     const held = Object.fromEntries(readTagEntries(value));
     return {
       k: 'projectionRead',
       projection: value.projection,
+      args: Object.entries(value.arguments || {}).map(([argName, arg]) => ({ name: argName, value: { k: 'lit', value: evNormalize(arg) } })),
       tags: projectionTagParams(target).map((tag) => {
         const given = held[tag.name];
         let expr;
@@ -340,8 +380,9 @@ function codePlanCommand(model, name, body, stubbedProjections) {
       const value = operandSource(operand) === 'tag-literal' ? { k: 'lit', value: operand.tagValue } : expr(operand);
       return { name: tag.name, value };
     });
+    const args = Object.entries(read.arguments || {}).map(([argName, operand]) => ({ name: argName, value: expr(operand) }));
     const round = alias ? roundOf.get(alias) : operandDepth(read, roundOf);
-    const entry = { name: alias || null, projection: read.projection, tags, round, label, fan: tags.some((t) => t.each) };
+    const entry = { name: alias || null, projection: read.projection, tags, args, round, label, fan: tags.some((t) => t.each) };
     reads.push(entry);
     return entry;
   };
@@ -464,7 +505,7 @@ function codePlanCommand(model, name, body, stubbedProjections) {
 // ============================================================
 
 const CODE_TARGETS = {
-  js: { label: 'JavaScript', extension: '.js', print: (plan, options) => codePrintJs(plan, options) },
+  js: { label: 'JavaScript', extension: '.js', runsScripts: true, print: (plan, options) => codePrintJs(plan, options) },
 };
 
 // The export: `{ text, extension, stubs }`. Options, all optional:
@@ -476,7 +517,7 @@ const CODE_TARGETS = {
 function generateCode(model, options = {}) {
   const target = CODE_TARGETS[options.target || 'js'];
   if (!target) throw new Error(`No code target "${options.target}".`);
-  const plan = codePlan(model, options);
+  const plan = codePlan(model, { ...options, scripts: !!target.runsScripts });
   return { text: target.print(plan, options), extension: target.extension, stubs: plan.stubs };
 }
 
@@ -500,7 +541,7 @@ const CODE_JS_RUNTIME_NAMES = [
   'endsWith', 'add', 'subtract', 'multiply', 'min', 'max', 'TAG_SCHEMAS', 'tag', 'EVENT_TAGS', 'tagsOf',
   'OPTIONAL_PROPERTIES', 'withOptionals', 'projection', 'derived', 'read', 'READ', 'notExported', 'decisionModel',
   'argument', 'event', 'projections', 'readEach', 'every', 'flat', 'each', 'i', 'commands', 'createApp', 'createInMemoryEventStore', 'sandboxSteps',
-  'replaySandbox', 'store', 'args', 'decision', 'events', 'state', 't', 'left', 'right',
+  'replaySandbox', 'store', 'scripted', 'freeze', 'args', 'decision', 'events', 'state', 't', 'left', 'right',
 ];
 
 const CODE_JS_IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
@@ -746,6 +787,22 @@ function codeJsProjection(p, projectionVar) {
     + `${leaf.field ? ', ' + codeJsString(leaf.field) : ''})`));
   const tags = `(t) => [${tagList.join(', ')}]`;
   const lines = [];
+  if (p.kind === 'script') {
+    lines.push(`const ${v} = scripted({`);
+    lines.push(`  name: ${codeJsString(p.name)},`);
+    lines.push(`  tags: ${tags},`);
+    lines.push(`  initialState: ${codeJsLiteral(p.initial)},`);
+    if (p.exposes !== null) lines.push(`  exposes: ${codeJsString(p.exposes)},`);
+    lines.push('  // The model\'s own scripts, verbatim.');
+    lines.push('  when: {');
+    for (const h of p.handlers) {
+      const code = h.code.includes('\n') ? h.code.split('\n').join('\n      ') : h.code;
+      lines.push(`    ${codeJsKey(h.event)}: (state, event, args, tags) => (${code}),`);
+    }
+    lines.push('  },');
+    lines.push('});');
+    return lines.join('\n');
+  }
   if (p.kind === 'fold') {
     lines.push(`const ${v} = projection({`);
     lines.push(`  name: ${codeJsString(p.name)},`);
@@ -762,7 +819,8 @@ function codeJsProjection(p, projectionVar) {
     return lines.join('\n');
   }
   const operand = (o) => (o.k === 'projectionRead'
-    ? `read(${projectionVar.get(o.projection)}, ${codeJsObject(o.tags.map((tag) => [tag.name, codeJsExpr(tag.value, null)]))})`
+    ? `read(${projectionVar.get(o.projection)}, ${codeJsObject(o.tags.map((tag) => [tag.name, codeJsExpr(tag.value, null)]))}`
+      + `${o.args.length ? ', ' + codeJsObject(o.args.map((a) => [a.name, codeJsExpr(a.value, null)])) : ''})`
     : codeJsExpr(o, null));
   lines.push(`const ${v} = derived({`);
   lines.push(`  name: ${codeJsString(p.name)},`);
@@ -829,9 +887,10 @@ function codeJsCommand(command, projectionVar, withDocs, typeNames) {
     for (const read of round) {
       const fanned = read.tags.find((tag) => tag.each);
       const tags = codeJsObject(read.tags.map((tag) => [tag.name, tag.each ? 'each' : codeJsExpr(tag.value, scope)]));
+      const args = read.args.length ? ', ' + codeJsObject(read.args.map((a) => [a.name, codeJsExpr(a.value, scope)])) : '';
       const call = fanned
-        ? `readEach(${projectionVar.get(read.projection)}, ${codeJsExpr(fanned.each, scope)}, (each) => (${tags}))`
-        : `read(${projectionVar.get(read.projection)}, ${tags})`;
+        ? `readEach(${projectionVar.get(read.projection)}, ${codeJsExpr(fanned.each, scope)}, (each) => (${tags})${args})`
+        : `read(${projectionVar.get(read.projection)}, ${tags}${args})`;
       lines.push(`${ind}  ${scope.reads.get(read)}: ${call},`);
     }
     lines.push(`${ind}});`);
@@ -922,7 +981,8 @@ function codeJsTests(plan) {
     lines.push('');
     lines.push(head(name, s.skip));
     lines.push(`    const app = given(${codeJsEvents(s.given, '    ')});`);
-    lines.push(`    same(await app.project(${codeJsString(s.projection)}, ${codeJsLiteral(s.tags)}), ${codeJsLiteral(s.then)});`);
+    const args = Object.keys(s.args).length ? `, ${codeJsLiteral(s.args)}` : '';
+    lines.push(`    same(await app.project(${codeJsString(s.projection)}, ${codeJsLiteral(s.tags)}${args}), ${codeJsLiteral(s.then)});`);
     lines.push('  });');
   }
   lines.push('}');
@@ -1117,15 +1177,48 @@ function projection({ name, tags, initialState, when }) {
 // A derived projection reads its operands and makes one value of them;
 // its query is theirs, each under its own tags.
 const READ = Symbol('read');
-const read = (projection, tags) => ({ [READ]: true, projection, tags });
+const read = (projection, tags, args = {}) => ({ [READ]: true, projection, tags, args });
 // A read made once per element of a list — one fold, and one query
 // item, each.
-const readEach = (projection, elements, tagsOf) => ({ [READ]: true, projection, each: asList(elements).map(tagsOf) });
+const readEach = (projection, elements, tagsOf, args = {}) => ({ [READ]: true, projection, each: asList(elements).map(tagsOf), args });
 function derived({ name, tags, operands, value }) {
   return {
     name,
     query: (values) => (tags(values), operands(values).flatMap((o) => (o?.[READ] ? o.projection.query(o.tags) : []))),
-    fold: (events, values) => (tags(values), value(...operands(values).map((o) => (o?.[READ] ? o.projection.fold(events, o.tags) : o)))),
+    fold: (events, values) => (tags(values), value(...operands(values).map((o) => (o?.[READ] ? o.projection.fold(events, o.tags, o.args) : o)))),
+  };
+}
+
+// A scripted projection: the model's own JavaScript, one expression per
+// event, \`(state, event, args, tags) => nextState\`. Each fold starts
+// from a copy of the initial state, a script sees a frozen copy of the
+// event, and \`exposes\` names the one field of the state a rule reads.
+function freeze(value) {
+  if (value !== null && typeof value === 'object') {
+    for (const key of Object.keys(value)) freeze(value[key]);
+    Object.freeze(value);
+  }
+  return value;
+}
+function scripted({ name, tags, initialState, exposes, when }) {
+  const types = Object.keys(when);
+  return {
+    name,
+    query: (values) => [{ types, tags: tags(values) }],
+    fold(events, values, args = {}) {
+      const wanted = tags(values);
+      let state = structuredClone(initialState);
+      for (const event of events) {
+        if (!Object.hasOwn(when, event.type) || !wanted.every((t) => event.tags.includes(t))) continue;
+        const { type, data } = withOptionals(event);
+        try {
+          state = when[type](state, freeze(structuredClone({ type, data })), args, values);
+        } catch (error) {
+          throw new EvaluationError(\`The script for "\${type}" on projection "\${name}" threw: \${error?.message ?? error}\`);
+        }
+      }
+      return exposes === undefined || state === null || state === undefined ? state : state[exposes];
+    },
   };
 }
 
@@ -1163,7 +1256,7 @@ function decisionModel(store) {
           .map((s) => s.event);
       }
       return Object.fromEntries(entries.map(([key, r]) => [key,
-        r.each ? r.each.map((t) => r.projection.fold(events, t)) : r.projection.fold(events, r.tags)]));
+        r.each ? r.each.map((t) => r.projection.fold(events, t, r.args)) : r.projection.fold(events, r.tags, r.args)]));
     },
     appendCondition() {
       if (!items.length) return undefined;
@@ -1193,13 +1286,13 @@ export function createApp(store) {
       if (decision.published.length) await store.append(decision.published, decision.appendCondition);
       return { published: decision.published };
     },
-    /** A projection's current value, read by its tags. */
-    async project(name, tags = {}) {
+    /** A projection's current value, read by its tags (and a script's arguments). */
+    async project(name, tags = {}, args = {}) {
       if (!Object.hasOwn(projections, name)) throw new EvaluationError(\`This model has no projection "\${name}".\`);
       const projection = projections[name];
       const query = { items: projection.query(tags) };
       const { events } = query.items.length ? await store.read(query) : { events: [] };
-      return projection.fold(events.map((s) => s.event), tags);
+      return projection.fold(events.map((s) => s.event), tags, args);
     },
   };
 }`;
