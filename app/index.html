@@ -15548,7 +15548,8 @@ document.getElementById('rail').addEventListener('click', (e) => {
 });
 
 // A `#model=…` or `#url=…` fragment never reaches the server (there is
-// none), so this is the only place it is read (`readModelLink`). Cleared
+// none), so it is read here and on a change of it (`readModelLink`,
+// `openModelLink`). Cleared
 // as soon as it is read, successfully or not — a bad or already-consumed
 // link should not keep re-triggering on every reload. A `#url=` link
 // fetches its file anew on every open; the copy it makes is of the file
@@ -15594,7 +15595,13 @@ async function boot() {
   render();
   syncTopbarHeight();
   setFooterYear();
-  if (!link) return;
+  if (link) await openModelLink(link);
+}
+
+// A link pasted into the address bar of a page already open changes
+// only the fragment, which reloads nothing — so the fragment is read
+// on its change too, not only on boot.
+async function openModelLink(link) {
   history.replaceState(null, '', location.pathname + location.search);
   const surface = link.options.get('surface');
   if (surface === 'code' || surface === 'visual') setCodeSurface(surface === 'code');
@@ -15631,6 +15638,10 @@ async function boot() {
 }
 
 window.addEventListener('DOMContentLoaded', boot);
+window.addEventListener('hashchange', () => {
+  const link = readModelLink(location.hash);
+  if (link) openModelLink(link);
+});
 </script>
 </body>
 </html>
