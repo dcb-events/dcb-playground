@@ -1,13 +1,13 @@
 // ============================================================
-// Rewrites app/vendor/monaco/ — the one vendored dependency.
+// Rewrites app/vendor/monaco/ – the one vendored dependency.
 //
 // The scripted-projection editor is Monaco, pinned to the version
 // below and trimmed to what the playground actually uses: the editor
 // core, the TypeScript language support (which is what turns the
 // synthesized per-handler type preamble into completion and
 // squiggles), and the worker that runs it. Everything else in the
-// distribution — other languages, other workers, translations,
-// source maps — is deliberately not vendored.
+// distribution – other languages, other workers, translations,
+// source maps – is deliberately not vendored.
 //
 // 0.52.2 is the last release with the classic AMD `min/vs` layout,
 // which is why it is the pin: the app is classic scripts with no
@@ -19,7 +19,7 @@
 //
 //   node app/generate-vendor-monaco.js
 //
-// Downloads from the npm registry, so it needs the network — but only
+// Downloads from the npm registry, so it needs the network – but only
 // when rerun, which is only on a version bump. The result is checked
 // in; the app never fetches anything at runtime.
 // ============================================================
@@ -65,7 +65,7 @@ function fetch(url) {
   });
 }
 
-// A minimal ustar reader — the one format npm publishes. Yields
+// A minimal ustar reader – the one format npm publishes. Yields
 // { name, body } per regular file.
 function* tarEntries(buffer) {
   let at = 0;

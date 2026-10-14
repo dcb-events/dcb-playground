@@ -1,5 +1,5 @@
 // ============================================================
-// DCB Playground — model layer.
+// DCB Playground – model layer.
 //
 // The semantics behind `index.html`. Nothing here touches the DOM: it
 // is the event log, the projection over it, type resolution, reference
@@ -7,10 +7,10 @@
 // predefined models.
 //
 // **Validation is split in two.** The write path refuses only what
-// could not be stored as a definition at all — a missing key, a name
+// could not be stored as a definition at all – a missing key, a name
 // collision, a body whose containers are not the lists they claim
-// (`assertStorableBody`). Everything semantic — dangling references,
-// write coverage, enum membership, name idiom — is an *advisory*:
+// (`assertStorableBody`). Everything semantic – dangling references,
+// write coverage, enum membership, name idiom – is an *advisory*:
 // computed from the stored state by `modelAdvisories`, surfaced by the
 // interface and the agent tools, never thrown at a writer. A defective
 // model loads, renders and evaluates; whatever its defects break
@@ -24,7 +24,7 @@
 //
 // **Scripted projections**: a property or a projection may replace its
 // declarative handlers with code, one body per event type. This is the
-// escape hatch for state whose accumulation cannot be declared —
+// escape hatch for state whose accumulation cannot be declared –
 // windows, running comparisons, anything needing a value the previous
 // events implied rather than carried. It costs real validation: the
 // code is stored and displayed but nothing here parses or runs it, so
@@ -35,8 +35,8 @@
 // boundary as a declared one.
 //
 // Command bodies carry an optional `feature`, naming the group a
-// command belongs to. Nothing in the model reads it — it rides along
-// untouched through validation, references and renames — and it is the
+// command belongs to. Nothing in the model reads it – it rides along
+// untouched through validation, references and renames – and it is the
 // one field a DCB Model carries that the modelled system does not
 // read. See `CommandDefinition.feature` in dcb-model.schema.json.
 // ============================================================
@@ -46,7 +46,7 @@
 // ============================================================
 // Bumped whenever a stored definition changes shape. The log is the
 // whole state, so an old log replayed against new validation would
-// produce models this build refuses to save — a fresh key is honest
+// produce models this build refuses to save – a fresh key is honest
 // about that where a silent migration would not be. v8 dropped
 // property retention and a binding's `asOf`. v9 dropped the reserved
 // `status` property and its entity-derived enum: a lifecycle is now an
@@ -61,10 +61,10 @@
 // the artifact from "DCB Context" to "DCB Model": the three lifecycle
 // event types and the `dcb-context-id` they carried are spelled with
 // `model` now, and nothing reads the old spelling. This is the one bump
-// so far that changes no shape at all — only names — which is exactly
+// so far that changes no shape at all – only names – which is exactly
 // why it needs a fresh key rather than a quiet coexistence.
-// v14 unified projections: an entity property is now a *binding* —
-// `{name, projection}` — pointing at an ordinary `projection-definition`,
+// v14 unified projections: an entity property is now a *binding* –
+// `{name, projection}` – pointing at an ordinary `projection-definition`,
 // every projection declares its partition as explicit `parameters`,
 // `isOptional` is gone, and an initial value may be any typed literal
 // including a non-empty list. v15 generalised property scenarios into
@@ -80,12 +80,12 @@
 // v18 added guarded emissions (`when` on a publishes entry) and
 // derived projections (`derived` in place of handlers): a v17 reader
 // would publish an emission its author made conditional and has no
-// fold for a handlerless projection — both misreads, so the key moves.
+// fold for a handlerless projection – both misreads, so the key moves.
 // v19 made an entity's lifecycle an explicit designation: the entity
 // carries `lifecycle`, naming one of its own property bindings, and the
 // two-state case is an ordinary `boolean` projection rather than a
-// `NonExistent`/`Existent` enum. The `status` convention is gone — no
-// reader keys off the name any more — so a v18 log replayed here would
+// `NonExistent`/`Existent` enum. The `status` convention is gone – no
+// reader keys off the name any more – so a v18 log replayed here would
 // produce entities whose lifecycle nothing designates.
 // v20 gave every rule a rejection message (`rejection` on a command's
 // conditions) and made a refusal known by it: a scenario's Then holds
@@ -156,21 +156,21 @@ function isIdKeyed(kind) { return ID_KEYED_KINDS.includes(kind); }
 
 const SIMPLE_TYPES = ['boolean', 'integer', 'string'];
 
-// A lifecycle is an ordinary property, folded like any other — what
+// A lifecycle is an ordinary property, folded like any other – what
 // makes it the lifecycle is that the entity *designates* it, by name,
 // in `lifecycle`. Nothing keys off the property's own name any more:
 // `exists` is only what the Entity view's "+ lifecycle → exists" types,
 // and an entity whose lifecycle is called `state` or `phase` reads
 // exactly the same.
 //
-// No entity gets one unasked. A new entity is bare — its identifier
-// and nothing else — and the existence wording ("course exists") is
+// No entity gets one unasked. A new entity is bare – its identifier
+// and nothing else – and the existence wording ("course exists") is
 // licensed by a designation, so until an author adds a lifecycle that
 // wording appears nowhere. The two-state case is a plain `boolean`,
 // not an enum: no custom type and no vocabulary to learn, the thing
 // either exists or it does not. An enum is the other way in, and
 // promoting a boolean to one has to ask for names, so both are
-// gestures rather than inferences — see
+// gestures rather than inferences – see
 // `docs/research/2026-09-30-entity-lifecycle-as-boolean-existence.md`.
 const LIFECYCLE_PROPERTY = 'exists';
 
@@ -207,7 +207,7 @@ const PREDICATE_SYMBOL = {
 const DERIVED_PREDICATES = BINARY_PREDICATES.filter((p) => p !== 'equalsAny');
 
 // What a derived projection may compute instead (9.0): one operator
-// over two numbers, yielding a number. No `divide` — an integer stays
+// over two numbers, yielding a number. No `divide` – an integer stays
 // an integer, and there is no division by zero to define. A longer
 // expression is a chain of derived projections, each one value the
 // sandbox can watch.
@@ -228,8 +228,8 @@ function loadEvents() {
     parsed = JSON.parse(raw);
   } catch { /* handled below: unparseable is corrupt */ }
   if (Array.isArray(parsed)) return parsed;
-  // The log is the whole state, so an unreadable one — bad JSON or the
-  // wrong shape — is never left where the next append would overwrite
+  // The log is the whole state, so an unreadable one – bad JSON or the
+  // wrong shape – is never left where the next append would overwrite
   // the only copy. It is moved aside, where a hand or a future build
   // can still reach it, and the app starts over honestly empty.
   localStorage.setItem(EVENT_LOG_KEY + ':corrupt', raw);
@@ -244,8 +244,8 @@ function loadEvents() {
   return [];
 }
 
-// Bumped by every writer of the log — `appendEvents` here, undo and
-// redo in the page, the corrupt-log move-aside below — so a cache can
+// Bumped by every writer of the log – `appendEvents` here, undo and
+// redo in the page, the corrupt-log move-aside below – so a cache can
 // ask "has anything changed?" without parsing the log to find out.
 // A writer that skips its bump is the one way the caches below go
 // stale; nothing re-reads storage to double-check. Another tab's write
@@ -255,8 +255,8 @@ function bumpLogRevision() { logRevision += 1; }
 function logRevisionNow() { return logRevision; }
 
 // Told after every append, with where it began and what landed. This
-// is the one seam every write funnels through — command functions
-// behind buttons and agent tools alike — which is what lets the
+// is the one seam every write funnels through – command functions
+// behind buttons and agent tools alike – which is what lets the
 // interface take undo marks here rather than wrapping each of the
 // hundred call sites. Undo and redo restore the log by writing the
 // storage key directly, so they never renotify.
@@ -276,7 +276,7 @@ function appendEvents(newEvents) {
     written = append();
   } catch (error) {
     if (!(error instanceof StorageFullError)) throw error;
-    // Full: make room and try again — first by folding what no undo
+    // Full: make room and try again – first by folding what no undo
     // step reaches, then, if that is not enough, everything. Only a
     // change that does not fit even then is refused.
     for (const keepFrom of [compactionFloor(log), log.length]) {
@@ -303,8 +303,8 @@ function stampEvents(events, from) {
   return events.map((e, i) => ({ sequence: from + i, timestamp, type: e.type, data: e.data }));
 }
 
-// The one way the whole log is written — an append, undo and redo, a
-// compaction — so the revision is bumped by every writer, and a full
+// The one way the whole log is written – an append, undo and redo, a
+// compaction – so the revision is bumped by every writer, and a full
 // storage is reported the same way to each. The quota is the browser's
 // for the whole site (on dcb.events, shared with the website), and the
 // log is rewritten whole on every edit: past it, every edit would fail
@@ -327,17 +327,17 @@ function writeEventLog(events) {
 // ---------- compaction ----------
 //
 // The log keeps every edit ever made, and is rewritten whole on every
-// append, so left alone it grows into the quota — a few megabytes for
+// append, so left alone it grows into the quota – a few megabytes for
 // the whole site, on dcb.events shared with the website. Past a size it
 // is compacted, unasked: the events up to a point are replaced by the
-// shortest history that builds the same state — per model, its
+// shortest history that builds the same state – per model, its
 // creation and one add per definition, in order; deleted models leave
-// nothing — and the events after it are kept as they were, renumbered.
+// nothing – and the events after it are kept as they were, renumbered.
 // Nobody is asked because nothing they can see changes: the point is
 // the page's oldest undo step (`setCompactionFloor`), so every step it
 // can still undo survives, moved by the same distance (`onCompact`).
 // Only when storage is full and folding that much is not enough does
-// compaction take everything, undo history included — and says so.
+// compaction take everything, undo history included – and says so.
 
 // A megabyte of log: far past any model's own size, and a fifth of the
 // smallest quota a browser gives a site.
@@ -349,7 +349,7 @@ function setLogCompactionThreshold(chars) { logCompactAt = chars; }
 let compactionFloor = (events) => events.length;
 function setCompactionFloor(floor) { compactionFloor = floor; }
 
-// Told after a compaction: `{ shift, events, dropped }` — an event kept
+// Told after a compaction: `{ shift, events, dropped }` – an event kept
 // at position `p` is now at `p + shift` of `events`; `dropped` when the
 // fold had to take everything, so no earlier position means anything.
 const compactListeners = [];
@@ -362,7 +362,7 @@ function projectEvents(events) {
 }
 
 // `events` with everything before `keepFrom` folded, and the distance
-// the rest moved — or null when folding would not shorten anything (it
+// the rest moved – or null when folding would not shorten anything (it
 // already is the shortest history of that state).
 function compactedLog(events, keepFrom) {
   const head = [];
@@ -388,7 +388,7 @@ function notifyCompacted(compacted) {
 }
 
 // Compacts the stored log up to the floor, when that shortens it. A
-// compaction that does not fit is no failure — the log as it was is
+// compaction that does not fit is no failure – the log as it was is
 // still there, and the next append tries again.
 function compactLog() {
   const compacted = compactedLog(loadEvents(), compactionFloor(loadEvents()));
@@ -430,7 +430,7 @@ function emptyModel(id, name) {
   return model;
 }
 
-// Folded once per log revision, not once per call — `activeModel` and
+// Folded once per log revision, not once per call – `activeModel` and
 // the render path ask many times per paint. Callers get one shared
 // object and must not mutate it: every editor already works on a
 // `deepClone` and every change goes through a command function.
@@ -448,7 +448,7 @@ function projectState() {
 
 // A `null` entry in a body's list says nothing, and the structural
 // gate lets it through. Every reader would otherwise have to step
-// over it — the ones that did not crashed the fold and the render — so
+// over it – the ones that did not crashed the fold and the render – so
 // it is dropped once, here, for every writer and every log already
 // stored. The event itself keeps what was written.
 function withoutNullEntries(body) {
@@ -512,15 +512,15 @@ function apply(models, event) {
 // ============================================================
 // Derived types.
 //
-// An entity brings an identifier type into existence — `<Entity>Id`
-// unless `identifierType` overrides the name — as an ordinary
+// An entity brings an identifier type into existence – `<Entity>Id`
+// unless `identifierType` overrides the name – as an ordinary
 // `custom-type-definition`, created alongside the entity and stored
 // like any other. A lifecycle is not a derived type: it is one of the
 // entity's own properties, named by `lifecycle`, and in the two-state
 // case its projection is typed `boolean` and declares no type at all.
 // ============================================================
 
-// `entityName`'s derived identifier type name — `identifierType` when
+// `entityName`'s derived identifier type name – `identifierType` when
 // the entity gives one, otherwise `<name>Id`, tracking the entity's own
 // name for as long as nothing overrides it. Reads straight off `model`,
 // so renaming the entity moves this automatically: the name is
@@ -530,7 +530,7 @@ function idTypeOf(model, entityName) {
   return (entity && entity.identifierType) || (entityName + 'Id');
 }
 
-// The one tag `entityName` is read by, `{name, tagType}` — its
+// The one tag `entityName` is read by, `{name, tagType}` – its
 // identifier type, under the name the entity gives it (`identifierName`)
 // or the type's own, lowercased: `courseId: CourseId`. A projection
 // bound as one of its properties is tagged by exactly this.
@@ -543,7 +543,7 @@ function entityTagParam(model, entityName) {
 
 // The entity that owns a value type as its derived identifier, or null.
 // Ownership is discovered by asking every entity what it currently
-// derives, not stored on the value type itself — which is what lets a
+// derives, not stored on the value type itself – which is what lets a
 // rename of the entity (while its identifier type is still tracking)
 // move the ownership along with the recomputed name, for free.
 function entityOfIdType(model, typeName) {
@@ -554,7 +554,7 @@ function entityOfIdType(model, typeName) {
 }
 
 // Classifies a type name against a model: simple, a declared value
-// type (entity-owned or standalone — same shape either way), or
+// type (entity-owned or standalone – same shape either way), or
 // unresolved.
 function classifyType(model, typeName) {
   if (!typeName) return { kind: 'unresolved' };
@@ -572,7 +572,7 @@ function classifyType(model, typeName) {
 }
 
 // The scalar, tag-marked value type a name resolves to, in the shape a
-// tag is rendered from — entity-owned or standalone alike — or null
+// tag is rendered from – entity-owned or standalone alike – or null
 // for anything else (unresolved, not a value type, composite, or not
 // marked `isTag`).
 function identifierTypeOf(model, typeName) {
@@ -583,10 +583,10 @@ function identifierTypeOf(model, typeName) {
 }
 
 // Renders one identifier's value into its tag, through that
-// identifier's own `tagSchema` — `{type}` and `{value}`, in whichever
+// identifier's own `tagSchema` – `{type}` and `{value}`, in whichever
 // order the template states them. Replaced through functions: a string
 // replacement reads `$'` or `$&` in the value as a pattern, and course
-// `a$'` would have been tagged — and read — as course `a`.
+// `a$'` would have been tagged – and read – as course `a`.
 function renderTag(identifierType, valueText) {
   return identifierType.tagSchema
     .replace('{type}', () => identifierType.name)
@@ -594,7 +594,7 @@ function renderTag(identifierType, valueText) {
 }
 
 // The fields of a composite value type, or null for anything else.
-// Universal — a composite's fields may be any value type, tag-marked
+// Universal – a composite's fields may be any value type, tag-marked
 // or not; `idLeavesOfType` is what picks out the tag-marked ones.
 function compositeFieldsOf(model, typeName) {
   const cls = classifyType(model, typeName);
@@ -602,7 +602,7 @@ function compositeFieldsOf(model, typeName) {
   return model['custom-type-definitions'][typeName].properties || [];
 }
 
-// Whether a type carries at least one tag — a tag-marked scalar, or a
+// Whether a type carries at least one tag – a tag-marked scalar, or a
 // composite with at least one tag-marked field. Used wherever something
 // must be able to narrow a query: a projection parameter, a tag filter,
 // an entity's own derived identifier.
@@ -612,7 +612,7 @@ function isTagBearing(model, typeName) {
 
 // Tag derivation, looking *through* a composite to its fields.
 //
-// Every tag reachable from a type, as `{ field, identifierType }` —
+// Every tag reachable from a type, as `{ field, identifierType }` –
 // `field` is null when the type is itself a tag-marked scalar (used
 // whole), and names the composite's field otherwise. A property typed
 // with a composite therefore contributes one tag per tag-marked field
@@ -640,7 +640,7 @@ function idLeavesOfType(model, typeName) {
 
 // The tags an event carries are the ones it lists (8.0). Each entry of
 // `tags` is a path: a property typed with a tag type, or
-// `property.field` into a record whose field is one — a list of either
+// `property.field` into a record whose field is one – a list of either
 // contributing one tag per element. Nothing is implied any more: a
 // tag-typed property left off the list is an ordinary value, and an
 // event with no list carries no tag at all. The advisories say both
@@ -648,7 +648,7 @@ function idLeavesOfType(model, typeName) {
 // than guessed for.
 //
 // Resolves one path to the leaf `idLeavesOfType` would have produced
-// for it — `{ path, property, field, isList, identifierType }` — or to
+// for it – `{ path, property, field, isList, identifierType }` – or to
 // `{ problem }` saying why it is not a tag.
 function resolveEventTagPath(model, event, path) {
   if (typeof path !== 'string' || !path) return { problem: 'a tag entry must name a property' };
@@ -660,7 +660,7 @@ function resolveEventTagPath(model, event, path) {
   const leaf = leaves.find((l) => l.field === (fieldName === undefined ? null : fieldName));
   if (!leaf) {
     if (fieldName === undefined && leaves.length) {
-      return { problem: `"${path}" is a record — name its tag field (${leaves.map((l) => `${propertyName}.${l.field}`).join(', ')})` };
+      return { problem: `"${path}" is a record – name its tag field (${leaves.map((l) => `${propertyName}.${l.field}`).join(', ')})` };
     }
     return { problem: `"${path}" is not of a tag type` };
   }
@@ -681,7 +681,7 @@ function eventTagLeaves(model, event) {
 
 // What the advisories say about an event's tags: an entry that is not
 // a tag, one listed twice, no tags at all, and a tag-typed value left
-// off the list — the last two because nothing is implied any more, so
+// off the list – the last two because nothing is implied any more, so
 // a forgotten tag is an event no query by that tag will ever reach.
 function eventTagAdvisories(model, event) {
   const messages = [];
@@ -696,14 +696,14 @@ function eventTagAdvisories(model, event) {
   if (!tags.length) messages.push('Carries no tags, so a query by tag never reaches it.');
   for (const path of tagPathsOf(model, (event && event.properties) || [])) {
     if (seen.has(path)) continue;
-    messages.push(`"${path}" is of a tag type but not one of this event's tags — a query by it does not reach this event.`);
+    messages.push(`"${path}" is of a tag type but not one of this event's tags – a query by it does not reach this event.`);
   }
   return messages;
 }
 
 // Every path in `properties` that could be listed as a tag, in property
 // order. What an authoring gesture offers, and what a new event made
-// from a command's payload starts with listed — the stored list is the
+// from a command's payload starts with listed – the stored list is the
 // fact, this is only a default someone can see and change.
 function tagPathsOf(model, properties) {
   return (properties || []).flatMap((p) => (p && p.propertyType
@@ -712,8 +712,8 @@ function tagPathsOf(model, properties) {
 }
 
 // An event body after a page edit, with its tags kept in step: a
-// tag-typed value the edit introduced — a new property, or one retyped
-// into a tag type — is listed, and a path the edit left meaning nothing
+// tag-typed value the edit introduced – a new property, or one retyped
+// into a tag type – is listed, and a path the edit left meaning nothing
 // (its property removed, or retyped out of a tag type) is dropped. The
 // pages' authoring default, visible and undoable like the edit itself;
 // a body arriving whole (a file, the code view, an agent) is stored as
@@ -736,7 +736,7 @@ function allTypeNames(model) {
 // An enum is not a distinct form of value type: it is a scalar value
 // type whose `schema` carries the JSON Schema `enum` keyword. Presence
 // of a non-empty `enum` array is what the tooling treats as "this
-// resolves to an enum" — the one keyword that unambiguously means
+// resolves to an enum" – the one keyword that unambiguously means
 // "these are the only legal values".
 function enumMembersFor(model, typeName) {
   const cls = classifyType(model, typeName);
@@ -746,7 +746,7 @@ function enumMembersFor(model, typeName) {
   return Array.isArray(members) && members.length ? members : null;
 }
 
-// Whether an enum's members are all plain strings — the shape the
+// Whether an enum's members are all plain strings – the shape the
 // chip-based member editor (add/rename/remove, with rewrite-on-rename
 // across every reference) is built for. A numeric, boolean or mixed
 // enum still evaluates correctly through the ordinary operand
@@ -757,7 +757,7 @@ function isStringEnumType(model, typeName) {
   return !!members && members.every((m) => typeof m === 'string');
 }
 
-// A model with one definition overlaid — used so that a body being
+// A model with one definition overlaid – used so that a body being
 // validated can reference the very definition it belongs to (an
 // entity's own properties may reference its own derived `<Entity>Id`).
 function withPending(model, kind, name, body) {
@@ -783,10 +783,10 @@ function uniqueAlias(base, taken) {
 // Reference computation and rewriting.
 //
 // References are derived from the body shape (per the DCB Model
-// schema) — never stored alongside it. An entity's own derived
+// schema) – never stored alongside it. An entity's own derived
 // identifier is an ordinary custom-type-definition, referenced by the
 // entity through `identifierType` exactly like any property type
-// references one — which is what lets renaming or removing it go
+// references one – which is what lets renaming or removing it go
 // through the same generic machinery as any other value type, with no
 // entity-specific case needed.
 // ============================================================
@@ -807,7 +807,7 @@ function pushTypeRef(model, refs, typeName) {
 // Every place a body names another definition, enumerated exactly
 // once for both directions: `computeReferences` reads through these
 // slots and `rewriteReferences` writes through them, so a reference
-// site added to one is a reference site added to the other — the
+// site added to one is a reference site added to the other – the
 // drift that used to be possible (compute sees it, rename leaves it
 // dangling, or the reverse) has nowhere left to live.
 //
@@ -817,7 +817,7 @@ function pushTypeRef(model, refs, typeName) {
 //     (the rename target being a custom type guarantees the class).
 //   - flavor 'name': a definition named outright.
 // A slot whose reference is derived rather than stored guards its own
-// `set` — see the entity identifier below.
+// `set` – see the entity identifier below.
 function forEachReferenceSlot(kind, name, body, slot) {
   const at = (holder, key, targetKind, flavor) => {
     if (!holder) return;
@@ -835,7 +835,7 @@ function forEachReferenceSlot(kind, name, body, slot) {
     }
   };
   // A tag literal carries its tag type by bare name (`CourseId("c1")`),
-  // and so does a projection's declared tag — the places a type is
+  // and so does a projection's declared tag – the places a type is
   // referenced outside a property type.
   const tagLiteralSlots = (tags) => {
     const values = tags && typeof tags === 'object' ? Object.values(tags) : [];
@@ -864,8 +864,8 @@ function forEachReferenceSlot(kind, name, body, slot) {
       // fold needs lives on the projection it names, so the binding
       // references exactly one thing.
       for (const p of body.properties || []) at(p, 'projection', 'projection-definition', 'name');
-      // An entity references its own derived identifier by name —
-      // whatever it currently resolves to, tracking or overridden —
+      // An entity references its own derived identifier by name –
+      // whatever it currently resolves to, tracking or overridden –
       // which is what lets renaming or removing that value type go
       // through the same generic machinery as any property type.
       // Writing moves only an *explicit* `identifierType`: while it is
@@ -913,7 +913,7 @@ function forEachReferenceSlot(kind, name, body, slot) {
     case 'scenario-definition':
       // A scenario names the command it exercises, every event its
       // Given is written from, and every event its expected outcome
-      // holds. All three have to move when one of them is renamed —
+      // holds. All three have to move when one of them is renamed –
       // and none of them may stop one from being deleted; a scenario
       // exists to report what a change broke, not to prevent it.
       at(body, 'command', 'command-definition', 'name');
@@ -982,10 +982,10 @@ function findReferencers(model, targetKind, targetName) {
 // entity alias the property is required, since an entity has many.
 //
 // A projection declares its tags by name (8.0, `tags: [{name,
-// tagType}]`), and a read supplies one value per name — `tags:
+// tagType}]`), and a read supplies one value per name – `tags:
 // {courseId: …}`, written `CourseStatus(courseId)`. The declared type is
 // the tag's key; the value has to be of it. A literal states its type
-// anyway — `{tagType, tagValue}`, spelled `CourseId("c1")` — because the
+// anyway – `{tagType, tagValue}`, spelled `CourseId("c1")` – because the
 // text shows it and a mismatch is then visible. It is allowed only
 // where a tag is, and its two keys keep it apart from any record
 // literal. `{each: operand}` is the fan-out, said where it happens: the
@@ -1037,7 +1037,7 @@ function operandText(operand) {
   }
 }
 
-// An operand is unresolved when the name its kind requires is absent —
+// An operand is unresolved when the name its kind requires is absent –
 // the gap `operandText` papers over with a '?' placeholder. Checked
 // structurally, because a literal that merely *contains* a question
 // mark is a value, not a gap.
@@ -1063,7 +1063,7 @@ function sameOperand(a, b) {
 // `operandSource` falls back to "static" for anything it does not
 // recognise, so a misspelt or retired operand key would be stored as a
 // literal and rendered as "[object Object]". A literal is a string, a
-// number or a boolean — never an object — so an object that classifies
+// number or a boolean – never an object – so an object that classifies
 // as static is simply not an operand.
 function assertRecognisedOperand(operand, where) {
   if (operandSource(operand) !== 'static') return;
@@ -1086,7 +1086,7 @@ function conditionText(condition) {
   return condition.negate ? `not(${core})` : core;
 }
 
-// A derived value as one line: its comparison, or its computation —
+// A derived value as one line: its comparison, or its computation –
 // `a - b`, `min(a, b)`.
 function derivedText(derived) {
   if (!derived) return '';
@@ -1098,7 +1098,7 @@ function derivedText(derived) {
 }
 
 // What a scenario is called. The stored name wins; without one it is
-// read off the outcome, which is why it changes when the outcome does —
+// read off the outcome, which is why it changes when the outcome does –
 // and why the interface freezes it the moment a scenario drifts, rather
 // than letting the label move under the reader.
 // `spell` turns a stored name into the words the reader is used to
@@ -1133,7 +1133,7 @@ function scriptOf(target) {
 // The predicate a projection is *derived* by, or null when it is
 // folded (declared or scripted) the ordinary way. A body defective
 // enough to carry both a script and a derived predicate reads as
-// scripted — deterministic, and the advisory says both are there.
+// scripted – deterministic, and the advisory says both are there.
 function derivedOf(target) {
   return target && target.derived && !target.script ? target.derived : null;
 }
@@ -1147,7 +1147,7 @@ function derivedComputes(derived) {
 
 // What a type is underneath, as arithmetic sees it: 'integer',
 // 'number', or null for anything that is no number. A scalar value
-// type counts as its schema's base, as `operationsFor` counts it — an
+// type counts as its schema's base, as `operationsFor` counts it – an
 // enum is a set of members, not a number, whatever they are spelled as.
 function numericBaseOf(model, typeName) {
   if (typeName === 'integer' || typeName === 'number') return typeName;
@@ -1156,7 +1156,7 @@ function numericBaseOf(model, typeName) {
   return body.schema.type === 'integer' || body.schema.type === 'number' ? body.schema.type : null;
 }
 
-// What one side of a computation is, as `{base, nullable}` — or null
+// What one side of a computation is, as `{base, nullable}` – or null
 // when it is no single number. A literal is what it is; a read is what
 // its projection holds, and may be null while that projection starts
 // at null (declared) or computes from something that may (derived). A
@@ -1179,7 +1179,7 @@ function derivedInputOf(model, operand, seen = []) {
 }
 
 // The type a computation yields from its two sides: an integer from two
-// integers, a number otherwise — or null when a side is no number.
+// integers, a number otherwise – or null when a side is no number.
 function derivedResultBase(model, derived) {
   const sides = derivedOperands(derived).map((o) => derivedInputOf(model, o));
   if (sides.some((side) => !side || !side.base)) return null;
@@ -1187,7 +1187,7 @@ function derivedResultBase(model, derived) {
 }
 
 // Which experimental features a model uses, as `{feature, where}`
-// pairs in a stable order — `feature` one of EXPERIMENTAL_FEATURES'
+// pairs in a stable order – `feature` one of EXPERIMENTAL_FEATURES'
 // keys, `where` the definition it was found on. The flag (shared.js)
 // gates authoring them, never reading them: this is what lets a page
 // say "this model uses …" instead of hiding what is stored. The line
@@ -1241,7 +1241,7 @@ function experimentalFeatures(model) {
   return found.sort((a, b) => order.indexOf(a.feature) - order.indexOf(b.feature));
 }
 
-// What `after` uses that `before` did not, by feature and definition —
+// What `after` uses that `before` did not, by feature and definition –
 // the experimental features an edit would introduce. A use the model
 // already has is not introduced by keeping it, so an editor that does
 // not offer them (WebMCP) can still edit a model that uses them.
@@ -1251,14 +1251,14 @@ function introducedExperimentalFeatures(before, after) {
   return experimentalFeatures(after).filter((use) => !had.has(keyOf(use)));
 }
 
-// Both sides of a derived predicate, in evaluation order — the derived
+// Both sides of a derived predicate, in evaluation order – the derived
 // analogue of `conditionOperands`.
 function derivedOperands(derived) {
   return derived ? [derived.leftHandSide, derived.rightHandSide] : [];
 }
 
 // What a reader of this projection supplies besides tags: a script's
-// arguments, `{name, propertyType}` — the values after the tags in
+// arguments, `{name, propertyType}` – the values after the tags in
 // `X(courseId, 14)`. A declared or derived projection takes none.
 function projectionSlots(projection) {
   const script = scriptOf(projection);
@@ -1266,7 +1266,7 @@ function projectionSlots(projection) {
 }
 
 // The tags a projection is read by, `[{name, tagType}]`, in declaration
-// order — one value per entry in every read of it, each keyed by its
+// order – one value per entry in every read of it, each keyed by its
 // declared type. Empty is an *untagged* projection, which folds the
 // whole log: a numbering is the case. Several are ANDed, as a DCB query
 // item's tags are. A body that states none reads as untagged; every
@@ -1276,7 +1276,7 @@ function projectionTagParams(projection) {
     .filter((tag) => tag && typeof tag === 'object');
 }
 
-// The tag types one projection's query is narrowed by — the leaves of
+// The tag types one projection's query is narrowed by – the leaves of
 // its declared tag types, a record's tag-marked fields included.
 function projectionTagTypes(model, projectionName) {
   const projection = model['projection-definitions'][projectionName];
@@ -1284,7 +1284,7 @@ function projectionTagTypes(model, projectionName) {
     .flatMap((tag) => idLeavesOfType(model, tag.tagType).map((leaf) => leaf.identifierType)));
 }
 
-// A read's values, `[[name, operand]]` in the order held — the tags,
+// A read's values, `[[name, operand]]` in the order held – the tags,
 // keyed by the names the projection declares.
 function readTagEntries(read) {
   const tags = read && read.tags;
@@ -1309,8 +1309,8 @@ function entityBoundProjections(model) {
 
 // An entity property is a binding `{name, projection}` pointing at an
 // ordinary projection definition. This resolves one to the projection
-// it names — `{ binding, projection }`, either half null when the name
-// does not resolve — so every reader walks the reference the same way.
+// it names – `{ binding, projection }`, either half null when the name
+// does not resolve – so every reader walks the reference the same way.
 function entityPropertyTarget(model, entityName, propertyName) {
   const entity = model['entity-definitions'][entityName];
   const binding = entity && (entity.properties || []).find((p) => p && p.name === propertyName);
@@ -1321,7 +1321,7 @@ function entityPropertyTarget(model, entityName, propertyName) {
   };
 }
 
-// An entity's designated lifecycle, resolved — or `null`, which is an
+// An entity's designated lifecycle, resolved – or `null`, which is an
 // ordinary answer and not a defect: an entity need not have one.
 //
 // `lifecycle` names one of the entity's *own* property bindings. That
@@ -1331,8 +1331,8 @@ function entityPropertyTarget(model, entityName, propertyName) {
 // `rewriteReferences`.
 //
 // The one thing this resolver exists to flatten is that a lifecycle has
-// two spellings. `states` is what the thing can be in — an enum's
-// members, or `[false, true]` for the boolean two-state case — as
+// two spellings. `states` is what the thing can be in – an enum's
+// members, or `[false, true]` for the boolean two-state case – as
 // strings either way, so everything downstream (the machine, the
 // constraint reader, the diagram) treats the two identically and no
 // caller has to ask which spelling it got. `isBoolean` is there for the
@@ -1382,7 +1382,7 @@ function lifecycleRefusal(model, entityName) {
   return null;
 }
 
-// What a bare literal of this type looks like at runtime — the shape an
+// What a bare literal of this type looks like at runtime – the shape an
 // initial value element is checked against. A declared value type is
 // read through its scalar schema's `type`; anything unstated is a
 // string, which is what every identifier is underneath.
@@ -1397,8 +1397,8 @@ function literalKindOf(model, typeName) {
   return 'string';
 }
 
-// Every scripted projection an entity alias is read through — resolved
-// through the property bindings — which is what decides the arguments
+// Every scripted projection an entity alias is read through – resolved
+// through the property bindings – which is what decides the arguments
 // its binding has to supply.
 function scriptedPropertiesRead(model, body, binding) {
   const entity = model['entity-definitions'][binding.entity];
@@ -1413,7 +1413,7 @@ function scriptedPropertiesRead(model, body, binding) {
 }
 
 // The arguments a binding owes, gathered from everything it reads. Two
-// scripted projections asking for the same name ask for the same value —
+// scripted projections asking for the same name ask for the same value –
 // they are read at one instant, through one binding. The instance is
 // never an argument: it is the tag the binding reads by.
 function argumentsExpected(model, body, binding) {
@@ -1428,7 +1428,7 @@ function argumentsExpected(model, body, binding) {
 
 // The operations that make sense for a projection's type. A scalar
 // value type counts as what its schema says it is underneath, so
-// `Hours` over an integer counts like the integer it replaced — wrapping
+// `Hours` over an integer counts like the integer it replaced – wrapping
 // a primitive in a named type must not cost it its operations.
 function operationsFor(model, target) {
   if (target.isList) return ['set', 'append', 'remove'];
@@ -1436,7 +1436,7 @@ function operationsFor(model, target) {
   return ['set'];
 }
 
-// Whether a value of this type has a *next* one — which is what decides
+// Whether a value of this type has a *next* one – which is what decides
 // whether "the one after …" is worth offering as a handler operand.
 //
 // A scalar value type, tag-marked or not, is a string underneath, so it
@@ -1445,7 +1445,7 @@ function operationsFor(model, target) {
 //
 // Extracted so the editors offering the operand and the validator
 // refusing it read the same rule off the same line. They did not, and
-// the projection editor offered "the one after true" on a boolean fold —
+// the projection editor offered "the one after true" on a boolean fold –
 // a choice that stored fine and then failed validation.
 function hasSuccessor(model, valueType) {
   const cls = classifyType(model, valueType);
@@ -1454,13 +1454,13 @@ function hasSuccessor(model, valueType) {
   return underlying === 'integer' || underlying === 'string';
 }
 
-// Whether an editor *offers* "successor" for a value of this type —
+// Whether an editor *offers* "successor" for a value of this type –
 // narrower than `hasSuccessor`, which is what the validator accepts.
 // Every successor the shipped models carry numbers something: the next
 // course id, the next course number. A plain `string` has one only by
 // accident of ending in digits, and offering it put "the one after the
 // title" beside every text field; an integer or a named scalar value
-// type — an id, a number — is what a numbering is made of. A stored
+// type – an id, a number – is what a numbering is made of. A stored
 // successor outside this rule still validates and still runs.
 function offersSuccessor(model, valueType) {
   if (!hasSuccessor(model, valueType)) return false;
@@ -1469,7 +1469,7 @@ function offersSuccessor(model, valueType) {
   return cls.kind === 'value' && !cls.composite;
 }
 
-// Walks every operand inside a command body — and into every inline
+// Walks every operand inside a command body – and into every inline
 // projection read (8.0), whose tags and arguments are operands in the
 // same scope: `CourseStatus(course.id)` names `course` exactly as a
 // rule does. A walker sees the read first, then what is inside it.
@@ -1524,7 +1524,7 @@ function forEachCommandOperand(body, outerVisit) {
   for (const emission of body.publishes || []) {
     if (!emission) continue;
     // An emission guard is a condition in every respect a walker cares
-    // about — the same operand set, read from the same scope.
+    // about – the same operand set, read from the same scope.
     for (const condition of emission.when || []) {
       if (!condition) continue;
       visitCondition(condition, `guard "${conditionText(condition)}" on "${emission.name}"`);
@@ -1542,8 +1542,8 @@ function forEachCommandOperand(body, outerVisit) {
 // holds every read. An entity binding contributes one query item: its
 // tag, restricted to the event types reachable through the properties
 // the conditions actually read. A projection read contributes one
-// item too: the tags it declares, with the values the read gives them —
-// none at all for an untagged one — and the event types it handles.
+// item too: the tags it declares, with the values the read gives them –
+// none at all for an untagged one – and the event types it handles.
 //
 // Items carry `tags` rather than one tag because a read may name
 // several. Tags within an item are ANDed; the items themselves are
@@ -1602,7 +1602,7 @@ function resolveOperandType(operand, { boundary, commandProperties, model }) {
   return null;
 }
 
-// The predicates that make sense against a resolved operand type — a
+// The predicates that make sense against a resolved operand type – a
 // rule editor offers these rather than the full predicate list, so
 // "starts with" never turns up against an integer. `null` (the type
 // could not be worked out, e.g. an untyped literal) leaves every
@@ -1610,7 +1610,7 @@ function resolveOperandType(operand, { boundary, commandProperties, model }) {
 //
 // Given the model, a scalar value type counts as what it is underneath,
 // the way `operationsFor` counts it: `Hours` over an integer is ordered
-// like the integer it wraps — naming a primitive must not cost it its
+// like the integer it wraps – naming a primitive must not cost it its
 // predicates. An identifier (a tag type) and an enum are not: they are
 // compared for identity, whatever they are spelled in.
 function predicatesForType(resolved, model) {
@@ -1630,7 +1630,7 @@ function predicatesForType(resolved, model) {
       'startsWith', 'endsWith'];
   }
   // Enum, id and composite types (custom or entity-derived): nothing
-  // but identity means anything without a declared ordering —
+  // but identity means anything without a declared ordering –
   // `equalsAny` is that same identity, taken against each entry of a
   // literal list, so it is admitted wherever `equals` is (and, like
   // `equals`, only against a scalar left-hand side: "this list is one
@@ -1639,7 +1639,7 @@ function predicatesForType(resolved, model) {
 }
 
 // The simple type a plain scalar value type wraps (`integer`,
-// `string`, `boolean`), or null for anything else — a simple type
+// `string`, `boolean`), or null for anything else – a simple type
 // itself, a composite, an enum, an identifier, an unknown name.
 function underlyingScalarType(model, typeName) {
   if (!model || !model['custom-type-definitions']) return null;
@@ -1650,7 +1650,7 @@ function underlyingScalarType(model, typeName) {
 }
 
 // The type a rule's right-hand side has to hold for a given predicate
-// against a left-hand side of `leftType` — `null` once `leftType`
+// against a left-hand side of `leftType` – `null` once `leftType`
 // itself is unknown, since nothing can be filtered against it then.
 function rightHandExpectedType(predicate, leftType) {
   if (!leftType) return null;
@@ -1664,7 +1664,7 @@ function rightHandExpectedType(predicate, leftType) {
   return { propertyType: leftType.propertyType, isList: leftType.isList };
 }
 
-// The tag a projection read fans out over — its `{each: …}` — or null.
+// The tag a projection read fans out over – its `{each: …}` – or null.
 function readFanTag(read) {
   return readTagOperands(read).find((tag) => operandSource(tag) === 'each') || null;
 }
@@ -1681,7 +1681,7 @@ function operandIsPlural(model, body, operand) {
   return !!source && isFannedOut(model, body, source);
 }
 
-// The value an entity binding is read by, its `each` unwrapped — what
+// The value an entity binding is read by, its `each` unwrapped – what
 // coverage compares and what a chain's root is found through.
 function entityIdOperand(binding) {
   const id = binding && binding.id;
@@ -1691,7 +1691,7 @@ function entityIdOperand(binding) {
 // A read fans out where it says so: a projection read at the tag that
 // is `each …`, an entity read when its identifier is (`Course(each
 // student.subscribedCourseIds)`). The list it fans over may itself be
-// read off a plural alias — a list of lists, which flattens.
+// read off a plural alias – a list of lists, which flattens.
 function isFannedOut(model, body, binding) {
   if (!binding) return false;
   if (binding.projection) return !!readFanTag(binding);
@@ -1731,7 +1731,7 @@ function fanRootOf(model, body, operand) {
     return bindingFanRoot(model, body,
       (body.boundary || []).find((b) => b && b.alias === operand.alias));
   }
-  // A read in place that fans out has the root of what it fans over —
+  // A read in place that fans out has the root of what it fans over –
   // a payload list, or a list read off a binding.
   if (source === 'projection-read') {
     const fan = readFanTag(operand);
@@ -1747,8 +1747,8 @@ function fanRootOf(model, body, operand) {
   }
   if (source === 'parameter') {
     // A list parameter is a fan root only when something actually fans
-    // out over it. A list nobody iterates — the new schedule handed to
-    // a reschedule command, say — is an ordinary list value, and
+    // out over it. A list nobody iterates – the new schedule handed to
+    // a reschedule command, say – is an ordinary list value, and
     // reading it alongside a fanned alias is not a second quantifier.
     const root = `parameter:${operand.parameterName}`;
     const iterated = (body.boundary || []).some((b) => bindingFanRoot(model, body, b) === root)
@@ -1779,7 +1779,7 @@ function conditionFanRoots(model, body, condition) {
 // Whether an operand is read at the iteration index rather than whole.
 //
 // It is zipped when some *alias* in the same condition fans from the
-// very list the operand is rooted at — that alias is what supplies the
+// very list the operand is rooted at – that alias is what supplies the
 // index. An operand rooted at a list nothing else iterates stays a
 // plain list, and is quantified over on its own.
 function isZipped(model, body, condition, operand) {
@@ -1813,7 +1813,7 @@ function projectionsRead(body) {
     .map((b) => b.projection);
 }
 
-// The operand that reaches one leaf of a composite identifier's value —
+// The operand that reaches one leaf of a composite identifier's value –
 // the same one-hop projection write coverage already applies via
 // `{parameterName, property}` / `{alias, property}`. `leaf` comes from
 // `idLeavesOfType`; `field: null` means the type is already the leaf,
@@ -1826,7 +1826,7 @@ function operandForLeaf(operand, leaf) {
   return operand;
 }
 
-// The tag(s) an identifier-typed value renders as — one per leaf,
+// The tag(s) an identifier-typed value renders as – one per leaf,
 // scalar and composite alike, each through that leaf's own `tagSchema`.
 // Shared by every DCB preview (a projection binding's arguments, an
 // event's published properties): all of them read the same union of
@@ -1845,7 +1845,7 @@ function tagsForIdentifierValue(model, identifierTypeName, operand, { each } = {
     return operandText(leaf ? operandForLeaf(operand, leaf) : operand);
   };
   if (!leaves.length) {
-    // Unresolved mid-edit — nothing to render through, so fall back to
+    // Unresolved mid-edit – nothing to render through, so fall back to
     // the type name literally rather than showing nothing at all.
     const shown = shownFor(null);
     return [`${identifierTypeName}:${each ? `each(${shown})` : shown}`];
@@ -1856,7 +1856,7 @@ function tagsForIdentifierValue(model, identifierTypeName, operand, { each } = {
   });
 }
 
-// The type a tag operand holds — `{propertyType, isList}` — in the
+// The type a tag operand holds – `{propertyType, isList}` – in the
 // scope of the command `body` it sits in, or null where that cannot be
 // worked out (a dangling reference, an untyped literal). It has to be
 // the type the projection declares for that tag, which is the key.
@@ -1869,7 +1869,7 @@ function tagOperandType(model, body, operand) {
   });
 }
 
-// The tags one projection read contributes, for display — one per leaf
+// The tags one projection read contributes, for display – one per leaf
 // of each declared tag type, with the value in the caller's terms
 // (`CourseId:courseId`). A tag the read leaves out shows as `?`.
 function readTagTexts(model, body, read) {
@@ -1884,7 +1884,7 @@ function readTagTexts(model, body, read) {
   }));
 }
 
-// The tag-type sets a projection is read by — one, its own declared
+// The tag-type sets a projection is read by – one, its own declared
 // tags (8.0): `[['CourseId']]`, or `[[]]` for an untagged one. Kept as
 // a list of sets because that is what every caller asks about.
 function projectionReadTagSets(model, projectionName) {
@@ -1892,11 +1892,11 @@ function projectionReadTagSets(model, projectionName) {
   return [[...projectionTagTypes(model, projectionName)].sort()];
 }
 
-// The events a read of `projectionName` by `tagTypes` — its own
-// declared ones unless given — can never see: each handled event that
+// The events a read of `projectionName` by `tagTypes` – its own
+// declared ones unless given – can never see: each handled event that
 // does not list a tag of every one of those types (`eventTagLeaves`).
-// Tag matching is by value — a query by CourseId finds only events
-// tagged by one — so such a handler never fires. `[{event, missing}]`,
+// Tag matching is by value – a query by CourseId finds only events
+// tagged by one – so such a handler never fires. `[{event, missing}]`,
 // empty when every handled event is reachable. A derived projection
 // has no handlers of its own: each operand is read by its own tags and
 // answers for itself.
@@ -1913,13 +1913,13 @@ function readTagsMissing(model, projectionName, tagTypes = projectionTagTypes(mo
   return out;
 }
 
-// The tag(s) an entity binding contributes — one per leaf of the
+// The tag(s) an entity binding contributes – one per leaf of the
 // entity's own derived identifier, scalar or composite alike.
 function entityBindingTags(model, entityName, idOperand, excludingOperand, fannedOut) {
   if (operandSource(idOperand) === 'each') idOperand = idOperand.each;
   const leaves = idLeavesOfType(model, idTypeOf(model, entityName));
   if (!leaves.length) {
-    // An unknown entity mid-edit has no derived identifier to look up —
+    // An unknown entity mid-edit has no derived identifier to look up –
     // fall back to its bare name so a body still being typed renders
     // something rather than nothing.
     const shown = operandText(idOperand);
@@ -1936,7 +1936,7 @@ function entityBindingTags(model, entityName, idOperand, excludingOperand, fanne
   });
 }
 
-// The event types a projection's query covers: its handlers' events —
+// The event types a projection's query covers: its handlers' events –
 // or, for a derived one, the union of its operands', walked
 // recursively. `seen` stops a cycle from recursing forever; the cycle
 // itself is the advisory's (and evaluation's) to report.
@@ -1957,7 +1957,7 @@ function projectionHandledTypes(model, projectionName, seen = []) {
 
 // The reads a read of `read.projection` comes down to, as `[{read,
 // via}]`: itself for a folded projection, and for a derived one each
-// projection it folds in the end, read by the values this read gave —
+// projection it folds in the end, read by the values this read gave –
 // an operand's `{parameterName}` is the derived projection's own tag,
 // so it takes whatever this read gave that tag; a tag literal stays
 // itself. A derived projection's query is its operands' queries, each
@@ -1983,7 +1983,7 @@ function foldedReads(model, read, seen = []) {
   return out;
 }
 
-// One query item per read a command makes — or, for a derived
+// One query item per read a command makes – or, for a derived
 // projection, one per projection it folds (`via`), each written under
 // that projection's own tags; the same query reached twice is one.
 function readItems(model, body, read, base) {
@@ -2017,8 +2017,8 @@ function deriveDcb(model, body) {
       const projection = model['projection-definitions'][binding.projection];
       if (!projection) continue;
       // The projection declares its tags and the read gives their
-      // values, so the query is written from both — one tag per scalar
-      // tag value, one per component for a record — whatever kind of
+      // values, so the query is written from both – one tag per scalar
+      // tag value, one per component for a record – whatever kind of
       // projection it reads: declared, scripted or derived, none of them
       // can hide what it reads.
       items.push(...readItems(model, body, binding, { alias: binding.alias }));
@@ -2038,7 +2038,7 @@ function deriveDcb(model, body) {
     // A derived property is read the way a derived projection is
     // (`foldedReads`): each projection it folds, under that one's own
     // tags. Those read by the instance's identifier alone share the
-    // entity's item; any other — untagged, a tag literal, a second tag —
+    // entity's item; any other – untagged, a tag literal, a second tag –
     // is a query of its own. ANDing it with the instance's tag would
     // leave out events the decision depends on.
     const apart = [];
@@ -2120,7 +2120,7 @@ function deriveDcb(model, body) {
 }
 
 // Every inline projection read in a command, once per distinct
-// spelling — `{ key, read }`, `key` the read's canonical JSON — in the
+// spelling – `{ key, read }`, `key` the read's canonical JSON – in the
 // order first written. Two rules reading `CourseStatus(courseId)` read
 // it once.
 function inlineReads(body) {
@@ -2136,7 +2136,7 @@ function inlineReads(body) {
   return out;
 }
 
-// Naming a read in place, and taking the name back — the rule adder
+// Naming a read in place, and taking the name back – the rule adder
 // writes a projection read in place, and the page offers the alias
 // afterwards. Both rewrite one command body in place and return it.
 //
@@ -2156,7 +2156,7 @@ function aliasInlineRead(body, key, alias) {
 
 // Whether a projection alias can be read in place again: only while
 // every use is the read's whole value, written where a read in place
-// may stand — a rule, a guard, an emission field. A property of it
+// may stand – a rule, a guard, an emission field. A property of it
 // (`alias.field`) or a use inside another read has no in-place
 // spelling to go back to.
 function aliasInlinable(body, alias) {
@@ -2186,7 +2186,7 @@ function inlineAliasedRead(body, alias) {
 }
 
 // Replaces the top-level operands of every rule, guard and emission
-// field with what `replace` returns for each — the places a read in
+// field with what `replace` returns for each – the places a read in
 // place or an alias's whole value can stand.
 function mapConditionOperands(body, replace) {
   const mapCondition = (condition) => {
@@ -2205,7 +2205,7 @@ function mapConditionOperands(body, replace) {
   }
 }
 
-// The operands one binding is read with — its identifier, exclusion,
+// The operands one binding is read with – its identifier, exclusion,
 // tags and arguments.
 function bindingOperands(binding) {
   if (!binding) return [];
@@ -2226,7 +2226,7 @@ function operandAliases(operand, out = []) {
   return out;
 }
 
-// The aliases a binding waits for — every binding its own operands
+// The aliases a binding waits for – every binding its own operands
 // name, inline reads included. A graph, not a tree: `id` and
 // `excluding` may point somewhere different, and arguments may point at
 // several bindings at once.
@@ -2252,7 +2252,7 @@ function operandDepth(operand, roundOf) {
   }
 }
 
-// Groups the boundary into the queries it actually resolves in — one
+// Groups the boundary into the queries it actually resolves in – one
 // per level of the chain (the identifier says "rounds"; every view
 // says "queries").
 //
@@ -2263,7 +2263,7 @@ function operandDepth(operand, roundOf) {
 // list is already topologically sorted and one left-to-right pass does
 // it.
 //
-// Derived, never authored — which is also what keeps it honest about
+// Derived, never authored – which is also what keeps it honest about
 // shape. A binding with two parents has no place in a written
 // hierarchy without being duplicated.
 function deriveRounds(body) {
@@ -2284,10 +2284,10 @@ function deriveRounds(body) {
 }
 
 // The consistency boundary, summed up and laid out the way every view
-// says it: how wide (`words` — "reads 5 types, 2 tags, in 2 queries")
+// says it: how wide (`words` – "reads 5 types, 2 tags, in 2 queries")
 // and the queries in the order they run. A chained read cannot share a
-// query with the read it waits for — its tags are answers from that
-// one — so the boundary is read in as many queries as the chain is
+// query with the read it waits for – its tags are answers from that
+// one – so the boundary is read in as many queries as the chain is
 // deep (`deriveRounds`), and the append condition is all of them,
 // ORed. A read whose properties nothing uses queries any type under
 // its tag, which no count of types could say. The code view's command
@@ -2320,7 +2320,7 @@ function boundarySummary(model, body) {
 }
 
 // Every entity-id property of every published event must resolve to a
-// binding in the boundary — a command may not write a tag it did not
+// binding in the boundary – a command may not write a tag it did not
 // consult. A value read from a projection binding is exempt when that
 // projection handles the event being published: its query then already
 // covers every event that could have issued the value, and a freshly
@@ -2348,7 +2348,7 @@ function mintsFromProjection(model, body, operand, eventName) {
 // what a read is for.
 //
 // **Asserted against derived.** A tag whose value came straight off the
-// command payload is asserted by the caller — the caller says *which*
+// command payload is asserted by the caller – the caller says *which*
 // student, and this command's decision never depended on that student's
 // state. A tag whose value was *derived*, read off some instance this
 // command bound, is a different claim entirely: it says "this is the
@@ -2363,7 +2363,7 @@ function emittedTagRequirements(model, body) {
     for (const property of event.properties || []) {
       const operand = (emission.parameters || {})[property.name];
       // An optional property with no mapping publishes the explicit
-      // null and writes no tag — there is no instance to have
+      // null and writes no tag – there is no instance to have
       // consulted, so there is nothing for the boundary to cover.
       if (operand === undefined && property.isOptional && !property.isList) continue;
       if (mintsFromProjection(model, body, operand, emission.name)) continue;
@@ -2372,8 +2372,8 @@ function emittedTagRequirements(model, body) {
       // surface: a property typed `Item[]` writes one tag per element,
       // and each names its own instance.
       for (const leaf of eventTagLeaves(model, event).filter((l) => l.property === property.name)) {
-        // A leaf whose identifier type is standalone — a component with
-        // no entity of its own — names no entity instance, so there is
+        // A leaf whose identifier type is standalone – a component with
+        // no entity of its own – names no entity instance, so there is
         // nothing here to consult or to keep alive.
         const ownerEntity = entityOfIdType(model, leaf.identifierType);
         if (!ownerEntity) continue;
@@ -2400,12 +2400,12 @@ function emittedTagRequirements(model, body) {
 // uncovered tag is not unsound. The append condition is the union of
 // the bindings' queries, so a `Student:s1` tag on the event *this*
 // command writes is what makes every *other* command that read
-// `Student:s1` conflict with it — which holds whether or not this one
+// `Student:s1` conflict with it – which holds whether or not this one
 // read it. What an uncovered tag gives up is only this command's own
 // protection against concurrent change to that instance, and where the
 // decision never depended on the instance's state there was nothing to
 // protect. So a tag the caller asserted passes in silence; a derived
-// one — a claim about state this command read — is what gets flagged.
+// one – a claim about state this command read – is what gets flagged.
 function coverageIssues(model, body) {
   return emittedTagRequirements(model, body).filter((requirement) => {
     if (requirement.asserted) return false;
@@ -2419,9 +2419,9 @@ function coverageIssues(model, body) {
 // ---------- what consults a read ----------
 //
 // A boundary binding is no longer authored. It comes into existence as
-// the side-effect of a gesture that needs it — a rule, a guard, an
+// the side-effect of a gesture that needs it – a rule, a guard, an
 // emission field, a tag the emission writes, or another binding's
-// identifier — and it goes when the last of those goes. The list is
+// identifier – and it goes when the last of those goes. The list is
 // still stored, and still authoritative: a rule names its alias and
 // nothing else records the path that alias stands for, so the boundary
 // cannot be recomputed from the rules. What is maintained instead is
@@ -2431,12 +2431,12 @@ function coverageIssues(model, body) {
 // The first five reasons are the five places an alias can be named.
 // Four are operands (`forEachCommandOperand` walks the same set); the
 // fifth is write coverage, which can demand a binding no operand
-// mentions — but only for a *derived* tag value, never for one the
+// mentions – but only for a *derived* tag value, never for one the
 // caller asserted (see `emittedTagRequirements`).
 //
 // The sixth names no alias at all: a binding to a projection that
 // takes no tags is the read of every event that projection folds, so
-// it serialises the command against all of them — the way a command
+// it serialises the command against all of them – the way a command
 // with no conditions is made strictly serial, which the schema
 // promises. Nothing else need consult it for it to matter, so it is
 // never pruned as unreferenced.
@@ -2474,7 +2474,7 @@ function bindingReferences(model, body) {
   }
   // A binding reached *through* another is the chain: `theirs` is why
   // `students` is read, and `students` is consulted by nothing else.
-  // `excluding` and `arguments` count for the same reason `id` does —
+  // `excluding` and `arguments` count for the same reason `id` does –
   // they are operands resolved in the same scope, which is what
   // `forEachCommandOperand` already treats them as.
   for (const binding of body.boundary || []) {
@@ -2491,7 +2491,7 @@ function bindingReferences(model, body) {
     const projection = (model['projection-definitions'] || {})[binding.projection];
     if (projection && !projectionTagParams(projection).length) note(binding.alias, 'serialisation');
   }
-  // Coverage names no alias — it names the instance an emitted tag
+  // Coverage names no alias – it names the instance an emitted tag
   // writes, and is satisfied by whichever binding consults it. So the
   // binding a coverage issue *would* complain about is the one the
   // emission keeps alive.
@@ -2532,7 +2532,7 @@ function unreferencedBindings(model, body) {
 // thing being tested.
 //
 // Everything else is read because an event records its value or writes
-// its tag — `CourseNumbering`, whose value becomes the new course's id,
+// its tag – `CourseNumbering`, whose value becomes the new course's id,
 // and the student `StudentUnsubscribedFromCourse` tags. That is a fact
 // about what the command *records*, not about what it *decides*, so it
 // belongs beside the emission and not under "it is only allowed if".
@@ -2563,8 +2563,8 @@ function decisionAliases(model, body) {
 // write path: every gesture that removes the last thing consulting a
 // read removes the read in the same append, so there is no moment at
 // which the boundary holds something nothing looks at. A body arriving
-// from elsewhere — a hand-written file, an agent writing a whole
-// body — may hold one, and keeps it until this runs: it is reported as
+// from elsewhere – a hand-written file, an agent writing a whole
+// body – may hold one, and keeps it until this runs: it is reported as
 // an advisory first and dropped at the next edit, never silently.
 function pruneUnreferencedBindings(model, body) {
   const dropped = unreferencedBindings(model, body);
@@ -2574,7 +2574,7 @@ function pruneUnreferencedBindings(model, body) {
 }
 
 // ============================================================
-// Commands — DCB-style consult-and-check, then append.
+// Commands – DCB-style consult-and-check, then append.
 // ============================================================
 
 class DomainError extends Error {
@@ -2588,13 +2588,13 @@ class DomainError extends Error {
 // full storage from a broken one and make room before giving up.
 class StorageFullError extends DomainError {
   constructor() {
-    super('The browser\'s storage for this site is full, so that change was not saved — '
+    super('The browser\'s storage for this site is full, so that change was not saved – '
       + 'it does not fit even with the history compacted. Removing a model you no longer need makes room.');
     this.name = 'StorageFullError';
   }
 }
 
-// Only structure is refused here — empty or unbounded, a key cannot
+// Only structure is refused here – empty or unbounded, a key cannot
 // address a definition. Idiom (PascalCase) is an advisory computed by
 // `modelAdvisories`, never a refusal: an unidiomatic name still keys,
 // renders and evaluates, and the Problems panel says so.
@@ -2654,7 +2654,7 @@ function getCtxOrThrow(modelId) {
   return model;
 }
 
-// The semantic checker — dangling references, unresolved types, write
+// The semantic checker – dangling references, unresolved types, write
 // coverage, enum membership, everything a definition can get *wrong*
 // while still being a definition. It throws the way it always has, but
 // nothing on the write path calls it any more: `modelAdvisories` below
@@ -2688,7 +2688,7 @@ function validateReferences(model, kind, name, body) {
       }
       if (p.isOptional && p.isList) {
         throw new DomainError(
-          `${label} property "${p.name}" is both optional and a list — two spellings of "none". ` +
+          `${label} property "${p.name}" is both optional and a list – two spellings of "none". ` +
           'The empty list already says nothing is there; this evaluates as a plain list.'
         );
       }
@@ -2711,7 +2711,7 @@ function validateReferences(model, kind, name, body) {
 //
 // The demoted validations. A definition that names what does not
 // exist, writes a tag its boundary never consults, compares against a
-// member its enum does not hold — all of it is representable state
+// member its enum does not hold – all of it is representable state
 // now, and this is where it gets said. One advisory per finding,
 // recomputed from the stored model and cached per log revision like
 // every other derived view; a writer never sees these as a refusal.
@@ -2724,13 +2724,13 @@ function validateReferences(model, kind, name, body) {
 const ADVISORY_KINDS = DEF_KINDS.filter((kind) => !isIdKeyed(kind));
 
 // Everything advisory about one definition, first semantic failure
-// only — `validateReferences` throws at the first thing it finds, and
+// only – `validateReferences` throws at the first thing it finds, and
 // fixing that one re-runs the rest. Anything unexpected a defective
 // body makes the checker itself throw is reported the same way: to a
 // reader an advisory is an advisory, whichever guard tripped.
 // A rule's rejection message is the outcome a refusal is known by: what
 // the person reads, and what a scenario expecting the refusal names. So
-// it is static, one line, and short enough to stand in a toast — the
+// it is static, one line, and short enough to stand in a toast – the
 // values a refusal saw are reported beside it, never spliced into it.
 const REJECTION_MAX_LENGTH = 200;
 
@@ -2742,7 +2742,7 @@ function rejectionProblem(text) {
   return '';
 }
 
-// Required on every rule and absent from every guard — but only ever
+// Required on every rule and absent from every guard – but only ever
 // advised, never refused: a rule without one still evaluates, and a
 // refusal by it is what a scenario cannot name (`deriveThen`).
 function rejectionAdvisories(body) {
@@ -2750,7 +2750,7 @@ function rejectionAdvisories(body) {
   for (const condition of body.conditions || []) {
     if (!condition) continue;
     if (condition.rejection === undefined) {
-      messages.push(`The rule "${conditionText(condition)}" has no rejection message — `
+      messages.push(`The rule "${conditionText(condition)}" has no rejection message – `
         + 'say what the command is refused with when it does not hold.');
       continue;
     }
@@ -2761,7 +2761,7 @@ function rejectionAdvisories(body) {
     for (const guard of (emission && emission.when) || []) {
       if (guard && guard.rejection !== undefined) {
         messages.push(`The guard "${conditionText(guard)}" on "${emission.name}" carries a rejection `
-          + 'message, but a guard never rejects — it skips the emission.');
+          + 'message, but a guard never rejects – it skips the emission.');
       }
     }
   }
@@ -2770,7 +2770,7 @@ function rejectionAdvisories(body) {
 
 // The messages a command can be refused with, in rule order, each once,
 // with the rules that lead to it. Rules sharing a message are one
-// outcome. A rule without a message is left out — it is an advisory.
+// outcome. A rule without a message is left out – it is an advisory.
 function commandRejections(body) {
   const outcomes = [];
   ((body && body.conditions) || []).forEach((condition, index) => {
@@ -2792,9 +2792,9 @@ function definitionAdvisories(model, kind, name, body) {
   } catch (error) {
     messages.push(error && error.message ? error.message : String(error));
   }
-  // A read nothing consults. The app cannot author one — a read exists
+  // A read nothing consults. The app cannot author one – a read exists
   // because a rule, guard, emission, emitted tag or another read wanted
-  // it — so this only ever comes from outside: a hand-written file, or
+  // it – so this only ever comes from outside: a hand-written file, or
   // an agent writing a whole body. It still bounds the append, so it is
   // never dropped behind anyone's back; it is reported here and pruned
   // by the next edit to this command, which is what the message says.
@@ -2805,7 +2805,7 @@ function definitionAdvisories(model, kind, name, body) {
     if (stranded.length) {
       messages.push(`Reads nothing consults: ${stranded.join(', ')}. `
         + `${stranded.length === 1 ? 'It still widens' : 'They still widen'} the consistency `
-        + `boundary, so nothing is dropped now — the next edit to this command will remove `
+        + `boundary, so nothing is dropped now – the next edit to this command will remove `
         + `${stranded.length === 1 ? 'it' : 'them'}.`);
     }
   }
@@ -2831,7 +2831,7 @@ function modelAdvisories(model) {
 }
 
 // Why a tag operand cannot fill a projection's tag `tag` (`{name,
-// tagType}`) — or null. It must be one value of the declared type,
+// tagType}`) – or null. It must be one value of the declared type,
 // which is the tag's key: a literal states its type (`CourseId("c1")`),
 // any other value has one in the command's scope. A list is read once
 // per element only with `each`.
@@ -2839,21 +2839,21 @@ function tagOperandProblem(model, body, operand, tag) {
   const source = operandSource(operand);
   const declared = tag && tag.tagType;
   const mismatch = (held) => (declared && held && held !== declared
-    ? `is tagged ${operandText(operand)}, ${typeArticle(held)} ${held} — but its "${tag.name}" tag is ${typeArticle(declared)} ${declared}.`
+    ? `is tagged ${operandText(operand)}, ${typeArticle(held)} ${held} – but its "${tag.name}" tag is ${typeArticle(declared)} ${declared}.`
     : null);
   if (source === 'static' || source === 'enum-member') {
-    return `is tagged ${operandText(operand)}, which says no tag type — write the literal with its type, `
+    return `is tagged ${operandText(operand)}, which says no tag type – write the literal with its type, `
       + `${declared || 'CourseId'}(${JSON.stringify(source === 'static' ? operand : operand.enumMember)}).`;
   }
   if (source === 'tag-literal') {
-    if (operand.tagValue === null || operand.tagValue === undefined) return `is tagged ${operand.tagType} with no value — a tag has one.`;
+    if (operand.tagValue === null || operand.tagValue === undefined) return `is tagged ${operand.tagType} with no value – a tag has one.`;
     return mismatch(operand.tagType);
   }
   // `each` fans out over a list; over one value there is nothing to fan.
   if (source === 'each') {
     const over = tagOperandType(model, body, operand.each);
     if (over && !over.isList) {
-      return `is tagged ${operandText(operand)}, but ${operandText(operand.each)} is one value — ` +
+      return `is tagged ${operandText(operand)}, but ${operandText(operand.each)} is one value – ` +
         `"each" fans out over a list; drop it.`;
     }
     if (operandSource(operand.each) === 'each') return 'is tagged each of each';
@@ -2862,7 +2862,7 @@ function tagOperandProblem(model, body, operand, tag) {
   }
   const resolved = tagOperandType(model, body, operand);
   if (resolved && resolved.isList) {
-    return `is tagged ${operandText(operand)}, which is a list — a tag takes one value; ` +
+    return `is tagged ${operandText(operand)}, which is a list – a tag takes one value; ` +
       `"each ${operandText(operand)}" reads it once per element.`;
   }
   return resolved ? mismatch(resolved.propertyType) : null;
@@ -2873,18 +2873,18 @@ function typeArticle(word) {
   return /^[aeiou]/i.test(String(word || '')) ? 'an' : 'a';
 }
 
-// Why a read cannot be read as written — or null: a projection that
+// Why a read cannot be read as written – or null: a projection that
 // exists, one value for each tag it declares and none it does not, each
 // of the declared type, one fan-out at most, and the arguments its
 // script takes and no others. Shared by an alias's read and a read in
 // place, which are the same read. `chained(operand, what)` lets a
-// binding add its own rule — a value from a binding below it.
+// binding add its own rule – a value from a binding below it.
 function readProblem(model, body, read, where, chained = () => null) {
   const projection = model['projection-definitions'][read.projection];
   if (!projection) return `${where} reads "${read.projection}", which this model does not define.`;
   const label = `${where} reads ${read.projection}`;
   if (read.tags !== undefined && (read.tags === null || typeof read.tags !== 'object' || Array.isArray(read.tags))) {
-    return `${label} with tags that are not named — each value belongs to one of its tags.`;
+    return `${label} with tags that are not named – each value belongs to one of its tags.`;
   }
   const declared = projectionTagParams(projection);
   const held = read.tags || {};
@@ -2897,11 +2897,11 @@ function readProblem(model, body, read, where, chained = () => null) {
     if (!declared.some((tag) => tag.name === key)) {
       return declared.length
         ? `${label} with "${key}", which is not one of its tags (${declared.map((tag) => tag.name).join(', ')}).`
-        : `${label} with "${key}", but it is untagged — it is read by no tag.`;
+        : `${label} with "${key}", but it is untagged – it is read by no tag.`;
     }
   }
   const fans = readTagOperands(read).filter((operand) => operandSource(operand) === 'each');
-  if (fans.length > 1) return `${label}, which fans out over ${fans.length} lists — a read fans out over one.`;
+  if (fans.length > 1) return `${label}, which fans out over ${fans.length} lists – a read fans out over one.`;
   for (const tag of declared) {
     const operand = held[tag.name];
     if (operand === undefined || operand === null || operandIncomplete(operand)) {
@@ -2926,7 +2926,7 @@ function readProblem(model, body, read, where, chained = () => null) {
 }
 
 // What a projection's own tags cannot do, as the advisory that says so
-// — or null. Two ways a handler and the tags fail to meet, both decided
+// – or null. Two ways a handler and the tags fail to meet, both decided
 // by the tags an event lists:
 //
 // - a handled event lists no tag of some type the projection is tagged
@@ -2947,7 +2947,7 @@ function projectionTagProblem(model, projectionName) {
   const [unreached] = readTagsMissing(model, projectionName, tagTypes);
   if (unreached) {
     return `${label} is tagged by ${unreached.missing.join(' and ')}, but ` +
-      `"${unreached.event}", which it handles, is tagged by no ${unreached.missing.join(' or ')} — ` +
+      `"${unreached.event}", which it handles, is tagged by no ${unreached.missing.join(' or ')} – ` +
       'so that handler never fires.';
   }
   if (scriptOf(projection)) return null;
@@ -2967,7 +2967,7 @@ function projectionTagProblem(model, projectionName) {
 }
 
 // Handler validation. `target` is a projection body: `valueType`,
-// `isList`, `script` — an entity property is a binding to one, so
+// `isList`, `script` – an entity property is a binding to one, so
 // there is exactly one shape to validate.
 function validateHandlers(model, label, target, handlers) {
   if (scriptOf(target)) return validateScriptedHandlers(model, label, handlers);
@@ -2983,7 +2983,7 @@ function validateHandlers(model, label, target, handlers) {
     if (operandSource(operand) === 'successor') {
       // `hasSuccessor` is the rule; this is where breaking it is
       // refused. (A composite has no successor either, but a projection
-      // never holds one — its valueType is refused before this runs.)
+      // never holds one – its valueType is refused before this runs.)
       if (!hasSuccessor(model, target.valueType)) {
         throw new DomainError(
           `${where} takes a successor, but ${label} is typed ${target.valueType}. ` +
@@ -3024,8 +3024,8 @@ function validateHandlers(model, label, target, handlers) {
       throw new DomainError(`${label} handles "${handler.event}", which this model does not define.`);
     }
     const where = `The handler for "${handler.event}" on ${label}`;
-    // `undefined` is not a value an operand can have — JSON cannot even
-    // carry it — but `operandSource` reads it as a static literal, so
+    // `undefined` is not a value an operand can have – JSON cannot even
+    // carry it – but `operandSource` reads it as a static literal, so
     // without this a handler that says what it does without saying
     // what *from* slips through and renders as "undefined" everywhere
     // the effect is spoken. `null` stays legal: "no value yet" is a
@@ -3085,7 +3085,7 @@ function validateScriptedHandlers(model, label, handlers) {
 // What a script may state, wherever it appears. `initialState` is the
 // state before any event; `exposes` names the field of it a condition
 // reads, and is what keeps a composite accumulation from leaking into
-// the boundary — `propertyType`/`isList` still describe that exposed
+// the boundary – `propertyType`/`isList` still describe that exposed
 // value, so conditions type-check exactly as they always did.
 //
 // `arguments` are values the command supplies at read time. They are
@@ -3096,7 +3096,7 @@ function validateScriptedHandlers(model, label, handlers) {
 function validateScript(model, label, target) {
   const script = scriptOf(target);
   if (script.initialState === undefined) {
-    throw new DomainError(`${label} needs an initial state — it is the state before any event.`);
+    throw new DomainError(`${label} needs an initial state – it is the state before any event.`);
   }
   if (target.initialValue !== undefined) {
     throw new DomainError(
@@ -3111,7 +3111,7 @@ function validateScript(model, label, target) {
     const state = script.initialState;
     if (!state || typeof state !== 'object' || Array.isArray(state)) {
       throw new DomainError(
-        `${label} exposes the field "${script.exposes}", but its initial state is not a record — ` +
+        `${label} exposes the field "${script.exposes}", but its initial state is not a record – ` +
         'a script that exposes one field of its state must keep that state in fields.'
       );
     }
@@ -3141,18 +3141,18 @@ function validateScript(model, label, target) {
   }
 
   // A script is read by the tags its projection declares, like any
-  // projection (8.0) — they reach its code as `tags`. A filter of its
+  // projection (8.0) – they reach its code as `tags`. A filter of its
   // own would be a second, disagreeing answer to "which events".
   if (script.tagFilter !== undefined) {
     throw new DomainError(
       `${label} states a tag filter. A projection declares the tags it is read by, and a ` +
-      'script sees their values as `tags` — drop the filter.'
+      'script sees their values as `tags` – drop the filter.'
     );
   }
 }
 
 // The initial value, checked against the declared type. `null` is
-// legal for any type — it is the state before anything has happened,
+// legal for any type – it is the state before anything has happened,
 // and distinct from the empty string. A list-typed projection starts
 // at a list, empty or not, of typed elements; `null` never appears
 // inside one, because a list of nothing-yets says nothing a shorter
@@ -3177,13 +3177,13 @@ function validateInitialValue(model, label, body) {
     }
     if (element === null || (element !== null && typeof element === 'object')) {
       throw new DomainError(
-        `${where} is not a literal — a list element is a value of the list's type, never null ` +
+        `${where} is not a literal – a list element is a value of the list's type, never null ` +
         'and never a record.'
       );
     }
     if (members) {
       throw new DomainError(
-        `${where} is a bare literal, but "${body.valueType}" is an enum — name the member as ` +
+        `${where} is a bare literal, but "${body.valueType}" is an enum – name the member as ` +
         '{"enumMember": "..."} so renaming it rewrites this too.'
       );
     }
@@ -3199,7 +3199,7 @@ function validateInitialValue(model, label, body) {
   if (body.isList) {
     if (!Array.isArray(value)) {
       throw new DomainError(
-        `${label} holds a list, so its initial value is one — empty, or holding typed elements.`
+        `${label} holds a list, so its initial value is one – empty, or holding typed elements.`
       );
     }
     value.forEach((element, index) => checkElement(element, `${label}'s initial element ${index + 1}`));
@@ -3211,11 +3211,11 @@ function validateInitialValue(model, label, body) {
   checkElement(value, `${label}'s initial value`);
 }
 
-// One projection — the one shape behind an entity property and a
+// One projection – the one shape behind an entity property and a
 // standalone read alike: same handlers, same operations, same
 // operands. It declares the tags it is read by (8.0), each named and
 // of a tag type; none at all is an untagged projection, which folds
-// the whole log — what a global numbering is.
+// the whole log – what a global numbering is.
 function validateProjectionBody(model, projectionName, body) {
   validateProjectionTags(model, projectionName, body);
   const valueCls = classifyType(model, body.valueType);
@@ -3227,7 +3227,7 @@ function validateProjectionBody(model, projectionName, body) {
   const script = scriptOf(body);
   if (body.script && body.derived) {
     throw new DomainError(
-      `Projection "${projectionName}" declares both a script and a derived predicate — one or ` +
+      `Projection "${projectionName}" declares both a script and a derived predicate – one or ` +
       'the other produces its value, not both. It reads as scripted until one goes.'
     );
   }
@@ -3242,29 +3242,29 @@ function validateProjectionBody(model, projectionName, body) {
     // A derived projection is nothing but its predicate or computation:
     // no initial value (before any event it derives from its operands'
     // initial values), no handlers (its operands' handlers are its
-    // query), and one value — a comparison's boolean, or a number.
+    // query), and one value – a comparison's boolean, or a number.
     if (body.derived.predicate !== undefined && body.derived.operator !== undefined) {
       throw new DomainError(
-        `Projection "${projectionName}" states both a predicate and an operator — it compares or it ` +
+        `Projection "${projectionName}" states both a predicate and an operator – it compares or it ` +
         'computes, not both. It reads as a comparison until one goes.'
       );
     }
     if (!derivedComputes(body.derived) && (body.valueType !== 'boolean' || body.isList)) {
       throw new DomainError(
-        `Projection "${projectionName}" is derived by a comparison, so it holds its outcome — ` +
+        `Projection "${projectionName}" is derived by a comparison, so it holds its outcome – ` +
         `one boolean, never ${body.isList ? 'a list' : `${typeArticle(body.valueType)} ${body.valueType}`}.`
       );
     }
     if (body.initialValue !== undefined) {
       throw new DomainError(
         `Projection "${projectionName}" is derived and declares an initial value. Before any ` +
-        'event it already derives from its operands\' own initial values — a second start would disagree.'
+        'event it already derives from its operands\' own initial values – a second start would disagree.'
       );
     }
     if ((body.handlers || []).length) {
       throw new DomainError(
         `Projection "${projectionName}" is derived and declares handlers. Nothing advances a ` +
-        'derived projection — its operands\' handlers are its query.'
+        'derived projection – its operands\' handlers are its query.'
       );
     }
     validateDerived(model, projectionName, body);
@@ -3279,13 +3279,13 @@ function validateProjectionBody(model, projectionName, body) {
     throw new DomainError(
       `Projection "${projectionName}" holds "${body.valueType}", which is a composite. ` +
       'The operations that advance a declared projection act on a single value and have ' +
-      'nothing to act on in a record of fields — script the projection to hold one.'
+      'nothing to act on in a record of fields – script the projection to hold one.'
     );
   }
 
   if (body.initialValue === undefined) {
     throw new DomainError(
-      `Projection "${projectionName}" needs an initial value — it is the value before any event ` +
+      `Projection "${projectionName}" needs an initial value – it is the value before any event ` +
       'has been applied, and for a numbering it is where the prefix is stated. ' +
       '"null" is a value: no value yet.'
     );
@@ -3297,8 +3297,8 @@ function validateProjectionBody(model, projectionName, body) {
   validateHandlers(model, `projection "${projectionName}"`, body, body.handlers);
 }
 
-// A projection's tags: each a camelCase name, once, of a tag type —
-// the key a read's value is rendered under — and no name a script
+// A projection's tags: each a camelCase name, once, of a tag type –
+// the key a read's value is rendered under – and no name a script
 // argument also has, since a read gives both in one list. Then whether
 // the events it handles carry them (`projectionTagProblem`).
 function validateProjectionTags(model, projectionName, body) {
@@ -3315,7 +3315,7 @@ function validateProjectionTags(model, projectionName, body) {
     }
     if (!isTagBearing(model, tag.tagType)) {
       throw new DomainError(
-        `${label}'s tag "${tag.name}" is typed ${tag.tagType}, which is no tag type — nothing is ` +
+        `${label}'s tag "${tag.name}" is typed ${tag.tagType}, which is no tag type – nothing is ` +
         'tagged by it, so no event would reach this projection.'
       );
     }
@@ -3332,7 +3332,7 @@ function validateProjectionTags(model, projectionName, body) {
 // The derived predicate: both operands recognised, at least one of
 // them a projection read, every read's arguments covering exactly the
 // arguments its target's script takes, each one a literal, enum
-// members belonging to the type they sit opposite — and no cycle,
+// members belonging to the type they sit opposite – and no cycle,
 // since a value derived through itself has nowhere to start. An
 // operand gives its projection's tags by name, each one of the derived
 // projection's own (`{parameterName}`) or a typed literal, of the type
@@ -3348,7 +3348,7 @@ function validateDerived(model, projectionName, body) {
       );
     }
     if (derived.negate !== undefined) {
-      throw new DomainError(`${label} negates a computation — "negate" belongs to a comparison.`);
+      throw new DomainError(`${label} negates a computation – "negate" belongs to a comparison.`);
     }
   } else if (!DERIVED_PREDICATES.includes(derived.predicate)) {
     throw new DomainError(
@@ -3360,7 +3360,7 @@ function validateDerived(model, projectionName, body) {
   const reads = derivedOperands(derived).filter((o) => operandSource(o) === 'projection-read');
   if (!reads.length) {
     throw new DomainError(
-      `${label} derives from no projection — at least one side of its predicate must read one.`
+      `${label} derives from no projection – at least one side of its predicate must read one.`
     );
   }
 
@@ -3370,7 +3370,7 @@ function validateDerived(model, projectionName, body) {
     if (source === 'parameter' || source === 'alias-property'
         || source === 'event-property' || source === 'current-value' || source === 'successor') {
       throw new DomainError(
-        `An operand of ${label} is "${operandText(operand)}" — a derived projection reads other ` +
+        `An operand of ${label} is "${operandText(operand)}" – a derived projection reads other ` +
         'projections, enum members and literals; nothing else is in scope.'
       );
     }
@@ -3400,7 +3400,7 @@ function validateDerived(model, projectionName, body) {
         }
         if (source.tagType !== tag.tagType) {
           throw new DomainError(
-            `${where} tagged ${value.parameterName}, ${typeArticle(source.tagType)} ${source.tagType} — ` +
+            `${where} tagged ${value.parameterName}, ${typeArticle(source.tagType)} ${source.tagType} – ` +
             `but its "${tag.name}" tag is ${typeArticle(tag.tagType)} ${tag.tagType}.`
           );
         }
@@ -3409,14 +3409,14 @@ function validateDerived(model, projectionName, body) {
       if (operandSource(value) === 'tag-literal') {
         if (value.tagType !== tag.tagType) {
           throw new DomainError(
-            `${where} tagged ${operandText(value)} — but its "${tag.name}" tag is ` +
+            `${where} tagged ${operandText(value)} – but its "${tag.name}" tag is ` +
             `${typeArticle(tag.tagType)} ${tag.tagType}.`
           );
         }
         continue;
       }
       throw new DomainError(
-        `${where} tagged ${operandText(value)} — an operand's tag is one of ${projectionName}'s own ` +
+        `${where} tagged ${operandText(value)} – an operand's tag is one of ${projectionName}'s own ` +
         'tags or a typed literal.'
       );
     }
@@ -3443,7 +3443,7 @@ function validateDerived(model, projectionName, body) {
       const argumentSource = operandSource(operand.arguments[key]);
       if (argumentSource !== 'enum-member' && argumentSource !== 'static') {
         throw new DomainError(
-          `${label} supplies "${key}" as "${operandText(operand.arguments[key])}" — an operand's ` +
+          `${label} supplies "${key}" as "${operandText(operand.arguments[key])}" – an operand's ` +
           'argument is a literal.'
         );
       }
@@ -3470,14 +3470,14 @@ function validateDerived(model, projectionName, body) {
   }
 
   // A computation takes two single numbers and yields one: an integer
-  // from two integers, a number otherwise — and null from a null side,
+  // from two integers, a number otherwise – and null from a null side,
   // which an ordering against it then errors on, so a side that may be
   // null is said here first.
   if (derivedComputes(derived)) {
     for (const operand of derivedOperands(derived)) {
       if (!derivedInputOf(model, operand)) {
         throw new DomainError(
-          `${label} computes from "${operandText(operand)}", which is not a single number — ` +
+          `${label} computes from "${operandText(operand)}", which is not a single number – ` +
           `"${derived.operator}" takes an integer or a number on each side.`
         );
       }
@@ -3487,7 +3487,7 @@ function validateDerived(model, projectionName, body) {
     if (!declared || body.isList || (result === 'number' && declared === 'integer')) {
       throw new DomainError(
         `${label} computes ${typeArticle(result)} ${result}, but holds ` +
-        `${body.isList ? `a list of ${body.valueType}` : `${typeArticle(body.valueType)} ${body.valueType}`} — ` +
+        `${body.isList ? `a list of ${body.valueType}` : `${typeArticle(body.valueType)} ${body.valueType}`} – ` +
         `declare it ${result === 'integer' ? 'an integer' : 'a number'}.`
       );
     }
@@ -3495,8 +3495,8 @@ function validateDerived(model, projectionName, body) {
       .find((operand) => (derivedInputOf(model, operand) || {}).nullable);
     if (nullable !== undefined) {
       throw new DomainError(
-        `${label} computes from ${operandText(nullable)}, which can be null — a projection it ` +
-        `reads starts at null — so ${projectionName} is null then too, and a rule ordering ` +
+        `${label} computes from ${operandText(nullable)}, which can be null – a projection it ` +
+        `reads starts at null – so ${projectionName} is null then too, and a rule ordering ` +
         'against it errors. Start that projection at a number.'
       );
     }
@@ -3510,7 +3510,7 @@ function validateDerived(model, projectionName, body) {
       if (operandSource(operand) !== 'projection-read') continue;
       if (operand.projection === projectionName) {
         throw new DomainError(
-          `${label} derives from itself through ${trail.join(' → ')} — a cycle has no value to start from.`
+          `${label} derives from itself through ${trail.join(' → ')} – a cycle has no value to start from.`
         );
       }
       if (trail.includes(operand.projection)) continue;
@@ -3519,14 +3519,14 @@ function validateDerived(model, projectionName, body) {
   };
   for (const operand of reads) {
     if (operand.projection === projectionName) {
-      throw new DomainError(`${label} derives from itself — a cycle has no value to start from.`);
+      throw new DomainError(`${label} derives from itself – a cycle has no value to start from.`);
     }
     visit(operand.projection, [operand.projection]);
   }
 }
 
 // A value type is scalar (an opaque JSON Schema) or composite (typed
-// fields) — never both and never neither. `isTag` is meaningful only
+// fields) – never both and never neither. `isTag` is meaningful only
 // on the scalar form: a composite is never itself a tag, so it may not
 // combine with fields. An entity-owned value type carries one further
 // invariant, checked here rather than only at the point of change: it
@@ -3545,7 +3545,7 @@ function validateCustomTypeBody(model, typeName, body) {
   const hasFields = body.properties !== undefined;
   if (hasSchema && hasFields) {
     throw new DomainError(
-      `Value type "${typeName}" declares both a schema and fields — it is either scalar or composite, not both.`
+      `Value type "${typeName}" declares both a schema and fields – it is either scalar or composite, not both.`
     );
   }
   if (!hasSchema && !hasFields) {
@@ -3555,7 +3555,7 @@ function validateCustomTypeBody(model, typeName, body) {
   if (hasFields) {
     if (body.isTag) {
       throw new DomainError(
-        `Value type "${typeName}" is composite and marked "represented as a tag" — only a scalar ` +
+        `Value type "${typeName}" is composite and marked "represented as a tag" – only a scalar ` +
         'value type can be. A composite\'s tag-ness is derived from its tag-marked fields instead.'
       );
     }
@@ -3578,11 +3578,11 @@ function validateCustomTypeBody(model, typeName, body) {
           `Type "${field.propertyType}" (field "${typeName}.${field.name}") does not resolve in this model.`
         );
       }
-      // Composites do not nest — an operand reaches one field, never a path.
+      // Composites do not nest – an operand reaches one field, never a path.
       if (cls.kind === 'value' && cls.composite) {
         throw new DomainError(
           `Field "${typeName}.${field.name}" is typed with the composite "${field.propertyType}". ` +
-          `Composites do not nest — an operand reaches one field, never a path.`
+          `Composites do not nest – an operand reaches one field, never a path.`
         );
       }
       if (field.isList) {
@@ -3603,13 +3603,13 @@ function validateCustomTypeBody(model, typeName, body) {
   const owner = entityOfIdType(model, typeName);
   if (owner && !isTagBearing(model, typeName)) {
     throw new DomainError(
-      `"${typeName}" is entity "${owner}"'s derived identifier — it must stay tag-bearing (a scalar ` +
+      `"${typeName}" is entity "${owner}"'s derived identifier – it must stay tag-bearing (a scalar ` +
       'marked "represented as a tag", or a composite with at least one tag-marked field).'
     );
   }
 }
 
-// An entity's properties are bindings — `{name, projection}` — and an
+// An entity's properties are bindings – `{name, projection}` – and an
 // instance reads each one by its identifier, the way a command reads
 // `CourseCapacity(courseId)`. So what binds is a projection tagged by
 // exactly that identifier; whether its events carry the tag is the
@@ -3638,7 +3638,7 @@ function validateEntityBody(model, entityName, body) {
       );
     }
     // An instance reads each property by its own identifier, so what
-    // binds is a projection tagged by exactly that — one tag, of the
+    // binds is a projection tagged by exactly that – one tag, of the
     // entity's identifier type. Anything else would leave a tag the
     // instance has no value for, or read it by the wrong key.
     const tags = projectionTagParams(projection);
@@ -3648,7 +3648,7 @@ function validateEntityBody(model, entityName, body) {
         (tags.length
           ? `tagged by ${tags.map((tag) => `${tag.name}: ${tag.tagType}`).join(', ')}`
           : 'untagged') +
-        ` — an instance reads its properties by its own identifier, so it binds a projection ` +
+        ` – an instance reads its properties by its own identifier, so it binds a projection ` +
         `tagged by one ${idType}.`
       );
     }
@@ -3661,12 +3661,12 @@ function validateEntityBody(model, entityName, body) {
 
   // The designation. An entity need not have one, and a lifecycle is an
   // ordinary property in every other respect, so the only thing wrong
-  // here is a designation pointing at nothing — which is advisory, like
+  // here is a designation pointing at nothing – which is advisory, like
   // every other dangling reference: the model loads and the properties
   // still fold.
   //
   // Designating a property that *is* declared but whose states cannot be
-  // read — scripted, derived, a list, typed a bare string — is not a
+  // read – scripted, derived, a list, typed a bare string – is not a
   // defect and is deliberately not advised. It is a legitimate model
   // (`content-decisions-scripted` ships one) whose lifecycle simply
   // cannot be drawn, so it is the Lifecycles page's business to say so
@@ -3681,8 +3681,8 @@ function validateEntityBody(model, entityName, body) {
     if (!seen.has(body.lifecycle)) {
       throw new DomainError(
         `Entity "${entityName}" designates "${body.lifecycle}" as its lifecycle but declares no ` +
-        `property by that name. Nothing else breaks — the entity's own rules still read whatever ` +
-        'properties it has — but no lifecycle is drawn for it.'
+        `property by that name. Nothing else breaks – the entity's own rules still read whatever ` +
+        'properties it has – but no lifecycle is drawn for it.'
       );
     }
   }
@@ -3723,8 +3723,8 @@ function validateCommandBody(model, body) {
           );
         }
       }
-      // A read gives a value for each tag the projection declares — of
-      // the declared type, which is the tag's key — and, for a script,
+      // A read gives a value for each tag the projection declares – of
+      // the declared type, which is the tag's key – and, for a script,
       // the arguments its code takes. What differs is what each does: a
       // tag selects events, an argument reaches the code.
       const chained = (operand, what) => {
@@ -3732,7 +3732,7 @@ function validateCommandBody(model, body) {
           if (alias === binding.alias) return `Boundary binding "${binding.alias}" takes ${what} from itself.`;
           if (!declaredAbove.includes(alias)) {
             return `Boundary binding "${binding.alias}" takes ${what} from "${operandText(operand)}", ` +
-              `but "${alias}" is not bound above it — a binding may only read what is declared earlier.`;
+              `but "${alias}" is not bound above it – a binding may only read what is declared earlier.`;
           }
         }
         return null;
@@ -3741,7 +3741,7 @@ function validateCommandBody(model, body) {
       if (problem) throw new DomainError(problem);
       if (binding.isOptional !== undefined) {
         throw new DomainError(
-          `Boundary binding "${binding.alias}" reads a projection and is marked "may be absent" — ` +
+          `Boundary binding "${binding.alias}" reads a projection and is marked "may be absent" – ` +
           `a projection always folds to a value, so there is no absent case to declare.`
         );
       }
@@ -3763,7 +3763,7 @@ function validateCommandBody(model, body) {
       if (!declaredAbove.includes(idOperand.alias)) {
         throw new DomainError(
           `Boundary binding "${binding.alias}" takes its identifier from "${operandText(idOperand)}", ` +
-          `but "${idOperand.alias}" is not bound above it — a binding may only read instances declared earlier.`
+          `but "${idOperand.alias}" is not bound above it – a binding may only read instances declared earlier.`
         );
       }
     }
@@ -3771,20 +3771,20 @@ function validateCommandBody(model, body) {
     const plural = operandIsPlural(model, body, idOperand);
     if (isFannedOut(model, body, binding) && !plural && operandSource(idOperand) !== 'tag-literal') {
       throw new DomainError(
-        `Boundary binding "${binding.alias}" reads each of ${operandText(idOperand)}, which is one value — ` +
+        `Boundary binding "${binding.alias}" reads each of ${operandText(idOperand)}, which is one value – ` +
         `"each" fans out over a list; drop it.`
       );
     }
     if (!isFannedOut(model, body, binding) && plural) {
       throw new DomainError(
         `Boundary binding "${binding.alias}" reads ${binding.entity} by ${operandText(idOperand)}, which ` +
-        `holds many — ${binding.entity}(each ${operandText(idOperand)}) reads one instance per element.`
+        `holds many – ${binding.entity}(each ${operandText(idOperand)}) reads one instance per element.`
       );
     }
     if (binding.excluding !== undefined && !isFannedOut(model, body, binding)) {
       throw new DomainError(
         `Boundary binding "${binding.alias}" excludes ${operandText(binding.excluding)}, ` +
-        `but it binds a single instance — there is nothing to exclude it from.`
+        `but it binds a single instance – there is nothing to exclude it from.`
       );
     }
     // The same "a field that means nothing here is a mistake" rule
@@ -3793,14 +3793,14 @@ function validateCommandBody(model, body) {
     if (binding.isOptional && isFannedOut(model, body, binding)) {
       throw new DomainError(
         `Boundary binding "${binding.alias}" is marked "may be absent", but it fans out over a ` +
-        `list — an empty list already binds nothing, so the flag means nothing there.`
+        `list – an empty list already binds nothing, so the flag means nothing there.`
       );
     }
     declaredAbove.push(binding.alias);
   }
 
   // An emission guard is a condition in every respect the checks below
-  // care about — same operands, same predicates, same quantification —
+  // care about – same operands, same predicates, same quantification –
   // so each one reads this combined list rather than `conditions`
   // alone. The one structural demand is that `when` is a list at all.
   for (const emission of body.publishes || []) {
@@ -3814,7 +3814,7 @@ function validateCommandBody(model, body) {
   ];
 
   // A plural alias cannot supply a single value, so it may be read by a
-  // condition — which quantifies over it — but never emitted. Nor may a
+  // condition – which quantifies over it – but never emitted. Nor may a
   // read in place that fans out.
   for (const emission of body.publishes || []) {
     if (!emission || !emission.parameters) continue;
@@ -3838,7 +3838,7 @@ function validateCommandBody(model, body) {
 
   // A condition may quantify over at most one fanned-out root. Two
   // distinct roots would have to be read as a cross product, and their
-  // lengths are unrelated — nothing here can assert otherwise, and the
+  // lengths are unrelated – nothing here can assert otherwise, and the
   // zipped and crossed readings look identical on the page.
   for (const condition of allConditions) {
     if (!condition) continue;
@@ -3859,7 +3859,7 @@ function validateCommandBody(model, body) {
     for (const [side, label] of [[left, 'Left'], [right, 'Right']]) {
       if (side && !side.isList) {
         throw new DomainError(
-          `${label} side of "${conditionText(condition)}" is not a list — ` +
+          `${label} side of "${conditionText(condition)}" is not a list – ` +
           `"containsAny" asks whether two lists intersect.`
         );
       }
@@ -3880,13 +3880,13 @@ function validateCommandBody(model, body) {
     const right = conditionOperandType(model, body, condition, condition.rightHandSide);
     if (left && !left.isList) {
       throw new DomainError(
-        `Left side of "${conditionText(condition)}" is not a list — ` +
+        `Left side of "${conditionText(condition)}" is not a list – ` +
         `"contains" asks whether a list holds one value.`
       );
     }
     if (right && right.isList) {
       throw new DomainError(
-        `Right side of "${conditionText(condition)}" is a list — "contains" looks for one value. ` +
+        `Right side of "${conditionText(condition)}" is a list – "contains" looks for one value. ` +
         `"containsAny" is the one that intersects two lists.`
       );
     }
@@ -3898,7 +3898,7 @@ function validateCommandBody(model, body) {
     }
   }
 
-  // `equalsAny` compares one scalar against a literal list — the one
+  // `equalsAny` compares one scalar against a literal list – the one
   // operand position that is an array, and the one predicate that
   // reads one. Its entries are literals or enum-member references,
   // never a reference to data (that is `contains`/`containsAny` over a
@@ -3918,34 +3918,34 @@ function validateCommandBody(model, body) {
     }
     if (!isValueList) {
       throw new DomainError(
-        `"${conditionText(condition)}" — "equalsAny" compares against a literal list ` +
+        `"${conditionText(condition)}" – "equalsAny" compares against a literal list ` +
         `of values ("equals" is the one-value comparison).`
       );
     }
     const left = conditionOperandType(model, body, condition, condition.leftHandSide);
     if (left && left.isList) {
       throw new DomainError(
-        `Left side of "${conditionText(condition)}" is a list — "equalsAny" compares one ` +
+        `Left side of "${conditionText(condition)}" is a list – "equalsAny" compares one ` +
         `value against the listed ones ("contains"/"containsAny" read a list).`
       );
     }
     if (!condition.rightHandSide.length) {
       throw new DomainError(
-        `"${conditionText(condition)}" lists no values — membership over an empty list is ` +
+        `"${conditionText(condition)}" lists no values – membership over an empty list is ` +
         `constant: it ${condition.negate ? 'always' : 'never'} holds.`
       );
     }
     for (const entry of condition.rightHandSide) {
       if (entry === null) {
         throw new DomainError(
-          `"${conditionText(condition)}" lists null — a membership list may not hold ` +
+          `"${conditionText(condition)}" lists null – a membership list may not hold ` +
           `"no value". Spell "unset or one of these" as a separate condition.`
         );
       }
       const source = operandSource(entry);
       if (source !== 'enum-member' && source !== 'static') {
         throw new DomainError(
-          `"${conditionText(condition)}" lists "${operandText(entry)}" — an "equalsAny" ` +
+          `"${conditionText(condition)}" lists "${operandText(entry)}" – an "equalsAny" ` +
           `list holds literals or enum members; membership against data is ` +
           `"contains"/"containsAny" over a list-typed source.`
         );
@@ -3998,7 +3998,7 @@ function validateCommandBody(model, body) {
       }
       if (!operand.property) {
         failure = `${meta.where} reads "${operand.alias}" with no property, but "${operand.alias}" binds `
-          + `${binding.entity}, which holds many — name the one it means.`;
+          + `${binding.entity}, which holds many – name the one it means.`;
         return;
       }
       const entity = model['entity-definitions'][binding.entity];
@@ -4034,7 +4034,7 @@ function validateCommandBody(model, body) {
       if (!argument) {
         throw new DomainError(
           `Boundary binding "${binding.alias}" supplies "${key}", but nothing it reads asks for ` +
-          `it — every ${binding.entity} property it consults is declared, not scripted.`
+          `it – every ${binding.entity} property it consults is declared, not scripted.`
         );
       }
       const operand = binding.arguments[key];
@@ -4079,11 +4079,11 @@ function validateCommandBody(model, body) {
       const binding = boundary.find((b) => b.alias === other.alias);
       if (!binding) continue;
       // A projection binding has no entity and so no properties to
-      // check the member against — its value type is not examined here.
+      // check the member against – its value type is not examined here.
       const entity = binding.entity && model['entity-definitions'][binding.entity];
       if (!entity) continue;
       // A property is a binding, so the type the member is checked
-      // against is the bound projection's — the same resolution the
+      // against is the bound projection's – the same resolution the
       // rename rewrite walks.
       const { projection } = entityPropertyTarget(model, binding.entity, other.property);
       if (!projection) continue;
@@ -4097,8 +4097,8 @@ function validateCommandBody(model, body) {
     }
   }
 
-  // Optional-parameter hazards. Neither is a structural fault — the
-  // model loads and evaluates — but each is a surprise waiting on the
+  // Optional-parameter hazards. Neither is a structural fault – the
+  // model loads and evaluates – but each is a surprise waiting on the
   // first unset value, and this (an advisory, like every semantic
   // finding) is where it gets said before that value arrives.
   const readsOptionalParameter = (operand) =>
@@ -4116,7 +4116,7 @@ function validateCommandBody(model, body) {
       if (operand !== undefined && readsOptionalParameter(operand)) {
         throw new DomainError(
           `"${emission.name}.${property.name}" is required, but takes its value from optional ` +
-          `parameter "${operand.parameterName}" — when that is unset, this publishes null into ` +
+          `parameter "${operand.parameterName}" – when that is unset, this publishes null into ` +
           `a property every reader may assume present. Mark the event property optional too, ` +
           `or make the parameter required.`
         );
@@ -4152,11 +4152,11 @@ function validateCommandBody(model, body) {
   // Entity-binding arguments are deliberately exempt: they reach a
   // script as ordinary values, and null is one. An identifier, an
   // exclusion or a projection read's tag becomes a tag, and null has no
-  // tag — evaluation errors when it is unset, and this says so first.
+  // tag – evaluation errors when it is unset, and this says so first.
   for (const binding of boundary) {
     const feeds = [];
     // An identifier already declared "may be absent" is the covered
-    // case — the flag is the fix this advisory would otherwise ask for.
+    // case – the flag is the fix this advisory would otherwise ask for.
     if (binding.id !== undefined && !binding.isOptional && readsOptionalParameter(binding.id)) {
       feeds.push(['its identifier', binding.id, true]);
     }
@@ -4172,7 +4172,7 @@ function validateCommandBody(model, body) {
       const [what, operand, flaggable] = feeds[0];
       throw new DomainError(
         `Boundary binding "${binding.alias}" takes ${what} from optional parameter ` +
-        `"${operand.parameterName}" — evaluation errors when it is unset. ` +
+        `"${operand.parameterName}" – evaluation errors when it is unset. ` +
         (flaggable
           ? `Make the parameter required, mark the binding "may be absent", or take the boundary off it.`
           : `Make the parameter required, or take the boundary off it.`)
@@ -4181,7 +4181,7 @@ function validateCommandBody(model, body) {
   }
 
   // The same hazard through a binding marked "may be absent". Absent,
-  // it binds nothing, and a rule over it holds vacuously — but a value
+  // it binds nothing, and a rule over it holds vacuously – but a value
   // read off it is null, and a read tagged by that null has no tag to
   // read by: an evaluation error, not a vacuous truth (AGENTS.md, on
   // null). The flag reads as "this is handled", so it is said here.
@@ -4195,7 +4195,7 @@ function validateCommandBody(model, body) {
     });
     if (found) {
       throw new DomainError(
-        `The read at ${found.where} is tagged by "${found.alias}", a binding that may be absent — `
+        `The read at ${found.where} is tagged by "${found.alias}", a binding that may be absent – `
         + `when it binds nothing, that tag is null and evaluation errors. Make the binding required, `
         + `or tag the read by a value that is always set.`
       );
@@ -4203,7 +4203,7 @@ function validateCommandBody(model, body) {
   }
 
   // The derived cousin of the same hazard: an identifier read off
-  // another binding's projected property can be unset too — a
+  // another binding's projected property can be unset too – a
   // projection that starts at null reads null until something sets it,
   // and an unflagged binding then errors on exactly the first
   // interesting case (nothing assigned yet). Statically knowable only
@@ -4224,7 +4224,7 @@ function validateCommandBody(model, body) {
     if (projection.initialValue === null) {
       throw new DomainError(
         `Boundary binding "${binding.alias}" takes its identifier from ${operandText(binding.id)}, ` +
-        `which starts at null — evaluation errors until something sets it. ` +
+        `which starts at null – evaluation errors until something sets it. ` +
         `Mark the binding "may be absent" to bind nothing instead, and conditions over it will ` +
         `hold vacuously.`
       );
@@ -4239,8 +4239,8 @@ function validateCommandBody(model, body) {
   if (issues.length > 0) {
     const first = issues[0];
     // Two different failures wear the same name. Either the emission
-    // gives the tag field no value at all — in which case there is no
-    // instance to talk about yet — or it gives one the boundary never
+    // gives the tag field no value at all – in which case there is no
+    // instance to talk about yet – or it gives one the boundary never
     // consulted. Saying "writes the tag Course:null" for the first is
     // an answer to a question nobody asked.
     throw new DomainError(
@@ -4249,7 +4249,7 @@ function validateCommandBody(model, body) {
           `it no value. Say where it comes from.`
         : `"${first.event}.${first.property}" writes the tag ` +
           `${first.entity}:${operandText(first.operand)} from a value this command derived, ` +
-          `without reading that ${first.entity} — so nothing checked that the value ` +
+          `without reading that ${first.entity} – so nothing checked that the value ` +
           `still holds. Reading it would put it in the boundary. (A tag taken straight from a ` +
           `command property is asserted by the caller and needs no read.)`
     );
@@ -4260,13 +4260,13 @@ function validateCommandBody(model, body) {
 // Scenarios.
 //
 // One command, exercised. `given` is a log written by hand rather than
-// driven — events with their payloads and the instant each was
+// driven – events with their payloads and the instant each was
 // recorded; `when` is the command and the arguments it is called with;
 // `then` is what the current definitions make of that, frozen at the
 // moment it was accepted.
 //
-// The freezing is the whole mechanism. `then` is *derived* — nothing
-// here asks a modeler to predict it — but it is stored, so the next
+// The freezing is the whole mechanism. `then` is *derived* – nothing
+// here asks a modeler to predict it – but it is stored, so the next
 // evaluation either agrees with it or does not, and a disagreement is
 // the report that some edit changed this command's behaviour.
 //
@@ -4277,15 +4277,15 @@ function validateCommandBody(model, body) {
 //
 // What is deliberately *not* checked here is the value in a payload
 // against the type it is declared with: a `CourseId` with a pattern is
-// stored as whatever was typed. Structure is checked — every property
-// present, no property invented, a list where a list is declared — and
+// stored as whatever was typed. Structure is checked – every property
+// present, no property invented, a list where a list is declared – and
 // the rest is the evaluator's to discover.
 // ============================================================
 
 // Checks a stored payload against the properties it is written from.
 // Both directions matter: a missing one cannot be evaluated, and an
 // invented one is a reference nothing would ever rewrite. An optional
-// property may simply not be there — that is what optional means, in a
+// property may simply not be there – that is what optional means, in a
 // Given as much as in a When. Shared by both scenario kinds, so the
 // two never disagree about what a payload owes.
 function checkScenarioPayload(values, properties, label) {
@@ -4349,7 +4349,7 @@ function validateScenarioBody(model, body) {
 // `given` is the same shape a scenario's is, but there is no `when` to
 // call and no boundary to infer an instance from, so `forInstance`
 // names it outright. `then` is *derived*, exactly like a scenario's,
-// but partial — only the properties a modeler chose to check appear,
+// but partial – only the properties a modeler chose to check appear,
 // each frozen at the moment it was accepted.
 function validateProjectionScenarioBody(model, body) {
   if (body.name !== undefined && typeof body.name !== 'string') {
@@ -4373,12 +4373,12 @@ function validateProjectionScenarioBody(model, body) {
     );
   }
   // It reads the projection the way a command does: one value for each
-  // tag it declares — literals here, each stating its type,
-  // `CourseId("c1")` — and with the arguments its script takes, required
+  // tag it declares – literals here, each stating its type,
+  // `CourseId("c1")` – and with the arguments its script takes, required
   // there and rejected anywhere else: an argument that means nothing is
   // a mistake, not a no-op.
   if (body.tags !== undefined && (body.tags === null || typeof body.tags !== 'object' || Array.isArray(body.tags))) {
-    throw new DomainError('A projection scenario\'s tags are named — one value per tag the projection declares.');
+    throw new DomainError('A projection scenario\'s tags are named – one value per tag the projection declares.');
   }
   const held = body.tags || {};
   const declared = projectionTagParams(projection);
@@ -4389,7 +4389,7 @@ function validateProjectionScenarioBody(model, body) {
     }
     if (operandSource(value) !== 'tag-literal' || operandIncomplete(value)) {
       throw new DomainError(
-        `This scenario is tagged ${operandText(value)}, which is not a tag literal — write it with its ` +
+        `This scenario is tagged ${operandText(value)}, which is not a tag literal – write it with its ` +
         `type, ${tag.tagType}("…").`
       );
     }
@@ -4400,7 +4400,7 @@ function validateProjectionScenarioBody(model, body) {
       );
     }
     if (value.tagValue === null || value.tagValue === undefined) {
-      throw new DomainError(`This scenario is tagged ${value.tagType} with no value — a tag has one.`);
+      throw new DomainError(`This scenario is tagged ${value.tagType} with no value – a tag has one.`);
     }
   }
   for (const key of Object.keys(held)) {
@@ -4425,19 +4425,19 @@ function validateProjectionScenarioBody(model, body) {
     }
   }
   // `then` is the projection's own value, so every shape one can hold
-  // is legal here — `null` and `[]` included. There is nothing left to
+  // is legal here – `null` and `[]` included. There is nothing left to
   // check that the fold itself does not.
   if (!('then' in body)) {
     throw new DomainError('A projection scenario\'s Then is what the projection folded to.');
   }
 }
 
-// The structural gate — the one refusal left on the write path. A
+// The structural gate – the one refusal left on the write path. A
 // body that is not an object, or whose container fields are not the
 // lists they claim to be, is not a defective definition but no
 // definition at all: storing it would crash the projection and the
-// renderer rather than merely mislead them. Everything semantic —
-// what the containers *say* — is an advisory now, never a refusal.
+// renderer rather than merely mislead them. Everything semantic –
+// what the containers *say* – is an advisory now, never a refusal.
 const STORABLE_LIST_FIELDS = [
   'properties', 'handlers', 'boundary', 'conditions', 'publishes', 'parameters', 'given',
 ];
@@ -4454,12 +4454,12 @@ function assertStorableBody(kind, body) {
     for (const element of body[field]) {
       if (element !== null && typeof element !== 'object') {
         throw new DomainError(
-          `A ${humanize(kind)}'s "${field}" must hold objects — got ${JSON.stringify(element)}.`
+          `A ${humanize(kind)}'s "${field}" must hold objects – got ${JSON.stringify(element)}.`
         );
       }
     }
   }
-  // An event's tags are paths, not objects — the one list of strings.
+  // An event's tags are paths, not objects – the one list of strings.
   if (kind === 'event-definition' && body.tags !== undefined) {
     if (!Array.isArray(body.tags) || body.tags.some((tag) => typeof tag !== 'string')) {
       throw new DomainError('An event\'s "tags" must be a list of property paths.');
@@ -4483,7 +4483,7 @@ function addDefinition(kind, modelId, name, body) {
   }
   if (kind === 'entity-definition') {
     // An entity's derived identifier is an ordinary value type, created
-    // in the same append so the two never exist without each other —
+    // in the same append so the two never exist without each other –
     // scalar, a plain string, and marked as a tag, which is the
     // ordinary case. Naming it `<name>Id` unless `identifierType`
     // overrides it, and colliding with an existing value type is
@@ -4505,7 +4505,7 @@ function addDefinition(kind, modelId, name, body) {
   appendEvents([{ type: `${kind}-added`, data: { 'dcb-model-id': modelId, name: trimmed, body } }]);
 }
 
-// An update may leave *other* definitions broken — a dropped property
+// An update may leave *other* definitions broken – a dropped property
 // a command still reads, a reshaped partition under a bound property,
 // an `identifierType` pointing at a type nothing created. All of it
 // used to be refused here; all of it is representable now, and the
@@ -4527,7 +4527,7 @@ function updateDefinition(kind, modelId, name, body) {
 // Several updates as one append: a gesture that touches every command
 // in a feature grows the log by one step and writes storage once.
 // Each change is validated against the model as it stood before the
-// gesture — sound because the callers touch a different definition
+// gesture – sound because the callers touch a different definition
 // each, so no change needs to see another one applied.
 function updateDefinitions(modelId, changes) {
   const model = getCtxOrThrow(modelId);
@@ -4535,7 +4535,7 @@ function updateDefinitions(modelId, changes) {
   // Pruning here rather than in every caller means one gesture is one
   // append: deleting the last rule about a read deletes the read in the
   // same event, and a rule that brought a read with it stored both at
-  // once. It is deliberately not in `addDefinition` — a body arriving
+  // once. It is deliberately not in `addDefinition` – a body arriving
   // whole, from a file or an agent, keeps what it came with until
   // someone edits it, and `modelAdvisories` says so meanwhile.
   for (const change of changes) {
@@ -4553,7 +4553,7 @@ function updateDefinitions(modelId, changes) {
 // would say it: "Product.validPrices", "ValidPrices".
 //
 // Renaming an event or one of its properties rewrites every declared
-// operand that names it. It cannot rewrite code — the model does not
+// operand that names it. It cannot rewrite code – the model does not
 // parse the body, and a textual pass over an unparsed language would
 // eventually rewrite a comment or a string literal and corrupt someone
 // else's work. So the rename goes through and this says what to check.
@@ -4577,13 +4577,13 @@ function scriptedHandlersOf(model, eventName) {
 
 // Renaming an entity while its derived identifier is still tracking
 // (`identifierType` absent) moves two names in one append: the entity
-// itself, and — since the value type is a real stored definition now —
+// itself, and – since the value type is a real stored definition now –
 // its still-default-named `<name>Id` alongside it. Neither is pinned
 // explicit afterward, so both keep tracking indefinitely. This is kept
 // separate from the ordinary rename path below because it merges two
 // referencer sets (whoever names the entity, whoever names its id
 // type) into one append, and because an entity with an *explicit*
-// `identifierType` needs none of this — that case falls through to the
+// `identifierType` needs none of this – that case falls through to the
 // ordinary path, which renames only the entity.
 function renameEntityDefinition(model, modelId, previousName, trimmed) {
   const entityBody = model['entity-definitions'][previousName];
@@ -4644,15 +4644,15 @@ function renameDefinition(kind, modelId, previousName, newName) {
     data: { 'dcb-model-id': modelId, 'previous-name': previousName, name: trimmed },
   }];
   for (const ref of referencers) {
-    // A value type can reference itself — a composite field typed with
+    // A value type can reference itself – a composite field typed with
     // one of its own siblings' names is not self-reference, but an
     // entity's own self-referencing property is. That rewrite lands on
     // the new name, since the rename event is applied first.
     const isSelf = ref.kind === kind && ref.name === previousName;
     let rewritten = rewriteReferences(ref.kind, ref.body, kind, previousName, trimmed);
     // Renaming a value type directly (not via the entity-rename path
-    // above): an entity that was tracking it — no explicit
-    // `identifierType` — has to pin the new name explicitly now, or it
+    // above): an entity that was tracking it – no explicit
+    // `identifierType` – has to pin the new name explicitly now, or it
     // would silently keep recomputing a default that no longer exists.
     if (kind === 'custom-type-definition' && ref.kind === 'entity-definition'
         && ref.body.identifierType === undefined) {
@@ -4669,17 +4669,17 @@ function renameDefinition(kind, modelId, previousName, newName) {
 // ------------------------------------------------------------
 // Member renames.
 //
-// A definition's *members* — an entity's properties and statuses, an
+// A definition's *members* – an entity's properties and statuses, an
 // event's properties, a command's payload, a composite's fields, a
-// projection's parameters — are referenced by name just as definitions
+// projection's parameters – are referenced by name just as definitions
 // are, so renaming one has to rewrite those references in the same
 // append. Doing it as a plain update would leave every reader of the
-// old name dangling — representable now, and reported as advisories,
+// old name dangling – representable now, and reported as advisories,
 // but a rename is a rename: the references are the point.
 //
 // Unlike a definition rename there is no `-renamed` event to emit. A
 // member lives inside a body, so the whole thing is a set of
-// `<kind>-updated` events — one for the owner, one per referrer.
+// `<kind>-updated` events – one for the owner, one per referrer.
 // ------------------------------------------------------------
 
 // Walks a handler value, stepping through `successor` to whatever it
@@ -4707,7 +4707,7 @@ function renameKey(object, previousName, newName) {
 // level in. Read and write through a dotted path so `MEMBER_SHAPE` can
 // name either uniformly. Named distinctly from the interface's own
 // `atPath`/`setAtPath` (which walk an array of keys, not a dotted
-// string) — model.js and index.html share one global scope as classic
+// string) – model.js and index.html share one global scope as classic
 // scripts, and a same-named `function` declared in either would
 // silently win over the other's.
 function getAtDottedPath(obj, path) {
@@ -4725,7 +4725,7 @@ function setAtDottedPath(obj, path, value) {
 
 // The rewrites each member kind implies, as
 // `(model, definitionName, previous, next) => [{kind, name, body}]`.
-// An event's tag paths with `rename(property, field)` applied — it
+// An event's tag paths with `rename(property, field)` applied – it
 // returns the new `[property, field]` or null to leave a path alone.
 // Null when nothing moved, so a rewrite only lands where it changed.
 function renameTagPaths(tags, rename) {
@@ -4744,7 +4744,7 @@ function renameTagPaths(tags, rename) {
 
 const MEMBER_REWRITES = {
   // An entity property is read as `{alias, property}` by any command
-  // that binds this entity under that alias — and, when it is the
+  // that binds this entity under that alias – and, when it is the
   // designated lifecycle, by the entity's own `lifecycle`. That one is
   // a local name rather than a reference, so it moves here rather than
   // through `rewriteReferences`; `renameMember` folds this owner
@@ -4781,7 +4781,7 @@ const MEMBER_REWRITES = {
     const out = [];
 
     // Every projection typed with this enum refers to its members
-    // through its initial value — scalar or an element of a list — and
+    // through its initial value – scalar or an element of a list – and
     // its handler values.
     for (const [name, projection] of Object.entries(model['projection-definitions'])) {
       if (projection.valueType !== typeName) continue;
@@ -4806,7 +4806,7 @@ const MEMBER_REWRITES = {
     }
 
     // A derived predicate compares a projection's value against a
-    // member the same way a condition does — resolved through the
+    // member the same way a condition does – resolved through the
     // operand it sits opposite.
     for (const [name, projection] of Object.entries(model['projection-definitions'])) {
       if (!derivedOf(projection)) continue;
@@ -4828,7 +4828,7 @@ const MEMBER_REWRITES = {
     }
 
     // A command condition compares an entity's enum-typed property
-    // against a member by value — resolved through the boundary rather
+    // against a member by value – resolved through the boundary rather
     // than assumed, since the bound entity is whichever the alias names.
     // An emission guard is the same comparison in the same scope.
     out.push(...rewriteCommands(model, (command) => {
@@ -4872,7 +4872,7 @@ const MEMBER_REWRITES = {
     const out = [];
     const handlesIt = (handlers) => (handlers || []).some((h) => h && h.event === eventName);
 
-    // Handlers live only on projections now — an entity property is a
+    // Handlers live only on projections now – an entity property is a
     // binding with nothing inside it for this rename to reach.
     for (const [name, projection] of Object.entries(model['projection-definitions'])) {
       if (!handlesIt(projection.handlers)) continue;
@@ -4915,7 +4915,7 @@ const MEMBER_REWRITES = {
       return touched;
     }));
 
-    // The event's own tags name the property by path — a local name,
+    // The event's own tags name the property by path – a local name,
     // so it moves on the owner, the way an entity's `lifecycle` does.
     const event = model['event-definitions'][eventName];
     const retagged = renameTagPaths(event && event.tags, (property, field) =>
@@ -4924,7 +4924,7 @@ const MEMBER_REWRITES = {
     return out;
   },
 
-  // A command's payload is local to it — except that every scenario
+  // A command's payload is local to it – except that every scenario
   // exercising it supplies that payload by key.
   'command-definition:property': (model, commandName, previous, next) => [
     ...rewriteCommands(model, (command, name) => {
@@ -4948,7 +4948,7 @@ const MEMBER_REWRITES = {
   ],
 
   // A composite's field is reached only through a parameter typed with
-  // that composite — `{parameterName: items, property: productId}`.
+  // that composite – `{parameterName: items, property: productId}`.
   'custom-type-definition:field': (model, typeName, previous, next) => [
     // An event lists a record's tag field by path, `items.productId`.
     ...Object.entries(model['event-definitions']).flatMap(([name, event]) => {
@@ -4972,7 +4972,7 @@ const MEMBER_REWRITES = {
       return touched;
     }),
     // A scenario holds composites as values, so the field name is a key
-    // inside the payload rather than a reference beside it — one level
+    // inside the payload rather than a reference beside it – one level
     // deeper than anywhere else this rename reaches.
     ...rewriteScenarios(model, (scenario) => {
       let touched = false;
@@ -4996,8 +4996,8 @@ const MEMBER_REWRITES = {
   ],
 
   // A read gives a projection's tags by name, so renaming one moves that
-  // key in every read of it — an alias's, one in place, a derived
-  // operand's, a projection scenario's — and, on a derived projection,
+  // key in every read of it – an alias's, one in place, a derived
+  // operand's, a projection scenario's – and, on a derived projection,
   // in its own operands wherever they pass the tag on (`{parameterName}`).
   // What a script reads as `tags.<name>` is code, and stays as written.
   'projection-definition:tag': (model, projectionName, previous, next) => {
@@ -5095,7 +5095,7 @@ function rewriteCommands(model, mutate) {
 }
 
 // Where a member of each kind lives inside its body. `list` is a
-// dotted path — flat for most kinds, but an enum's members sit at
+// dotted path – flat for most kinds, but an enum's members sit at
 // `schema.enum`, one level into the custom type's JSON Schema.
 const MEMBER_SHAPE = {
   property: { list: 'properties', named: true, label: 'Property' },
@@ -5116,7 +5116,7 @@ function renameMember(kind, modelId, definitionName, memberKind, previousName, n
     throw new DomainError(`A ${humanize(kind)} has no ${memberKind} to rename.`);
   }
 
-  // Only emptiness refuses — an unidiomatic member name renames fine,
+  // Only emptiness refuses – an unidiomatic member name renames fine,
   // and the idiom is the advisories' to point out, not this gesture's
   // to refuse.
   const trimmed = (newName || '').trim();
@@ -5171,12 +5171,12 @@ function removeDefinition(kind, modelId, name) {
     throw new DomainError(`No ${humanize(kind)} named "${name}" exists in this model.`);
   }
   // Whatever still references this definition is left dangling and
-  // says so — the rule scenarios always lived by ("a test exists to
+  // says so – the rule scenarios always lived by ("a test exists to
   // report what a change broke, not to prevent it") now applied to
   // every kind: the dangling reference surfaces as an advisory on the
   // definition holding it, not as a refusal here.
   if (kind === 'entity-definition') {
-    // The entity's own derived custom type is removed alongside it —
+    // The entity's own derived custom type is removed alongside it –
     // auto-created together, they go together. Anything else still
     // naming either is left broken, reported the same way this system
     // already reports every other broken reference: a scenario left
@@ -5191,7 +5191,7 @@ function removeDefinition(kind, modelId, name) {
   appendEvents([{ type: `${kind}-removed`, data: { 'dcb-model-id': modelId, name } }]);
 }
 
-// Changes the order this collection's members are stored in — the order
+// Changes the order this collection's members are stored in – the order
 // every listing reads directly off the collection, since nothing here
 // keeps a separate position field. `order` has to name every current
 // member exactly once; it says nothing about *which* moved, so the fold
@@ -5208,17 +5208,17 @@ function reorderDefinitions(kind, modelId, order) {
 }
 
 // Two bodies that say the same thing. Stored bodies spell their
-// defaults inconsistently — `isList: false` here, absent there, `when:
-// []` on one emission and nothing on the next — and a writer that
+// defaults inconsistently – `isList: false` here, absent there, `when:
+// []` on one emission and nothing on the next – and a writer that
 // compared them literally would rewrite half a model to change one
 // rule. So the defaults the schema names are dropped before comparing,
 // as are key order and empty containers.
 //
 // Only on the schema's own keys, though. An operand, and the
 // author-keyed maps of them (an emission's `parameters`, a read's
-// `tags` and `arguments`), hold values rather than definition — `false`,
+// `tags` and `arguments`), hold values rather than definition – `false`,
 // `[]` and a property that happens to be called `isList` are content
-// there — so they are compared as written, key order aside; the one
+// there – so they are compared as written, key order aside; the one
 // thing dropped inside them is an empty `tags` or `arguments`, which
 // says "none" the same way its absence does. An event's `tags` are a
 // set of paths, so their order is not compared either. Data (`schema`, `initialState`,
@@ -5292,8 +5292,8 @@ function sameDefinition(a, b) {
   return JSON.stringify(normalizedDefinition(a)) === JSON.stringify(normalizedDefinition(b));
 }
 
-// The whole model at once — every definition kind but the two scenario
-// kinds, as ordered `{ name: body }` maps — written as the difference
+// The whole model at once – every definition kind but the two scenario
+// kinds, as ordered `{ name: body }` maps – written as the difference
 // from what is stored: an added, updated, removed or reordered event
 // for exactly what changed, and all of them in one append, so a
 // gesture that rewrote the model from a text is one undo step and one
@@ -5307,7 +5307,7 @@ function sameDefinition(a, b) {
 //
 // Only structure is refused, the same as every other writer (see
 // `assertStorableBody`); a body arriving whole keeps every read it came
-// with — pruning is the next *edit's* business, as for an import. Names
+// with – pruning is the next *edit's* business, as for an import. Names
 // are trimmed like everywhere else, and a name the fold could not key
 // a collection by (`constructor`, `__proto__`) is refused.
 function replaceDefinitions(modelId, next) {
@@ -5322,7 +5322,7 @@ function replaceDefinitions(modelId, next) {
       summary.renamed = name;
     }
   }
-  // The two scenario kinds are written only when asked for — a caller
+  // The two scenario kinds are written only when asked for – a caller
   // that says nothing about them leaves them as they are.
   const kinds = [...ADVISORY_KINDS, ...ID_KEYED_KINDS.filter((kind) => next.collections[kind] !== undefined)];
   for (const kind of kinds) {
@@ -5350,8 +5350,8 @@ function replaceDefinitions(modelId, next) {
         summary.updated.push({ kind, name });
       }
     }
-    // The order the fold will have produced — survivors where they
-    // were, additions at the end — against the order asked for.
+    // The order the fold will have produced – survivors where they
+    // were, additions at the end – against the order asked for.
     const landed = [
       ...order.filter((name) => has(wanted, name)),
       ...Object.keys(wanted).filter((name) => !has(current, name)),
@@ -5361,11 +5361,11 @@ function replaceDefinitions(modelId, next) {
       summary.reordered.push({ kind });
     }
   }
-  // A caller that may not remove — an agent that did not say it means
-  // to — is refused whole, told what the text left out.
+  // A caller that may not remove – an agent that did not say it means
+  // to – is refused whole, told what the text left out.
   if (next.refuseRemovals && summary.removed.length) {
     const error = new DomainError(`This would remove ${removalWords(summary.removed)}, which the text leaves out `
-      + '— nothing was applied.');
+      + '– nothing was applied.');
     error.removed = summary.removed;
     throw error;
   }
@@ -5387,7 +5387,7 @@ function removalWords(removed) {
 // ============================================================
 
 // The value a freshly created projection starts from, chosen from its
-// type so the editor can pre-fill one — the stored value is always
+// type so the editor can pre-fill one – the stored value is always
 // explicit, this is only the suggestion.
 function defaultInitialValue(model, target) {
   if (target.isList) return [];
@@ -5408,8 +5408,8 @@ function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
 // Sharing a model with the outside world.
 //
 // The wire format is `{ $schema, dcbModelVersion, name }` followed by
-// the definition arrays themselves — the six kinds, plus
-// `projectionScenarioDefinitions?` and `sandbox?` — and it is exactly what
+// the definition arrays themselves – the six kinds, plus
+// `projectionScenarioDefinitions?` and `sandbox?` – and it is exactly what
 // `dcb-model.schema.json` describes, so a file built by another tool
 // against that schema drops straight in.
 //
@@ -5424,15 +5424,15 @@ function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
 //
 // Two markers say what a document is, and they are not
 // interchangeable. `dcbModelVersion` is the one an importer
-// dispatches on. `$schema` is for editors — it is what makes a
-// hand-edited export complete and validate in place — and nothing here
+// dispatches on. `$schema` is for editors – it is what makes a
+// hand-edited export complete and validate in place – and nothing here
 // ever reads it, deliberately: repointing it at a local copy to work
 // offline is a legitimate thing to do to a document, and a reader that
 // checked it would reject exactly the files someone had been careful
 // with.
 //
-// Both ride in both directions out of the playground — readable JSON
-// and the gzipped payload of a share link — because a marker one
+// Both ride in both directions out of the playground – readable JSON
+// and the gzipped payload of a share link – because a marker one
 // channel may omit is a marker `importModelFromEnvelope` could not
 // insist on.
 //
@@ -5445,24 +5445,24 @@ function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
 // The version of the wire format above, `major.minor`. A major bump
 // means a reader built against an earlier one cannot correctly read the
 // document; a minor means it can, because the addition is one it
-// ignores — which the validation in this file makes possible by
+// ignores – which the validation in this file makes possible by
 // checking only what it knows about and never rejecting a key it has
 // not heard of (`CommandDefinition.feature` has ridden along that way
 // from the start). What counts as additive is judged from the reader's
 // side, though, not the schema's: another member of a closed vocabulary
-// — a condition operator, an operand shape, a handler operation — is a
+// – a condition operator, an operand shape, a handler operation – is a
 // *major* change even where the schema merely grows an enum, because
 // `operationsFor` fails on the value rather than passing it through.
 // 2.0 unified projections: entity properties became bindings to
 // ordinary projection definitions, partitions became explicit
 // parameters, `isOptional` was dropped and initial values grew typed
 // (possibly non-empty) lists, and property scenarios became projection
-// scenarios asserting over a list of reads — every one of them a change
+// scenarios asserting over a list of reads – every one of them a change
 // a 1.x reader would misread rather than ignore.
 // 4.0 added `isOptional` on boundary bindings: an unset identifier
 // binds nothing instead of erroring, conditions over the alias hold
 // vacuously, and reading a property of it yields null. Additive in
-// shape — which is exactly the trap the reader-side rule exists for: a
+// shape – which is exactly the trap the reader-side rule exists for: a
 // 3.x reader ignores the flag and errors on the very case the author
 // declared expected, so this is a major. The other direction is safe:
 // a 3.x document never says it, so this build reads 3.x whole
@@ -5470,14 +5470,14 @@ function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
 // 4.1 lifted a documented restriction rather than adding anything: a
 // *scripted* projection's `valueType` may be a composite value type.
 // No shape changed, and a 4.0 reader loads and evaluates such a
-// document correctly — equality was always deep, a composite was
+// document correctly – equality was always deep, a composite was
 // always offered identity predicates only, and a scripted fold is
 // opaque code either way. The one thing it does wrong is flag the
 // projection with the advisory that used to guard the restriction,
 // which is exactly the non-blocking miss `envelopeVersionWarning`
 // exists to explain.
 // 5.0 is the closed-vocabulary kind the reader-side rule names
-// outright: `equalsAny` joined the binary predicates — one scalar
+// outright: `equalsAny` joined the binary predicates – one scalar
 // against a literal list, spelled as a bare array of literals and
 // enum-member references in `rightHandSide`, the same list spelling
 // initial values already had. A 4.x reader fails on the predicate in
@@ -5485,29 +5485,29 @@ function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
 // major even though nothing a 4.x document says changed; this build
 // reads 3.x and 4.x whole.
 // 6.0 added two members at once, each the closed-vocabulary kind: an
-// emission may carry `when` (conditions under which it publishes —
+// emission may carry `when` (conditions under which it publishes –
 // failing a guard skips the emission, never rejects the command), and
 // a projection may be derived (`derived` in place of handlers: one
 // declared predicate over other projections, always a boolean). A 5.x
 // reader would publish what an author made conditional and has no
-// fold for a handlerless projection — both misreads, so this is a
+// fold for a handlerless projection – both misreads, so this is a
 // major; this build reads 3.x, 4.x and 5.x whole.
 // 6.1 gave an entity an optional `lifecycle`, naming which of its own
-// properties is the state it is in — and made the two-state case an
+// properties is the state it is in – and made the two-state case an
 // ordinary `boolean` projection rather than a `NonExistent`/`Existent`
 // enum. Judged from the reader's side this is a minor, which is the
 // distinction 4.0 is here to sharpen: a 6.0 reader that ignores
 // `lifecycle` loses a diagram, and a boolean-typed projection was
-// always readable — no condition changed shape, `evaluate.js` did not
+// always readable – no condition changed shape, `evaluate.js` did not
 // change, and nothing evaluates differently. Contrast 4.0, where the
 // ignored flag made the old reader error on exactly the case the flag
 // declared expected. So the schema URL stays at v6 and `READABLE_MAJORS`
 // is untouched. What a 6.0 reader misses is what the version warning
 // exists to say.
-// 7.0 gave every rule a rejection message — `rejection` on each of a
-// command's conditions, the sentence it is refused with — and made a
+// 7.0 gave every rule a rejection message – `rejection` on each of a
+// command's conditions, the sentence it is refused with – and made a
 // refusal known by it: a scenario's Then carries the message as
-// `rejection`, and nothing else about the refusal — not the condition's
+// `rejection`, and nothing else about the refusal – not the condition's
 // text or index, nor the values it read. Required on both sides, so a 6.x
 // reader cannot read a 7.0 document, and this build reads no earlier
 // major: a 6.x rule has no message, and inventing one would put words
@@ -5516,12 +5516,12 @@ function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
 // (`tags`, property paths), and one without the list carries none; a
 // projection names the tags it is read by, and a read gives a value per
 // name. A 7.x reader would tag what this document leaves untagged, and
-// a 7.x document read here would carry no tag at all — so this build
+// a 7.x document read here would carry no tag at all – so this build
 // reads 8.x only. Nothing is public yet; there is no upgrader.
 // 9.0 let a derived projection compute as well as compare: `operator`
 // (`add`, `subtract`, `multiply`, `min`, `max`) in place of `predicate`,
 // over two numbers, yielding a number. A new member of a closed
-// vocabulary — an 8.x reader finds no predicate and errors — so a
+// vocabulary – an 8.x reader finds no predicate and errors – so a
 // major; every 8.x document is a 9.0 document unchanged, so this build
 // reads 8.x whole.
 const MODEL_VERSION = '9.0';
@@ -5577,7 +5577,7 @@ function definitionsToSchema(model) {
   return out;
 }
 
-// `sandboxSteps` — `[{ command, args }]` — comes in from the caller
+// `sandboxSteps` – `[{ command, args }]` – comes in from the caller
 // rather than being read off a global here: this file knows nothing of
 // the interactive session index.html keeps.
 function buildShareEnvelope(model, sandboxSteps) {
@@ -5598,7 +5598,7 @@ function buildShareEnvelope(model, sandboxSteps) {
 // The stored model a shared envelope would import as again, if there
 // is one: the same example opened twice from dcb.events, a link pasted
 // a second time. Compared as the envelope that model would share now,
-// so a copy edited since is not mistaken for the original — an export
+// so a copy edited since is not mistaken for the original – an export
 // is stable once imported, which a test holds. A sandbox session rides
 // along only with a link that carries one, and such a link is always
 // imported, so its steps replay.
@@ -5611,7 +5611,7 @@ function modelMatchingEnvelope(envelope) {
 }
 
 // Whether importing this envelope would run authored code the moment
-// anything touches it — a property or a projection carrying a `script`
+// anything touches it – a property or a projection carrying a `script`
 // both compile through the same unsandboxed path (see `evCompileHandler`
 // in evaluate.js). This is what gates the confirmation before import.
 function envelopeHasScript(envelope) {
@@ -5621,7 +5621,7 @@ function envelopeHasScript(envelope) {
 // The code that would run, per scripted projection, as the gate shows
 // it: a confirmation that only says *that* there is code asks for
 // trust it gives the reader no way to check. Scripts live only on
-// projections — an entity property is a binding and carries none of
+// projections – an entity property is a binding and carries none of
 // its own. Handlers are listed as they stand, `code` or not, so the
 // list is what `evCompileHandler` would compile.
 function envelopeScripts(envelope) {
@@ -5638,7 +5638,7 @@ function envelopeScripts(envelope) {
 // An entity, stripped down to what can exist before the projections
 // its properties bind are added: the bindings are dropped wholesale
 // and put back by `updateDefinition` once every projection exists. An
-// entity with no properties is legal — one consulted purely by tag —
+// entity with no properties is legal – one consulted purely by tag –
 // so the bare form is always addable.
 function bareEntityBody(body) {
   return { ...body, properties: [] };
@@ -5646,8 +5646,8 @@ function bareEntityBody(body) {
 
 // Adds a mixed batch of custom types and bare entities, retrying
 // whatever fails until a full pass makes no progress. The two kinds
-// collide over an entity's derived identifier type — a standalone
-// value type and the auto-created one contending for a name — so
+// collide over an entity's derived identifier type – a standalone
+// value type and the auto-created one contending for a name – so
 // neither can be finished first in general; nothing downstream of this
 // (events, full entities, projections, commands, scenarios) has that
 // problem, so it is the only phase that needs retrying rather than a
@@ -5681,7 +5681,7 @@ function addManyWithRetry(modelId, items) {
 // The synthesizer: rebuilds a shared model into a brand-new one by
 // replaying it through the same commands manual editing uses, so an
 // untrusted export can never land in a state those commands would have
-// refused. The commands refuse little now — structure, collisions —
+// refused. The commands refuse little now – structure, collisions –
 // and what one does refuse is *skipped* rather than aborting the
 // import: the rest of the model loads, and the skips come back to the
 // caller to report. Semantic defects in what did load are the
@@ -5689,7 +5689,7 @@ function addManyWithRetry(modelId, items) {
 // The wire format's two markers, checked. Only `dcbModelVersion` is
 // read: `$schema` has to be *present*, because a document without one
 // was not written by anything that knows this format and its shape is
-// a guess from there — but what it points at is the author's business,
+// a guess from there – but what it points at is the author's business,
 // and a reader that insisted on a particular URL would reject exactly
 // the file someone had repointed at a local copy to work offline.
 //
@@ -5721,7 +5721,7 @@ function assertEnvelopeVersion(envelope) {
       + 'to tell which format it is in.'
     );
   }
-  // Earlier majors stay readable where the newer format only *added* —
+  // Earlier majors stay readable where the newer format only *added* –
   // a 3.x document never said `via` or a binding's `isOptional`, so
   // 6.x builds read it whole. 7.0 *required* something (a rule's
   // rejection message) that no earlier document has, so this build
@@ -5757,8 +5757,8 @@ const REQUIRED_SCHEMA_KINDS = SCHEMA_KINDS.filter((kind) => kind !== 'scenario-d
 
 function importModelFromEnvelope(envelope) {
   assertEnvelopeVersion(envelope);
-  // There is no wrapper object to look for any more — the definition
-  // arrays sit directly on the envelope — so what identifies a model is
+  // There is no wrapper object to look for any more – the definition
+  // arrays sit directly on the envelope – so what identifies a model is
   // that the kinds one must declare are actually there and are lists.
   for (const kind of REQUIRED_SCHEMA_KINDS) {
     if (!Array.isArray(envelope[SCHEMA_FIELD[kind]])) {
@@ -5796,7 +5796,7 @@ function importModelFromEnvelope(envelope) {
   };
 
   // Created automatically by `addDefinition('entity-definition', ...)`
-  // — never added again here as a standalone value type, only enriched
+  // – never added again here as a standalone value type, only enriched
   // once its exported body is known to carry more than the bare default.
   const derivedIdTypeNames = new Set(
     Object.entries(entities).map(([name, body]) => body.identifierType || (name + 'Id'))
@@ -5821,12 +5821,12 @@ function importModelFromEnvelope(envelope) {
   }
   // Projections before the full entities: a property binding names a
   // projection, so every projection exists before the bindings render
-  // against it. Ordering is a courtesy now, not a requirement — a
+  // against it. Ordering is a courtesy now, not a requirement – a
   // binding to a projection that never loads is an advisory.
   for (const [name, body] of Object.entries(projections)) {
     attempt('projection-definition', name, () => addDefinition('projection-definition', modelId, name, body));
   }
-  // An entity whose bare form was skipped has nothing to enrich — the
+  // An entity whose bare form was skipped has nothing to enrich – the
   // one skip already tells the story, so no second entry for the
   // enrichment failing too.
   const skippedEntities = skippedNames('entity-definition');
@@ -5871,17 +5871,17 @@ function importModelFromEnvelope(envelope) {
 // thing, then generated identifiers, then schedules; and a product
 // pricing model as the plain thing, then a grace period on repricing.
 // Each layer is applied through the ordinary commands, so loading one
-// exercises exactly the write path an author would hit typing it in —
+// exercises exactly the write path an author would hit typing it in –
 // and ships advisory-clean, which the tests hold it to.
 //
-// Every layer keeps references resolvable at each step — entities
+// Every layer keeps references resolvable at each step – entities
 // first without handlers (nothing to reference yet), then the events,
 // then the entities again with their handlers, then the commands.
 // ============================================================
 
 // A lifecycle enum is an ordinary scalar custom type whose schema
 // carries `enum`, declared once and referenced from an ordinary
-// property — the same shape any other enum property has. Only a
+// property – the same shape any other enum property has. Only a
 // lifecycle with three or more states needs one at all; two states are
 // a `boolean` projection and no type.
 const seedEnumType = (name, members) => ({ schema: { type: 'string', enum: members } });
@@ -5895,7 +5895,7 @@ const seedBind = (alias, entity, idParam) => ({ alias, entity, id: seedParam(idP
 const seedReadProjection = (alias, projection, tags = {}) =>
   ({ alias, projection, tags });
 // The one tag a projection about one of `entityName`'s instances is
-// tagged by — its identifier, named after it: `courseId: CourseId`.
+// tagged by – its identifier, named after it: `courseId: CourseId`.
 const seedEntityTag = (entityName) => ({
   name: entityName.charAt(0).toLowerCase() + entityName.slice(1) + 'Id',
   tagType: entityName + 'Id',
@@ -5906,14 +5906,14 @@ const seedPropertyProjection = (entityName, valueType, initialValue, handlers, e
   tags: [seedEntityTag(entityName)], valueType, isList: false, initialValue, handlers, ...extra,
 });
 // An event's tags, written out: every tag-typed value its properties
-// hold. A seed states them like any author would — nothing is implied
-// on the way in — and this only saves restating each list by hand.
+// hold. A seed states them like any author would – nothing is implied
+// on the way in – and this only saves restating each list by hand.
 const seedTags = (modelId, properties) => tagPathsOf(getCtxOrThrow(modelId), properties);
-// The binding itself — everything else lives on the projection.
+// The binding itself – everything else lives on the projection.
 const seedBindProp = (name, projection) => ({ name, projection });
 
 // A scenario a seed ships with. The id is written out rather than
-// generated so that regenerating an example produces the same file —
+// generated so that regenerating an example produces the same file –
 // a fresh id on every run would make every regeneration a diff.
 function seedProjectionScenario(modelId, id, body) {
   addDefinition('projection-scenario-definition', modelId, id, body);
@@ -5935,11 +5935,11 @@ function seedBase(modelId) {
   const bind = seedBind;
   const bindProp = seedBindProp;
 
-  // 1. One lifecycle enum — Course's, because a course has three states
+  // 1. One lifecycle enum – Course's, because a course has three states
   //    to be in. A student has two, so it needs no enum and gets none:
   //    its lifecycle is a plain boolean, which is the whole of what
   //    "does it exist" ever needed. The two spellings side by side in
-  //    the first model anyone opens is deliberate — it is where the
+  //    the first model anyone opens is deliberate – it is where the
   //    promotion from one to the other is taught.
   //
   //    Then the entities, bare: a property is a binding to a projection,
@@ -5961,7 +5961,7 @@ function seedBase(modelId) {
   event('StudentSubscribedToCourse', [prop('courseId', 'CourseId'), prop('studentId', 'StudentId')]);
   event('StudentUnsubscribedFromCourse', [prop('courseId', 'CourseId'), prop('studentId', 'StudentId')]);
 
-  // 3. The projections themselves — ordinary definitions, each tagged
+  // 3. The projections themselves – ordinary definitions, each tagged
   //    by the identifier of what it is about, which is what lets an
   //    entity bind one as a property: an instance reads it by its own
   //    identifier. Nothing else about them says "entity property": that
@@ -5996,7 +5996,7 @@ function seedBase(modelId) {
   ], { isList: true }));
 
   // 4. The entities again, now binding them. A binding names the
-  //    projection and nothing else — there is no second place where a
+  //    projection and nothing else – there is no second place where a
   //    type or an initial value could disagree with the first.
   seedPatch('entity-definition', modelId, 'Student', (student) => {
     student.properties = [
@@ -6099,7 +6099,7 @@ function seedBase(modelId) {
     feature: 'Enrolment',
     properties: [prop('courseId', 'CourseId'), prop('studentId', 'StudentId')],
     // The course only. Which student is asserted by the caller, and
-    // whether they are in this course is answered off the course — the
+    // whether they are in this course is answered off the course – the
     // student's own state decides nothing here, so reading it would
     // widen the boundary and buy nothing. The event still carries the
     // `Student` tag, which is what makes a concurrent command that
@@ -6120,7 +6120,7 @@ function seedBase(modelId) {
 
 // Layer 2: course identifiers stop being supplied and start being
 // issued. DefineCourse loses its identifier parameter and its "not
-// already used" check, and gains a binding in their place — reading
+// already used" check, and gains a binding in their place – reading
 // the projection contributes `types CourseDefined` to the append
 // condition, which is what makes the numbering monotonic and what
 // makes the check redundant.
@@ -6128,7 +6128,7 @@ function seedBase(modelId) {
 // The numbering is an ordinary projection, untagged: its
 // value is set to the *successor* of the id each CourseDefined
 // carried, so it holds the next number to issue at every point in its
-// life — `c1` before anything has happened, `successor(last)` after.
+// life – `c1` before anything has happened, `successor(last)` after.
 // Project to the last id instead and `initialValue` would have to mean
 // two different things depending on whether anything had happened yet.
 function seedAddSequence(modelId) {
@@ -6162,7 +6162,7 @@ function seedAddSequence(modelId) {
 
 }
 
-// Two scenarios over the numbering itself — the thing no entity owns
+// Two scenarios over the numbering itself – the thing no entity owns
 // and no command page shows in isolation. A numbering is exactly the
 // case worth asserting directly: its whole contract is "the next value
 // to issue", at every point in its life, and that is a claim about the
@@ -6199,7 +6199,7 @@ function seedSequenceScenarios(modelId) {
 // Layer 3a: tenancy, and with it a numbering *tagged* by something.
 //
 // This is the case the old design could not express. It called
-// numbering "global by nature" and gave a sequence no tag at all —
+// numbering "global by nature" and gave a sequence no tag at all –
 // which a numbering per tenant simply falsifies. A projection declares
 // the tags it is read by, so restarting the numbering per tenant is a
 // numbering tagged by the tenant and nothing else.
@@ -6207,7 +6207,7 @@ function seedSequenceScenarios(modelId) {
 // Number is not identity. `CourseId` stays globally minted by the
 // parameterless `CourseNumbering`, and the per-tenant projection
 // issues a human-facing `CourseNumber` that restarts at 1 for each
-// tenant. Doing it the other way — minting the id per tenant — would
+// tenant. Doing it the other way – minting the id per tenant – would
 // have two tenants both writing `Course:c1`, and tags are flat, so
 // those two courses would be one instance. It is also how real systems
 // work: invoice numbers restart, invoice ids never do.
@@ -6239,7 +6239,7 @@ function seedAddTenancy(modelId) {
   });
 
   // Tagged by the tenant, so one tag: `Tenant:<id> AND type
-  // CourseDefined`. Untagged, this would be a global numbering — that
+  // CourseDefined`. Untagged, this would be a global numbering – that
   // is the whole difference.
   addDefinition('projection-definition', modelId, 'TenantCourseNumbering', {
     tags: [seedEntityTag('Tenant')],
@@ -6285,7 +6285,7 @@ function seedAddTenancy(modelId) {
 // scheduled by naming the slots it occupies, so a slot value *is* a
 // discretised timestamp and the granularity is stated by the pattern.
 //
-// Slots are values, never tags. Occupancy is not stored per student —
+// Slots are values, never tags. Occupancy is not stored per student –
 // it is read from each course's current schedule at check time, which
 // is exactly what lets a course be rescheduled underneath its
 // subscribers without invalidating anything.
@@ -6331,8 +6331,8 @@ function seedAddSchedules(modelId) {
   // prove that nobody it moves ends up double-booked: bind the
   // subscribers, then every *other* course any of them is in, and
   // require none of those schedules to touch the new slots. `theirs`
-  // would otherwise include this very course — every subscriber is in
-  // it — and a course almost always overlaps its own old schedule.
+  // would otherwise include this very course – every subscriber is in
+  // it – and a course almost always overlaps its own old schedule.
   addDefinition('command-definition', modelId, 'RescheduleCourse', {
     feature: 'Course management',
     properties: [seedProp('courseId', 'CourseId'), seedListProp('slots', 'TimeSlot')],
@@ -6376,7 +6376,7 @@ function seedAddSchedules(modelId) {
 //
 // `OrderProducts` submits a cart: each line names a product and the
 // price the customer was shown. Two things have to hold for every line
-// — the product exists, and the price shown is still the price — and
+// – the product exists, and the price shown is still the price – and
 // they hold or fail together, in one append.
 //
 // The list is what makes this different from every other example here:
@@ -6402,13 +6402,13 @@ function seedProductPricing(modelId) {
 
   // 1. Value types. Money is scalar; Item is composite, and its
   //    productId field is what turns a list of them into tags. The
-  //    lifecycle enums are scalar too — just with `enum` instead of a
+  //    lifecycle enums are scalar too – just with `enum` instead of a
   //    numeric schema.
   addDefinition('custom-type-definition', modelId, 'Money', {
     schema: { type: 'number', minimum: 0 },
   });
 
-  // 2. Entities, bare — Item cannot be declared until ProductId
+  // 2. Entities, bare – Item cannot be declared until ProductId
   //    exists, and ProductId comes from Product.
   addDefinition('entity-definition', modelId, 'Product', { icon: '📦', properties: [] });
   addDefinition('entity-definition', modelId, 'Order', { icon: '🧾', properties: [] });
@@ -6436,7 +6436,7 @@ function seedProductPricing(modelId) {
   addDefinition('projection-definition', modelId, 'ProductExists',
     seedPropertyProjection('Product', 'boolean', false,
       [handler('ProductDefined', 'set', true)]));
-  // Starts at null — no value yet. A price of 0 on a product that does
+  // Starts at null – no value yet. A price of 0 on a product that does
   // not exist would be a lie the model then has to defend, and null is
   // a different answer from both 0 and "".
   addDefinition('projection-definition', modelId, 'ProductCurrentPrice',
@@ -6549,12 +6549,12 @@ function seedProductPricing(modelId) {
 // Without entities (8.0).
 //
 // The course and content models were designed with entities, and the
-// layers above still build them that way — which is the honest record
+// layers above still build them that way – which is the honest record
 // of how they came about, and what the one entity example keeps. Every
 // other shipped model is then stated without them, by this last layer:
 // a property an entity read stood for becomes the projection it binds,
-// read in place by the identifier the entity was read by — a fan-out
-// staying one — and the entities and their lifecycles (experimental)
+// read in place by the identifier the entity was read by – a fan-out
+// staying one – and the entities and their lifecycles (experimental)
 // go, the icons and feature groups with them. One append, through the
 // ordinary command, like every layer.
 // ============================================================
@@ -6615,7 +6615,7 @@ function seedWithoutEntities(modelId) {
 }
 
 // ============================================================
-// Content based decisions — one domain, five spellings.
+// Content based decisions – one domain, five spellings.
 //
 // A document's Published/PendingChanges distinction depends on whether
 // its current text equals the last published one: a decision made from
@@ -6637,7 +6637,7 @@ function seedWithoutEntities(modelId) {
 // as private state and exposes only the status, and every command
 // decides against that one exposed value. Publishing "restores"
 // silently: re-typing the published text flips the status back to
-// Published with no event saying so — and no event *carrying* the
+// Published with no event saying so – and no event *carrying* the
 // published text either, which is what every alternative fixes first.
 function seedContentDecisionsScripted(modelId) {
   const prop = seedProp;
@@ -6645,15 +6645,15 @@ function seedContentDecisionsScripted(modelId) {
   const of = seedOf;
   const bind = seedBind;
 
-  // 1. The lifecycle enum, then the entity, bare — declaring Document
+  // 1. The lifecycle enum, then the entity, bare – declaring Document
   //    mints DocumentId, which the state type and events reference.
   addDefinition('custom-type-definition', modelId, 'DocumentStatus', seedEnumType('DocumentStatus',
     ['NonExistent', 'Draft', 'Published', 'PendingChanges', 'Archived']));
   addDefinition('entity-definition', modelId, 'Document', { icon: '📄', properties: [] });
 
   // The script's private state, written down as a composite type.
-  // Nothing references it — the script's initialState is untyped by
-  // design — but the shape a reader would otherwise reverse-engineer
+  // Nothing references it – the script's initialState is untyped by
+  // design – but the shape a reader would otherwise reverse-engineer
   // out of four code strings is worth one declaration.
   addDefinition('custom-type-definition', modelId, 'DocumentChangeState', {
     properties: [
@@ -6704,7 +6704,7 @@ function seedContentDecisionsScripted(modelId) {
     document.lifecycle = 'status';
   });
 
-  // 4. Commands — every rule is a status check, and the two that allow
+  // 4. Commands – every rule is a status check, and the two that allow
   //    more than one status use `equalsAny` rather than spelling the
   //    same read out once per member.
   const command = (name, body) => addDefinition('command-definition', modelId, name, body);
@@ -6768,8 +6768,8 @@ function seedContentDecisionsScripted(modelId) {
 }
 
 // The comparison moved to decision time. Two plain `set` projections
-// hold the texts — `DocumentPublished` carries the text it publishes,
-// read off the boundary, so the log is self-contained — and the
+// hold the texts – `DocumentPublished` carries the text it publishes,
+// read off the boundary, so the log is self-contained – and the
 // publish guard compares them: `not(currentText == publishedText)`.
 // The stored status shrinks to a four-state lifecycle in which
 // Published means *has been published*; pending-ness is never stored,
@@ -6849,7 +6849,7 @@ function seedDocumentAuthoring(modelId) {
         rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }],
         rejection: 'Document is not editable' },
       // Recording an unchanged text is a no-op, and saying so pulls
-      // TextUpdated into this command's query — the same move
+      // TextUpdated into this command's query – the same move
       // ChangeProductPrice documents in the pricing example.
       { leftHandSide: of('document', 'currentText'), predicate: 'equals',
         rightHandSide: param('text'), negate: true,
@@ -6871,7 +6871,7 @@ function seedDocumentAuthoring(modelId) {
         rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }],
         rejection: 'Document cannot be published' },
       // The content-based decision, in the boundary: publishing is
-      // refused exactly while nothing differs — a fresh Draft ("" vs
+      // refused exactly while nothing differs – a fresh Draft ("" vs
       // null) differs, a republish does not, and re-typing the
       // published text makes the two equal again, so the revert needs
       // no event and no stored status to hold.
@@ -6900,7 +6900,7 @@ function seedDocumentAuthoring(modelId) {
 }
 
 // Layer: the client sends proof. `PublishDocument` gains the text as a
-// parameter and verifies it against the boundary — the same pattern
+// parameter and verifies it against the boundary – the same pattern
 // `OrderProducts` applies to prices, and the one the DCB canon's
 // dynamic-product-price example blesses verbatim (`displayedPrice`).
 // The published event carries the parameter, now proven identical to
@@ -6917,7 +6917,7 @@ function seedVerifiedPublish(modelId) {
         rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }],
         rejection: 'Document cannot be published' },
       // The proof: what the caller believes it is publishing must be
-      // the current text — a stale echo is rejected, which is the
+      // the current text – a stale echo is rejected, which is the
       // optimistic check made a domain rule.
       { leftHandSide: seedOf('document', 'currentText'), predicate: 'equals',
         rightHandSide: seedParam('text'),
@@ -6934,8 +6934,8 @@ function seedVerifiedPublish(modelId) {
 }
 
 // Layer: the comparison declared once. `DocumentHasPendingChanges` is
-// a *derived* projection — no handlers, one predicate over the two
-// text projections — bound as an entity property and read by the
+// a *derived* projection – no handlers, one predicate over the two
+// text projections – bound as an entity property and read by the
 // publish guard, so the logic lives in exactly one declaration and a
 // real application's read side could interpret the same data. Its
 // query is its operands' union, so binding it guards the append
@@ -6971,9 +6971,9 @@ function seedDerivedPending(modelId) {
 
 // Weekly developer hours: a developer registers with the hours they
 // have per week, and every allocation is subtracted from that week's
-// budget. What is left is *computed*, not folded — a derived
+// budget. What is left is *computed*, not folded – a derived
 // projection subtracting the hours allocated that week from the weekly
-// budget — so `AllocateHours` reads one value, and its boundary is
+// budget – so `AllocateHours` reads one value, and its boundary is
 // still both queries: the developer's registration and that week's
 // allocations.
 function seedDeveloperHours(modelId) {
@@ -7161,9 +7161,9 @@ function seedDeveloperHours(modelId) {
 }
 
 // The decision made at write time and recorded. `UpdateText` carries
-// two guarded emissions — `TextChanged` while the new text differs
+// two guarded emissions – `TextChanged` while the new text differs
 // from the published one, `TextRevertedToPublished` while it does not
-// — so the log *says* a revert happened and the five-state status is
+// – so the log *says* a revert happened and the five-state status is
 // fully declarative again: one plain handler per event type, no
 // comparison anywhere downstream of the command. This is the decider
 // pattern's shape (decide: state and command in, one of several event
@@ -7191,7 +7191,7 @@ function seedGuardedAuthoring(modelId) {
   const projection = (name, body) =>
     addDefinition('projection-definition', modelId, name, body);
 
-  // The five states, every transition a plain `set` — the split events
+  // The five states, every transition a plain `set` – the split events
   // carry the distinction the scripted baseline computed.
   projection('DocumentStatus', seedPropertyProjection('Document', 'DocumentStatus',
     { enumMember: 'NonExistent' }, [
@@ -7314,7 +7314,7 @@ const PREDEFINED_MODELS = [
     name: 'Course Example (with sequence)',
     slug: 'course-sequence',
     description: 'Adds a projection issuing c1, c2, c3… DefineCourse loses its identifier '
-      + 'parameter and its conditions — reading the numbering guards it instead.',
+      + 'parameter and its conditions – reading the numbering guards it instead.',
     build: (modelId) => {
       seedBase(modelId); seedAddSequence(modelId); seedSequenceScenarios(modelId);
       seedWithoutEntities(modelId);
@@ -7323,7 +7323,7 @@ const PREDEFINED_MODELS = [
   {
     name: 'Course Example (with sequence and tenant)',
     slug: 'course-tenant',
-    description: 'The numbering restarts per tenant — the case a tagless sequence could not '
+    description: 'The numbering restarts per tenant – the case a tagless sequence could not '
       + 'express. Identity stays globally minted; what restarts is the number, so no two '
       + 'tenants ever write the same Course tag.',
     build: (modelId) => {
@@ -7337,7 +7337,7 @@ const PREDEFINED_MODELS = [
     experimental: true,
     description: 'Adds hourly slots and the rule that a student is never in two courses at '
       + 'once, checked against live schedules so courses can be rescheduled under subscribers. '
-      + 'Stated with entities — rescheduling excludes the course itself from its subscribers\' '
+      + 'Stated with entities – rescheduling excludes the course itself from its subscribers\' '
       + 'other courses, which only an entity read can say.',
     build: (modelId) => { seedBase(modelId); seedAddSequence(modelId); seedAddSchedules(modelId); },
   },
@@ -7354,7 +7354,7 @@ const PREDEFINED_MODELS = [
     slug: 'content-decisions-scripted',
     experimental: true,
     description: 'The baseline: a document is Published or PendingChanges depending on whether '
-      + 'its current text equals the last published one — a comparison no declared handler can '
+      + 'its current text equals the last published one – a comparison no declared handler can '
       + 'express, so the status projection is scripted, keeps both texts as hidden state and '
       + 'exposes only the status.',
     build: (modelId) => { seedContentDecisionsScripted(modelId); seedWithoutEntities(modelId); },
@@ -7371,7 +7371,7 @@ const PREDEFINED_MODELS = [
     name: 'Content based decisions (client-verified)',
     slug: 'content-decisions-verified',
     description: 'Publishing takes the text the caller saw and verifies it against the current '
-      + 'one — the optimistic check OrderProducts applies to prices, made a domain rule. A stale '
+      + 'one – the optimistic check OrderProducts applies to prices, made a domain rule. A stale '
       + 'echo is rejected; the published event carries the proven text.',
     build: (modelId) => { seedDocumentAuthoring(modelId); seedVerifiedPublish(modelId); seedWithoutEntities(modelId); },
   },
@@ -7387,8 +7387,8 @@ const PREDEFINED_MODELS = [
   {
     name: 'Content based decisions (derived projection)',
     slug: 'content-decisions-derived',
-    description: 'The comparison declared once: hasPendingChanges is a derived projection — no '
-      + 'handlers, one predicate over the two text projections — read by the publish guard, so '
+    description: 'The comparison declared once: hasPendingChanges is a derived projection – no '
+      + 'handlers, one predicate over the two text projections – read by the publish guard, so '
       + 'a frontend could interpret the same declaration.',
     build: (modelId) => { seedDocumentAuthoring(modelId); seedDerivedPending(modelId); seedWithoutEntities(modelId); },
   },
@@ -7397,7 +7397,7 @@ const PREDEFINED_MODELS = [
     slug: 'developer-hours',
     description: 'Developers register the hours they have per week, and allocations to '
       + 'projects are subtracted from that week\'s budget. The hours left are a derived '
-      + 'projection — the weekly budget less that week\'s allocations — so allocating reads '
+      + 'projection – the weekly budget less that week\'s allocations – so allocating reads '
       + 'one value, and its boundary is still both queries.',
     build: (modelId) => { seedDeveloperHours(modelId); },
   },
@@ -7405,7 +7405,7 @@ const PREDEFINED_MODELS = [
     name: 'Course Example (with entities)',
     slug: 'course-entities',
     experimental: true,
-    description: 'The simple course example stated with entities and lifecycles — the '
+    description: 'The simple course example stated with entities and lifecycles – the '
       + 'experimental way of grouping projections under the thing they are about.',
     build: (modelId) => { seedBase(modelId); },
   },

@@ -1,7 +1,7 @@
 // ============================================================
 // Shared harness for the four suites. The DOM stub is the contract
-// between index.html and the tests — it lives here once, so ui and
-// webmcp cannot drift onto different fakes — and the loader is the
+// between index.html and the tests – it lives here once, so ui and
+// webmcp cannot drift onto different fakes – and the loader is the
 // one place that knows how the browser concatenates the scripts.
 //
 // Plain Node, `require`d by the suites; not a runner and not a
@@ -25,7 +25,7 @@ const element = (text, tag) => {
     insertBefore(child) { if (child) node.children.unshift(child); return child; },
     get firstChild() { return node.children[0] || null; },
     removeChild: noop, remove: noop,
-    // Recorded, not rendered — so a test can ask what an attribute
+    // Recorded, not rendered – so a test can ask what an attribute
     // (an optgroup's label, a title) was set to. `label` doubles as a
     // property the way it does on a real element.
     setAttribute(k, v) { node.attributes[k] = v; if (k === 'label') node.label = v; },
@@ -56,7 +56,7 @@ const findAll = (node, pred, out = []) => {
 // load. Every lookup answers with an inert element rather than null:
 // the page wires a handful of listeners at load, and a stub that said
 // "not there" would only be testing that. Nothing runs at load beyond
-// that — the app boots on DOMContentLoaded, and this never fires one.
+// that – the app boots on DOMContentLoaded, and this never fires one.
 function createSandbox() {
   const storage = (map) => ({
     getItem: (k) => (map.has(k) ? map.get(k) : null),
@@ -66,7 +66,7 @@ function createSandbox() {
   const store = new Map();
   const sessionStore = new Map();
   // What the page listens for on `window`, kept so a suite can play the
-  // part of the browser — another tab's `storage` event, say.
+  // part of the browser – another tab's `storage` event, say.
   const listeners = {};
   const sandbox = {
     console,
@@ -86,7 +86,7 @@ function createSandbox() {
     matchMedia: () => ({ matches: false, addEventListener: noop }),
     // The page's own timers (a toast's 8 s dismissal) are unref'd: no
     // suite waits on one, and a live one only kept Node idling after
-    // the tally. `finish` guards the other side — see makeChecker.
+    // the tally. `finish` guards the other side – see makeChecker.
     setTimeout: (fn, ms, ...rest) => {
       const timer = setTimeout(fn, ms, ...rest);
       if (timer && timer.unref) timer.unref();
@@ -111,7 +111,7 @@ function createSandbox() {
   return { sandbox, store, sessionStore, dispatch, listening };
 }
 
-// The page's own inline script, marked `data-page` — named rather than
+// The page's own inline script, marked `data-page` – named rather than
 // guessed at, since the host injects inline scripts of its own (the
 // theme hook) and any other inline block would be a candidate too.
 function pageScript() {
@@ -124,7 +124,7 @@ function pageScript() {
 // Concatenates the way index.html loads: the named files in <script>
 // order, then (when asked) the inline page script, then a trailer for
 // what a suite needs handed out of the script's lexical scope. One
-// script, one scope — the same as classic scripts sharing a window.
+// script, one scope – the same as classic scripts sharing a window.
 function loadApp(sandbox, files, { withPage = false, trailer = '' } = {}) {
   const source = files
     .map((file) => fs.readFileSync(path.join(APP, file), 'utf8'))
@@ -136,7 +136,7 @@ function loadApp(sandbox, files, { withPage = false, trailer = '' } = {}) {
 
 // A fixture edit that must land. `String.replace` on a text that no
 // longer contains its target returns the text unchanged, and the test
-// goes on asserting about an edit that never happened — which is how a
+// goes on asserting about an edit that never happened – which is how a
 // renamed section comment once left a completion test checking
 // nothing. Every edit of a fixture text goes through here; the
 // pre-commit hook refuses a bare `.replace(` on one.
@@ -148,22 +148,22 @@ function swap(text, from, to) {
 
 // `check` records, `eq` asserts, `finish` prints the tally and sets
 // the exit code. `check` follows its function: a sync body is recorded
-// on the spot, an async one when it settles — one pair for all four
+// on the spot, an async one when it settles – one pair for all four
 // suites, awaited only where a suite is actually async.
 function makeChecker() {
   let passed = 0;
   const failures = [];
   // Page timers do not hold the process open (createSandbox), so a
-  // suite that awaited one would end without its tally — and with a
+  // suite that awaited one would end without its tally – and with a
   // zero exit. Ending without `finish` is a failure.
   let finished = false;
   process.on('exit', (code) => {
     if (!finished && code === 0) {
-      console.log('the suite ended before finish() — an awaited page timer?');
+      console.log('the suite ended before finish() – an awaited page timer?');
       process.exitCode = 1;
     }
   });
-  // STACK=1 in the environment reports a failure with its stack — for
+  // STACK=1 in the environment reports a failure with its stack – for
   // the TypeError deep in a fold, where the message alone says little.
   const record = (name, error) => {
     if (error) failures.push(`${name}\n    ${process.env.STACK ? error.stack : error.message}`);

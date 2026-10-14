@@ -1,5 +1,5 @@
 // ============================================================
-// DCB Playground — WebMCP smoke test.
+// DCB Playground – WebMCP smoke test.
 //
 // `webmcp.js` registers tools on `document.modelContext` when one
 // exists; here one is a stub that only records what was registered,
@@ -9,8 +9,8 @@
 // land in the app's own event log, and that a domain refusal comes
 // back as an `isError` answer rather than a broken call.
 //
-// The page's script is loaded too — `list_problems` and the repaint
-// after an edit reach into it — behind the same inert DOM stub as
+// The page's script is loaded too – `list_problems` and the repaint
+// after an edit reach into it – behind the same inert DOM stub as
 // `ui.test.js`, and nothing runs at load because no `DOMContentLoaded`
 // is ever fired.
 //
@@ -20,14 +20,14 @@ const { createSandbox, loadApp, makeChecker, swap } = require('./test-harness.js
 
 const { sandbox, store } = createSandbox();
 
-// What `webmcp.js` registered, by name — the surface under test.
+// What `webmcp.js` registered, by name – the surface under test.
 const registered = new Map();
 sandbox.document.modelContext = {
   registerTool: (tool) => { registered.set(tool.name, tool); },
 };
 
-// Same order as the <script> tags in index.html — webmcp.js *before*
-// the page script — so a load-time dependency that would break in the
+// Same order as the <script> tags in index.html – webmcp.js *before*
+// the page script – so a load-time dependency that would break in the
 // browser breaks here too.
 loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js', 'shared.js', 'webmcp-schemas.js', 'webmcp.js'], {
   withPage: true,
@@ -78,7 +78,7 @@ async function call(name, args) {
 
   await check('every tool argument is described and typed the way auditors read it', () => {
     // A WebMCP schema audit reads each top-level argument's own
-    // `description` and `type` — a choice spelled only through
+    // `description` and `type` – a choice spelled only through
     // `oneOf`, or no type at all, reads as unsupported.
     const supported = ['string', 'number', 'integer', 'boolean', 'array', 'object', 'null'];
     for (const [name, tool] of registered) {
@@ -98,7 +98,7 @@ async function call(name, args) {
     eq(typeof add.properties.conditions.items, 'object', 'nested shapes spelled out in place');
     const flat = JSON.stringify(add);
     eq(flat.includes('"$ref"') || flat.includes('"$defs"'), false,
-      'nothing referencing anything — the consumers cannot resolve references');
+      'nothing referencing anything – the consumers cannot resolve references');
     eq(add.required.includes('name'), true, 'named kinds require the name');
     const scenarioAdd = registered.get('add_scenario_definition').inputSchema;
     eq(scenarioAdd.required.includes('id'), false, 'an added scenario may omit its id');
@@ -151,7 +151,7 @@ async function call(name, args) {
   });
 
   // The rest runs against the first predefined model, opened the way
-  // the page opens one — stored, not held.
+  // the page opens one – stored, not held.
   store.clear();
   const id = loadPredefinedModel(sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-entities'));
   store.set('dcb-playground:model', id);
@@ -294,7 +294,7 @@ async function call(name, args) {
       properties: [], boundary: [], conditions: [],
       publishes: [{ name: 'NoSuchEvent', parameters: {} }],
     });
-    eq(isError, false, 'accepted, not refused — the demoted validations');
+    eq(isError, false, 'accepted, not refused – the demoted validations');
     eq(text.includes('Advisories introduced by this change'), true, 'the result says so');
     eq(text.includes('NoSuchEvent'), true, 'naming the dangling reference');
     const removed = await call('remove_definition', { kind: 'command-definition', name: 'ProbeCommand' });
@@ -417,7 +417,7 @@ async function call(name, args) {
     for (const tool of registered.values()) {
       const { readOnlyHint, destructiveHint } = tool.annotations || {};
       eq(readOnlyHint === true || typeof destructiveHint === 'boolean', true,
-        `${tool.name} says what it does — the default for a writing tool is destructive`);
+        `${tool.name} says what it does – the default for a writing tool is destructive`);
     }
   });
 

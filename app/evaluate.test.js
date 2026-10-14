@@ -1,5 +1,5 @@
 // ============================================================
-// DCB Playground — evaluation tests.
+// DCB Playground – evaluation tests.
 //
 // Exercises `evaluate.js` against the five models the playground
 // ships, because those are the models the language was designed
@@ -7,13 +7,13 @@
 // in the interface, and a rule that fails here is the rule they would
 // see fail.
 //
-// Run with `node app/evaluate.test.js`. No dependencies and no runner —
+// Run with `node app/evaluate.test.js`. No dependencies and no runner –
 // the playground has neither, and a test suite that needed a build step
 // would be the first thing in this project to need one.
 //
 // `model.js` and `evaluate.js` are classic scripts, so they are loaded
 // into one `vm` context with a stubbed `localStorage` rather than
-// required — the sandbox, the loader and the assertions live in
+// required – the sandbox, the loader and the assertions live in
 // `test-harness.js`, shared with the other two suites.
 // ============================================================
 const { createSandbox, loadApp, makeChecker } = require('./test-harness.js');
@@ -32,7 +32,7 @@ function resetStore() {
   sandbox.bumpLogRevision();
 }
 
-// The course example with entities — what `course-simple` was before the
+// The course example with entities – what `course-simple` was before the
 // shipped models were stated without them. Tests about entities,
 // lifecycles and entity reads build this one.
 const ENTITIES = sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-entities');
@@ -63,7 +63,7 @@ const {
   envelopeVersionWarning, modelMatchingEnvelope, commandRejections,
 } = sandbox;
 
-// An event a fixture adds, tagged by every tag-typed value it holds —
+// An event a fixture adds, tagged by every tag-typed value it holds –
 // what an author listing them all would write. Events are tagged only
 // by what they list (8.0); fixtures that test the list itself spell
 // `tags` out, and this leaves a given list alone.
@@ -72,7 +72,7 @@ function addTaggedEvent(id, name, body) {
   return sandbox.addDefinition('event-definition', id, name, { ...body, tags });
 }
 
-// A fresh, empty model — for the ad-hoc identifier-type fixtures
+// A fresh, empty model – for the ad-hoc identifier-type fixtures
 // below, which want a minimal model rather than one of the five shipped
 // models.
 function openBlank(name) {
@@ -82,7 +82,7 @@ function openBlank(name) {
 }
 
 // A fresh model with a scripted projection bound as an entity property
-// — for scripted-content tests (script round-tripping,
+// – for scripted-content tests (script round-tripping,
 // `envelopeHasScript`, safe mode) that need a fixture no
 // PREDEFINED_MODELS example carries. `Tick` reads the script through
 // its boundary.
@@ -394,7 +394,7 @@ function drive(model, log, command, args) {
 // 8. The predicates and operands the shipped models do not reach.
 //
 // Six of the sixteen predicates appear in a seed. The rest are checked
-// by swapping a condition into a command in memory — the model is a
+// by swapping a condition into a command in memory – the model is a
 // plain object, so this is the same body the interface would have
 // written, without needing a seventh example model to hold it.
 // ---------------------------------------------------------------
@@ -586,7 +586,7 @@ function drive(model, log, command, args) {
     const key = store_(id, model(), refused());
     eq(model()['scenario-definitions'][key].then.rejection, 'Course is not active', 'the course rule refuses');
     // The student rule now says the same thing, and is moved ahead, so
-    // it refuses first — but the outcome is the one the scenario names.
+    // it refuses first – but the outcome is the one the scenario names.
     const command = deepClone(model()['command-definitions'].SubscribeStudentToCourse);
     command.conditions.find((c) => c.leftHandSide.alias === 'student' && c.predicate === 'isTrue')
       .rejection = 'Course is not active';
@@ -729,8 +729,8 @@ function drive(model, log, command, args) {
   });
 
   check('a payload with a property the event does not have is stored, not refused', () => {
-    // The lenient regime: an invented payload property is inert — the
-    // folds never read it — so storing it beats refusing the scenario.
+    // The lenient regime: an invented payload property is inert – the
+    // folds never read it – so storing it beats refusing the scenario.
     const { id, model } = open_(ENTITIES);
     const body = scenarioBody();
     body.then = deriveThen(model(), body);
@@ -780,7 +780,7 @@ function drive(model, log, command, args) {
 // 11. What a command reports having read.
 //
 // A binding reports the properties the decision depended on, so the
-// report has to be taken after the conditions have run — described
+// report has to be taken after the conditions have run – described
 // before them it would say a command read nothing, which is what the
 // sandbox showed when it did.
 // ---------------------------------------------------------------
@@ -806,7 +806,7 @@ function drive(model, log, command, args) {
       { courseId: 'c1', studentId: 's1' });
     eq(result.outcome, 'rejected', 'outcome');
     // It stopped at the first rule, so only what that rule needed is
-    // reported — not every property the command could have read.
+    // reported – not every property the command could have read.
     eq(Object.keys(result.reads.course.instances[0].properties), ['status'], 'only what it got to');
     eq(result.reads.course.instances[0].properties.status, 'NonExistent', 'the value that refused it');
   });
@@ -875,11 +875,11 @@ function drive(model, log, command, args) {
 // standalone identifier type shared across two entities' composite ids.
 //
 // `Course` and `Invoice` each compose a shared standalone `TenantTag`
-// with a component of their own (`CourseNumber`, `InvoiceNumber` — one
+// with a component of their own (`CourseNumber`, `InvoiceNumber` – one
 // entity-derived, one standalone, exercising both origins in the same
 // composite). Tag derivation looks *through* the composite: the tags
 // are the union of the components' own tags, never renamespaced under
-// `CourseId`/`InvoiceId` — and because both entities compose in the
+// `CourseId`/`InvoiceId` – and because both entities compose in the
 // very same `TenantTag`, their events end up sharing that one tag.
 // ---------------------------------------------------------------
 {
@@ -959,7 +959,7 @@ function drive(model, log, command, args) {
 }
 
 // ---------------------------------------------------------------
-// 16. Rename tracking for an entity's derived identifier — now an
+// 16. Rename tracking for an entity's derived identifier – now an
 // ordinary custom-type-definition, auto-created alongside the entity.
 //
 // Three shapes: an entity whose identifier still tracks it (renaming
@@ -1145,7 +1145,7 @@ function drive(model, log, command, args) {
 {
   // Dynamic Product Price (simple) is the case that actually needs the
   // retry pool: `Item`, a standalone composite custom type, names
-  // `ProductId` — the identifier type `Product` derives, which does not
+  // `ProductId` – the identifier type `Product` derives, which does not
   // exist until the entity does. A synthesizer that added every custom
   // type before any entity would refuse this model.
   const original = build(4);
@@ -1157,7 +1157,7 @@ function drive(model, log, command, args) {
     eq(definitionsToSchema(imported), definitionsToSchema(original), 'the reconstructed model');
   });
 
-  check('the imported model is independently valid — its own commands still run', () => {
+  check('the imported model is independently valid – its own commands still run', () => {
     const log = [];
     drive(imported, log, 'DefineProduct', { productId: 'p1', price: 500 });
     eq(foldProjection(imported, log, 'ProductCurrentPrice', { tags: { productId: 'p1' } }), 500,
@@ -1186,7 +1186,7 @@ function drive(model, log, command, args) {
 }
 
 {
-  // Opening a link twice finds the model the first opening made — which
+  // Opening a link twice finds the model the first opening made – which
   // only works if an imported model shares exactly what it was imported
   // from, for every shipped model.
   const envelopes = [0, 1, 2, 3, 4].map((index) => buildShareEnvelope(build(index), []));
@@ -1247,8 +1247,8 @@ function drive(model, log, command, args) {
 
 {
   // The gate asks about `script`, so `script` alone decides whether
-  // code runs. A `code` slipped onto a declared handler — by a crafted
-  // link, an agent's edit or a JSON body in the code view — is inert:
+  // code runs. A `code` slipped onto a declared handler – by a crafted
+  // link, an agent's edit or a JSON body in the code view – is inert:
   // the gate rightly lets the envelope through, the declared operation
   // is what folds, and the validator says the code is there.
   const envelope = JSON.parse(JSON.stringify(buildShareEnvelope(build(1), [])));
@@ -1301,12 +1301,12 @@ function drive(model, log, command, args) {
 
 {
   // The case this regime exists for: a file whose command writes a tag
-  // its boundary never consults — valid JSON, defective model. It must
+  // its boundary never consults – valid JSON, defective model. It must
   // load whole, the defect must come back as an advisory, and the
   // command must still evaluate: an unguarded write is legal DCB.
   //
   // The tag has to be a *derived* one. A tag whose value came off the
-  // command payload is asserted by the caller and wants no read — only
+  // command payload is asserted by the caller and wants no read – only
   // a value this command read somewhere is a claim about state, and
   // only that is worth flagging.
   const { id, model } = openBlank('Lenient');
@@ -1359,7 +1359,7 @@ function drive(model, log, command, args) {
 }
 
 // ---------------------------------------------------------------
-// `equalsAny` — membership over a literal list. One scalar against
+// `equalsAny` – membership over a literal list. One scalar against
 // the listed values, `negate` for "is not one of"; the list is the
 // one operand position that is an array.
 // ---------------------------------------------------------------
@@ -1410,7 +1410,7 @@ function drive(model, log, command, args) {
       'and so passes the negation');
   });
 
-  check('an empty list holds for nothing — negated, for everything', () => {
+  check('an empty list holds for nothing – negated, for everything', () => {
     eq(outcomeWith(membership([]), { status: 'Draft' }).outcome, 'rejected', 'one of nothing');
     eq(outcomeWith(membership([], true), { status: 'Draft' }).outcome, 'published', 'not one of nothing');
   });
@@ -1438,7 +1438,7 @@ function drive(model, log, command, args) {
 }
 
 // A listed enum member is checked against the enum the left-hand side
-// resolves to, and renaming that member rewrites the entries — the same
+// resolves to, and renaming that member rewrites the entries – the same
 // promises the single-value comparison already keeps.
 {
   const { id, model } = open_(ENTITIES);
@@ -1475,7 +1475,7 @@ check('an import missing the definition arrays is refused, not silently accepted
 
 // The two markers on the wire format, and the ladder an importer walks
 // down them: both must be there, the major must match, and a newer
-// minor is read rather than refused — the one rung that lets the format
+// minor is read rather than refused – the one rung that lets the format
 // grow without every older playground rejecting the result.
 {
   const { model } = openBlank('Marked');
@@ -1520,13 +1520,13 @@ check('an import missing the definition arrays is refused, not silently accepted
     // 6.x has no rejection messages, and none can be invented for it.
     refuses({ ...good, dcbModelVersion: '6.1' }, 'the last major before messages');
     // 2.x is where a projection scenario read several projections under
-    // aliases — readable as JSON, and misread as a model.
+    // aliases – readable as JSON, and misread as a model.
     refuses({ ...good, dcbModelVersion: '2.0' }, 'the last unreadable major');
     refuses({ ...good, dcbModelVersion: '1.0' }, 'and the one before that');
   });
 
   // 9.0 added computing derived projections and changed nothing an 8.x
-  // document says, so 8.x reads whole — and with nothing to warn about.
+  // document says, so 8.x reads whole – and with nothing to warn about.
   check('an 8.x import still reads', () => {
     const older = { ...good, $schema: 'https://dcb.events/schemas/model/v8.json', dcbModelVersion: '8.0' };
     eq(typeof importModelFromEnvelope(older).modelId, 'string', 'imported');
@@ -1556,7 +1556,7 @@ check('an import missing the definition arrays is refused, not silently accepted
 //
 // An entity property is a binding to an ordinary projection, so the
 // things that used to be true of only one of them are now true of
-// both — and the things that told them apart are gone.
+// both – and the things that told them apart are gone.
 // ---------------------------------------------------------------
 {
   // The write goes through and the defect is reported instead: `fn`
@@ -1593,7 +1593,7 @@ check('an import missing the definition arrays is refused, not silently accepted
       valueType: 'boolean', isList: false, initialValue: false,
       handlers: [{ event: 'CourseDefined', operation: 'set', value: true }],
     });
-    // Two names for one fold, on the same entity — legal, and the
+    // Two names for one fold, on the same entity – legal, and the
     // point of a property being a reference rather than a definition.
     updateDefinition('entity-definition', id, 'Course', {
       properties: [
@@ -1630,7 +1630,7 @@ check('an import missing the definition arrays is refused, not silently accepted
       const { id, model } = open_(ENTITIES);
       // A course reads its properties by its CourseId; a student's
       // existence is tagged by a StudentId, which no course instance
-      // has — the entity says so instead of the update refusing.
+      // has – the entity says so instead of the update refusing.
       updateDefinition('entity-definition', id, 'Course', {
         icon: '📚', properties: [{ name: 'studentExists', projection: 'StudentExists' }],
       });
@@ -1763,7 +1763,7 @@ check('an import missing the definition arrays is refused, not silently accepted
     });
     const log = [{ type: 'Ticked', data: { counterId: 'x1' } }];
     eq(foldProjection(model(), log, 'TicksSeen', { tags: { counterId: 'x1' }, args: { prefix: '#' } }),
-      '#x1', 'tags.counterId — by its name — and args.prefix');
+      '#x1', 'tags.counterId – by its name – and args.prefix');
   });
 }
 
@@ -1782,7 +1782,7 @@ check('an import missing the definition arrays is refused, not silently accepted
     tags: [], isList: false, handlers: [], ...body,
   });
   // A mistyped initial value saves and comes back as an advisory on
-  // the projection — this returns that advisory's message, or null
+  // the projection – this returns that advisory's message, or null
   // when the add produced a clean definition.
   const advisoryOf = (body) => {
     const name = 'Attempt' + Math.random().toString(36).slice(2, 8).replace(/[0-9]/g, 'x');
@@ -1857,7 +1857,7 @@ check('an import missing the definition arrays is refused, not silently accepted
 //
 // One projection per scenario, and its Then is that projection's value.
 // Asserting four properties of a course over one Given is four
-// scenarios sharing that Given — each answerable, each drifting alone.
+// scenarios sharing that Given – each answerable, each drifting alone.
 // ---------------------------------------------------------------
 {
   const store_ = (id, model, body) => {
@@ -1954,7 +1954,7 @@ check('an import missing the definition arrays is refused, not silently accepted
     const define = deepClone(model()['command-definitions'].DefineCourse);
     define.properties = [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false },
       { name: 'capacity', propertyType: 'integer', isOptional: false, isList: false }];
-    // Supplying the id instead of minting it — which is what makes the
+    // Supplying the id instead of minting it – which is what makes the
     // numbering unreferenced, and the point of the check.
     define.boundary = [{ alias: 'course', entity: 'Course', id: { parameterName: 'courseId' } }];
     define.publishes[0].parameters.courseId = { parameterName: 'courseId' };
@@ -2001,7 +2001,7 @@ check('an import missing the definition arrays is refused, not silently accepted
     })).status, 'broken', 'read tagged by no value');
     eq(runProjectionScenario(model(), stored({ projection: 'NoSuchThing' })).status,
       'broken', 'a projection this model does not define');
-    // An extra argument is inert — the fold never reads it — so that
+    // An extra argument is inert – the fold never reads it – so that
     // scenario stores as written and is judged only on its Then.
     stored({ projection: 'CourseNumbering', arguments: { tenantId: 't1' } });
   });
@@ -2067,7 +2067,7 @@ check('an import missing the definition arrays is refused, not silently accepted
 // ---------------------------------------------------------------
 // `excluding` on a fanned binding compacts the instance list, but a
 // zipped parameter is still read at each instance's original fan-out
-// index — the pairing must not shift. `excluding` is an entity read's
+// index – the pairing must not shift. `excluding` is an entity read's
 // (experimental), so this is the pricing model before it was stated
 // without entities: its seed alone.
 // ---------------------------------------------------------------
@@ -2107,7 +2107,7 @@ check('an import missing the definition arrays is refused, not silently accepted
 // ---------------------------------------------------------------
 // A fan chained off another fan (`Course(each student.courses)`)
 // inherits its list: a parameter zipped with it pairs each course with
-// the element its *student* came from — not with the course's own
+// the element its *student* came from – not with the course's own
 // position in the flattened list, which runs past the list as soon as
 // a student holds more than one course, or shifts when `excluding`
 // leaves a student out.
@@ -2185,8 +2185,8 @@ check('an import missing the definition arrays is refused, not silently accepted
 
   check('a corrupt log is moved aside rather than erased on the next append', () => {
     store.set(logKey, '{not json');
-    // A write from outside `appendEvents` — another tab, a hand in
-    // devtools — is only seen once the revision moves, which is what
+    // A write from outside `appendEvents` – another tab, a hand in
+    // devtools – is only seen once the revision moves, which is what
     // this simulates.
     sandbox.bumpLogRevision();
     eq(sandbox.projectState(), {}, 'projects empty');
@@ -2207,7 +2207,7 @@ check('an import missing the definition arrays is refused, not silently accepted
 
 // ---------------------------------------------------------------
 // Reference symmetry: whatever computeReferences sees, a rename must
-// move. Walked over every reference in every shipped model — a
+// move. Walked over every reference in every shipped model – a
 // reference site visible to one direction and not the other leaves a
 // dangling name here.
 // ---------------------------------------------------------------
@@ -2237,7 +2237,7 @@ check('an import missing the definition arrays is refused, not silently accepted
     check(`shipped model ${i}: every computed reference survives renaming its target`, () => {
       const { id, model } = open_(i);
       eq(dangling(model()), [], 'baseline has no dangling references');
-      // Every (kind, name) anything references — renamed one by one.
+      // Every (kind, name) anything references – renamed one by one.
       const targets = [];
       const seen = new Set();
       for (const kind of KINDS) {
@@ -2264,7 +2264,7 @@ check('an import missing the definition arrays is refused, not silently accepted
 
 // ---------------------------------------------------------------
 // Validation: identifier operands are judged by structure, not by
-// their rendered text — a literal may contain '?' and still be a
+// their rendered text – a literal may contain '?' and still be a
 // value, while an operand missing its name is a gap however it prints.
 // ---------------------------------------------------------------
 {
@@ -2273,7 +2273,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   check('a literal identifier containing "?" is a value, not a gap', () => {
     const body = deepClone(model()['command-definitions'].ChangeCourseCapacity);
     // The emission writes the same literal, so write coverage still
-    // sees the tag the boundary consults — only the '?' is under test.
+    // sees the tag the boundary consults – only the '?' is under test.
     body.boundary[0].id = 'what?';
     body.publishes[0].parameters.courseId = 'what?';
     updateDefinition('command-definition', id, 'ChangeCourseCapacity', body);
@@ -2295,7 +2295,7 @@ check('an import missing the definition arrays is refused, not silently accepted
 // unset optional command property reaches everything as null, an
 // unmapped optional event property publishes the explicit null, and
 // the empty string stays a value of its own. Where a null would
-// become a tag — a binding's identifier, an exclusion, a partition —
+// become a tag – a binding's identifier, an exclusion, a partition –
 // evaluation errors instead, and an advisory says so ahead of time.
 // ---------------------------------------------------------------
 {
@@ -2323,7 +2323,7 @@ check('an import missing the definition arrays is refused, not silently accepted
       { name: 'notiz', propertyType: 'string', isOptional: true, isList: false },
     ],
     // No boundary: the caller says which Anordnung, and nothing here
-    // tests its state — a read would widen the append condition and
+    // tests its state – a read would widen the append condition and
     // decide nothing.
     boundary: [],
     conditions: [],
@@ -2383,7 +2383,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   // A projection reading the optional property, bound as an entity
-  // property — the fold sees the same null whether the Given spelled
+  // property – the fold sees the same null whether the Given spelled
   // it out or left the key off.
   addDefinition('projection-definition', id, 'AnordnungNotiz', {
     tags: [{ name: 'anordnungId', tagType: 'AnordnungId' }],
@@ -2467,7 +2467,7 @@ check('an import missing the definition arrays is refused, not silently accepted
 // ---------------------------------------------------------------
 check('every predefined model ships advisory-clean', () => {
   // `PREDEFINED_MODELS` is a top-level const, invisible on the vm's
-  // global — walked by index until the loader runs out instead.
+  // global – walked by index until the loader runs out instead.
   let count = 0;
   for (let i = 0; ; i++) {
     let model;
@@ -2486,8 +2486,8 @@ check('every predefined model ships advisory-clean', () => {
 //
 // A binding derived from a value nothing has set yet may declare the
 // absence expected and bind nothing instead of erroring. And the
-// reassignment shape — one command moving two instructors' partitions
-// in opposite directions — is expressed by *splitting the event*: an
+// reassignment shape – one command moving two instructors' partitions
+// in opposite directions – is expressed by *splitting the event*: an
 // Assigned and an Unassigned each carry one instructor tag, so one
 // plain handler per event type is enough; an event that names two
 // instances of one type is the ambiguity the advisory points out.
@@ -2505,7 +2505,7 @@ check('every predefined model ships advisory-clean', () => {
     });
     // The predecessor's own fact. Its identifier is optional: a first
     // assignment replaces nobody, and a null identifier carries no tag,
-    // so that event reaches no partition at all — a recorded no-op.
+    // so that event reaches no partition at all – a recorded no-op.
     addTaggedEvent(id, 'Unassigned', {
       properties: [
         { name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false },
@@ -2538,7 +2538,7 @@ check('every predefined model ships advisory-clean', () => {
       ],
       // The new instructor is asserted by the caller and tested by
       // nothing, so it is not read. The *previous* one is read, because
-      // the rule is about it — and because the `Unassigned` tag is
+      // the rule is about it – and because the `Unassigned` tag is
       // derived from `course.instructorId`, which is a claim about
       // state this command looked at.
       boundary: [
@@ -2598,7 +2598,7 @@ check('every predefined model ships advisory-clean', () => {
 
   check('an inline read tagged by an optional binding is advised: absent, it is an error', () => {
     const { id, model } = openAssignment();
-    // An instructor's mentor, another instructor — a value read off the
+    // An instructor's mentor, another instructor – a value read off the
     // optional binding, and the tag of a read.
     addDefinition('projection-definition', id, 'InstructorMentor', {
       tags: [{ name: 'instructorId', tagType: 'InstructorId' }],
@@ -2650,7 +2650,7 @@ check('every predefined model ships advisory-clean', () => {
     const body = deepClone(model()['command-definitions'].Assign);
     body.conditions = [];
     // Route the read through the absent alias itself rather than
-    // through `course` — nothing was read at all, so the value is
+    // through `course` – nothing was read at all, so the value is
     // null, the one spelling of no value.
     body.publishes[1].parameters.instructorId = {
       alias: 'previousInstructor', property: 'instructedCourses',
@@ -2665,7 +2665,7 @@ check('every predefined model ships advisory-clean', () => {
     const { id, model } = openAssignment();
     eq(sandbox.modelAdvisories(model()).length, 0, 'the split-event shape is clean');
     // The unsplit shape: one event carrying both the new holder and
-    // the one replaced — a handler on it fires for both partitions.
+    // the one replaced – a handler on it fires for both partitions.
     addTaggedEvent(id, 'Reassigned', {
       properties: [
         { name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false },
@@ -2694,7 +2694,7 @@ check('every predefined model ships advisory-clean', () => {
 // Guarded emissions (6.0). A guard decides what an accepted command
 // *records*, never whether it happens: a failing guard skips its
 // emission silently, and every guard failing publishes nothing at all
-// — still a `published` outcome. Exercised against the shipped
+// – still a `published` outcome. Exercised against the shipped
 // guarded-emissions variant of the content-decisions family, whose
 // UpdateText carries the complementary pair.
 // ---------------------------------------------------------------
@@ -2718,7 +2718,7 @@ check('every predefined model ships advisory-clean', () => {
       're-typing the published text is recorded as the fact it is');
   });
 
-  check('every guard failing publishes nothing — an accepted command, not a rejection', () => {
+  check('every guard failing publishes nothing – an accepted command, not a rejection', () => {
     const { id, model } = openBlank('Guarded');
     addTaggedEvent(id, 'Pinged', { properties: [] });
     addDefinition('command-definition', id, 'Ping', {
@@ -2738,7 +2738,7 @@ check('every predefined model ships advisory-clean', () => {
       ['Pinged'], 'and the guard holding publishes');
   });
 
-  check('a guard read joins the derived DCB — it may hide nothing from the query', () => {
+  check('a guard read joins the derived DCB – it may hide nothing from the query', () => {
     const model = build(GUARDED);
     const dcb = sandbox.deriveDcb(model, model['command-definitions'].UpdateText);
     const published = dcb.items.find((item) => item.projection === 'DocumentPublishedText');
@@ -2763,8 +2763,8 @@ check('every predefined model ships advisory-clean', () => {
 }
 
 // ---------------------------------------------------------------
-// Derived projections (6.0). One predicate over other projections —
-// no handlers, no initial value, one boolean — declared once, bound
+// Derived projections (6.0). One predicate over other projections –
+// no handlers, no initial value, one boolean – declared once, bound
 // as an entity property, read by command guards, and contributing its
 // operands' queries to any boundary that binds it. Exercised against
 // the shipped derived variant of the content-decisions family.
@@ -2796,7 +2796,7 @@ check('every predefined model ships advisory-clean', () => {
     eq(refused.failedRule.leftValue, false, 'and the value it derived is reported');
   });
 
-  check('its query is its operands\' union — the predicate hides nothing', () => {
+  check('its query is its operands\' union – the predicate hides nothing', () => {
     const model = build(DERIVED);
     const dcb = sandbox.deriveDcb(model, model['command-definitions'].PublishDocument);
     const derived = dcb.items.filter((item) => item.projection === 'DocumentHasPendingChanges');
@@ -2840,7 +2840,7 @@ check('every predefined model ships advisory-clean', () => {
     eq(derived.leftHandSide.projection, 'DocumentDraftText', 'the operand moved with the rename');
   });
 
-  check('derived is data, not code — the import gate stays closed', () => {
+  check('derived is data, not code – the import gate stays closed', () => {
     const model = build(DERIVED);
     eq(envelopeHasScript(buildShareEnvelope(model, [])), false, 'nothing to confirm');
   });
@@ -2848,7 +2848,7 @@ check('every predefined model ships advisory-clean', () => {
 
 // ---------------------------------------------------------------
 // Derived computations (9.0). A derived projection may compute one
-// number from two — add, subtract, multiply, min, max — in place of
+// number from two – add, subtract, multiply, min, max – in place of
 // comparing. Exercised against the shipped developer-hours model,
 // whose remaining hours are the weekly budget less the week's
 // allocations: two operands kept per different tags.
@@ -2941,7 +2941,7 @@ check('every predefined model ships advisory-clean', () => {
     // `Course.full` compares the course's subscriptions with a limit
     // kept for all courses. Read as a projection, the limit is a query
     // of its own; read through the entity, it used to be ANDed with the
-    // course's tag — and the untagged event that changes it fell out of
+    // course's tag – and the untagged event that changes it fell out of
     // the append condition the decision depends on.
     const { id, model } = openBlank('Derived through an entity');
     addDefinition('entity-definition', id, 'Course', { properties: [] });
@@ -3031,7 +3031,7 @@ check('every predefined model ships advisory-clean', () => {
 }
 
 // ---------------------------------------------------------------
-// Tags are what an event lists (8.0) — a tag-typed value left off the
+// Tags are what an event lists (8.0) – a tag-typed value left off the
 // list is an ordinary value, an event with no list carries none, and
 // the advisories say both rather than anything being implied.
 // ---------------------------------------------------------------
@@ -3080,7 +3080,7 @@ check('every predefined model ships advisory-clean', () => {
     eq(odd.some((m) => /listed twice/.test(m)), true, 'a duplicate');
     eq(odd.some((m) => /"note" is not of a tag type/.test(m)), true, 'a plain value');
     eq(odd.some((m) => /"ghost" names no property/.test(m)), true, 'a missing property');
-    eq(odd.some((m) => /"line" is a record — name its tag field \(line\.productId\)/.test(m)), true, 'a record, whole');
+    eq(odd.some((m) => /"line" is a record – name its tag field \(line\.productId\)/.test(m)), true, 'a record, whole');
     eq(odd.some((m) => /"line\.productId" is of a tag type but not one/.test(m)), true, 'and its field, unlisted');
   });
 
@@ -3119,7 +3119,7 @@ check('every predefined model ships advisory-clean', () => {
 
 // ---------------------------------------------------------------
 // A projection declares the tags it is read by (8.0), each named and
-// typed, and a read gives a value for each — of the declared type,
+// typed, and a read gives a value for each – of the declared type,
 // which is the tag's key.
 // ---------------------------------------------------------------
 {
@@ -3165,7 +3165,7 @@ check('every predefined model ships advisory-clean', () => {
     let message = '';
     try { evaluateCommand(model(), log, 'SubscribeStudentToCourse', { courseId: 'c1', studentId: 's1' }); }
     catch (error) { message = error.message; }
-    eq(/holds many — Course\(each student\.subscribedCourseIds\)/.test(message), true, message);
+    eq(/holds many – Course\(each student\.subscribedCourseIds\)/.test(message), true, message);
   });
 
   check('a read by a tag literal folds what the literal names', () => {
@@ -3187,7 +3187,7 @@ check('every predefined model ships advisory-clean', () => {
       'and the query says so');
   });
 
-  check('a read by a value of another type, by an untyped literal or unnamed is advised — and a run refuses it', () => {
+  check('a read by a value of another type, by an untyped literal or unnamed is advised – and a run refuses it', () => {
     const { id, model } = open_(ENTITIES);
     const body = deepClone(model()['command-definitions'].ChangeCourseCapacity);
     body.boundary.push({ alias: 'odd', projection: 'CourseCapacity', tags: { courseId: { parameterName: 'newCapacity' } } });
@@ -3195,15 +3195,15 @@ check('every predefined model ships advisory-clean', () => {
     updateDefinition('command-definition', id, 'ChangeCourseCapacity', body);
     const advised = () => sandbox.modelAdvisories(model()).filter((a) => a.name === 'ChangeCourseCapacity').map((a) => a.message);
     let found = advised();
-    eq(found.some((m) => /newCapacity, an integer — but its "courseId" tag is a CourseId/.test(m)), true, found.join('; '));
+    eq(found.some((m) => /newCapacity, an integer – but its "courseId" tag is a CourseId/.test(m)), true, found.join('; '));
     let message = '';
     try { evaluateCommand(model(), [], 'ChangeCourseCapacity', { courseId: 'c1', newCapacity: 3 }); } catch (error) { message = error.message; }
-    eq(/is tagged by newCapacity, an integer — but CourseCapacity's "courseId" tag is a CourseId/.test(message), true,
+    eq(/is tagged by newCapacity, an integer – but CourseCapacity's "courseId" tag is a CourseId/.test(message), true,
       'the run refuses to fold the wrong instance: ' + message);
     body.boundary[body.boundary.length - 1].tags = { courseId: 'c1' };
     updateDefinition('command-definition', id, 'ChangeCourseCapacity', body);
     found = advised();
-    eq(found.some((m) => /which says no tag type — write the literal with its type, CourseId\("c1"\)/.test(m)), true, found.join('; '));
+    eq(found.some((m) => /which says no tag type – write the literal with its type, CourseId\("c1"\)/.test(m)), true, found.join('; '));
     body.boundary[body.boundary.length - 1].tags = [{ parameterName: 'courseId' }];
     updateDefinition('command-definition', id, 'ChangeCourseCapacity', body);
     found = advised();
@@ -3242,7 +3242,7 @@ check('every predefined model ships advisory-clean', () => {
   });
 
   check('a script cannot change the events it folds', () => {
-    // The log is shared — by every fold, every read, every repaint — so
+    // The log is shared – by every fold, every read, every repaint – so
     // an event a script changed would change what the next fold sees.
     const { id, model } = openScripted();
     addDefinition('projection-definition', id, 'Tamperer', {
@@ -3333,8 +3333,8 @@ check('every predefined model ships advisory-clean', () => {
 
 // ---------------------------------------------------------------
 // The log grows with every edit and lives in the browser's storage,
-// whose quota the site shares. Past a size it compacts itself — the
-// history up to the floor folded into what it built — and a full
+// whose quota the site shares. Past a size it compacts itself – the
+// history up to the floor folded into what it built – and a full
 // storage makes room the same way before it refuses anything.
 // ---------------------------------------------------------------
 {

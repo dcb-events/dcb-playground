@@ -1,10 +1,10 @@
 // ============================================================
-// DCB Playground — the code view's language.
+// DCB Playground – the code view's language.
 //
 // The same definitions the pages edit, as text a developer can read top
 // to bottom, grep, diff and paste: `modelToSource` prints a model,
 // `parseModelSource` reads one back, `applyModelSource` writes the
-// difference through `replaceDefinitions`. No DOM — the editor around
+// difference through `replaceDefinitions`. No DOM – the editor around
 // it lives in index.html; the grammar Monaco highlights with is here,
 // as data, so it cannot drift from the parser it describes.
 //
@@ -38,10 +38,10 @@
 //
 // **Tags are explicit on both sides (8.0), and a projection owns its
 // own.** An event marks the values it is tagged by where it declares
-// them — `tag courseId: CourseId`, and `items: Item[] tag each
+// them – `tag courseId: CourseId`, and `items: Item[] tag each
 // productId` for a field of the records a list holds. A projection
 // names the tags it is read by in its header, `(tag courseId:
-// CourseId)` — several are ANDed — or says it has none: `untagged
+// CourseId)` – several are ANDed – or says it has none: `untagged
 // projection`, which folds the whole log. Saying neither is an error
 // with both fixes; the partition is too easy to forget for the text to
 // assume one. What a projection is kept per is its own to say, so a
@@ -50,7 +50,7 @@
 //
 // **A read gives its values in parentheses**, in the order the
 // projection declares them: `CourseStatus(courseId)`, `Transfers(fromId,
-// toId)`, `CourseNumbering()` for an untagged one — the parentheses are
+// toId)`, `CourseNumbering()` for an untagged one – the parentheses are
 // never left off, which is what keeps a read apart from an enum member
 // by sight. A value has to be of the tag's declared type; a literal
 // says its type anyway, `CourseStatus(CourseId("c1"))`, so the text
@@ -58,20 +58,20 @@
 // takes besides after its tags, `scripted projection X (tag courseId:
 // CourseId, days: integer)`, and a read gives those after the tags
 // too. `each` before a value reads once per element of a list. A read may sit anywhere an
-// operand does — `require CourseStatus(courseId) == Existent`, an
+// operand does – `require CourseStatus(courseId) == Existent`, an
 // emission's `courseId: CourseNumbering()`, another read's value
-// `OwnedCourses(CourseOwner(courseId))` — and an `alias` only names
+// `OwnedCourses(CourseOwner(courseId))` – and an `alias` only names
 // one; written twice, it is one query. A call is a read when a
 // projection is declared by its name and a tag literal otherwise,
 // settled once every declaration is known. An entity (experimental) is
 // declared the same way, `entity Course (tag courseId: CourseId)`, and
-// read `Course(courseId)` — `Course(each …)` for many, its scripted
+// read `Course(courseId)` – `Course(each …)` for many, its scripted
 // properties' arguments given by name after the identifier.
 //
 // The read is a function application, and spelled as one on purpose: a
 // projection is a pure function of the log, its tags and its arguments.
-// What a call does not say — that the read becomes part of the
-// consistency boundary — no read spelling could, and the editor says
+// What a call does not say – that the read becomes part of the
+// consistency boundary – no read spelling could, and the editor says
 // it beside each command instead. Brackets were rejected: `X[c1]` reads
 // as a lookup into a stored table, the read model DCB moves away from.
 // The 8.0 draft's `X tagged courseId` and `with (…)` are errors that
@@ -84,20 +84,20 @@
 // it was left out: an alias is always written, since the schema stores
 // it. A fan-out is marked where the schema marks it, `{each: …}`, on a
 // projection read's tag and an entity read's identifier alike. A read's
-// values are positional in the text and named in the stored shape —
+// values are positional in the text and named in the stored shape –
 // which is why the printer and the parser take what each projection
 // declares (`sourceNamesOf`), and why a read of a projection the text
 // does not declare is printed as JSON.
 //
 // **`alias`, not `read`.** The statement names an instance for the
-// rules below it; it reads nothing at that line — the query is derived
+// rules below it; it reads nothing at that line – the query is derived
 // from what the rules use (`deriveDcb`). `read` suggested the opposite,
 // and `alias` is the wire format's own word for the name.
 //
 // One spelling is read but never printed: `x in xs`, where `xs` is a
 // list held in data rather than a literal `[..]`, is `xs contains x`
 // with its sides swapped. Membership is said both ways round, and a
-// rule about one value reads with that value first — but the schema
+// rule about one value reads with that value first – but the schema
 // has one shape for it, so the text comes back as `contains`. Nothing
 // is inferred: which predicate it is follows from the token after
 // `in`, never from a type.
@@ -106,7 +106,7 @@
 // is DCB-native, and its `emit Event { field }` shorthand and `on
 // Event => …` fold arms are taken as they are. Weltenwanderer
 // (weltenwanderer.dev) contributes `require … else reject "…"` and
-// `type X = string` — and with the first, that every rule says what it
+// `type X = string` – and with the first, that every rule says what it
 // is refused with: the message is required, as it is there.
 // Where both disagree with the wire format, the wire format wins:
 // heklang's `fold` is a read *and* its accumulator in one place, here
@@ -130,18 +130,18 @@
 // `increment 1` without loss; it is not, because an arm that looks
 // like an expression invites `state + 2 * event.data.n`, which no
 // operation stores. The vocabulary is closed because it is analysed,
-// not only run — what an editor offers per type (`operationsFor`),
+// not only run – what an editor offers per type (`operationsFor`),
 // whether a boolean only ever moves one way (`isMonotoneBoolean`),
-// which event moves a lifecycle — and a keyword shows that edge where
+// which event moves a lifecycle – and a keyword shows that edge where
 // an expression would hide it. Arithmetic *between* values is a derived
 // projection's (9.0): `derived projection Left (…): integer { Cap(x) -
-// Taken(x) }`, one operator — `+`, `-`, `*`, `min(a, b)`, `max(a, b)` —
+// Taken(x) }`, one operator – `+`, `-`, `*`, `min(a, b)`, `max(a, b)` –
 // over two projections or literals, outside any fold, so the fold arms
 // stay keywords. What neither says is what a script is for (experimental):
 // its arms are expressions over `state`, `event` and `args`, behind a
 // door that says analysis stops there. Expect the list to stay short:
 // each new operation is a major (a reader fails on one it does not
-// know) and has to earn its place by being analysable — a
+// know) and has to earn its place by being analysable – a
 // duplicate-free append is the candidate in sight.
 //
 // **What kind a projection is, it says in front**: `derived projection`
@@ -153,7 +153,7 @@
 //
 // **Operand names resolve per command.** A bare or dotted lowercase
 // name is an alias when some `alias` in the same command declares it
-// and a payload property otherwise — the schema keeps the two apart, a
+// and a payload property otherwise – the schema keeps the two apart, a
 // text can only do so by scope. A name that is neither (a dangling
 // reference, which the model allows and advises about) reads as a
 // property when bare and as an alias when dotted, the common case of
@@ -161,14 +161,14 @@
 //
 // **Nothing is ever lost by printing.** Each definition is printed and
 // then parsed back on the spot, and one that does not come back equal
-// (`sameDefinition`) — a defective body, a name the grammar cannot
-// write, a parameter and a read sharing a name — is printed as its
+// (`sameDefinition`) – a defective body, a name the grammar cannot
+// write, a parameter and a read sharing a name – is printed as its
 // stored JSON instead (`command Foo json { … }`), under a comment
 // saying why. So the text always says everything the model does, and
 // an untouched text applies as no change at all.
 //
 // **Scenarios sit in the block of what they exercise**, in one
-// `scenarios` group that ends it — a command's run it, a projection's
+// `scenarios` group that ends it – a command's run it, a projection's
 // assert its value:
 //
 //   scenarios {
@@ -190,9 +190,9 @@
 // Each of given, when and then is said once, and what follows it
 // continues with `and`, so a scenario reads as the sentence it is. A
 // keyword said again is an error whose fix is `and`. There is still one
-// command per scenario — `and` after a when is the same error as a
+// command per scenario – `and` after a when is the same error as a
 // second when.
-// The group is syntax only — the wire format has no such thing — and
+// The group is syntax only – the wire format has no such thing – and
 // it is required, because it is what the editor folds: a model's
 // examples can outweigh its definitions many times over, and one fold
 // per block puts them away as one line. A scenario outside a group is
@@ -200,16 +200,16 @@
 // groups is one click from reading.
 //
 // The subject is named (`when DefineCourse`, `then CourseStatus(…)`)
-// and must be the block's — a scenario moved into the wrong block is an
+// and must be the block's – a scenario moved into the wrong block is an
 // error, not a reassignment; one whose subject is gone sits in a group
 // at the top level. A Then is the scenario's assertion and is stored as written.
 // Left out, it is an error that says what the text's definitions make
-// of the scenario, and whose fix writes that in — one scenario, or all
+// of the scenario, and whose fix writes that in – one scenario, or all
 // of them at once: the text says everything the model stores, so an
 // apply never records an outcome nobody saw. An agent is the exception
 // (`recordOutcomes`): it is not asked to predict an outcome, so its
 // apply records one and says which. A refusal is named by its
-// rule's message and by nothing else — not the condition, not what it
+// rule's message and by nothing else – not the condition, not what it
 // read: rules sharing a message are one outcome, and the message is
 // what the command is refused with. A Then that disagrees with
 // the text is drift: shown, with a fix that accepts it, and never
@@ -218,14 +218,14 @@
 // blocks to stored scenarios by content, then by place, so an edited or
 // renamed-along scenario keeps its id (`sourceScenarioCollections`).
 //
-// Comments are not stored — the model has nowhere to keep them — so
+// Comments are not stored – the model has nowhere to keep them – so
 // they survive as long as the text in the editor does and no longer.
 //
 // **The editor knows what each name is** (the language service, at the
 // end). The parser marks which token every part of a body came from;
 // `sourceSymbols` walks the bodies and resolves each marked name to the
-// one thing it means — `member CourseStatus Existent`, never a word
-// that happens to match — so a rename (`sourceRename`) touches exactly
+// one thing it means – `member CourseStatus Existent`, never a word
+// that happens to match – so a rename (`sourceRename`) touches exactly
 // those tokens, and refuses rather than guess: over a script or json
 // body the name may also hide in, a member whose enum the text cannot
 // tell, or a result that would not read back the same. A read in place
@@ -234,8 +234,8 @@
 // (`sourceCompletions`) reads the cursor's place off the tokens before
 // it, since a text being typed rarely parses there. And beside every
 // `alias` it says how many event types that alias adds to the append
-// condition, and names them on hover (`sourceReadQueries`) — only the
-// used properties' — since `alias course = Course(courseId)` otherwise
+// condition, and names them on hover (`sourceReadQueries`) – only the
+// used properties' – since `alias course = Course(courseId)` otherwise
 // reads as the whole entity; and beside each command, what it reads in
 // all (`sourceCommandQueries`), in the same words.
 // ============================================================
@@ -290,7 +290,7 @@ const SOURCE_COUNT_PREDICATES = { '==': 'countEquals', '<': 'countLessThan', '>'
 const SOURCE_UNARY_WORDS = { isEmpty: 'is empty', isNotEmpty: 'is not empty', isTrue: 'is true', isFalse: 'is false' };
 
 // A definition with no IDENT-safe name, or an object key that is not
-// one, can still be put — `__proto__` is a legal identifier, and an
+// one, can still be put – `__proto__` is a legal identifier, and an
 // assignment would set a prototype instead of a key.
 function sourcePut(target, key, value) {
   Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true });
@@ -350,7 +350,7 @@ function lexSource(text) {
       token = { t: 'code', v: value };
     } else if (c === '"') {
       let j = i + 1;
-      // A backslash escapes the next character — but never a line break:
+      // A backslash escapes the next character – but never a line break:
       // a string does not run on past the end of its line, or one stray
       // backslash swallows the declaration below it.
       while (j < text.length && text[j] !== '"' && text[j] !== '\n') {
@@ -373,7 +373,7 @@ function lexSource(text) {
       const match = SOURCE_NUMBER_RE.exec(text);
       advanceTo(i + match[0].length);
       token = { t: 'number', v: Number(match[0]) };
-      // Past what a double holds, a number reads as Infinity — and is
+      // Past what a double holds, a number reads as Infinity – and is
       // stored as null, JSON having no Infinity.
       if (!Number.isFinite(token.v)) report('This number is too large to store.', start);
     } else if (/[A-Za-z_]/.test(c)) {
@@ -422,7 +422,7 @@ function describeToken(token) {
 
 // The text, read back: `{ name, collections, spans, diagnostics,
 // implicit }`. `collections` holds one ordered `{ name: body }` map per
-// source kind — the shape `replaceDefinitions` takes. `spans` says
+// source kind – the shape `replaceDefinitions` takes. `spans` says
 // where each definition sits (1-based, Monaco's convention), for
 // markers, navigation and the outline. `implicit` names the identifier
 // types synthesized for entities whose type the text never declared:
@@ -463,7 +463,7 @@ function parseModelSourceText(text, options) {
   // Which token each part of a body was read from, keyed by the object
   // that holds it: `mark(binding, 'alias', token)`. Kept beside the
   // bodies rather than in them, so what is parsed is still exactly the
-  // stored shape — the language service (references, rename) is the
+  // stored shape – the language service (references, rename) is the
   // only reader.
   const mark = (object, slot, token) => {
     if (!object || typeof object !== 'object' || !token) return;
@@ -492,7 +492,7 @@ function parseModelSourceText(text, options) {
   const accept = (v) => (is(v) ? next() : null);
   const fail = (message, token = peek()) => { throw new SourceError(message, token); };
   const expect = (v, what) => accept(v) || fail(`Expected ${what || `"${v}"`}, found ${describeToken(peek())}.`);
-  // How deep the value being read is nested — a list in a list, a read
+  // How deep the value being read is nested – a list in a list, a read
   // in a read. Every recursive reader steps in and out through these,
   // and past SOURCE_MAX_DEPTH the read fails where it happens, as a
   // diagnostic, long before the stack would. Reset per declaration, so
@@ -505,8 +505,8 @@ function parseModelSourceText(text, options) {
   const ident = (what) => (peek().t === 'ident' ? next() : fail(`Expected ${what}, found ${describeToken(peek())}.`));
   const declName = (what) => (peek().t === 'ident' || peek().t === 'string'
     ? next() : fail(`Expected ${what}, found ${describeToken(peek())}.`));
-  // A line that plainly opens the next declaration — a declaration
-  // word followed by a name, or an annotation — ends whatever block is
+  // A line that plainly opens the next declaration – a declaration
+  // word followed by a name, or an annotation – ends whatever block is
   // still open, so a missing "}" is reported where it is missing
   // rather than as nonsense about the declaration below it. "Plainly",
   // because `type: string` is a property called type.
@@ -531,7 +531,7 @@ function parseModelSourceText(text, options) {
 
   // ---------- values ----------
 
-  // JSON, read off the token stream — the schema object of a `type`,
+  // JSON, read off the token stream – the schema object of a `type`,
   // a script's `initialState`, a definition's fallback body. Keys may
   // be bare words as well as strings; the printer writes them bare.
   const jsonValue = () => {
@@ -566,7 +566,7 @@ function parseModelSourceText(text, options) {
     return fail(`Expected a JSON value, found ${describeToken(token)}.`);
   };
 
-  // A literal, an enum member, or a list of those — what an initial
+  // A literal, an enum member, or a list of those – what an initial
   // value, an `in [..]` list and the literal side of any rule hold.
   const literalValue = () => {
     const token = peek();
@@ -607,7 +607,7 @@ function parseModelSourceText(text, options) {
       && (['true', 'false', 'null', 'enum'].includes(token.v) || SOURCE_MEMBER_RE.test(token.v));
   };
 
-  // A name in a command, resolved once the whole command is read —
+  // A name in a command, resolved once the whole command is read –
   // which `alias` declares it is not known until then.
   const nameRef = () => {
     const headToken = next();
@@ -622,8 +622,8 @@ function parseModelSourceText(text, options) {
   };
 
   // An operand in a command. A capitalised name followed by `(` is a
-  // call — a projection read, `CourseStatus(courseId)`, or a typed tag
-  // literal, `CourseId("c1")` — and bare, an enum member. Which a call is
+  // call – a projection read, `CourseStatus(courseId)`, or a typed tag
+  // literal, `CourseId("c1")` – and bare, an enum member. Which a call is
   // is settled once every declaration is known (`settle`, after the
   // parse), by name, the way an operand resolves to an alias or a
   // payload property.
@@ -642,8 +642,8 @@ function parseModelSourceText(text, options) {
     return literalValue();
   };
 
-  // `Name(a, each b, key: c)`: the values in order — `each` marking the
-  // one a read fans out over — and `key: value` pairs, which only an
+  // `Name(a, each b, key: c)`: the values in order – `each` marking the
+  // one a read fans out over – and `key: value` pairs, which only an
   // entity read takes (its scripted properties' arguments).
   const call = (valueOf) => {
     const callee = next();
@@ -688,9 +688,9 @@ function parseModelSourceText(text, options) {
   const oldReadSpelling = (target) => fail(
     `A read gives its values in parentheses, in the order ${target.v} declares them: ${target.v}(…).`, peek(1));
 
-  // A derived projection's operand: another projection's value — read
+  // A derived projection's operand: another projection's value – read
   // with the values it declares, each one of this projection's own tags
-  // by name, a typed literal, or a literal argument — or an enum member
+  // by name, a typed literal, or a literal argument – or an enum member
   // or a literal. Settled like a command's (`settle`).
   const derivedOperand = () => {
     const token = peek();
@@ -716,7 +716,7 @@ function parseModelSourceText(text, options) {
   };
 
   // What a derived projection derives: `min(a, b)` / `max(a, b)`, an
-  // operand, one of + - *, and another — or else a comparison, read the
+  // operand, one of + - *, and another – or else a comparison, read the
   // way a rule is.
   const derivedExpression = () => {
     for (const word of SOURCE_OPERATOR_CALLS) {
@@ -743,7 +743,7 @@ function parseModelSourceText(text, options) {
 
   const handlerOperand = () => {
     if (is('event')) {
-      next(); expect('.'); expect('data', '"data" — an event value is read as event.data.<property>'); expect('.');
+      next(); expect('.'); expect('data', '"data" – an event value is read as event.data.<property>'); expect('.');
       const property = ident('an event property');
       const operand = { eventProperty: property.v };
       mark(operand, 'eventProperty', property);
@@ -761,7 +761,7 @@ function parseModelSourceText(text, options) {
   };
   const startsHandlerOperand = () => startsLiteral() || is('event') || is('currentValue') || is('successor');
 
-  // `name: operand` pairs — or a bare `name`, short for `name: name`.
+  // `name: operand` pairs – or a bare `name`, short for `name: name`.
   const argumentList = (close, operand) => {
     const out = {};
     while (!is(close)) {
@@ -800,7 +800,7 @@ function parseModelSourceText(text, options) {
     const leftHandSide = operand();
     if (accept('is')) {
       let predicate;
-      if (accept('not')) { expect('empty', '"empty" — the one thing "is not" is followed by'); predicate = 'isNotEmpty'; }
+      if (accept('not')) { expect('empty', '"empty" – the one thing "is not" is followed by'); predicate = 'isNotEmpty'; }
       else if (accept('empty')) predicate = 'isEmpty';
       else if (accept('true')) predicate = 'isTrue';
       else if (accept('false')) predicate = 'isFalse';
@@ -816,7 +816,7 @@ function parseModelSourceText(text, options) {
     if (accept('not')) negate = !negate;
     if (accept('in')) {
       if (is('[')) return finish({ leftHandSide, predicate: 'equalsAny', rightHandSide: literalValue() }, negate);
-      // `x in xs` against data is `xs contains x`, sides swapped — the
+      // `x in xs` against data is `xs contains x`, sides swapped – the
       // way membership reads when the one value is what the rule is
       // about. It stores, and so prints, as `contains`.
       return finish({ leftHandSide: operand(), predicate: 'contains', rightHandSide: leftHandSide }, negate);
@@ -853,7 +853,7 @@ function parseModelSourceText(text, options) {
   };
 
   // A projection's header, `(tag courseId: CourseId, days: integer)`:
-  // the tags it is read by, marked `tag`, then — only for a script — the
+  // the tags it is read by, marked `tag`, then – only for a script – the
   // values its code takes besides. Tags first, since a read gives them in
   // this order.
   const projectionParameterList = () => {
@@ -867,7 +867,7 @@ function parseModelSourceText(text, options) {
       expect(':');
       const typeToken = ident('a type');
       if (tagToken) {
-        if (args.length) fail('Tags come first — a read gives the tags, then the values a script takes.', tagToken);
+        if (args.length) fail('Tags come first – a read gives the tags, then the values a script takes.', tagToken);
         const tag = { name: nameToken.v, tagType: typeToken.v };
         mark(tag, 'name', nameToken);
         mark(tag, 'tagType', typeToken);
@@ -891,7 +891,7 @@ function parseModelSourceText(text, options) {
       diagnostics.push({
         severity: 'error',
         message: `${sourceArticle(SOURCE_KEYWORD[kind]) === 'an' ? 'An' : 'A'} ${SOURCE_KEYWORD[kind]} named "${name}" `
-          + 'is already defined above — one of the two has to go.',
+          + 'is already defined above – one of the two has to go.',
         line: nameToken.line, col: nameToken.col, endLine: nameToken.endLine, endCol: nameToken.endCol,
       });
       return;
@@ -906,7 +906,7 @@ function parseModelSourceText(text, options) {
     });
   };
 
-  // `kind NAME json { … }` — the stored body, whole. What the printer
+  // `kind NAME json { … }` – the stored body, whole. What the printer
   // falls back to for anything it cannot say, and a way to write what
   // the grammar does not cover yet.
   const jsonBody = () => {
@@ -920,7 +920,7 @@ function parseModelSourceText(text, options) {
   const annotate = (kind, body, annotations) => {
     for (const { name, value, token } of annotations) {
       const allowed = Object.prototype.hasOwnProperty.call(SOURCE_ANNOTATIONS, name) ? SOURCE_ANNOTATIONS[name] : null;
-      if (!allowed) fail(`There is no @${name} — the annotations are @icon, @feature and @tagSchema.`, token);
+      if (!allowed) fail(`There is no @${name} – the annotations are @icon, @feature and @tagSchema.`, token);
       if (!allowed.includes(kind)) fail(`A ${SOURCE_KEYWORD[kind]} carries no @${name}.`, token);
       if (body[name] !== undefined) fail(`@${name} is given twice.`, token);
       body[name] = value;
@@ -957,7 +957,7 @@ function parseModelSourceText(text, options) {
         mark(field, 'name', nameToken);
         mark(field, 'propertyType', typeToken);
         properties.push(field);
-        if (is('[') || is('?')) fail('A record field is always one required value — a list or an optional field cannot be zipped.');
+        if (is('[') || is('?')) fail('A record field is always one required value – a list or an optional field cannot be zipped.');
         if (!accept(',') && peek().t !== 'ident') break;
       }
       expect('}', '"}" or ","');
@@ -968,7 +968,7 @@ function parseModelSourceText(text, options) {
       else {
         const base = ident('a base type');
         if (!SOURCE_BASE_TYPES.includes(base.v)) {
-          fail(`A value type is one of ${SOURCE_BASE_TYPES.join(', ')} — or a JSON Schema object — `
+          fail(`A value type is one of ${SOURCE_BASE_TYPES.join(', ')} – or a JSON Schema object – `
             + `not "${base.v}". (A record of fields is written "record ${nameToken.v} { … }".)`, base);
         }
         const schema = { type: base.v };
@@ -1013,7 +1013,7 @@ function parseModelSourceText(text, options) {
         const marker = next();
         const each = accept('each');
         if (isList && !each) fail(`${propertyToken.v} holds a list, so it is tagged by each element: tag each <field>.`, marker);
-        if (!isList && each) fail(`${propertyToken.v} holds one record — "each" is for a list: tag <field>.`, each);
+        if (!isList && each) fail(`${propertyToken.v} holds one record – "each" is for a list: tag <field>.`, each);
         const fields = [];
         if (accept('(')) {
           do fields.push(ident('a record field')); while (accept(','));
@@ -1037,7 +1037,7 @@ function parseModelSourceText(text, options) {
     const nameToken = declName('an entity name');
     if (is('json')) return define('entity-definition', nameToken, annotate('entity-definition', jsonBody(), annotations), start);
     const body = {};
-    // `(tag courseId: CourseId)` — the one tag an instance is read by,
+    // `(tag courseId: CourseId)` – the one tag an instance is read by,
     // named. The defaults, `<Name>Id` named `<name>Id`, are the entity
     // tracking its own name and are stored as absent, which is how the
     // model keeps them.
@@ -1046,11 +1046,11 @@ function parseModelSourceText(text, options) {
       fail(`Say what ${nameToken.v} is tagged by: entity ${nameToken.v} (tag ${lowered}Id: ${nameToken.v}Id).`, peek());
     }
     next();
-    expect('tag', '"tag" — an entity is read by one tag, its identifier');
+    expect('tag', '"tag" – an entity is read by one tag, its identifier');
     const idName = ident('the name of its tag');
     expect(':');
     const typeToken = ident('the identifier type');
-    expect(')', '")" — an entity has one tag');
+    expect(')', '")" – an entity has one tag');
     if (typeToken.v !== nameToken.v + 'Id') body.identifierType = typeToken.v;
     if (idName.v !== typeToken.v.charAt(0).toLowerCase() + typeToken.v.slice(1)) body.identifierName = idName.v;
     mark(body, 'identifierType', typeToken);
@@ -1082,7 +1082,7 @@ function parseModelSourceText(text, options) {
 
   // `untagged` before `projection` says the projection folds the whole
   // log; anything else names its tags in its header. Saying neither is
-  // an error with both fixes — the partition is too easy to forget for
+  // an error with both fixes – the partition is too easy to forget for
   // the text to assume one.
   //
   // `derived` or `scripted` right before `projection` says what kind it
@@ -1095,8 +1095,8 @@ function parseModelSourceText(text, options) {
     const derivedKind = !!kind && kind.v === 'derived';
     const scriptedKind = !!kind && kind.v === 'scripted';
     if (is('json')) {
-      if (untagged) fail('A json body says its own tags — drop "untagged".', untagged);
-      if (kind) fail(`A json body says what it is — drop "${kind.v}".`, kind);
+      if (untagged) fail('A json body says its own tags – drop "untagged".', untagged);
+      if (kind) fail(`A json body says what it is – drop "${kind.v}".`, kind);
       return define('projection-definition', nameToken, annotate('projection-definition', jsonBody(), annotations), start);
     }
     annotate('projection-definition', {}, annotations);
@@ -1105,15 +1105,15 @@ function parseModelSourceText(text, options) {
     // What a read gives besides the tags is what the code takes, so only
     // a script declares any.
     if (header.args.length && !scriptedKind) {
-      fail(`Only a scripted projection takes values besides its tags — ${header.args[0].argument.name} is not a tag `
+      fail(`Only a scripted projection takes values besides its tags – ${header.args[0].argument.name} is not a tag `
         + `(scripted projection ${nameToken.v} (…)).`, header.args[0].token);
     }
-    if (untagged && header.tags.length) fail(`${nameToken.v} is declared untagged and tagged by ${header.tags.map((t) => t.name).join(', ')} — one or the other.`, untagged);
+    if (untagged && header.tags.length) fail(`${nameToken.v} is declared untagged and tagged by ${header.tags.map((t) => t.name).join(', ')} – one or the other.`, untagged);
     if (!untagged && !header.tags.length) {
       const lowered = nameToken.v.charAt(0).toLowerCase() + nameToken.v.slice(1);
       diagnostics.push({
         severity: 'error',
-        message: `Say what ${nameToken.v} is tagged by — projection ${nameToken.v} (tag ${lowered}Id: …) — or that it is untagged.`,
+        message: `Say what ${nameToken.v} is tagged by – projection ${nameToken.v} (tag ${lowered}Id: …) – or that it is untagged.`,
         line: nameToken.line, col: nameToken.col, endLine: nameToken.endLine, endCol: nameToken.endCol,
         fix: {
           line: (kind || keyword).line, col: (kind || keyword).col, endLine: (kind || keyword).line, endCol: (kind || keyword).col,
@@ -1127,14 +1127,14 @@ function parseModelSourceText(text, options) {
     body.valueType = valueType.v;
     mark(body, 'valueType', valueType);
     body.isList = !!(accept('[') && expect(']'));
-    if (is('=') && derivedKind) fail(`A derived projection has no initial value — before any event it is what its operands start at.`);
+    if (is('=') && derivedKind) fail(`A derived projection has no initial value – before any event it is what its operands start at.`);
     if (accept('=')) body.initialValue = literalValue();
     if (is('derived')) {
       fail(`"derived" goes in front, and what it derives in the block: derived projection ${nameToken.v} (…): `
         + `${body.valueType} { … }.`);
     }
     if (derivedKind) {
-      expect('{', `"{" and what it derives — derived projection ${nameToken.v} (…): ${body.valueType} { A(…) - B(…) }`);
+      expect('{', `"{" and what it derives – derived projection ${nameToken.v} (…): ${body.valueType} { A(…) - B(…) }`);
       body.derived = derivedExpression();
     }
     if (derivedKind || accept('{')) {
@@ -1150,12 +1150,12 @@ function parseModelSourceText(text, options) {
       const bare = [];
       while (!is('}')) {
         guardBlock('}');
-        if (group && !is('scenarios')) fail('The scenarios group comes last — nothing follows it in the block.');
+        if (group && !is('scenarios')) fail('The scenarios group comes last – nothing follows it in the block.');
         if (derivedKind && !is('scenarios') && !is('scenario')) {
-          fail(`A derived projection's block holds what it derives, then its scenarios — found ${describeToken(peek())}.`);
+          fail(`A derived projection's block holds what it derives, then its scenarios – found ${describeToken(peek())}.`);
         }
         if (!scriptedKind && (is('initialState') || is('exposes'))) {
-          fail(`Only a scripted projection has ${peek().v} — scripted projection ${nameToken.v} (…).`);
+          fail(`Only a scripted projection has ${peek().v} – scripted projection ${nameToken.v} (…).`);
         }
         if (accept('on')) {
           const eventToken = ident('an event name');
@@ -1169,7 +1169,7 @@ function parseModelSourceText(text, options) {
           } else {
             const op = ident('an operation (set, increment, decrement, append, remove) or a ```code``` block');
             if (!OPERATIONS.includes(op.v)) {
-              fail(`"${op.v}" is not an operation — set, increment, decrement, append or remove.`, op);
+              fail(`"${op.v}" is not an operation – set, increment, decrement, append or remove.`, op);
             }
             const handler = { event, operation: op.v };
             mark(handler, 'event', eventToken);
@@ -1213,7 +1213,7 @@ function parseModelSourceText(text, options) {
     expect('(', '"(" and the payload');
     body.properties = propertyList(')');
     // Where the header ends, for what the editor says about the command
-    // as a whole (`sourceCommandQueries`) — not a name.
+    // as a whole (`sourceCommandQueries`) – not a name.
     mark(body, 'open', expect('{'));
     body.boundary = [];
     body.conditions = [];
@@ -1223,7 +1223,7 @@ function parseModelSourceText(text, options) {
     const bare = [];
     while (!is('}')) {
       guardBlock('}');
-      if (group && !is('scenarios')) fail('The scenarios group comes last — nothing follows it in the block.');
+      if (group && !is('scenarios')) fail('The scenarios group comes last – nothing follows it in the block.');
       const readToken = accept('alias');
       if (readToken) {
         const aliasToken = ident('the name of the alias');
@@ -1241,7 +1241,7 @@ function parseModelSourceText(text, options) {
         binding.alias = alias;
         mark(binding, 'alias', aliasToken);
         // The statement's extent, for what the editor says about the
-        // read as a whole (`sourceReadQueries`) — not names, so nothing
+        // read as a whole (`sourceReadQueries`) – not names, so nothing
         // resolves or renames them.
         mark(binding, 'statement', readToken);
         mark(binding, 'statementEnd', last());
@@ -1307,7 +1307,7 @@ function parseModelSourceText(text, options) {
   // A payload value: JSON, except that a bare capitalised word is an
   // enum member and reads as the string it is stored as.
   // A bare member is a string by then, so its token is marked on the
-  // container that holds it (`value:<key>`, `i:<n>`) — or, at the top,
+  // container that holds it (`value:<key>`, `i:<n>`) – or, at the top,
   // left in `memberToken` for the caller to place.
   let memberToken = null;
   const scenarioValue = () => {
@@ -1354,18 +1354,18 @@ function parseModelSourceText(text, options) {
       // The message is the whole assertion: what the rule read is how
       // the decision was made, not what it was.
       const rejected = string('the message the command was refused with, in quotes');
-      if (is('saw') || is('at')) fail('A refusal is named by its message alone — what the rule read is not asserted.');
+      if (is('saw') || is('at')) fail('A refusal is named by its message alone – what the rule read is not asserted.');
       return { rejected };
     }
     const name = ident('an event, a projection, nothing or rejected');
     if (is('{')) return { event: name.v, data: scenarioValue(), subjectToken: name };
     // A projection, read the way a command reads it: its values in the
-    // order it declares them — tag literals here, each with its type,
-    // then the values a script takes — settled against the declaration
+    // order it declares them – tag literals here, each with its type,
+    // then the values a script takes – settled against the declaration
     // after the parse.
     const item = { projection: name.v, subjectToken: name };
     if (is('tagged') || is('with')) oldReadSpelling(name);
-    if (!is('(')) fail(`A projection is read with its values in parentheses: ${name.v}(…) — empty for an untagged one.`, peek());
+    if (!is('(')) fail(`A projection is read with its values in parentheses: ${name.v}(…) – empty for an untagged one.`, peek());
     next();
     item.values = [];
     item.valueTokens = [];
@@ -1375,7 +1375,7 @@ function parseModelSourceText(text, options) {
         next(); next();
         const literal = { tagType: token.v, tagValue: literalValue() };
         mark(literal, 'tagType', token);
-        expect(')', '")" — a tag literal holds one value');
+        expect(')', '")" – a tag literal holds one value');
         item.values.push(literal);
         item.valueTokens.push(null);
       } else {
@@ -1392,7 +1392,7 @@ function parseModelSourceText(text, options) {
     return item;
   };
 
-  // `scenario ["name"] { given … when … then … }` — see the header. The
+  // `scenario ["name"] { given … when … then … }` – see the header. The
   // record keeps what an apply needs beyond the body: where it sits,
   // where its then lines are, and which parts were left to evaluation.
   const scenarioDecl = (start, block) => {
@@ -1416,13 +1416,13 @@ function parseModelSourceText(text, options) {
       const thens = [];
       // Each keyword is said once; what follows it continues with `and`.
       // Said again, it is read anyway and reported, with a fix when it
-      // follows its own kind — `and` is what it means.
+      // follows its own kind – `and` is what it means.
       const said = new Set();
       let previous = null;
       const once = (token) => {
         if (said.has(token.v)) {
           diagnostics.push({
-            severity: 'error', message: `A scenario says ${token.v} once — what follows continues with "and".`,
+            severity: 'error', message: `A scenario says ${token.v} once – what follows continues with "and".`,
             line: token.line, col: token.col, endLine: token.endLine, endCol: token.endCol,
             fix: previous === token.v ? {
               line: token.line, col: token.col, endLine: token.endLine, endCol: token.endCol,
@@ -1446,7 +1446,7 @@ function parseModelSourceText(text, options) {
           previous = 'given';
         } else if (is('when') || continued === 'when') {
           const token = next();
-          if (when) fail('A scenario runs one command — one when.', token);
+          if (when) fail('A scenario runs one command – one when.', token);
           const command = ident('the command it runs');
           when = { command: command.v, arguments: payload('the command\'s arguments'), token: command };
           previous = 'when';
@@ -1475,14 +1475,14 @@ function parseModelSourceText(text, options) {
       if (nameToken) body.name = nameToken.v;
       const projections = thens.filter((t) => t.projection !== undefined);
       if (when) {
-        if (projections.length) fail('A scenario that runs a command ends in events, nothing or a rejection — not in a projection\'s value.', projections[0].token);
+        if (projections.length) fail('A scenario that runs a command ends in events, nothing or a rejection – not in a projection\'s value.', projections[0].token);
         record.kind = 'scenario-definition';
         record.subject = when.command;
         subjectToken = when.token;
         Object.assign(body, { command: when.command, given, when: { arguments: when.arguments } });
         const rejections = thens.filter((t) => t.rejected);
-        if (rejections.length && thens.length > 1) fail('A rejection is the whole outcome — it stands alone.', rejections[0].token);
-        if (thens.some((t) => t.nothing) && thens.length > 1) fail('"then nothing" is the whole outcome — it stands alone.', thens[1].token);
+        if (rejections.length && thens.length > 1) fail('A rejection is the whole outcome – it stands alone.', rejections[0].token);
+        if (thens.some((t) => t.nothing) && thens.length > 1) fail('"then nothing" is the whole outcome – it stands alone.', thens[1].token);
         if (rejections.length) {
           body.then = { outcome: 'rejected', events: [], rejection: rejections[0].rejected };
         } else if (thens.length) {
@@ -1492,8 +1492,8 @@ function parseModelSourceText(text, options) {
           };
         }
       } else {
-        if (thens.length > 1) fail('A projection scenario asserts one value — one then.', thens[1].token);
-        if (thens.length && !projections.length) fail('A scenario ending in events, nothing or a rejection needs a when — the command it runs.', thens[0].token);
+        if (thens.length > 1) fail('A projection scenario asserts one value – one then.', thens[1].token);
+        if (thens.length && !projections.length) fail('A scenario ending in events, nothing or a rejection needs a when – the command it runs.', thens[0].token);
         record.kind = 'projection-scenario-definition';
         if (projections.length) {
           const item = projections[0];
@@ -1524,7 +1524,7 @@ function parseModelSourceText(text, options) {
     if (block) {
       const wanted = block.kind === 'command-definition' ? 'scenario-definition' : 'projection-scenario-definition';
       if (record.kind !== wanted || record.subject !== block.name) {
-        fail(`This scenario sits in ${block.name} but is about ${record.subject} — move it there, or make it about ${block.name}.`, subjectToken);
+        fail(`This scenario sits in ${block.name} but is about ${record.subject} – move it there, or make it about ${block.name}.`, subjectToken);
       }
     }
     const end = last();
@@ -1534,7 +1534,7 @@ function parseModelSourceText(text, options) {
     return record;
   };
 
-  // `scenarios { scenario … scenario … }` — a block's scenarios, held
+  // `scenarios { scenario … scenario … }` – a block's scenarios, held
   // together so the editor can fold them as one. A block has at most
   // one group, and it is the block's last statement.
   const scenariosGroup = (block, previous = null) => {
@@ -1543,7 +1543,7 @@ function parseModelSourceText(text, options) {
     // scenarios in it are not lost to the error.
     if (previous) {
       diagnostics.push({
-        severity: 'error', message: 'A block has one scenarios group — move these scenarios into the first.',
+        severity: 'error', message: 'A block has one scenarios group – move these scenarios into the first.',
         line: head.line, col: head.col, endLine: head.endLine, endCol: head.endCol,
       });
     }
@@ -1563,8 +1563,8 @@ function parseModelSourceText(text, options) {
   // A scenario written outside a group is read anyway, so that what it
   // says is not lost to the error, and the error carries the fix: the
   // run it belongs to, wrapped. Offered only for a run that stands
-  // where a group may — one scenario after another, and at a block's
-  // end — which is how every text printed before groups reads.
+  // where a group may – one scenario after another, and at a block's
+  // end – which is how every text printed before groups reads.
   const source = String(text);
   const ungrouped = (records, endAt) => {
     const runs = [];
@@ -1629,7 +1629,7 @@ function parseModelSourceText(text, options) {
     if (is('event')) return eventDecl(start, annotations);
     if (is('entity')) return entityDecl(start, annotations);
     if (is('command')) return commandDecl(start, annotations);
-    return fail(`Expected a declaration — type, enum, record, event, entity, projection or command — `
+    return fail(`Expected a declaration – type, enum, record, event, entity, projection or command – `
       + `found ${describeToken(peek())}.`);
   };
 
@@ -1641,7 +1641,7 @@ function parseModelSourceText(text, options) {
       declaration();
     } catch (caught) {
       // The depth limit is the guard; a RangeError is the net under it,
-      // for a recursion it does not count — the promise is that errors
+      // for a recursion it does not count – the promise is that errors
       // never stop the read, and a stack overflow is one.
       const error = caught instanceof RangeError ? new SourceError(
         'This could not be read: it is nested too deeply.', tokens[from]) : caught;
@@ -1659,12 +1659,12 @@ function parseModelSourceText(text, options) {
 
   // A read names its target the same way whether it is an entity or a
   // projection, a call is a read or a tag literal by whether its name is
-  // a projection, and a bare capitalised name an enum member — all
+  // a projection, and a bare capitalised name an enum member – all
   // settled here, once every declaration in the text (and, for a
   // fragment, every one handed in) is known. Resolving by name, the way
   // an operand resolves to an alias or a payload property: nothing about
   // the stored shape is guessed. A read's values are given in the order
-  // its projection declares them — tags, then a script's arguments — and
+  // its projection declares them – tags, then a script's arguments – and
   // stored by name.
   const declares = (kind, option, name) =>
     Object.prototype.hasOwnProperty.call(collections[kind], name)
@@ -1693,13 +1693,13 @@ function parseModelSourceText(text, options) {
     const slots = [...params.tags.map((key) => ['tags', key]), ...params.arguments.map((key) => ['arguments', key])];
     if (values.length !== slots.length) {
       report(token, `${name} takes ${count(slots.length, 'value')}`
-        + `${slots.length ? ` (${slots.map(([, key]) => key).join(', ')})` : ''} — this gives ${values.length}.`);
+        + `${slots.length ? ` (${slots.map(([, key]) => key).join(', ')})` : ''} – this gives ${values.length}.`);
     }
     values.forEach((value, index) => {
       if (!slots[index]) return;
       const [where, key] = slots[index];
       if (where === 'arguments' && value && typeof value === 'object' && value.each !== undefined) {
-        report(token, `"each" fans a read out over one of its tags — ${key} is an argument.`);
+        report(token, `"each" fans a read out over one of its tags – ${key} is an argument.`);
       }
       read[where] = read[where] || {};
       sourcePut(read[where], key, value);
@@ -1717,7 +1717,7 @@ function parseModelSourceText(text, options) {
       const values = value.values.map(settle);
       if (value.named) for (const key of Object.keys(value.named)) value.named[key] = settle(value.named[key]);
       if (declares('projection-definition', 'projectionNames', name)) {
-        if (value.named) report(token, `A read gives its values in order, as ${name} declares them — no names.`);
+        if (value.named) report(token, `A read gives its values in order, as ${name} declares them – no names.`);
         const read = readOf(name, values, value.named ? null : token);
         mark(read, 'close', (marksOf(value) || {}).close);
         return read;
@@ -1728,7 +1728,7 @@ function parseModelSourceText(text, options) {
         mark(literal, 'tagType', token);
         return literal;
       }
-      report(token, `${name} is no projection — a read names one, and a tag literal is a type and one value: CourseId("c1").`);
+      report(token, `${name} is no projection – a read names one, and a tag literal is a type and one value: CourseId("c1").`);
       return { projection: name };
     }
     if (value['%pascal'] !== undefined) {
@@ -1737,7 +1737,7 @@ function parseModelSourceText(text, options) {
       if (declares('projection-definition', 'projectionNames', name)) {
         // A read takes its parentheses, empty or not: the bare name is
         // the enum member's spelling.
-        report(token, `${name} is a projection — read it as ${name}(…).`, token && {
+        report(token, `${name} is a projection – read it as ${name}(…).`, token && {
           line: token.endLine, col: token.endCol, endLine: token.endLine, endCol: token.endCol,
           text: '()', title: 'Read it with ()', label: '()',
         });
@@ -1764,12 +1764,12 @@ function parseModelSourceText(text, options) {
       if (named) for (const key of Object.keys(named)) named[key] = settle(named[key]);
       const out = { alias: binding.alias };
       if (!called) {
-        report(token, `${target} is read with its values in parentheses — ${target}(…), empty for an untagged projection.`);
+        report(token, `${target} is read with its values in parentheses – ${target}(…), empty for an untagged projection.`);
       }
       if (declares('entity-definition', 'entityNames', target)) {
         out.entity = target;
         if (called && values.length !== 1) {
-          report(token, `${target} is an entity, read by its identifier — one value: ${target}(…).`);
+          report(token, `${target} is an entity, read by its identifier – one value: ${target}(…).`);
         }
         out.id = values[0];
         if (named) out.arguments = named;
@@ -1779,9 +1779,9 @@ function parseModelSourceText(text, options) {
         out.projection = target;
         if (read.tags) out.tags = read.tags;
         if (read.arguments) out.arguments = read.arguments;
-        if (named) report(token, `A read gives its values in order, as ${target} declares them — no names.`);
+        if (named) report(token, `A read gives its values in order, as ${target} declares them – no names.`);
         if (binding.excluding !== undefined) {
-          report(token, `${target} is a projection — "excluding" narrows an entity's fan-out.`);
+          report(token, `${target} is a projection – "excluding" narrows an entity's fan-out.`);
         }
       }
       if (binding.isOptional) out.isOptional = true;
@@ -1810,7 +1810,7 @@ function parseModelSourceText(text, options) {
     const slots = [...params.tags.map((key) => ['tags', key]), ...params.arguments.map((key) => ['arguments', key])];
     if (written.values.length !== slots.length) {
       report(written.callee, `${body.projection} takes ${count(slots.length, 'value')}`
-        + `${slots.length ? ` (${slots.map(([, key]) => key).join(', ')})` : ''} — this gives ${written.values.length}.`);
+        + `${slots.length ? ` (${slots.map(([, key]) => key).join(', ')})` : ''} – this gives ${written.values.length}.`);
     }
     written.values.forEach((value, index) => {
       if (!slots[index]) return;
@@ -1822,7 +1822,7 @@ function parseModelSourceText(text, options) {
   }
   for (const record of result.scenarios) settle(record.body);
 
-  // Every entity's identifier type, declared or not — see above.
+  // Every entity's identifier type, declared or not – see above.
   const types = collections['custom-type-definition'];
   for (const [name, body] of Object.entries(collections['entity-definition'])) {
     const idType = (body && typeof body.identifierType === 'string' && body.identifierType) || name + 'Id';
@@ -1855,7 +1855,7 @@ function sourceDeclName(name) {
   return SOURCE_IDENT_RE.test(name) ? name : JSON.stringify(name);
 }
 
-// JSON, on one line when it is short — keys bare where they can be,
+// JSON, on one line when it is short – keys bare where they can be,
 // the way the parser reads them.
 function sourceJson(value, indent = '') {
   const flat = sourceJsonFlat(value);
@@ -1929,8 +1929,8 @@ function sourceBlock(head, items, { inline = 3, width = 90, separator = ', ' } =
   return `${head} {\n${items.map((i) => '  ' + i.replace(/\n/g, '\n  ')).join('\n')}\n}`;
 }
 
-// A derived projection's expression: a computation — `a - b`,
-// `min(a, b)` — or a comparison, spelled as a rule is.
+// A derived projection's expression: a computation – `a - b`,
+// `min(a, b)` – or a comparison, spelled as a rule is.
 function sourceDerived(derived, operand) {
   if (!derived || typeof derived !== 'object') unprintable('what it derives is not an object');
   if (derived.operator === undefined) return sourceCondition(derived, operand);
@@ -1978,7 +1978,7 @@ function sourceCondition(condition, operand) {
 
 // The names a printer needs beyond the definition it prints: which
 // names are entities and projections, and what each projection declares
-// — a read is written positionally, so its values are put in that order.
+// – a read is written positionally, so its values are put in that order.
 function sourceNamesOf(model) {
   const projections = model['projection-definitions'] || {};
   const projectionParameters = {};
@@ -2003,7 +2003,7 @@ function sourceTagLiteral(tag) {
   return `${tag.tagType}(${sourceLiteral(tag.tagValue)})`;
 }
 
-// `X(a, each b, 14)` — a read, its values in the order `X` declares
+// `X(a, each b, 14)` – a read, its values in the order `X` declares
 // them: the tags, then a script's arguments. A read whose names are not
 // exactly the declared ones has no positional spelling.
 function sourceRead(read, names, operand) {
@@ -2043,8 +2043,8 @@ function sourceHandlerOperand(operand) {
   return sourceLiteral(operand);
 }
 
-// A derived operand: another projection's read — its tags each one of
-// this projection's own by name, or a literal — or a literal.
+// A derived operand: another projection's read – its tags each one of
+// this projection's own by name, or a literal – or a literal.
 function sourceDerivedOperand(names) {
   const value = (v) => {
     if (v && typeof v === 'object' && !Array.isArray(v) && v.parameterName !== undefined) {
@@ -2088,7 +2088,7 @@ function printCustomType(name, body) {
   return tagSchema + `${tag}type ${declared} = ${sourceJson(schema)}`;
 }
 
-// An event, each property marked where it is a tag — `tag courseId:
+// An event, each property marked where it is a tag – `tag courseId:
 // CourseId`, `items: Item[] tag each productId`. A path naming no
 // property has no place to be marked, and falls back to JSON.
 function printEvent(name, body) {
@@ -2124,7 +2124,7 @@ function printEntity(name, body) {
   return sourceAnnotations(body, ['icon']) + sourceBlock(head, items, { inline: 0 });
 }
 
-// `projection Name (tag courseId: CourseId): T = v` — or `untagged
+// `projection Name (tag courseId: CourseId): T = v` – or `untagged
 // projection Name: T = v`, `derived projection Name (…): T { a - b }`,
 // `scripted projection Name (tag courseId: CourseId, days: integer): T
 // { … }`. The tags come first, then what a script takes besides, which
@@ -2158,7 +2158,7 @@ function printProjection(name, body, names) {
   if (body.handlers === undefined && script === undefined) return lines.join('\n');
   const items = [];
   if (script !== undefined) {
-    if (script.tagFilter !== undefined) unprintable('its script states a tag filter — a projection declares its tags');
+    if (script.tagFilter !== undefined) unprintable('its script states a tag filter – a projection declares its tags');
     if (script.initialState !== undefined) items.push(`initialState ${sourceJson(script.initialState, '  ')}`);
     if (script.exposes !== undefined) items.push(`exposes ${sourceRef(script.exposes, 'exposed field')}`);
   }
@@ -2179,7 +2179,7 @@ function printProjection(name, body, names) {
   return lines.join('\n');
 }
 
-// How a command writes an operand — the inverse of `resolveCommandNames`,
+// How a command writes an operand – the inverse of `resolveCommandNames`,
 // refusing whatever it would resolve differently.
 function sourceCommandOperand(body, names) {
   const aliases = new Set((body.boundary || []).map((b) => b && b.alias));
@@ -2289,7 +2289,7 @@ const SOURCE_PRINTERS = {
 
 // The line saying why a definition is written as JSON. A reason can
 // quote stored strings (a predicate, a tag key, an alias), and a line
-// break in one would end the comment and print the rest as code — code
+// break in one would end the comment and print the rest as code – code
 // an untouched text would then apply. So the reason is one line, always.
 function sourceFallbackComment(reason) {
   return `// Written as JSON: ${String(reason).replace(/[\r\n\u2028\u2029]+/g, ' ')}.`;
@@ -2369,7 +2369,7 @@ function sourceEventPayload(model, eventName, data) {
 
 // A command scenario's outcome as `then` lines. A refusal names its rule
 // in the rule's own syntax when the command still has a rule reading
-// that way, and as the stored text in quotes when it does not — the
+// that way, and as the stored text in quotes when it does not – the
 // scenario that drifted because its rule changed has to print too.
 function sourceCommandThen(model, commandName, then) {
   if (!then || typeof then !== 'object' || Array.isArray(then)) unprintable('its outcome is not an object');
@@ -2387,8 +2387,8 @@ function sourceCommandThen(model, commandName, then) {
 }
 
 // A projection scenario's `then`: the projection, read the way a
-// command reads it — its tags as literals that state their type, then
-// the arguments a script takes, in the order it declares them — and the
+// command reads it – its tags as literals that state their type, then
+// the arguments a script takes, in the order it declares them – and the
 // value it folds to.
 function sourceProjectionThen(model, body) {
   const projection = model['projection-definitions'][body.projection];
@@ -2400,7 +2400,7 @@ function sourceProjectionThen(model, body) {
   const argumentKeys = new Set(Object.keys((body.arguments && typeof body.arguments === 'object') ? body.arguments : {}));
   const call = sourceRead(body, sourceNamesOf(model), (value) => {
     // An argument is a payload value; a tag that is not a literal has no
-    // spelling here — a scenario states its values.
+    // spelling here – a scenario states its values.
     const key = [...argumentKeys].find((k) => body.arguments[k] === value);
     if (key === undefined) unprintable('a scenario is tagged by something other than a literal');
     return sourceScenarioValue(model, value, typeOf(key));
@@ -2440,7 +2440,7 @@ function printScenario(model, kind, body) {
 }
 
 // One scenario, in the grammar when it survives the trip back and as
-// JSON under a comment when it does not — `printDefinitionSource`'s
+// JSON under a comment when it does not – `printDefinitionSource`'s
 // contract, for a definition keyed by an id the text never shows.
 function printScenarioSource(model, kind, body) {
   let reason;
@@ -2475,8 +2475,8 @@ function sourceNest(text, scenarios) {
   return `${text} {\n${inner}\n}`;
 }
 
-// The whole model. Definitions of one kind sit in their stored order —
-// the text's order *is* the order an apply stores — and consecutive
+// The whole model. Definitions of one kind sit in their stored order –
+// the text's order *is* the order an apply stores – and consecutive
 // one-liners stay together, so twenty value types read as a table.
 // Scenarios sit in a group at the end of their command's or
 // projection's block; one whose subject is gone, or whose subject is
@@ -2540,7 +2540,7 @@ function modelSource(model) {
 
 // The model the text describes, as if it had been applied: its own
 // definitions, with the model's scenarios alongside since the text
-// leaves those alone. Never stored — what the editor asks questions of
+// leaves those alone. Never stored – what the editor asks questions of
 // (advisories, a command's boundary) before anything is written.
 function sourceDraftModel(model, parsed) {
   const draft = { id: model.id, name: parsed.name || model.name };
@@ -2571,8 +2571,8 @@ function sourceAdvisories(model, parsed) {
 // with a `CourseCapacityChanged`. The line says the opposite at a
 // glance, which is why the editor says beside it how many event types
 // it reads (`hint`, in the command line's words: "reads 2 types") and
-// the rest — the types themselves, tag, per-property events, the
-// properties left out, why the read is made — on hover. One whose
+// the rest – the types themselves, tag, per-property events, the
+// properties left out, why the read is made – on hover. One whose
 // properties nothing uses is queried by tag alone, every event under
 // it, and the hint says so rather than reading as empty.
 function sourceReadQueries(model, parsed) {
@@ -2613,7 +2613,7 @@ function sourceReadQueries(model, parsed) {
         properties: read.map((p) => ({ name: p.name, types: projectionHandledTypes(draft, p.projection).sort() })),
         unread: properties.filter((p) => !read.includes(p)).map((p) => p.name),
         reasons,
-        hint: `‹reads ${types}${item.fannedOut ? ', one per element' : ''}${reasons.length ? '' : ' — unused'}›`,
+        hint: `‹reads ${types}${item.fannedOut ? ', one per element' : ''}${reasons.length ? '' : ' – unused'}›`,
       });
     }
   }
@@ -2621,7 +2621,7 @@ function sourceReadQueries(model, parsed) {
 }
 
 // What each command reads in all, for its header line: the summary
-// every view gives (`boundarySummary` — "reads 5 types, 2 tags, in 2
+// every view gives (`boundarySummary` – "reads 5 types, 2 tags, in 2
 // queries") and the queries behind it, for the hover. `start`/`end`
 // span the header, from the line the name is on to its `{`.
 function sourceCommandQueries(model, parsed) {
@@ -2698,7 +2698,7 @@ const SCENARIO_SUBJECT = { 'scenario-definition': 'command', 'projection-scenari
 // already have. A scenario carries no id in the text, so which stored
 // one a block *is* is matched: an unchanged block by its content, an
 // edited one by its place among its subject's scenarios, one whose
-// subject was renamed by its place among the leftovers — and whatever
+// subject was renamed by its place among the leftovers – and whatever
 // is still unmatched is new.
 //
 // The collection order keeps the stored interleaving of subjects and
@@ -2763,7 +2763,7 @@ function sourceScenarioCollections(model, parsed) {
 }
 
 // A scenario's outcome as its `then` lines, or null where it cannot be
-// written — then there is no fix to offer.
+// written – then there is no fix to offer.
 function sourceThenLines(draft, record, actual) {
   try {
     return record.kind === 'scenario-definition'
@@ -2773,13 +2773,13 @@ function sourceThenLines(draft, record, actual) {
 }
 
 // The outcomes the scenario a line sits in could be written with, when
-// it has no Then yet — what completion offers where its Then is being
+// it has no Then yet – what completion offers where its Then is being
 // written. The line being typed is left out of the parse, since half a
 // then does not read; the rest of the text has to, as far as that
 // scenario. A command's scenario has one outcome. A projection's is a
 // value read with tag values, so the read the line already names is
 // the one asked, and where it names none, each read the given events
-// can tag — their properties of each tag's type — is tried. A script
+// can tag – their properties of each tag's type – is tried. A script
 // that takes arguments is not guessed at. Each outcome is its lines,
 // and for a projection its read and its value apart (`call`, `value`).
 function sourceOutcomesAt(model, text, line) {
@@ -2846,10 +2846,10 @@ function sourceOutcomesAt(model, text, line) {
 // What the editor says about each scenario of a draft: an error where
 // one cannot be recorded, a warning where it is broken or drifted, and
 // for a drift the `then` lines that would accept what the model now
-// does — the quick fix.
+// does – the quick fix.
 // A scenario the text writes without a Then is an error too: the text
 // says everything the model stores, so the outcome is written in, by
-// its fix — or by one that writes every missing outcome at once —
+// its fix – or by one that writes every missing outcome at once –
 // never recorded unseen by an apply. `recordOutcomes` is the agent's
 // path, where an omitted Then is recorded and only one that cannot
 // run is refused (`applyModelSource`).
@@ -2863,7 +2863,7 @@ function sourceScenarioReport(model, parsed, { recordOutcomes = false } = {}) {
     const done = completeScenario(draft, record);
     const at = { line: record.head.line, col: record.head.col, endLine: record.head.endLine, endCol: record.head.endCol };
     if (done.error) {
-      errors.push({ severity: 'error', message: recordOutcomes ? done.error : `No outcome — cannot run: ${done.reason}`, ...at });
+      errors.push({ severity: 'error', message: recordOutcomes ? done.error : `No outcome – cannot run: ${done.reason}`, ...at });
       continue;
     }
     if (done.status === 'recorded') {
@@ -2871,7 +2871,7 @@ function sourceScenarioReport(model, parsed, { recordOutcomes = false } = {}) {
       const lines = thenLines(record, done);
       const error = {
         severity: 'error',
-        message: 'No outcome yet — the model now does:\n' + (lines ? lines.join('\n') : JSON.stringify(done.actual)),
+        message: 'No outcome yet – the model now does:\n' + (lines ? lines.join('\n') : JSON.stringify(done.actual)),
         ...at,
       };
       if (lines && record.thenRange) {
@@ -2887,12 +2887,12 @@ function sourceScenarioReport(model, parsed, { recordOutcomes = false } = {}) {
       continue;
     }
     if (done.status === 'broken') {
-      warnings.push({ message: `Broken — ${done.reason}`, ...at });
+      warnings.push({ message: `Broken – ${done.reason}`, ...at });
       continue;
     }
     if (done.status !== 'drifted') continue;
     const lines = thenLines(record, done);
-    const warning = { message: 'Drifted — the model now does:\n' + (lines ? lines.join('\n') : JSON.stringify(done.actual)), ...at };
+    const warning = { message: 'Drifted – the model now does:\n' + (lines ? lines.join('\n') : JSON.stringify(done.actual)), ...at };
     if (lines && record.thenRange) {
       warning.fix = {
         ...record.thenRange,
@@ -2909,7 +2909,7 @@ function sourceScenarioReport(model, parsed, { recordOutcomes = false } = {}) {
   return { errors, warnings };
 }
 
-// Parses, refuses on any error, and writes the difference — one
+// Parses, refuses on any error, and writes the difference – one
 // append, one undo step, nothing at all when nothing changed. An
 // identifier type the text left implicit keeps whatever the model
 // already says about it, and its place, so leaving `tag type CourseId
@@ -2922,7 +2922,7 @@ function sourceScenarioReport(model, parsed, { recordOutcomes = false } = {}) {
 // `options.refuseRemovals` refuses a text that leaves a definition or
 // scenario out, rather than removing it (see replaceDefinitions).
 // A scenario written without a Then is refused, as the editor refuses
-// it — unless `options.recordOutcomes`, the agent's path: no one is
+// it – unless `options.recordOutcomes`, the agent's path: no one is
 // asked to predict an outcome there, so it is recorded, and the summary
 // says which (`recorded`).
 function applyModelSource(modelId, text, options = {}) {
@@ -2930,7 +2930,7 @@ function applyModelSource(modelId, text, options = {}) {
   const errors = parsed.diagnostics.filter((d) => d.severity === 'error');
   if (errors.length) {
     const first = errors[0];
-    throw new DomainError(`${errors.length} error${errors.length === 1 ? '' : 's'} in the code — nothing was `
+    throw new DomainError(`${errors.length} error${errors.length === 1 ? '' : 's'} in the code – nothing was `
       + `applied. Line ${first.line}: ${first.message}`);
   }
   const model = getCtxOrThrow(modelId);
@@ -2962,12 +2962,12 @@ function applyModelSource(modelId, text, options = {}) {
   if (scenarios.errors.length) {
     const [first] = scenarios.errors;
     throw new DomainError(`${scenarios.errors.length} scenario${scenarios.errors.length === 1 ? '' : 's'} cannot be `
-      + `recorded — nothing was applied. Line ${first.record.head.line}: ${first.message}`);
+      + `recorded – nothing was applied. Line ${first.record.head.line}: ${first.message}`);
   }
   if (scenarios.recorded.length && !options.recordOutcomes) {
     const [first] = scenarios.recorded;
     throw new DomainError(`${scenarios.recorded.length} scenario${scenarios.recorded.length === 1 ? ' has' : 's have'} `
-      + `no then — nothing was applied. Line ${first.head.line}: write the outcome in.`);
+      + `no then – nothing was applied. Line ${first.head.line}: write the outcome in.`);
   }
   const summary = replaceDefinitions(modelId, {
     name: parsed.name,
@@ -3005,14 +3005,14 @@ function sourceApplySummary(summary) {
 
 // ============================================================
 // The language service: what the editor knows about a text beyond
-// whether it parses — which definition each name in it stands for
+// whether it parses – which definition each name in it stands for
 // (go to definition, references, a rename that cannot hit a
 // look-alike) and what may be written at the cursor (completion).
 // Pure like the rest of this file; index.html only adapts it to
 // Monaco's providers.
 // ============================================================
 
-// A symbol is a string: its kind, then the names that place it —
+// A symbol is a string: its kind, then the names that place it –
 // `member CourseStatus Existent`, `alias DefineCourse course`. Two
 // names are the same symbol exactly when these are equal, which is what
 // keeps `Existent` apart from `NonExistent`, and the projection called
@@ -3040,7 +3040,7 @@ function sourceSymbolParts(symbol) {
 }
 
 // The definitions a text declares, in the shape the model helpers read
-// (`resolveOperandType`, `operationsFor`, …) — optionally over a stored
+// (`resolveOperandType`, `operationsFor`, …) – optionally over a stored
 // model, whose definitions fill in for any the text does not hold, as a
 // declaration that fails to parse while it is being typed.
 function sourceTextModel(parsed, fallback) {
@@ -3055,13 +3055,13 @@ function sourceTextModel(parsed, fallback) {
 // Every name in a parsed text, resolved: `occurrences` (`{ symbol,
 // token, decl, shorthand }`), `ambiguous` (an enum member some other
 // enum also has, written where nothing says which type is meant) and
-// `opaque` (a script, a json body, a tag filter — text a name may hide
+// `opaque` (a script, a json body, a tag filter – text a name may hide
 // in without the grammar seeing it, which a rename has to refuse over
 // rather than silently miss).
 //
 // It walks the bodies, not the tokens: the parser marked which token
 // each part came from (`parsed.marks`), and the bodies say what that
-// part *is* — whose property `course.status` reads is the read's
+// part *is* – whose property `course.status` reads is the read's
 // entity's, and which enum `Existent` belongs to is the type on the
 // other side of its rule. `{ courseId }` is one token and two symbols,
 // the emitted event's property and the command's own, told apart by
@@ -3236,7 +3236,7 @@ function sourceSymbols(parsed) {
   }
 
   // ---------- commands ----------
-  // A name in a scenario's rule is still `%ref` — resolved here against
+  // A name in a scenario's rule is still `%ref` – resolved here against
   // the command it is about, by the rule `resolveCommandNames` uses.
   const commandOperand = (commandName, body, value, expected) => {
     if (Array.isArray(value)) return value.forEach((v) => commandOperand(commandName, body, v, expected));
@@ -3400,8 +3400,8 @@ function sourceSymbols(parsed) {
 const sourceTokenHas = (token, line, col) => token.line === line && col >= token.col && col <= token.endCol;
 
 // The symbol under a 1-based position, with every place it occurs.
-// On a shorthand (`{ courseId }`) it is the value — the command's own
-// name, the way a rename in a shorthand property means the variable —
+// On a shorthand (`{ courseId }`) it is the value – the command's own
+// name, the way a rename in a shorthand property means the variable –
 // and `symbols` lists both, for go to definition.
 function sourceSymbolAt(parsed, line, col) {
   const { occurrences, ambiguous } = sourceSymbols(parsed);
@@ -3423,7 +3423,7 @@ function sourceSymbolAt(parsed, line, col) {
   };
 }
 
-// Where a symbol is declared — or nothing, for a name the text only
+// Where a symbol is declared – or nothing, for a name the text only
 // uses (an identifier type left implicit, a dangling reference).
 function sourceDeclarationOf(parsed, symbol) {
   return sourceSymbols(parsed).occurrences.find((o) => o.symbol === symbol && o.decl) || null;
@@ -3433,7 +3433,7 @@ function sourceDeclarationOf(parsed, symbol) {
 
 // The names a kind of symbol may take. A lowercase one has to stay
 // lowercase and a member capitalised, or the parser would read it as
-// the other thing — a literal where a name was, or the reverse.
+// the other thing – a literal where a name was, or the reverse.
 const SOURCE_RENAME_RULES = {
   member: [SOURCE_MEMBER_RE, 'an enum member starts with a capital letter'],
   type: [SOURCE_IDENT_RE, 'a name is letters, digits and _'],
@@ -3456,7 +3456,7 @@ const SOURCE_RESERVED_NAMES = ['true', 'false', 'null', 'enum', 'not', 'count', 
 // script, a json body or a tag filter may also hold (the grammar cannot
 // see in there); an enum member written somewhere its enum cannot be
 // told; and a result that would not read back as the same model with
-// one name changed — checked by renaming, re-reading, and counting.
+// one name changed – checked by renaming, re-reading, and counting.
 //
 // An entity whose identifier type is still `<Name>Id` takes the type
 // along, as renaming it on its page does; a type an entity tracks that
@@ -3468,14 +3468,14 @@ function sourceRename(text, line, col, newName) {
   return target.error ? target : sourceRenameSymbol(text, parsed, target.symbol, newName);
 }
 
-// What a rename at a position would rename — `{ symbol, token }` — or
+// What a rename at a position would rename – `{ symbol, token }` – or
 // `{ error }` before a new name is even asked for.
 function sourceRenameTarget(parsed, line, col) {
   const at = sourceSymbolAt(parsed, line, col);
   if (!at) return { error: 'There is nothing here to rename.' };
   if (at.ambiguous) {
     const { name, candidates } = at.ambiguous;
-    return { error: `${name} is a member of ${candidates.map((c) => sourceSymbolParts(c).owner).join(' and ')}, and nothing here says which — rename it at its declaration.` };
+    return { error: `${name} is a member of ${candidates.map((c) => sourceSymbolParts(c).owner).join(' and ')}, and nothing here says which – rename it at its declaration.` };
   }
   if (at.token.t !== 'ident') return { error: `${at.token.v} is written in quotes; rename it by hand.` };
   return { symbol: at.symbol, token: at.token };
@@ -3528,11 +3528,11 @@ function sourceRenameSymbol(text, parsed, symbol, newName) {
     const visible = SOURCE_SCRIPT_VISIBLE.includes(sourceSymbolParts(from).kind);
     const hidden = opaque.find((o) => (o.json || visible) && pattern.test(o.text));
     if (hidden) {
-      return { error: `${fromName} also appears in the script or JSON at line ${hidden.token.line}, which a rename cannot follow into — change it there by hand.` };
+      return { error: `${fromName} also appears in the script or JSON at line ${hidden.token.line}, which a rename cannot follow into – change it there by hand.` };
     }
     const unclear = ambiguous.find((a) => a.candidates.includes(from));
     if (unclear) {
-      return { error: `${fromName} at line ${unclear.token.line} could be a member of ${unclear.candidates.map((c) => sourceSymbolParts(c).owner).join(' or ')} — nothing there says which.` };
+      return { error: `${fromName} at line ${unclear.token.line} could be a member of ${unclear.candidates.map((c) => sourceSymbolParts(c).owner).join(' or ')} – nothing there says which.` };
     }
     for (const o of occurrences.filter((x) => x.symbol === from)) {
       if (o.token.t !== 'ident') return { error: `${fromName} is written in quotes at line ${o.token.line}; rename it there by hand.` };
@@ -3542,7 +3542,7 @@ function sourceRenameSymbol(text, parsed, symbol, newName) {
   }
 
   // The proof: the renamed text reads with no new errors, and each
-  // renamed symbol occurs exactly where it did — no more (it merged
+  // renamed symbol occurs exactly where it did – no more (it merged
   // into a look-alike), no fewer (some use now reads as something else).
   const after = sourceApplyEdits(text, edits);
   const reread = parseModelSource(after);
@@ -3555,7 +3555,7 @@ function sourceRenameSymbol(text, parsed, symbol, newName) {
   for (const [from, to, as] of group) {
     const expected = count(before, from);
     if (count(now, as || renamed(from, to)) !== expected || count(now, from) !== 0) {
-      return { error: `Renaming to ${newName} would change what the text means — some other name would read differently.` };
+      return { error: `Renaming to ${newName} would change what the text means – some other name would read differently.` };
     }
   }
   return { edits };
@@ -3576,8 +3576,8 @@ function sourceApplyEdits(text, edits) {
 
 // ---------- introduce alias ----------
 
-// Edits that name a read written in place — `CourseStatus(courseId)` in
-// a rule, a guard, an emission or another read — with an alias:
+// Edits that name a read written in place – `CourseStatus(courseId)` in
+// a rule, a guard, an emission or another read – with an alias:
 // `{ name, title, edits }`, or `{ error }`. The innermost read under
 // the cursor is the one named; it is declared after the command's last
 // alias, or first in its block, and every equal read in the command is
@@ -3586,8 +3586,8 @@ function sourceApplyEdits(text, edits) {
 // command already names; `at` is where it lands, and the editor opens
 // a rename there, so it is named as it is introduced.
 //
-// Nothing about the boundary may change — a read in place and an alias
-// derive the same query — and that is checked, not assumed: the result
+// Nothing about the boundary may change – a read in place and an alias
+// derive the same query – and that is checked, not assumed: the result
 // is read back, the alias put back in place of each use, and the
 // command has to come out as it was.
 function sourceIntroduceAlias(text, line, col) {
@@ -3617,7 +3617,7 @@ function sourceIntroduceAlias(text, line, col) {
     const hit = all.filter(covers).pop();
     if (hit) { command = name; target = hit; reads = all; break; }
   }
-  if (!target) return { error: 'There is no read in place here — put the cursor on one in a rule, a guard or an emission.' };
+  if (!target) return { error: 'There is no read in place here – put the cursor on one in a rule, a guard or an emission.' };
 
   const body = parsed.collections['command-definition'][command];
   const key = JSON.stringify(target);
@@ -3723,7 +3723,7 @@ function sourceOffset(text, line, col) {
 }
 
 // What may be written at a 1-based position: `{ items, slot }`. Each
-// item is `{ label, kind, detail, insert, snippet, sort, retrigger }` —
+// item is `{ label, kind, detail, insert, snippet, sort, retrigger }` –
 // `kind` one of the symbol kinds or `keyword`, `insert` a Monaco
 // snippet when `snippet` is set. `slot` says the cursor sits where
 // something specific is expected (after `require`, `on`, `emit E {`,
@@ -3731,13 +3731,13 @@ function sourceOffset(text, line, col) {
 //
 // The context is read off the tokens before the cursor, not the parse:
 // the text is mid-edit and rarely parses there. A stack of the brackets
-// still open says what the cursor is inside — a command's body, an
-// emit's arguments, a scenario's payload — and the tokens since the
+// still open says what the cursor is inside – a command's body, an
+// emit's arguments, a scenario's payload – and the tokens since the
 // statement began say where in it. What the names mean comes from the
 // whole text's parse, with `model`'s definitions filling in for any
 // that fail to parse while being typed.
 // `experimental: false` leaves out what the experimental flag keeps off
-// the pages — entities, lifecycles, scripted projections and guards.
+// the pages – entities, lifecycles, scripted projections and guards.
 // A text using them still reads.
 function sourceCompletions(text, line, col, { model = null, experimental = true } = {}) {
   const none = { items: [], slot: false };
@@ -3852,8 +3852,8 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     }
     return own('json');
   };
-  // The operand a condition's tokens start with — `course.status`,
-  // `count(course.subscribedStudentIds)` — as the names it is made of.
+  // The operand a condition's tokens start with – `course.status`,
+  // `count(course.subscribedStudentIds)` – as the names it is made of.
   function conditionLeft(s) {
     let start = -1;
     s.forEach((t, i) => { if (SOURCE_CONDITION_STARTS.includes(t.v)) start = i; });
@@ -3897,7 +3897,7 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
   const prev = v(s[s.length - 1]);
 
   // And what follows the cursor: the rest of the innermost bracket, at
-  // its own level, and the rest of the declaration — the handlers,
+  // its own level, and the rest of the declaration – the handlers,
   // keys and reads written below, which a block being edited does not
   // parse to tell.
   const suffix = lexSource(text.slice(prefix.length)).tokens.slice(0, -1);
@@ -3966,7 +3966,7 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
   const keywords = (words, sort = 0) => words.forEach(([label, insert, snippet]) => push(label, 'keyword', '', {
     sort, insert: insert || label, snippet: !!snippet,
   }));
-  // The messages a command already refuses with — offered where a rule
+  // The messages a command already refuses with – offered where a rule
   // states one, so two rules can share it, and where a scenario names one.
   // Read off the tokens where the cursor is inside the command, since
   // a block being typed rarely parses.
@@ -3981,7 +3981,7 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     }
   };
 
-  // A command's names — its payload and its reads — from the text
+  // A command's names – its payload and its reads – from the text
   // before the cursor, with whatever its parsed body adds (a read
   // written further down is in scope too).
   const commandScope = (name) => {
@@ -4057,7 +4057,7 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     if (!cond.length || last === 'not') {
       operandItems(scope);
       // A rule may read a projection in place, so every projection is
-      // a way for one to start — after what the command already has.
+      // a way for one to start – after what the command already has.
       definitionItems('projection-definition', { sort: 1, call: projectionCall, detail: (n, b) => `${b.valueType}${b.isList ? '[]' : ''}` });
       push('count', 'keyword', 'count(…)', { insert: 'count($1)', snippet: true, sort: 1 });
       if (!cond.length) push('not', 'keyword', '', { sort: 2 });
@@ -4113,7 +4113,7 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     return done();
   };
   // What a read of a projection gives, in order: its tags, then a
-  // script's arguments — `{ name, propertyType, tag }` each.
+  // script's arguments – `{ name, propertyType, tag }` each.
   const projectionParameters = (name) => {
     const ownDecl = frame.decl || decl;
     if (ownDecl.keyword === 'projection' && ownDecl.name === name) {
@@ -4126,7 +4126,7 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
       ...list(body && body.script && body.script.arguments),
     ];
   };
-  // A projection is read with its values in parentheses — empty for an
+  // A projection is read with its values in parentheses – empty for an
   // untagged one, so the cursor lands inside only when there is
   // something to fill in.
   const projectionCall = (name) => (projectionParameters(name).length ? `${name}($1)` : `${name}()`);
@@ -4260,8 +4260,8 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
       return done();
     };
     if (k === 'successor') return handlerOperands();
-    // A derived projection's block: the expression — reads of other
-    // projections, min / max, a comparison — then its scenarios.
+    // A derived projection's block: the expression – reads of other
+    // projections, min / max, a comparison – then its scenarios.
     if (frame.decl && frame.decl.derived) {
       const reads = () => {
         definitionItems('projection-definition', { exclude: [ownName], sort: 0, call: projectionCall, detail: (n, b) => `${b.valueType}` });
@@ -4366,8 +4366,8 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     });
   }
   // A call's values, in order: what the projection declares at this
-  // position — a tag, offered the values in scope of its type first, and
-  // `each` for a list — or an entity's identifier.
+  // position – a tag, offered the values in scope of its type first, and
+  // `each` for a list – or an entity's identifier.
   if (k === 'callArgs') {
     const scope = commandScope(commandName);
     const position = framed.filter((t) => t.v === ',').length - restOfFrame.filter((t) => t.v === ',').length;
@@ -4415,7 +4415,7 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
   if (k === 'scenario') {
     const block = frame.block;
     // Where the Then is being written, what the model makes of the
-    // scenario — each whole outcome, its `and` lines included, as one
+    // scenario – each whole outcome, its `and` lines included, as one
     // item, from where the cursor is: the line's start, after `then`,
     // or after a projection's read and its `==` (`sourceOutcomesAt`).
     const outcome = (from) => {
@@ -4493,7 +4493,7 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
 }
 
 // ============================================================
-// Folding — off the tokens alone, since a text being edited rarely
+// Folding – off the tokens alone, since a text being edited rarely
 // parses and what folds should not come and go with it.
 // ============================================================
 
@@ -4523,7 +4523,7 @@ function sourceFoldingRanges(text) {
 }
 
 // Where a text uses what the experimental flag keeps off the pages, as
-// `{ line, col, endLine, endCol, message }` — read off the tokens, so a
+// `{ line, col, endLine, endCol, message }` – read off the tokens, so a
 // text that does not parse is marked too. The editor shows them at
 // info level while the flag is off: the text reads and applies whole
 // either way, as a model using them loads whole.
@@ -4532,7 +4532,7 @@ function sourceExperimentalMarks(text) {
   const out = [];
   const said = (token, what) => out.push({
     line: token.line, col: token.col, endLine: token.endLine, endCol: token.endCol,
-    message: `${what} is experimental — turn experimental features on in Settings to author it on the pages.`,
+    message: `${what} is experimental – turn experimental features on in Settings to author it on the pages.`,
   });
   // Which blocks are scenarios: `when` there is a scenario's, not a guard.
   const frames = [];
@@ -4558,7 +4558,7 @@ function sourceExperimentalMarks(text) {
 
 // ============================================================
 // The language, for an agent: what the WebMCP tool
-// `get_model_language` answers with — enough to write a whole model
+// `get_model_language` answers with – enough to write a whole model
 // as text without ever having seen one. A guide, the forms a rule can
 // take, a tour that declares a complete model using every construct
 // the tools offer, and a shipped model as the printer prints it.
@@ -4567,7 +4567,7 @@ function sourceExperimentalMarks(text) {
 // tour (no diagnostics, no advisories, nothing experimental, scenarios
 // recorded), holds the example to `modelToSource` of the shipped model
 // it names, and requires every keyword of the grammar outside the
-// experimental ones to appear in the tour or the forms — so a new
+// experimental ones to appear in the tour or the forms – so a new
 // construct cannot ship without the agent being told about it. The
 // experimental constructs are left out on purpose: WebMCP does not
 // offer them (see webmcp.js).
@@ -4577,13 +4577,13 @@ const SOURCE_REFERENCE_GUIDE = `# The DCB model language
 
 The text get_model_source returns, apply_model_source applies and start_model takes as its source.
 
-- A text is the whole model: a model "Name" line, then types, events, projections and commands. A definition left out of an applied text is removed — apply_model_source refuses that unless told allowRemovals: true — so to change a model, edit what get_model_source returned and send all of it back.
+- A text is the whole model: a model "Name" line, then types, events, projections and commands. A definition left out of an applied text is removed – apply_model_source refuses that unless told allowRemovals: true – so to change a model, edit what get_model_source returned and send all of it back.
 - A text with any error is refused whole, with each error's line and column; fix them and send it again. What does not stop it (an event nothing emits, a read of a projection nobody declared) comes back as advisories with the result; fix those as well.
-- DCB in brief: events are tagged by identifier values; a projection folds the events that carry its tags into one value; a command reads projections, checks its rules and emits events. Its consistency boundary is exactly what it reads — derived, never declared (derive_boundary shows it).
+- DCB in brief: events are tagged by identifier values; a projection folds the events that carry its tags into one value; a command reads projections, checks its rules and emits events. Its consistency boundary is exactly what it reads – derived, never declared (derive_boundary shows it).
 - Definitions, enum members and records are PascalCase; properties, parameters, tags and aliases are camelCase.
 - // and /* */ are comments. They are not stored.
 - @tagSchema("{type}={value}") on the line before a tag type changes how its values render as tags; "{type}:{value}" is the default.
-- @icon("📦") on the line before an event or a command gives it the mark the pages show it with — one emoji or short glyph.
+- @icon("📦") on the line before an event or a command gives it the mark the pages show it with – one emoji or short glyph.
 - @feature("Course management") on the line before a command puts it in that feature group; the pages list commands by feature. A command without one is ungrouped.`;
 
 const SOURCE_REFERENCE_FORMS = `Rules (after require), each negated by a leading not:
@@ -4688,8 +4688,8 @@ untagged projection LoanNumbering: LoanId = "l1" {
 
 // A derived projection handles no events: its block holds one
 // expression over other projections, read with this one's own tags,
-// and it starts from what they start at. It computes a number — a + b,
-// a - b, a * b, min(a, b), max(a, b) — or compares two values, written
+// and it starts from what they start at. It computes a number – a + b,
+// a - b, a * b, min(a, b), max(a, b) – or compares two values, written
 // as a rule is, and holds the boolean. Its query is theirs.
 derived projection MemberLoansLeft (tag memberId: MemberId): integer {
   5 - MemberLoanCount(memberId)
@@ -4887,7 +4887,7 @@ command UnsubscribeStudentFromCourse(courseId: CourseId, studentId: StudentId) {
 }
 `;
 
-// The shipped model the example is printed from — held to the printer
+// The shipped model the example is printed from – held to the printer
 // by dsl.test.js.
 const SOURCE_REFERENCE_EXAMPLE_SLUG = 'course-simple';
 
@@ -4900,8 +4900,8 @@ function sourceLanguageReference() {
   return [
     SOURCE_REFERENCE_GUIDE,
     '## Forms\n\n' + SOURCE_REFERENCE_FORMS,
-    '## Tour — a complete model using every construct\n\n~~~\n' + SOURCE_REFERENCE_TOUR + '~~~',
-    '## Example — a shipped model, as get_model_source prints it\n\n~~~\n' + SOURCE_REFERENCE_EXAMPLE + '~~~',
+    '## Tour – a complete model using every construct\n\n~~~\n' + SOURCE_REFERENCE_TOUR + '~~~',
+    '## Example – a shipped model, as get_model_source prints it\n\n~~~\n' + SOURCE_REFERENCE_EXAMPLE + '~~~',
     SOURCE_REFERENCE_UNOFFERED,
   ].join('\n\n') + '\n';
 }
@@ -4921,7 +4921,7 @@ const SOURCE_KEYWORDS = [
 ];
 
 // The words a block's statements start with, coloured apart so the
-// shape of a command — what it reads, requires, emits — shows at a
+// shape of a command – what it reads, requires, emits – shows at a
 // glance.
 const SOURCE_STATEMENTS = ['alias', 'require', 'emit', 'when', 'on', 'scenarios', 'scenario', 'given', 'then'];
 

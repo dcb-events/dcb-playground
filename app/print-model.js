@@ -1,5 +1,5 @@
 // ============================================================
-// Prints a model the way the code view would show it — for looking at
+// Prints a model the way the code view would show it – for looking at
 // a shipped model, an example file or an exported envelope from the
 // shell, without a browser and without writing a sandbox by hand.
 //

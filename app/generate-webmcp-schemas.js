@@ -1,11 +1,11 @@
 // ============================================================
-// Writes webmcp-schemas.js — the per-kind definition schemas the
-// WebMCP tools hand to an agent — out of dcb-model.schema.json, the
+// Writes webmcp-schemas.js – the per-kind definition schemas the
+// WebMCP tools hand to an agent – out of dcb-model.schema.json, the
 // canonical schema one directory up. Each kind gets its own schema:
 // the definition's object shape (`{name, …body}`, exactly what a
 // share envelope stores per definition) with every `$ref` inlined,
 // because the consumers on the other side of WebMCP (Gemini's
-// function calling, for one) do not resolve references — a schema
+// function calling, for one) do not resolve references – a schema
 // has to say everything where it stands.
 //
 // Three references cannot be inlined and are cut deliberately:
@@ -21,9 +21,9 @@
 //
 // The experimental members are cut before anything is inlined, since
 // WebMCP does not offer them (see webmcp.js): no entity kind, and no
-// schema so much as mentions an entity binding, a guard, a script —
-// its code handlers and the arguments its readers pass included — or
-// `currentValue`. The canonical schema keeps them — a model using them
+// schema so much as mentions an entity binding, a guard, a script –
+// its code handlers and the arguments its readers pass included – or
+// `currentValue`. The canonical schema keeps them – a model using them
 // still imports.
 //
 // Run with `node app/generate-webmcp-schemas.js` after changing
@@ -39,7 +39,7 @@ const defs = schema.$defs;
 
 // What the experimental flag keeps off the pages, as schema members:
 // properties of a $def, and branches of a $def's choice. A name that
-// is not there stops the build — the schema moved, and so must this.
+// is not there stops the build – the schema moved, and so must this.
 const EXPERIMENTAL_PROPERTIES = {
   ProjectionDefinition: ['script'],
   PropertyHandler: ['code'],
@@ -68,7 +68,7 @@ for (const [name, branches] of Object.entries(EXPERIMENTAL_BRANCHES)) {
   if (kept.length !== defs[name][choice].length - branches.length) {
     throw new Error(`${name} does not offer all of ${branches.join(', ')} to cut`);
   }
-  // A choice of one is that one — its description, written to tell
+  // A choice of one is that one – its description, written to tell
   // the branches apart, would only mention what was cut.
   defs[name] = kept.length === 1 ? kept[0] : { ...defs[name], [choice]: kept };
 }
@@ -85,7 +85,7 @@ const ROOTS = {
 
 // A value with every reference inlined. A `$ref`'s siblings (usually a
 // site-specific description) win over what the referenced definition
-// says for the same key — the words closest to the use are the ones
+// says for the same key – the words closest to the use are the ones
 // written for it.
 function inline(value, stack) {
   if (Array.isArray(value)) return value.map((item) => inline(item, stack));
@@ -97,12 +97,12 @@ function inline(value, stack) {
       Object.entries(value).map(([k, v]) =>
         // `const` and a one-member `enum` say the same thing, and the
         // consumers that choke on references tend to choke on `const`
-        // too — say it the widely understood way.
+        // too – say it the widely understood way.
         (k === 'const' ? ['enum', [v]] : [k, inline(v, stack)]))
     );
   }
   if (!$ref.startsWith('#/$defs/')) {
-    // The one external ref — a custom type's `schema` is any JSON
+    // The one external ref – a custom type's `schema` is any JSON
     // Schema. Nothing downstream of WebMCP could fetch it anyway.
     return {
       type: 'object',
@@ -116,7 +116,7 @@ function inline(value, stack) {
     return {
       type: 'object',
       description: ((siblings.description || '') + ' ' + defs[name].description.trim()
-        + ' `tags`: one value per tag the projection declares, keyed by its name — an operand of'
+        + ' `tags`: one value per tag the projection declares, keyed by its name – an operand of'
         + ' the tag\'s type, a tag literal {tagType, tagValue}, or {each: operand}.').trim(),
       properties: {
         projection: { type: 'string' },
@@ -137,8 +137,8 @@ function inline(value, stack) {
 
 // The Anthropic API refuses oneOf/anyOf/allOf at the *top level* of a
 // tool's input schema (nested is fine). The one place the model schema
-// has one — a custom type is scalar (`schema`) xor composite
-// (`properties`) — alternates only the `required` list, so it flattens
+// has one – a custom type is scalar (`schema`) xor composite
+// (`properties`) – alternates only the `required` list, so it flattens
 // losslessly: keep what every branch requires, say the alternation in
 // words. Anything more elaborate arriving here should stop the build
 // rather than be silently mistranslated.
@@ -148,7 +148,7 @@ function flattenTopLevelChoice(schema, kind) {
     if (!branches) continue;
     if (key === 'allOf'
         || !branches.every((b) => Object.keys(b).every((k) => k === 'required'))) {
-      throw new Error(`${kind}: top-level ${key} is more than a required-alternation — `
+      throw new Error(`${kind}: top-level ${key} is more than a required-alternation – `
         + 'decide how to flatten it before regenerating');
     }
     const common = branches.map((b) => b.required)
@@ -170,8 +170,8 @@ function flattenTopLevelChoice(schema, kind) {
 
 // WebMCP auditors (and the stricter function-calling consumers) read a
 // tool argument's `type` and nothing else, so a top-level property
-// that says what it admits only through `oneOf`/`anyOf` — an initial
-// value — or not at all — what a projection scenario expects — reads
+// that says what it admits only through `oneOf`/`anyOf` – an initial
+// value – or not at all – what a projection scenario expects – reads
 // as having no type. Each such property is given the union of what it
 // admits, beside the choice it already states: a restatement, never a
 // narrowing. Nested properties are left alone; nothing reads them that
@@ -203,14 +203,14 @@ for (const [kind, rootName] of Object.entries(ROOTS)) {
 // What this exists to guarantee: nothing referencing anything.
 const flat = JSON.stringify(out);
 if (flat.includes('"$ref"') || flat.includes('"$defs"')) {
-  throw new Error('a $ref or $defs survived inlining — the consumers cannot resolve them');
+  throw new Error('a $ref or $defs survived inlining – the consumers cannot resolve them');
 }
 
 const file = path.join(APP, 'webmcp-schemas.js');
 const banner = [
   '// Generated by generate-webmcp-schemas.js from ../dcb-model.schema.json',
-  '// — do not edit by hand; change the schema and regenerate.',
-  '// Each entry is one definition kind\'s object shape ({name, …body} —',
+  '// – do not edit by hand; change the schema and regenerate.',
+  '// Each entry is one definition kind\'s object shape ({name, …body} –',
   '// or {id, …body} for the id-keyed scenario kinds), every reference',
   '// inlined, ready to serve as a WebMCP tool\'s inputSchema.',
 ].join('\n');

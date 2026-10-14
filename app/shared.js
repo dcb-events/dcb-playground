@@ -1,6 +1,6 @@
 // ============================================================
 // Everything the interface needs that is not the model: DOM helpers,
-// the experimental-features flag, and the *slice* view — everything one
+// the experimental-features flag, and the *slice* view – everything one
 // command touches, gathered here so the page never has to walk the
 // definition graph itself.
 //
@@ -8,8 +8,8 @@
 // reads, in how many trips to the log, what it decides, what it emits,
 // and what those events change. The model layer stores none of that as
 // a unit; it is derived here, from the definitions. The overview pages
-// read the same material across every command at once — the coupling
-// matrix, and each entity's status as a lifecycle machine — and those
+// read the same material across every command at once – the coupling
+// matrix, and each entity's status as a lifecycle machine – and those
 // derivations live here too.
 // ============================================================
 
@@ -17,7 +17,7 @@
 
 // Text is always text: a string child becomes a text node and an
 // attribute value an attribute. The two ways a string could become code
-// are refused — markup goes through `svg`, and a handler must be a
+// are refused – markup goes through `svg`, and a handler must be a
 // function (a string `onclick` would be an attribute the browser runs).
 function h(tag, attrs = {}, ...children) {
   const el = document.createElement(tag);
@@ -39,7 +39,7 @@ function h(tag, attrs = {}, ...children) {
   return el;
 }
 
-// The one sink for markup: an icon, a band's wires — SVG written in
+// The one sink for markup: an icon, a band's wires – SVG written in
 // this code, its only interpolations numbers and fixed ids. Never pass
 // it a string that came from a model. A fragment, appended whole by `h`.
 function svg(markup) {
@@ -75,7 +75,7 @@ function run(fn) {
 // ---------- the scripted-handler editor ----------
 //
 // The one part of a model the tooling neither runs nor checks is the
-// scripted handler — but what its code can *see* is still knowable
+// scripted handler – but what its code can *see* is still knowable
 // from the definitions. This turns that knowledge into TypeScript: a
 // synthesized preamble typing `state`, `event` and `args` for one
 // handler, fed to Monaco (the app's one vendored dependency, pinned
@@ -85,20 +85,20 @@ function run(fn) {
 // The synthesis is the tested part, and it is pure. The choices it
 // bakes in:
 //   - every named scalar custom type is *branded* (`string & { __type:
-//     'CourseId' }`), so comparing a CourseId to a StudentId — or to a
-//     bare string literal — draws the no-overlap squiggle;
+//     'CourseId' }`), so comparing a CourseId to a StudentId – or to a
+//     bare string literal – draws the no-overlap squiggle;
 //   - enums become literal unions, so `===` completes the legal values;
 //   - `state` is inferred from the initial state but stays *loose*
 //     (`& { [key: string]: any }` at every level), because a script
 //     may legitimately grow keys the initial state never had;
-//   - a dangling type or event reference types as `any` — a defective
+//   - a dangling type or event reference types as `any` – a defective
 //     model must still load and edit, the same rule as everywhere.
 //
 // Each handler's preamble is its own file-scope (`export {};` makes
 // the model a module), which is what lets several editors with
 // different `event` types coexist in one TypeScript project. The
 // preamble ends by opening a `__check(` call whose parameter is what
-// a handler must return — the projection's value type (through
+// a handler must return – the projection's value type (through
 // `exposes` when the state is bookkeeping around one exposed field),
 // allowing the initial state's type too when it differs, a null start
 // being how "nullable" is spelled. Brands are widened to their bases
@@ -127,7 +127,7 @@ function scriptTsHint(value) {
   return text.length > 32 ? text.slice(0, 31) + '…' : text;
 }
 
-// The TypeScript shape of a JSON value — how `state` is typed from
+// The TypeScript shape of a JSON value – how `state` is typed from
 // the initial state. Objects stay walkable but loose; arrays type
 // their elements when the elements are uniform primitives and give up
 // honestly (`any[]`) when they are not.
@@ -152,8 +152,8 @@ function scriptTsOfValue(value, indent) {
 }
 
 // What a handler must return, as an inline TypeScript type. This is
-// return position, so brands widen to their bases — an expression can
-// compare branded values it was given, but never mint one — while
+// return position, so brands widen to their bases – an expression can
+// compare branded values it was given, but never mint one – while
 // enums stay literal unions and composites stay structural.
 function scriptReturnType(model, body) {
   const inline = (typeName, depth) => {
@@ -183,7 +183,7 @@ function scriptReturnType(model, body) {
   if (script.exposes) {
     value = '{ ' + scriptTsKey(script.exposes) + ': ' + value + ' } & { [key: string]: any }';
   }
-  // Where the projection starts is also a legal thing to hand back — a
+  // Where the projection starts is also a legal thing to hand back – a
   // null start is how "nullable" is spelled.
   const initial = script.initialState;
   const initialTs = initial === null || initial === undefined ? 'null' : scriptTsOfValue(initial);
@@ -246,7 +246,7 @@ function scriptHandlerPreamble(model, body, handler) {
     eventLines.push('  readonly data: {');
     for (const property of event.properties || []) {
       if (property.isOptional) {
-        eventLines.push('    /** optional — null when the event carries no value */');
+        eventLines.push('    /** optional – null when the event carries no value */');
       } else if (property.propertyType === 'integer') {
         eventLines.push('    /** integer */');
       }
@@ -278,7 +278,7 @@ function scriptHandlerPreamble(model, body, handler) {
 // --- the widget: a cached Monaco editor per handler row ---
 
 // Rows are keyed by the draft object being edited (stable across
-// repaints — the page state holds it) plus the handler's index.
+// repaints – the page state holds it) plus the handler's index.
 const scriptEditorDraftIds = new WeakMap();
 let scriptEditorDraftSeq = 0;
 function scriptEditorKey(draft, index) {
@@ -293,7 +293,7 @@ const scriptEditors = new Map();
 
 function ensureScriptEditorLoaded() {
   if (scriptEditorPhase !== 'unloaded') return;
-  // No real head to load into (the test stub) — the textarea is it.
+  // No real head to load into (the test stub) – the textarea is it.
   if (typeof document === 'undefined' || !document.head || !document.head.appendChild) {
     scriptEditorPhase = 'failed';
     return;
@@ -416,13 +416,13 @@ function createScriptEditorEntry(key) {
   const entry = { root, editor, model, spec: null, preamble: '', headerLines: 0, loading: false };
 
   // `setHiddenAreas` is internal API, stable here because the vendored
-  // version is pinned. Without it the wrapper lines stay visible —
+  // version is pinned. Without it the wrapper lines stay visible –
   // degraded, not broken.
   const hideWrapper = (force) => {
     if (typeof editor.setHiddenAreas !== 'function') return;
     // setValue drops the view's hidden areas while the widget keeps
     // its cached ranges, so re-applying identical ranges is swallowed
-    // as a no-op — clear first when the model was reloaded wholesale.
+    // as a no-op – clear first when the model was reloaded wholesale.
     if (force) editor.setHiddenAreas([]);
     const last = model.getLineCount();
     editor.setHiddenAreas([
@@ -436,7 +436,7 @@ function createScriptEditorEntry(key) {
     root.style.height = Math.max(height, 2 * SCRIPT_EDITOR_LINE + 12) + 'px';
   };
   // Content height reflects the hidden areas only once the view has
-  // taken them in, and how soon that is is not promised — measure a
+  // taken them in, and how soon that is is not promised – measure a
   // frame after any wholesale load, and once more for good measure.
   const resizeSoon = () => {
     requestAnimationFrame(resize);
@@ -454,7 +454,7 @@ function createScriptEditorEntry(key) {
     entry.headerLines = preamble.split('\n').length;
     model.setValue(preamble + '\n' + code + '\n)');
     hideWrapper(true);
-    // setValue parks the cursor at 1:1 — inside the hidden preamble,
+    // setValue parks the cursor at 1:1 – inside the hidden preamble,
     // where typing would land invisibly. Park it at the code's end.
     const lastCodeLine = model.getLineCount() - 1;
     editor.setPosition({ lineNumber: lastCodeLine, column: model.getLineMaxColumn(lastCodeLine) });
@@ -462,7 +462,7 @@ function createScriptEditorEntry(key) {
     entry.loading = false;
   };
 
-  // The wrapper is hidden, not protected — a select-all delete can
+  // The wrapper is hidden, not protected – a select-all delete can
   // still take it out. Whatever survived is the author's code; put the
   // frame back around it. Asynchronously, and that is load-bearing:
   // inside the change event the editing command has not yet placed its
@@ -505,8 +505,8 @@ function createScriptEditorEntry(key) {
   };
 
   // Better than repairing: the two deletions that would eat into the
-  // wrapper — Backspace at the code's first character, Delete at its
-  // last — simply do nothing, the same as at a document edge.
+  // wrapper – Backspace at the code's first character, Delete at its
+  // last – simply do nothing, the same as at a document edge.
   editor.onKeyDown((e) => {
     if (e.keyCode !== monaco.KeyCode.Backspace && e.keyCode !== monaco.KeyCode.Delete) return;
     const selection = editor.getSelection();
@@ -546,15 +546,15 @@ function createScriptEditorEntry(key) {
 //
 // Everything that is DCB is always on screen: types, events, projections,
 // the consistency boundary each command derives. What the examples on
-// dcb.events never need — entities and their lifecycles, scripted
+// dcb.events never need – entities and their lifecycles, scripted
 // projections, guarded emissions, the overview pages
-// (`EXPERIMENTAL_FEATURES`, model.js) — waits behind this flag.
+// (`EXPERIMENTAL_FEATURES`, model.js) – waits behind this flag.
 //
 // It gates *authoring*, never reading: a model that already uses an
 // experimental feature still loads, renders and evaluates it, and the
 // page says which ones it found (`experimentalFeatures`). A share link
 // may switch it on for one session (`&experimental`) without touching
-// the stored choice — following a link never changes a setting.
+// the stored choice – following a link never changes a setting.
 //
 // How it is offered is the page's business, not this file's: it is one
 // of the interface's own settings, and they are collected in one place
@@ -583,7 +583,7 @@ function enableExperimentalForSession() { experimentalThisSession = true; }
 // link `helpReferenceLinks` lists that it does not define, so renaming
 // one is a change on both sides. Until the website has pages for what
 // 8.0 added (a projection's and an event's `tag`, `untagged`, `alias`,
-// reads in place), those link the nearest page it has — the list of
+// reads in place), those link the nearest page it has – the list of
 // what is owed is in docs/research/2026-10-05-explicit-tags-and-aliases.md.
 
 const NOTATION_GUIDE_URL = 'https://dcb.events/notation/';
@@ -592,7 +592,7 @@ const NOTATION_REFERENCE_URL = 'https://dcb.events/notation/reference/';
 // model here through a share link.
 const EXAMPLES_URL = 'https://dcb.events/examples/';
 // Where to reach us: feedback through the site's About page, issues in
-// the website's repository — the playground's own takes pull requests
+// the website's repository – the playground's own takes pull requests
 // only. The title prefix tells playground issues apart in the shared
 // tracker; the label sticks only for those allowed to triage. The page
 // footer and the disclaimer spell the same two links in index.html.
@@ -620,7 +620,7 @@ function helpReferenceLinks() {
 //
 // Defaults to whatever the system says, same as any other well-behaved
 // page; the sun/moon button in the bar overrides that per browser. `isDark` is the one
-// question the rest of the page asks — nothing downstream needs to know
+// question the rest of the page asks – nothing downstream needs to know
 // whether that answer came from the system or from a stored choice.
 //
 // A page hosting the playground can own the choice instead, so that one
@@ -629,7 +629,7 @@ function helpReferenceLinks() {
 // scripts run, with `get()` answering 'system' | 'light' | 'dark' (or
 // null for "no opinion"), `set(value)`, and optionally `onChange(fn)`
 // for a choice made elsewhere, e.g. in another tab. How the host stores
-// it is the host's business — nothing here knows it.
+// it is the host's business – nothing here knows it.
 
 const THEME_KEY = 'dcb-playground:theme';
 // Guarded, like the listeners below: dcb.events loads this file outside
@@ -663,7 +663,7 @@ function isDark() {
   if (t !== 'system') return t === 'dark';
   return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
 }
-// Only "system" cares about this firing — an explicit choice already
+// Only "system" cares about this firing – an explicit choice already
 // repaints itself the moment it is made.
 if (typeof window !== 'undefined' && window.matchMedia) {
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
@@ -690,8 +690,8 @@ function activeModel() {
 
 // ---------- copies opened from a link ----------
 //
-// A link — an example's "Open in Playground" on dcb.events, a shared
-// model — imports a copy, and nothing here ever writes back to where
+// A link – an example's "Open in Playground" on dcb.events, a shared
+// model – imports a copy, and nothing here ever writes back to where
 // it came from. Testers took their first edit of an example for an
 // edit of the example itself, so a copy's first change is where the
 // page says otherwise and offers to name it (`namePromptField`,
@@ -720,7 +720,7 @@ function markLinkedCopy(id) {
   setLinkedCopies([...linkedCopies().filter((other) => other !== id && models[other]), id]);
 }
 
-// The linked copy these appended events first change, if any — and
+// The linked copy these appended events first change, if any – and
 // every copy they touch is unmarked, so each is asked about once. A
 // rename or a delete unmarks without asking: the one has answered the
 // question already, the other has made it moot.
@@ -739,15 +739,15 @@ function takeFirstChange(appended) {
   return changed;
 }
 
-// A model with nothing in it at all — no entities, no events, no
+// A model with nothing in it at all – no entities, no events, no
 // commands. Everything downstream has to cope with that, because it is
 // where a real model actually starts.
 //
 // The name is collected by the page (there are no browser dialogs in
 // here); this only does the creating.
 //
-// `openNewModel` is the unwrapped core — one definition of what
-// opening a fresh model means — shared with the WebMCP `start_model`
+// `openNewModel` is the unwrapped core – one definition of what
+// opening a fresh model means – shared with the WebMCP `start_model`
 // tool, which needs the refusal to reach the agent rather than only
 // the toast `run` turns it into.
 function openNewModel(name) {
@@ -768,8 +768,8 @@ function createNamedModel(name) {
 // link (`#model=<gzipped, base64url-encoded envelope>`, so a static
 // page with no backend can still hand someone a working copy of what
 // it built) and a URL someone else hosts, fetched and inflated on
-// demand — typed into Import, or carried by a link of its own
-// (`#url=<URI-encoded address>`). Both carry the same envelope — see
+// demand – typed into Import, or carried by a link of its own
+// (`#url=<URI-encoded address>`). Both carry the same envelope – see
 // `buildShareEnvelope` in model.js. Compression is the native Streams API only, matching the
 // rest of this project's lack of a dependency story; there is no
 // fallback for a browser that lacks it.
@@ -801,7 +801,7 @@ async function gzipToBase64Url(text) {
 const UNPACKED_MAX_BYTES = 5 * 1024 * 1024;
 const SHARE_LINK_MAX_LENGTH = 1000 * 1000;
 
-// A stream's text, read a chunk at a time and abandoned past the cap —
+// A stream's text, read a chunk at a time and abandoned past the cap –
 // so an oversized one is never held whole.
 async function readCappedText(stream) {
   const reader = stream.getReader();
@@ -822,7 +822,7 @@ async function readCappedText(stream) {
 
 async function gunzipFromBase64Url(encoded) {
   if (encoded.length > SHARE_LINK_MAX_LENGTH) {
-    throw new DomainError(`it is too long — over ${SHARE_LINK_MAX_LENGTH / 1000 / 1000} million characters, far more than any model.`);
+    throw new DomainError(`it is too long – over ${SHARE_LINK_MAX_LENGTH / 1000 / 1000} million characters, far more than any model.`);
   }
   return readCappedText(new Blob([base64UrlDecode(encoded)]).stream().pipeThrough(new DecompressionStream('gzip')));
 }
@@ -841,7 +841,7 @@ function decodeShareLink(encoded) {
 // What a link to this page carries after its `#`: a model packed into
 // it (`#model=…`) or the address of a file holding one (`#url=…`), then
 // `&`-separated options. Null for any other fragment. An address that
-// does not decode is taken as written — the fetch reports what is
+// does not decode is taken as written – the fetch reports what is
 // wrong with it.
 function readModelLink(hash) {
   for (const kind of ['model', 'url']) {
@@ -856,7 +856,7 @@ function readModelLink(hash) {
 }
 
 // The fragment that links to a hosted file: its address as typed when
-// that reads back unchanged — a gist's stays legible — and URI-encoded
+// that reads back unchanged – a gist's stays legible – and URI-encoded
 // when it holds what would end or garble it.
 function modelUrlLink(address) {
   return '#url=' + (/[&#%\s]/.test(address) ? encodeURIComponent(address) : address);
@@ -870,7 +870,7 @@ function modelUrlLinkBase() {
 // A gist's page (`gist.github.com/<user>/<id>`) is HTML; its files come
 // from the API, which any site may read. The page address is the one
 // people copy, so it is read as the gist it names; every other address
-// — a gist's Raw link among them — is fetched as it is.
+// – a gist's Raw link among them – is fetched as it is.
 const GIST_PAGE_URL = /^https:\/\/gist\.github\.com\/(?:[\w-]+\/)?([0-9a-f]+)\/?(?:[?#].*)?$/i;
 
 function modelSourceUrl(url) {
@@ -889,11 +889,11 @@ function gistModelFile(gist) {
   return file;
 }
 
-// A URL someone else hosts — a gist, a bucket, another tool's export.
+// A URL someone else hosts – a gist, a bucket, another tool's export.
 // `fetch` only auto-decompresses a gzip `Content-Encoding`; a file whose
 // *content type* says gzip (a plain `.json.gz` sitting on a static
 // host) arrives untouched over the wire and has to be inflated by hand.
-// Every way it can fail says so as a DomainError — the reader of the
+// Every way it can fail says so as a DomainError – the reader of the
 // message is whoever pasted or followed the address.
 async function loadModelFromUrl(url) {
   const source = modelSourceUrl(url);
@@ -915,7 +915,7 @@ async function fetchCappedText(url, { gist = false } = {}) {
     throw notLoaded('its host could not be reached, or does not let other sites read it.');
   }
   if (gist && (response.status === 403 || response.status === 429)) {
-    throw notLoaded('GitHub refused to serve the gist — likely its limit of 60 requests an hour. '
+    throw notLoaded('GitHub refused to serve the gist – likely its limit of 60 requests an hour. '
       + 'Use the file’s Raw link instead.');
   }
   if (!response.ok) throw notLoaded(`its host answered ${response.status} ${response.statusText}`.trim() + '.');
@@ -953,7 +953,7 @@ async function runAsync(fn) {
 
 // ---------- the slice ----------
 
-// Every entity property that handles this event — i.e. everything the
+// Every entity property that handles this event – i.e. everything the
 // event changes. This is the link the original interface made you go
 // and find for yourself, one entity at a time.
 //
@@ -980,7 +980,7 @@ function effectsOf(model, eventName) {
   return out;
 }
 
-// Every command that publishes this event — zero, one, or many. An
+// Every command that publishes this event – zero, one, or many. An
 // event has no single owner the way an entity does, so this answers
 // "who records this" instead of a boundary binding.
 function publishersOf(model, eventName) {
@@ -994,7 +994,7 @@ function publishersOf(model, eventName) {
 }
 
 // Every projection that handles this event and is *not* bound as some
-// entity's property — the ones `effectsOf` does not already name,
+// entity's property – the ones `effectsOf` does not already name,
 // listed beside it rather than twice.
 function projectionsHandling(model, eventName) {
   const out = [];
@@ -1007,7 +1007,7 @@ function projectionsHandling(model, eventName) {
   return out;
 }
 
-// Every entity property binding this projection — `{entity, property}`
+// Every entity property binding this projection – `{entity, property}`
 // each. Empty for one no entity binds, which is what everywhere else
 // calls a standalone projection.
 function boundAs(model, projectionName) {
@@ -1022,7 +1022,7 @@ function boundAs(model, projectionName) {
   return out;
 }
 
-// Every scenario — over a command or over projections — whose Given or
+// Every scenario – over a command or over projections – whose Given or
 // Then names this event. `overProjections` says which of the two, since
 // they are opened and named differently.
 function scenariosReferencingEvent(model, eventName) {
@@ -1070,11 +1070,11 @@ function allSlices(model) {
 // ---------- coupling ----------
 //
 // Every command against every event type it writes (`publishes`) or
-// reads back to decide — the same relationship each command's own page
+// reads back to decide – the same relationship each command's own page
 // already shows one at a time (its derived boundary), gathered once
 // into a matrix. "Consumes" is read straight off `deriveDcb`: an event
 // type is in a command's boundary the moment some read property's
-// handler names it, whether or not that command ever publishes it —
+// handler names it, whether or not that command ever publishes it –
 // which is what lets a cell be produce-only, consume-only, or both.
 function couplingMatrix(model) {
   const events = Object.keys(model['event-definitions']).sort();
@@ -1120,13 +1120,13 @@ function couplingRow(model, name, events) {
 
 // ---------- coupling clusters ----------
 //
-// The matrix as a plain undirected graph — one node per command and
+// The matrix as a plain undirected graph – one node per command and
 // per event, an edge wherever a cell has any coupling at all (produce
 // or consume; direction does not matter for reachability). Two things
 // fall out of that graph for free: which commands and events could be
 // lifted into their own bounded context together (a connected
 // component), and which single command or event is the one thing
-// still holding two such components together (an articulation point —
+// still holding two such components together (an articulation point –
 // sever that one coupling and the model splits along the seam it
 // names).
 function couplingGraph(matrix) {
@@ -1149,7 +1149,7 @@ function couplingGraph(matrix) {
 }
 
 // Every node's connected-component index, assigned in the order
-// `nodeOrder` first meets each component — so the numbering is stable
+// `nodeOrder` first meets each component – so the numbering is stable
 // and reproducible rather than an artefact of `Map` iteration order.
 function connectedComponentsOf(adj, nodeOrder) {
   const componentOf = new Map();
@@ -1171,7 +1171,7 @@ function connectedComponentsOf(adj, nodeOrder) {
 
 // Articulation points (Tarjan): nodes whose removal would split the
 // component they belong to into two or more pieces. Standard
-// discovery/low-link DFS — recursive, since a DCB model's coupling
+// discovery/low-link DFS – recursive, since a DCB model's coupling
 // graph is small enough that the call depth never approaches what
 // would trouble the interpreter.
 function articulationPointsOf(adj) {
@@ -1204,8 +1204,8 @@ function articulationPointsOf(adj) {
 }
 
 // Commands and events reordered so that coupled clusters sit together
-// and, within a cluster, the most-coupled things — the likeliest
-// bridges — settle toward the far edge. Clusters are numbered by size,
+// and, within a cluster, the most-coupled things – the likeliest
+// bridges – settle toward the far edge. Clusters are numbered by size,
 // largest first, so the model's core sits at the top-left and its
 // loosest ends trail off toward the bottom-right.
 function couplingClusters(matrix) {
@@ -1258,15 +1258,15 @@ function couplingClusters(matrix) {
 // ---------- lifecycles ----------
 //
 // Each entity's lifecycle read as a state machine. Nothing here is
-// authored — every part is derived from definitions that already exist,
+// authored – every part is derived from definitions that already exist,
 // through the designation `model.js` resolves: an entity's `lifecycle`
 // names one of its own properties, and `lifecycleOf` flattens the two
 // spellings that property may have (a boolean, or an enum) into one
 // list of states.
 //
-//   states       `lifecycleOf`'s states — an enum's members, or
+//   states       `lifecycleOf`'s states – an enum's members, or
 //                `false`/`true` for the two-state boolean case;
-//   transitions  the lifecycle projection's declared handlers — a
+//   transitions  the lifecycle projection's declared handlers – a
 //                handler that sets a state is an arrow into it, and the
 //                arrow starts wherever the commands publishing its
 //                event are allowed to run;
@@ -1275,7 +1275,7 @@ function couplingClusters(matrix) {
 //
 // A command with no condition over a lifecycle it touches is
 // *unguarded*: nothing refuses it at any state. That is a fact worth
-// surfacing, not papering over — an unguarded transition is drawn from
+// surfacing, not papering over – an unguarded transition is drawn from
 // the initial state only as a convention, and flagged as such, so a
 // missing guard stays visible. It is also why the two-state machines
 // are on this page at all rather than filtered off it: a command that
@@ -1286,7 +1286,7 @@ function couplingClusters(matrix) {
 // condition says nothing readable about it.
 //
 // An enum is read off `equals` against a member reference and
-// `equalsAny` against a list whose every entry is one — a bare literal
+// `equalsAny` against a list whose every entry is one – a bare literal
 // in the list makes it unreadable rather than guessed at. A boolean is
 // read off the unary `isTrue`/`isFalse` and off `equals` against a bare
 // `true`/`false`. Any other predicate leaves it unread.
@@ -1312,7 +1312,7 @@ function lifecycleAllowedStates(condition, lifecycle, other) {
     return only(other.map((entry) => String(entry.enumMember)));
   }
   // An empty `equalsAny` list is still read: "one of nothing" allows no
-  // state, which is what it evaluates to — unreadable would claim the
+  // state, which is what it evaluates to – unreadable would claim the
   // opposite.
   if (condition.predicate === 'equalsAny' && Array.isArray(other) && !other.length) {
     return only([]);
@@ -1346,7 +1346,7 @@ function lifecycleConstraint(model, body, entityName, lifecycle) {
 }
 
 // Every entity's machine, plus the entities that do not yield one and
-// why — an entity whose lifecycle cannot be read is not an error, it is
+// why – an entity whose lifecycle cannot be read is not an error, it is
 // simply not drawable, and the page should say so rather than silently
 // thin out.
 //
@@ -1357,14 +1357,14 @@ function lifecycleConstraint(model, body, entityName, lifecycle) {
 //   states / initial      off `lifecycleOf` and the projection's initial
 //                         value;
 //   transitions           `{event, target, publishers, sources,
-//                         unguarded, conventional}` — `sources` is the
+//                         unguarded, conventional}` – `sources` is the
 //                         union of the publishing commands' allowed
 //                         states; a transition only unguarded
 //                         publishers reach is drawn from the initial
 //                         state (`conventional: true`);
 //   perState              state -> the commands allowed there, each
 //                         `{command, movesTo, unguarded}`;
-//   terminal              states no drawn transition leaves — with the
+//   terminal              states no drawn transition leaves – with the
 //                         conventional arrows counted, so "terminal"
 //                         matches what the page draws;
 //   opaque                events whose handler touches the lifecycle in
@@ -1469,13 +1469,13 @@ function lifecycleOrder(machine) {
 //
 // The event lanes are tags, not streams. An event belongs to every
 // instance it is tagged with, so one carrying a course id and a student
-// id is one card across both lanes — the fact a stream-per-aggregate
+// id is one card across both lanes – the fact a stream-per-aggregate
 // model would have to split in two, which is the whole case for DCB.
 //
 // A definition holds no time, so the order is derived, along the
 // lifecycles: a command that brings something into being comes first,
 // one that only works on what exists next, and one that moves a thing
-// further along — or back to where it started, which ends it — after
+// further along – or back to where it started, which ends it – after
 // that. Feature order breaks every tie, which is all it is for a model
 // without lifecycles.
 function eventModel(model) {
@@ -1573,7 +1573,7 @@ function eventModel(model) {
 //
 // This is the whole discriminator behind the promotion suggestion, and
 // it is worth being exact about why. `exists && !archived` folds into a
-// three-state lifecycle soundly, because archiving never un-archives —
+// three-state lifecycle soundly, because archiving never un-archives –
 // the states are successive and a thing is in exactly one of them.
 // `exists && !isPublic` must not: a course can be existent-and-public
 // or existent-and-private, those are not stages, and collapsing them
@@ -1595,7 +1595,7 @@ function isMonotoneBoolean(model, entityName, propertyName) {
 
 // Which of an entity's properties could be designated its lifecycle:
 // single-valued, folded (not scripted or derived), and holding either a
-// boolean or an enum — the two things that have states to be in.
+// boolean or an enum – the two things that have states to be in.
 //
 // This is what the designation picker offers, and it is deliberately
 // the same test `lifecycleOf` applies, so the picker can never offer a
@@ -1615,7 +1615,7 @@ function lifecycleCandidates(model, entityName) {
 // `'create'` the `exists` boolean, `'designate'` the one it already has
 // (the round trip after removing a lifecycle, which leaves the property
 // behind), or `null` when `exists` is taken by something that cannot
-// be one — then the option is not offered at all, rather than inventing
+// be one – then the option is not offered at all, rather than inventing
 // `exists2`. The projection name is uniquified like any property's;
 // the property name is what conditions read, so it is not.
 function existenceLifecycleOffer(model, entityName) {
@@ -1628,7 +1628,7 @@ function existenceLifecycleOffer(model, entityName) {
     && lifecycleCandidates(model, entityName).includes(LIFECYCLE_PROPERTY) ? 'designate' : null;
 }
 
-// The monotone booleans of one entity that `body` guards — the raw
+// The monotone booleans of one entity that `body` guards – the raw
 // material of a merge. In the entity's own declaration order, with the
 // designated lifecycle first when it is one of them, because existence
 // is always the first stage of anything.
@@ -1664,11 +1664,11 @@ function orderedMonotoneBooleans(model, entityName, names) {
 // The promotion this command's rules are asking for, or null.
 //
 // Two or more monotone booleans of one entity, guarded by one command.
-// Whether one of them is the designated lifecycle does not matter — what
+// Whether one of them is the designated lifecycle does not matter – what
 // matters is that they are successive one-way doors, which is the same
 // question either way. (It mattered in the first cut of this, and that
-// was a bug: two booleans an author had just added by hand — `registered`
-// and `expelled` — are exactly the shape this is for, and neither of
+// was a bug: two booleans an author had just added by hand – `registered`
+// and `expelled` – are exactly the shape this is for, and neither of
 // them was the designation.)
 //
 // Still narrow in the way that counts: **monotone**. `registered` and
@@ -1685,7 +1685,7 @@ function lifecycleMergeSuggestion(model, body) {
   return null;
 }
 
-// The same offer, for the entity's own page — where an author who has
+// The same offer, for the entity's own page – where an author who has
 // just added two booleans by hand is actually looking, and where no
 // command need exist yet. Every monotone boolean the entity has, not
 // only the ones some command guards.
@@ -1720,11 +1720,11 @@ function featureOf(body) {
 }
 
 // Features in the order their first command appears, then the ones still
-// waiting for one, then the catch-all — so the rail never reshuffles
+// waiting for one, then the catch-all – so the rail never reshuffles
 // under you as you edit. *Within* a feature the commands sit
 // alphabetically, by the name they are shown under: a command's place
 // in a group carries no meaning, so a fixed order beats an accidental
-// one — and it is what lets dropping a command anywhere in a group
+// one – and it is what lets dropping a command anywhere in a group
 // mean only "into this group".
 function featureGroups(model) {
   const order = [];
@@ -1745,7 +1745,7 @@ function featureGroups(model) {
   }));
 }
 
-// Events no feature emits, and entities nothing reads — the loose ends
+// Events no feature emits, and entities nothing reads – the loose ends
 // a command-centred view would otherwise hide.
 function orphans(model) {
   const emitted = new Set();
@@ -1790,13 +1790,13 @@ function propertyUsage(model, entityName, propertyName) {
 // Which commands read a projection, however they reach it: directly by
 // name when nothing binds it, and through an entity alias when
 // something does. One question rather than two, because a projection
-// does not know which of the two it is — that is the whole point of a
+// does not know which of the two it is – that is the whole point of a
 // property being a binding.
 function projectionReaders(model, projectionName) {
   const owners = boundAs(model, projectionName);
   const readers = [];
   for (const [command, body] of Object.entries(model['command-definitions'])) {
-    // An alias's read, or one in place — the same read either way.
+    // An alias's read, or one in place – the same read either way.
     let reads = (body.boundary || []).some((b) => b.projection === projectionName)
       || inlineReads(body).some(({ read }) => read.projection === projectionName);
     if (!reads) {
@@ -1853,7 +1853,7 @@ function readable(name) {
 }
 
 // `courseId` -> "course id". For the things that belong to something
-// else — a property, a parameter, a field. They are never capitalised,
+// else – a property, a parameter, a field. They are never capitalised,
 // and they read the same wherever they turn up: in the list that
 // declares them and in the sentence that refers back to them.
 function propertyWords(name) {
@@ -1876,7 +1876,7 @@ const PREPOSITIONS = ['To', 'From', 'In', 'On', 'For', 'With', 'At', 'Of'];
 // An event is usually the command in the past tense, with the verb
 // moved behind the thing it acted on: DefineCourse -> CourseDefined,
 // SubscribeStudentToCourse -> StudentSubscribedToCourse. Only ever a
-// suggestion — it is offered in an editable field, never imposed.
+// suggestion – it is offered in an editable field, never imposed.
 function suggestEventName(commandName) {
   const words = splitWords(toPascal(commandName));
   if (!words.length) return '';
@@ -1891,7 +1891,7 @@ function suggestEventName(commandName) {
 // ---------- saying it in words ----------
 
 function operandWords(operand) {
-  // `equalsAny`'s literal list — the entries, said in order.
+  // `equalsAny`'s literal list – the entries, said in order.
   if (Array.isArray(operand)) {
     return operand.length ? operand.map(operandWords).join(', ') : '[]';
   }
@@ -1907,7 +1907,7 @@ function operandWords(operand) {
         : propertyWords(operand.parameterName);
     case 'enum-member': return readable(operand.enumMember);
     // A path, not a name: the same `event.data.capacity` a scripted
-    // handler writes, so the stored spelling stays — humanizing inside
+    // handler writes, so the stored spelling stays – humanizing inside
     // a dotted path reads as a typo. It is also what tells a value the
     // event carried apart from a constant at a glance.
     case 'event-property': return `event.data.${operand.eventProperty}`;
@@ -1917,7 +1917,7 @@ function operandWords(operand) {
     case 'current-value': return 'currentValue';
     case 'successor': return `successor(${operandWords(operand.successor)})`;
     // A projection read in place, as a call: the name, then the values
-    // it gives its tags and arguments — `Developer seniority level
+    // it gives its tags and arguments – `Developer seniority level
     // (developer)`. The code view's spelling with the words a reader
     // reads; `projectionReadParts` hands the pieces to a renderer.
     case 'projection-read': {
@@ -1929,7 +1929,7 @@ function operandWords(operand) {
     default:
       if (typeof operand === 'string') return `"${operand}"`;
       // A record a scripted projection folded to is a static value
-      // with no operand shape — it reads as the JSON it is rather
+      // with no operand shape – it reads as the JSON it is rather
       // than as "[object Object]".
       if (operand !== null && typeof operand === 'object') return JSON.stringify(operand);
       return String(operand);
@@ -1940,7 +1940,7 @@ function operandWords(operand) {
 //
 // `null`, `""` and `[]` are three different answers and each keeps its
 // own spelling: a value that has not arrived is not the empty string,
-// and an empty list is neither. None of them is softened into words —
+// and an empty list is neither. None of them is softened into words –
 // this reader gets the literal faster than a description of it.
 function initialValueWords(value) {
   if (value === null || value === undefined) return 'null';
@@ -1972,8 +1972,8 @@ const PREDICATE_WORDS = {
 
 // A boolean property is named as a predicate, so its false state is
 // that predicate denied. Two shapes cover what the one-click lifecycle
-// and ordinary naming produce — `isArchived` -> "is not archived",
-// `exists` -> "does not exist" — and anything else falls back to a bare
+// and ordinary naming produce – `isArchived` -> "is not archived",
+// `exists` -> "does not exist" – and anything else falls back to a bare
 // "not …", which is graceless but never wrong. This is the one thing
 // the two-state spelling gives up: an enum's states are named, a
 // boolean's have to be said.
@@ -1985,7 +1985,7 @@ function negatedPredicateWords(words) {
 }
 
 // One of a machine's states, in words. An enum state is its member's
-// name; a boolean state has none, so it is said off the property —
+// name; a boolean state has none, so it is said off the property –
 // which is why the page labels the two nodes "exists" and "does not
 // exist" rather than "true" and "false".
 function lifecycleStateWords(machine, state) {
@@ -1998,7 +1998,7 @@ function lifecycleStateWords(machine, state) {
 // licenses saying "the course exists" instead of "course · exists
 // holds": the entity designated that property, so the condition is
 // about the thing's existence and can be said that way. Nothing is
-// stored differently — the condition is an ordinary `isTrue` over an
+// stored differently – the condition is an ordinary `isTrue` over an
 // ordinary property, and this only decides how it reads.
 //
 // An enum lifecycle is deliberately not sugared. Its states are named,
@@ -2049,7 +2049,7 @@ function conditionParts(condition, model, body) {
 }
 
 // A read in place in pieces: the projection's name, and each value
-// it is read with — tags first, then arguments as `name = value` — with
+// it is read with – tags first, then arguments as `name = value` – with
 // the operand each came from, so a renderer can point back at it.
 function projectionReadParts(operand) {
   const tagWords = (tag) => (operandSource(tag) === 'tag-literal' ? operandText(tag) : operandWords(tag));
@@ -2064,7 +2064,7 @@ function projectionReadParts(operand) {
 }
 
 // The message a rule is refused with when its author wrote none: the
-// condition, said as what the command requires — `Developer seniority
+// condition, said as what the command requires – `Developer seniority
 // level must be at least Required seniority level`. A read in place is
 // named without its tags, an alias's property as words: the message is
 // static text, and what a refusal read is never part of it.
@@ -2078,7 +2078,7 @@ function derivedRejection(model, body, condition) {
     ? { ...condition, predicate: 'equalsAny', leftHandSide: condition.rightHandSide, rightHandSide: condition.leftHandSide }
     : condition;
   const p = conditionParts(said, model, body);
-  // Only where the sentence named the operand itself — "course exists"
+  // Only where the sentence named the operand itself – "course exists"
   // already said the lifecycle property its own way.
   const words = (operand, fallback) => {
     if (fallback !== operandWords(operand)) return fallback;
@@ -2110,7 +2110,7 @@ function requirementVerb(verb) {
   return ['must', base, ...rest].join(' ');
 }
 
-// A condition as one plain sentence — the same words `conditionParts`
+// A condition as one plain sentence – the same words `conditionParts`
 // hands the slice page's rule editor, joined into a string for a
 // read-only overview that has nowhere to hang per-operand styling.
 function ruleSentence(model, body, condition) {
@@ -2125,14 +2125,14 @@ function effectParts(effect) {
   const subject = effect.entity
     ? memberWords(readable(effect.entity), effect.property.name)
     : readable(effect.projection);
-  // A scripted handler has no operation and no operand to name — the
+  // A scripted handler has no operation and no operand to name – the
   // code is both, and nothing here reads it.
   if (effect.handler.code !== undefined) {
     return { subject, verb: 'scripted', object: null };
   }
   return {
     subject,
-    // The operation's own token, as the Code view spells it — see
+    // The operation's own token, as the Code view spells it – see
     // _The interface register_ in docs/design-notes.md.
     verb: effect.handler.operation,
     object: operandWords(effect.handler.value),
@@ -2147,8 +2147,8 @@ function readParts(model, body, binding) {
       alias: binding.alias,
       projection: binding.projection,
       plural: false,
-      // What it is read by — a value for each tag it declares, in the
-      // command's scope or a literal with its type — and the values a
+      // What it is read by – a value for each tag it declares, in the
+      // command's scope or a literal with its type – and the values a
       // script's code reads besides.
       tags: readTagEntries(binding).map(([name, operand]) => ({
         name,
@@ -2176,7 +2176,7 @@ function readParts(model, body, binding) {
 // The type a member or projection holds, written the way a reader
 // reads it. `propertyType` on anything that declares one (an event
 // field, a command input, a composite's field); `valueType` on a
-// projection — the two never both appear on one object.
+// projection – the two never both appear on one object.
 function typeLabel(member) {
   const type = member.propertyType !== undefined ? member.propertyType : member.valueType;
   return `${type}${member.isList ? '[]' : ''}${member.isOptional ? '?' : ''}`;
@@ -2184,19 +2184,19 @@ function typeLabel(member) {
 
 // ---------- what a thing looks like ----------
 //
-// An entity is named in a dozen places — the rail, a read, a change, a
-// loose end — and a page with five kinds of thing on it is scanned by
+// An entity is named in a dozen places – the rail, a read, a change, a
+// loose end – and a page with five kinds of thing on it is scanned by
 // shape long before it is read by name. So every entity carries one
 // mark, and the mark goes wherever the entity does.
 //
 // An entity's mark is authored and only authored. An unmarked entity
 // carries no glyph: a hashed stand-in was tried and did not earn its
-// place — a shape nobody chose says nothing about the thing, so every
+// place – a shape nobody chose says nothing about the thing, so every
 // page paid a column of noise for a legibility that never arrived. What
 // the picker offers is `ICON_CHOICES` (index.html).
 //
 // Commands and events are the exception: an unmarked one shows its
-// kind's mark (`COMMAND_FALLBACK_ICON`, `EVENT_FALLBACK_ICON`) — one
+// kind's mark (`COMMAND_FALLBACK_ICON`, `EVENT_FALLBACK_ICON`) – one
 // mark per kind, not per name, so it says only what the thing is. The
 // glyph carries the meaning (an intent pushed in, something that
 // happened) and the stylesheet the colour: a plain text glyph takes
@@ -2205,7 +2205,7 @@ function typeLabel(member) {
 // stored: the code view and the wire format see only an authored icon.
 
 // The icon a body actually carries, or '' when it carries none worth
-// showing — the one place the trim-or-fall-back rule lives.
+// showing – the one place the trim-or-fall-back rule lives.
 function chosenIcon(model, collection, name) {
   const body = model && model[collection] ? model[collection][name] : null;
   return body && typeof body.icon === 'string' ? body.icon.trim() : '';
@@ -2213,7 +2213,7 @@ function chosenIcon(model, collection, name) {
 
 // A mark in front of a label, for the places that build one string
 // rather than two elements. Unmarked things are the common case now, so
-// the separator belongs to the mark and not to the label — otherwise
+// the separator belongs to the mark and not to the label – otherwise
 // every unmarked name renders behind a space nobody can see but every
 // alignment can.
 function iconPrefix(icon, separator) {
@@ -2240,7 +2240,7 @@ function commandIcon(model, name) {
   return chosenIcon(model, 'command-definitions', name) || COMMAND_FALLBACK_ICON;
 }
 
-// Every command that publishes this event — usually none or one, since
+// Every command that publishes this event – usually none or one, since
 // every shipped example records one event per command, but nothing
 // stops two commands recording the same fact.
 function commandsPublishing(model, eventName) {
@@ -2253,9 +2253,9 @@ function eventIcon(model, name) {
   const chosen = chosenIcon(model, 'event-definitions', name);
   if (chosen) return chosen;
   // Unmarked, and the outcome of exactly one command: read as that
-  // command's doing, the same mark and all — a modeler who wants this
+  // command's doing, the same mark and all – a modeler who wants this
   // event to look like its own thing gives it its own icon, same as
-  // always. Only an *authored* command mark is borrowed — the command's
+  // always. Only an *authored* command mark is borrowed – the command's
   // fallback would make the event read as a command. Two commands
   // recording the same event agree on nothing, so that case falls back.
   const commands = commandsPublishing(model, name);

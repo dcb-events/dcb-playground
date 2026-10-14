@@ -1,8 +1,8 @@
 // ============================================================
-// DCB Playground — code view language tests.
+// DCB Playground – code view language tests.
 //
 // `dsl.js` claims two things, and this holds it to both: that the text
-// it prints says everything the model does (print, parse, compare —
+// it prints says everything the model does (print, parse, compare –
 // for every shipped model and every fixture file, with no definition
 // falling back to JSON), and that applying a text writes exactly the
 // difference, as one append. The rest pins down the grammar's
@@ -19,7 +19,7 @@ const { createSandbox, loadApp, makeChecker, swap } = require('./test-harness.js
 
 const APP = __dirname;
 // Models with scenarios authored in the playground, which no seed
-// builder produces — test data only, kept outside app/ so none of it
+// builder produces – test data only, kept outside app/ so none of it
 // is served.
 const FIXTURES = path.join(APP, '..', 'fixtures');
 const { sandbox, store } = createSandbox();
@@ -44,7 +44,7 @@ function fresh() {
   sandbox.bumpLogRevision();
 }
 
-// The course example with entities — what `course-simple` was before the
+// The course example with entities – what `course-simple` was before the
 // shipped models were stated without them. Tests about entities,
 // lifecycles and entity reads build this one.
 const ENTITIES = PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-entities');
@@ -92,7 +92,7 @@ check('every predefined model prints without a JSON fallback and parses back equ
 
 // The class of bug the fallback comment once was: a stored string that
 // the printed text does not keep inside its quotes, comment or code
-// fence, and that reads back as something else — a declaration the
+// fence, and that reads back as something else – a declaration the
 // model never had. Every free-text slot of every shipped model and
 // fixture is filled with what would break out of each of those, and the
 // text must still read back as exactly the model.
@@ -298,7 +298,7 @@ check('every rule says what it is refused with, on its line or the next', () => 
     ['A refusal is named by the message it was refused with: then rejected "…".'], 'a refusal names the message');
   eq(parseModelSource('command C(a: integer) {\n  require a > 1 else reject "No"\n'
     + '  scenarios {\n    scenario {\n      when C { a: 0 }\n      then rejected "No" saw 0, 1\n    }\n  }\n}').diagnostics.map((d) => d.message),
-    ['A refusal is named by its message alone — what the rule read is not asserted.'], 'and by nothing else');
+    ['A refusal is named by its message alone – what the rule read is not asserted.'], 'and by nothing else');
   const bare = { name: 'm', ...emptyCollections({ 'command-definition': { C: {
     properties: [], boundary: [], publishes: [], conditions: [{ leftHandSide: { parameterName: 'a' }, predicate: 'isTrue' }],
   } } }) };
@@ -475,7 +475,7 @@ check('a text with an error applies nothing and says where', () => {
   let refused = null;
   try { applyModelSource(id, text); } catch (error) { refused = error; }
   eq(refused instanceof sandbox.DomainError, true, 'refused as a domain error');
-  eq(refused.message.startsWith(`1 error in the code — nothing was applied. Line ${line}:`), true, refused.message);
+  eq(refused.message.startsWith(`1 error in the code – nothing was applied. Line ${line}:`), true, refused.message);
   eq(loadEvents().length, before, 'nothing appended');
 });
 
@@ -504,7 +504,7 @@ check('annotations go only where they mean something', () => {
 });
 
 // ---------------------------------------------------------------
-// What review found — each pinned so it stays found.
+// What review found – each pinned so it stays found.
 // ---------------------------------------------------------------
 
 check('a body the write path stores but no printer expects shows as JSON, never as a crash', () => {
@@ -605,7 +605,7 @@ check('a scenario reads as given, when and then, nested in its command', () => {
   eq(guarded.includes('then DocumentStatus(DocumentId("d1")) == NonExistent'), true, 'a tag literal');
 });
 
-// A text with its edits made, last first — what a fix with `edits` does.
+// A text with its edits made, last first – what a fix with `edits` does.
 const withEdits = (text, edits) => {
   const lines = text.split('\n');
   const offset = (line, col) => lines.slice(0, line - 1).reduce((sum, l) => sum + l.length + 1, 0) + col - 1;
@@ -634,8 +634,8 @@ check('a scenario written without a then is an error whose fix writes the outcom
   ].join('\n'));
   const report = sandbox.sourceScenarioReport(model(), parseModelSource(text));
   eq(report.errors.map((e) => e.message), [
-    'No outcome yet — the model now does:\nthen CourseArchived { courseId: "c9" }',
-    'No outcome yet — the model now does:\nthen rejected "Course is not active"',
+    'No outcome yet – the model now does:\nthen CourseArchived { courseId: "c9" }',
+    'No outcome yet – the model now does:\nthen rejected "Course is not active"',
   ], 'each says what it would be');
   eq(report.errors.map((e) => e.fix.title), ['Write actual outcome', 'Write actual outcome'], 'each with its fix');
   const before = loadEvents().length;
@@ -662,7 +662,7 @@ check('a projection scenario without its value is fixed the same way', () => {
   const { model } = importFixture('course-sequence');
   const text = swap(modelToSource(model()), 'then CourseNumbering() == "c1"', 'then CourseNumbering()');
   const [error] = sandbox.sourceScenarioReport(model(), parseModelSource(text)).errors;
-  eq(error.message, 'No outcome yet — the model now does:\nthen CourseNumbering() == "c1"', error.message);
+  eq(error.message, 'No outcome yet – the model now does:\nthen CourseNumbering() == "c1"', error.message);
   eq(withEdits(text, [error.fix]), modelToSource(model()), 'the line written whole');
   eq(error.fixAll, undefined, 'one missing, no fix for all');
 });
@@ -672,7 +672,7 @@ check('a keyword said twice is joined with and', () => {
   const tail = '\n    }\n  }\n}';
   const text = head + '      given E {}\n      given F {}\n      when A {}' + tail;
   const [d] = parseModelSource(text).diagnostics;
-  eq(d.message, 'A scenario says given once — what follows continues with "and".', 'reported');
+  eq(d.message, 'A scenario says given once – what follows continues with "and".', 'reported');
   eq([d.line, d.col, d.fix.title], [5, 7, 'Join with and'], 'on the second');
   eq(withEdits(text, [d.fix]), head + '      given E {}\n      and F {}\n      when A {}' + tail, 'fixed');
   const apart = parseModelSource(head + '      given E {}\n      when A {}\n      given F {}' + tail).diagnostics;
@@ -724,9 +724,9 @@ check('a written then is asserted: a drift is reported with its fix, and applyin
   const archived = () => Object.values(model()['scenario-definitions'])
     .filter((b) => b.then.rejection === 'Course is closed').length;
   const already = archived();
-  eq(warnings[0].message, 'Drifted — the model now does:\nthen rejected "Course is not active"', 'what it does');
+  eq(warnings[0].message, 'Drifted – the model now does:\nthen rejected "Course is not active"', 'what it does');
   applyModelSource(id, text);
-  eq(archived(), already + 1, 'stored as written — drifted, as on the pages');
+  eq(archived(), already + 1, 'stored as written – drifted, as on the pages');
   const { fix } = warnings[0];
   const lines = text.split('\n');
   const offset = (line, col) => lines.slice(0, line - 1).reduce((sum, l) => sum + l.length + 1, 0) + col - 1;
@@ -792,8 +792,8 @@ check('scenarios sit in one group per block, and a text from before groups is on
   const command = (inner) => `command A() {\n  emit E\n${inner}\n}\nevent E {}`;
   const group = '  scenarios {\n    scenario {\n      when A {}\n    }\n  }';
   eq(messages(command(group)), [], 'a group');
-  eq(messages(command(`${group}\n${group}`)), ['A block has one scenarios group — move these scenarios into the first.'], 'one group');
-  eq(messages(command(`${group}\n  emit E`)), ['The scenarios group comes last — nothing follows it in the block.'], 'and last');
+  eq(messages(command(`${group}\n${group}`)), ['A block has one scenarios group – move these scenarios into the first.'], 'one group');
+  eq(messages(command(`${group}\n  emit E`)), ['The scenarios group comes last – nothing follows it in the block.'], 'and last');
   eq(messages(command('  scenarios {\n    emit E\n  }')), ['Expected scenario, found "emit".'], 'holding scenarios only');
   eq(messages(command('  scenarios {}')), [], 'empty is no error');
   const early = parseModelSource('command A() {\n  scenario {\n    when A {}\n  }\n  emit E\n}\nevent E {}').diagnostics;
@@ -830,24 +830,24 @@ check('scenarios refuse what they cannot mean', () => {
   const errors = (text) => parseModelSource(text).diagnostics.map((d) => d.message);
   const loose = (scenario) => errors(`scenarios {\n${scenario}\n}`);
   eq(errors('command A() {\n  scenarios {\n    scenario {\n      when B {}\n    }\n  }\n}')[0],
-    'This scenario sits in A but is about B — move it there, or make it about A.', 'in the wrong block');
+    'This scenario sits in A but is about B – move it there, or make it about A.', 'in the wrong block');
   eq(loose('scenario {\n  then Ghost tagged CourseId("x") == 1\n}')[0],
     'A read gives its values in parentheses, in the order Ghost declares them: Ghost(…).', 'the draft spelling');
   eq(loose('scenario {\n  then Ghost == 1\n}')[0],
-    'A projection is read with its values in parentheses: Ghost(…) — empty for an untagged one.', 'parentheses, always');
-  eq(loose('scenario {\n  when A {}\n  then nothing\n  and E {}\n}')[0], '"then nothing" is the whole outcome — it stands alone.', 'nothing and more');
-  eq(loose('scenario {\n  when A {}\n  then rejected "no"\n  and E {}\n}')[0], 'A rejection is the whole outcome — it stands alone.', 'a rejection and more');
-  eq(loose('scenario {\n  when A {}\n  and B {}\n}')[0], 'A scenario runs one command — one when.', 'one when, even by and');
+    'A projection is read with its values in parentheses: Ghost(…) – empty for an untagged one.', 'parentheses, always');
+  eq(loose('scenario {\n  when A {}\n  then nothing\n  and E {}\n}')[0], '"then nothing" is the whole outcome – it stands alone.', 'nothing and more');
+  eq(loose('scenario {\n  when A {}\n  then rejected "no"\n  and E {}\n}')[0], 'A rejection is the whole outcome – it stands alone.', 'a rejection and more');
+  eq(loose('scenario {\n  when A {}\n  and B {}\n}')[0], 'A scenario runs one command – one when.', 'one when, even by and');
   eq(loose('scenario {\n  and E {}\n}')[0], 'Expected given, when or then, found "and".', 'and continues something');
-  eq(loose('scenario {\n  given E {}\n  then P() == 1\n  and P() == 2\n}')[0], 'A projection scenario asserts one value — one then.', 'one value, even by and');
-  eq(loose('scenario {\n  then E {}\n}')[0], 'A scenario ending in events, nothing or a rejection needs a when — the command it runs.', 'no when');
+  eq(loose('scenario {\n  given E {}\n  then P() == 1\n  and P() == 2\n}')[0], 'A projection scenario asserts one value – one then.', 'one value, even by and');
+  eq(loose('scenario {\n  then E {}\n}')[0], 'A scenario ending in events, nothing or a rejection needs a when – the command it runs.', 'no when');
   eq(loose('scenario {\n  then Ghost(GhostId("1"), 1) == 1\n}'), [], 'an orphan, read');
   const { id, model } = importFixture('course-simple');
   const text = swap(modelToSource(model()), '  emit CourseArchived { courseId }\n\n  scenarios {\n',
     '  emit CourseArchived { courseId }\n\n  scenarios {\n    scenario {\n      given CourseBurnt { courseId: "c1" }\n      when ArchiveCourse { courseId: "c1" }\n    }\n\n');
   const report = sandbox.sourceScenarioReport(model(), parseModelSource(text));
   eq(report.errors.length, 1, 'a scenario with nothing to record');
-  eq(report.errors[0].message.startsWith('No outcome — cannot run: Given step 1 records "CourseBurnt"'), true, report.errors[0].message);
+  eq(report.errors[0].message.startsWith('No outcome – cannot run: Given step 1 records "CourseBurnt"'), true, report.errors[0].message);
   eq(report.errors[0].fix, undefined, 'nothing to write in');
   const before = loadEvents().length;
   let refused = null;
@@ -927,7 +927,7 @@ check('an event marks its tags in place, and a rename follows them', () => {
     'no tags, no marks');
   const errors = (source) => parseModelSource(source).diagnostics.map((d) => d.message);
   eq(errors('event E { lines: Line[] tag productId }'), ['lines holds a list, so it is tagged by each element: tag each <field>.'], 'each, for a list');
-  eq(errors('event E { line: Line tag each productId }'), ['line holds one record — "each" is for a list: tag <field>.'], 'and only there');
+  eq(errors('event E { line: Line tag each productId }'), ['line holds one record – "each" is for a list: tag <field>.'], 'and only there');
   eq(errors('event E { courseId: CourseId } tags courseId'), ['An event marks its tags in place: tag courseId: CourseId.'], 'the draft spelling');
   eq(parseModelSource('event E { tag: string, tag tagged: CourseId }').collections['event-definition'].E,
     { properties: [{ name: 'tag', propertyType: 'string', isOptional: false, isList: false },
@@ -935,7 +935,7 @@ check('an event marks its tags in place, and a rename follows them', () => {
     'a property called tag is a property');
 });
 
-check('a read gives its values in parentheses — in declared order, a literal with its type', () => {
+check('a read gives its values in parentheses – in declared order, a literal with its type', () => {
   const text = [
     'model "Tags"',
     'tag type CourseId = string',
@@ -978,24 +978,24 @@ check('a read gives its values in parentheses — in declared order, a literal w
   eq(parseModelSource(tag).collections['command-definition'].C.boundary[1].tags, { course: { tagType: 'CourseId', tagValue: 'c1' } },
     'a tag renamed in its declaration names the reads\' values anew');
   const errors = (source) => parseModelSource(swap(text, 'alias one = PerCourse(CourseId("c1"))', source)).diagnostics.map((d) => d.message);
-  eq(errors('alias one = PerCourse(courseId, studentId)'), ['PerCourse takes 1 value (courseId) — this gives 2.'], 'as many values as it declares');
-  eq(errors('alias one = PerCourse'), ['PerCourse is read with its values in parentheses — PerCourse(…), empty for an untagged projection.'], 'parentheses, always');
-  eq(errors('alias one = PerCourse(courseId: courseId)'), ['A read gives its values in order, as PerCourse declares them — no names.'], 'in order');
+  eq(errors('alias one = PerCourse(courseId, studentId)'), ['PerCourse takes 1 value (courseId) – this gives 2.'], 'as many values as it declares');
+  eq(errors('alias one = PerCourse'), ['PerCourse is read with its values in parentheses – PerCourse(…), empty for an untagged projection.'], 'parentheses, always');
+  eq(errors('alias one = PerCourse(courseId: courseId)'), ['A read gives its values in order, as PerCourse declares them – no names.'], 'in order');
 });
 
 check('a projection says what it is tagged by, or that it is untagged', () => {
   const text = 'event E {}\nprojection P: integer = 0 {}\n';
   const { diagnostics } = parseModelSource(text);
-  eq(diagnostics.map((d) => d.message), ['Say what P is tagged by — projection P (tag pId: …) — or that it is untagged.'], 'neither is an error');
+  eq(diagnostics.map((d) => d.message), ['Say what P is tagged by – projection P (tag pId: …) – or that it is untagged.'], 'neither is an error');
   eq(parseModelSource(sandbox.sourceApplyEdits(text, [diagnostics[0].fix])).diagnostics, [], 'whose fix declares it untagged');
   const errors = (source) => parseModelSource(source).diagnostics.map((d) => d.message);
-  eq(errors('untagged projection P (tag id: CourseId): integer = 0 {}'), ['P is declared untagged and tagged by id — one or the other.'], 'not both');
-  eq(errors('projection P (days: integer, tag id: CourseId): integer = 0 {}'), ['Tags come first — a read gives the tags, then the values a script takes.'], 'tags first');
-  eq(errors('projection P (tag id: CourseId, days: integer): integer = 0 {}'), ['Only a scripted projection takes values besides its tags — days is not a tag (scripted projection P (…)).'], 'arguments, only for a script');
+  eq(errors('untagged projection P (tag id: CourseId): integer = 0 {}'), ['P is declared untagged and tagged by id – one or the other.'], 'not both');
+  eq(errors('projection P (days: integer, tag id: CourseId): integer = 0 {}'), ['Tags come first – a read gives the tags, then the values a script takes.'], 'tags first');
+  eq(errors('projection P (tag id: CourseId, days: integer): integer = 0 {}'), ['Only a scripted projection takes values besides its tags – days is not a tag (scripted projection P (…)).'], 'arguments, only for a script');
   eq(errors('projection P (tag id: CourseId): integer {\n  script\n}'),
     ['"script" goes in front now, as "scripted": scripted projection P (…).'], 'the kind is said in front');
   eq(errors('projection P (tag id: CourseId): integer = 0 {\n  initialState 0\n}'),
-    ['Only a scripted projection has initialState — scripted projection P (…).'], 'a script\'s state, only on a script');
+    ['Only a scripted projection has initialState – scripted projection P (…).'], 'a script\'s state, only on a script');
   eq(errors('command C(courseId: CourseId) {\n  require P tagged courseId == 1 else reject "No"\n}'),
     ['A read gives its values in parentheses, in the order P declares them: P(…).'], 'the draft spelling');
   eq(errors('entity Course tagged CourseId {}'), ['Say what Course is tagged by: entity Course (tag courseId: CourseId).'], 'an entity too');
@@ -1034,9 +1034,9 @@ check('a derived projection says so in front, and holds one expression', () => {
   eq(errors('projection Left (tag courseId: CourseId): boolean\n  derived Cap(courseId) > 1\n'),
     ['"derived" goes in front, and what it derives in the block: derived projection Left (…): boolean { … }.'], 'the old spelling');
   eq(errors('derived projection Left (tag courseId: CourseId): integer = 0 {\n  Cap(courseId) - 1\n}\n'),
-    ['A derived projection has no initial value — before any event it is what its operands start at.'], 'no initial value');
+    ['A derived projection has no initial value – before any event it is what its operands start at.'], 'no initial value');
   eq(errors('derived projection Left (tag courseId: CourseId): integer {\n  Cap(courseId) - 1\n  on E => set 1\n}\n'),
-    ['A derived projection\'s block holds what it derives, then its scenarios — found "on".'], 'nothing else in its block');
+    ['A derived projection\'s block holds what it derives, then its scenarios – found "on".'], 'nothing else in its block');
   eq(errors('scripted untagged projection Left: integer {\n  initialState 0\n}\n'),
     ['"untagged" comes first: untagged scripted projection …'], 'untagged leads');
   eq(parseModelSource('untagged derived projection Total: integer {\n  max(1, 2)\n}\n').diagnostics, [], 'untagged, then derived');
@@ -1045,7 +1045,7 @@ check('a derived projection says so in front, and holds one expression', () => {
     [untagged.diagnostics[0].fix])).diagnostics, [], 'the untagged fix goes in front of the kind');
 });
 
-check('a rule reads a projection in place — no alias needed', () => {
+check('a rule reads a projection in place – no alias needed', () => {
   const text = [
     'model "Inline"',
     'enum CourseStatus { NonExistent, Existent }',
@@ -1087,7 +1087,7 @@ check('a rule reads a projection in place — no alias needed', () => {
   eq(parsed.collections['command-definition'].Define.publishes[0].parameters.courseId, { projection: 'CourseNumbering' },
     'an untagged read');
   eq(parseModelSource(swap(text, 'courseId: CourseNumbering()', 'courseId: CourseNumbering')).diagnostics.map((d) => d.message),
-    ['CourseNumbering is a projection — read it as CourseNumbering(…).'], 'a projection bare is an error, with its fix');
+    ['CourseNumbering is a projection – read it as CourseNumbering(…).'], 'a projection bare is an error, with its fix');
   // Round trip: printed as it was written.
   const { id, model } = (() => {
     const modelId = sandbox.createDcbModel('Inline');
@@ -1118,7 +1118,7 @@ check('a rule reads a projection in place — no alias needed', () => {
   eq(renamed.includes('OwnedCourses(CourseHolder(courseId))'), true, 'renamed in place');
 });
 
-check('a read fans out where it says so — each, paired by index with its list', () => {
+check('a read fans out where it says so – each, paired by index with its list', () => {
   const text = [
     'model "Fan"',
     'type Money = number { minimum: 0 }',
@@ -1161,7 +1161,7 @@ check('a read fans out where it says so — each, paired by index with its list'
   const order = (items) => sandbox.evaluateCommand(model(), log, 'OrderProducts', { orderId: 'o1', items });
   eq(order([{ productId: 'p1', price: 10 }, { productId: 'p2', price: 20 }]).outcome, 'published', 'every price holds');
   eq(order([{ productId: 'p1', price: 10 }, { productId: 'p2', price: 25 }]).failedRule.rejection, 'Price has changed',
-    'one wrong price refuses — paired with its own line');
+    'one wrong price refuses – paired with its own line');
   eq(order([{ productId: 'p1', price: 10 }, { productId: 'p9', price: 1 }]).failedRule.rejection, 'Product does not exist',
     'one unknown product refuses');
   eq(order([]).outcome, 'published', 'and over no lines, it holds vacuously');
@@ -1170,11 +1170,11 @@ check('a read fans out where it says so — each, paired by index with its list'
     'the query says it fans out');
   const bad = sandbox.createDcbModel('Bad');
   applyModelSource(bad, swap(text, 'require ProductPrice(each items.productId)', 'require ProductPrice(each orderId)'));
-  eq(sandbox.modelAdvisories(projectState()[bad]).some((a) => /orderId is one value — "each" fans out over a list/.test(a.message)),
+  eq(sandbox.modelAdvisories(projectState()[bad]).some((a) => /orderId is one value – "each" fans out over a list/.test(a.message)),
     true, 'each over one value is advised: ' + sandbox.modelAdvisories(projectState()[bad]).map((a) => a.message).join('; '));
   const mistyped = sandbox.createDcbModel('Mistyped');
   applyModelSource(mistyped, swap(text, 'require ProductPrice(each items.productId)', 'require ProductPrice(orderId)'));
-  eq(sandbox.modelAdvisories(projectState()[mistyped]).some((a) => /orderId, an OrderId — but its "productId" tag is a ProductId/.test(a.message)),
+  eq(sandbox.modelAdvisories(projectState()[mistyped]).some((a) => /orderId, an OrderId – but its "productId" tag is a ProductId/.test(a.message)),
     true, 'a value of another tag type is advised: ' + sandbox.modelAdvisories(projectState()[mistyped]).map((a) => a.message).join('; '));
 });
 
@@ -1243,7 +1243,7 @@ check('renaming any declared name and back changes nothing, or is refused over a
       const { token, symbol } = declaration;
       const fresh = (/^[A-Z]/.test(token.v) ? 'Zz' : 'zz') + token.v;
       // The parses this test already holds are handed on rather than
-      // redone by sourceRename — a few thousand of them were most of
+      // redone by sourceRename – a few thousand of them were most of
       // the suite's time.
       const there = sandbox.sourceRenameSymbol(text, parsed, symbol, fresh);
       if (there.error) {
@@ -1442,7 +1442,7 @@ check('a rename refuses what it cannot do exactly', () => {
   eq(/Open at line 3 could be a member of A or B/.test(renameAt(shared, 'A { Open', 4, 'Opened').error), true,
     'a member where its enum cannot be told');
   eq(renameAt(shared, 'Unknown = Open', 'Unknown = '.length, 'X').error,
-    'Open is a member of A and B, and nothing here says which — rename it at its declaration.', 'from there');
+    'Open is a member of A and B, and nothing here says which – rename it at its declaration.', 'from there');
   const typed = renameAt(swap(shared, 'projection P: Unknown = Open\n', ''), 'A { Open', 4, 'Opened').text;
   eq(typed.includes('require a == Opened') && typed.includes('enum B { Open, Shut }'), true, 'typed by the rule\'s other side');
 });
@@ -1479,7 +1479,7 @@ check('completion knows a command\'s reads and payload', () => {
     `    else reject "Course has more subscriptions than that"\n  ${insert}`));
   eq(rule('require |').labels, ['course', 'courseId', 'newCapacity', 'StudentExists', 'StudentSubscriptionCount',
     'CourseStatus', 'CourseCapacity', 'CourseSubscriptionCount', 'CourseSubscribedStudentIds', 'count', 'not'],
-  'what a rule can be about — its reads and payload, then any projection, read in place');
+  'what a rule can be about – its reads and payload, then any projection, read in place');
   eq(rule('require course.|').labels, ['status', 'capacity', 'subscriptionCount', 'subscribedStudentIds'], 'the read\'s properties');
   eq(rule('require course.status == |').labels.slice(0, 3), ['NonExistent', 'Existent', 'Archived'], 'members first');
   eq(rule('require course.status in [|]').labels, ['NonExistent', 'Existent', 'Archived'], 'in a list');
@@ -1556,7 +1556,7 @@ check('completion knows scenarios, declarations, and when to stay quiet', () => 
 // What a read queries.
 // ---------------------------------------------------------------
 
-check('a read says which events it adds — only those of the properties used', () => {
+check('a read says which events it adds – only those of the properties used', () => {
   const { model } = build(ENTITIES);
   const text = modelToSource(model());
   const queries = (source) => sandbox.sourceReadQueries(model(), parseModelSource(source));
@@ -1577,7 +1577,7 @@ check('a read says which events it adds — only those of the properties used', 
   // Nothing uses it: queried by tag alone, every event under it.
   const unused = of(queries(swap(text, '  require course.status == Existent\n    else reject "Course is not active"\n\n  emit CourseArchived',
     '  emit CourseArchived')), 'ArchiveCourse');
-  eq([unused.hint, unused.reasons, unused.properties], ['‹reads any type — unused›', [], []], 'an unused read');
+  eq([unused.hint, unused.reasons, unused.properties], ['‹reads any type – unused›', [], []], 'an unused read');
 });
 
 check('a command says what it reads in all, on its header line', () => {
@@ -1664,7 +1664,7 @@ check('every keyword outside the experimental ones is shown to an agent', () => 
     'add each to the tour or the forms in dsl.js');
 });
 
-// Errors never stop the read — nesting included. Past a depth no model
+// Errors never stop the read – nesting included. Past a depth no model
 // is written at, the parser says so where it happens, instead of
 // running out of stack and taking the code view with it.
 {

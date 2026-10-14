@@ -3,7 +3,7 @@
 
 :root {
   /* The real height of .topbar (disclaimer + app-bar), kept current by
-     JS — see `syncTopbarHeight`. Everything that docks under it reads
+     JS – see `syncTopbarHeight`. Everything that docks under it reads
      this instead of a guessed constant, so a taller disclaimer (a
      narrow screen wrapping its text to two lines) never leaves a gap
      or an overlap. */
@@ -15,7 +15,7 @@
   --entity: #16a34a;
   --entity-soft: #f0fdf4;
   /* Projections share the entity green: a standalone projection and an
-     entity property are the same thing — folded state — and a second
+     entity property are the same thing – folded state – and a second
      colour would suggest a distinction the model does not make. */
   --projection: var(--entity);
   --projection-soft: var(--entity-soft);
@@ -34,8 +34,8 @@
   --rule-soft: #fdf4ff;
   --type: #6b7280;
   --type-soft: #f9fafb;
-  /* The interface's own colour — buttons, focus, hover, the selected
-     tab — and deliberately not one of the kinds above: chrome painted
+  /* The interface's own colour – buttons, focus, hover, the selected
+     tab – and deliberately not one of the kinds above: chrome painted
      command blue reads as "this is about a command". dcb.events teal
      (Material's teal, a step darker for contrast on white), so the
      playground and the site it lives on read as one place. */
@@ -64,7 +64,7 @@
 
 /* The same palette after dark. Every colour above is a token and every
    rule below this line reads one, so the theme is this block and
-   nothing else — except the handful of places where a chip needed a
+   nothing else – except the handful of places where a chip needed a
    border and a text colour of its own, which are re-stated here. */
 body.f-dark {
   color-scheme: dark;
@@ -76,7 +76,7 @@ body.f-dark {
   --entity-soft: #0f2a1c;
   --event-text: var(--event);
   --entity-text: var(--entity);
-  /* An alias resolves where it is declared, on :root — restated here,
+  /* An alias resolves where it is declared, on :root – restated here,
      or the dark page would get the light values behind it. */
   --projection: var(--entity);
   --projection-soft: var(--entity-soft);
@@ -129,7 +129,7 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 /* ---------- app chrome ---------- */
 
 /* The disclaimer sits above the bar rather than inside it, so it
-   scrolls with nothing and stays put — the two stick together as one
+   scrolls with nothing and stays put – the two stick together as one
    unit rather than each claiming top:0 for itself. */
 .topbar { position: sticky; top: 0; z-index: 20; }
 
@@ -148,12 +148,12 @@ body.f-dark .disclaimer { background: #2d2408; color: #fcd34d; border-bottom-col
   border-bottom: 1px solid var(--border);
 }
 .app-bar .spacer { flex: 1; }
-/* The mark is the way to the site the playground lives on — in a new
+/* The mark is the way to the site the playground lives on – in a new
    tab, so the model being worked on stays open behind it. */
 .brand-home { flex: none; display: block; border-radius: 6px; }
 .brand-home:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
-/* The playground's name and the open model, one button — see
+/* The playground's name and the open model, one button – see
    `paintPage`. Plain text rather than a .btn, so it reads as the bar's
    title; the caret says it opens something. */
 .model-switch {
@@ -169,7 +169,7 @@ body.f-dark .disclaimer { background: #2d2408; color: #fcd34d; border-bottom-col
 .model-switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .brand-mark { flex: none; width: 22px; height: 22px; display: block; }
 
-/* The name as a field, on a linked copy's first change — see
+/* The name as a field, on a linked copy's first change – see
    `namePromptField`. In the accent, so the bar's one changed part
    reads as the thing being asked about; the note under it is an
    anchored card, not a dialog, because nothing waits on it. */
@@ -193,10 +193,10 @@ body.f-dark .disclaimer { background: #2d2408; color: #fcd34d; border-bottom-col
 .app-bar #model-switch, .app-bar #tools, .app-bar #jump, .app-bar #actions {
   display: flex; align-items: center; gap: 4px;
 }
-/* Most of the time there is no loose end to report — an empty #tools
+/* Most of the time there is no loose end to report – an empty #tools
    should not still cost the bar two gaps either side of nothing. */
 .app-bar #tools:empty { display: none; }
-/* display:inline-block so max-width actually clips it — a plain
+/* display:inline-block so max-width actually clips it – a plain
    inline box ignores max-width entirely, which desktop had enough
    room to never expose. */
 .app-bar .model-name {
@@ -204,7 +204,7 @@ body.f-dark .disclaimer { background: #2d2408; color: #fcd34d; border-bottom-col
   text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom;
 }
 
-/* Import/export, theme and Settings — icon only, same footprint as the
+/* Import/export, theme and Settings – icon only, same footprint as the
    undo/redo buttons they sit next to. */
 .app-bar .icon-btn {
   display: inline-flex; align-items: center; justify-content: center;
@@ -214,7 +214,7 @@ body.f-dark .disclaimer { background: #2d2408; color: #fcd34d; border-bottom-col
 }
 .app-bar .icon-btn:hover { border-color: var(--accent); color: var(--accent); }
 .app-bar .icon-btn svg { width: 16px; height: 16px; }
-/* The rail's own toggle — only meaningful once the rail is off-canvas,
+/* The rail's own toggle – only meaningful once the rail is off-canvas,
    so it stays out of the bar entirely above that breakpoint. The ⋯
    menu likewise: above it, its four rows are buttons in the bar. */
 .app-bar .menu-btn, .app-bar .more { display: none; }
@@ -234,7 +234,7 @@ body.f-dark .disclaimer { background: #2d2408; color: #fcd34d; border-bottom-col
 .more-icon { display: flex; flex: none; color: var(--muted); }
 .more-icon svg { width: 18px; height: 18px; }
 
-/* The trigger that opens quick open — a button that looks like a
+/* The trigger that opens quick open – a button that looks like a
    search field but only ever holds a placeholder; the field itself
    lives in the palette that pops over the page. Fixed height, rather
    than one padding happens to produce, so it lines up exactly with the
@@ -254,9 +254,9 @@ body.f-dark .disclaimer { background: #2d2408; color: #fcd34d; border-bottom-col
    One breakpoint, everything the bar and the rail need to keep working
    down to a 320px phone: the rail becomes a drawer (see .rail below),
    its toggle appears, the bar keeps only what is used while modelling
-   — the model, the surface toggle (icons only), quick open — and folds
+   – the model, the surface toggle (icons only), quick open – and folds
    import/export, help, theme and Settings behind ⋯ (`moreMenu`). Touch
-   targets grow to the ~40px a finger actually needs — the desktop 30px
+   targets grow to the ~40px a finger actually needs – the desktop 30px
    stays for a mouse. Every dialog goes fullscreen here; that lives
    with .modal in index.html. */
 @media (max-width: 760px) {
@@ -279,7 +279,7 @@ body.f-dark .disclaimer { background: #2d2408; color: #fcd34d; border-bottom-col
   /* The name is the one part of the bar that gives: everything else
      keeps its size and the name ellipsizes into whatever is left. Flex
      shrinking rather than a vw budget, because the rest of the bar is
-     not fixed — the Problems count comes and goes — and a budget
+     not fixed – the Problems count comes and goes – and a budget
      written down once drifts the moment a control is added (one did,
      and the bar ran 190px past a phone's edge). */
   .app-bar #model-switch, .app-bar .model-switch, .app-bar .model-name { min-width: 0; }
@@ -326,7 +326,7 @@ kbd {
 .chip.event { background: var(--event-soft); border-color: #fed7aa; color: #9a3412; }
 .chip.entity, .chip.projection { background: var(--entity-soft); border-color: #bbf7d0; color: #166534; }
 .chip.rule { background: var(--rule-soft); border-color: #f5d0fe; color: #86198f; }
-/* No value yet. Drawn as an absence — dashed, unfilled, italic — so it
+/* No value yet. Drawn as an absence – dashed, unfilled, italic – so it
    never reads as a value someone typed. `""` and `[]` are values and
    are drawn as values; this is the one that is not, and the whole
    point of the distinction is that you can see it. */
@@ -350,8 +350,8 @@ input[type=text]:focus, select:focus, textarea:focus {
 }
 /* What is not a value does not look like one (`pick`): an unanswered
    placeholder and a chosen "none" are muted in the closed face, the
-   none italic too, and a picker with nothing to offer is a slot — a
-   dashed edge on the page's ground — not a control. The options are
+   none italic too, and a picker with nothing to offer is a slot – a
+   dashed edge on the page's ground – not a control. The options are
    reset so a native list does not inherit the muting. */
 select:has(> option.placeholder:checked),
 select:has(> option.none:checked) { color: var(--muted); }
@@ -364,11 +364,11 @@ select option { color: var(--text); font-style: normal; }
 select option.none { color: var(--muted); font-style: italic; }
 select option.action { color: var(--accent); }
 /* Every dropdown is a customizable <select> where the browser has one
-   (`appearance: base-select`) — all of them, not just the ones with
+   (`appearance: base-select`) – all of them, not just the ones with
    something to show, because a styled picker beside a native one in
    the same row reads as two different widgets. What it buys: options
    that carry markup (a mark re-fronted, a token in monospace, a
-   context span shown only once picked — see `pick`), group headings
+   context span shown only once picked – see `pick`), group headings
    that read as headings, and a popover in the page's palette. A
    browser without it gets the native control and the options' plain
    text, which every caller keeps readable on its own. */
@@ -384,8 +384,8 @@ select option.action { color: var(--accent); }
   option { display: flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 4px; }
   option:hover, option:focus-visible { background: var(--accent-soft); outline: none; }
   option:checked { font-weight: 600; }
-  /* A fixed checkmark column, so every name — and every heading over
-     them — starts at the same x: 8px padding, 14px column, 4px gap.
+  /* A fixed checkmark column, so every name – and every heading over
+     them – starts at the same x: 8px padding, 14px column, 4px gap.
      A heading's label carries 4px of the browser's own, hence 22. */
   option::checkmark { color: var(--accent); width: 14px; flex: none; }
   option:disabled { color: var(--muted); }
@@ -393,7 +393,7 @@ select option.action { color: var(--accent); }
   option.placeholder { display: none; }
   /* A heading sits over the names, not over the checkmark column, so
      the eye runs straight down them, and is set apart from them in
-     every way at once — small capitals, muted, tracked — since an
+     every way at once – small capitals, muted, tracked – since an
      alias heading ("already read", "course") is otherwise a word like
      the rows under it. Groups and the rows ruled off with an <hr>
      (`pick`: a leading none, the actions) share one hairline. */
@@ -460,8 +460,8 @@ input.inline:focus { border-bottom-color: var(--accent); }
   border-radius: 6px; font-size: 12px; z-index: 100;
   box-shadow: 0 6px 20px rgba(15,23,42,.25);
 }
-/* A refusal wears the same diagnostic dress as the problems — tinted
-   panel, hairline red border, ⚠ — not a solid red shout. The colours
+/* A refusal wears the same diagnostic dress as the problems – tinted
+   panel, hairline red border, ⚠ – not a solid red shout. The colours
    are the advisory/issue hardcodes (see index.html), restated for dark
    below like the chips'; the dark rule must outrank `body.f-dark
    #toast` above, which is what flattened error toasts to grey. */

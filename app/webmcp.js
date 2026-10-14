@@ -1,9 +1,9 @@
 // ============================================================
-// WebMCP — the playground's tools for an in-browser agent.
+// WebMCP – the playground's tools for an in-browser agent.
 //
 // Registers the model on `document.modelContext` (the WebMCP browser
 // API) so an agent in the browser can inspect the open model, drive
-// commands against a hypothetical event log, and edit definitions —
+// commands against a hypothetical event log, and edit definitions –
 // through the same command functions the buttons call, so every edit
 // lands in the app's own event log and is undoable like any other.
 //
@@ -11,7 +11,7 @@
 // two directions: without the API (no flag, no extension) nothing is
 // registered, and without an open model every tool answers with that
 // instead of an error trace. Tool execution never works from a
-// `file:` origin — WebMCP needs a real one, e.g. `npx serve` over
+// `file:` origin – WebMCP needs a real one, e.g. `npx serve` over
 // this directory.
 //
 // Every call is announced with a toast, and a tool that changed the
@@ -31,7 +31,7 @@
 // an edit that would introduce a use is refused. The tools are
 // registered once, so following the flag would mean re-registering on
 // every toggle. A model that already uses those constructs still
-// reads whole and stays editable — only a *new* use is refused
+// reads whole and stays editable – only a *new* use is refused
 // (`introducedExperimentalFeatures`), as the flag gates an offer and
 // never the display of something stored.
 // ============================================================
@@ -64,17 +64,17 @@
 
   // The shared wrapper: resolve the open model, run the tool, announce
   // what happened. A domain refusal or an evaluation error is a normal
-  // answer for an agent — it comes back as an `isError` result with the
+  // answer for an agent – it comes back as an `isError` result with the
   // message the interface would have shown, not as a broken call. A
   // mutation that *succeeded* may still have left the model with
-  // something to say — the demoted validations — and that rides along
+  // something to say – the demoted validations – and that rides along
   // in the result rather than blocking it.
-  // `mutates` marks a tool that edits the model — it repaints and
+  // `mutates` marks a tool that edits the model – it repaints and
   // echoes advisories. `mutatesSandbox` marks one that only moves the
   // page's sandbox session: it repaints too, but the model is exactly
   // as it was, so there is nothing advisory to say about it.
   // `destructive` marks a writing tool that overwrites or removes what
-  // is there, rather than only adding to it — said in every writing
+  // is there, rather than only adding to it – said in every writing
   // tool's annotations, since a client takes an unmarked writer to be
   // destructive and could not tell the two apart.
   const register = ({ name, description, inputSchema, mutates, mutatesSandbox, destructive, needsModel = true, run }) => {
@@ -89,7 +89,7 @@
         try {
           const model = activeModel();
           if (needsModel && !model) {
-            return refusal('No model is open in the playground — open or create one first.');
+            return refusal('No model is open in the playground – open or create one first.');
           }
           const before = mutates && model ? modelAdvisories(model) : [];
           const { summary, payload } = run(model, args || {});
@@ -130,8 +130,8 @@
 
   // The full shape of one definition, straight from the model schema
   // (see webmcp-schemas.js and the generator that writes it). The
-  // definition's key — `name`, or `id` for the id-keyed scenario
-  // kinds — is part of the object; `withKey` says whether a call must
+  // definition's key – `name`, or `id` for the id-keyed scenario
+  // kinds – is part of the object; `withKey` says whether a call must
   // supply it, and an add of an id-keyed kind must not have to.
   const definitionSchema = (kind, withKey) => {
     const base = WEBMCP_DEFINITION_SCHEMAS[kind];
@@ -141,15 +141,15 @@
     return { ...base, required: [...required] };
   };
 
-  // The kinds an agent may author — entities are experimental.
+  // The kinds an agent may author – entities are experimental.
   const KINDS = DEF_KINDS.filter((kind) => kind !== 'entity-definition');
 
   // Refuses an edit that would introduce an experimental construct,
-  // naming each use — with its line, when the edit is a text.
+  // naming each use – with its line, when the edit is a text.
   const refuseNewExperimental = (before, after, lineOf = () => null) => {
     const fresh = introducedExperimentalFeatures(before, after);
     if (!fresh.length) return;
-    throw new DomainError('Nothing was applied — experimental constructs are not offered to agents:\n'
+    throw new DomainError('Nothing was applied – experimental constructs are not offered to agents:\n'
       + fresh.map(({ feature, where }) => {
         const line = lineOf(where);
         return `- ${line ? `line ${line}: ` : ''}${where} uses ${EXPERIMENTAL_FEATURES[feature]}`;
@@ -166,7 +166,7 @@
     const parsed = parseModelSource(source);
     const errors = parsed.diagnostics.length ? parsed.diagnostics : sourceScenarioReport(model, parsed, { recordOutcomes: true }).errors;
     if (errors.length) {
-      throw new DomainError('Nothing was applied — the text has '
+      throw new DomainError('Nothing was applied – the text has '
         + `${errors.length} error${errors.length === 1 ? '' : 's'}:\n`
         + errors.map((e) => `- line ${e.line}, column ${e.col}: ${e.message}`).join('\n'));
     }
@@ -175,7 +175,7 @@
     return parsed;
   };
 
-  // A model with nothing in it, never stored — what a source for a
+  // A model with nothing in it, never stored – what a source for a
   // model not yet created is checked against.
   const emptyModel = (name) => {
     const model = { id: null, name };
@@ -189,7 +189,7 @@
     name: 'get_model',
     description: 'The DCB model currently open in the playground, in full, as stored JSON: its '
       + 'custom types, events, projections and the commands that guard them. Every other tool '
-      + 'speaks in this model\'s names. get_model_source says the same far shorter, as code — '
+      + 'speaks in this model\'s names. get_model_source says the same far shorter, as code – '
       + 'prefer it for reading, and for any edit beyond one definition.',
     inputSchema: { type: 'object', properties: {} },
     run: (model) => ({
@@ -198,11 +198,11 @@
     }),
   });
 
-  // The same model as code (dsl.js) — usually the shorter read, and
+  // The same model as code (dsl.js) – usually the shorter read, and
   // the one an agent can edit as a whole with `apply_model_source`.
   register({
     name: 'get_model_source',
-    description: 'The open model as code — the playground\'s own model language, the text its '
+    description: 'The open model as code – the playground\'s own model language, the text its '
       + 'Code view edits: types, events, projections and commands, each command\'s and '
       + 'projection\'s scenarios inside its block. Usually far shorter than get_model. Edit it and '
       + 'send it back with apply_model_source; get_model_language explains the language.',
@@ -214,12 +214,12 @@
   });
 
   // The language itself (dsl.js), so an agent can write a model it has
-  // never seen one of — `start_model` leaves it nothing to imitate.
+  // never seen one of – `start_model` leaves it nothing to imitate.
   register({
     name: 'get_model_language',
     description: 'How to write a DCB model as code: the rules, every construct in a commented '
       + 'tour, and a complete example. Read it before writing a model with start_model\'s source '
-      + 'or apply_model_source — the fastest way to build a model with its events, projections '
+      + 'or apply_model_source – the fastest way to build a model with its events, projections '
       + 'and commands is to write the whole text and send it in one call.',
     inputSchema: { type: 'object', properties: {} },
     needsModel: false,
@@ -248,7 +248,7 @@
     name: 'evaluate_command',
     description: 'Run a command of the open model against a hypothetical event log and '
       + 'report the outcome: `published` with the events it would record, or `rejected` '
-      + 'with the message it was refused with and the rule that refused it. Pure — nothing '
+      + 'with the message it was refused with and the rule that refused it. Pure – nothing '
       + 'in the playground changes; to stage a run the person can see and scrub through, '
       + 'use drive_command instead. '
       + '`reads` shows what the boundary resolved to when it decided.',
@@ -263,7 +263,7 @@
         givenEvents: {
           type: 'array',
           description: 'The events already in the log, oldest first. Defaults to an empty log. '
-            + 'Each is {type, data} — the shape evaluate_command itself publishes, so outcomes chain.',
+            + 'Each is {type, data} – the shape evaluate_command itself publishes, so outcomes chain.',
           items: {
             type: 'object',
             properties: { type: { type: 'string' }, data: { type: 'object' } },
@@ -276,7 +276,7 @@
     run: (model, { commandName, arguments: args, givenEvents }) => {
       const outcome = evaluateCommand(model, givenEvents || [], commandName, args || {});
       return {
-        summary: `evaluated ${commandName} — ${outcome.outcome === 'published'
+        summary: `evaluated ${commandName} – ${outcome.outcome === 'published'
           ? 'published ' + outcome.events.map((e) => e.type).join(', ')
           : 'rejected: ' + (outcome.failedRule.rejection || outcome.failedRule.text)}`,
         payload: outcome,
@@ -289,7 +289,7 @@
     description: 'Everything findably wrong with the open model, without judging it: '
       + 'loose ends (events nothing records, entities nothing reads, commands that '
       + 'record nothing), advisories (what a definition got wrong without being '
-      + 'refused — dangling references, boundary gaps, mistyped values) and '
+      + 'refused – dangling references, boundary gaps, mistyped values) and '
       + 'scenarios the model no longer agrees with.',
     inputSchema: { type: 'object', properties: {} },
     run: (model) => {
@@ -297,7 +297,7 @@
       return {
         summary: found.length
           ? `listed ${found.length} problem${found.length === 1 ? '' : 's'}`
-          : 'listed problems — none found',
+          : 'listed problems – none found',
         payload: found,
       };
     },
@@ -307,14 +307,14 @@
   //
   // These go through the same command functions the interface calls, so
   // an agent's edit is an event in the app's own log: visible on the
-  // next repaint, undoable, and refused by the same domain rules — a
+  // next repaint, undoable, and refused by the same domain rules – a
   // refusal comes back verbatim as the tool's error text.
 
   register({
     name: 'start_model',
     description: 'Start a new model and open it, so every other tool speaks about it from here '
       + 'on. Pass the whole model as source to create it with its types, events, projections, '
-      + 'commands and scenarios in this one call — see get_model_language for how to write it; '
+      + 'commands and scenarios in this one call – see get_model_language for how to write it; '
       + 'without source the model starts empty. A source with any error is refused whole and '
       + 'nothing is created. The model that was open before stays stored and can be reopened '
       + 'from the Models modal.',
@@ -324,7 +324,7 @@
         name: { type: 'string', description: 'What the new model is called. A model line in the source renames it.' },
         source: {
           type: 'string',
-          description: 'Optional: the whole model, as code — what apply_model_source would take.',
+          description: 'Optional: the whole model, as code – what apply_model_source would take.',
         },
       },
       required: ['name'],
@@ -334,8 +334,8 @@
     run: (_, { name, source }) => {
       if (source !== undefined) checkedSource(emptyModel(name), source);
       // `openNewModel` is `createNamedModel` unwrapped from its `run`
-      // wrapper — the refusal has to reach the agent, not only the
-      // toast — so both paths open a model the same one way.
+      // wrapper – the refusal has to reach the agent, not only the
+      // toast – so both paths open a model the same one way.
       const id = openNewModel(name);
       if (typeof state === 'object' && state) state.models = false;
       if (source !== undefined) {
@@ -348,14 +348,14 @@
           id,
           name: name.trim(),
           next: 'The model is empty. To build it, read get_model_language, write the whole model '
-            + 'as code and send it with apply_model_source — one call, not one per definition.',
+            + 'as code and send it with apply_model_source – one call, not one per definition.',
         },
       };
     },
   });
 
   // One add and one update per kind, so each tool's inputSchema is the
-  // full shape of that one definition — an agent discovers what a
+  // full shape of that one definition – an agent discovers what a
   // command body looks like from the tool itself, not by fishing an
   // example out of get_model.
   for (const kind of KINDS) {
@@ -381,8 +381,8 @@
         + 'definition itself, in the shape this schema describes.'
         + (idKeyed ? ' The id is generated when omitted.' : '')
         + ' Refused only when the name is taken or the body is structurally not a '
-        + 'definition; anything semantically wrong — a dangling reference, a boundary '
-        + 'gap — is accepted and comes back as an advisory in the result. Fix what it '
+        + 'definition; anything semantically wrong – a dangling reference, a boundary '
+        + 'gap – is accepted and comes back as an advisory in the result. Fix what it '
         + 'reports before moving on.' + prefer,
       inputSchema: definitionSchema(kind, !idKeyed),
       mutates: true,
@@ -398,7 +398,7 @@
       name: 'update_' + suffix,
       description: `Replace the ${label.toLowerCase()} the ${idKeyed ? 'id' : 'name'} `
         + 'points at, wholesale. A body that strands a reference elsewhere is accepted '
-        + 'and the stranding comes back as an advisory in the result — renames still '
+        + 'and the stranding comes back as an advisory in the result – renames still '
         + 'belong in rename_definition and rename_member, which move the references '
         + 'along instead of stranding them.' + prefer,
       inputSchema: definitionSchema(kind, true),
@@ -423,7 +423,7 @@
         kind: kindSchema(KINDS),
         name: {
           type: 'string',
-          description: 'The name of the definition to remove — or its id, for the '
+          description: 'The name of the definition to remove – or its id, for the '
             + 'id-keyed scenario kinds.',
         },
       },
@@ -443,10 +443,10 @@
       + '(the text get_model_source returns, edited; get_model_language explains the language). '
       + 'The way to build or restructure a model: write all of it and send it in one call. Only '
       + 'what differs is written, as one undoable step. A definition or scenario left out of the '
-      + 'text is removed — but only with allowRemovals: true; without it, a text that leaves '
+      + 'text is removed – but only with allowRemovals: true; without it, a text that leaves '
       + 'anything out is refused, naming what it would remove. A scenario written without a then is recorded with what the model does; '
       + 'one with a then asserts it, and a drift is reported by list_problems, never accepted '
-      + 'silently. A renamed definition is a removal plus an addition — references to it in the '
+      + 'silently. A renamed definition is a removal plus an addition – references to it in the '
       + 'text move only if the text moves them. A text with any error is refused whole, with every '
       + 'error and its line.',
     inputSchema: {
@@ -472,7 +472,7 @@
       } catch (error) {
         if (error.removed) {
           throw new DomainError(error.message + ' Send it again with allowRemovals: true if the removals are meant '
-            + '— or, to rename, use rename_definition, which moves the references along.');
+            + '– or, to rename, use rename_definition, which moves the references along.');
         }
         throw error;
       }
@@ -483,7 +483,7 @@
   register({
     name: 'rename_definition',
     description: 'Rename a definition and rewrite every reference to it across the model '
-      + 'in the same change — never rename by editing bodies one at a time. The id-keyed '
+      + 'in the same change – never rename by editing bodies one at a time. The id-keyed '
       + 'scenario kinds have no name to rename, so they are not offered here.',
     inputSchema: {
       type: 'object',
@@ -492,7 +492,7 @@
         previousName: { type: 'string', description: 'The definition\'s current name.' },
         newName: {
           type: 'string',
-          description: 'The name to give it — PascalCase, and not already taken by '
+          description: 'The name to give it – PascalCase, and not already taken by '
             + 'another definition of the same kind.',
         },
       },
@@ -512,8 +512,8 @@
     .filter(([kind]) => KINDS.includes(kind));
   register({
     name: 'rename_member',
-    description: 'Rename one member of a definition — a property, an enum member, a '
-      + 'composite type\'s field — and rewrite everything '
+    description: 'Rename one member of a definition – a property, an enum member, a '
+      + 'composite type\'s field – and rewrite everything '
       + 'that referred to it by that name. The valid kind/memberKind pairs: '
       + memberCombos.map(([k, m]) => `${k} + ${m}`).join('; ') + '.',
     inputSchema: {
@@ -533,7 +533,7 @@
         previousName: { type: 'string', description: 'The member\'s current name.' },
         newName: {
           type: 'string',
-          description: 'The name to give it — not already taken by another member of '
+          description: 'The name to give it – not already taken by another member of '
             + 'the same definition.',
         },
       },
@@ -555,7 +555,7 @@
   // other, events piling up on a timeline the person can scrub (see
   // section D of the page script). These tools drive that same
   // session, so an agent can stage a worked example to look at
-  // together — the model and its stored log are untouched throughout,
+  // together – the model and its stored log are untouched throughout,
   // and a reload clears it, like anything else in the sandbox.
 
   register({
@@ -563,7 +563,7 @@
     description: 'Drive a command in the sandbox: evaluate it against the events already '
       + 'recorded there and, when it publishes, append its events to the sandbox timeline '
       + 'the person sees (the Sandbox page in the playground). A rejection is an ordinary '
-      + 'outcome — reported, nothing recorded. The model itself never changes. Drive '
+      + 'outcome – reported, nothing recorded. The model itself never changes. Drive '
       + 'commands in sequence to stage a worked example; for a what-if that should leave '
       + 'no trace, use evaluate_command instead.',
     inputSchema: {
@@ -581,7 +581,7 @@
     run: (model, { commandName, arguments: args }) => {
       const outcome = sessionDrive(model, commandName, args || {});
       return {
-        summary: `drove ${commandName} in the sandbox — ${outcome.outcome === 'published'
+        summary: `drove ${commandName} in the sandbox – ${outcome.outcome === 'published'
           ? 'published ' + outcome.events.map((e) => e.type).join(', ')
           : 'rejected: ' + (outcome.failedRule.rejection || outcome.failedRule.text)}`,
         payload: outcome,
@@ -591,12 +591,12 @@
 
   register({
     name: 'get_sandbox',
-    description: 'The sandbox as it stands: every command driven so far — with its '
-      + 'arguments and the range of events it appended — and the full event log those '
+    description: 'The sandbox as it stands: every command driven so far – with its '
+      + 'arguments and the range of events it appended – and the full event log those '
       + 'runs have built up, oldest first. Empty when nothing has been driven.',
     inputSchema: { type: 'object', properties: {} },
     run: () => ({
-      summary: `read the sandbox — ${session.steps.length} step${session.steps.length === 1 ? '' : 's'}, `
+      summary: `read the sandbox – ${session.steps.length} step${session.steps.length === 1 ? '' : 's'}, `
         + `${session.log.length} event${session.log.length === 1 ? '' : 's'}`,
       payload: { steps: session.steps, events: session.log },
     }),
@@ -605,7 +605,7 @@
   register({
     name: 'reset_sandbox',
     description: 'Clear the sandbox: every driven command, its events and whatever was '
-      + 'being watched. The model is untouched — this only empties the timeline, ready '
+      + 'being watched. The model is untouched – this only empties the timeline, ready '
       + 'for a fresh example.',
     inputSchema: { type: 'object', properties: {} },
     mutatesSandbox: true,

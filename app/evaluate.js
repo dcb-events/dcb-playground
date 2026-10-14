@@ -1,5 +1,5 @@
 // ============================================================
-// DCB Playground — evaluation layer.
+// DCB Playground – evaluation layer.
 //
 // `model.js` says what a definition *means*; this says what it *does*.
 // Given a model, a log of events and a command with its arguments,
@@ -9,7 +9,7 @@
 //
 // Nothing here touches the DOM, `localStorage` or the event log the
 // playground stores its own history in. It takes a model object and
-// a list of events and returns a value — which is what makes it usable
+// a list of events and returns a value – which is what makes it usable
 // from a scenario, from the sandbox, and eventually from a worker,
 // without any of them knowing about the others.
 //
@@ -18,29 +18,29 @@
 // per projection, built by walking the declarative operand tree and
 // closing over it. A scripted handler compiles to a function of the
 // *same signature* through `new Function`, so the fold engine never
-// branches on whether a projection is scripted — the difference is
+// branches on whether a projection is scripted – the difference is
 // gone by the time anything folds. What this deliberately avoids is
 // emitting source: a generated fold would be a third copy of semantics
 // that `deriveDcb` and validation already hold, and the only copy of
 // the three you could not read, grep or breakpoint.
 //
-// **Scripts run on the main thread, unsandboxed — and unprompted.**
+// **Scripts run on the main thread, unsandboxed – and unprompted.**
 // The contract is the one the schema states: each body is an
 // expression over `state`, `event`, `args` and `tags` returning the next
 // state. A scripted projection folds wherever and whenever a declared
 // one would, repaints included. What stands between an untrusted
 // model and that is the import gate (nothing external loads without a
-// confirmation — index.html), and what stands between a hanging
+// confirmation – index.html), and what stands between a hanging
 // script and a page that hangs again on every reload is safe mode:
-// `setScriptsDisabled(true)` — flipped by the interface for a `?safe`
-// URL, or after a load that hung — compiles every script handler to a
+// `setScriptsDisabled(true)` – flipped by the interface for a `?safe`
+// URL, or after a load that hung – compiles every script handler to a
 // thrower instead, so the model still loads and the script can be reached and fixed.
 //
 // **Failure has two kinds and they are not the same.** A command whose
-// conditions do not hold is *rejected* — an ordinary, expected outcome
-// this returns. A scenario that cannot be run at all — an event that no
+// conditions do not hold is *rejected* – an ordinary, expected outcome
+// this returns. A scenario that cannot be run at all – an event that no
 // longer exists, an argument the command never got, a script that threw
-// — is *broken*, and comes back as an `EvaluationError`. Real bugs in
+// – is *broken*, and comes back as an `EvaluationError`. Real bugs in
 // this file are neither: they propagate as ordinary exceptions, so a
 // mistake here can never be mistaken for a modelling mistake.
 // ============================================================
@@ -63,8 +63,8 @@ function fail(message) {
   throw new EvaluationError(message);
 }
 
-// What a thrown thing says. A script may throw anything at all —
-// `throw null` included — and reading `.message` off that must not be
+// What a thrown thing says. A script may throw anything at all –
+// `throw null` included – and reading `.message` off that must not be
 // the second, unexplained failure.
 function evErrorText(error) {
   return String((error && error.message) || error);
@@ -78,7 +78,7 @@ function evErrorText(error) {
 // in conditions alike; carrying that wrapper into the fold would mean
 // every predicate unwrapping it again, so it is unwrapped once, here,
 // and a status is a string everywhere downstream. The unwrapping goes
-// all the way down — a list of statuses, a record holding one — and
+// all the way down – a list of statuses, a record holding one – and
 // hands a value back untouched when there was nothing to unwrap.
 // ============================================================
 
@@ -107,7 +107,7 @@ function evNormalize(value) {
   return out;
 }
 
-// A value held under a key the object itself has — a definition in a
+// A value held under a key the object itself has – a definition in a
 // collection, a field of a payload, an argument supplied. Never what
 // Object inherits under `constructor` or `toString`; see emptyCollection
 // (model.js) for the projection's side of the same rule.
@@ -121,7 +121,7 @@ function evDeepEqual(a, b) {
   if (x === y) return true;
   if (x === null || y === null || typeof x !== 'object' || typeof y !== 'object') return false;
   // Canonicalised first: two records carrying the same fields are the
-  // same value no matter what order they were authored in — the rule
+  // same value no matter what order they were authored in – the rule
   // evSameOutcome already applies to scenario comparison.
   return JSON.stringify(evCanonical(x)) === JSON.stringify(evCanonical(y));
 }
@@ -130,13 +130,13 @@ function evDeepEqual(a, b) {
 // Integers step by one; a string ending in digits steps its trailing
 // run and keeps the width it was written with, so `c1` becomes `c2` and
 // `inv-009` becomes `inv-010`. Anything else has no successor, which
-// validation already refuses — reaching it here means a body was
+// validation already refuses – reaching it here means a body was
 // written past the validator.
 function evSuccessor(value) {
   const v = evNormalize(value);
   if (v !== null && typeof v === 'object' && !Array.isArray(v)) {
     return fail(
-      'A composite identifier has no successor — auto-incrementing makes sense for a single ' +
+      'A composite identifier has no successor – auto-incrementing makes sense for a single ' +
       'value, and a composite is a record of them.'
     );
   }
@@ -224,10 +224,10 @@ function evMatchesTags(model, event, tags) {
   return tags.every((tag) => carried.has(tag));
 }
 
-// Which of a log's events carry a tag, as positions — so a read starts
+// Which of a log's events carry a tag, as positions – so a read starts
 // from the events carrying its rarest tag instead of scanning the log.
 // Kept per model and log array, and rebuilt when the log is no longer
-// the one it was built over — longer, or ending elsewhere (the
+// the one it was built over – longer, or ending elsewhere (the
 // sandbox's log is appended to in place).
 const evTagIndexes = new WeakMap();
 
@@ -264,7 +264,7 @@ function evEventsTagged(model, events, tags) {
 // ============================================================
 // Compiling a fold.
 //
-// A projection — an entity property or a standalone one — becomes three
+// A projection – an entity property or a standalone one – becomes three
 // things: the state it starts from, a step function per event type, and
 // the reading a condition sees. Declared and scripted projections
 // produce the same three, which is the point: below this line nothing
@@ -272,7 +272,7 @@ function evEventsTagged(model, events, tags) {
 // ============================================================
 
 // A handler operand, as a function of the state and the event it is
-// folding. `event-property` is only available to a handler — a
+// folding. `event-property` is only available to a handler – a
 // condition gets a different operand set.
 function evCompileHandlerOperand(operand) {
   switch (operandSource(operand)) {
@@ -294,7 +294,7 @@ function evCompileHandlerOperand(operand) {
 // Safe mode. Flipped by the interface for a `?safe` URL or after a
 // load that hung (and by tests directly): every script handler compiles to a thrower, so a model
 // whose script hangs the tab on load can still be opened, edited and
-// repaired. Declared handlers are untouched — this is a way back in,
+// repaired. Declared handlers are untouched – this is a way back in,
 // not a mode the app runs in.
 let evScriptsDisabled = false;
 function setScriptsDisabled(disabled) {
@@ -325,13 +325,13 @@ function evDeepFreeze(value) {
 
 // One handler, as `(state, event, args, tags) => nextState`. `args` are
 // the read's argument values, `tags` the values it is tagged by, keyed
-// by the names the projection declares (`tags.courseId`) — a script
+// by the names the projection declares (`tags.courseId`) – a script
 // sees what it is read by, but cannot change it.
 //
 // Code runs only on a projection that declares a `script`: that is
 // what the import gate (`envelopeHasScript`) asks about, so it is the
 // one thing that may decide whether authored JavaScript runs. A `code`
-// left on an ordinary handler is inert here — the validator reports it.
+// left on an ordinary handler is inert here – the validator reports it.
 function evCompileHandler(handler, label, scripted) {
   if (scripted && handler.code !== undefined) {
     if (evScriptsDisabled) {
@@ -395,7 +395,7 @@ function evCompileHandler(handler, label, scripted) {
   }
 }
 
-// A projection or entity property, compiled once and folded many times —
+// A projection or entity property, compiled once and folded many times –
 // once per model and target, so a fan-out reading the same projection
 // two hundred times compiles it (scripts included) once. Safe mode
 // changes what a script compiles to, so switching it starts afresh.
@@ -445,7 +445,7 @@ function evCompileTargetAfresh(model, target, label) {
     types: [...steps.keys()],
     fold: (events, args, tags) => evNormalize(expose(run(events, args, tags))),
     // The same fold read before `exposes` trims it: the whole state,
-    // bookkeeping included. Hidden from conditions — a statement about
+    // bookkeeping included. Hidden from conditions – a statement about
     // the boundary, not about the person watching the script work.
     foldState: (events, args, tags) => evNormalize(run(events, args, tags)),
   };
@@ -454,7 +454,7 @@ function evCompileTargetAfresh(model, target, label) {
 // ============================================================
 // Folding.
 //
-// There is one fold, `foldProjection`, and one way into it: a *read* —
+// There is one fold, `foldProjection`, and one way into it: a *read* –
 // `{ tags: { courseId: 'c1' }, args }`, a value for each tag the
 // projection declares (8.0), keyed by its name, and the arguments a
 // script takes. The declared type of each tag is its key, so the
@@ -468,12 +468,12 @@ function evCompileTargetAfresh(model, target, label) {
 //
 // It replays from the start of the log every time. That is the same
 // choice the playground already makes for its own state, and it stays
-// until something measured says otherwise — an incremental fold only
+// until something measured says otherwise – an incremental fold only
 // helps scrubbing forwards, and pays for it with a snapshot regime that
 // a replay does not need.
 // ============================================================
 
-// One property of one entity instance — the projection it binds, read
+// One property of one entity instance – the projection it binds, read
 // by its one tag, the instance's identifier.
 function foldEntityProperty(model, events, entityName, propertyName, instanceId, args) {
   const entity = evOwn(model['entity-definitions'], entityName);
@@ -495,14 +495,14 @@ function foldEntityProperty(model, events, entityName, propertyName, instanceId,
 }
 
 // The value a read gives one declared tag (`{name, tagType}`), as the
-// leaves it renders to — a scalar tag type renders one tag, a record
-// one per tag-marked field — paired with the type each leaf is keyed by.
+// leaves it renders to – a scalar tag type renders one tag, a record
+// one per tag-marked field – paired with the type each leaf is keyed by.
 function evReadTagLeaves(model, projectionName, tag, value) {
   const normalized = evNormalize(value);
   if (value === undefined) {
     fail(`Projection "${projectionName}" was read without a value for its "${tag.name}" tag.`);
   }
-  // null has no tag — "Type:null" would be one phantom read every unset
+  // null has no tag – "Type:null" would be one phantom read every unset
   // value shares.
   if (normalized === null) {
     fail(`Projection "${projectionName}" was read tagged by no value (null) for its "${tag.name}" tag.`);
@@ -516,8 +516,8 @@ function evReadTagLeaves(model, projectionName, tag, value) {
 }
 
 // The tags a read's query carries, rendered. Extracted so the interface
-// can *say* what a fold will read — a watched projection's query, with
-// the actual values in it — without running the fold to find out. A
+// can *say* what a fold will read – a watched projection's query, with
+// the actual values in it – without running the fold to find out. A
 // derived projection's operands are read by the tags it passes them, so
 // its query is theirs.
 function projectionQueryTags(model, projectionName, read) {
@@ -530,7 +530,7 @@ function projectionQueryTags(model, projectionName, read) {
 }
 
 // What a script sees of the tags it is read by: one value per declared
-// tag, by name — `tags.courseId`.
+// tag, by name – `tags.courseId`.
 function evScriptTags(model, projectionName, read) {
   const out = {};
   const held = (read && read.tags) || {};
@@ -541,7 +541,7 @@ function evScriptTags(model, projectionName, read) {
 }
 
 // Events reach a fold carrying an explicit key for every optional
-// property their definition declares — null when unset. One spelling
+// property their definition declares – null when unset. One spelling
 // of "no value" downstream: a Given step may omit the key, an emission
 // writes the null out, and a handler or script reads the same thing
 // either way. Optional lists are exempt (they evaluate as plain
@@ -578,14 +578,14 @@ function foldProjectionState(model, events, projectionName, read) {
 }
 
 // A derived projection is not folded but computed: each operand that
-// reads a projection folds it — by the tags the operand gives it, each
+// reads a projection folds it – by the tags the operand gives it, each
 // one of this read's own (`{parameterName}`) or a literal, with the
-// operand's own literal arguments — and the predicate decides, or the
-// operator computes. `seen` is the cycle guard — a value derived through itself
+// operand's own literal arguments – and the predicate decides, or the
+// operator computes. `seen` is the cycle guard – a value derived through itself
 // has nowhere to start, and the advisory said so before this error does.
 function evDeriveProjection(model, events, projectionName, read, seen = []) {
   if (seen.includes(projectionName)) {
-    fail(`Projection "${projectionName}" derives from itself — a cycle has no value to start from.`);
+    fail(`Projection "${projectionName}" derives from itself – a cycle has no value to start from.`);
   }
   const projection = evOwn(model['projection-definitions'], projectionName);
   const derived = derivedOf(projection);
@@ -609,8 +609,8 @@ function evDeriveProjection(model, events, projectionName, read, seen = []) {
   return evApplyPredicate(derived, left, right);
 }
 
-// One computation over two numbers. A null side yields null — "not
-// known yet" stays unknown rather than counting as zero — and a side
+// One computation over two numbers. A null side yields null – "not
+// known yet" stays unknown rather than counting as zero – and a side
 // that is no number at all is an error the advisory named first.
 function evApplyOperator(projectionName, derived, left, right) {
   const l = evNormalize(left);
@@ -652,7 +652,7 @@ function evProjectionFold(model, events, projectionName, read) {
 //
 // What a command's operands can see: its own arguments, and whatever
 // the boundary has bound so far. An entity binding may hold one
-// instance or many — the boundary is resolved in rounds, and a later
+// instance or many – the boundary is resolved in rounds, and a later
 // round may read an earlier one, so this grows as the rounds run.
 // ============================================================
 
@@ -674,10 +674,10 @@ function evEntityInstance(model, events, entityName, id, args) {
 
 // An operand as a command reads it: whole, with no iteration index
 // applied. Reading a property off a plural alias yields one value per
-// instance, and a list read that way flattens — a list of lists is not
+// instance, and a list read that way flattens – a list of lists is not
 // a shape anything downstream can use.
 function evReadOperand(operand, scope) {
-  // The one array operand — `equalsAny`'s literal list — reads as its
+  // The one array operand – `equalsAny`'s literal list – reads as its
   // entries, each normalized like any other literal.
   if (Array.isArray(operand)) return operand.map(evNormalize);
   switch (operandSource(operand)) {
@@ -709,7 +709,7 @@ function evReadOperand(operand, scope) {
       }
       if (!binding.fanned) {
         // An absent optional binding bound nothing; reading it yields
-        // null — the one spelling of "no value" — rather than erroring.
+        // null – the one spelling of "no value" – rather than erroring.
         if (!binding.instances.length) return null;
         return binding.instances[0].read(operand.property);
       }
@@ -719,7 +719,7 @@ function evReadOperand(operand, scope) {
     case 'enum-member':
       return operand.enumMember;
     // An inline read is folded where it is first needed and once per
-    // spelling — the same read written in two rules is one query — and
+    // spelling – the same read written in two rules is one query – and
     // reported beside the aliases, under how it reads.
     case 'projection-read': {
       const key = JSON.stringify(canonicalOperand(operand));
@@ -739,7 +739,7 @@ function evReadOperand(operand, scope) {
 // ============================================================
 
 // Where each element of a fan came from, as an index into the list the
-// fan is rooted in — what a zipped parameter is read at. Fanned from a
+// fan is rooted in – what a zipped parameter is read at. Fanned from a
 // list, an element is its own index. Fanned from an alias that is
 // itself fanned out (`Course(each student.courses)`), it is the index
 // the instance it was read off came from: every course of the first
@@ -762,9 +762,9 @@ function evFanSourceIndexes(operand, scope, count) {
   return Array.from({ length: count }, (_, i) => i);
 }
 
-// One projection read — an alias's or an inline one — resolved in the
+// One projection read – an alias's or an inline one – resolved in the
 // command's scope: a value for each tag the projection declares, which
-// has to be of the declared type (the tag's key — the advisory said so
+// has to be of the declared type (the tag's key – the advisory said so
 // first), the arguments a script takes, and the value folded from them.
 // The tags and arguments are kept beside the value because they are
 // what makes it reproducible: the value alone says what was read, and
@@ -772,8 +772,8 @@ function evFanSourceIndexes(operand, scope, count) {
 // `tags` is reported as `[{name, type, value}]`, in declaration order.
 //
 // A read fanned out (`ProductExists(each items.productId)`) is made once
-// per element of that list — `instances`, each with its tags and value,
-// in the list's order so a zipped parameter pairs by index — and `value`
+// per element of that list – `instances`, each with its tags and value,
+// in the list's order so a zipped parameter pairs by index – and `value`
 // is then every one of them, in order.
 function evProjectionRead(model, events, body, read, scope, label) {
   const projection = evOwn(model['projection-definitions'], read.projection);
@@ -786,7 +786,7 @@ function evProjectionRead(model, events, body, read, scope, label) {
     const resolved = tagOperandType(model, body, operand);
     if (resolved && resolved.propertyType !== tag.tagType) {
       fail(`${label} is tagged by ${operandText(operand)}, ${typeArticle(resolved.propertyType)} ` +
-        `${resolved.propertyType} — but ${read.projection}'s "${tag.name}" tag is ` +
+        `${resolved.propertyType} – but ${read.projection}'s "${tag.name}" tag is ` +
         `${typeArticle(tag.tagType)} ${tag.tagType}.`);
     }
     if (operandSource(operand) === 'each') {
@@ -796,7 +796,7 @@ function evProjectionRead(model, events, body, read, scope, label) {
     }
     const value = operandSource(operand) === 'tag-literal' ? operand.tagValue : evReadOperand(operand, scope);
     if ((resolved && resolved.isList) || Array.isArray(value)) {
-      fail(`${label} is tagged by ${operandText(operand)}, a list — its "${tag.name}" tag takes one value.`);
+      fail(`${label} is tagged by ${operandText(operand)}, a list – its "${tag.name}" tag takes one value.`);
     }
     return { name: tag.name, type: tag.tagType, value };
   });
@@ -851,13 +851,13 @@ function evResolveBinding(model, events, body, binding, scope) {
   // read as one identifier has no one instance to be.
   if (!fanned && Array.isArray(evNormalize(held))) {
     fail(`Binding "${binding.alias}" reads ${binding.entity} by ${operandText(binding.id)}, which holds ` +
-      `many — ${binding.entity}(each ${operandText(binding.id)}) reads one instance per element.`);
+      `many – ${binding.entity}(each ${operandText(binding.id)}) reads one instance per element.`);
   }
   // A null identifier binds nothing. Folding at "Entity:null" would
   // invent one phantom instance every unset value shares. A binding
   // flagged `isOptional` declares the absence expected and binds zero
   // instances instead: conditions over it hold vacuously and reading a
-  // property of it yields null. Without the flag the error stays — an
+  // property of it yields null. Without the flag the error stays – an
   // unset identifier nobody declared possible is an accident, and this
   // is the error the optional-parameter advisory promises.
   if (!fanned && evNormalize(held) === null) {
@@ -882,7 +882,7 @@ function evResolveBinding(model, events, body, binding, scope) {
   const roots = fanned ? evFanSourceIndexes(entityIdOperand(binding), scope, ids.length) : [0];
 
   // Each instance remembers the index it was fanned out from, because
-  // a zipped parameter is read at *that* index — `excluding` compacts
+  // a zipped parameter is read at *that* index – `excluding` compacts
   // the instance list, but it must not shift the pairing against the
   // list the fan came from.
   let entries = ids.map((id, i) => ({ id, sourceIndex: roots[i] }));
@@ -911,8 +911,8 @@ function evResolveBinding(model, events, body, binding, scope) {
 //
 // A condition over a plural alias holds when it holds for every
 // instance. Where a list parameter is read beside an alias fanned out
-// from that very list, the two are read at the same index — `zipped`,
-// in the language `model.js` uses for it — so each product is checked
+// from that very list, the two are read at the same index – `zipped`,
+// in the language `model.js` uses for it – so each product is checked
 // against the price submitted for that product.
 // ============================================================
 
@@ -928,8 +928,8 @@ function evApplyPredicate(condition, left, right) {
     case 'isFalse': held = l === false; break;
     case 'equals': held = evDeepEqual(l, r); break;
     case 'equalsAny':
-      // Membership is repeated equality — a null left is simply not a
-      // member unless listed — and an empty list holds for nothing
+      // Membership is repeated equality – a null left is simply not a
+      // member unless listed – and an empty list holds for nothing
       // (negated: for everything), which the advisory said ahead of
       // time. A non-list right (a defect the advisories flag) wraps to
       // one entry rather than erroring: a defective model evaluates.
@@ -954,11 +954,11 @@ function evApplyPredicate(condition, left, right) {
     case 'lessThanOrEquals':
     case 'greaterThan':
     case 'greaterThanOrEquals':
-      // `null < 3` would coerce to `0 < 3` and quietly hold — an unset
+      // `null < 3` would coerce to `0 < 3` and quietly hold – an unset
       // optional has no place in an ordering, and saying so beats
       // ranking it as zero.
       if (l === null || l === undefined || r === null || r === undefined) {
-        return fail(`"${conditionText(condition)}" orders against no value (null) — an ordering needs both sides.`);
+        return fail(`"${conditionText(condition)}" orders against no value (null) – an ordering needs both sides.`);
       }
       if (condition.predicate === 'lessThan') held = l < r;
       else if (condition.predicate === 'lessThanOrEquals') held = l <= r;
@@ -978,8 +978,8 @@ function evApplyPredicate(condition, left, right) {
 }
 
 // The aliases a condition reads that hold more than one instance. All
-// of them share one fan root — validation refuses a condition
-// quantified over two unrelated lists — so they are read side by side.
+// of them share one fan root – validation refuses a condition
+// quantified over two unrelated lists – so they are read side by side.
 function evFannedAliasesOf(condition, scope) {
   const out = [];
   for (const operand of conditionOperands(condition)) {
@@ -992,7 +992,7 @@ function evFannedAliasesOf(condition, scope) {
 
 function evCheckCondition(model, body, condition, scope) {
   // A condition reading an alias the boundary flagged optional and
-  // could not bind holds vacuously — the same reading a fanned alias
+  // could not bind holds vacuously – the same reading a fanned alias
   // with zero instances already gets. `skippedFor` names the alias, so
   // an interface can say the rule stepped aside rather than passed.
   for (const operand of conditionOperands(condition)) {
@@ -1056,7 +1056,7 @@ function evCheckCondition(model, body, condition, scope) {
       'together, but they hold different numbers of instances, so there is no pairing to check.'
     );
   }
-  // Quantified over nothing is vacuously true — a course with no
+  // Quantified over nothing is vacuously true – a course with no
   // subscribers cannot double-book any of them.
   for (let index = 0; index < lengths[0]; index++) {
     const outcome = check(index);
@@ -1075,7 +1075,7 @@ function evCheckCondition(model, body, condition, scope) {
 //   { outcome: 'rejected', failedRule, reads }
 //
 // The discriminator is there from the start so that publishing an
-// alternative event on refusal — a rejection that also carries events —
+// alternative event on refusal – a rejection that also carries events –
 // is a change to what a `rejected` outcome holds rather than a change
 // to the shape every stored scenario was written in.
 //
@@ -1115,7 +1115,7 @@ function evaluateCommand(model, events, commandName, args) {
   }
 
   // Described at each way out rather than here, because a binding
-  // reports the properties the decision *depended on* — and it has not
+  // reports the properties the decision *depended on* – and it has not
   // depended on any of them until the conditions have run.
   const conditions = body.conditions || [];
   for (let index = 0; index < conditions.length; index++) {
@@ -1127,7 +1127,7 @@ function evaluateCommand(model, events, commandName, args) {
       outcome: 'rejected',
       events: [],
       // `rejection` is what the refusal is known by; `index` and `text`
-      // say which rule it was, for the interface — a scenario keeps
+      // say which rule it was, for the interface – a scenario keeps
       // neither (`deriveThen`).
       failedRule: {
         index,
@@ -1150,7 +1150,7 @@ function evaluateCommand(model, events, commandName, args) {
       fail(`"${commandName}" publishes "${emission.name}", which this model does not define.`);
     }
     // A guarded emission fires only while every guard holds. A guard
-    // that does not hold *skips* the emission and nothing else — the
+    // that does not hold *skips* the emission and nothing else – the
     // command has already been accepted; `when` decides what it
     // records, never whether it happens.
     let held = true;
@@ -1164,7 +1164,7 @@ function evaluateCommand(model, events, commandName, args) {
       const operand = evOwn(emission.parameters, property.name);
       if (operand === undefined) {
         // An optional event property needs no mapping. The published
-        // payload still carries the key, holding the explicit null —
+        // payload still carries the key, holding the explicit null –
         // canonical form, so a stored event always spells out every
         // property its definition declares.
         if (property.isOptional && !property.isList) {
@@ -1181,7 +1181,7 @@ function evaluateCommand(model, events, commandName, args) {
   return { outcome: 'published', events: published, reads: evDescribeReads(scope) };
 }
 
-// The boundary as a plain value — every instance it bound and every
+// The boundary as a plain value – every instance it bound and every
 // property that was actually read while deciding. Only what the fold
 // touched appears, because that is what the command consulted.
 function evDescribeReads(scope) {
@@ -1201,7 +1201,7 @@ function evDescribeReads(scope) {
       kind: 'entity',
       entity: binding.entity,
       fanned: binding.fanned,
-      // An optional binding whose identifier was unset — it bound
+      // An optional binding whose identifier was unset – it bound
       // nothing, and the reader deserves to see that said, not an
       // empty list that looks like a fan-out over nothing.
       ...(binding.absent ? { absent: true } : {}),
@@ -1272,11 +1272,11 @@ function scenarioLog(scenario) {
   }));
 }
 
-// What the current definitions make of this scenario — the same shape
+// What the current definitions make of this scenario – the same shape
 // that gets stored as its Then.
 function deriveThen(model, scenario) {
   // A Given written against definitions that have since moved is not a
-  // scenario that fails — it is one that cannot be run. Without this
+  // scenario that fails – it is one that cannot be run. Without this
   // the fold would simply not match an event it no longer recognises,
   // and a deleted event would report as agreement rather than as the
   // repair it actually needs.
@@ -1287,7 +1287,7 @@ function deriveThen(model, scenario) {
     }
     for (const property of definition.properties || []) {
       // An optional property legitimately absent is not an event the
-      // scenario has fallen behind — the fold reads it as undefined.
+      // scenario has fallen behind – the fold reads it as undefined.
       if (property.isOptional) continue;
       if (evOwn(step.data, property.name) === undefined) {
         fail(
@@ -1305,7 +1305,7 @@ function deriveThen(model, scenario) {
     return { outcome: 'published', events: result.events.map((e) => ({ type: e.type, data: e.data })) };
   }
   // A refusal is its message and nothing else: which rule refused, and
-  // what it read, are how the decision was made, not what it was — so
+  // what it read, are how the decision was made, not what it was – so
   // rules sharing a message are one outcome, and a projection storing
   // its state differently is no change in behaviour. A refusal a
   // scenario cannot name is not an outcome it can assert: the rule has
@@ -1319,8 +1319,8 @@ function deriveThen(model, scenario) {
 
 // Why something could not be worked out. An EvaluationError is a
 // sentence written for the modeller; anything else is a defect in the
-// model this file did not foresee. Both are an *error* — a scenario
-// broken, a card saying so — rather than escaping: the scenario runners
+// model this file did not foresee. Both are an *error* – a scenario
+// broken, a card saying so – rather than escaping: the scenario runners
 // and the sandbox evaluate while the page renders, and an imported
 // model must not be able to take that down.
 function evaluationFailure(error) {
@@ -1346,9 +1346,9 @@ function runScenario(model, scenario) {
   };
 }
 
-// What the current definitions make of this projection scenario — the
+// What the current definitions make of this projection scenario – the
 // same shape that gets stored as its Then: the value its one projection
-// folds to, over the Given. `scenarioLog` reads the Given unchanged — a
+// folds to, over the Given. `scenarioLog` reads the Given unchanged – a
 // projection scenario's is the same shape a command scenario's is.
 //
 // There is nothing to say about *which* of several reads to fold any
@@ -1358,7 +1358,7 @@ function runScenario(model, scenario) {
 // answerable and each drifting on its own.
 function deriveProjectionScenarioThen(model, spec) {
   // A Given written against definitions that have since moved is not a
-  // scenario that fails — it is one that cannot be run. See deriveThen
+  // scenario that fails – it is one that cannot be run. See deriveThen
   // for why this is checked ahead of the fold rather than left to fall
   // out of it as a silent, empty match.
   (spec.given || []).forEach((step, index) => {
@@ -1368,7 +1368,7 @@ function deriveProjectionScenarioThen(model, spec) {
     }
     for (const property of definition.properties || []) {
       // An optional property legitimately absent is not an event the
-      // scenario has fallen behind — the fold reads it as undefined.
+      // scenario has fallen behind – the fold reads it as undefined.
       if (property.isOptional) continue;
       if (evOwn(step.data, property.name) === undefined) {
         fail(
@@ -1387,7 +1387,7 @@ function deriveProjectionScenarioThen(model, spec) {
   return foldProjection(model, scenarioLog(spec), spec.projection, { tags, args: spec.arguments || {} });
 }
 
-// `{ status, expected, actual, reason }` — the projection analogue of
+// `{ status, expected, actual, reason }` – the projection analogue of
 // runScenario.
 function runProjectionScenario(model, spec) {
   // `null` and `[]` are values a projection really holds, so what the
@@ -1406,8 +1406,8 @@ function runProjectionScenario(model, spec) {
   };
 }
 
-// Loadable both as a classic script — the way the playground loads
-// everything, so it opens from the filesystem without a server — and as
+// Loadable both as a classic script – the way the playground loads
+// everything, so it opens from the filesystem without a server – and as
 // a module, so this can be exercised outside a browser.
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
