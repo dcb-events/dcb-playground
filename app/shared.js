@@ -855,6 +855,13 @@ function readModelLink(hash) {
   return null;
 }
 
+// The fragment that links to a hosted file: its address as typed when
+// that reads back unchanged — a gist's stays legible — and URI-encoded
+// when it holds what would end or garble it.
+function modelUrlLink(address) {
+  return '#url=' + (/[&#%\s]/.test(address) ? encodeURIComponent(address) : address);
+}
+
 // This page's address, up to where a hosted file's address goes.
 function modelUrlLinkBase() {
   return location.origin + location.pathname + '#url=';

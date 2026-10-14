@@ -5515,6 +5515,60 @@ check('a link carries a packed model or a hosted file’s address, then its opti
   eq(sandbox.readModelLink('#overview'), null, 'another fragment');
 });
 
+check('a hosted file’s link spells its address as typed, encoded only where it must', () => {
+  const gist = 'https://gist.github.com/someone/0f1e';
+  eq(sandbox.modelUrlLink(gist), '#url=' + gist, 'legible');
+  const query = 'https://x.test/m.json?a=1&b=2';
+  eq(sandbox.modelUrlLink(query), '#url=' + encodeURIComponent(query), 'encoded');
+  for (const address of [gist, query, 'https://x.test/a b.json']) {
+    eq(sandbox.readModelLink(sandbox.modelUrlLink(address)).value, address, 'reads back: ' + address);
+  }
+});
+
+// The address bar's stand-in, as far as these checks need one.
+function withAddressBar(hash, body) {
+  const { history } = sandbox;
+  sandbox.location.hash = hash;
+  sandbox.history = { replaceState: (_, __, url) => { sandbox.location.hash = url.includes('#') ? url.slice(url.indexOf('#')) : ''; } };
+  try { body(); } finally { sandbox.history = history; sandbox.location.hash = ''; sandbox.dropAddressLink(); }
+}
+
+check('From a URL opens the address as this page’s #url= link', () => {
+  const replaced = [];
+  sandbox.location.replace = (hash) => replaced.push(hash);
+  sandbox.openModelAddress('  https://gist.github.com/someone/0f1e ');
+  delete sandbox.location.replace;
+  eq(replaced, ['#url=https://gist.github.com/someone/0f1e'], 'the link, trimmed');
+});
+
+check('a model link stays in the address bar until its model changes', () => {
+  store.clear();
+  sandbox.bumpLogRevision();
+  const linked = sandbox.createDcbModel('Linked');
+  const other = sandbox.createDcbModel('Other');
+  withAddressBar('#url=https://x.test/m.json', () => {
+    sandbox.linkInAddressBar(linked);
+    sandbox.addDefinition('event-definition', other, 'Elsewhere', { properties: [], tags: [] });
+    eq(sandbox.location.hash, '#url=https://x.test/m.json', 'another model’s change leaves it');
+    sandbox.addDefinition('event-definition', linked, 'Changed', { properties: [], tags: [] });
+    eq(sandbox.location.hash, '', 'its own change drops it');
+  });
+});
+
+check('a model link leaves the address bar when another model is opened', () => {
+  store.clear();
+  sandbox.bumpLogRevision();
+  const linked = sandbox.createDcbModel('Linked');
+  const other = sandbox.createDcbModel('Other');
+  withAddressBar('#model=H4sI', () => {
+    sandbox.linkInAddressBar(linked);
+    sandbox.switchToModel(linked);
+    eq(sandbox.location.hash, '#model=H4sI', 'the same model keeps it');
+    sandbox.switchToModel(other);
+    eq(sandbox.location.hash, '', 'another drops it');
+  });
+});
+
 check('the export says how to share a hosted file, with this page’s #url= link', () => {
   sandbox.location.origin = 'https://dcb.events';
   sandbox.location.pathname = '/playground/';

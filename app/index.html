@@ -1834,6 +1834,41 @@ function beginImport(envelope) {
   finishImport(envelope);
 }
 
+// ---------- the model link in the address bar ----------
+//
+// A model link — opened, or written by ⌘S or Export — stays in the
+// address bar while it still says what is on screen: until that model
+// changes (an append, an undo, a redo) or another one is opened. So
+// the address bar is the link to copy, and a reload before then finds
+// the unchanged copy (`modelMatchingEnvelope`) rather than importing a
+// second one. Null while there is none, or while a link is still on
+// its way in — what it stands for is not known until it lands.
+let addressModelId = null;
+
+function linkInAddressBar(id) { addressModelId = id; }
+
+function dropAddressLink() {
+  addressModelId = null;
+  if (readModelLink(location.hash)) history.replaceState(null, '', location.pathname + location.search);
+}
+
+// "From a URL", in either dialog: the address becomes this page's own
+// `#url=` link, and the link is what loads it (`openModelLink`) — the
+// one way a hosted model comes in, typed or followed. The same link
+// twice changes no fragment, so it is opened directly.
+function openModelAddress(address) {
+  const hash = modelUrlLink(address.trim());
+  if (location.hash === hash) openModelLink(readModelLink(hash));
+  else location.replace(hash);
+}
+
+// A link's import turned down at the script gate: nothing landed, so
+// the address bar no longer stands for anything.
+function cancelImport() {
+  if (state.pendingImport && linkedEnvelopes.has(state.pendingImport)) dropAddressLink();
+  state.pendingImport = null;
+}
+
 // Envelopes that came in through a link rather than the models dialog
 // — what `markLinkedCopy` (shared.js) is told about once they land,
 // across the script gate if there is one.
@@ -1845,6 +1880,7 @@ const linkedEnvelopes = new WeakSet();
 // not part of any model, so neither may survive the crossing: a
 // session scrubbed against model A must not render against model B.
 function switchToModel(id) {
+  if (addressModelId && id !== addressModelId) dropAddressLink();
   localStorage.setItem(MODEL_KEY, id);
   sessionReset();
   setPendingFeatures([]);
@@ -1856,8 +1892,8 @@ function switchToModel(id) {
 function finishImport(envelope) {
   run(() => {
     const { modelId, skipped } = importModelFromEnvelope(envelope);
-    if (linkedEnvelopes.has(envelope)) markLinkedCopy(modelId);
     switchToModel(modelId);
+    if (linkedEnvelopes.has(envelope)) { markLinkedCopy(modelId); linkInAddressBar(modelId); }
     // A model is now loaded, so whatever opened the models dialog — a
     // click on the bar, or entering the page without a model link — is
     // answered.
@@ -1944,8 +1980,9 @@ function modelsModal() {
       ? inlineForm({
           question: 'Model URL', placeholder: 'https://…', submitLabel: 'Load',
           onSubmit: (v) => {
-            state.loadingUrl = false;
-            runAsync(async () => beginImport(await loadModelFromUrl(v)));
+            state.loadingUrl = false; state.models = false;
+            render();
+            openModelAddress(v);
           },
           onCancel: () => { state.loadingUrl = false; render(); },
         })
@@ -2198,6 +2235,7 @@ function railIcon(key) { return h('span', { class: 'rail-icon' }, svg(RAIL_ICONS
 async function shareCurrentModel() {
   const link = await buildShareLink(activeModel());
   history.replaceState(null, '', link);
+  linkInAddressBar(activeModelId());
   try {
     await navigator.clipboard.writeText(link);
     toast('Link copied — this page\'s address now reopens this model.');
@@ -2247,6 +2285,7 @@ function refreshExportLink() {
     const link = await computeExportLink(envelope);
     if (token !== exportLinkToken) return;
     history.replaceState(null, '', link);
+    linkInAddressBar(activeModelId());
     state.ieLink = link;
   });
 }
@@ -2753,7 +2792,8 @@ const HELP_FAQ = [
       + 'one that stays short? Save the JSON somewhere public — a ',
     { text: 'gist ↗', href: 'https://gist.github.com/' },
     ', for instance — and share ', { urlLinkBase: true }, ' followed by its address. Whoever opens it '
-      + 'gets a copy of the file as it is at that moment.'] },
+      + 'gets a copy of the file as it is at that moment. Loading it here from a URL puts that link in '
+      + 'the address bar, ready to copy.'] },
   { question: 'Is anything sent to a server?', answer: [
     'No. The playground runs entirely in your browser; a shared link carries the model after the '
       + '#, which browsers never send to the server. One exception is the demo video, loaded '
@@ -2950,7 +2990,7 @@ function helpModal() {
 // `finishImport` replays it through, so there is nothing else to ask.
 function renderImportGate() {
   const envelope = state.pendingImport;
-  const close = () => { state.pendingImport = null; render(); };
+  const close = () => { cancelImport(); render(); };
   const modal = h('div', { class: 'modal', tabindex: '-1', role: 'dialog', 'aria-modal': 'true' },
     h('header', {},
       h('h2', {}, 'Import shared model'),
@@ -2996,7 +3036,8 @@ function hostedFileHint() {
     'To share it as a file, save it somewhere public — a ',
     h('a', { href: 'https://gist.github.com/', target: '_blank', rel: 'noopener' }, 'gist ↗'),
     ', for instance — and share ', h('code', {}, modelUrlLinkBase()), ' followed by its address. '
-      + 'Whoever opens that gets a copy of the file as it is then. A gist’s page address works as it is.');
+      + 'Whoever opens that gets a copy of the file as it is then. A gist’s page address works as it is, '
+      + 'and Import → From a URL leaves the link in the address bar.');
 }
 
 function renderImportExportModal() {
@@ -3010,7 +3051,8 @@ function renderImportExportModal() {
     if (state.ieImportMode === 'url') {
       if (!urlValue.trim()) return;
       state.importExport = false;
-      runAsync(async () => beginImport(await loadModelFromUrl(urlValue.trim())));
+      render();
+      openModelAddress(urlValue);
     } else {
       if (!jsonValue.trim()) return;
       let envelope;
@@ -3039,7 +3081,7 @@ function renderImportExportModal() {
             onkeydown: (e) => { if (e.key === 'Enter') doImportLoad(); },
           }),
           h('div', { class: 'why' }, 'Fetches a model definition from any URL that returns the exported JSON — '
-            + 'a gist’s page address too.'))
+            + 'a gist’s page address too. The address bar then holds a link to share it.'))
       : h('div', { class: 'ie-field' },
           h('label', {}, 'Model JSON'),
           h('textarea', {
@@ -3242,6 +3284,13 @@ onAppend((at, appended) => {
   takeUndoMark(at, appended);
 });
 
+// The model the address bar links to has changed: the link is stale.
+onAppend((at, appended) => {
+  if (addressModelId && appended.some((event) => event.data && event.data['dcb-model-id'] === addressModelId)) {
+    dropAddressLink();
+  }
+});
+
 // A linked copy's first change asks for a name — only while it is the
 // model on screen, since the question is about what was just done.
 onAppend((at, appended) => {
@@ -3275,6 +3324,7 @@ function undo() {
     return toast(OVERTAKEN, true);
   }
   writeEventLog(events.slice(0, mark.at));
+  dropAddressLink();
   log.undone.push({
     at: mark.at, stamp: logStampAt(events, mark.at), events: events.slice(mark.at), label: mark.label,
   });
@@ -3295,6 +3345,7 @@ function redo() {
   }
   const replayed = step.events.map((event, i) => ({ ...event, sequence: events.length + i }));
   writeEventLog([...events, ...replayed]);
+  dropAddressLink();
   log.done.push({
     at: events.length, end: events.length + replayed.length,
     stamp: logStampAt(replayed, replayed.length), label: step.label,
@@ -15403,7 +15454,7 @@ window.addEventListener('keydown', (e) => {
   if (state.hintPop) { state.hintPop = null; return render(); }
   if (state.lcMenu) { state.lcMenu = null; return render(); }
   if (state.moreOpen) { state.moreOpen = false; return render(); }
-  if (state.pendingImport) { state.pendingImport = null; return render(); }
+  if (state.pendingImport) { cancelImport(); return render(); }
   if (state.importExport) { state.importExport = false; return render(); }
   if (state.help) { state.help = false; return render(); }
   if (state.problems) { state.problems = false; return render(); }
@@ -15549,11 +15600,10 @@ document.getElementById('rail').addEventListener('click', (e) => {
 
 // A `#model=…` or `#url=…` fragment never reaches the server (there is
 // none), so it is read here and on a change of it (`readModelLink`,
-// `openModelLink`). Cleared
-// as soon as it is read, successfully or not — a bad or already-consumed
-// link should not keep re-triggering on every reload. A `#url=` link
-// fetches its file anew on every open; the copy it makes is of the file
-// as it is then. A link may add `&surface=code` (or
+// `openModelLink`). One that loads stays in the address bar until its
+// model changes or another is opened (`addressModelId`); one that does
+// not is cleared at once. A `#url=` link fetches its file anew on every
+// open; the copy it makes is of the file as it is then. A link may add `&surface=code` (or
 // `visual`) to say which surface the model opens on — dcb.events does
 // on the pages explaining the notation, whose reader came for the text —
 // and `&experimental` to show experimental features for this session.
@@ -15602,7 +15652,7 @@ async function boot() {
 // only the fragment, which reloads nothing — so the fragment is read
 // on its change too, not only on boot.
 async function openModelLink(link) {
-  history.replaceState(null, '', location.pathname + location.search);
+  addressModelId = null;
   const surface = link.options.get('surface');
   if (surface === 'code' || surface === 'visual') setCodeSurface(surface === 'code');
   if (link.options.has('experimental')) enableExperimentalForSession();
@@ -15615,6 +15665,7 @@ async function openModelLink(link) {
     toast(link.kind === 'model' ? 'That share link could not be read: ' + error.message
       : error instanceof DomainError ? error.message
         : 'That model URL could not be loaded: ' + error.message, true);
+    dropAddressLink();
     state.models = true;
     render();
     return;
@@ -15628,6 +15679,7 @@ async function openModelLink(link) {
   if (existing) {
     markLinkedCopy(existing);
     switchToModel(existing);
+    linkInAddressBar(existing);
     state.models = false;
     render();
     toast('This model was opened before — switched to it.');
