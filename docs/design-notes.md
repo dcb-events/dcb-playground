@@ -977,7 +977,8 @@ step at the playhead. Only the step band scrolls.
   dropped (2026-10). Scripts need `'unsafe-eval'`, so a CSP does not
   stop one from running. The one restriction worth having,
   `connect-src 'self'` (no sending data elsewhere), would break
-  "From a URL", which fetches whatever URL the reader types. The page
+  "From a URL" and `#url=` links, which fetch whatever URL the reader
+  types or the link names. The page
   also needs `style-src 'unsafe-inline'` (inline `style` attributes,
   Monaco's runtime `<style>`). And the host's theme hook is an inline
   `<script>` whose content depends on the site's configuration

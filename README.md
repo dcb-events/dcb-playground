@@ -25,7 +25,9 @@ The playground is hosted at [dcb.events/playground](https://dcb.events/playgroun
   opening its model here through a share link.
 - **Import / export** as JSON, validated by
   [`dcb-model.schema.json`](dcb-model.schema.json), or share a model as a
-  link.
+  link — either carrying the model itself (`#model=…`) or pointing to the
+  JSON hosted elsewhere, e.g. in a gist (`#url=<address>`; a gist's page
+  address works as is).
 - **WebMCP**: an in-browser agent can inspect and edit the open model
   through the same commands the UI uses.
 

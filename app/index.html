@@ -812,6 +812,7 @@
   .help-body { flex: 1; min-width: 0; overflow-y: auto; padding: 20px 24px; }
   .help-body > :first-child { margin-top: 0; }
   .help-body p { font-size: 13.5px; line-height: 1.6; margin: 12px 0; }
+  .help-body p code { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
   .help-body h3 { font-size: 15px; margin: 0 0 4px; }
   .help-body h4 {
     font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .07em;
@@ -945,7 +946,9 @@
   .ie-field textarea[readonly], .ie-field input[readonly] { background: #fbfcfe; color: var(--muted); }
   body.f-dark .ie-field textarea[readonly], body.f-dark .ie-field input[readonly] { background: #101827; }
   .ie-field .why { font-size: 11.5px; color: var(--muted); margin-top: 7px; line-height: 1.5; }
-  .ie-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
+  .ie-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+  .ie-hint { font-size: 11.5px; color: var(--muted); margin-top: 12px; line-height: 1.5; }
+  .ie-hint code { font-family: var(--mono); overflow-wrap: anywhere; }
 
   /* ---------- quick open ----------
      Everything in the model, by name, from anywhere. It sits higher and
@@ -2713,16 +2716,17 @@ const HELP_FEATURES = [
   { name: 'Problems',
     what: 'Dangling references, uncovered tags and other loose ends — a defective model still loads and runs.' },
   { name: 'Import & export',
-    what: 'Models live in this browser only. Export one as JSON, or copy a link that reopens it as it is.' },
+    what: 'Models live in this browser only. Export one as JSON, copy a link that reopens it as it is, '
+      + 'or link to the JSON hosted elsewhere.' },
   { name: 'Quick open',
     what: 'Jump to any definition or action from the keyboard.' },
 ];
 
 // Questions people ask, answered on the FAQ page, in the order listed:
 // what this is first, feedback last. An answer is a list of parts — a
-// string, a link `{ text, href }` (in a new tab) or a shortcut `{ kbd }`
-// — data rather than nodes, as nodes built once would move between
-// renders.
+// string, a link `{ text, href }` (in a new tab), a shortcut `{ kbd }`,
+// code `{ code }` or this page's `#url=` link `{ urlLinkBase }` — data
+// rather than nodes, as nodes built once would move between renders.
 const HELP_FAQ = [
   { question: 'What is the DCB Playground?', answer: [
     'A modeling tool for event-sourced systems: describe events, projections and the commands '
@@ -2745,16 +2749,24 @@ const HELP_FAQ = [
   { question: 'How do I share a model?', answer: [
     'Copy a link — from Import & export, or with ', { kbd: 'Mod+S' }, '. The model, its scenarios '
       + 'and the sandbox steps travel inside the link itself, so whoever opens it gets their own '
-      + 'copy. Or export a JSON file and import it on the other side.'] },
+      + 'copy. Or export a JSON file and import it on the other side. Too large for a link, or want '
+      + 'one that stays short? Save the JSON somewhere public — a ',
+    { text: 'gist ↗', href: 'https://gist.github.com/' },
+    ', for instance — and share ', { urlLinkBase: true }, ' followed by its address. Whoever opens it '
+      + 'gets a copy of the file as it is at that moment.'] },
   { question: 'Is anything sent to a server?', answer: [
     'No. The playground runs entirely in your browser; a shared link carries the model after the '
-      + '#, which browsers never send to the server. The one exception is the demo video, loaded '
-      + 'from YouTube (youtube-nocookie.com) only once you press play. The playground itself sets '
-      + 'no cookies and uses no analytics.'] },
+      + '#, which browsers never send to the server. One exception is the demo video, loaded '
+      + 'from YouTube (youtube-nocookie.com) only once you press play. The other: importing from a '
+      + 'URL, or opening a ', { code: '#url=' }, ' link, fetches that file from wherever it is hosted, '
+      + 'and that host sees the request, as with any download. The playground itself sets no cookies '
+      + 'and uses no analytics.'] },
   { question: 'Is it safe to open a model someone sent me?', answer: [
     'Models can contain scripted projections: JavaScript that runs in your browser with the same '
       + 'access as the playground itself. If a shared model includes any, you see the code and are '
-      + 'asked before it is imported — only import it if you trust where it came from.'] },
+      + 'asked before it is imported — only import it if you trust where it came from. A ',
+    { code: '#url=' }, ' link loads whatever the file contains when you open it — it may have '
+      + 'changed since it was shared.'] },
   { question: 'Should I use the Visual or the Code view?', answer: [
     'Whichever you prefer — they are two spellings of the same model, and a change in one shows '
       + 'in the other. The pages guide you through each definition; the code is faster once you '
@@ -2884,7 +2896,9 @@ function helpFaqPage() {
     HELP_FAQ.map((item) => [h('h4', {}, item.question), h('p', {}, item.answer.map((part) =>
       typeof part === 'string' ? part
         : part.kbd ? kbd(part.kbd)
-          : h('a', { href: part.href, target: '_blank', rel: 'noopener' }, part.text)))]),
+          : part.code ? h('code', {}, part.code)
+            : part.urlLinkBase ? h('code', {}, modelUrlLinkBase())
+              : h('a', { href: part.href, target: '_blank', rel: 'noopener' }, part.text)))]),
   ];
 }
 
@@ -2974,6 +2988,17 @@ function renderImportGate() {
 // one out the same two ways. Reached from the bar's import/export
 // button, which opens straight to Export — the button used to be
 // "share", and this is that job's closest tab.
+// How a model is shared as a file someone else hosts. Said, not built:
+// there is no field for the address — the link is this page's own,
+// with the address after `#url=` (`readModelLink`).
+function hostedFileHint() {
+  return h('div', { class: 'why ie-hint' },
+    'To share it as a file, save it somewhere public — a ',
+    h('a', { href: 'https://gist.github.com/', target: '_blank', rel: 'noopener' }, 'gist ↗'),
+    ', for instance — and share ', h('code', {}, modelUrlLinkBase()), ' followed by its address. '
+      + 'Whoever opens that gets a copy of the file as it is then. A gist’s page address works as it is.');
+}
+
 function renderImportExportModal() {
   const model = activeModel();
   const close = () => { state.importExport = false; render(); };
@@ -3013,7 +3038,8 @@ function renderImportExportModal() {
             oninput: (e) => { urlValue = e.target.value; },
             onkeydown: (e) => { if (e.key === 'Enter') doImportLoad(); },
           }),
-          h('div', { class: 'why' }, 'Fetches a model definition from any URL that returns the exported JSON.'))
+          h('div', { class: 'why' }, 'Fetches a model definition from any URL that returns the exported JSON — '
+            + 'a gist’s page address too.'))
       : h('div', { class: 'ie-field' },
           h('label', {}, 'Model JSON'),
           h('textarea', {
@@ -3077,15 +3103,17 @@ function renderImportExportModal() {
             h('div', { class: 'why' }, 'A complete copy of this model — commands, events, entities, '
               + 'projections and types.')),
           h('div', { class: 'ie-actions' },
+            h('button', { class: 'btn', onclick: () => downloadModelJson(model, jsonExportText) }, 'Download'),
             h('button', {
               class: 'btn primary', onclick: () => copyToClipboard(jsonExportText, 'ieCopiedJson'),
-            }, state.ieCopiedJson ? 'Copied ✓' : 'Copy JSON')))
+            }, state.ieCopiedJson ? 'Copied ✓' : 'Copy JSON')),
+          hostedFileHint())
       : h('div', {},
           h('div', { class: 'ie-field' },
             h('label', {}, 'Shareable link'),
             h('input', { class: 'mono', type: 'text', readonly: true, value: state.ieLink || 'Computing…' }),
             h('div', { class: 'why' }, 'Anyone who opens this link gets exactly this model — nothing '
-              + 'is uploaded to load it.')),
+              + 'is uploaded to load it. Too long to send? Host the JSON instead — see As JSON.')),
           h('div', { class: 'ie-actions' },
             h('button', {
               class: 'btn primary', disabled: !state.ieLink,
@@ -15265,6 +15293,18 @@ function codeToolIcon(paths) {
       + 'stroke-linejoin="round" aria-hidden="true">' + paths + '</svg>'));
 }
 
+// The exported JSON as a file — named like the code's download, so the
+// two sit together — for a gist or a bucket to take as it is.
+function downloadModelJson(model, text) {
+  const blob = new Blob([text], { type: 'application/json' });
+  const link = h('a', {
+    href: URL.createObjectURL(blob),
+    download: (toCamel(model.name) || 'model') + SOURCE_EXTENSION + '.json',
+  });
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+
 function downloadCode(model) {
   const blob = new Blob([codeView.text], { type: 'text/plain' });
   const link = h('a', {
@@ -15507,10 +15547,12 @@ document.getElementById('rail').addEventListener('click', (e) => {
   if (state.railOpen && e.target.closest('a')) { state.railOpen = false; render(); }
 });
 
-// A `#model=…` fragment never reaches the server (there is none), so
-// this is the only place it is read. Cleared as soon as it is read,
-// successfully or not — a bad or already-consumed link should not keep
-// re-triggering on every reload. A link may add `&surface=code` (or
+// A `#model=…` or `#url=…` fragment never reaches the server (there is
+// none), so this is the only place it is read (`readModelLink`). Cleared
+// as soon as it is read, successfully or not — a bad or already-consumed
+// link should not keep re-triggering on every reload. A `#url=` link
+// fetches its file anew on every open; the copy it makes is of the file
+// as it is then. A link may add `&surface=code` (or
 // `visual`) to say which surface the model opens on — dcb.events does
 // on the pages explaining the notation, whose reader came for the text —
 // and `&experimental` to show experimental features for this session.
@@ -15545,25 +15587,29 @@ async function boot() {
     setScriptsDisabled(true);
     toast('The last load did not finish, so scripts are off for this one. Reload to run them again.', true);
   }
-  const hash = location.hash;
+  const link = readModelLink(location.hash);
   // Entering without a model link starts at the models dialog, over
   // whatever was open last — see `modelsModal`.
-  if (!hash.startsWith('#model=')) state.models = true;
+  if (!link) state.models = true;
   render();
   syncTopbarHeight();
   setFooterYear();
-  if (!hash.startsWith('#model=')) return;
+  if (!link) return;
   history.replaceState(null, '', location.pathname + location.search);
-  const [encoded, ...options] = hash.slice('#model='.length).split('&');
-  const linkOptions = new URLSearchParams(options.join('&'));
-  const surface = linkOptions.get('surface');
+  const surface = link.options.get('surface');
   if (surface === 'code' || surface === 'visual') setCodeSurface(surface === 'code');
-  if (linkOptions.has('experimental')) enableExperimentalForSession();
+  if (link.options.has('experimental')) enableExperimentalForSession();
   let envelope;
   try {
-    envelope = await decodeShareLink(encoded);
+    envelope = link.kind === 'model' ? await decodeShareLink(link.value) : await loadModelFromUrl(link.value);
   } catch (error) {
-    toast('That share link could not be read: ' + error.message, true);
+    // Nothing came in, so the page is where entering without a link
+    // leaves it: the models dialog.
+    toast(link.kind === 'model' ? 'That share link could not be read: ' + error.message
+      : error instanceof DomainError ? error.message
+        : 'That model URL could not be loaded: ' + error.message, true);
+    state.models = true;
+    render();
     return;
   }
   // Opened before and unchanged since: back to that copy rather than a

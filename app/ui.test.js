@@ -5501,6 +5501,31 @@ check('the app is text: no file carries a raw control byte', () => {
   store.delete('dcb-playground:model');
 }
 
+sandbox.URLSearchParams = URLSearchParams;
+check('a link carries a packed model or a hosted file’s address, then its options', () => {
+  const packed = sandbox.readModelLink('#model=H4sI&surface=code&experimental');
+  eq([packed.kind, packed.value, packed.options.get('surface'), packed.options.has('experimental')],
+    ['model', 'H4sI', 'code', true], 'packed');
+  const raw = 'https://gist.githubusercontent.com/u/1/raw/m.json?x=1&y=2';
+  const hosted = sandbox.readModelLink('#url=' + encodeURIComponent(raw) + '&surface=visual');
+  eq([hosted.kind, hosted.value, hosted.options.get('surface')], ['url', raw, 'visual'], 'hosted, encoded');
+  eq(sandbox.readModelLink('#url=https://x.test/m.json').value, 'https://x.test/m.json', 'hosted, as typed');
+  eq(sandbox.readModelLink('#url=%E0%A4%A').value, '%E0%A4%A', 'undecodable: as written');
+  eq(sandbox.readModelLink(''), null, 'none');
+  eq(sandbox.readModelLink('#overview'), null, 'another fragment');
+});
+
+check('the export says how to share a hosted file, with this page’s #url= link', () => {
+  sandbox.location.origin = 'https://dcb.events';
+  sandbox.location.pathname = '/playground/';
+  eq(textOf(sandbox.hostedFileHint()).includes('https://dcb.events/playground/#url='), true, 'the link to complete');
+  sandbox.state.helpPage = 'faq';
+  eq(textOf(sandbox.helpModal()).includes('https://dcb.events/playground/#url='), true, 'and the FAQ');
+  sandbox.state.helpPage = 'start';
+  delete sandbox.location.origin;
+  sandbox.location.pathname = '/';
+});
+
 // A share link or a fetched file is unpacked under a cap: a few hundred
 // kilobytes of gzip can stand for gigabytes of whitespace, and the
 // link is unpacked the moment it is opened.
@@ -5524,6 +5549,65 @@ check('the app is text: no file carries a raw control byte', () => {
     let message = '';
     try { await sandbox.decodeShareLink('A'.repeat(sandbox.SHARE_LINK_MAX_LENGTH + 1)); } catch (error) { message = error.message; }
     eq(/too long/.test(message), true, message || 'refused');
+  });
+
+  // A file someone else hosts, fetched — `fetch` stubbed per check.
+  const loadFrom = async (url, respond) => {
+    const asked = [];
+    sandbox.fetch = async (target) => { asked.push(target); return respond(target); };
+    let model = null;
+    let message = '';
+    try { model = await sandbox.loadModelFromUrl(url); } catch (error) { message = error.message; }
+    delete sandbox.fetch;
+    return { asked, model, message };
+  };
+  const json = (body, init) => new Response(JSON.stringify(body), init);
+
+  await check('a URL is fetched as it is and its JSON read', async () => {
+    const raw = 'https://gist.githubusercontent.com/u/abc123/raw/model.json';
+    const { asked, model } = await loadFrom(raw, () => json({ name: 'M' }));
+    eq(asked, [raw], 'fetched as given');
+    eq(model, { name: 'M' }, 'read');
+  });
+
+  await check('a gist page address is read through the API, from its .json file', async () => {
+    const { asked, model } = await loadFrom('https://gist.github.com/someone/0f1e2d3c4b', () => json({
+      files: {
+        'README.md': { filename: 'README.md', content: '# notes' },
+        'course.dcb.json': { filename: 'course.dcb.json', content: '{"name":"M"}' },
+      },
+    }));
+    eq(asked, ['https://api.github.com/gists/0f1e2d3c4b'], 'the API');
+    eq(model, { name: 'M' }, 'the .json file');
+  });
+
+  await check('a truncated gist file is fetched whole from its raw URL', async () => {
+    const rawUrl = 'https://gist.githubusercontent.com/someone/0f1e/raw/1/m.json';
+    const { asked, model } = await loadFrom('https://gist.github.com/0f1e', (target) => (target === rawUrl
+      ? json({ name: 'M' })
+      : json({ files: { 'm.json': { filename: 'm.json', content: '{"na', truncated: true, raw_url: rawUrl } } })));
+    eq(asked, ['https://api.github.com/gists/0f1e', rawUrl], 'then the raw URL');
+    eq(model, { name: 'M' }, 'read whole');
+  });
+
+  await check('a gist with no .json file among several is refused', async () => {
+    const { message } = await loadFrom('https://gist.github.com/someone/0f1e', () => json({
+      files: { 'a.md': { filename: 'a.md', content: '' }, 'b.txt': { filename: 'b.txt', content: '' } },
+    }));
+    eq(/no \.json file/.test(message), true, message || 'refused');
+  });
+
+  await check('GitHub refusing a gist points at the Raw link', async () => {
+    const { message } = await loadFrom('https://gist.github.com/someone/0f1e', () => json({}, { status: 403 }));
+    eq(/Raw link/.test(message), true, message || 'refused');
+  });
+
+  await check('what fails to load says why, as a message for whoever pasted the address', async () => {
+    eq((await loadFrom('https://x.test/m.json', () => json({}, { status: 404, statusText: 'Not Found' }))).message,
+      'That file was not loaded: its host answered 404 Not Found.', 'a status');
+    eq(/could not be reached/.test((await loadFrom('https://x.test/m.json', () => { throw new TypeError('Failed to fetch'); })).message),
+      true, 'no response at all');
+    eq(/not JSON/.test((await loadFrom('https://x.test/m.html', () => new Response('<html>'))).message), true, 'not JSON');
   });
 
   finish();

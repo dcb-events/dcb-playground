@@ -10,7 +10,9 @@ No build step, no framework, and one vendored dependency: Monaco, pinned and
 checked in under `app/vendor/monaco/`, lazy-loaded only when a scripted
 handler's editor is on screen. The app runs from any static server —
 `npx serve app` locally; it never fetches anything at runtime — except the
-help's demo video, from youtube-nocookie.com, once someone presses play.
+help's demo video, from youtube-nocookie.com, once someone presses play,
+and a model someone asked for by address: Import's URL field or a
+`#url=` link (`loadModelFromUrl`, shared.js).
 
 ## Layout
 
