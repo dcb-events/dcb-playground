@@ -35,7 +35,7 @@ loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js', 'shared.js'], {
     + ' globalThis.PREDEFINED_MODELS = PREDEFINED_MODELS; globalThis.SHARE_LINK_MAX_LENGTH = SHARE_LINK_MAX_LENGTH;'
     + ' globalThis.EVENT_LOG_KEY = EVENT_LOG_KEY; globalThis.PAGE_BEHIND = PAGE_BEHIND;'
     + ' globalThis.NOTATION_GUIDE_URL = NOTATION_GUIDE_URL; globalThis.NOTATION_REFERENCE_URL = NOTATION_REFERENCE_URL;'
-    + ' globalThis.HELP_FEATURES = HELP_FEATURES; globalThis.HELP_CLAIM = HELP_CLAIM;'
+    + ' globalThis.HELP_FEATURES = HELP_FEATURES; globalThis.HELP_CLAIM = HELP_CLAIM; globalThis.HELP_FAQ = HELP_FAQ;'
     + ' globalThis.FEEDBACK_URL = FEEDBACK_URL; globalThis.ISSUES_URL = ISSUES_URL;',
 });
 const { check, eq, finish } = makeChecker();
@@ -4695,8 +4695,10 @@ function build(index) {
 
 // The help explains the playground and leaves the notation to the
 // reference on dcb.events; beside it, where to send feedback and
-// issues — each in a new tab, and nothing else.
+// issues — each in a new tab, and nothing else. The FAQ links what its
+// answers mention.
 check('the help modal links the notation reference, feedback and issues, and nothing else', () => {
+  sandbox.state.helpPage = 'start';
   const links = findAll(sandbox.helpModal(), (n) => n.tag === 'a');
   eq(links.map((a) => [a.attributes.href, a.attributes.target]), [
     [sandbox.NOTATION_REFERENCE_URL, '_blank'], [sandbox.FEEDBACK_URL, '_blank'], [sandbox.ISSUES_URL, '_blank']]);
@@ -4723,21 +4725,45 @@ check('a shortcut is spelled for the platform it is read on', () => {
   }
 });
 
-// The help is a sidebar of pages: it opens on Getting started, every
-// feature has a page of its own, and the shortcuts are kept apart on
-// theirs.
-check('the help modal opens on Getting started, with a page per feature', () => {
+// The help is a sidebar of pages: it opens on Getting started, the FAQ
+// has a page of its own, and the shortcuts are kept apart on theirs.
+check('the help modal opens on Getting started, beside the FAQ and the shortcuts', () => {
   sandbox.state.helpPage = 'start';
   const modal = sandbox.helpModal();
   const nav = findAll(modal, (n) => n.tag === 'button' && /help-nav-item/.test(n.className)).map(textOf);
-  eq(nav, ['Getting started', ...sandbox.HELP_FEATURES.map((item) => item.name), '⌨ Keyboard shortcuts'], 'the sidebar');
+  eq(nav, ['Getting started', 'FAQ', '⌨ Keyboard shortcuts'], 'the sidebar');
   eq(textOf(modal).includes(sandbox.HELP_CLAIM), true, 'the claim');
   eq(findAll(modal, (n) => n.tag === 'kbd').length, 0, 'no shortcuts on it');
   const button = (label) => findAll(modal, (n) => n.tag === 'button' && textOf(n) === label)[0];
   eq(!!button('Close'), true, 'closed with Close');
-  button('Sandbox').onclick();
-  eq(sandbox.state.helpPage, 'sandbox', 'a feature is a page');
+  button('FAQ').onclick();
+  eq(sandbox.state.helpPage, 'faq', 'the FAQ is a page');
   sandbox.state.helpPage = 'start';
+});
+
+check('the FAQ answers in text, links in a new tab and shortcuts as kbd', () => {
+  sandbox.state.helpPage = 'faq';
+  const modal = sandbox.helpModal();
+  eq(findAll(modal, (n) => n.tag === 'h4').length, sandbox.HELP_FAQ.length, 'a heading per question');
+  const links = findAll(modal, (n) => n.tag === 'a' && n.attributes.target === '_blank');
+  eq(links.some((a) => a.attributes.href === sandbox.ISSUES_URL && textOf(a) === 'report it on GitHub ↗'), true, 'a link in an answer');
+  eq(findAll(modal, (n) => n.tag === 'kbd').length, 1, 'the share shortcut');
+  sandbox.state.helpPage = 'start';
+});
+
+// The demo video loads nothing until it is played, and then only the
+// cookieless player.
+check('the help video is a play button until pressed, then the youtube-nocookie player', () => {
+  sandbox.state.helpPage = 'start';
+  sandbox.state.helpVideoPlaying = false;
+  eq(findAll(sandbox.helpModal(), (n) => n.tag === 'iframe').length, 0, 'nothing loaded up front');
+  const play = findAll(sandbox.helpModal(), (n) => n.tag === 'button' && /help-video/.test(n.className));
+  eq(play.length, 1, 'a play button');
+  play[0].onclick();
+  const frames = findAll(sandbox.helpModal(), (n) => n.tag === 'iframe');
+  eq(frames.length, 1, 'the player, once played');
+  eq(frames[0].attributes.src.startsWith('https://www.youtube-nocookie.com/embed/'), true, 'cookieless');
+  sandbox.state.helpVideoPlaying = false;
 });
 
 check('the help modal lists the keyboard shortcuts, as kbd, on a page of their own', () => {
@@ -5475,6 +5501,85 @@ check('the app is text: no file carries a raw control byte', () => {
   store.delete('dcb-playground:model');
 }
 
+sandbox.URLSearchParams = URLSearchParams;
+check('a link carries a packed model or a hosted file’s address, then its options', () => {
+  const packed = sandbox.readModelLink('#model=H4sI&surface=code&experimental');
+  eq([packed.kind, packed.value, packed.options.get('surface'), packed.options.has('experimental')],
+    ['model', 'H4sI', 'code', true], 'packed');
+  const raw = 'https://gist.githubusercontent.com/u/1/raw/m.json?x=1&y=2';
+  const hosted = sandbox.readModelLink('#url=' + encodeURIComponent(raw) + '&surface=visual');
+  eq([hosted.kind, hosted.value, hosted.options.get('surface')], ['url', raw, 'visual'], 'hosted, encoded');
+  eq(sandbox.readModelLink('#url=https://x.test/m.json').value, 'https://x.test/m.json', 'hosted, as typed');
+  eq(sandbox.readModelLink('#url=%E0%A4%A').value, '%E0%A4%A', 'undecodable: as written');
+  eq(sandbox.readModelLink(''), null, 'none');
+  eq(sandbox.readModelLink('#overview'), null, 'another fragment');
+});
+
+check('a hosted file’s link spells its address as typed, encoded only where it must', () => {
+  const gist = 'https://gist.github.com/someone/0f1e';
+  eq(sandbox.modelUrlLink(gist), '#url=' + gist, 'legible');
+  const query = 'https://x.test/m.json?a=1&b=2';
+  eq(sandbox.modelUrlLink(query), '#url=' + encodeURIComponent(query), 'encoded');
+  for (const address of [gist, query, 'https://x.test/a b.json']) {
+    eq(sandbox.readModelLink(sandbox.modelUrlLink(address)).value, address, 'reads back: ' + address);
+  }
+});
+
+// The address bar's stand-in, as far as these checks need one.
+function withAddressBar(hash, body) {
+  const { history } = sandbox;
+  sandbox.location.hash = hash;
+  sandbox.history = { replaceState: (_, __, url) => { sandbox.location.hash = url.includes('#') ? url.slice(url.indexOf('#')) : ''; } };
+  try { body(); } finally { sandbox.history = history; sandbox.location.hash = ''; sandbox.dropAddressLink(); }
+}
+
+check('From a URL opens the address as this page’s #url= link', () => {
+  const replaced = [];
+  sandbox.location.replace = (hash) => replaced.push(hash);
+  sandbox.openModelAddress('  https://gist.github.com/someone/0f1e ');
+  delete sandbox.location.replace;
+  eq(replaced, ['#url=https://gist.github.com/someone/0f1e'], 'the link, trimmed');
+});
+
+check('a model link stays in the address bar until its model changes', () => {
+  store.clear();
+  sandbox.bumpLogRevision();
+  const linked = sandbox.createDcbModel('Linked');
+  const other = sandbox.createDcbModel('Other');
+  withAddressBar('#url=https://x.test/m.json', () => {
+    sandbox.linkInAddressBar(linked);
+    sandbox.addDefinition('event-definition', other, 'Elsewhere', { properties: [], tags: [] });
+    eq(sandbox.location.hash, '#url=https://x.test/m.json', 'another model’s change leaves it');
+    sandbox.addDefinition('event-definition', linked, 'Changed', { properties: [], tags: [] });
+    eq(sandbox.location.hash, '', 'its own change drops it');
+  });
+});
+
+check('a model link leaves the address bar when another model is opened', () => {
+  store.clear();
+  sandbox.bumpLogRevision();
+  const linked = sandbox.createDcbModel('Linked');
+  const other = sandbox.createDcbModel('Other');
+  withAddressBar('#model=H4sI', () => {
+    sandbox.linkInAddressBar(linked);
+    sandbox.switchToModel(linked);
+    eq(sandbox.location.hash, '#model=H4sI', 'the same model keeps it');
+    sandbox.switchToModel(other);
+    eq(sandbox.location.hash, '', 'another drops it');
+  });
+});
+
+check('the export says how to share a hosted file, with this page’s #url= link', () => {
+  sandbox.location.origin = 'https://dcb.events';
+  sandbox.location.pathname = '/playground/';
+  eq(textOf(sandbox.hostedFileHint()).includes('https://dcb.events/playground/#url='), true, 'the link to complete');
+  sandbox.state.helpPage = 'faq';
+  eq(textOf(sandbox.helpModal()).includes('https://dcb.events/playground/#url='), true, 'and the FAQ');
+  sandbox.state.helpPage = 'start';
+  delete sandbox.location.origin;
+  sandbox.location.pathname = '/';
+});
+
 // A share link or a fetched file is unpacked under a cap: a few hundred
 // kilobytes of gzip can stand for gigabytes of whitespace, and the
 // link is unpacked the moment it is opened.
@@ -5498,6 +5603,65 @@ check('the app is text: no file carries a raw control byte', () => {
     let message = '';
     try { await sandbox.decodeShareLink('A'.repeat(sandbox.SHARE_LINK_MAX_LENGTH + 1)); } catch (error) { message = error.message; }
     eq(/too long/.test(message), true, message || 'refused');
+  });
+
+  // A file someone else hosts, fetched — `fetch` stubbed per check.
+  const loadFrom = async (url, respond) => {
+    const asked = [];
+    sandbox.fetch = async (target) => { asked.push(target); return respond(target); };
+    let model = null;
+    let message = '';
+    try { model = await sandbox.loadModelFromUrl(url); } catch (error) { message = error.message; }
+    delete sandbox.fetch;
+    return { asked, model, message };
+  };
+  const json = (body, init) => new Response(JSON.stringify(body), init);
+
+  await check('a URL is fetched as it is and its JSON read', async () => {
+    const raw = 'https://gist.githubusercontent.com/u/abc123/raw/model.json';
+    const { asked, model } = await loadFrom(raw, () => json({ name: 'M' }));
+    eq(asked, [raw], 'fetched as given');
+    eq(model, { name: 'M' }, 'read');
+  });
+
+  await check('a gist page address is read through the API, from its .json file', async () => {
+    const { asked, model } = await loadFrom('https://gist.github.com/someone/0f1e2d3c4b', () => json({
+      files: {
+        'README.md': { filename: 'README.md', content: '# notes' },
+        'course.dcb.json': { filename: 'course.dcb.json', content: '{"name":"M"}' },
+      },
+    }));
+    eq(asked, ['https://api.github.com/gists/0f1e2d3c4b'], 'the API');
+    eq(model, { name: 'M' }, 'the .json file');
+  });
+
+  await check('a truncated gist file is fetched whole from its raw URL', async () => {
+    const rawUrl = 'https://gist.githubusercontent.com/someone/0f1e/raw/1/m.json';
+    const { asked, model } = await loadFrom('https://gist.github.com/0f1e', (target) => (target === rawUrl
+      ? json({ name: 'M' })
+      : json({ files: { 'm.json': { filename: 'm.json', content: '{"na', truncated: true, raw_url: rawUrl } } })));
+    eq(asked, ['https://api.github.com/gists/0f1e', rawUrl], 'then the raw URL');
+    eq(model, { name: 'M' }, 'read whole');
+  });
+
+  await check('a gist with no .json file among several is refused', async () => {
+    const { message } = await loadFrom('https://gist.github.com/someone/0f1e', () => json({
+      files: { 'a.md': { filename: 'a.md', content: '' }, 'b.txt': { filename: 'b.txt', content: '' } },
+    }));
+    eq(/no \.json file/.test(message), true, message || 'refused');
+  });
+
+  await check('GitHub refusing a gist points at the Raw link', async () => {
+    const { message } = await loadFrom('https://gist.github.com/someone/0f1e', () => json({}, { status: 403 }));
+    eq(/Raw link/.test(message), true, message || 'refused');
+  });
+
+  await check('what fails to load says why, as a message for whoever pasted the address', async () => {
+    eq((await loadFrom('https://x.test/m.json', () => json({}, { status: 404, statusText: 'Not Found' }))).message,
+      'That file was not loaded: its host answered 404 Not Found.', 'a status');
+    eq(/could not be reached/.test((await loadFrom('https://x.test/m.json', () => { throw new TypeError('Failed to fetch'); })).message),
+      true, 'no response at all');
+    eq(/not JSON/.test((await loadFrom('https://x.test/m.html', () => new Response('<html>'))).message), true, 'not JSON');
   });
 
   finish();

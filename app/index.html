@@ -812,6 +812,7 @@
   .help-body { flex: 1; min-width: 0; overflow-y: auto; padding: 20px 24px; }
   .help-body > :first-child { margin-top: 0; }
   .help-body p { font-size: 13.5px; line-height: 1.6; margin: 12px 0; }
+  .help-body p code { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
   .help-body h3 { font-size: 15px; margin: 0 0 4px; }
   .help-body h4 {
     font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .07em;
@@ -819,10 +820,12 @@
   }
   .help-body .help-claim { font-size: 17px; font-weight: 600; line-height: 1.4; }
   .help-video {
-    position: relative; display: flex; align-items: center; justify-content: center;
-    aspect-ratio: 16 / 9; border-radius: var(--radius); background: linear-gradient(135deg, #0f172a, #1e293b);
+    position: relative; display: flex; align-items: center; justify-content: center; width: 100%;
+    aspect-ratio: 16 / 9; border: 0; padding: 0; border-radius: var(--radius); overflow: hidden;
+    background: linear-gradient(135deg, #0f172a, #1e293b); cursor: pointer;
   }
-  .help-video:hover { text-decoration: none; }
+  .help-video iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  .help-video:hover .help-play { background: #fff; }
   .help-play {
     width: 56px; height: 56px; border-radius: 50%; padding-left: 4px;
     display: flex; align-items: center; justify-content: center;
@@ -943,7 +946,9 @@
   .ie-field textarea[readonly], .ie-field input[readonly] { background: #fbfcfe; color: var(--muted); }
   body.f-dark .ie-field textarea[readonly], body.f-dark .ie-field input[readonly] { background: #101827; }
   .ie-field .why { font-size: 11.5px; color: var(--muted); margin-top: 7px; line-height: 1.5; }
-  .ie-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
+  .ie-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+  .ie-hint { font-size: 11.5px; color: var(--muted); margin-top: 12px; line-height: 1.5; }
+  .ie-hint code { font-family: var(--mono); overflow-wrap: anywhere; }
 
   /* ---------- quick open ----------
      Everything in the model, by name, from anywhere. It sits higher and
@@ -1785,6 +1790,7 @@ const state = {
   settings: false,          // the settings modal
   help: false,              // the help modal — see `helpModal`
   helpPage: 'start',        // within the help modal: the page its sidebar has open
+  helpVideoPlaying: false,  // within the help modal: its video's player loaded, once played
   problems: false,         // the loose-ends-and-drifted-scenarios panel
   railOpen: false,          // the rail, as an off-canvas drawer on a narrow screen
   moreOpen: false,          // the bar's ⋯ menu, on a narrow screen — see `moreMenu`
@@ -1828,6 +1834,41 @@ function beginImport(envelope) {
   finishImport(envelope);
 }
 
+// ---------- the model link in the address bar ----------
+//
+// A model link — opened, or written by ⌘S or Export — stays in the
+// address bar while it still says what is on screen: until that model
+// changes (an append, an undo, a redo) or another one is opened. So
+// the address bar is the link to copy, and a reload before then finds
+// the unchanged copy (`modelMatchingEnvelope`) rather than importing a
+// second one. Null while there is none, or while a link is still on
+// its way in — what it stands for is not known until it lands.
+let addressModelId = null;
+
+function linkInAddressBar(id) { addressModelId = id; }
+
+function dropAddressLink() {
+  addressModelId = null;
+  if (readModelLink(location.hash)) history.replaceState(null, '', location.pathname + location.search);
+}
+
+// "From a URL", in either dialog: the address becomes this page's own
+// `#url=` link, and the link is what loads it (`openModelLink`) — the
+// one way a hosted model comes in, typed or followed. The same link
+// twice changes no fragment, so it is opened directly.
+function openModelAddress(address) {
+  const hash = modelUrlLink(address.trim());
+  if (location.hash === hash) openModelLink(readModelLink(hash));
+  else location.replace(hash);
+}
+
+// A link's import turned down at the script gate: nothing landed, so
+// the address bar no longer stands for anything.
+function cancelImport() {
+  if (state.pendingImport && linkedEnvelopes.has(state.pendingImport)) dropAddressLink();
+  state.pendingImport = null;
+}
+
 // Envelopes that came in through a link rather than the models dialog
 // — what `markLinkedCopy` (shared.js) is told about once they land,
 // across the script gate if there is one.
@@ -1839,6 +1880,7 @@ const linkedEnvelopes = new WeakSet();
 // not part of any model, so neither may survive the crossing: a
 // session scrubbed against model A must not render against model B.
 function switchToModel(id) {
+  if (addressModelId && id !== addressModelId) dropAddressLink();
   localStorage.setItem(MODEL_KEY, id);
   sessionReset();
   setPendingFeatures([]);
@@ -1850,8 +1892,8 @@ function switchToModel(id) {
 function finishImport(envelope) {
   run(() => {
     const { modelId, skipped } = importModelFromEnvelope(envelope);
-    if (linkedEnvelopes.has(envelope)) markLinkedCopy(modelId);
     switchToModel(modelId);
+    if (linkedEnvelopes.has(envelope)) { markLinkedCopy(modelId); linkInAddressBar(modelId); }
     // A model is now loaded, so whatever opened the models dialog — a
     // click on the bar, or entering the page without a model link — is
     // answered.
@@ -1938,8 +1980,9 @@ function modelsModal() {
       ? inlineForm({
           question: 'Model URL', placeholder: 'https://…', submitLabel: 'Load',
           onSubmit: (v) => {
-            state.loadingUrl = false;
-            runAsync(async () => beginImport(await loadModelFromUrl(v)));
+            state.loadingUrl = false; state.models = false;
+            render();
+            openModelAddress(v);
           },
           onCancel: () => { state.loadingUrl = false; render(); },
         })
@@ -2192,6 +2235,7 @@ function railIcon(key) { return h('span', { class: 'rail-icon' }, svg(RAIL_ICONS
 async function shareCurrentModel() {
   const link = await buildShareLink(activeModel());
   history.replaceState(null, '', link);
+  linkInAddressBar(activeModelId());
   try {
     await navigator.clipboard.writeText(link);
     toast('Link copied — this page\'s address now reopens this model.');
@@ -2241,6 +2285,7 @@ function refreshExportLink() {
     const link = await computeExportLink(envelope);
     if (token !== exportLinkToken) return;
     history.replaceState(null, '', link);
+    linkInAddressBar(activeModelId());
     state.ieLink = link;
   });
 }
@@ -2679,10 +2724,9 @@ function definitionModalProjection(model, frame, renamed) {
 // `?` key and the models dialog's "What is this?" open it. It explains
 // the playground, not the notation — that is the reference on
 // dcb.events, linked from its footer in a new tab beside where to send
-// feedback and issues. A sidebar of pages,
-// not one long page: each feature gets a page its help text can grow
-// into, and the shortcuts sit apart at the bottom, out of the way of
-// someone reading about the playground.
+// feedback and issues. A sidebar of pages, not one long page: Getting
+// started, the FAQ, and the shortcuts apart at the bottom, out of the
+// way of someone reading about the playground.
 const HELP_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
   + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
   + '<circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>'
@@ -2691,29 +2735,98 @@ const HELP_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor
 // The help's claim. Not "without code": the notation is code.
 const HELP_CLAIM = 'Model events and commands — see the boundary each one needs.';
 
-// The introductory video, once there is one: `{ url }`, opened on
-// dcb.events in a new tab rather than played here — the playground
-// fetches nothing at runtime. Until then the slot is left out.
-const HELP_VIDEO = null;
+// The introductory video on YouTube, by its id. Behind a play button
+// until someone presses it: only then is the player loaded, from
+// youtube-nocookie.com — the one thing the playground ever fetches
+// from elsewhere, and only when asked to.
+const HELP_VIDEO = { id: '9II9RcaYYBk' };
 
 // What the playground does, one line each — not how to use it; the
-// pages say that where it is done. Each is a page of the help, reached
-// from its sidebar; `id` keeps a page open across re-renders.
+// pages say that where it is done. Cards on Getting started.
 const HELP_FEATURES = [
-  { id: 'visual-code', name: 'Visual and Code',
+  { name: 'Visual and Code',
     what: 'Edit a model through its pages, or as text in the Code view — two spellings of the same model.' },
-  { id: 'boundaries', name: 'Derived boundaries',
+  { name: 'Derived boundaries',
     what: 'Every command shows the queries it issues and the append condition its rules lead to.' },
-  { id: 'scenarios', name: 'Scenarios',
+  { name: 'Scenarios',
     what: 'Given / When / Then for commands and projections — flagged when a change makes one drift.' },
-  { id: 'sandbox', name: 'Sandbox',
+  { name: 'Sandbox',
     what: 'Drive commands against a hypothetical event log and watch what they append or why they refuse.' },
-  { id: 'problems', name: 'Problems',
+  { name: 'Problems',
     what: 'Dangling references, uncovered tags and other loose ends — a defective model still loads and runs.' },
-  { id: 'import-export', name: 'Import & export',
-    what: 'Models live in this browser only. Export one as JSON, or copy a link that reopens it as it is.' },
-  { id: 'quick-open', name: 'Quick open',
+  { name: 'Import & export',
+    what: 'Models live in this browser only. Export one as JSON, copy a link that reopens it as it is, '
+      + 'or link to the JSON hosted elsewhere.' },
+  { name: 'Quick open',
     what: 'Jump to any definition or action from the keyboard.' },
+];
+
+// Questions people ask, answered on the FAQ page, in the order listed:
+// what this is first, feedback last. An answer is a list of parts — a
+// string, a link `{ text, href }` (in a new tab), a shortcut `{ kbd }`,
+// code `{ code }` or this page's `#url=` link `{ urlLinkBase }` — data
+// rather than nodes, as nodes built once would move between renders.
+const HELP_FAQ = [
+  { question: 'What is the DCB Playground?', answer: [
+    'A modeling tool for event-sourced systems: describe events, projections and the commands '
+      + 'that guard them, and see the consistency boundary each command needs — then try the '
+      + 'commands against a hypothetical event log.'] },
+  { question: 'What is DCB?', answer: [
+    'Dynamic Consistency Boundary: an approach to enforcing consistency in event-sourced systems '
+      + 'without fixed aggregates — each command declares exactly the events it depends on. ',
+    { text: 'More on dcb.events ↗', href: 'https://dcb.events/' }] },
+  { question: 'Who is it for?', answer: [
+    'Developers and architects designing event-sourced systems — whether new to DCB and learning '
+      + 'by trying, or experienced and sketching a real model before writing code.'] },
+  { question: 'Do I need to know DCB to use it?', answer: [
+    'No. The example models are a good start, and the notation reference explains each construct. ',
+    { text: 'Notation reference ↗', href: NOTATION_REFERENCE_URL }] },
+  { question: 'Where is my model stored?', answer: [
+    'Only in this browser, in its local storage — nothing is saved on a server, so clearing your '
+      + 'site data, or switching browsers or devices, leaves it behind. Export it as JSON or copy a '
+      + 'link to keep a copy elsewhere.'] },
+  { question: 'How do I share a model?', answer: [
+    'Copy a link — from Import & export, or with ', { kbd: 'Mod+S' }, '. The model, its scenarios '
+      + 'and the sandbox steps travel inside the link itself, so whoever opens it gets their own '
+      + 'copy. Or export a JSON file and import it on the other side. Too large for a link, or want '
+      + 'one that stays short? Save the JSON somewhere public — a ',
+    { text: 'gist ↗', href: 'https://gist.github.com/' },
+    ', for instance — and share ', { urlLinkBase: true }, ' followed by its address. Whoever opens it '
+      + 'gets a copy of the file as it is at that moment. Loading it here from a URL puts that link in '
+      + 'the address bar, ready to copy.'] },
+  { question: 'Is anything sent to a server?', answer: [
+    'No. The playground runs entirely in your browser; a shared link carries the model after the '
+      + '#, which browsers never send to the server. One exception is the demo video, loaded '
+      + 'from YouTube (youtube-nocookie.com) only once you press play. The other: importing from a '
+      + 'URL, or opening a ', { code: '#url=' }, ' link, fetches that file from wherever it is hosted, '
+      + 'and that host sees the request, as with any download. The playground itself sets no cookies '
+      + 'and uses no analytics.'] },
+  { question: 'Is it safe to open a model someone sent me?', answer: [
+    'Models can contain scripted projections: JavaScript that runs in your browser with the same '
+      + 'access as the playground itself. If a shared model includes any, you see the code and are '
+      + 'asked before it is imported — only import it if you trust where it came from. A ',
+    { code: '#url=' }, ' link loads whatever the file contains when you open it — it may have '
+      + 'changed since it was shared.'] },
+  { question: 'Should I use the Visual or the Code view?', answer: [
+    'Whichever you prefer — they are two spellings of the same model, and a change in one shows '
+      + 'in the other. The pages guide you through each definition; the code is faster once you '
+      + 'know the notation.'] },
+  { question: 'Can I generate production code from my model?', answer: [
+    'Not yet. The playground is for exploring a design quickly — trying out events, commands and '
+      + 'their boundaries before writing any code. A code export may come later; until then, the '
+      + 'exported JSON follows a ',
+    { text: 'public schema ↗', href: 'https://dcb.events/schemas/model/v9.json' },
+    ', should you want to build on it.'] },
+  { question: 'Can an AI agent work on my model?', answer: [
+    'Yes, in browsers that support WebMCP (currently behind a flag or extension): an in-browser '
+      + 'agent can read the open model, run commands in the sandbox and edit definitions. Every '
+      + 'call shows up as a notification, and every edit can be undone like your own.'] },
+  { question: "Something doesn't work — what now?", answer: [
+    'Please ', { text: 'report it on GitHub ↗', href: ISSUES_URL }, '. It helps to include a link '
+      + 'to the model (Import & export → Copy link) and what you expected to happen.'] },
+  { question: 'How can I give feedback?', answer: [
+    "We'd love to hear how you use the playground and what's missing. ",
+    { text: 'Get in touch ↗', href: FEEDBACK_URL }] },
 ];
 
 // The keys worth knowing, by where they work. Keys that belong to one
@@ -2792,16 +2905,40 @@ function helpButton() {
 function helpStartPage() {
   return [
     h('p', { class: 'help-claim' }, HELP_CLAIM),
-    HELP_VIDEO ? h('a', {
-      class: 'help-video', href: HELP_VIDEO.url, target: '_blank', rel: 'noopener',
-    }, h('span', { class: 'help-play', 'aria-hidden': 'true' }, '▶'),
-      h('span', { class: 'help-video-caption' }, 'Watch on dcb.events ↗')) : null,
+    HELP_VIDEO ? helpVideo() : null,
     h('p', {},
       'Build a model of events, projections and the commands that guard them, and see the '
         + 'consistency boundary each command derives.'),
     h('dl', { class: 'help-cards' }, HELP_FEATURES.map((item) => h('div', {},
       h('dt', {}, item.name),
       h('dd', {}, item.what)))),
+  ];
+}
+
+function helpVideo() {
+  if (state.helpVideoPlaying) {
+    return h('div', { class: 'help-video' }, h('iframe', {
+      src: 'https://www.youtube-nocookie.com/embed/' + HELP_VIDEO.id + '?autoplay=1&rel=0',
+      title: 'DCB Playground demo', allow: 'autoplay; encrypted-media; picture-in-picture; fullscreen',
+      allowfullscreen: '', referrerpolicy: 'strict-origin-when-cross-origin',
+    }));
+  }
+  return h('button', {
+    type: 'button', class: 'help-video', 'aria-label': 'Play the demo video (loads it from YouTube)',
+    onclick: () => { state.helpVideoPlaying = true; render(); },
+  }, h('span', { class: 'help-play', 'aria-hidden': 'true' }, '▶'),
+    h('span', { class: 'help-video-caption' }, 'Watch the demo · loads from YouTube'));
+}
+
+function helpFaqPage() {
+  return [
+    h('h3', {}, 'FAQ'),
+    HELP_FAQ.map((item) => [h('h4', {}, item.question), h('p', {}, item.answer.map((part) =>
+      typeof part === 'string' ? part
+        : part.kbd ? kbd(part.kbd)
+          : part.code ? h('code', {}, part.code)
+            : part.urlLinkBase ? h('code', {}, modelUrlLinkBase())
+              : h('a', { href: part.href, target: '_blank', rel: 'noopener' }, part.text)))]),
   ];
 }
 
@@ -2817,11 +2954,10 @@ function helpKeysPage() {
 }
 
 function helpModal() {
-  const close = () => { state.help = false; render(); };
-  const go = (page) => { state.helpPage = page; render(); };
-  const feature = HELP_FEATURES.find((item) => item.id === state.helpPage);
+  const close = () => { state.help = false; state.helpVideoPlaying = false; render(); };
+  const go = (page) => { state.helpPage = page; state.helpVideoPlaying = false; render(); };
   const page = state.helpPage === 'keys' ? helpKeysPage()
-    : feature ? [h('h3', {}, feature.name), h('p', {}, feature.what)]
+    : state.helpPage === 'faq' ? helpFaqPage()
       : helpStartPage();
   const navItem = (id, label, cls = '') => h('button', {
     type: 'button', class: 'help-nav-item' + (state.helpPage === id ? ' active' : '') + cls,
@@ -2835,7 +2971,7 @@ function helpModal() {
     h('div', { class: 'help-panes' },
       h('nav', { class: 'help-nav', 'aria-label': 'Help pages' },
         navItem('start', 'Getting started'),
-        HELP_FEATURES.map((item) => navItem(item.id, item.name)),
+        navItem('faq', 'FAQ'),
         h('hr', { class: 'help-keys' }),
         navItem('keys', '⌨ Keyboard shortcuts', ' help-keys')),
       h('div', { class: 'help-body' }, page)),
@@ -2854,7 +2990,7 @@ function helpModal() {
 // `finishImport` replays it through, so there is nothing else to ask.
 function renderImportGate() {
   const envelope = state.pendingImport;
-  const close = () => { state.pendingImport = null; render(); };
+  const close = () => { cancelImport(); render(); };
   const modal = h('div', { class: 'modal', tabindex: '-1', role: 'dialog', 'aria-modal': 'true' },
     h('header', {},
       h('h2', {}, 'Import shared model'),
@@ -2892,6 +3028,18 @@ function renderImportGate() {
 // one out the same two ways. Reached from the bar's import/export
 // button, which opens straight to Export — the button used to be
 // "share", and this is that job's closest tab.
+// How a model is shared as a file someone else hosts. Said, not built:
+// there is no field for the address — the link is this page's own,
+// with the address after `#url=` (`readModelLink`).
+function hostedFileHint() {
+  return h('div', { class: 'why ie-hint' },
+    'To share it as a file, save it somewhere public — a ',
+    h('a', { href: 'https://gist.github.com/', target: '_blank', rel: 'noopener' }, 'gist ↗'),
+    ', for instance — and share ', h('code', {}, modelUrlLinkBase()), ' followed by its address. '
+      + 'Whoever opens that gets a copy of the file as it is then. A gist’s page address works as it is, '
+      + 'and Import → From a URL leaves the link in the address bar.');
+}
+
 function renderImportExportModal() {
   const model = activeModel();
   const close = () => { state.importExport = false; render(); };
@@ -2903,7 +3051,8 @@ function renderImportExportModal() {
     if (state.ieImportMode === 'url') {
       if (!urlValue.trim()) return;
       state.importExport = false;
-      runAsync(async () => beginImport(await loadModelFromUrl(urlValue.trim())));
+      render();
+      openModelAddress(urlValue);
     } else {
       if (!jsonValue.trim()) return;
       let envelope;
@@ -2931,7 +3080,8 @@ function renderImportExportModal() {
             oninput: (e) => { urlValue = e.target.value; },
             onkeydown: (e) => { if (e.key === 'Enter') doImportLoad(); },
           }),
-          h('div', { class: 'why' }, 'Fetches a model definition from any URL that returns the exported JSON.'))
+          h('div', { class: 'why' }, 'Fetches a model definition from any URL that returns the exported JSON — '
+            + 'a gist’s page address too. The address bar then holds a link to share it.'))
       : h('div', { class: 'ie-field' },
           h('label', {}, 'Model JSON'),
           h('textarea', {
@@ -2995,15 +3145,17 @@ function renderImportExportModal() {
             h('div', { class: 'why' }, 'A complete copy of this model — commands, events, entities, '
               + 'projections and types.')),
           h('div', { class: 'ie-actions' },
+            h('button', { class: 'btn', onclick: () => downloadModelJson(model, jsonExportText) }, 'Download'),
             h('button', {
               class: 'btn primary', onclick: () => copyToClipboard(jsonExportText, 'ieCopiedJson'),
-            }, state.ieCopiedJson ? 'Copied ✓' : 'Copy JSON')))
+            }, state.ieCopiedJson ? 'Copied ✓' : 'Copy JSON')),
+          hostedFileHint())
       : h('div', {},
           h('div', { class: 'ie-field' },
             h('label', {}, 'Shareable link'),
             h('input', { class: 'mono', type: 'text', readonly: true, value: state.ieLink || 'Computing…' }),
             h('div', { class: 'why' }, 'Anyone who opens this link gets exactly this model — nothing '
-              + 'is uploaded to load it.')),
+              + 'is uploaded to load it. Too long to send? Host the JSON instead — see As JSON.')),
           h('div', { class: 'ie-actions' },
             h('button', {
               class: 'btn primary', disabled: !state.ieLink,
@@ -3132,6 +3284,13 @@ onAppend((at, appended) => {
   takeUndoMark(at, appended);
 });
 
+// The model the address bar links to has changed: the link is stale.
+onAppend((at, appended) => {
+  if (addressModelId && appended.some((event) => event.data && event.data['dcb-model-id'] === addressModelId)) {
+    dropAddressLink();
+  }
+});
+
 // A linked copy's first change asks for a name — only while it is the
 // model on screen, since the question is about what was just done.
 onAppend((at, appended) => {
@@ -3165,6 +3324,7 @@ function undo() {
     return toast(OVERTAKEN, true);
   }
   writeEventLog(events.slice(0, mark.at));
+  dropAddressLink();
   log.undone.push({
     at: mark.at, stamp: logStampAt(events, mark.at), events: events.slice(mark.at), label: mark.label,
   });
@@ -3185,6 +3345,7 @@ function redo() {
   }
   const replayed = step.events.map((event, i) => ({ ...event, sequence: events.length + i }));
   writeEventLog([...events, ...replayed]);
+  dropAddressLink();
   log.done.push({
     at: events.length, end: events.length + replayed.length,
     stamp: logStampAt(replayed, replayed.length), label: step.label,
@@ -15183,6 +15344,18 @@ function codeToolIcon(paths) {
       + 'stroke-linejoin="round" aria-hidden="true">' + paths + '</svg>'));
 }
 
+// The exported JSON as a file — named like the code's download, so the
+// two sit together — for a gist or a bucket to take as it is.
+function downloadModelJson(model, text) {
+  const blob = new Blob([text], { type: 'application/json' });
+  const link = h('a', {
+    href: URL.createObjectURL(blob),
+    download: (toCamel(model.name) || 'model') + SOURCE_EXTENSION + '.json',
+  });
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+
 function downloadCode(model) {
   const blob = new Blob([codeView.text], { type: 'text/plain' });
   const link = h('a', {
@@ -15281,7 +15454,7 @@ window.addEventListener('keydown', (e) => {
   if (state.hintPop) { state.hintPop = null; return render(); }
   if (state.lcMenu) { state.lcMenu = null; return render(); }
   if (state.moreOpen) { state.moreOpen = false; return render(); }
-  if (state.pendingImport) { state.pendingImport = null; return render(); }
+  if (state.pendingImport) { cancelImport(); return render(); }
   if (state.importExport) { state.importExport = false; return render(); }
   if (state.help) { state.help = false; return render(); }
   if (state.problems) { state.problems = false; return render(); }
@@ -15425,10 +15598,12 @@ document.getElementById('rail').addEventListener('click', (e) => {
   if (state.railOpen && e.target.closest('a')) { state.railOpen = false; render(); }
 });
 
-// A `#model=…` fragment never reaches the server (there is none), so
-// this is the only place it is read. Cleared as soon as it is read,
-// successfully or not — a bad or already-consumed link should not keep
-// re-triggering on every reload. A link may add `&surface=code` (or
+// A `#model=…` or `#url=…` fragment never reaches the server (there is
+// none), so it is read here and on a change of it (`readModelLink`,
+// `openModelLink`). One that loads stays in the address bar until its
+// model changes or another is opened (`addressModelId`); one that does
+// not is cleared at once. A `#url=` link fetches its file anew on every
+// open; the copy it makes is of the file as it is then. A link may add `&surface=code` (or
 // `visual`) to say which surface the model opens on — dcb.events does
 // on the pages explaining the notation, whose reader came for the text —
 // and `&experimental` to show experimental features for this session.
@@ -15463,25 +15638,36 @@ async function boot() {
     setScriptsDisabled(true);
     toast('The last load did not finish, so scripts are off for this one. Reload to run them again.', true);
   }
-  const hash = location.hash;
+  const link = readModelLink(location.hash);
   // Entering without a model link starts at the models dialog, over
   // whatever was open last — see `modelsModal`.
-  if (!hash.startsWith('#model=')) state.models = true;
+  if (!link) state.models = true;
   render();
   syncTopbarHeight();
   setFooterYear();
-  if (!hash.startsWith('#model=')) return;
-  history.replaceState(null, '', location.pathname + location.search);
-  const [encoded, ...options] = hash.slice('#model='.length).split('&');
-  const linkOptions = new URLSearchParams(options.join('&'));
-  const surface = linkOptions.get('surface');
+  if (link) await openModelLink(link);
+}
+
+// A link pasted into the address bar of a page already open changes
+// only the fragment, which reloads nothing — so the fragment is read
+// on its change too, not only on boot.
+async function openModelLink(link) {
+  addressModelId = null;
+  const surface = link.options.get('surface');
   if (surface === 'code' || surface === 'visual') setCodeSurface(surface === 'code');
-  if (linkOptions.has('experimental')) enableExperimentalForSession();
+  if (link.options.has('experimental')) enableExperimentalForSession();
   let envelope;
   try {
-    envelope = await decodeShareLink(encoded);
+    envelope = link.kind === 'model' ? await decodeShareLink(link.value) : await loadModelFromUrl(link.value);
   } catch (error) {
-    toast('That share link could not be read: ' + error.message, true);
+    // Nothing came in, so the page is where entering without a link
+    // leaves it: the models dialog.
+    toast(link.kind === 'model' ? 'That share link could not be read: ' + error.message
+      : error instanceof DomainError ? error.message
+        : 'That model URL could not be loaded: ' + error.message, true);
+    dropAddressLink();
+    state.models = true;
+    render();
     return;
   }
   // Opened before and unchanged since: back to that copy rather than a
@@ -15493,6 +15679,7 @@ async function boot() {
   if (existing) {
     markLinkedCopy(existing);
     switchToModel(existing);
+    linkInAddressBar(existing);
     state.models = false;
     render();
     toast('This model was opened before — switched to it.');
@@ -15503,6 +15690,10 @@ async function boot() {
 }
 
 window.addEventListener('DOMContentLoaded', boot);
+window.addEventListener('hashchange', () => {
+  const link = readModelLink(location.hash);
+  if (link) openModelLink(link);
+});
 </script>
 </body>
 </html>

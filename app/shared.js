@@ -768,8 +768,9 @@ function createNamedModel(name) {
 // link (`#model=<gzipped, base64url-encoded envelope>`, so a static
 // page with no backend can still hand someone a working copy of what
 // it built) and a URL someone else hosts, fetched and inflated on
-// demand. Both carry the same envelope — see `buildShareEnvelope` in
-// model.js. Compression is the native Streams API only, matching the
+// demand — typed into Import, or carried by a link of its own
+// (`#url=<URI-encoded address>`). Both carry the same envelope — see
+// `buildShareEnvelope` in model.js. Compression is the native Streams API only, matching the
 // rest of this project's lack of a dependency story; there is no
 // fallback for a browser that lacks it.
 
@@ -837,23 +838,103 @@ function decodeShareLink(encoded) {
   return gunzipFromBase64Url(encoded).then((json) => JSON.parse(json));
 }
 
+// What a link to this page carries after its `#`: a model packed into
+// it (`#model=…`) or the address of a file holding one (`#url=…`), then
+// `&`-separated options. Null for any other fragment. An address that
+// does not decode is taken as written — the fetch reports what is
+// wrong with it.
+function readModelLink(hash) {
+  for (const kind of ['model', 'url']) {
+    const prefix = '#' + kind + '=';
+    if (!hash.startsWith(prefix)) continue;
+    const [value, ...options] = hash.slice(prefix.length).split('&');
+    let decoded = value;
+    if (kind === 'url') { try { decoded = decodeURIComponent(value); } catch { /* as written */ } }
+    return { kind, value: decoded, options: new URLSearchParams(options.join('&')) };
+  }
+  return null;
+}
+
+// The fragment that links to a hosted file: its address as typed when
+// that reads back unchanged — a gist's stays legible — and URI-encoded
+// when it holds what would end or garble it.
+function modelUrlLink(address) {
+  return '#url=' + (/[&#%\s]/.test(address) ? encodeURIComponent(address) : address);
+}
+
+// This page's address, up to where a hosted file's address goes.
+function modelUrlLinkBase() {
+  return location.origin + location.pathname + '#url=';
+}
+
+// A gist's page (`gist.github.com/<user>/<id>`) is HTML; its files come
+// from the API, which any site may read. The page address is the one
+// people copy, so it is read as the gist it names; every other address
+// — a gist's Raw link among them — is fetched as it is.
+const GIST_PAGE_URL = /^https:\/\/gist\.github\.com\/(?:[\w-]+\/)?([0-9a-f]+)\/?(?:[?#].*)?$/i;
+
+function modelSourceUrl(url) {
+  const match = GIST_PAGE_URL.exec(url.trim());
+  return match
+    ? { url: 'https://api.github.com/gists/' + match[1], gist: true }
+    : { url: url.trim(), gist: false };
+}
+
+// The file in a gist that holds the model: its first `.json` file, or
+// its only file when none is named so.
+function gistModelFile(gist) {
+  const files = Object.values((gist && gist.files) || {});
+  const file = files.find((f) => /\.json$/i.test(f.filename || '')) || (files.length === 1 ? files[0] : null);
+  if (!file) throw new DomainError('That file was not loaded: the gist holds no .json file.');
+  return file;
+}
+
 // A URL someone else hosts — a gist, a bucket, another tool's export.
 // `fetch` only auto-decompresses a gzip `Content-Encoding`; a file whose
 // *content type* says gzip (a plain `.json.gz` sitting on a static
 // host) arrives untouched over the wire and has to be inflated by hand.
+// Every way it can fail says so as a DomainError — the reader of the
+// message is whoever pasted or followed the address.
 async function loadModelFromUrl(url) {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-  if (!response.body) throw new Error('the response was empty');
+  const source = modelSourceUrl(url);
+  const text = await fetchCappedText(source.url, { gist: source.gist });
+  if (!source.gist) return parseFetchedJson(text);
+  const file = gistModelFile(parseFetchedJson(text));
+  return parseFetchedJson(file.truncated ? await fetchCappedText(file.raw_url) : file.content);
+}
+
+function notLoaded(reason) {
+  return new DomainError('That file was not loaded: ' + reason);
+}
+
+async function fetchCappedText(url, { gist = false } = {}) {
+  let response;
+  try {
+    response = await fetch(url);
+  } catch {
+    throw notLoaded('its host could not be reached, or does not let other sites read it.');
+  }
+  if (gist && (response.status === 403 || response.status === 429)) {
+    throw notLoaded('GitHub refused to serve the gist — likely its limit of 60 requests an hour. '
+      + 'Use the file’s Raw link instead.');
+  }
+  if (!response.ok) throw notLoaded(`its host answered ${response.status} ${response.statusText}`.trim() + '.');
+  if (!response.body) throw notLoaded('the response was empty.');
   const contentType = response.headers.get('Content-Type') || '';
   const body = contentType.includes('gzip') ? response.body.pipeThrough(new DecompressionStream('gzip')) : response.body;
-  let text;
   try {
-    text = await readCappedText(body);
+    return await readCappedText(body);
   } catch (error) {
-    throw error instanceof DomainError ? new DomainError('That file was not loaded: ' + error.message) : error;
+    throw error instanceof DomainError ? notLoaded(error.message) : error;
   }
-  return JSON.parse(text);
+}
+
+function parseFetchedJson(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw notLoaded('it is not JSON. For a gist, use its page or its Raw link.');
+  }
 }
 
 // The async twin of `run`: same error reporting, for a flow that has to
