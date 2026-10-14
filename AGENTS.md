@@ -9,7 +9,8 @@ which consistency boundary each command derives.
 No build step, no framework, and one vendored dependency: Monaco, pinned and
 checked in under `app/vendor/monaco/`, lazy-loaded only when a scripted
 handler's editor is on screen. The app runs from any static server —
-`npx serve app` locally; it never fetches anything at runtime.
+`npx serve app` locally; it never fetches anything at runtime — except the
+help's demo video, from youtube-nocookie.com, once someone presses play.
 
 ## Layout
 
@@ -132,8 +133,8 @@ was decided, why, and what was tried and reverted:
 
 - **The help modal explains the playground, not the notation**
   (`helpModal`, index.html): the bar's button, the `?` key and the
-  models dialog open it. A sidebar of pages — Getting started, one per
-  `HELP_FEATURES` entry, the shortcuts apart at the bottom; its links
+  models dialog open it. A sidebar of pages — Getting started, the FAQ
+  (`HELP_FAQ`), the shortcuts apart at the bottom; its links
   are the notation reference on dcb.events, feedback (`FEEDBACK_URL`),
   issues (`ISSUES_URL`) and, once `HELP_VIDEO` is set, the video, all
   in a new tab. Issues go to the website's repository, not this one. An `ⓘ` keeps its one line and links the

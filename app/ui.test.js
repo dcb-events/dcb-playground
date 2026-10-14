@@ -35,7 +35,7 @@ loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js', 'shared.js'], {
     + ' globalThis.PREDEFINED_MODELS = PREDEFINED_MODELS; globalThis.SHARE_LINK_MAX_LENGTH = SHARE_LINK_MAX_LENGTH;'
     + ' globalThis.EVENT_LOG_KEY = EVENT_LOG_KEY; globalThis.PAGE_BEHIND = PAGE_BEHIND;'
     + ' globalThis.NOTATION_GUIDE_URL = NOTATION_GUIDE_URL; globalThis.NOTATION_REFERENCE_URL = NOTATION_REFERENCE_URL;'
-    + ' globalThis.HELP_FEATURES = HELP_FEATURES; globalThis.HELP_CLAIM = HELP_CLAIM;'
+    + ' globalThis.HELP_FEATURES = HELP_FEATURES; globalThis.HELP_CLAIM = HELP_CLAIM; globalThis.HELP_FAQ = HELP_FAQ;'
     + ' globalThis.FEEDBACK_URL = FEEDBACK_URL; globalThis.ISSUES_URL = ISSUES_URL;',
 });
 const { check, eq, finish } = makeChecker();
@@ -4695,8 +4695,10 @@ function build(index) {
 
 // The help explains the playground and leaves the notation to the
 // reference on dcb.events; beside it, where to send feedback and
-// issues — each in a new tab, and nothing else.
+// issues — each in a new tab, and nothing else. The FAQ links what its
+// answers mention.
 check('the help modal links the notation reference, feedback and issues, and nothing else', () => {
+  sandbox.state.helpPage = 'start';
   const links = findAll(sandbox.helpModal(), (n) => n.tag === 'a');
   eq(links.map((a) => [a.attributes.href, a.attributes.target]), [
     [sandbox.NOTATION_REFERENCE_URL, '_blank'], [sandbox.FEEDBACK_URL, '_blank'], [sandbox.ISSUES_URL, '_blank']]);
@@ -4723,21 +4725,45 @@ check('a shortcut is spelled for the platform it is read on', () => {
   }
 });
 
-// The help is a sidebar of pages: it opens on Getting started, every
-// feature has a page of its own, and the shortcuts are kept apart on
-// theirs.
-check('the help modal opens on Getting started, with a page per feature', () => {
+// The help is a sidebar of pages: it opens on Getting started, the FAQ
+// has a page of its own, and the shortcuts are kept apart on theirs.
+check('the help modal opens on Getting started, beside the FAQ and the shortcuts', () => {
   sandbox.state.helpPage = 'start';
   const modal = sandbox.helpModal();
   const nav = findAll(modal, (n) => n.tag === 'button' && /help-nav-item/.test(n.className)).map(textOf);
-  eq(nav, ['Getting started', ...sandbox.HELP_FEATURES.map((item) => item.name), '⌨ Keyboard shortcuts'], 'the sidebar');
+  eq(nav, ['Getting started', 'FAQ', '⌨ Keyboard shortcuts'], 'the sidebar');
   eq(textOf(modal).includes(sandbox.HELP_CLAIM), true, 'the claim');
   eq(findAll(modal, (n) => n.tag === 'kbd').length, 0, 'no shortcuts on it');
   const button = (label) => findAll(modal, (n) => n.tag === 'button' && textOf(n) === label)[0];
   eq(!!button('Close'), true, 'closed with Close');
-  button('Sandbox').onclick();
-  eq(sandbox.state.helpPage, 'sandbox', 'a feature is a page');
+  button('FAQ').onclick();
+  eq(sandbox.state.helpPage, 'faq', 'the FAQ is a page');
   sandbox.state.helpPage = 'start';
+});
+
+check('the FAQ answers in text, links in a new tab and shortcuts as kbd', () => {
+  sandbox.state.helpPage = 'faq';
+  const modal = sandbox.helpModal();
+  eq(findAll(modal, (n) => n.tag === 'h4').length, sandbox.HELP_FAQ.length, 'a heading per question');
+  const links = findAll(modal, (n) => n.tag === 'a' && n.attributes.target === '_blank');
+  eq(links.some((a) => a.attributes.href === sandbox.ISSUES_URL && textOf(a) === 'report it on GitHub ↗'), true, 'a link in an answer');
+  eq(findAll(modal, (n) => n.tag === 'kbd').length, 1, 'the share shortcut');
+  sandbox.state.helpPage = 'start';
+});
+
+// The demo video loads nothing until it is played, and then only the
+// cookieless player.
+check('the help video is a play button until pressed, then the youtube-nocookie player', () => {
+  sandbox.state.helpPage = 'start';
+  sandbox.state.helpVideoPlaying = false;
+  eq(findAll(sandbox.helpModal(), (n) => n.tag === 'iframe').length, 0, 'nothing loaded up front');
+  const play = findAll(sandbox.helpModal(), (n) => n.tag === 'button' && /help-video/.test(n.className));
+  eq(play.length, 1, 'a play button');
+  play[0].onclick();
+  const frames = findAll(sandbox.helpModal(), (n) => n.tag === 'iframe');
+  eq(frames.length, 1, 'the player, once played');
+  eq(frames[0].attributes.src.startsWith('https://www.youtube-nocookie.com/embed/'), true, 'cookieless');
+  sandbox.state.helpVideoPlaying = false;
 });
 
 check('the help modal lists the keyboard shortcuts, as kbd, on a page of their own', () => {
