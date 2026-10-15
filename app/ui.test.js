@@ -563,8 +563,7 @@ function build(index) {
           problems.push(`${spec.id} is about the unknown ${spec.projection}`);
           continue;
         }
-        const slots = projection.script
-          ? (projection.script.arguments || []) : (projection.parameters || []);
+        const slots = projection.arguments || [];
         const supplied = Object.keys(spec.arguments || {}).sort();
         const expected = slots.map((s) => s.name).sort();
         if (JSON.stringify(supplied) !== JSON.stringify(expected)) {
@@ -861,14 +860,12 @@ function build(index) {
   check('the editor renders a scripted projection from either side', () => {
     sandbox.addDefinition('projection-definition', id, 'CourseTouches', {
       tags: [{ name: 'courseId', tagType: 'CourseId' }],
+      arguments: [{ name: 'since', propertyType: 'integer' }],
       valueType: 'integer',
       isList: false,
       // Written in the order the schema declares, which is the order
       // the editor writes it back in.
-      script: {
-        initialState: 0,
-        arguments: [{ name: 'since', propertyType: 'integer' }],
-      },
+      script: { initialState: 0 },
       handlers: [{ event: 'CourseDefined', code: '(state || 0) + 1' }],
     });
     sandbox.patch('entity-definition', 'Course', (b) => {
@@ -2433,10 +2430,8 @@ function build(index) {
   };
   const body = {
     valueType: 'integer',
-    script: {
-      initialState: { count: 0, open: true, ids: [], seats: { taken: 0 } },
-      arguments: [{ name: 'courseId', propertyType: 'CourseId' }, { name: '', propertyType: 'CourseId' }],
-    },
+    arguments: [{ name: 'courseId', propertyType: 'CourseId' }, { name: '', propertyType: 'CourseId' }],
+    script: { initialState: { count: 0, open: true, ids: [], seats: { taken: 0 } } },
   };
 
   check('the preamble types exactly what the handler can see', () => {
@@ -5305,6 +5300,54 @@ check('the reference links only anchors the website defines', () => {
     const compareRoot = sandbox.document.createElement('div');
     for (const node of sandbox.projectionFields(hours(), projectionDraftFrom(comparing))) compareRoot.appendChild(node);
     eq(findAll(compareRoot, (node) => node.tag === 'label' && textOf(node) === ' not').length, 1, 'where a comparison has');
+    store.set('dcb-playground:model', id);
+    sandbox.closeForms();
+  });
+
+  // A row's `tag` toggle, as `{checked, disabled}`, in row order.
+  const tagToggles = (root) => findAll(root, (node) => node.tag === 'label' && textOf(node) === ' tag')
+    .map((label) => findAll(label, (node) => node.tag === 'input')[0].attributes)
+    .map((attributes) => ({ checked: 'checked' in attributes, disabled: 'disabled' in attributes }));
+  const fieldsOf = (model, body) => {
+    const root = sandbox.document.createElement('div');
+    for (const node of sandbox.projectionFields(model, body)) root.appendChild(node);
+    return root;
+  };
+
+  check('a projection\'s parameters are one list, each with a tag toggle', () => {
+    const { id: hoursId, model: hours } = build(sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'developer-hours'));
+    store.set('dcb-playground:model', hoursId);
+    const stored = hours()['projection-definitions'].DeveloperHasHoursForWeek;
+    eq(cleanProjectionBody(projectionDraftFrom(stored)), stored, 'its arguments, through the editor and back');
+    sandbox.state.projDraft = { name: 'DeveloperHasHoursForWeek', body: projectionDraftFrom(stored) };
+    const root = fieldsOf(hours(), sandbox.state.projDraft.body);
+    eq(textOf(root).includes('+ parameter'), true, 'one door for both');
+    eq(tagToggles(root), [
+      { checked: true, disabled: false }, { checked: true, disabled: false }, { checked: false, disabled: true },
+    ], 'two tags, and an integer argument that can be no tag');
+
+    const declared = hours()['projection-definitions'].DeveloperAllocatedHoursForWeek;
+    sandbox.state.projDraft = { name: 'DeveloperAllocatedHoursForWeek', body: projectionDraftFrom(declared) };
+    eq(tagToggles(fieldsOf(hours(), sandbox.state.projDraft.body)).every((t) => t.checked && t.disabled), true,
+      'a declared projection\'s handlers see only the event: every parameter a tag, and stays one');
+    store.set('dcb-playground:model', id);
+    sandbox.closeForms();
+  });
+
+  check('unticking a saved tag makes it an argument, and moves every read of it', () => {
+    const { id: hoursId, model: hours } = build(sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'developer-hours'));
+    store.set('dcb-playground:model', hoursId);
+    const stored = hours()['projection-definitions'].DeveloperHasHoursForWeek;
+    sandbox.state.projDraft = { name: 'DeveloperHasHoursForWeek', body: projectionDraftFrom(stored) };
+    const root = fieldsOf(hours(), sandbox.state.projDraft.body);
+    const week = findAll(root, (node) => node.tag === 'label' && textOf(node) === ' tag')[1];
+    findAll(week, (node) => node.tag === 'input')[0].onchange({ target: { checked: false } });
+    const now = hours()['projection-definitions'].DeveloperHasHoursForWeek;
+    eq([now.tags.map((t) => t.name), now.arguments.map((a) => a.name)], [['developerId'], ['week', 'hours']],
+      'the first argument now');
+    const read = hours()['command-definitions'].AllocateHours.conditions[3].leftHandSide;
+    eq(Object.keys(read.arguments), ['hours', 'week'], 'the command gives it as an argument');
+    eq(sandbox.state.projDraft.body.arguments.map((a) => a.name), ['week', 'hours'], 'and the draft says the same');
     store.set('dcb-playground:model', id);
     sandbox.closeForms();
   });

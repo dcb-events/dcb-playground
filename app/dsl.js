@@ -689,9 +689,10 @@ function parseModelSourceText(text, options) {
     `A read gives its values in parentheses, in the order ${target.v} declares them: ${target.v}(…).`, peek(1));
 
   // A derived projection's operand: another projection's value – read
-  // with the values it declares, each one of this projection's own tags
-  // by name, a typed literal, or a literal argument – or an enum member
-  // or a literal. Settled like a command's (`settle`).
+  // with the values it declares, each one of this projection's own
+  // parameters by name or a literal – one of its own parameters by name
+  // (10.0), or an enum member or a literal. Settled like a command's
+  // (`settle`).
   const derivedOperand = () => {
     const token = peek();
     if (token.t === 'ident' && SOURCE_MEMBER_RE.test(token.v) && is('(', 1)) return call(derivedValue);
@@ -701,7 +702,7 @@ function parseModelSourceText(text, options) {
       mark(ref, 'pascal', token);
       return ref;
     }
-    return literalValue();
+    return derivedValue();
   };
   const derivedValue = () => {
     const token = peek();
@@ -867,7 +868,7 @@ function parseModelSourceText(text, options) {
       expect(':');
       const typeToken = ident('a type');
       if (tagToken) {
-        if (args.length) fail('Tags come first – a read gives the tags, then the values a script takes.', tagToken);
+        if (args.length) fail('Tags come first – a read gives the tags, then the arguments.', tagToken);
         const tag = { name: nameToken.v, tagType: typeToken.v };
         mark(tag, 'name', nameToken);
         mark(tag, 'tagType', typeToken);
@@ -1101,13 +1102,10 @@ function parseModelSourceText(text, options) {
     }
     annotate('projection-definition', {}, annotations);
     const body = {};
+    // What a read gives besides the tags is an argument (10.0): a script
+    // reads it, a derived projection compares or computes with it. A
+    // declared one's handlers cannot, which is the advisories' to say.
     const header = is('(') ? projectionParameterList() : { tags: [], args: [] };
-    // What a read gives besides the tags is what the code takes, so only
-    // a script declares any.
-    if (header.args.length && !scriptedKind) {
-      fail(`Only a scripted projection takes values besides its tags – ${header.args[0].argument.name} is not a tag `
-        + `(scripted projection ${nameToken.v} (…)).`, header.args[0].token);
-    }
     if (untagged && header.tags.length) fail(`${nameToken.v} is declared untagged and tagged by ${header.tags.map((t) => t.name).join(', ')} – one or the other.`, untagged);
     if (!untagged && !header.tags.length) {
       const lowered = nameToken.v.charAt(0).toLowerCase() + nameToken.v.slice(1);
@@ -1122,6 +1120,7 @@ function parseModelSourceText(text, options) {
       });
     }
     body.tags = header.tags;
+    if (header.args.length) body.arguments = header.args.map((a) => a.argument);
     expect(':', '":" and the type it holds');
     const valueType = ident('the type it holds');
     body.valueType = valueType.v;
@@ -1201,7 +1200,6 @@ function parseModelSourceText(text, options) {
     } else if (scriptedKind) {
       body.script = {};
     }
-    if (header.args.length) body.script = { arguments: header.args.map((a) => a.argument), ...body.script };
     return define('projection-definition', nameToken, body, start);
   };
 
@@ -1361,7 +1359,7 @@ function parseModelSourceText(text, options) {
     if (is('{')) return { event: name.v, data: scenarioValue(), subjectToken: name };
     // A projection, read the way a command reads it: its values in the
     // order it declares them – tag literals here, each with its type,
-    // then the values a script takes – settled against the declaration
+    // then its arguments – settled against the declaration
     // after the parse.
     const item = { projection: name.v, subjectToken: name };
     if (is('tagged') || is('with')) oldReadSpelling(name);
@@ -1664,7 +1662,7 @@ function parseModelSourceText(text, options) {
   // fragment, every one handed in) is known. Resolving by name, the way
   // an operand resolves to an alias or a payload property: nothing about
   // the stored shape is guessed. A read's values are given in the order
-  // its projection declares them – tags, then a script's arguments – and
+  // its projection declares them – tags, then its arguments – and
   // stored by name.
   const declares = (kind, option, name) =>
     Object.prototype.hasOwnProperty.call(collections[kind], name)
@@ -2004,7 +2002,7 @@ function sourceTagLiteral(tag) {
 }
 
 // `X(a, each b, 14)` – a read, its values in the order `X` declares
-// them: the tags, then a script's arguments. A read whose names are not
+// them: the tags, then its arguments. A read whose names are not
 // exactly the declared ones has no positional spelling.
 function sourceRead(read, names, operand) {
   const name = sourceRef(read.projection, 'projection');
@@ -2043,13 +2041,14 @@ function sourceHandlerOperand(operand) {
   return sourceLiteral(operand);
 }
 
-// A derived operand: another projection's read – its tags each one of
-// this projection's own by name, or a literal – or a literal.
+// A derived operand: another projection's read – its values each one
+// of this projection's own parameters by name, or a literal – one of
+// its own parameters by name, or a literal.
 function sourceDerivedOperand(names) {
   const value = (v) => {
     if (v && typeof v === 'object' && !Array.isArray(v) && v.parameterName !== undefined) {
-      if (Object.keys(v).length !== 1) unprintable('a derived operand\'s tag reaches into a field');
-      return sourceRef(v.parameterName, 'tag');
+      if (Object.keys(v).length !== 1) unprintable('a derived operand\'s parameter reaches into a field');
+      return sourceRef(v.parameterName, 'parameter');
     }
     return sourceLiteral(v);
   };
@@ -2058,7 +2057,7 @@ function sourceDerivedOperand(names) {
       if (Object.keys(operand).some((k) => !['projection', 'tags', 'arguments'].includes(k))) unprintable('a derived operand carries extra fields');
       return sourceRead(operand, names, value);
     }
-    return sourceLiteral(operand);
+    return value(operand);
   };
 }
 
@@ -2127,19 +2126,25 @@ function printEntity(name, body) {
 // `projection Name (tag courseId: CourseId): T = v` – or `untagged
 // projection Name: T = v`, `derived projection Name (…): T { a - b }`,
 // `scripted projection Name (tag courseId: CourseId, days: integer): T
-// { … }`. The tags come first, then what a script takes besides, which
+// { … }`. The tags come first, then its arguments, which
 // is the order a read gives them in.
 function printProjection(name, body, names) {
   const tags = body.tags === undefined ? [] : body.tags;
   if (!Array.isArray(tags)) unprintable('its tags are not a list');
   const script = body.script;
   if (script !== undefined && (script === null || typeof script !== 'object' || Array.isArray(script))) unprintable('its script is not an object');
+  if (script && script.arguments !== undefined) unprintable('its script states arguments, which are the projection\'s');
+  const args = body.arguments === undefined ? [] : body.arguments;
+  if (!Array.isArray(args) || (body.arguments !== undefined && !args.length)) unprintable('its arguments are not a non-empty list');
   const parameters = [
     ...tags.map((tag) => {
       if (!tag || typeof tag !== 'object' || Object.keys(tag).some((k) => k !== 'name' && k !== 'tagType')) unprintable('a tag is not { name, tagType }');
       return `tag ${sourceRef(tag.name, 'tag')}: ${sourceRef(tag.tagType, 'tag type')}`;
     }),
-    ...((script && script.arguments) || []).map((p) => `${sourceRef(p.name, 'parameter')}: ${sourceRef(p.propertyType, 'type')}`),
+    ...args.map((p) => {
+      if (!p || typeof p !== 'object' || Object.keys(p).some((k) => k !== 'name' && k !== 'propertyType')) unprintable('an argument is not { name, propertyType }');
+      return `${sourceRef(p.name, 'parameter')}: ${sourceRef(p.propertyType, 'type')}`;
+    }),
   ];
   // The kind is said once, in front; a body that is two kinds at once
   // has no spelling.
@@ -2388,11 +2393,11 @@ function sourceCommandThen(model, commandName, then) {
 
 // A projection scenario's `then`: the projection, read the way a
 // command reads it – its tags as literals that state their type, then
-// the arguments a script takes, in the order it declares them – and the
+// its arguments, in the order it declares them – and the
 // value it folds to.
 function sourceProjectionThen(model, body) {
   const projection = model['projection-definitions'][body.projection];
-  const slots = (projection && projection.script && projection.script.arguments) || [];
+  const slots = projectionSlots(projection);
   const typeOf = (key) => {
     const slot = slots.find((p) => p && p.name === key);
     return slot ? { typeName: slot.propertyType, isList: false } : null;
@@ -2818,7 +2823,7 @@ function sourceOutcomesAt(model, text, line) {
   } else {
     const name = record.subject;
     const projection = draft['projection-definitions'][name];
-    if (!projection || (projection.script && (projection.script.arguments || []).length)) return [];
+    if (!projection || projectionSlots(projection).length) return [];
     const valuesOf = (tagType) => {
       const found = [];
       for (const step of record.body.given || []) {
@@ -3117,7 +3122,7 @@ function sourceSymbols(parsed) {
     if (slots.json) { opaque.push({ token: slots.json, text: JSON.stringify(body), json: true }); return false; }
     return true;
   };
-  const parameters = (projection) => list(projection && projection.script && projection.script.arguments);
+  const parameters = (projection) => list(projection && projection.arguments);
   // A read's tags, by name: a literal names its tag type, anything else
   // is an operand in the read's scope.
   const tagOperands = (tags, operandOf) => {
@@ -3199,7 +3204,7 @@ function sourceSymbols(parsed) {
       add(sourceSymbol('projectionTag', name, tag.name), slotsOf(tag).name, { decl: true });
       typeRef(slotsOf(tag).tagType);
     }
-    for (const parameter of list(body.script && body.script.arguments)) {
+    for (const parameter of list(body.arguments)) {
       add(sourceSymbol('projectionParameter', name, parameter.name), slotsOf(parameter).name, { decl: true });
       typeRef(slotsOf(parameter).propertyType);
     }
@@ -3214,17 +3219,27 @@ function sourceSymbols(parsed) {
     if (body.derived && typeof body.derived === 'object') {
       const typeOf = (operand) => {
         if (has(operand, 'projection')) { const p = own(projections, operand.projection); return p ? p.valueType : null; }
+        if (has(operand, 'parameterName')) {
+          const found = [...list(body.tags).map((t) => [t.name, t.tagType]), ...list(body.arguments).map((a) => [a.name, a.propertyType])]
+            .find(([n]) => n === operand.parameterName);
+          return found ? found[1] : null;
+        }
         return null;
       };
+      // A name is one of this projection's own parameters – a tag or an
+      // argument, as it declares it – whether compared, computed with or
+      // passed on.
+      const ownRef = (ref) => add(sourceSymbol(
+        list(body.tags).some((t) => t.name === ref.parameterName) ? 'projectionTag' : 'projectionParameter',
+        name, ref.parameterName,
+      ), slotsOf(ref).parameter);
       const operand = (value, expected) => {
         if (Array.isArray(value)) return value.forEach((v) => operand(v, expected));
         const marked = slotsOf(value);
-        if (has(value, 'projection')) {
+        if (has(value, 'parameterName')) ownRef(value);
+        else if (has(value, 'projection')) {
           add(sourceSymbol('projection', value.projection), marked.projection);
-          // A tag passed on by name is one of this projection's own.
-          tagOperands(value.tags, (tag) => {
-            if (has(tag, 'parameterName')) add(sourceSymbol('projectionTag', name, tag.parameterName), slotsOf(tag).parameter);
-          });
+          tagOperands(value.tags, (tag) => { if (has(tag, 'parameterName')) ownRef(tag); });
           keyed(value.arguments, (key) => sourceSymbol('projectionParameter', value.projection, key),
             (arg, key) => operand(arg, parameterType(value.projection, key)));
         } else literal(value, expected);
@@ -4112,8 +4127,8 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     }
     return done();
   };
-  // What a read of a projection gives, in order: its tags, then a
-  // script's arguments – `{ name, propertyType, tag }` each.
+  // What a read of a projection gives, in order: its tags, then its
+  // arguments – `{ name, propertyType, tag }` each.
   const projectionParameters = (name) => {
     const ownDecl = frame.decl || decl;
     if (ownDecl.keyword === 'projection' && ownDecl.name === name) {
@@ -4123,8 +4138,16 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     const body = def('projection-definition', name);
     return [
       ...projectionTagParams(body).map((tag) => ({ name: tag.name, propertyType: tag.tagType, tag: true })),
-      ...list(body && body.script && body.script.arguments),
+      ...list(body && body.arguments),
     ];
+  };
+  // A derived projection's own parameters, as names its expression may
+  // use – those of `preferred` type first.
+  const ownParameterItems = (ownName, preferred) => {
+    for (const p of ownName ? projectionParameters(ownName) : []) {
+      push(p.name, p.tag ? 'projectionTag' : 'projectionParameter', p.propertyType,
+        { sort: !preferred || p.propertyType === preferred ? 0 : 1 });
+    }
   };
   // A projection is read with its values in parentheses – empty for an
   // untagged one, so the cursor lands inside only when there is
@@ -4261,10 +4284,12 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     };
     if (k === 'successor') return handlerOperands();
     // A derived projection's block: the expression – reads of other
-    // projections, min / max, a comparison – then its scenarios.
+    // projections, its own parameters, min / max, a comparison – then
+    // its scenarios.
     if (frame.decl && frame.decl.derived) {
       const reads = () => {
         definitionItems('projection-definition', { exclude: [ownName], sort: 0, call: projectionCall, detail: (n, b) => `${b.valueType}` });
+        ownParameterItems(ownName);
         return done();
       };
       if (!s.length) {
@@ -4389,23 +4414,24 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     }
     return done();
   }
-  // Inside `min(…)` / `max(…)`: the two sides, each a read.
+  // Inside `min(…)` / `max(…)`: the two sides, each a read or one of
+  // this projection's own parameters.
   if (k === 'derivedOperands') {
     if (segment.length) return done(false);
     definitionItems('projection-definition', { exclude: [frame.decl && frame.decl.name], sort: 0, call: projectionCall, detail: (n, b) => `${b.valueType}` });
+    ownParameterItems(frame.decl && frame.decl.name);
     return done();
   }
-  // A derived operand's values: one of this projection's own tags, of
-  // the type the callee declares at that position.
+  // A derived operand's values: one of this projection's own
+  // parameters, those of the type the callee declares at that position
+  // first – or, for an argument, a literal of it.
   if (k === 'derivedArgs') {
     const ownName = frame.decl && frame.decl.name;
     const position = framed.filter((t) => t.v === ',').length - restOfFrame.filter((t) => t.v === ',').length;
     const slot = projectionParameters(frame.callee)[position];
     if (segment.length) return done(false);
-    if (slot && !slot.tag) { valueItems(slot.propertyType); return done(); }
-    for (const p of projectionParameters(ownName).filter((x) => x.tag)) {
-      push(p.name, 'projectionTag', p.propertyType, { sort: slot && p.propertyType === slot.propertyType ? 0 : 1 });
-    }
+    if (slot && !slot.tag) valueItems(slot.propertyType);
+    ownParameterItems(ownName, slot && slot.propertyType);
     return done();
   }
   if (k === 'scenarios') {
@@ -4687,16 +4713,20 @@ untagged projection LoanNumbering: LoanId = "l1" {
 }
 
 // A derived projection handles no events: its block holds one
-// expression over other projections, read with this one's own tags,
-// and it starts from what they start at. It computes a number – a + b,
-// a - b, a * b, min(a, b), max(a, b) – or compares two values, written
-// as a rule is, and holds the boolean. Its query is theirs.
+// expression over other projections, read with this one's own
+// parameters, and it starts from what they start at. It computes a
+// number – a + b, a - b, a * b, min(a, b), max(a, b) – or compares two
+// values, written as a rule is, and holds the boolean. Its query is
+// theirs.
 derived projection MemberLoansLeft (tag memberId: MemberId): integer {
   5 - MemberLoanCount(memberId)
 }
 
-derived projection MemberAtLimit (tag memberId: MemberId): boolean {
-  MemberLoansLeft(memberId) <= 0
+// A parameter without "tag" is an argument: a read gives it after the
+// tags, and it narrows nothing. A derived projection compares or
+// computes with it by name, or passes it on to a read.
+derived projection MemberCanBorrow (tag memberId: MemberId, books: integer): boolean {
+  MemberLoansLeft(memberId) >= books
 }
 
 derived projection MemberLoansLeftCapped (tag memberId: MemberId): integer {
@@ -4763,7 +4793,7 @@ command LendBook(bookId: BookId, memberId: MemberId) {
     else reject "Book is not available"
   require MemberExists(memberId) is true
     else reject "Not a member"
-  require MemberAtLimit(memberId) is false
+  require MemberCanBorrow(memberId, 1) is true
     else reject "Too many loans"
   require BookBorrowers(bookId) not contains memberId
     else reject "Borrowed this book before"
@@ -4891,8 +4921,8 @@ command UnsubscribeStudentFromCourse(courseId: CourseId, studentId: StudentId) {
 // by dsl.test.js.
 const SOURCE_REFERENCE_EXAMPLE_SLUG = 'course-simple';
 
-const SOURCE_REFERENCE_UNOFFERED = 'Not offered to agents: entities, lifecycles, scripted projections (and the '
-  + 'arguments a read passes one), guarded emissions (emit … when …), optional reads (alias x? = …), excluding '
+const SOURCE_REFERENCE_UNOFFERED = 'Not offered to agents: entities, lifecycles, scripted projections, '
+  + 'guarded emissions (emit … when …), optional reads (alias x? = …), excluding '
   + 'and currentValue. A text or '
   + 'definition that adds one is refused. A model that already uses them shows them in get_model_source; keep those parts as they are.';
 

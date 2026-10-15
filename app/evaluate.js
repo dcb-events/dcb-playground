@@ -456,8 +456,8 @@ function evCompileTargetAfresh(model, target, label) {
 //
 // There is one fold, `foldProjection`, and one way into it: a *read* –
 // `{ tags: { courseId: 'c1' }, args }`, a value for each tag the
-// projection declares (8.0), keyed by its name, and the arguments a
-// script takes. The declared type of each tag is its key, so the
+// projection declares (8.0), keyed by its name, and the arguments it
+// takes. The declared type of each tag is its key, so the
 // projection and the read together say which events it folds. Reading
 // an entity's property is the same read, its one tag the instance's
 // identifier: nothing left for two paths to disagree about.
@@ -578,10 +578,11 @@ function foldProjectionState(model, events, projectionName, read) {
 }
 
 // A derived projection is not folded but computed: each operand that
-// reads a projection folds it – by the tags the operand gives it, each
-// one of this read's own (`{parameterName}`) or a literal, with the
-// operand's own literal arguments – and the predicate decides, or the
-// operator computes. `seen` is the cycle guard – a value derived through itself
+// reads a projection folds it – by the tags and arguments the operand
+// gives it, each a literal or one of this read's own parameters
+// (`{parameterName}`, a tag or an argument) – a side that names a
+// parameter is the value the read gave it, and the predicate decides,
+// or the operator computes. `seen` is the cycle guard – a value derived through itself
 // has nowhere to start, and the advisory said so before this error does.
 function evDeriveProjection(model, events, projectionName, read, seen = []) {
   if (seen.includes(projectionName)) {
@@ -590,16 +591,26 @@ function evDeriveProjection(model, events, projectionName, read, seen = []) {
   const projection = evOwn(model['projection-definitions'], projectionName);
   const derived = derivedOf(projection);
 
+  // One of this projection's own parameters, as the read gave it – a
+  // tag or an argument, by name.
+  const parameter = (value) => {
+    const name = value.parameterName;
+    const given = evOwn((read && read.tags) || {}, name) !== undefined
+      ? evOwn(read.tags, name) : evOwn((read && read.args) || {}, name);
+    if (given === undefined) {
+      fail(`Projection "${projectionName}" was read without a value for "${name}".`);
+    }
+    return evNormalize(given);
+  };
+  const literal = (value) => (operandSource(value) === 'parameter' ? parameter(value)
+    : operandSource(value) === 'tag-literal' ? value.tagValue : evNormalize(value));
   const readOperand = (operand) => {
+    if (operandSource(operand) === 'parameter') return parameter(operand);
     if (operandSource(operand) !== 'projection-read') return evNormalize(operand);
     const args = {};
-    for (const [name, argument] of Object.entries(operand.arguments || {})) args[name] = evNormalize(argument);
-    const own = (read && read.tags) || {};
+    for (const [name, argument] of Object.entries(operand.arguments || {})) args[name] = literal(argument);
     const tags = {};
-    for (const [name, value] of readTagEntries(operand)) {
-      tags[name] = operandSource(value) === 'parameter' ? evOwn(own, value.parameterName)
-        : operandSource(value) === 'tag-literal' ? value.tagValue : evNormalize(value);
-    }
+    for (const [name, value] of readTagEntries(operand)) tags[name] = literal(value);
     return foldProjection(model, events, operand.projection, { tags, args }, [...seen, projectionName]);
   };
 
@@ -765,7 +776,7 @@ function evFanSourceIndexes(operand, scope, count) {
 // One projection read – an alias's or an inline one – resolved in the
 // command's scope: a value for each tag the projection declares, which
 // has to be of the declared type (the tag's key – the advisory said so
-// first), the arguments a script takes, and the value folded from them.
+// first), the arguments it takes, and the value folded from them.
 // The tags and arguments are kept beside the value because they are
 // what makes it reproducible: the value alone says what was read, and
 // they say how, which is the half a reader needs to go and look at it.

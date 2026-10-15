@@ -1490,8 +1490,8 @@ check('an import missing the definition arrays is refused, not silently accepted
   // from: these two strings are the published contract, and a test that
   // derived them from the source could not notice one of them changing.
   check('an export carries both markers', () => {
-    eq(good.$schema, 'https://dcb.events/schemas/model/v9.json', '$schema');
-    eq(/^9\.\d+$/.test(good.dcbModelVersion), true, 'dcbModelVersion is a 9.x');
+    eq(good.$schema, 'https://dcb.events/schemas/model/v10.json', '$schema');
+    eq(/^10\.\d+$/.test(good.dcbModelVersion), true, 'dcbModelVersion is a 10.x');
   });
 
   check('the definition arrays sit at the top level, under no wrapper', () => {
@@ -1514,7 +1514,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('an import from an unknown major is refused', () => {
-    refuses({ ...good, dcbModelVersion: '10.0' }, 'a newer major');
+    refuses({ ...good, dcbModelVersion: '11.0' }, 'a newer major');
     // 7.x tagged events by property type; read here, it would carry none.
     refuses({ ...good, dcbModelVersion: '7.0' }, 'the last major with implied tags');
     // 6.x has no rejection messages, and none can be invented for it.
@@ -1526,11 +1526,14 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   // 9.0 added computing derived projections and changed nothing an 8.x
-  // document says, so 8.x reads whole – and with nothing to warn about.
-  check('an 8.x import still reads', () => {
-    const older = { ...good, $schema: 'https://dcb.events/schemas/model/v8.json', dcbModelVersion: '8.0' };
-    eq(typeof importModelFromEnvelope(older).modelId, 'string', 'imported');
-    eq(envelopeVersionWarning(older), '', 'nothing dropped');
+  // document says; 10.0 moved a script's arguments, which an import
+  // lifts. So 8.x and 9.x read whole – and with nothing to warn about.
+  check('an 8.x and a 9.x import still read', () => {
+    for (const major of [8, 9]) {
+      const older = { ...good, $schema: `https://dcb.events/schemas/model/v${major}.json`, dcbModelVersion: `${major}.0` };
+      eq(typeof importModelFromEnvelope(older).modelId, 'string', `${major}.x imported`);
+      eq(envelopeVersionWarning(older), '', `${major}.x: nothing dropped`);
+    }
   });
 
   check('$schema is required but never read, so a repointed one still imports', () => {
@@ -1539,7 +1542,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('a newer minor imports, and says what it is dropping', () => {
-    const newer = { ...good, dcbModelVersion: '9.99' };
+    const newer = { ...good, dcbModelVersion: '10.99' };
     eq(typeof importModelFromEnvelope(newer).modelId, 'string', 'imported');
     eq(envelopeVersionWarning(newer).length > 0, true, 'warned');
     eq(envelopeVersionWarning(good), '', 'nothing to warn about at the current version');
@@ -1757,8 +1760,9 @@ check('an import missing the definition arrays is refused, not silently accepted
     const { id, model } = openScripted();
     addDefinition('projection-definition', id, 'TicksSeen', {
       tags: [{ name: 'counterId', tagType: 'CounterId' }],
+      arguments: [{ name: 'prefix', propertyType: 'string' }],
       valueType: 'string', isList: false,
-      script: { initialState: '', arguments: [{ name: 'prefix', propertyType: 'string' }] },
+      script: { initialState: '' },
       handlers: [{ event: 'Ticked', code: 'args.prefix + tags.counterId' }],
     });
     const log = [{ type: 'Ticked', data: { counterId: 'x1' } }];
@@ -2930,7 +2934,7 @@ check('every predefined model ships advisory-clean', () => {
   check('its boundary is each operand\'s query, under that operand\'s own tags', () => {
     const model = build(HOURS);
     const dcb = sandbox.deriveDcb(model, model['command-definitions'].AllocateHours);
-    const derived = dcb.items.filter((item) => item.projection === 'DeveloperRemainingHoursForWeek');
+    const derived = dcb.items.filter((item) => item.projection === 'DeveloperHasHoursForWeek');
     eq(derived.map((item) => [item.via, item.tags, item.types]), [
       ['DeveloperAvailableHoursPerWeek', ['DeveloperId:developerId'], ['DeveloperRegistered']],
       ['DeveloperAllocatedHoursForWeek', ['DeveloperId:developerId', 'WeekNumber:week'], ['HoursAllocated']],
@@ -2981,6 +2985,198 @@ check('every predefined model ships advisory-clean', () => {
     const log = [{ type: 'Subscribed', data: { courseId: 'c1' } }, { type: 'LimitSet', data: { max: 1 } }];
     eq(evaluateCommand(model(), log, 'SubscribeThroughEntity', { courseId: 'c1' }).outcome, 'rejected',
       'and the decision does depend on it');
+  });
+
+  // A course's free seats, and derived projections over them that take
+  // what the reader asks about as an argument (10.0).
+  const seatsModel = (title) => {
+    const { id, model } = openBlank(title);
+    addDefinition('custom-type-definition', id, 'CourseId', { schema: { type: 'string' }, isTag: true });
+    addDefinition('custom-type-definition', id, 'StudentId', { schema: { type: 'string' }, isTag: true });
+    const prop = (name, propertyType) => ({ name, propertyType, isOptional: false, isList: false });
+    addTaggedEvent(id, 'Subscribed', { properties: [prop('courseId', 'CourseId'), prop('studentId', 'StudentId')] });
+    const course = [{ name: 'courseId', tagType: 'CourseId' }];
+    addDefinition('projection-definition', id, 'Free', {
+      tags: course, valueType: 'integer', isList: false, initialValue: 3,
+      handlers: [{ event: 'Subscribed', operation: 'decrement', value: 1 }],
+    });
+    addDefinition('projection-definition', id, 'HasSeats', {
+      tags: course, arguments: [{ name: 'seats', propertyType: 'integer' }], valueType: 'boolean', isList: false,
+      derived: { leftHandSide: { projection: 'Free', tags: { courseId: { parameterName: 'courseId' } } },
+        predicate: 'greaterThanOrEquals', rightHandSide: { parameterName: 'seats' } },
+    });
+    const subscribe = (title) => ({ type: 'Subscribed', data: { courseId: 'c1', studentId: title } });
+    return { id, model, prop, course, subscribe };
+  };
+
+  check('a side may be one of its own parameters, as the read gave it', () => {
+    const { model, subscribe } = seatsModel('Seats');
+    const has = (log, seats) => foldProjection(model(), log, 'HasSeats', { tags: { courseId: 'c1' }, args: { seats } });
+    eq(has([], 3), true, 'three free, three asked');
+    eq(has([subscribe('s1')], 3), false, 'two free, three asked');
+    eq(has([subscribe('s1')], 2), true, 'the argument is the read\'s to give');
+    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+  });
+
+  check('a command reads it with an argument from its payload, and its boundary is the operand\'s', () => {
+    const { id, model, prop, subscribe } = seatsModel('Seats from a command');
+    addDefinition('command-definition', id, 'Book', {
+      properties: [prop('courseId', 'CourseId'), prop('seats', 'integer')],
+      conditions: [{
+        leftHandSide: { projection: 'HasSeats', tags: { courseId: { parameterName: 'courseId' } },
+          arguments: { seats: { parameterName: 'seats' } } },
+        predicate: 'isTrue', rejection: 'Not enough seats',
+      }],
+      publishes: [],
+    });
+    eq(sandbox.modelAdvisories(model()).filter((a) => a.kind === 'projection-definition'), [], 'advisory-clean');
+    const log = [subscribe('s1'), subscribe('s2')];
+    eq(evaluateCommand(model(), log, 'Book', { courseId: 'c1', seats: 1 }).outcome, 'published', 'one is left');
+    eq(evaluateCommand(model(), log, 'Book', { courseId: 'c1', seats: 2 }).outcome, 'rejected', 'two are not');
+    const dcb = sandbox.deriveDcb(model(), model()['command-definitions'].Book);
+    eq(dcb.items.map((item) => [item.via, item.tags, item.types]),
+      [['Free', ['CourseId:courseId'], ['Subscribed']]], 'the argument narrows nothing');
+  });
+
+  check('an argument passes on – as an operand\'s argument, or as its tag', () => {
+    const { id, model, course, subscribe } = seatsModel('Passed on');
+    addDefinition('projection-definition', id, 'FreeAfter', {
+      tags: course, arguments: [{ name: 'taken', propertyType: 'integer' }], valueType: 'integer', isList: false,
+      derived: { leftHandSide: { projection: 'Free', tags: { courseId: { parameterName: 'courseId' } } },
+        operator: 'subtract', rightHandSide: { parameterName: 'taken' } },
+    });
+    addDefinition('projection-definition', id, 'FreeAfterTwice', {
+      tags: course, arguments: [{ name: 'each', propertyType: 'integer' }], valueType: 'integer', isList: false,
+      derived: { leftHandSide: { projection: 'FreeAfter', tags: { courseId: { parameterName: 'courseId' } },
+        arguments: { taken: { parameterName: 'each' } } }, operator: 'subtract', rightHandSide: { parameterName: 'each' } },
+    });
+    addDefinition('projection-definition', id, 'Subscribed', {
+      tags: [...course, { name: 'studentId', tagType: 'StudentId' }], valueType: 'boolean', isList: false, initialValue: false,
+      handlers: [{ event: 'Subscribed', operation: 'set', value: true }],
+    });
+    // The student is a value of a tag type taken as an argument: this
+    // projection is kept per course, and what it asks about one
+    // student is the operand's to narrow.
+    addDefinition('projection-definition', id, 'IsSubscribed', {
+      tags: course, arguments: [{ name: 'studentId', propertyType: 'StudentId' }], valueType: 'boolean', isList: false,
+      derived: { leftHandSide: { projection: 'Subscribed', tags: {
+        courseId: { parameterName: 'courseId' }, studentId: { parameterName: 'studentId' } } },
+      predicate: 'equals', rightHandSide: true },
+    });
+    eq(sandbox.modelAdvisories(model()).map((a) => a.message), [], 'advisory-clean');
+    eq(foldProjection(model(), [], 'FreeAfterTwice', { tags: { courseId: 'c1' }, args: { each: 1 } }), 1, 'passed on and computed with');
+    const is = (studentId) => foldProjection(model(), [subscribe('s1')], 'IsSubscribed',
+      { tags: { courseId: 'c1' }, args: { studentId } });
+    eq([is('s1'), is('s2')], [true, false], 'the argument narrowed the operand\'s read');
+
+    addDefinition('command-definition', id, 'Check', {
+      properties: [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false },
+        { name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
+      conditions: [{
+        leftHandSide: { projection: 'IsSubscribed', tags: { courseId: { parameterName: 'courseId' } },
+          arguments: { studentId: { parameterName: 'studentId' } } },
+        predicate: 'isFalse', rejection: 'Already subscribed',
+      }],
+      publishes: [],
+    });
+    const dcb = sandbox.deriveDcb(model(), model()['command-definitions'].Check);
+    eq(dcb.items.map((item) => item.tags), [['CourseId:courseId', 'StudentId:studentId']],
+      'the operand\'s query carries the tag its argument gave');
+  });
+
+  check('a parameter that is not there, or not of the kind it meets, is an advisory', () => {
+    const { id, model, course } = seatsModel('Wrong parameters');
+    const advice = (name) => sandbox.modelAdvisories(model()).filter((a) => a.name === name).map((a) => a.message).join('; ');
+    const derive = (name, body) => addDefinition('projection-definition', id, name, {
+      tags: course, valueType: 'boolean', isList: false, ...body,
+    });
+    const free = { projection: 'Free', tags: { courseId: { parameterName: 'courseId' } } };
+    derive('Unknown', { derived: { leftHandSide: free, predicate: 'equals', rightHandSide: { parameterName: 'seats' } } });
+    eq(/none of Unknown's own parameters/.test(advice('Unknown')), true, advice('Unknown'));
+    derive('Mismatched', {
+      arguments: [{ name: 'title', propertyType: 'string' }],
+      derived: { leftHandSide: free, predicate: 'lessThan', rightHandSide: { parameterName: 'title' } },
+    });
+    eq(/no values of one kind/.test(advice('Mismatched')), true, advice('Mismatched'));
+    addDefinition('projection-definition', id, 'Declared', {
+      tags: course, arguments: [{ name: 'seats', propertyType: 'integer' }], valueType: 'integer', isList: false,
+      initialValue: 0, handlers: [],
+    });
+    eq(/nothing uses them/.test(advice('Declared')), true, advice('Declared'));
+  });
+
+  check('renaming an argument moves every read of it, and its own predicate\'s reference', () => {
+    const { id, model, prop } = seatsModel('Renamed');
+    addDefinition('command-definition', id, 'Book', {
+      properties: [prop('courseId', 'CourseId'), prop('seats', 'integer')],
+      conditions: [{
+        leftHandSide: { projection: 'HasSeats', tags: { courseId: { parameterName: 'courseId' } },
+          arguments: { seats: { parameterName: 'seats' } } },
+        predicate: 'isTrue', rejection: 'Not enough seats',
+      }],
+      publishes: [],
+    });
+    sandbox.renameMember('projection-definition', id, 'HasSeats', 'argument', 'seats', 'wanted');
+    const body = model()['projection-definitions'].HasSeats;
+    eq(body.arguments, [{ name: 'wanted', propertyType: 'integer' }], 'the declaration');
+    eq(body.derived.rightHandSide, { parameterName: 'wanted' }, 'its own side');
+    eq(model()['command-definitions'].Book.conditions[0].leftHandSide.arguments,
+      { wanted: { parameterName: 'seats' } }, 'the command\'s read, keyed by the new name');
+  });
+
+  check('the tag toggle moves a parameter, and every read\'s value, between tags and arguments', () => {
+    const { id, model, prop, subscribe } = seatsModel('Toggled');
+    addDefinition('projection-definition', id, 'IsSubscribed', {
+      tags: [{ name: 'courseId', tagType: 'CourseId' }, { name: 'studentId', tagType: 'StudentId' }],
+      valueType: 'boolean', isList: false, initialValue: false,
+      handlers: [{ event: 'Subscribed', operation: 'set', value: true }],
+    });
+    addDefinition('projection-definition', id, 'NotSubscribed', {
+      tags: [{ name: 'courseId', tagType: 'CourseId' }, { name: 'studentId', tagType: 'StudentId' }],
+      valueType: 'boolean', isList: false,
+      derived: { leftHandSide: { projection: 'IsSubscribed', tags: {
+        courseId: { parameterName: 'courseId' }, studentId: { parameterName: 'studentId' } } },
+      predicate: 'equals', rightHandSide: false },
+    });
+    addDefinition('command-definition', id, 'Subscribe', {
+      properties: [prop('courseId', 'CourseId'), prop('studentId', 'StudentId')],
+      conditions: [{
+        leftHandSide: { projection: 'NotSubscribed', tags: { courseId: { parameterName: 'courseId' },
+          studentId: { tagType: 'StudentId', tagValue: 's1' } } },
+        predicate: 'isTrue', rejection: 'Already subscribed',
+      }],
+      publishes: [{ name: 'Subscribed', parameters: { courseId: { parameterName: 'courseId' }, studentId: { parameterName: 'studentId' } } }],
+    });
+    sandbox.setProjectionParameterIsTag(id, 'NotSubscribed', 'studentId', false);
+    const body = model()['projection-definitions'].NotSubscribed;
+    eq([body.tags, body.arguments], [[{ name: 'courseId', tagType: 'CourseId' }], [{ name: 'studentId', propertyType: 'StudentId' }]],
+      'an argument now, first among them');
+    const read = model()['command-definitions'].Subscribe.conditions[0].leftHandSide;
+    eq([read.tags, read.arguments], [{ courseId: { parameterName: 'courseId' } }, { studentId: 's1' }],
+      'the read gives it as an argument, as a bare literal');
+    eq(sandbox.modelAdvisories(model()).map((a) => a.message), [], 'advisory-clean');
+    eq(evaluateCommand(model(), [subscribe('s1')], 'Subscribe', { courseId: 'c1', studentId: 's1' }).outcome,
+      'rejected', 'and it reads the same');
+
+    sandbox.setProjectionParameterIsTag(id, 'NotSubscribed', 'studentId', true);
+    const back = model()['command-definitions'].Subscribe.conditions[0].leftHandSide;
+    eq([back.tags, back.arguments], [{ courseId: { parameterName: 'courseId' }, studentId: { tagType: 'StudentId', tagValue: 's1' } }, undefined],
+      'and back, the literal typed again');
+    eq(model()['projection-definitions'].NotSubscribed.arguments, undefined, 'no empty list left behind');
+  });
+
+  check('a 9.x script\'s arguments are lifted onto its projection on import', () => {
+    const { model } = seatsModel('Lifted');
+    const envelope = buildShareEnvelope(model(), []);
+    envelope.dcbModelVersion = '9.0';
+    envelope.projectionDefinitions.push({
+      name: 'Prefixed', tags: [], valueType: 'string', isList: false,
+      script: { initialState: '', arguments: [{ name: 'prefix', propertyType: 'string' }] },
+      handlers: [],
+    });
+    const { modelId } = importModelFromEnvelope(envelope);
+    const body = sandbox.projectState()[modelId]['projection-definitions'].Prefixed;
+    eq([body.arguments, body.script.arguments], [[{ name: 'prefix', propertyType: 'string' }], undefined], 'lifted');
   });
 
   check('the shipped model is advisory-clean and its scenarios hold', () => {

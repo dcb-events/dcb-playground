@@ -18,7 +18,7 @@ and a model someone asked for by address: Import's URL field or a
 
 - `app/` — the application. Everything that runs.
 - `dcb-model.schema.json` — canonical JSON Schema for the interchange format
-  (`https://dcb.events/schemas/model/v9.json`). Source of truth for what a
+  (`https://dcb.events/schemas/model/v10.json`). Source of truth for what a
   DCB Model file contains; `app/webmcp-schemas.js` is generated from it.
 - `fixtures/` — test data only: models carrying scenarios authored in
   the playground, which no seed builder produces; `dsl.test.js` reads

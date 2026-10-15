@@ -1,6 +1,6 @@
 {
-  "$schema": "https://dcb.events/schemas/model/v9.json",
-  "dcbModelVersion": "9.0",
+  "$schema": "https://dcb.events/schemas/model/v10.json",
+  "dcbModelVersion": "10.0",
   "name": "Content based decisions (derived projection)",
   "customTypeDefinitions": [
     {

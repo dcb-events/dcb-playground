@@ -63,7 +63,7 @@ node app/dsl.test.js
 - [`app/`](app/) — the application: plain classic scripts, one HTML page,
   one stylesheet. Each file's header comment documents its role.
 - [`dcb-model.schema.json`](dcb-model.schema.json) — JSON Schema of the
-  model interchange format (`https://dcb.events/schemas/model/v9.json`).
+  model interchange format (`https://dcb.events/schemas/model/v10.json`).
 - [`fixtures/`](fixtures/) — models with authored scenarios, read by the
   tests only.
 - [`docs/research/`](docs/research/) — dated notes behind design decisions.

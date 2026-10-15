@@ -2815,7 +2815,7 @@ const HELP_FAQ = [
     'Not yet. The playground is for exploring a design quickly – trying out events, commands and '
       + 'their boundaries before writing any code. A code export may come later; until then, the '
       + 'exported JSON follows a ',
-    { text: 'public schema ↗', href: 'https://dcb.events/schemas/model/v9.json' },
+    { text: 'public schema ↗', href: 'https://dcb.events/schemas/model/v10.json' },
     ', should you want to build on it.'] },
   { question: 'Can an AI agent work on my model?', answer: [
     'Yes, in browsers that support WebMCP (currently behind a flag or extension): an in-browser '
@@ -4578,8 +4578,8 @@ function operandChoicesAbove(model, slice, index) {
 }
 
 // Narrows operand choices to one type, for the slots that know exactly
-// what they need – an entity's identifier, a projection's parameter, a
-// scripted argument. The same rule the emission fields and the rule
+// what they need – an entity's identifier, a projection's parameter, an
+// argument. The same rule the emission fields and the rule
 // editor's right side already apply: a course is never identified by a
 // student id, so the picker does not offer it. `list: true` admits
 // list-typed operands alongside singular ones – on an id slot a list
@@ -6263,8 +6263,7 @@ function readCard(model, slice, binding, index, waitsFor) {
 //
 // `excluding` is offered only on a binding that fans out – there is
 // nothing to exclude something *from* otherwise – and an argument row
-// appears once for each argument a scripted property it reads asks
-// for, which is the same rule the model enforces. A field that could
+// appears once for each argument a property it reads takes, which is the same rule the model enforces. A field that could
 // not mean anything here is left off the page rather than shown and
 // then refused.
 function bindingEditor(model, slice, binding, index) {
@@ -6388,7 +6387,7 @@ function bindingEditor(model, slice, binding, index) {
         },
       }, 'Set'),
       h('span', { class: 'muted tiny' },
-        `required – a scripted property it reads asks for one ${argument.propertyType}`))),
+        `required – a property it reads takes one ${argument.propertyType}`))),
 
     h('div', { class: 'adder' },
       h('button', { class: 'btn ghost tiny', onclick: () => { state.bindingDraft = null; close(); } }, 'Done')));
@@ -9361,47 +9360,120 @@ function partitionCells(model, name) {
     }))];
 }
 
-// The tags a projection declares, edited: each a name and a tag type,
-// in the order a read gives them, with `+ tag` and `untagged` the two
-// doors while it has none. Renaming a saved projection's tag is a
-// rename – every read of it moves (`renameMember`) – and happens on the
-// spot; adding, retyping or removing one is part of the draft, and the
-// reads it leaves without a value say so as advisories.
-function projectionTagsEditor(model, draft, savedName, info) {
-  const types = partitionTypeOptions(model);
-  const undecided = draft.tags === null || draft.tags === undefined;
+// What a read of the projection gives, edited as one list (10.0): its
+// tags, then its arguments, each a name and a type with a `tag` toggle,
+// the way an event's fields are. Ticked, a parameter is a tag – what
+// each value is kept per, narrowing the query; unticked, an argument,
+// which a script or a derived predicate uses and which narrows nothing.
+// The toggle is offered only for a tag type, and is ticked as one is
+// picked; a declared projection's handlers cannot see an argument, so
+// there every parameter is a tag and only tag types are offered. An
+// entity's property is tagged by the entity's identifier and nothing
+// else (`fixedTag`); what it may add is arguments.
+//
+// Renaming a saved projection's parameter, and toggling it, rewrites
+// every read of it (`renameMember`, `setProjectionParameterIsTag`) and
+// happens on the spot; adding, retyping or removing one is part of the
+// draft, and the reads it leaves without a value say so as advisories.
+function projectionParametersEditor(model, draft, savedName, info, { fixedTag } = {}) {
+  const declared = !draft.derived && !draft.script;
+  const tagTypes = partitionTypeOptions(model);
+  const types = declared ? tagTypes : typeOptions(model);
+  const undecided = !fixedTag && (draft.tags === null || draft.tags === undefined);
   const tags = draft.tags || [];
-  const addTag = () => {
-    const [type] = types[0] || [''];
-    const base = type ? type.charAt(0).toLowerCase() + type.slice(1) : 'id';
-    draft.tags = [...tags, { name: uniqueAlias(base, tags.map((t) => t.name)), tagType: type }];
+  const args = draft.arguments || [];
+  const stored = savedName ? model['projection-definitions'][savedName] : null;
+  const storedAs = (name) => (projectionParameters(stored).find((p) => p.name === name) || null);
+  const names = () => [...tags, ...args].map((p) => p.name);
+
+  // Moves one parameter across in the draft – the last tag, or the
+  // first argument – and, when it is saved as the other, every read
+  // with it.
+  const setTag = (name, isTag) => {
+    const saved = storedAs(name);
+    if (saved && saved.isTag !== isTag) {
+      run(() => setProjectionParameterIsTag(model.id, savedName, name, isTag));
+    }
+    if (isTag) {
+      const at = args.findIndex((p) => p.name === name);
+      if (at < 0) return;
+      const [moved] = args.splice(at, 1);
+      draft.tags = [...tags, { name: moved.name, tagType: moved.propertyType }];
+      draft.arguments = [...args];
+    } else {
+      const at = tags.findIndex((p) => p.name === name);
+      if (at < 0) return;
+      const [moved] = tags.splice(at, 1);
+      draft.tags = [...tags];
+      draft.arguments = [{ name: moved.name, propertyType: moved.tagType }, ...args];
+    }
+  };
+  const add = () => {
+    const [type] = tagTypes[0] || [];
+    if (type && !fixedTag) {
+      const base = type.charAt(0).toLowerCase() + type.slice(1);
+      draft.tags = [...tags, { name: uniqueAlias(base, names()), tagType: type }];
+    } else {
+      draft.arguments = [...args, { name: uniqueAlias('value', names()), propertyType: 'integer' }];
+    }
     render();
   };
-  const rows = tags.map((tag, i) => h('div', { class: 'adder' },
-    h('input', {
-      type: 'text', class: 'mono', style: 'width:130px', value: tag.name || '', placeholder: 'tag name',
-      onblur: (e) => {
-        const next = toCamel(e.target.value);
-        if (!next || next === tag.name) { e.target.value = tag.name || ''; return; }
-        const stored = savedName && projectionTagParams(model['projection-definitions'][savedName])
-          .some((t) => t.name === tag.name);
-        if (stored) run(() => renameMember('projection-definition', model.id, savedName, 'tag', tag.name, next));
-        tag.name = next;
+
+  const row = (parameter, isTag, list, i) => {
+    const type = isTag ? parameter.tagType : parameter.propertyType;
+    const taggable = isTagBearing(model, type);
+    const lockedOn = isTag && declared;
+    const toggleTitle = fixedTag ? 'An entity\'s property is tagged by its identifier alone'
+      : lockedOn ? 'A declared projection\'s handlers see only the event – every parameter is a tag'
+        : !taggable ? `${readable(type)} is no tag type – this is an argument, which narrows nothing`
+          : isTag ? 'A tag: each value is kept per it, and it narrows the query'
+            : 'An argument: the read gives it, and it narrows nothing';
+    return h('div', { class: 'adder' },
+      h('input', {
+        type: 'text', class: 'mono', style: 'width:130px', value: parameter.name || '', placeholder: 'name',
+        onblur: (e) => {
+          const next = toCamel(e.target.value);
+          if (!next || next === parameter.name) { e.target.value = parameter.name || ''; return; }
+          const saved = storedAs(parameter.name);
+          if (saved) {
+            run(() => renameMember('projection-definition', model.id, savedName,
+              saved.isTag ? 'tag' : 'argument', parameter.name, next));
+          }
+          parameter.name = next;
+          render();
+        },
+        onkeydown: (e) => { if (e.key === 'Enter') e.target.blur(); },
+      }),
+      h('span', { class: 'pk' }, ':'),
+      pick(types, type, (v) => {
+        if (isTag) parameter.tagType = v; else parameter.propertyType = v;
+        // Picking a tag type ticks the toggle, and a type that is none
+        // unticks it – as an event's field does.
+        if (!declared && !fixedTag && isTagBearing(model, v) !== isTag) setTag(parameter.name, !isTag);
         render();
-      },
-      onkeydown: (e) => { if (e.key === 'Enter') e.target.blur(); },
-    }),
-    h('span', { class: 'pk' }, ':'),
-    pick(types, tag.tagType, (v) => { tag.tagType = v; render(); }, types.length ? null : 'no tag type yet'),
-    h('button', {
-      class: 'btn tiny danger', title: 'Remove this tag',
-      onclick: () => { tags.splice(i, 1); draft.tags = [...tags]; render(); },
-    }, '×')));
+      }, types.length ? null : 'no tag type yet'),
+      h('label', { class: 'tiny', title: toggleTitle }, h('input', {
+        type: 'checkbox', checked: isTag, disabled: !!fixedTag || lockedOn || (!isTag && !taggable),
+        onchange: (e) => { setTag(parameter.name, e.target.checked); render(); },
+      }), ' tag'),
+      h('button', {
+        class: 'btn tiny danger', title: 'Remove this parameter',
+        onclick: () => {
+          list.splice(i, 1);
+          if (isTag) draft.tags = [...list]; else draft.arguments = [...list];
+          render();
+        },
+      }, '×'));
+  };
+
   // Undecided is a question with two answers, and both are offered;
-  // decided and empty is a fact, and is said.
-  return projectionSection('tags', info,
-    h('button', { class: 'btn ghost tiny', disabled: !types.length, onclick: addTag }, '+ tag'),
-    ...rows,
+  // decided and untagged is a fact, and is said.
+  return projectionSection('parameters', info,
+    declared && fixedTag ? null
+      : h('button', { class: 'btn ghost tiny', disabled: declared && !tagTypes.length, onclick: add }, '+ parameter'),
+    fixedTag || null,
+    ...(fixedTag ? [] : tags.map((tag, i) => row(tag, true, tags, i))),
+    ...args.map((argument, i) => row(argument, false, args, i)),
     undecided
       ? h('div', { class: 'adder' },
           h('span', { class: 'muted tiny' }, 'undecided –'),
@@ -9409,7 +9481,7 @@ function projectionTagsEditor(model, draft, savedName, info) {
             class: 'btn ghost tiny', title: 'One value for the whole log – a numbering is one',
             onclick: () => { draft.tags = []; render(); },
           }, 'untagged'))
-      : (tags.length ? null : h('span', { class: 'chip unset', title: 'One value for the whole log' }, 'untagged')));
+      : (fixedTag || tags.length ? null : h('span', { class: 'chip unset', title: 'One value for the whole log' }, 'untagged')));
 }
 
 // A row, and – when it is the one being edited – everything under it.
@@ -10327,6 +10399,12 @@ function unhandledEventChoices(eventNames, handlers, current) {
 
 function projectionDraftFrom(body) {
   const draft = deepClone(body);
+  // A script's arguments, stored where 9.x kept them, are edited where
+  // they belong – saving the draft moves them.
+  if (draft.script && draft.script.arguments !== undefined) {
+    if (draft.arguments === undefined && Array.isArray(draft.script.arguments)) draft.arguments = draft.script.arguments;
+    delete draft.script.arguments;
+  }
   draft.handlers = (draft.handlers || []).map((handler) =>
     (handler.code !== undefined
       ? handler
@@ -10343,10 +10421,15 @@ function cleanProjectionBody(draft) {
   // and a draft that has not decided yet stores as one.
   const tags = (draft.tags || []).filter((tag) => tag && tag.name && tag.tagType)
     .map((tag) => ({ name: toCamel(tag.name), tagType: tag.tagType }));
+  // Its arguments, stated only when there are any – on a declared
+  // projection too, where the advisories say nothing uses them.
+  const args = (draft.arguments || []).filter((a) => a && a.name && a.propertyType)
+    .map((a) => ({ name: toCamel(a.name), propertyType: a.propertyType }));
+  const parameters = args.length ? { tags, arguments: args } : { tags };
   if (draft.derived && !draft.script) {
-    // An operand passes its projection the tags it declares – each one
-    // of this projection's own – and the literal arguments a script
-    // takes.
+    // An operand passes its projection the tags and arguments it
+    // declares – each one of this projection's own parameters, or a
+    // literal.
     const operand = (o) => {
       if (operandSource(o) !== 'projection-read') return o;
       const cleaned = { projection: o.projection };
@@ -10372,7 +10455,7 @@ function cleanProjectionBody(draft) {
         };
     if (!computes && draft.derived.negate) derived.negate = true;
     return {
-      tags,
+      ...parameters,
       // The one thing a predicate can yield is a boolean – stated here
       // rather than trusted from the draft, so a body that left derived
       // mode half-way can never store another type against it. A
@@ -10385,12 +10468,8 @@ function cleanProjectionBody(draft) {
   if (draft.script) {
     const script = { initialState: draft.script.initialState };
     if (draft.script.exposes) script.exposes = draft.script.exposes;
-    const args = (draft.script.arguments || [])
-      .filter((a) => a && a.name)
-      .map((a) => ({ name: toCamel(a.name), propertyType: a.propertyType }));
-    if (args.length) script.arguments = args;
     return {
-      tags,
+      ...parameters,
       valueType: draft.valueType,
       isList: !!draft.isList,
       script,
@@ -10398,7 +10477,7 @@ function cleanProjectionBody(draft) {
     };
   }
   return {
-    tags,
+    ...parameters,
     valueType: draft.valueType,
     isList: !!draft.isList,
     initialValue: draft.initialValue === undefined ? null : draft.initialValue,
@@ -10432,34 +10511,47 @@ function blankProjectionDraft(model, entityName) {
 }
 
 // One side of a derived predicate or computation: another projection –
-// read by whatever this one is read by – or a typed value: on the right
-// of a comparison, on either side of a computation. Enum members are
-// offered exactly when the other side reads an enum-typed projection,
-// the same rule the rule editor follows.
+// read by whatever this one is read by – one of this projection's own
+// parameters (10.0), or a typed value: on the right of a comparison, on
+// either side of a computation. Enum members are offered exactly when
+// the other side holds an enum, the same rule the rule editor follows.
 function derivedSideEditor(model, draft, side, { allowLiteral } = {}) {
   const derived = draft.derived;
   const current = derived[side];
   const isRead = operandSource(current) === 'projection-read';
-  const options = Object.keys(model['projection-definitions'])
-    .filter((name) => !(state.projDraft && state.projDraft.name === name))
-    .sort()
-    .map((name) => [name, readable(name)]);
-  if (allowLiteral) options.push([LITERAL, 'a typed value…']);
-  const chosen = isRead ? (current.projection || '') : (current === undefined ? '' : LITERAL);
+  const isParameter = operandSource(current) === 'parameter';
+  // This projection's own parameters, tags then arguments, as the
+  // draft has them – `{name, type}`.
+  const own = [
+    ...(draft.tags || []).filter((t) => t && t.name).map((t) => ({ name: t.name, type: t.tagType })),
+    ...(draft.arguments || []).filter((a) => a && a.name).map((a) => ({ name: a.name, type: a.propertyType })),
+  ];
+  const ownChoice = (p) => [JSON.stringify({ parameterName: p.name }), propertyWords(p.name), null, { section: 'Its parameters' }];
+  const options = [
+    ...Object.keys(model['projection-definitions'])
+      .filter((name) => !(state.projDraft && state.projDraft.name === name))
+      .sort()
+      .map((name) => [name, readable(name), null, own.length ? { section: 'Projections' } : undefined]),
+    ...own.map(ownChoice),
+  ];
+  if (allowLiteral) options.push([LITERAL, 'a typed value…', null, own.length ? { section: 'Values' } : undefined]);
+  const chosen = isRead ? (current.projection || '')
+    : isParameter ? JSON.stringify({ parameterName: current.parameterName })
+      : (current === undefined ? '' : LITERAL);
 
   const nodes = [pick(options, chosen, (v) => {
     if (v === LITERAL) derived[side] = '';
+    else if (v.startsWith('{')) derived[side] = JSON.parse(v);
     else derived[side] = { projection: v };
     render();
   }, 'which projection?')];
 
   // Each tag the operand's projection declares, given one of this
-  // projection's own tags of that type – the partition flows down, so a
-  // read of this one reads its operands at the same instance.
+  // projection's own parameters of that type – the partition flows
+  // down, so a read of this one reads its operands at the same instance.
   if (isRead && current.projection) {
-    const own = (draft.tags || []).filter((tag) => tag && tag.name);
     for (const tag of projectionTagParams(model['projection-definitions'][current.projection])) {
-      const options = own.filter((o) => o.tagType === tag.tagType)
+      const options = own.filter((o) => o.type === tag.tagType)
         .map((o) => [JSON.stringify({ parameterName: o.name }), propertyWords(o.name)]);
       const held = (current.tags || {})[tag.name];
       const value = held === undefined ? '' : JSON.stringify(held);
@@ -10469,28 +10561,39 @@ function derivedSideEditor(model, draft, side, { allowLiteral } = {}) {
         pick(options, held === undefined && options.length ? options[0][0] : value, (v) => {
           current.tags = { ...(current.tags || {}), [tag.name]: JSON.parse(v) };
           render();
-        }, options.length ? null : `this projection has no ${readable(tag.tagType)} tag`));
+        }, options.length ? null : `this projection has no ${readable(tag.tagType)} parameter`));
     }
-    // A script's arguments, as literals: nothing else is in scope here.
+    // Its arguments: one of this projection's own parameters of the
+    // type, passed on, or a literal.
     for (const slot of projectionSlots(model['projection-definitions'][current.projection])) {
       const held = (current.arguments || {})[slot.name];
-      nodes.push(
-        h('span', { class: 'muted tiny' }, `· with ${propertyWords(slot.name)} =`),
-        h('input', {
+      const passed = own.filter((o) => o.type === slot.propertyType)
+        .map((o) => [JSON.stringify({ parameterName: o.name }), propertyWords(o.name)]);
+      const isPassed = operandSource(held) === 'parameter';
+      const set = (value) => { current.arguments = { ...(current.arguments || {}), [slot.name]: value }; };
+      nodes.push(h('span', { class: 'muted tiny' }, `· with ${propertyWords(slot.name)} =`));
+      if (passed.length) {
+        nodes.push(pick([...passed, [LITERAL, 'a value…']], isPassed ? JSON.stringify(held) : LITERAL, (v) => {
+          set(v === LITERAL ? '' : JSON.parse(v));
+          render();
+        }));
+      }
+      if (!isPassed) {
+        nodes.push(h('input', {
           type: 'text', style: 'width:110px', value: held === undefined || held === null ? '' : String(held),
-          onblur: (e) => {
-            current.arguments = { ...(current.arguments || {}), [slot.name]: literalOfType(model, slot.propertyType, e.target.value) };
-          },
+          onblur: (e) => set(literalOfType(model, slot.propertyType, e.target.value)),
           onkeydown: (e) => { if (e.key === 'Enter') e.target.blur(); },
         }));
+      }
     }
   }
 
-  if (!isRead && chosen === LITERAL) {
+  if (!isRead && !isParameter && chosen === LITERAL) {
     const other = derived[side === 'leftHandSide' ? 'rightHandSide' : 'leftHandSide'];
-    const otherTarget = operandSource(other) === 'projection-read' && other.projection
-      ? model['projection-definitions'][other.projection] : null;
-    const members = otherTarget ? enumMembersFor(model, otherTarget.valueType) : null;
+    const otherType = operandSource(other) === 'projection-read' && other.projection
+      ? (model['projection-definitions'][other.projection] || {}).valueType
+      : operandSource(other) === 'parameter' ? (own.find((o) => o.name === other.parameterName) || {}).type : null;
+    const members = otherType ? enumMembersFor(model, otherType) : null;
     if (members) {
       nodes.push(pick(members.map((m) => [m, readable(m)]),
         operandSource(current) === 'enum-member' ? current.enumMember : '',
@@ -10615,23 +10718,26 @@ function projectionFields(model, draft, { entityName, onNewType, onChecks } = {}
       ? h('div', { class: 'use' }, h('span', { class: 'pk' }, 'members '), ...enumMemberChips(model, enumType))
       : null);
 
-  // ---- tags ----
+  // ---- parameters ----
   //
-  // The tags a read of it gives, each named and of a tag type (8.0) –
-  // or none, an untagged projection folding the whole log. An entity's
-  // property is tagged by the entity's identifier and nothing else,
-  // which is what binding it means, so that one is shown, not offered.
-  // A new projection has not decided yet (`tags: null`): both doors are
-  // open, and it saves once one is taken.
-  const tagsHint = hint('proj-tags', 'Tags', [
-    'What each value is kept per: a read gives a value for every tag.',
+  // What a read of it gives (10.0): its tags, each named and of a tag
+  // type – or none, an untagged projection folding the whole log – then
+  // its arguments. An entity's property is tagged by the entity's
+  // identifier and nothing else, which is what binding it means, so
+  // that one is shown, not offered. A new projection has not decided
+  // yet (`tags: null`): both doors are open, and it saves once one is
+  // taken.
+  const tagsHint = hint('proj-tags', 'Parameters', [
+    'What a read gives. A tag is what each value is kept per: it narrows the query.',
+    'An argument is a value the read passes in – a script or a derived projection uses it; it narrows nothing.',
     'Untagged: one value for the whole log – a numbering is one.',
   ]);
-  const tagsSection = entityName
-    ? projectionSection('tags', tagsHint, null,
-        h('span', { class: 'chip entity' },
-          h('i', { class: 'ic' }, entityIcon(model, entityName)), 'each ' + readable(entityName)))
-    : projectionTagsEditor(model, draft, savedName, tagsHint);
+  const tagsSection = projectionParametersEditor(model, draft, savedName, tagsHint, {
+    fixedTag: entityName
+      ? h('span', { class: 'chip entity' },
+          h('i', { class: 'ic' }, entityIcon(model, entityName)), 'each ' + readable(entityName))
+      : null,
+  });
 
   // ---- handlers ----
 
@@ -10731,7 +10837,7 @@ function projectionFields(model, draft, { entityName, onNewType, onChecks } = {}
       derived.operator = v.slice(2);
       delete derived.predicate;
       delete derived.negate;
-      draft.valueType = derivedResultBase(model, derived)
+      draft.valueType = derivedResultBase(model, derived, draft)
         || (numericBaseOf(model, draft.valueType) ? draft.valueType : 'integer');
     }
     draft.isList = false;
@@ -10740,7 +10846,7 @@ function projectionFields(model, draft, { entityName, onNewType, onChecks } = {}
 
   const derivedSection = !draft.derived ? null : projectionSection('derived',
     hint('proj-derived', 'Derived', [
-      'One comparison or computation over other projections, read by the same tags as this one.',
+      'One comparison or computation over other projections – read by this one\'s parameters – and its own parameters.',
       'A comparison holds a boolean; a computation (+, -, *, min, max) a number, null while a side is null.',
       'Their queries are its query, so reading it guards the append exactly as reading them would.',
     ]), null,
@@ -10796,7 +10902,7 @@ function projectionFields(model, draft, { entityName, onNewType, onChecks } = {}
       if (e.target.checked) {
         delete draft.derived;
         const initialState = draft.initialValue === undefined ? null : draft.initialValue;
-        draft.script = { initialState, arguments: [] };
+        draft.script = { initialState };
         delete draft.initialValue;
         draft.handlers = (draft.handlers || []).map((handler) => ({
           event: handler.event, code: 'state',
@@ -10834,7 +10940,6 @@ function projectionFields(model, draft, { entityName, onNewType, onChecks } = {}
           render();
         },
       }))),
-    ...scriptArgumentRows(model, draft),
   ] : [];
 
   const advancedSection = advanced || draft.script || draft.derived
@@ -11005,37 +11110,6 @@ function initialValueControl(model, draft) {
       (v) => { draft.initialValue = v; }));
   return { control, below: null };
 }
-
-// A scripted projection's arguments: values its reader supplies, which
-// reach the code rather than the query. The one typed with the owning
-// entity's identifier is what a property binding fills in, so it is
-// shown as fixed rather than offered for removal.
-function scriptArgumentRows(model, draft) {
-  const args = draft.script.arguments || [];
-  const rows = args.map((argument, i) => h('div', { class: 'adder' },
-    h('input', {
-      type: 'text', class: 'mono', value: argument.name || '', placeholder: 'argument name',
-      oninput: (e) => { argument.name = e.target.value; },
-    }),
-    h('span', { class: 'pk' }, ':'),
-    pick(typeOptions(model), argument.propertyType,
-      (v) => { argument.propertyType = v; render(); }),
-    h('button', {
-      class: 'btn tiny danger',
-      onclick: () => { draft.script.arguments.splice(i, 1); render(); },
-    }, '×')));
-  return [h('div', { style: 'margin-top:6px' },
-    h('div', { class: 'pk', style: 'margin-bottom:4px', title: 'Values a read gives besides its tags' }, 'arguments'),
-    rows.length ? rows : h('div', { class: 'empty' }, '–'),
-    h('div', { class: 'adder' }, h('button', {
-      class: 'btn ghost tiny',
-      onclick: () => {
-        (draft.script.arguments = args).push({ name: '', propertyType: 'string' });
-        render();
-      },
-    }, '+ argument')))];
-}
-
 
 function renderProjections(model, main) {
   main.appendChild(h('header', {},
@@ -13300,7 +13374,7 @@ function patchProjectionScenarioDraft(mutate) {
 
 // How the projection under test is read: a value for each tag it
 // declares – none at all for an untagged one, which reads the whole
-// log – and the arguments its script takes. A scenario is about one
+// log – and the arguments it takes. A scenario is about one
 // projection, and its Then is that projection's value. The draft is
 // kept in step with the declaration, so a tag the projection gained
 // since is asked for rather than missing.
@@ -13928,7 +14002,7 @@ function entityWatch(tag) { return { kind: 'entity', tag }; }
 // A watched read: a value for each tag the projection declares –
 // `[{name, type, value}]` as a run reports them, or already named tag
 // literals – kept by name as tag literals, the spelling the code view
-// shows (`CourseId("c1")`), and the script's arguments.
+// shows (`CourseId("c1")`), and the arguments.
 function projectionWatch(projection, tags, args) {
   const named = {};
   if (Array.isArray(tags)) {
