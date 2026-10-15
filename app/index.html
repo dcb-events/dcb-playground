@@ -1770,7 +1770,7 @@ const state = {
   adder: null,              // which "add another" is unfolded
   projDraft: null,          // { name, body } – a projection being edited
   defFrames: [],            // the definition modals, bottom first – see `openDefinitionModal`
-  newProjection: null,      // a projection being described
+  newProjection: null,      // true while a projection is being named
   renamingProjection: null,
   newEvent: null,           // { name } – a bare event being described
   renamingEvent: null,
@@ -1790,6 +1790,7 @@ const state = {
   lcOpen: {},               // entity name -> its state row unfolded in Identity.
                             // Session-only, like `wizard`: a view choice, not the model.
   wizard: null,             // { slice, upto } – a brand-new command revealing its steps.
+  projWizard: null,         // { name, at, guessed } – a brand-new projection revealing its steps.
                             // Session-only on purpose: how far someone got is authoring
                             // state, not a fact about the model, so it is never stored.
   openEvent: null,
@@ -2689,34 +2690,27 @@ function projectionNewTypeOffer(model, frame) {
   return (choose) => openDefinitionModal(model, { kind: 'custom-type', onCreated: choose });
 }
 
-// The Projections page's question, asked here.
+// The Projections page's question, asked here: a name, and the
+// wizard then reveals the rest in the modal (`PROJECTION_WIZARD_STEPS`).
 function newProjectionQuestion(model, frame, created) {
-  const draft = frame.draft;
-  return h('div', {},
-    h('div', { class: 'row' },
-      h('span', { class: 'muted tiny', style: 'min-width:90px' }, 'called'),
-      h('input', {
-        type: 'text', value: draft.name, placeholder: 'projection name',
-        oninput: (e) => { draft.name = e.target.value; },
-      })),
-    h('div', { style: 'margin-top:10px' },
-      ...projectionFields(model, draft.body, { onNewType: projectionNewTypeOffer(model, frame) })),
-    h('div', { class: 'adder', style: 'margin-top:10px' },
-      h('button', {
-        class: 'btn primary',
-        onclick: () => {
-          const projectionName = toPascal(draft.name);
-          if (!projectionName) return toast('Give the projection a name.', true);
-          if (draft.body.tags === null) return toast('Say what it is tagged by – or that it is untagged.', true);
-          run(() => {
-            addDefinition('projection-definition', model.id, projectionName, cleanProjectionBody(draft.body));
-            const stored = projectState()[model.id]['projection-definitions'][projectionName];
-            frame.draft = { name: projectionName, body: projectionDraftFrom(stored) };
-            created(projectionName);
-            anchorDefinitionModal();
-          });
-        },
-      }, 'Create')));
+  // Asked from a command, the projection is most likely kept per what
+  // the command is about: its one tag-typed input, when it has one.
+  const command = state.view === 'slice' ? model['command-definitions'][state.slice] : null;
+  const tagInputs = ((command && command.properties) || [])
+    .filter((p) => p && !p.isList && classifyType(model, p.propertyType).kind === 'value'
+      && !classifyType(model, p.propertyType).composite && isTagBearing(model, p.propertyType));
+  const fallbackTags = tagInputs.length === 1 ? [{ name: tagInputs[0].name, tagType: tagInputs[0].propertyType }] : [];
+  return inlineForm({
+    question: 'New projection',
+    placeholder: 'projection name',
+    submitLabel: 'Create',
+    onSubmit: (label) => createProjectionFromName(model, label, (name, draft) => {
+      frame.draft = { name, body: draft };
+      created(name);
+      anchorDefinitionModal();
+    }, { fallbackTags }),
+    onCancel: () => closeDefinitionModal(),
+  });
 }
 
 // An existing projection, as its ledger row edits it: saved as it is
@@ -9491,22 +9485,17 @@ function projectionParametersEditor(model, draft, savedName, info, { fixedTag } 
       }, '×'));
   };
 
-  // Undecided is a question with two answers, and both are offered;
+  // Undecided is a question the wizard's partition step asks – adding a
+  // tag, or skipping it as untagged – so nothing more is said here;
   // decided and untagged is a fact, and is said.
-  return projectionSection('parameters', info,
+  return projectionSection('partition', info,
     declared && fixedTag ? null
       : h('button', { class: 'btn ghost tiny', disabled: declared && !tagTypes.length, onclick: add }, '+ parameter'),
     fixedTag || null,
     ...(fixedTag ? [] : tags.map((tag, i) => row(tag, true, tags, i))),
     ...args.map((argument, i) => row(argument, false, args, i)),
-    undecided
-      ? h('div', { class: 'adder' },
-          h('span', { class: 'muted tiny' }, 'undecided –'),
-          h('button', {
-            class: 'btn ghost tiny', title: 'One value for the whole log – a numbering is one',
-            onclick: () => { draft.tags = []; render(); },
-          }, 'untagged'))
-      : (fixedTag || tags.length ? null : h('span', { class: 'chip unset', title: 'One value for the whole log' }, 'untagged')));
+    undecided || fixedTag || tags.length ? null
+      : h('span', { class: 'chip unset', title: 'One value for the whole log' }, 'untagged'));
 }
 
 // A row, and – when it is the one being edited – everything under it.
@@ -9561,6 +9550,9 @@ function projectionLedgerRow(model, entry, { owner, cols }) {
 function toggleProjectionRow(model, projection) {
   const open = !!state.projDraft && state.projDraft.name === projection;
   closeForms();
+  // Folding a projection away mid-wizard is leaving it: opened again,
+  // it is the whole editor.
+  state.projWizard = null;
   if (!open) {
     const body = model['projection-definitions'][projection];
     if (body) state.projDraft = { name: projection, body: projectionDraftFrom(body) };
@@ -10526,13 +10518,204 @@ function cleanProjectionBody(draft) {
 // A brand-new projection's draft. An entity's property is tagged by
 // the entity's identifier, which is what binding it means; one read on
 // its own has not said yet (`tags: null`) – tagged by something, or
-// untagged, is the author's to decide, and the form will not save
-// until they have.
+// untagged, is the author's to decide, at the wizard's partition step;
+// until then it is stored untagged.
 function blankProjectionDraft(model, entityName) {
   const valueType = projectionTypeOptions(model)[0] ? projectionTypeOptions(model)[0][0] : 'string';
   const draft = { tags: entityName ? [entityTagParam(model, entityName)] : null, valueType, isList: false, handlers: [] };
   draft.initialValue = defaultInitialValue(model, draft);
   return draft;
+}
+
+// ---------- guessing from a new projection's name ----------
+//
+// What the wizard proposes once a projection is named – the same idea
+// as `suggestEventName` for a command: a cheap guess, shown in the
+// pickers it fills and changed there, never a rule. The name's words
+// say a great deal: `CourseSubscriptionCount` is kept per course
+// (a tag type the name starts with), holds an integer starting at 0,
+// and moves on the events about subscribing.
+
+const nameWords = (name) => String(name || '').match(/[A-Z][a-z0-9]*|[a-z0-9]+/g) || [];
+const lowerFirst = (s) => s.charAt(0).toLowerCase() + s.slice(1);
+
+// The words a tag type is named by in a projection's name: `CourseId`
+// is "Course", `WeekNumber` is "WeekNumber" or "Week".
+function tagTypeStems(typeName) {
+  return uniq([typeName.replace(/Id$/, ''), nameWords(typeName)[0]]).filter(Boolean);
+}
+
+// The tag type a name starts with (the longest that fits), and one a
+// trailing `For<X>` names – `DeveloperAllocatedHoursForWeek`.
+function partitionGuess(model, name) {
+  const types = partitionTypeOptions(model).map(([t]) => t)
+    .filter((t) => !(classifyType(model, t).composite));
+  const at = (text) => {
+    let found = null;
+    for (const type of types) {
+      for (const stem of tagTypeStems(type)) {
+        const fits = text.startsWith(stem) && (text.length === stem.length || /[A-Z]/.test(text[stem.length]));
+        if (fits && (!found || stem.length > found.stem.length)) found = { type, stem };
+      }
+    }
+    return found;
+  };
+  const out = [];
+  const lead = at(name);
+  if (lead) out.push(lead);
+  const forAt = name.lastIndexOf('For');
+  const trail = forAt > 0 ? at(name.slice(forAt + 3)) : null;
+  if (trail && !out.some((o) => o.type === trail.type)) out.push(trail);
+  return out;
+}
+
+// The guess as a draft's fields: its kind, partition and initial state.
+// A numbering is untagged and holds the identifier it issues; a
+// decision (`Has…`, `Can…`, `…Remaining…`, `…Left`) is derived.
+function projectionGuess(model, name) {
+  const words = nameWords(name);
+  const last = words[words.length - 1] || '';
+  const tagTypes = partitionTypeOptions(model).map(([t]) => t);
+  const derived = /^(Has|Can)[A-Z]/.test(name) || /Remaining/.test(name) || last === 'Left';
+  const numbering = last === 'Numbering' || (words[0] === 'Next' && last === 'Id');
+  const partition = numbering ? [] : partitionGuess(model, name);
+  const guess = {
+    kind: derived ? 'derived' : 'declared',
+    tags: partition.map(({ type }) => ({ name: lowerFirst(type), tagType: type })),
+    valueType: null, isList: false, initialValue: undefined,
+  };
+  if (derived) {
+    guess.valueType = /^(Has|Can)[A-Z]/.test(name) ? 'boolean' : 'integer';
+    return guess;
+  }
+  const typed = (valueType, initialValue, isList = false) => Object.assign(guess, { valueType, initialValue, isList });
+  if (numbering) {
+    const issued = tagTypes.find((t) => tagTypeStems(t).some((stem) => name.includes(stem)));
+    if (issued) {
+      const numeric = literalKindOf(model, issued) === 'number';
+      typed(issued, numeric ? 1 : issued.charAt(0).toLowerCase() + '1');
+    }
+  } else if (last === 'Count' || last === 'Total') {
+    typed('integer', 0);
+  } else if (last === 'Exists' || /^Is[A-Z]/.test(name)) {
+    typed('boolean', false);
+  } else if (last === 'Status' || last === 'State') {
+    const enums = allTypeNames(model).filter((t) => enumMembersFor(model, t));
+    const own = enums.find((t) => t === name) || enums.find((t) => name.endsWith(t));
+    if (own) typed(own, { enumMember: enumMembersFor(model, own)[0] });
+  } else if (last === 'Ids' && words.length > 1) {
+    const element = words[words.length - 2] + 'Id';
+    if (tagTypes.includes(element)) typed(element, [], true);
+  }
+  return guess;
+}
+
+// The events a draft's partition lets reach it: each carries a tag of
+// every type the projection is tagged by.
+function eventsReaching(model, tags) {
+  const needed = uniq((tags || []).filter((t) => t && t.tagType)
+    .flatMap((t) => idLeavesOfType(model, t.tagType).map((leaf) => leaf.identifierType)));
+  return Object.keys(model['event-definitions']).sort().filter((name) => {
+    const carried = new Set(eventTagLeaves(model, model['event-definitions'][name]).map((leaf) => leaf.identifierType));
+    return needed.every((type) => carried.has(type));
+  });
+}
+
+// The handlers a declared draft is proposed, as stored handlers: one
+// per reaching event the name is about – an event sharing a word with
+// it, beyond its partition and what it holds – the verb read off the
+// event's name and the type. `StudentUnsubscribedFromCourse` takes one
+// off a count; `CourseArchived` sets the status to `Archived`. A guess
+// it cannot make is left out rather than made badly.
+function handlerGuesses(model, name, draft) {
+  if (draft.derived || draft.script) return [];
+  const partitionWords = new Set((draft.tags || []).flatMap((t) => tagTypeStems(t.tagType || '').flatMap(nameWords)));
+  const vocabulary = new Set(['Count', 'Total', 'Exists', 'Is', 'Status', 'State', 'Ids', 'Id', 'Numbering', 'Next', 'For']);
+  const stems = nameWords(name)
+    .filter((w) => w.length >= 4 && !partitionWords.has(w) && !vocabulary.has(w))
+    .map((w) => w.toLowerCase().slice(0, 5));
+  const reaching = eventsReaching(model, draft.tags);
+  const about = stems.length
+    ? reaching.filter((event) => stems.some((stem) => event.toLowerCase().includes(stem)))
+    : reaching;
+  const undoes = (event) => /Un[a-z]|Remov|Cancel|Withdr|Return|Delet|Archiv|Clos/.test(event.slice(1));
+  const creates = (event) => /(Added|Defined|Registered|Created|Joined|Opened|Started|Catalogued)$/.test(event);
+  const members = enumMembersFor(model, draft.valueType);
+  const numeric = !draft.isList && literalKindOf(model, draft.valueType) === 'number' && !members;
+  const out = [];
+  for (const event of about) {
+    const properties = (model['event-definitions'][event] || {}).properties || [];
+    const carrying = (type) => properties.find((p) => p.propertyType === type && !p.isList);
+    if (draft.isList) {
+      const element = carrying(draft.valueType);
+      if (element) out.push({ event, operation: undoes(event) ? 'remove' : 'append', value: { eventProperty: element.name } });
+    } else if (members) {
+      const member = members.find((m) => typeof m === 'string' && event.toLowerCase().includes(m.toLowerCase().slice(0, 5)));
+      if (member) out.push({ event, operation: 'set', value: { enumMember: member } });
+    } else if (draft.valueType === 'boolean') {
+      if (undoes(event)) out.push({ event, operation: 'set', value: false });
+      else if (stems.length || creates(event)) out.push({ event, operation: 'set', value: true });
+    } else if (numeric && stems.length) {
+      out.push({ event, operation: undoes(event) ? 'decrement' : 'increment', value: 1 });
+    } else if (!(draft.tags || []).length && carrying(draft.valueType)) {
+      out.push({ event, operation: 'set', value: { successor: { eventProperty: carrying(draft.valueType).name } } });
+    }
+  }
+  return out;
+}
+
+// A sample value of a type, for a proposed check: a tag value named
+// after its type (`c1` for a CourseId, 1 for a number), otherwise the
+// blank a slot starts from.
+function sampleValue(model, typeName) {
+  const members = enumMembersFor(model, typeName);
+  if (members) return members[0];
+  const kind = literalKindOf(model, typeName);
+  if (classifyType(model, typeName).kind === 'value' && isTagBearing(model, typeName)) {
+    return kind === 'number' ? 1 : typeName.charAt(0).toLowerCase() + '1';
+  }
+  if (kind === 'number') return 0;
+  if (kind === 'boolean') return false;
+  return '';
+}
+
+// The first check a projection is proposed: the first event it
+// handles – tagged by the same sample values its read gives – and the
+// value the fold makes of it as its Then. One event, not one of each:
+// a subscribe and an unsubscribe fold to where they started, which
+// checks nothing. Null when it handles
+// nothing, or something here has no sample (a record, a script that
+// throws).
+function projectionCheckGuess(model, name) {
+  const projection = model['projection-definitions'][name];
+  const types = projection ? projectionHandledTypes(model, name) : [];
+  if (!types.length) return null;
+  try {
+    const tags = {};
+    const read = {};
+    for (const tag of projectionTagParams(projection)) {
+      if (classifyType(model, tag.tagType).composite) return null;
+      read[tag.name] = sampleValue(model, tag.tagType);
+      tags[tag.name] = { tagType: tag.tagType, tagValue: read[tag.name] };
+    }
+    const args = {};
+    for (const slot of projectionSlots(projection)) args[slot.name] = sampleValue(model, slot.propertyType);
+    const given = types.slice(0, 1).map((event) => {
+      const data = {};
+      for (const p of (model['event-definitions'][event] || {}).properties || []) {
+        if (classifyType(model, p.propertyType).composite) throw new Error('no sample for a record');
+        data[p.name] = p.isList ? [] : sampleValue(model, p.propertyType);
+      }
+      return { event, data };
+    });
+    const then = foldProjection(model, given.map((step) => ({ type: step.event, data: step.data })), name,
+      { tags: read, args });
+    const body = { projection: name, tags, given, then };
+    if (Object.keys(args).length) body.arguments = args;
+    return body;
+  } catch (error) {
+    return null;
+  }
 }
 
 // One side of a derived predicate or computation: another projection –
@@ -10642,6 +10825,256 @@ function derivedSideEditor(model, draft, side, { allowLiteral } = {}) {
   return nodes;
 }
 
+// What produces a projection's value: its handlers fold events
+// (`declared`), a predicate or computation over other projections
+// (`derived`), or code (`scripted`).
+function projectionKindOf(draft) {
+  return draft.derived ? 'derived' : draft.script ? 'scripted' : 'declared';
+}
+
+const PROJECTION_KIND_TOASTS = {
+  declared: 'Declared – its handlers fold the events it reads.',
+  derived: 'Now derived – worked out from other projections. The handlers are gone.',
+  scripted: 'Now scripted – the declared operations are gone, the events they named are kept.',
+};
+
+// Turns a draft into another kind, in place – the Advanced switches and
+// the wizard's first step alike. What the kind it leaves needed goes:
+// a derived projection has no handlers and no initial value; a script
+// keeps the events its handlers named, as code. Returns why it cannot,
+// or null: a record is a value only code can advance, so leaving a
+// script that holds one asks for the re-typing first.
+function setProjectionKind(model, draft, kind) {
+  const from = projectionKindOf(draft);
+  if (from === kind) return null;
+  if (kind === 'derived') {
+    delete draft.script;
+    delete draft.initialValue;
+    draft.handlers = [];
+    draft.valueType = 'boolean';
+    draft.isList = false;
+    draft.derived = {
+      leftHandSide: { projection: '' },
+      predicate: 'equals',
+      rightHandSide: { projection: '' },
+    };
+    return null;
+  }
+  if (kind === 'scripted') {
+    delete draft.derived;
+    const initialState = draft.initialValue === undefined ? null : draft.initialValue;
+    draft.script = { initialState };
+    delete draft.initialValue;
+    draft.handlers = (draft.handlers || []).map((handler) => ({ event: handler.event, code: 'state' }));
+    return null;
+  }
+  if (from === 'scripted') {
+    const cls = classifyType(model, draft.valueType);
+    if (cls.kind === 'value' && cls.composite) {
+      return `It holds ${readable(draft.valueType)}, a record – only code can advance one. Pick a single-value type first.`;
+    }
+    delete draft.script;
+    draft.handlers = (draft.handlers || []).map((handler) => ({ event: handler.event, operation: 'set', value: '' }));
+  } else {
+    delete draft.derived;
+    draft.handlers = [];
+  }
+  draft.initialValue = defaultInitialValue(model, draft);
+  return null;
+}
+
+// ---------- the projection wizard ----------
+//
+// A new projection's editor, one step at a time – the command wizard's
+// treatment (`WIZARD_STEPS`) for a projection's sections: what produces
+// its value, its partition, its initial state, what moves it, and a
+// first check. Each step is the real section, revealed once the one
+// before it is answered; an empty step is skipped by name; and when the
+// last is answered the page is simply the editor again. The name is
+// stored at once, guesses from it already in place (`projectionGuess`),
+// so everything after it edits a real definition – undo and the code
+// view see it from the start. `state.projWizard` is `{name, at,
+// guessed}`: the projection, the step reached, and which steps hold a
+// guess, said in the step so it reads as an offer.
+const PROJECTION_WIZARD_STEPS = [
+  { key: 'kind' },
+  {
+    key: 'partition', skipWords: 'untagged – one value for the whole log',
+    empty: (d) => !(d.tags || []).length && !(d.arguments || []).length,
+  },
+  // A derived projection has no initial state: it starts from what its
+  // operands start at, and its type follows from what it derives.
+  { key: 'initial', applies: (d) => !d.derived },
+  {
+    key: 'moves', skipWords: 'nothing moves it yet',
+    empty: (d) => !d.derived && !(d.handlers || []).some((x) => x && x.event),
+  },
+  { key: 'check' },
+];
+
+const projectionWizardOrder = (key) => PROJECTION_WIZARD_STEPS.findIndex((step) => step.key === key);
+
+function projectionWizardFor(name) {
+  const wizard = state.projWizard;
+  return wizard && name && wizard.name === name ? wizard : null;
+}
+
+// The steps a draft takes, and the one reached – the last of them at
+// or before `at`, since a kind picked since may have dropped the step
+// it was on.
+function projectionWizardSteps(wizard, draft, { entityName } = {}) {
+  const steps = PROJECTION_WIZARD_STEPS
+    .filter((step) => (!step.applies || step.applies(draft)) && !(entityName && step.key === 'partition'));
+  const reached = steps.filter((step) => projectionWizardOrder(step.key) <= projectionWizardOrder(wizard.at));
+  return { steps, current: reached[reached.length - 1] || steps[0], shown: new Set(reached.map((s) => s.key)) };
+}
+
+// A projection named `label`, stored with what its name suggests, and
+// its draft – undecided about its partition unless the name said one.
+// `opened(name, draft, guessed)` runs inside the same gesture: it is
+// where the caller opens the editor the wizard reveals.
+//
+// `fallbackTags` is a partition to propose when the name says none –
+// what a command asking for the projection is about.
+function createProjectionFromName(model, label, opened, { fallbackTags = [] } = {}) {
+  const name = toPascal(label);
+  if (!name) return toast('Give the projection a name.', true);
+  const guess = projectionGuess(model, name);
+  if (!guess.tags.length && guess.kind !== 'derived' && !/Numbering$/.test(name)) guess.tags = fallbackTags;
+  const draft = blankProjectionDraft(model);
+  const guessed = [];
+  if (guess.kind === 'derived') {
+    setProjectionKind(model, draft, 'derived');
+    if (guess.valueType === 'integer') {
+      draft.derived = { leftHandSide: { projection: '' }, operator: 'subtract', rightHandSide: { projection: '' } };
+      draft.valueType = 'integer';
+    }
+    guessed.push('kind');
+  } else if (guess.valueType) {
+    draft.valueType = guess.valueType;
+    draft.isList = guess.isList;
+    draft.initialValue = guess.initialValue === undefined ? defaultInitialValue(model, draft) : guess.initialValue;
+    guessed.push('initial');
+  }
+  if (guess.tags.length) {
+    draft.tags = guess.tags;
+    guessed.push('partition');
+  }
+  return run(() => {
+    addDefinition('projection-definition', model.id, name, cleanProjectionBody(draft));
+    state.projWizard = { name, at: 'kind', guessed };
+    opened(name, draft, guessed);
+    return name;
+  });
+}
+
+// Answering the step reached and revealing the next. Leaving the
+// partition undecided is the untagged answer; reaching the handlers
+// proposes some (`handlerGuesses`) when there are none yet. The draft
+// is saved first, so the check the last step proposes folds what is
+// stored.
+function advanceProjectionWizard(model, draft, { entityName } = {}) {
+  const wizard = state.projWizard;
+  if (!wizard) return;
+  const { steps, current } = projectionWizardSteps(wizard, draft, { entityName });
+  if (current.key === 'partition' && (draft.tags === null || draft.tags === undefined)) draft.tags = [];
+  const next = steps[steps.indexOf(current) + 1];
+  if (next && next.key === 'moves' && projectionKindOf(draft) === 'declared' && !(draft.handlers || []).length) {
+    const guesses = handlerGuesses(model, wizard.name, draft);
+    if (guesses.length) {
+      draft.handlers = projectionDraftFrom({ handlers: guesses }).handlers;
+      wizard.guessed = [...wizard.guessed, 'moves'];
+    }
+  }
+  autoSaveProjectionDraft();
+  if (next) wizard.at = next.key;
+  else state.projWizard = null;
+  render();
+  if (next) focusProjectionWizardStep(next.key, next.key === 'check' || wizard.guessed.includes(next.key));
+}
+
+// Where the keyboard lands when a step is revealed: its first control,
+// as in the command wizard (`focusWizardStep`) – or the bar's button,
+// when the step arrives already answered (proposed handlers, the
+// check) and continuing is the honest next thing to press.
+function focusProjectionWizardStep(key, onBar) {
+  setTimeout(() => {
+    const bar = onBar && document.querySelector('.pwizard-bar button');
+    if (bar) { bar.focus(); bar.scrollIntoView({ block: 'nearest' }); return; }
+    const step = document.querySelector('.pstep-' + key);
+    const target = step && step.querySelector('button:not(.hbtn), select, input');
+    if (target) { target.focus(); target.scrollIntoView({ block: 'nearest' }); }
+  }, 0);
+}
+
+// The bar under the step reached: one primary button saying what
+// continuing means – an empty step is skipped by name – and the way to
+// the whole editor at once. The check step's primary adds the check it
+// proposes, and skipping it is the other way on.
+function projectionWizardBar(model, draft, { current, check, entityName }) {
+  const end = () => { state.projWizard = null; render(); };
+  let primary;
+  let skip = null;
+  if (current.key === 'check') {
+    primary = h('button', {
+      class: 'btn primary',
+      onclick: () => run(() => {
+        if (check) {
+          addDefinition('projection-scenario-definition', model.id, generateId(), check);
+        }
+        state.projWizard = null;
+      }),
+    }, check ? 'Add this check →' : 'Done');
+    if (check) skip = h('button', { class: 'btn ghost', onclick: end }, 'Skip – no check yet');
+  } else {
+    const skipping = current.empty && current.empty(draft);
+    primary = h('button', {
+      class: 'btn primary',
+      onclick: () => advanceProjectionWizard(model, draft, { entityName }),
+    }, skipping ? `Skip – ${current.skipWords} →` : 'Continue →');
+  }
+  return h('div', { class: 'pwizard-bar' }, primary, skip,
+    h('button', {
+      class: 'btn ghost tiny', title: 'Stop revealing step by step and show the whole projection',
+      onclick: end,
+    }, 'Show all steps'));
+}
+
+// The wizard's first step: what produces the value, as three answers
+// rather than the Advanced switches. Code is experimental, offered with
+// the flag on.
+function projectionKindSection(model, draft) {
+  const kind = projectionKindOf(draft);
+  const kinds = [
+    ['declared', 'From events', 'its handlers fold the events it reads'],
+    ['derived', 'From other projections', 'one comparison or computation'],
+    ...(experimental() || kind === 'scripted' ? [['scripted', 'From code', 'a script – experimental']] : []),
+  ];
+  return projectionSection('gets its value', null, null,
+    h('div', { class: 'pkinds' }, kinds.map(([key, title, words]) => h('button', {
+      type: 'button', class: 'pkind' + (kind === key ? ' on' : ''),
+      'aria-pressed': kind === key ? 'true' : 'false',
+      onclick: () => {
+        const problem = setProjectionKind(model, draft, key);
+        if (problem) return toast(problem, true);
+        render();
+      },
+    }, h('b', {}, title), h('span', {}, words)))));
+}
+
+// The proposed first check, as the code view writes it.
+function projectionCheckSection(model, check) {
+  let text = null;
+  if (check) {
+    try { text = printScenario(model, 'projection-scenario-definition', check); } catch (error) { text = null; }
+  }
+  return projectionSection('first check', null, null,
+    text
+      ? [h('pre', { class: 'pcheck' }, text),
+          h('div', { class: 'muted tiny' }, 'The first event it handles, and what it folds that to – add it, and change it on the Checks tab.')]
+      : h('div', { class: 'muted tiny' }, 'Nothing to check yet – it handles no event.'));
+}
+
 // The editor of a projection, wherever one is edited: this page, an
 // entity's own page for the ones bound as its properties, and the
 // definition modals. Sections on the left – value, tags, handlers (or
@@ -10674,6 +11107,22 @@ function projectionFields(model, draft, { entityName, onNewType, onChecks } = {}
   const advanced = projectionAdvanced();
   const savedName = state.projDraft && state.projDraft.body === draft ? state.projDraft.name : null;
   const fieldLabel = (text, control) => h('label', { class: 'pfield' }, h('span', { class: 'pk' }, text), control);
+  // A projection just named shows its sections one step at a time
+  // (`PROJECTION_WIZARD_STEPS`): only those reached, each marked so the
+  // keyboard can land in it, with a word on the steps its name guessed.
+  const wizard = projectionWizardFor(savedName);
+  const reveal = wizard ? projectionWizardSteps(wizard, draft, { entityName }) : null;
+  const check = wizard && reveal.current.key === 'check' ? projectionCheckGuess(model, savedName) : null;
+  const wizardSections = (pairs) => pairs.map(([key, section]) => {
+    if (!section) return null;
+    if (!wizard) return section;
+    if (!reveal.shown.has(key)) return null;
+    section.className += ' pstep-' + key;
+    if (wizard.guessed.includes(key) && key !== 'kind') {
+      section.appendChild(h('div', { class: 'pguess muted tiny' }, 'Guessed from its name – change anything here.'));
+    }
+    return section;
+  });
 
   // ---- value: type, cardinality, initial ----
 
@@ -10721,9 +11170,14 @@ function projectionFields(model, draft, { entityName, onNewType, onChecks } = {}
   });
 
   const initial = draft.derived || draft.script ? null : initialValueControl(model, draft);
-  const valueSection = projectionSection('value', hint('proj-value', 'Value', [
-    'initial is the value before any handled event. For a numbering it is the first number '
-    + 'issued, and the only place a prefix is stated.',
+  // What it holds before any event – what the section is about, and
+  // so what it is called. A derived projection has no initial state:
+  // the section says what it holds, and that it starts from its
+  // operands.
+  const valueSection = projectionSection(draft.derived ? 'value' : 'initial state', hint('proj-value',
+    draft.derived ? 'Value' : 'Initial state', [
+    'What it holds before any handled event: its type, single or a list, and the value it starts at. '
+    + 'For a numbering that is the first number issued, and the only place a prefix is stated.',
     'null is no value yet – not the empty string.',
   ]), null,
     draft.derived
@@ -10732,12 +11186,11 @@ function projectionFields(model, draft, { entityName, onNewType, onChecks } = {}
           // holds the number its author types it as – set from its
           // operands when the operator is picked, editable after.
           fieldLabel('type', draft.derived.operator !== undefined ? typePicker : h('span', { class: 'chip' }, 'boolean')),
-          fieldLabel('initial', h('span', { class: 'muted tiny' }, '– derived')))
+          fieldLabel('starts at', h('span', { class: 'muted tiny' }, '– its operands\' start')))
       : h('div', { class: 'pfields' },
           fieldLabel('type', typePicker),
           fieldLabel('cardinality', cardinalityPicker),
-          fieldLabel(draft.script ? 'initial state' : 'initial',
-            draft.script ? scriptInitial() : initial.control)),
+          fieldLabel('starts at', draft.script ? scriptInitial() : initial.control)),
     initial ? initial.below : null,
     enumType && !draft.derived
       ? h('div', { class: 'use' }, h('span', { class: 'pk' }, 'members '), ...enumMemberChips(model, enumType))
@@ -10750,9 +11203,9 @@ function projectionFields(model, draft, { entityName, onNewType, onChecks } = {}
   // its arguments. An entity's property is tagged by the entity's
   // identifier and nothing else, which is what binding it means, so
   // that one is shown, not offered. A new projection has not decided
-  // yet (`tags: null`): both doors are open, and it saves once one is
-  // taken.
-  const tagsHint = hint('proj-tags', 'Parameters', [
+  // yet (`tags: null`) until the wizard's partition step is answered –
+  // with tags, or skipped as untagged.
+  const tagsHint = hint('proj-tags', 'Partition', [
     'What a read gives. A tag is what each value is kept per: it narrows the query.',
     'An argument is a value the read passes in – a script or a derived projection uses it; it narrows nothing.',
     'Untagged: one value for the whole log – a numbering is one.',
@@ -10771,9 +11224,20 @@ function projectionFields(model, draft, { entityName, onNewType, onChecks } = {}
   // picker could not show its current choice. An event that carries
   // none of its tags is offered too, and said as an advisory on the
   // projection (`projectionTagProblem`) rather than hidden here.
-  const eventChoicesFor = (handler) =>
-    unhandledEventChoices(eventNames, draft.handlers, handler)
-      .map((n) => [n, readable(n), eventIcon(model, n)]);
+  // Those that cannot reach it – carrying no tag of a type its
+  // partition names – come last, under a heading that says why, rather
+  // than missing from the list with nothing to say so.
+  const reaching = new Set(eventsReaching(model, draft.tags));
+  const unreachedHeading = 'not tagged by ' + (draft.tags || []).filter((t) => t && t.tagType)
+    .map((t) => readable(t.tagType)).join(' and ');
+  const eventChoicesFor = (handler) => {
+    const offered = unhandledEventChoices(eventNames, draft.handlers, handler);
+    return [
+      ...offered.filter((n) => reaching.has(n)).map((n) => [n, readable(n), eventIcon(model, n)]),
+      ...offered.filter((n) => !reaching.has(n))
+        .map((n) => [n, readable(n), eventIcon(model, n), { section: unreachedHeading }]),
+    ];
+  };
 
   const declaredHandlerRows = (draft.handlers || []).map((handler, i) => {
     const event = model['event-definitions'][handler.event];
@@ -10895,65 +11359,20 @@ function projectionFields(model, draft, { entityName, onNewType, onChecks } = {}
   // projection that already uses it shows it anyway: the switch hides
   // offers, never what is stored.
 
-  const derivedToggle = h('label', { class: 'tiny' }, h('input', {
-    type: 'checkbox', checked: !!draft.derived,
+  const kindToggle = (kind, label) => h('label', { class: 'tiny' }, h('input', {
+    type: 'checkbox', checked: projectionKindOf(draft) === kind,
     onchange: (e) => {
-      if (e.target.checked) {
-        delete draft.script;
-        delete draft.initialValue;
-        draft.handlers = [];
-        draft.valueType = 'boolean';
-        draft.isList = false;
-        draft.derived = {
-          leftHandSide: { projection: '' },
-          predicate: 'equals',
-          rightHandSide: { projection: '' },
-        };
-        toast('Now derived – worked out from other projections. The handlers are gone.');
-      } else {
-        delete draft.derived;
-        draft.initialValue = defaultInitialValue(model, draft);
-        draft.handlers = [];
-        toast('Declared again – add its handlers.');
-      }
+      const problem = setProjectionKind(model, draft, e.target.checked ? kind : 'declared');
+      if (problem) { e.target.checked = !e.target.checked; return toast(problem, true); }
+      toast(PROJECTION_KIND_TOASTS[e.target.checked ? kind : 'declared']);
       render();
     },
-  }), ' derived projection');
-
+  }), ' ' + label);
+  const derivedToggle = kindToggle('derived', 'derived projection');
   // Scripted is experimental: offered with the flag on, and shown
   // regardless on a projection that already is one – so it can be
   // turned back into a declared one.
-  const scriptToggle = !experimental() && !draft.script ? null : h('label', { class: 'tiny' }, h('input', {
-    type: 'checkbox', checked: !!draft.script,
-    onchange: (e) => {
-      if (e.target.checked) {
-        delete draft.derived;
-        const initialState = draft.initialValue === undefined ? null : draft.initialValue;
-        draft.script = { initialState };
-        delete draft.initialValue;
-        draft.handlers = (draft.handlers || []).map((handler) => ({
-          event: handler.event, code: 'state',
-        }));
-        toast('Now scripted – the declared operations are gone, the events they named are kept.');
-      } else {
-        // A record is a value only code can advance – going declared
-        // with one held would store a projection the advisories flag
-        // on arrival, so the gesture asks for the re-typing first.
-        const cls = classifyType(model, draft.valueType);
-        if (cls.kind === 'value' && cls.composite) {
-          e.target.checked = true;
-          return toast(`It holds ${readable(draft.valueType)}, a record – only code can advance one. Pick a single-value type first.`, true);
-        }
-        draft.initialValue = defaultInitialValue(model, draft);
-        delete draft.script;
-        draft.handlers = (draft.handlers || []).map((handler) => ({
-          event: handler.event, operation: 'set', value: '',
-        }));
-        toast('Declared again – the code is gone, the events it handled are kept.');
-      }
-      render();
-    },
-  }), ' scripted projection');
+  const scriptToggle = !experimental() && !draft.script ? null : kindToggle('scripted', 'scripted projection');
 
   const scriptFields = draft.script ? [
     h('div', { class: 'pfields' },
@@ -10984,10 +11403,15 @@ function projectionFields(model, draft, { entityName, onNewType, onChecks } = {}
         title: 'Show scripted and derived projections, and where it is used',
         onclick: () => setProjectionAdvanced(!advanced),
       }, h('span', { class: 'track' }, h('span', { class: 'knob' })), 'Advanced')),
-    valueSection,
-    tagsSection,
-    draft.derived ? derivedSection : handlersSection,
-    advancedSection);
+    ...wizardSections([
+      ['kind', wizard ? projectionKindSection(model, draft) : null],
+      ['partition', tagsSection],
+      [draft.derived ? 'moves' : 'initial', valueSection],
+      ['moves', draft.derived ? derivedSection : handlersSection],
+      ['check', wizard ? projectionCheckSection(model, check) : null],
+    ]),
+    wizard ? null : advancedSection,
+    wizard ? projectionWizardBar(model, draft, { current: reveal.current, check, entityName }) : null);
 
   return [h('div', { class: 'peditor' },
     editor,
@@ -11147,7 +11571,7 @@ function renderProjections(model, main) {
         class: 'btn tiny',
         onclick: () => {
           closeForms();
-          state.newProjection = { name: '', body: blankProjectionDraft(model) };
+          state.newProjection = true;
           render();
         },
       }, '+ new projection'))));
@@ -11169,34 +11593,20 @@ function renderProjections(model, main) {
     add: null,
   }));
 
+  // A projection starts as a name: stored at once, opened in its row,
+  // and revealed there one step at a time (`PROJECTION_WIZARD_STEPS`).
   if (state.newProjection) {
-    const draft = state.newProjection;
-    const card = h('div', { class: 'ecard', style: 'margin-top:10px' });
-    card.appendChild(h('div', { class: 'q', style: 'font-size:11px;color:var(--muted);margin-bottom:6px' },
-      'What is this projection of?'));
-    card.appendChild(h('div', { class: 'row' },
-      h('span', { class: 'muted tiny', style: 'min-width:90px' }, 'called'),
-      h('input', {
-        type: 'text', value: draft.name, placeholder: 'projection name',
-        oninput: (e) => { draft.name = e.target.value; },
-      })));
-    card.appendChild(h('div', { style: 'margin-top:10px' }, ...projectionFields(model, draft.body)));
-    card.appendChild(h('div', { class: 'adder', style: 'margin-top:10px' },
-      h('button', {
-        class: 'btn primary',
-        onclick: () => {
-          const projectionName = toPascal(draft.name);
-          if (!projectionName) return toast('Give the projection a name.', true);
-          if (draft.body.tags === null) return toast('Say what it is tagged by – or that it is untagged.', true);
-          run(() => {
-            addDefinition('projection-definition', model.id, projectionName,
-              cleanProjectionBody(draft.body));
-            state.newProjection = null;
-          });
-        },
-      }, 'Create'),
-      h('button', { class: 'btn ghost', onclick: () => { state.newProjection = null; render(); } }, 'Cancel')));
-    main.appendChild(card);
+    main.appendChild(h('div', { class: 'ecard', style: 'margin-top:10px' }, inlineForm({
+      question: 'New projection',
+      placeholder: 'projection name',
+      submitLabel: 'Create',
+      onSubmit: (label) => createProjectionFromName(model, label, (name, draft) => {
+        state.newProjection = null;
+        state.projDraft = { name, body: draft };
+        state.projTab = 'definition';
+      }),
+      onCancel: () => { state.newProjection = null; render(); },
+    })));
   }
 
   // Everything the entity pages own. Not a second ledger – names, and a

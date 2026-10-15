@@ -472,8 +472,9 @@ and prune what no longer holds.
 on Projections, on an entity's page, and in the definition modals.
 
 - **Sections, with what it works out to beside them.** On the left:
-  `value` (type, cardinality, initial), `parameters` (`tags` until
-  10.0), `handlers` (or the
+  `partition` (its tags, then its arguments – `tags` until 10.0),
+  `initial state` (type, cardinality, `starts at` – `value` for a
+  derived projection, which has none), `handlers` (or the
   derived predicate) and `advanced`, each headed in monospace with its
   one `ⓘ`; on the right, `projectionUsage`: the query, spelled out
   rather than behind the query popover, the checks count (a way to the
@@ -495,6 +496,38 @@ on Projections, on an entity's page, and in the definition modals.
   its section with the switch off, the way the experimental flag
   works.
 
+- **A new projection is a name, then a wizard**
+  (`PROJECTION_WIZARD_STEPS`), the command wizard's treatment: the name
+  is stored at once, and its editor is revealed one section at a time –
+  what produces its value (three answers, `From events` / `From other
+  projections` / `From code`, the last behind the experimental flag;
+  the Advanced switches once the wizard is over), its partition, its
+  initial state (not for a derived projection), what moves it, and a
+  proposed first check. Partition comes before the initial state
+  because it decides which events can reach it; kind comes first
+  because it decides what a parameter may be. An empty step is skipped
+  by name (`Skip – untagged …`, `Skip – nothing moves it yet`), and
+  skipping the partition *is* the untagged answer, which retired the
+  `undecided –` door for a new projection. `Show all steps` ends it, and
+  so does folding the row away. Earlier drafts asked "What is this
+  projection of?" with the whole editor under it; a simpler
+  reveal-only variant (no kind step, no guesses) was weighed and
+  dropped for this one.
+- **The name proposes, the steps show it** (`projectionGuess`,
+  `handlerGuesses`, `projectionCheckGuess`): a tag type the name starts
+  with (or a trailing `For<X>`) is its partition, `…Count` an integer at
+  0, `…Exists` a boolean at false, `…Status` the enum it ends with,
+  `…Ids` a list of that id, `Has…` / `Can…` / `…Remaining…` / `…Left`
+  derived. Handlers are proposed on reaching that step, one per event
+  that reaches it and shares a word with the name, the verb read off
+  the event (`Un…`, `…Removed`, `…Archived` undo). A step holding a
+  guess says so ("Guessed from its name"); a guess it cannot make is
+  left out rather than made badly. The check folds the *first* handled
+  event – one of each would let a subscribe and an unsubscribe cancel
+  out. Asked from a command (the definition modal), a name that says no
+  partition takes the command's one tag-typed input. The entity page
+  still adds a property as a name and a type: its partition is the
+  entity's, and it is not a wizard yet.
 - **A handler is one line** however long the event's name: the pickers
   give way and end in an ellipsis, the event's first, then the value's
   (the end of `event.data.…` is the part that says anything); the

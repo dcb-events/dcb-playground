@@ -5037,11 +5037,12 @@ check('the reference links only anchors the website defines', () => {
     eq(/New projection/.test(textOf(modal())), true, 'asking for a new projection');
     eq(/What is this rule about\?/.test(textOf(screen.main)), true, 'the half-built rule still shows behind it');
 
-    const draft = sandbox.state.defFrames[0].draft;
-    draft.name = 'Course seats';
-    Object.assign(draft.body, { tags: [], valueType: 'integer', initialValue: '0' });
+    findAll(modal(), (n) => n.tag === 'input')[0].oninput({ target: { value: 'Course seats' } });
     press(modal(), 'Create');
     eq(!!model()['projection-definitions'].CourseSeats, true, 'it is created');
+    eq(model()['projection-definitions'].CourseSeats.tags, [{ name: 'courseId', tagType: 'CourseId' }],
+      'partitioned by what its name starts with');
+    eq(sandbox.state.projWizard && sandbox.state.projWizard.at, 'kind', 'and revealed from its first step');
     eq(sandbox.state.defFrames.length, 1, 'and the modal stays, on the projection it made');
     eq(/autosaved/.test(textOf(modal())), true, 'now its editor');
     eq(sandbox.state.projDraft && sandbox.state.projDraft.name, 'CourseSeats', 'editing through its draft');
@@ -5052,6 +5053,16 @@ check('the reference links only anchors the website defines', () => {
     eq(rule.target, 'projection:CourseSeats', 'with the new projection as its answer');
     eq(sandbox.state.adder, 'rule', 'and its adder still open');
     eq(sandbox.state.projDraft, null, 'the modal\'s draft does not stay behind');
+  });
+
+  check('a name that says no partition takes the one the command is about', () => {
+    openRuleAdder();
+    choose(offering(screen.main, '+ New projection…'), NEW);
+    findAll(modal(), (n) => n.tag === 'input')[0].oninput({ target: { value: 'Seats offered' } });
+    press(modal(), 'Create');
+    eq(model()['projection-definitions'].SeatsOffered.tags, [{ name: 'courseId', tagType: 'CourseId' }],
+      'DefineCourse takes one course id');
+    press(modal(), 'Close');
   });
 
   check('closing before Create leaves the rule exactly as it was', () => {
@@ -5135,9 +5146,19 @@ check('the reference links only anchors the website defines', () => {
     sandbox.openDefinitionModal(model(), { kind: 'projection' });
     fresh();
     sandbox.render();
+    findAll(modal(), (n) => n.tag === 'input')[0].oninput({ target: { value: 'Seat kind count' } });
+    press(modal(), 'Create');
+    // Its type is the initial state's, two steps on – whatever the
+    // partition step's button says about what its name guessed.
+    for (let i = 0; i < 2; i++) {
+      const next = findAll(modal(), (n) => n.tag === 'button' && /→$/.test(textOf(n)))[0];
+      fresh();
+      next.onclick();
+    }
+    eq(sandbox.state.projWizard.at, 'initial', 'at its initial state');
     choose(offering(modal(), '+ New custom type…'), NEW);
     eq(sandbox.state.defFrames.length, 2, 'stacked once');
-    eq(/Back to the new projection/.test(textOf(modal())), true, 'saying what is underneath');
+    eq(/Back to Seat kind count/.test(textOf(modal())), true, 'saying what is underneath');
     eq(!!offering(modal(), '+ New custom type…'), false, 'and offering nothing deeper');
     sandbox.openDefinitionModal(model(), { kind: 'custom-type' });
     eq(sandbox.state.defFrames.length, 2, 'nor opening it');
@@ -5146,7 +5167,7 @@ check('the reference links only anchors the website defines', () => {
     findAll(modal(), (n) => n.tag === 'input')[0].oninput({ target: { value: 'Seat kind' } });
     press(modal(), 'Add');
     eq(sandbox.state.defFrames[0].draft.body.valueType, 'SeatKind', 'the projection now holds it');
-    press(modal(), '‹ Back to the new projection');
+    press(modal(), '‹ Back to Seat kind count');
     eq(sandbox.state.defFrames.length, 1, 'back on the projection');
     press(modal(), '×');
     eq(sandbox.state.defFrames.length, 0, 'and closed');
@@ -5226,16 +5247,16 @@ check('the reference links only anchors the website defines', () => {
 
   check('the initial value is one picker, and null is one of its options', () => {
     store.set(ADVANCED, 'off');
-    eq(optionsOf(editorOf('StudentExists'), 'initial'), ['false', 'true', 'null'], 'a boolean');
-    eq(optionsOf(editorOf('CourseStatus'), 'initial').includes('null'), true, 'an enum');
-    eq(optionsOf(editorOf('CourseCapacity'), 'initial'), ['value…', 'null'], 'a number is typed');
-    eq(optionsOf(editorOf('CourseSubscribedStudentIds'), 'initial'), ['list…', 'null'], 'a list');
+    eq(optionsOf(editorOf('StudentExists'), 'starts at'), ['false', 'true', 'null'], 'a boolean');
+    eq(optionsOf(editorOf('CourseStatus'), 'starts at').includes('null'), true, 'an enum');
+    eq(optionsOf(editorOf('CourseCapacity'), 'starts at'), ['value…', 'null'], 'a number is typed');
+    eq(optionsOf(editorOf('CourseSubscribedStudentIds'), 'starts at'), ['list…', 'null'], 'a list');
     sandbox.closeForms();
   });
 
   check('picking null stores null, not an empty value', () => {
     const root = editorOf('StudentExists');
-    const field = findAll(root, (n) => n.className === 'pfield' && textOf(n).startsWith('initial'))[0];
+    const field = findAll(root, (n) => n.className === 'pfield' && textOf(n).startsWith('starts at'))[0];
     findAll(field, (n) => n.tag === 'select')[0].onchange({ target: { value: ' null' } });
     eq(sandbox.state.projDraft.body.initialValue, null, 'null');
     eq(cleanProjectionBody(sandbox.state.projDraft.body).initialValue, null, 'and saved as null');
@@ -5349,6 +5370,101 @@ check('the reference links only anchors the website defines', () => {
     eq(Object.keys(read.arguments), ['hours', 'week'], 'the command gives it as an argument');
     eq(sandbox.state.projDraft.body.arguments.map((a) => a.name), ['week', 'hours'], 'and the draft says the same');
     store.set('dcb-playground:model', id);
+    sandbox.closeForms();
+  });
+}
+
+// ---------------------------------------------------------------
+// The projection wizard: a new projection is a name, stored with what
+// the name suggests, then its editor revealed one step at a time.
+// ---------------------------------------------------------------
+{
+  const { id: courseId, model: course } = build(sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-simple'));
+  const fieldsOf = (body) => {
+    const root = sandbox.document.createElement('div');
+    for (const node of sandbox.projectionFields(course(), body)) root.appendChild(node);
+    return root;
+  };
+  const barOf = (root) => findAll(root, (n) => n.tag === 'button' && /→$|^Done$/.test(textOf(n))).map(textOf);
+  const sectionsOf = (root) => findAll(root, (n) => n.tag === 'section' && /pstep-/.test(n.className || ''))
+    .map((n) => /pstep-(\w+)/.exec(n.className)[1]);
+  const create = (label) => {
+    store.set('dcb-playground:model', courseId);
+    sandbox.closeForms();
+    sandbox.state.projWizard = null;
+    sandbox.createProjectionFromName(course(), label, (name, draft) => { sandbox.state.projDraft = { name, body: draft }; });
+    return sandbox.state.projDraft;
+  };
+  const advance = () => sandbox.advanceProjectionWizard(course(), sandbox.state.projDraft.body);
+
+  check('a name says what it is likely to be', () => {
+    const guess = (name) => sandbox.projectionGuess(course(), name);
+    eq(guess('CourseSeatCount'), { kind: 'declared', tags: [{ name: 'courseId', tagType: 'CourseId' }],
+      valueType: 'integer', isList: false, initialValue: 0 }, 'a count, kept per what it starts with');
+    eq(guess('StudentHasEnrolledExists').valueType, 'boolean', 'whether something exists');
+    eq(guess('CourseStatus').initialValue, { enumMember: 'NonExistent' }, 'a status, of the enum its name ends with');
+    eq([guess('CourseMemberIds').valueType, guess('CourseMemberIds').isList], [null, false],
+      'no MemberId, so no list of one – the type is left as it was');
+    eq([guess('CourseStudentIds').valueType, guess('CourseStudentIds').isList], ['StudentId', true], 'a list of ids');
+    eq([guess('HasSeatsLeft').kind, guess('HasSeatsLeft').valueType], ['derived', 'boolean'], 'a decision is derived');
+    eq(guess('Untitled'), { kind: 'declared', tags: [], valueType: null, isList: false, initialValue: undefined },
+      'and nothing at all is guessed from a name that says nothing');
+  });
+
+  check('it is stored at once, and revealed from what produces its value', () => {
+    const open = create('Course seat count');
+    eq(course()['projection-definitions'].CourseSeatCount.tags, [{ name: 'courseId', tagType: 'CourseId' }], 'stored, guesses in place');
+    eq(sandbox.state.projWizard, { name: 'CourseSeatCount', at: 'kind', guessed: ['initial', 'partition'] }, 'at the first step');
+    const root = fieldsOf(open.body);
+    eq(sectionsOf(root), ['kind'], 'only that step');
+    eq(barOf(root), ['Continue →'], 'and a way on');
+    advance();
+    eq(sectionsOf(fieldsOf(open.body)), ['kind', 'partition'], 'one more each time');
+    eq(textOf(fieldsOf(open.body)).includes('Guessed from its name'), true, 'saying what was guessed');
+  });
+
+  check('an empty partition is skipped as untagged, and handlers are proposed on arrival', () => {
+    const open = create('Subscription total');
+    advance();
+    eq(barOf(fieldsOf(open.body)), ['Skip – untagged – one value for the whole log →'], 'skipping says what it means');
+    advance();
+    eq(open.body.tags, [], 'and is that answer');
+    advance();
+    eq(sandbox.state.projWizard.at, 'moves', 'past its initial state');
+    eq(sandbox.cleanProjectionBody(open.body).handlers, [
+      { event: 'StudentSubscribedToCourse', operation: 'increment', value: 1 },
+      { event: 'StudentUnsubscribedFromCourse', operation: 'decrement', value: 1 },
+    ], 'the events its name is about, up and down');
+  });
+
+  check('the last step proposes a check, and adding it ends the wizard', () => {
+    const open = create('Course student ids');
+    for (let i = 0; i < 4; i++) advance();
+    eq(sandbox.state.projWizard.at, 'check', 'at the check');
+    const root = fieldsOf(open.body);
+    eq(textOf(root).includes('then CourseStudentIds(CourseId("c1")) == ["s1"]'), true, 'what the first event folds to');
+    const before = Object.keys(course()['projection-scenario-definitions'] || {}).length;
+    findAll(root, (n) => n.tag === 'button' && textOf(n) === 'Add this check →')[0].onclick();
+    eq(Object.keys(course()['projection-scenario-definitions']).length, before + 1, 'added');
+    eq(sandbox.state.projWizard, null, 'and the page is the editor again');
+  });
+
+  check('a derived projection has no initial state step', () => {
+    const open = create('Has seats left');
+    eq(!!open.body.derived, true, 'derived, from its name');
+    advance();
+    advance();
+    eq(sandbox.state.projWizard.at, 'moves', 'from its partition straight to what it derives');
+    eq(sectionsOf(fieldsOf(open.body)), ['kind', 'partition', 'moves', 'moves'], 'its value shown with it');
+    sandbox.state.projWizard = null;
+  });
+
+  check('an event its partition does not carry is listed apart, saying why', () => {
+    const open = create('Course seat total');
+    sandbox.state.projWizard = null;
+    open.body.handlers = [{ event: '', operation: 'increment', value: '' }];
+    const groups = findAll(fieldsOf(open.body), (n) => n.label !== undefined).map((n) => n.label);
+    eq(groups.includes('not tagged by Course id'), true, groups.join(', '));
     sandbox.closeForms();
   });
 }
