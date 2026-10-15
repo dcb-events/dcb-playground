@@ -1132,6 +1132,18 @@ step at the playhead. Only the step band scrolls.
   exact), are one call; the next dry run sees the round they unlock.
   The deciding run comes after, over fetched events only – a dry run's
   wrong guesses can cost bandwidth, never correctness.
+- **Planned rounds were weighed and deferred (2026-10).** The
+  definitions know every read's shape and order (`deriveDcb`,
+  `deriveRounds`); only the tag values are missing, and those could be
+  computed per round from the arguments and the aliases bound so far –
+  no dry run, no wasted folds, and the store asked for exactly the
+  displayed DCB. It needs `evResolveBinding` split into resolving
+  identifiers and folding, so the two share one resolution. Store
+  calls and correctness are the same either way, so it waits for
+  something that needs the query *before* evaluating: reading an
+  untagged, state-blind projection as `backwards, limit 1`, a view
+  of the exact query a command with given arguments will run, or
+  dry runs showing in a profile.
 - **Synchronous, deliberately.** An asynchronous port would make the
   whole fold asynchronous, and every render path that evaluates with
   it (see _Scripts and the origin_). A WebAssembly host import is a
