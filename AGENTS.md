@@ -130,6 +130,7 @@ was decided, why, and what was tried and reverted:
   view's language_, and the `dsl.js` header
 - what a script can reach, a CSP, sandboxing scripts — _Scripts and the
   origin_
+- how evaluation gets its events, the read port — _The read port_
 
 ## Conventions and gotchas
 

@@ -1100,3 +1100,29 @@ step at the playhead. Only the step band scrolls.
   is set before the first render and cleared after it, and found still
   set means the last load hung. One load only, so a reload that merely
   interrupted a slow page costs a reload.
+
+## The read port
+
+- **What it is.** Wherever `evaluate.js` takes a log, it also takes
+  a function `read({ types, tags }) → events`, called once per fold
+  with that fold's query – one DCB query item (`evSelectEvents`). The
+  playground keeps passing its log; nothing in the interface changed.
+- **Why.** A runtime that executes a model against a real DCB event
+  store (`docs/research/2026-10-15-dcb-runtime-wasm.md`) must fetch
+  only what a decision reads, and a chained binding's query is known
+  only after the read it waits for has been folded – so the store has
+  to be asked from inside evaluation, not before it. The calls the
+  port receives are exactly the reads the decision made, which is what
+  the runtime's append condition ORs together.
+- **Synchronous, deliberately.** An asynchronous port would make the
+  whole fold asynchronous, and every render path that evaluates with
+  it (see _Scripts and the origin_). A WebAssembly host import is a
+  blocking call anyway; a host over an asynchronous client blocks.
+- **A log passes every type; the port asks for the handled ones.**
+  Over a log, filtering by type would be a pass for nothing – the fold
+  skips what it has no handler for. A fold that handles no event reads
+  nothing through the port, because an empty `types` means "any type"
+  to a store.
+- **Held by a test.** Every command scenario of the shipped models
+  and the fixtures, and a chained boundary, decide the same through a
+  port as over the log (evaluate.test.js).

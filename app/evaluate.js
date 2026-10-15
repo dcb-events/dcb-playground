@@ -13,6 +13,14 @@
 // from a scenario, from the sandbox, and eventually from a worker,
 // without any of them knowing about the others.
 //
+// **A log or a read port.** Where a log goes in, a function may go in
+// instead: `read({ types, tags }) → events`, called once per fold with
+// the query that fold runs (`evSelectEvents`). The playground passes
+// its log; a runtime over a real event store passes the port and gets
+// exactly the reads the decision made, in the order it made them –
+// what its append condition has to cover. The port is synchronous, as
+// everything here is; an asynchronous store is the caller's to block on.
+//
 // **Closures, not generated code.** Every handler compiles to a small
 // JavaScript function `(state, event, args) => state`, one per handler
 // per projection, built by walking the declarative operand tree and
@@ -247,6 +255,23 @@ function evTagIndex(model, events) {
     perModel.set(events, entry = { length: events.length, last, index });
   }
   return entry.index;
+}
+
+// The events a fold reads: those carrying every one of `tags`, of the
+// `types` it handles. `events` is a log – an array – or a *read port*,
+// a function given that query (`{ types, tags }`, one DCB query item)
+// and returning the matching events in order. The playground hands in
+// its log; a runtime against a real event store hands in the port, and
+// so fetches only what each read asks for, at the moment it asks – a
+// chained binding's tags are known only once the read it waits for has
+// been folded. A log keeps the other types in: the fold skips what it
+// has no handler for, and filtering here would cost a pass for nothing.
+function evSelectEvents(model, events, types, tags) {
+  if (typeof events !== 'function') return evEventsTagged(model, events, tags);
+  // A fold that handles nothing reads nothing – and an empty `types`
+  // would mean "any type" to a store.
+  if (!types.length) return [];
+  return events({ types: [...types], tags: [...tags] }) || [];
 }
 
 // The events carrying every one of `tags`, in log order.
@@ -648,7 +673,7 @@ function evProjectionFold(model, events, projectionName, read) {
 
   const queryTags = projectionQueryTags(model, projectionName, read);
   const compiled = evCompileTarget(model, projection, `projection "${projectionName}"`);
-  const selected = evEventsTagged(model, events, queryTags)
+  const selected = evSelectEvents(model, events, compiled.types, queryTags)
     .map((event) => evWithExplicitOptionals(model, event));
   return {
     compiled,

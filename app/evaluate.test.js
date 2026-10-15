@@ -3700,4 +3700,78 @@ check('every predefined model ships advisory-clean', () => {
   });
 }
 
+// ---------------------------------------------------------------
+// A read port in place of the log: a runtime over a real event store
+// hands the evaluator a function that answers each fold's query, and
+// must get the very outcome the log gives.
+// ---------------------------------------------------------------
+{
+  // A store as the DCB specification describes one: an event matches
+  // when its type is one of the item's and it carries all its tags.
+  const portOver = (model, log, queries) => (query) => {
+    queries.push(query);
+    return log.filter((event) => query.types.includes(event.type)
+      && query.tags.every((tag) => tagsOfEvent(model, event.type, event.data).includes(tag)));
+  };
+
+  const sameThroughPort = (model, log, command, args, what) => {
+    const outcome = (events) => {
+      try { return evaluateCommand(model, events, command, args); } catch (e) { return { error: e.message }; }
+    };
+    const queries = [];
+    eq(outcome(portOver(model, log, queries)), outcome(log), what);
+    eq(queries.every((q) => q.types.length > 0), true, `${what} – every query names its types`);
+    return queries;
+  };
+
+  // The shipped models and the fixtures, whose scenarios cover scripted,
+  // guarded and derived reads.
+  const modelsWithScenarios = () => [
+    ...sandbox.PREDEFINED_MODELS.map((shipped, index) => ({ name: shipped.slug, model: build(index) })),
+    ...require('fs').readdirSync(require('path').join(__dirname, '..', 'fixtures')).map((file) => {
+      resetStore();
+      const envelope = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, '..', 'fixtures', file), 'utf8'));
+      const imported = importModelFromEnvelope(envelope).modelId;
+      return { name: file, model: sandbox.projectState()[imported] };
+    }),
+  ];
+
+  check('every command scenario decides the same through a read port', () => {
+    let compared = 0;
+    for (const { name, model } of modelsWithScenarios()) {
+      for (const scenario of Object.values(model['scenario-definitions'] || {})) {
+        sameThroughPort(model, sandbox.scenarioLog(scenario), scenario.command,
+          (scenario.when && scenario.when.arguments) || {}, `${name}: ${scenario.name}`);
+        compared++;
+      }
+    }
+    eq(compared > 50, true, `${compared} scenarios compared`);
+  });
+
+  check('a chained boundary reads by what the read it waits for answered', () => {
+    const model = build(PREDEFINED_INDEX('course-schedules'));
+    const log = [];
+    drive(model, log, 'DefineCourse', { capacity: 9, slots: ['2026-03-01T09'] });          // c1
+    drive(model, log, 'DefineCourse', { capacity: 9, slots: ['2026-03-01T11'] });          // c2
+    drive(model, log, 'RegisterStudent', { studentId: 's1' });
+    drive(model, log, 'SubscribeStudentToCourse', { courseId: 'c1', studentId: 's1' });
+    drive(model, log, 'SubscribeStudentToCourse', { courseId: 'c2', studentId: 's1' });
+    eq(sandbox.deriveRounds(model['command-definitions'].RescheduleCourse).length > 1, true, 'chained');
+    const queries = sameThroughPort(model, log, 'RescheduleCourse', { courseId: 'c1', slots: ['2026-03-01T11'] },
+      'rescheduling onto a subscriber\'s other course');
+    eq(queries.some((q) => q.tags.some((tag) => /c2/.test(tag))), true,
+      'c2 is read, known only from c1\'s subscribers');
+  });
+
+  check('a fold that handles no event reads nothing', () => {
+    const { id, model } = open_(ENTITIES);
+    addDefinition('projection-definition', id, 'Nothing', {
+      tags: [], valueType: 'integer', isList: false, initialValue: 7, handlers: [],
+    });
+    const queries = [];
+    eq(foldProjection(model(), portOver(model(), [], queries), 'Nothing', { tags: {}, args: {} }), 7, 'initial value');
+    eq(queries, [], 'no query');
+  });
+}
+
 finish();
