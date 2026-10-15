@@ -3702,26 +3702,29 @@ check('every predefined model ships advisory-clean', () => {
 
 // ---------------------------------------------------------------
 // A read port in place of the log: a runtime over a real event store
-// hands the evaluator a function that answers each fold's query, and
+// hands the evaluator a function that answers a query per round, and
 // must get the very outcome the log gives.
 // ---------------------------------------------------------------
 {
   // A store as the DCB specification describes one: an event matches
-  // when its type is one of the item's and it carries all its tags.
-  const portOver = (model, log, queries) => (query) => {
-    queries.push(query);
-    return log.filter((event) => query.types.includes(event.type)
-      && query.tags.every((tag) => tagsOfEvent(model, event.type, event.data).includes(tag)));
+  // an item when its type is one of the item's and it carries all its
+  // tags, and a query when it matches any of its items.
+  const portOver = (model, log, calls) => (items) => {
+    calls.push(items);
+    return log.filter((event) => items.some((item) => item.types.includes(event.type)
+      && item.tags.every((tag) => tagsOfEvent(model, event.type, event.data).includes(tag))));
   };
 
+  // The outcome through a port, its calls, and the query it decided on.
   const sameThroughPort = (model, log, command, args, what) => {
     const outcome = (events) => {
       try { return evaluateCommand(model, events, command, args); } catch (e) { return { error: e.message }; }
     };
-    const queries = [];
-    eq(outcome(portOver(model, log, queries)), outcome(log), what);
-    eq(queries.every((q) => q.types.length > 0), true, `${what} – every query names its types`);
-    return queries;
+    const calls = [];
+    const { query, ...through } = outcome(portOver(model, log, calls));
+    eq(through, outcome(log), what);
+    eq(calls.flat().every((item) => item.types.length > 0), true, `${what} – every item names its types`);
+    return { calls, query };
   };
 
   // The shipped models and the fixtures, whose scenarios cover scripted,
@@ -3757,10 +3760,34 @@ check('every predefined model ships advisory-clean', () => {
     drive(model, log, 'SubscribeStudentToCourse', { courseId: 'c1', studentId: 's1' });
     drive(model, log, 'SubscribeStudentToCourse', { courseId: 'c2', studentId: 's1' });
     eq(sandbox.deriveRounds(model['command-definitions'].RescheduleCourse).length > 1, true, 'chained');
-    const queries = sameThroughPort(model, log, 'RescheduleCourse', { courseId: 'c1', slots: ['2026-03-01T11'] },
+    const { calls, query } = sameThroughPort(model, log, 'RescheduleCourse', { courseId: 'c1', slots: ['2026-03-01T11'] },
       'rescheduling onto a subscriber\'s other course');
-    eq(queries.some((q) => q.tags.some((tag) => /c2/.test(tag))), true,
-      'c2 is read, known only from c1\'s subscribers');
+    eq(calls.map((items) => items.map((item) => item.tags)), [
+      [['CourseId:c1']],
+      [['StudentId:s1']],
+      [['CourseId:c2']],
+    ], 'one call per link of the chain, c2 known only from c1\'s subscribers');
+    eq(query.map((item) => item.tags), [['CourseId:c1'], ['StudentId:s1'], ['CourseId:c2']], 'the query decided on');
+  });
+
+  check('reads that hang off the arguments alone are asked in one call, merged by their tags', () => {
+    const model = build(PREDEFINED_INDEX('course-simple'));
+    const log = [];
+    drive(model, log, 'DefineCourse', { courseId: 'c1', capacity: 10 });
+    drive(model, log, 'RegisterStudent', { studentId: 's1' });
+    const { calls, query } = sameThroughPort(model, log, 'SubscribeStudentToCourse', { courseId: 'c1', studentId: 's1' },
+      'subscribing');
+    eq(calls.length, 1, 'one call');
+    eq(calls[0].map((item) => item.tags), [['CourseId:c1'], ['StudentId:s1']], 'one item per tag set');
+    eq(query, calls[0], 'and every item asked was read');
+  });
+
+  check('a command refused at its first rule still asked once for every rule', () => {
+    const model = build(PREDEFINED_INDEX('course-simple'));
+    const { calls } = sameThroughPort(model, [], 'SubscribeStudentToCourse', { courseId: 'c1', studentId: 's1' },
+      'subscribing to no course');
+    eq(calls.length, 1, 'one call');
+    eq(calls[0].length, 2, 'both tag sets');
   });
 
   check('a fold that handles no event reads nothing', () => {
@@ -3768,9 +3795,9 @@ check('every predefined model ships advisory-clean', () => {
     addDefinition('projection-definition', id, 'Nothing', {
       tags: [], valueType: 'integer', isList: false, initialValue: 7, handlers: [],
     });
-    const queries = [];
-    eq(foldProjection(model(), portOver(model(), [], queries), 'Nothing', { tags: {}, args: {} }), 7, 'initial value');
-    eq(queries, [], 'no query');
+    const calls = [];
+    eq(foldProjection(model(), portOver(model(), [], calls), 'Nothing', { tags: {}, args: {} }), 7, 'initial value');
+    eq(calls, [], 'no query');
   });
 }
 

@@ -34,20 +34,30 @@ website could do, and is WebAssembly a target?
   Second host, for conformance: Node via `jco transpile` over an
   in-memory store, running every command scenario against
   `runScenario`.
-- **The decision cycle.**
-  - One read round: `read(query)` → evaluate → `pos` = last position
-    read → `append(events, failIfEventsMatch: query, after: pos)`.
-  - Chained rounds: `head` → `pos` → reads 1…n → evaluate →
+- **The decision cycle.** The evaluator asks its read port once per
+  round, its items merged by tag set (_The read port_ in
+  `docs/design-notes.md`) – a query to a store has an overhead.
+  - One call: `read(query)` → evaluate → `pos` = last position read →
+    `append(events, failIfEventsMatch: query, after: pos)`.
+  - More than one: `head` → `pos` → reads 1…n → evaluate →
     `append(events, failIfEventsMatch: all reads ORed, after: pos)`.
     An event landing after `head` that a read sees fails the append
-    and retries – safe, no capping needed.
+    and retries – safe, no capping needed. Taking `pos` from the
+    reads instead would lose an update: an event matching read 1 that
+    lands before one read 2 returns sits below `after`.
+  - Whether a command needs more than one call is known from its
+    boundary's chain; should a second call come unannounced, the
+    runtime restarts the decision with `head`.
   - An empty store has no position; `after` is left out.
   - A conflict reruns the whole cycle, up to N times (default 3), no
     backoff; scripted handlers re-run, which the schema's purity
     contract allows.
 - **Event mapping.** `type` is the event name, `data` the payload as
   JSON, `tags` what `tagsOfEvent` derives. No metadata.
-- **Out of scope for now.** A query port for projections,
+- **Out of scope for now.** Reading an untagged projection whose
+  handlers never read its state (`CourseNumbering`) as
+  `read(query, { backwards: true, limit: 1 })`; a query port for
+  projections,
   idempotency through the event `uuid`, debug detail in results,
   splitting `model.js`, embedding the model at build time.
 
@@ -80,4 +90,5 @@ website could do, and is WebAssembly a target?
 ## What changed in the playground
 
 `evaluateCommand` and the folds accept a read port wherever they took
-a log – see _The read port_ in `docs/design-notes.md`.
+a log, and a command asks it once per round – see _The read port_ in
+`docs/design-notes.md`.
