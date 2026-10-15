@@ -495,6 +495,11 @@ on Projections, on an entity's page, and in the definition modals.
   its section with the switch off, the way the experimental flag
   works.
 
+- **A handler is one line** however long the event's name: the pickers
+  give way and end in an ellipsis, the event's first, then the value's
+  (the end of `event.data.…` is the part that says anything); the
+  operation keeps its width. A phone lets the row wrap again.
+
 ## Guarded emissions, rejection messages, derived projections
 
 - **Guarded emissions (6.0)**: a `publishes` entry may carry

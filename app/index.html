@@ -519,8 +519,33 @@
   .peditor .pinitial select { width: auto; flex: none; }
   .peditor .pinitial input { flex: 1; min-width: 0; }
   .peditor .pinitial-list { margin-top: 6px; }
-  .peditor .phandler { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 4px 6px; margin-bottom: 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+  /* A handler is one line – on, event, operation, value – however long
+     the event's name: the pickers give way and end in an ellipsis (the
+     open list still shows each name whole) rather than the value
+     dropping under the event. A phone, where that would leave a few
+     letters of each, lets the row wrap again. */
+  .peditor .pkinds { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px; }
+  .peditor .pkind { display: grid; gap: 2px; text-align: left; padding: 8px 10px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
+  .peditor .pkind b { color: var(--text); font-size: 13px; font-weight: 600; }
+  .peditor .pkind:hover { border-color: var(--accent); }
+  .peditor .pkind.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+  .peditor .pkind:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .peditor .pcheck { margin: 0; padding: 8px 10px; font: 11.5px/1.55 var(--mono); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; overflow-x: auto; white-space: pre; }
+  .peditor .pguess { margin-top: 2px; }
+  .peditor .pwizard-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 12px 4px; }
+  .peditor .phandler { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; padding: 4px 6px; margin-bottom: 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+  .peditor .phandler > .pk, .peditor .phandler > .pop, .peditor .phandler > .btn { flex: none; }
   .peditor .phandler > .btn.danger { margin-left: auto; }
+  .peditor .phandler > select { flex: 0 1 auto; min-width: 4.5em; }
+  /* The event's name gives way first: the value is a path whose end is
+     the part that says anything. */
+  .peditor .phandler > select:first-of-type { flex-shrink: 4; }
+  .peditor .phandler > input { flex: 1 1 6em; min-width: 0; }
+  .peditor .phandler > select > button, .peditor .phandler selectedcontent { min-width: 0; overflow: hidden; white-space: nowrap; }
+  .peditor .phandler selectedcontent > .label, .peditor .phandler selectedcontent > .token { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  @media (max-width: 560px) {
+    .peditor .phandler { flex-wrap: wrap; }
+  }
   .peditor .pusage-block { padding: 10px 12px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
   .peditor .pusage-block:last-child { border-bottom: 0; }
   .peditor .pquery { font-family: var(--mono); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
@@ -10770,7 +10795,9 @@ function projectionFields(model, draft, { entityName, onNewType, onChecks } = {}
         (v) => { handler.event = v; handler.value = ''; handler.valueText = ''; render(); },
         'event'),
       h('span', { class: 'pk' }, '⇒'),
-      operationControl(operations, handler),
+      // The verb is a word or two and keeps its width; the names
+      // beside it are what give way.
+      h('span', { class: 'pop' }, operationControl(operations, handler)),
       ...(event
         ? operandPicker(values, handler, 'value', { allowLiteral: !enumMembers })
         : [pick([], '', () => {}, 'pick an event first')]),
