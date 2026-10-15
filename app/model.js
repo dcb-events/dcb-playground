@@ -5783,6 +5783,82 @@ function definitionsToSchema(model) {
   return out;
 }
 
+// ============================================================
+// Value schemas.
+//
+// The values a model's definitions describe – a command's arguments, an
+// event's payload – as JSON Schema 2020-12, for whatever has to state
+// or check them outside the playground: an API contract, a validator.
+// Nothing here enforces anything; the evaluator stays as lenient as it
+// is, because a defective model must still run.
+//
+// A custom scalar type already *is* a JSON Schema (its `schema`), so it
+// is carried over whole; a composite is an object of its fields, every
+// one required and singular. `refOf(typeName)` says how a property
+// names a custom type – a `$ref` into wherever the caller keeps
+// `customTypeSchemas`, or, left out, the type's schema inline. An
+// unresolved type allows any value; its advisory already says so.
+// ============================================================
+
+function customTypeSchema(model, typeName, refOf) {
+  const body = model['custom-type-definitions'][typeName];
+  if (!body) return {};
+  if (Array.isArray(body.properties)) {
+    return propertiesSchema(model, body.properties, refOf, { requireAll: true });
+  }
+  return deepClone(body.schema || {});
+}
+
+function customTypeSchemas(model, refOf) {
+  const out = {};
+  for (const typeName of Object.keys(model['custom-type-definitions'])) {
+    out[typeName] = customTypeSchema(model, typeName, refOf);
+  }
+  return out;
+}
+
+function valueTypeSchema(model, typeName, refOf) {
+  const cls = classifyType(model, typeName);
+  if (cls.kind === 'simple') return { type: typeName };
+  if (cls.kind !== 'value') return {};
+  return refOf ? refOf(typeName) : customTypeSchema(model, typeName);
+}
+
+// One property: its type, a list of it, and `null` when it is optional
+// – the one spelling of "no value". An optional list is advised against
+// and evaluates as a plain list; it still admits the null it declares.
+function propertySchema(model, property, refOf) {
+  let schema = valueTypeSchema(model, property.propertyType, refOf);
+  if (property.isList) schema = { type: 'array', items: schema };
+  if (property.isOptional) schema = { anyOf: [schema, { type: 'null' }] };
+  return schema;
+}
+
+// An object of `properties`, closed: a key no property declares is
+// refused, so a misspelt optional argument is an error rather than a
+// silent null. An optional property may be left out (`requireAll`
+// false – what a command accepts) or must be spelt out, null or not
+// (`requireAll` – what an event payload always carries).
+function propertiesSchema(model, properties, refOf, { requireAll = false } = {}) {
+  const out = { type: 'object', properties: {}, required: [], additionalProperties: false };
+  for (const property of properties || []) {
+    if (!property || !property.name) continue;
+    out.properties[property.name] = propertySchema(model, property, refOf);
+    if (requireAll || !property.isOptional) out.required.push(property.name);
+  }
+  return out;
+}
+
+function commandArgumentsSchema(model, commandName, refOf) {
+  const body = model['command-definitions'][commandName];
+  return propertiesSchema(model, body ? body.properties : [], refOf);
+}
+
+function eventPayloadSchema(model, eventName, refOf) {
+  const body = model['event-definitions'][eventName];
+  return propertiesSchema(model, body ? body.properties : [], refOf, { requireAll: true });
+}
+
 // `sandboxSteps` – `[{ command, args }]` – comes in from the caller
 // rather than being read off a global here: this file knows nothing of
 // the interactive session index.html keeps.

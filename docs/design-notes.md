@@ -1156,3 +1156,31 @@ step at the playhead. Only the step band scrolls.
 - **Held by a test.** Every command scenario of the shipped models
   and the fixtures decides the same through a port as over the log,
   and the call counts above are asserted (evaluate.test.js).
+
+## Value schemas
+
+- **What they are.** `commandArgumentsSchema` and
+  `eventPayloadSchema` (model.js) state what a command accepts and an
+  event carries as JSON Schema 2020-12, with `customTypeSchemas` for
+  the types they name. Written for what states or checks values outside
+  the playground – the runtime's API contract and its request
+  validation (`docs/research/2026-10-15-dcb-runtime-wasm.md`).
+- **Nothing in the playground enforces them.** The evaluator checks
+  presence and nothing more, and stays that way: a mistyped value is
+  for the model's author to see, not a reason a model stops running.
+- **A custom scalar type is its own schema.** Its `schema` is already
+  JSON Schema 2020-12 – OpenAPI 3.1's dialect – so it is carried over
+  whole, patterns and enums included. A composite is an object of its
+  fields, all required. How a property names a type is the caller's
+  (`refOf`): a `$ref` into its own components, or the schema inline.
+- **Closed, and null is the one "no value".** An unknown key is
+  refused, so a misspelt optional argument is an error instead of a
+  silent null. A command may leave an optional argument out or send
+  null; an event payload always spells it out, as the evaluator
+  publishes it.
+- **Not in WebMCP.** Its tool schemas are fixed when the tools
+  register; a command's arguments depend on the command named in the
+  call, so a tool cannot declare them.
+- **Held by a test.** Every scenario's arguments, and every event the
+  evaluator publishes for it, validate against these schemas
+  (evaluate.test.js, with a validator for the keywords in use).

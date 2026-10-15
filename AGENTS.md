@@ -131,6 +131,7 @@ was decided, why, and what was tried and reverted:
 - what a script can reach, a CSP, sandboxing scripts — _Scripts and the
   origin_
 - how evaluation gets its events, the read port — _The read port_
+- JSON Schemas of arguments and payloads — _Value schemas_
 
 ## Conventions and gotchas
 

@@ -3700,6 +3700,20 @@ check('every predefined model ships advisory-clean', () => {
   });
 }
 
+// The shipped models and the fixtures, whose scenarios cover scripted,
+// guarded and derived reads.
+function modelsWithScenarios() {
+  return [
+    ...sandbox.PREDEFINED_MODELS.map((shipped, index) => ({ name: shipped.slug, model: build(index) })),
+    ...require('fs').readdirSync(require('path').join(__dirname, '..', 'fixtures')).map((file) => {
+      resetStore();
+      const envelope = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, '..', 'fixtures', file), 'utf8'));
+      const imported = importModelFromEnvelope(envelope).modelId;
+      return { name: file, model: sandbox.projectState()[imported] };
+    }),
+  ];
+}
+
 // ---------------------------------------------------------------
 // A read port in place of the log: a runtime over a real event store
 // hands the evaluator a function that answers a query per round, and
@@ -3726,18 +3740,6 @@ check('every predefined model ships advisory-clean', () => {
     eq(calls.flat().every((item) => item.types.length > 0), true, `${what} – every item names its types`);
     return { calls, query };
   };
-
-  // The shipped models and the fixtures, whose scenarios cover scripted,
-  // guarded and derived reads.
-  const modelsWithScenarios = () => [
-    ...sandbox.PREDEFINED_MODELS.map((shipped, index) => ({ name: shipped.slug, model: build(index) })),
-    ...require('fs').readdirSync(require('path').join(__dirname, '..', 'fixtures')).map((file) => {
-      resetStore();
-      const envelope = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, '..', 'fixtures', file), 'utf8'));
-      const imported = importModelFromEnvelope(envelope).modelId;
-      return { name: file, model: sandbox.projectState()[imported] };
-    }),
-  ];
 
   check('every command scenario decides the same through a read port', () => {
     let compared = 0;
@@ -3798,6 +3800,89 @@ check('every predefined model ships advisory-clean', () => {
     const calls = [];
     eq(foldProjection(model(), portOver(model(), [], calls), 'Nothing', { tags: {}, args: {} }), 7, 'initial value');
     eq(calls, [], 'no query');
+  });
+}
+
+// ---------------------------------------------------------------
+// Value schemas: what a command accepts and an event carries, as JSON
+// Schema. Checked by validating every scenario's arguments, and every
+// event the evaluator publishes for it, against them – with a validator
+// for the keywords the generator writes and the shipped types use, as
+// this suite takes no dependency.
+// ---------------------------------------------------------------
+{
+  const errorsOf = (schema, value, defs, at = '$') => {
+    if (schema.$ref) return errorsOf(defs[schema.$ref.split('/').pop()], value, defs, at);
+    if (schema.anyOf) {
+      return schema.anyOf.some((s) => !errorsOf(s, value, defs, at).length) ? [] : [`${at}: matches no alternative`];
+    }
+    const kind = value === null ? 'null' : Array.isArray(value) ? 'array'
+      : Number.isInteger(value) ? 'integer' : typeof value;
+    if (schema.type && schema.type !== kind && !(schema.type === 'number' && kind === 'integer')) {
+      return [`${at}: ${kind}, not ${schema.type}`];
+    }
+    if (schema.enum && !schema.enum.some((m) => JSON.stringify(m) === JSON.stringify(value))) return [`${at}: not a member`];
+    if (schema.pattern && !new RegExp(schema.pattern, 'u').test(value)) return [`${at}: does not match ${schema.pattern}`];
+    if (schema.minimum !== undefined && value < schema.minimum) return [`${at}: below ${schema.minimum}`];
+    if (kind === 'array' && schema.items) return value.flatMap((v, i) => errorsOf(schema.items, v, defs, `${at}[${i}]`));
+    if (kind === 'object' && schema.properties) {
+      return [
+        ...(schema.required || []).filter((k) => !(k in value)).map((k) => `${at}.${k}: missing`),
+        ...Object.keys(value).filter((k) => !(k in schema.properties)).map((k) => `${at}.${k}: not declared`),
+        ...Object.entries(value).filter(([k]) => k in schema.properties)
+          .flatMap(([k, v]) => errorsOf(schema.properties[k], v, defs, `${at}.${k}`)),
+      ];
+    }
+    return [];
+  };
+  const refOf = (typeName) => ({ $ref: `#/components/schemas/${typeName}` });
+
+  check('every scenario\'s arguments and published events fit their schemas', () => {
+    let checked = 0;
+    for (const { name, model } of modelsWithScenarios()) {
+      const defs = sandbox.customTypeSchemas(model, refOf);
+      for (const scenario of Object.values(model['scenario-definitions'] || {})) {
+        const args = (scenario.when && scenario.when.arguments) || {};
+        eq(errorsOf(sandbox.commandArgumentsSchema(model, scenario.command, refOf), args, defs), [],
+          `${name}: ${scenario.name} – arguments`);
+        let result = null;
+        try { result = evaluateCommand(model, sandbox.scenarioLog(scenario), scenario.command, args); } catch (e) { /* broken */ }
+        for (const event of (result && result.events) || []) {
+          eq(errorsOf(sandbox.eventPayloadSchema(model, event.type, refOf), event.data, defs), [],
+            `${name}: ${scenario.name} – ${event.type}`);
+        }
+        checked++;
+      }
+    }
+    eq(checked > 50, true, `${checked} scenarios checked`);
+  });
+
+  check('a command\'s schema is closed, and an optional argument may be left out or null', () => {
+    const model = build(PREDEFINED_INDEX('course-simple'));
+    const defs = sandbox.customTypeSchemas(model, refOf);
+    const schema = sandbox.commandArgumentsSchema(model, 'DefineCourse', refOf);
+    eq(schema.additionalProperties, false, 'closed');
+    eq(errorsOf(schema, { courseId: 'c1', capacity: 2, capacityy: 3 }, defs), ['$.capacityy: not declared'], 'a misspelt key');
+    eq(errorsOf(schema, { courseId: 'c1' }, defs), ['$.capacity: missing'], 'a required one missing');
+    const optional = { name: 'note', propertyType: 'string', isOptional: true };
+    const withOptional = sandbox.propertiesSchema(model, [optional]);
+    eq([errorsOf(withOptional, {}, {}), errorsOf(withOptional, { note: null }, {})], [[], []], 'absent or null');
+    eq(sandbox.propertiesSchema(model, [optional], undefined, { requireAll: true }).required, ['note'],
+      'but an event always spells it out');
+  });
+
+  check('a custom type is its own schema, a composite its fields', () => {
+    const model = build(PREDEFINED_INDEX('course-schedules'));
+    const types = model['custom-type-definitions'];
+    const scalar = Object.keys(types).find((t) => types[t].schema && types[t].schema.pattern);
+    eq(sandbox.customTypeSchema(model, scalar), types[scalar].schema, `${scalar} carried over whole`);
+    const cart = build(PREDEFINED_INDEX('pricing-simple'));
+    const composite = Object.keys(cart['custom-type-definitions'])
+      .find((t) => Array.isArray(cart['custom-type-definitions'][t].properties));
+    const schema = sandbox.customTypeSchema(cart, composite);
+    eq([schema.type, schema.additionalProperties, schema.required.length],
+      ['object', false, cart['custom-type-definitions'][composite].properties.length], `${composite} as an object`);
+    eq(sandbox.valueTypeSchema(cart, 'NoSuchType'), {}, 'an unresolved type allows anything');
   });
 }
 
