@@ -37,7 +37,7 @@ and prune what no longer holds.
   What DCB is made of — types, events, projections, commands, the
   derived boundary — is always on screen; what the examples on
   dcb.events do not need is behind the flag: entities and lifecycles,
-  scripted projections (and the arguments a read passes one), guarded
+  scripted projections, guarded
   emissions, optional reads, `excluding`, `currentValue`, and the
   Coupling /
   Rule map / Event model / Lifecycles views. A model that uses any of
@@ -263,7 +263,7 @@ and prune what no longer holds.
   The declared type is the key; a value of another type is an advisory
   (`readProblem`) and an evaluation *error*, never a fold of the wrong
   instance. The text writes reads positionally, `CourseStatus(courseId)`
-  — tags then a script's arguments, in declaration order, always with
+  — tags then its arguments, in declaration order, always with
   parentheses (`CourseNumbering()`) — so the printer and the parser
   need each projection's declaration (`sourceNamesOf`,
   `options.projectionParameters`), and a call is a read or a tag
@@ -287,6 +287,30 @@ and prune what no longer holds.
   list (`fanRootOf` / `isZipped`). An entity read fans out the same way,
   `Course(each …)`, and a list read without `each` is an advisory and
   an error. An emission cannot take a fanned read.
+- **A projection's parameters are its tags, then its arguments**
+  (10.0). An argument (`arguments: [{name, propertyType}]`) is a value
+  a read gives besides its tags — after them, positionally, in the
+  text — and it narrows nothing: the store returns the same events
+  either way. Until 10.0 only a script had them (`script.arguments`);
+  now any projection does, and a derived one is what they are for
+  (below). A declared projection's handlers see only the event, so an
+  argument there is an advisory, never a refusal. **Tag-ness is
+  declared, not read off the type**: the editor shows one `parameters`
+  list with a `tag` toggle per row, as an event's fields have — offered
+  only for a tag type, ticked as one is picked, locked on for a
+  declared projection. Inferring it from the type was the first idea
+  and was dropped: flipping `isTag` on a custom type would silently
+  change every projection's query, and a value of a tag type that is
+  deliberately not a tag (one student, asked about within a course's
+  fold) would have no spelling. The text keeps the `tag` keyword for
+  the same reason, and a tag after an argument is a parse error
+  (reads are positional). Toggling a saved parameter moves it between
+  the lists and every read's value with it, a literal respelled
+  (`setProjectionParameterIsTag`); renaming one is a member rename
+  (`projection-definition:argument` beside `:tag`), and a tag and an
+  argument share one namespace. An entity binding supplies the
+  arguments of any property it reads that takes some
+  (`argumentsExpected`), not only a scripted one's.
 - **One handler per event type, per projection** — and it is a real
   constraint, not a convenience: tag matching is by _value_, whichever
   listed property carries it, so an event listing one identifier type
@@ -324,6 +348,11 @@ and prune what no longer holds.
   changed, so this build reads 8.x and 9.x (`READABLE_MAJORS = [8,
   9]`), the first time since 7.0 that an older major is read. No
   stored shape changed either, so `EVENT_LOG_KEY` did not move.
+  10.0 moved `arguments` from a script onto the projection and let a
+  derived operand be one of its owner's parameters (`{parameterName}`,
+  below): a moved field and a new operand member. The one 9.x shape
+  that moved is lifted on import (`liftScriptArguments`), so this build
+  reads 8.x to 10.x; the stored shape moved, so `EVENT_LOG_KEY` did.
   **6.1 is the contrast worth knowing**: entity `lifecycle` is additive
   in shape *and* a minor, because a 6.0 reader that ignores it loses a
   derived diagram and misreads nothing — where 4.0's equally additive
@@ -443,7 +472,9 @@ and prune what no longer holds.
 on Projections, on an entity's page, and in the definition modals.
 
 - **Sections, with what it works out to beside them.** On the left:
-  `value` (type, cardinality, initial), `tags`, `handlers` (or the
+  `partition` (its tags, then its arguments – `tags` until 10.0),
+  `initial state` (type, cardinality, `starts at` – `value` for a
+  derived projection, which has none), `handlers` (or the
   derived predicate) and `advanced`, each headed in monospace with its
   one `ⓘ`; on the right, `projectionUsage`: the query, spelled out
   rather than behind the query popover, the checks count (a way to the
@@ -464,6 +495,43 @@ on Projections, on an entity's page, and in the definition modals.
   offers, never what is stored — a scripted or derived projection shows
   its section with the switch off, the way the experimental flag
   works.
+
+- **A new projection is a name, then a wizard**
+  (`PROJECTION_WIZARD_STEPS`), the command wizard's treatment: the name
+  is stored at once, and its editor is revealed one section at a time –
+  what produces its value (three answers, `From events` / `From other
+  projections` / `From code`, the last behind the experimental flag;
+  the Advanced switches once the wizard is over), its partition, its
+  initial state (not for a derived projection), what moves it, and a
+  proposed first check. Partition comes before the initial state
+  because it decides which events can reach it; kind comes first
+  because it decides what a parameter may be. An empty step is skipped
+  by name (`Skip – untagged …`, `Skip – nothing moves it yet`), and
+  skipping the partition *is* the untagged answer, which retired the
+  `undecided –` door for a new projection. `Show all steps` ends it, and
+  so does folding the row away. Earlier drafts asked "What is this
+  projection of?" with the whole editor under it; a simpler
+  reveal-only variant (no kind step, no guesses) was weighed and
+  dropped for this one.
+- **The name proposes, the steps show it** (`projectionGuess`,
+  `handlerGuesses`, `projectionCheckGuess`): a tag type the name starts
+  with (or a trailing `For<X>`) is its partition, `…Count` an integer at
+  0, `…Exists` a boolean at false, `…Status` the enum it ends with,
+  `…Ids` a list of that id, `Has…` / `Can…` / `…Remaining…` / `…Left`
+  derived. Handlers are proposed on reaching that step, one per event
+  that reaches it and shares a word with the name, the verb read off
+  the event (`Un…`, `…Removed`, `…Archived` undo). A step holding a
+  guess says so ("Guessed from its name"); a guess it cannot make is
+  left out rather than made badly. The check folds the *first* handled
+  event – one of each would let a subscribe and an unsubscribe cancel
+  out. Asked from a command (the definition modal), a name that says no
+  partition takes the command's one tag-typed input. The entity page
+  still adds a property as a name and a type: its partition is the
+  entity's, and it is not a wizard yet.
+- **A handler is one line** however long the event's name: the pickers
+  give way and end in an ellipsis, the event's first, then the value's
+  (the end of `event.data.…` is the part that says anything); the
+  operation keeps its width. A phone lets the row wrap again.
 
 ## Guarded emissions, rejection messages, derived projections
 
@@ -540,6 +608,21 @@ on Projections, on an entity's page, and in the definition modals.
   No case/conditional expression: it is the one thing that would turn
   `content-decisions-scripted` into data, and no real model has needed
   it yet.
+- **Derived projections compare and compute with their parameters
+  (10.0)**: a side may be one of the owner's own parameters, by name
+  (`{parameterName}`; `Free(courseId) >= seats` in the text), and so
+  may an operand's tag or argument — whether the owner reads it as a
+  tag or takes it as an argument, checked by type alone. That is what
+  lets the request be part of the declared decision:
+  `developer-hours`' `DeveloperHasHoursForWeek(developerId, week,
+  hours)` holds the comparison `AllocateHours` used to state itself.
+  An owner's argument given as an operand's *tag* does narrow that
+  operand's query — `foldedReads` takes a read's arguments with its
+  tags, so the boundary still names it. A parameter compared with a
+  single value must be of its kind (`literalKindOf`), an advisory;
+  a parameter is never assumed null, since a reader's null is the
+  reader's advisory to raise. At least one side still reads a
+  projection: a predicate over parameters alone reads nothing.
 - **A derived read is its operands' queries, each under its own tags**
   (`foldedReads` / `readItems`, model.js). Until 9.0 a derived read was
   one query item: the derived projection's own tags ANDed with the
@@ -954,8 +1037,7 @@ step at the playhead. Only the step band scrolls.
   initialState … }`, after `untagged` when both apply. The inner
   `derived …` line and `script` line are gone; the old spellings are
   errors naming the new one. In front, the header knows what the
-  block may hold before reading it — an argument on anything but a
-  script fails at the header — and a derived projection, whose body
+  block may hold before reading it, and a derived projection, whose body
   is one expression and its scenarios, prints with a block like
   every other one. The operators are `+`, `-`, `*` and the calls
   `min(a, b)` / `max(a, b)`; a `-` straight after a value (`)`, `]`, a

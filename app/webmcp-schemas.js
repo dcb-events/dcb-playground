@@ -170,6 +170,53 @@ const WEBMCP_DEFINITION_SCHEMAS = {
           ]
         }
       },
+      "arguments": {
+        "description": "Values a reader gives besides its tags (10.0; a script's own until\nthen), one entry per name – given after the tags, in this order, in\nthe notation: `Overdue(courseId, 14)`. A read of this projection must\nsupply exactly these – the same \"required here, rejected there\" rule\n`excluding` follows.\n\nAn argument is **not a tag** and can never narrow a query: the store\nreturns the same events either way. A script sees them as `args`; a\nderived projection compares or computes with them, or passes them on\nto the projections it reads. A declared projection's handlers see only\nthe event, so one taking arguments uses none of them – an advisory, not\nan error. A value of a tag type may be an argument: what makes a\nparameter a tag is being listed in `tags`, not its type.\n",
+        "type": "array",
+        "items": {
+          "description": "One value a projection asks its reader for, besides the tags it is\nread by. Any type – an argument reaches a script's code or a derived\nprojection's predicate, never the query.\n",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 100,
+              "pattern": "^[a-z][A-Za-z0-9]+$",
+              "examples": [
+                "someProperty"
+              ]
+            },
+            "propertyType": {
+              "description": "A simple type, or a declared value type – scalar (which includes\nan enum and a tag-marked identifier) or composite, including an\nentity's own derived identifier (`<name>Id` unless overridden,\nitself an ordinary `customTypeDefinition`). Every declared value\ntype shares one namespace, so a name resolves against it.\n",
+              "type": "string",
+              "anyOf": [
+                {
+                  "enum": [
+                    "boolean",
+                    "integer",
+                    "string"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "minLength": 2,
+                  "maxLength": 100,
+                  "pattern": "^[A-Z][A-Za-z0-9]+$",
+                  "examples": [
+                    "EmailAddress"
+                  ]
+                }
+              ]
+            }
+          },
+          "required": [
+            "name",
+            "propertyType"
+          ]
+        },
+        "default": []
+      },
       "valueType": {
         "description": "The type of the value held.\n\nA composite value type is legal only on a *scripted*\nprojection (4.1): the operations that advance a declared one\nact on a single value, and a record of fields has none – but\ncode has no such limit, so a script may hold the record\noutright, and a condition against it gets identity predicates\nonly, as against any composite. A script that keeps a record\nas private bookkeeping instead names the one field a reader\nsees in `script.exposes`, which is of this type like anything\nelse.\n",
         "type": "string",
@@ -276,10 +323,10 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         "additionalProperties": false,
         "properties": {
           "leftHandSide": {
-            "description": "One side of a derived projection's predicate or computation:\nanother projection's value, read by the tags the operand gives it,\nor a literal / enum-member reference to compare against. A\ncomputation's sides are numbers – a read of a numeric projection or a\nnumber literal.\n",
+            "description": "One side of a derived projection's predicate or computation:\nanother projection's value, read by the tags the operand gives it,\none of the owning projection's own parameters – a tag or an argument,\nby name (`{parameterName}`, 10.0) – or a literal / enum-member\nreference to compare against. A computation's sides are numbers – a\nread of a numeric projection, a numeric parameter or a number literal.\n",
             "oneOf": [
               {
-                "description": "Another projection's value, as a derived projection's operand. It\ngives the projection's tags by name – each one of the *owning*\nprojection's own tags (`{parameterName}`) or a `TagLiteral`, of the\ntype the tag declares – and `arguments` one literal per argument of a\nscripted projection: the same \"required here, rejected there\" rule\nevery other map of them follows.\n",
+                "description": "Another projection's value, as a derived projection's operand. It\ngives the projection's tags by name – each one of the *owning*\nprojection's own parameters (`{parameterName}`, a tag or an argument)\nor a `TagLiteral`, of the type the tag declares – and `arguments` one\nper argument the projection takes, a literal or one of the owner's\nparameters: the same \"required here, rejected there\" rule every other\nmap of them follows.\n",
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
@@ -298,7 +345,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                     "additionalProperties": {
                       "oneOf": [
                         {
-                          "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n",
+                          "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
                           "type": "object",
                           "additionalProperties": false,
                           "properties": {
@@ -374,6 +421,35 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                 },
                 "required": [
                   "projection"
+                ]
+              },
+              {
+                "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "parameterName": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 100,
+                    "pattern": "^[a-z][A-Za-z0-9]+$",
+                    "examples": [
+                      "someProperty"
+                    ]
+                  },
+                  "property": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 100,
+                    "pattern": "^[a-z][A-Za-z0-9]+$",
+                    "examples": [
+                      "someProperty"
+                    ],
+                    "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
+                  }
+                },
+                "required": [
+                  "parameterName"
                 ]
               },
               {
@@ -430,10 +506,10 @@ const WEBMCP_DEFINITION_SCHEMAS = {
             ]
           },
           "rightHandSide": {
-            "description": "One side of a derived projection's predicate or computation:\nanother projection's value, read by the tags the operand gives it,\nor a literal / enum-member reference to compare against. A\ncomputation's sides are numbers – a read of a numeric projection or a\nnumber literal.\n",
+            "description": "One side of a derived projection's predicate or computation:\nanother projection's value, read by the tags the operand gives it,\none of the owning projection's own parameters – a tag or an argument,\nby name (`{parameterName}`, 10.0) – or a literal / enum-member\nreference to compare against. A computation's sides are numbers – a\nread of a numeric projection, a numeric parameter or a number literal.\n",
             "oneOf": [
               {
-                "description": "Another projection's value, as a derived projection's operand. It\ngives the projection's tags by name – each one of the *owning*\nprojection's own tags (`{parameterName}`) or a `TagLiteral`, of the\ntype the tag declares – and `arguments` one literal per argument of a\nscripted projection: the same \"required here, rejected there\" rule\nevery other map of them follows.\n",
+                "description": "Another projection's value, as a derived projection's operand. It\ngives the projection's tags by name – each one of the *owning*\nprojection's own parameters (`{parameterName}`, a tag or an argument)\nor a `TagLiteral`, of the type the tag declares – and `arguments` one\nper argument the projection takes, a literal or one of the owner's\nparameters: the same \"required here, rejected there\" rule every other\nmap of them follows.\n",
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
@@ -452,7 +528,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                     "additionalProperties": {
                       "oneOf": [
                         {
-                          "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n",
+                          "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
                           "type": "object",
                           "additionalProperties": false,
                           "properties": {
@@ -528,6 +604,35 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                 },
                 "required": [
                   "projection"
+                ]
+              },
+              {
+                "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "parameterName": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 100,
+                    "pattern": "^[a-z][A-Za-z0-9]+$",
+                    "examples": [
+                      "someProperty"
+                    ]
+                  },
+                  "property": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 100,
+                    "pattern": "^[a-z][A-Za-z0-9]+$",
+                    "examples": [
+                      "someProperty"
+                    ],
+                    "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
+                  }
+                },
+                "required": [
+                  "parameterName"
                 ]
               },
               {
@@ -821,7 +926,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                 "description": "The value one tag of a read is given: a value in the command's\nscope of the tag's declared type (a tag-marked value type directly,\nor a record with tag-marked fields – one tag per field), a\n`TagLiteral`, a projection read in place, or a `TagEach`, reading once\nper element of a list.\n",
                 "oneOf": [
                   {
-                    "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n",
+                    "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
                     "type": "object",
                     "additionalProperties": false,
                     "properties": {
@@ -942,7 +1047,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                       "each": {
                         "oneOf": [
                           {
-                            "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n",
+                            "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
                             "type": "object",
                             "additionalProperties": false,
                             "properties": {
@@ -1033,7 +1138,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                       "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\n",
                       "oneOf": [
                         {
-                          "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n",
+                          "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
                           "type": "object",
                           "additionalProperties": false,
                           "properties": {
@@ -1167,7 +1272,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                       "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\n",
                       "oneOf": [
                         {
-                          "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n",
+                          "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
                           "type": "object",
                           "additionalProperties": false,
                           "properties": {
@@ -1289,7 +1394,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                           "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\n",
                           "oneOf": [
                             {
-                              "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n",
+                              "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
                               "type": "object",
                               "additionalProperties": false,
                               "properties": {
@@ -1478,7 +1583,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                 "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\n",
                 "oneOf": [
                   {
-                    "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n",
+                    "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
                     "type": "object",
                     "additionalProperties": false,
                     "properties": {

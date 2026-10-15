@@ -100,7 +100,10 @@
 // per name (`tags: {courseId: …}`) where it had listed operands; a
 // derived operand passes its owner's tags on by name, and an entity's
 // fan-out is marked (`id: {each: …}`). A v21 read has no names to match.
-const EVENT_LOG_KEY = 'dcb-playground:events:v22';
+// v23 moved a script's `arguments` onto the projection (10.0), where a
+// derived projection declares them too; a v22 script's arguments would
+// read as none.
+const EVENT_LOG_KEY = 'dcb-playground:events:v23';
 
 const DEF_KINDS = [
   'entity-definition',
@@ -831,7 +834,6 @@ function forEachReferenceSlot(kind, name, body, slot) {
     for (const p of properties || []) {
       if (!p) continue;
       at(p, 'propertyType', 'custom-type-definition', 'type');
-      typeSlots((p.script || {}).arguments);
     }
   };
   // A tag literal carries its tag type by bare name (`CourseId("c1")`),
@@ -880,7 +882,7 @@ function forEachReferenceSlot(kind, name, body, slot) {
     case 'projection-definition':
       at(body, 'valueType', 'custom-type-definition', 'type');
       tagLiteralSlots(body.tags);
-      typeSlots((scriptOf(body) || {}).arguments);
+      typeSlots(body.arguments);
       for (const handler of body.handlers || []) at(handler, 'event', 'event-definition', 'name');
       // A derived predicate names the projections it reads. `derived`
       // is read raw rather than through `derivedOf`, so a body carrying
@@ -1160,10 +1162,17 @@ function numericBaseOf(model, typeName) {
 // when it is no single number. A literal is what it is; a read is what
 // its projection holds, and may be null while that projection starts
 // at null (declared) or computes from something that may (derived). A
-// script's value is opaque, and taken at its word.
-function derivedInputOf(model, operand, seen = []) {
+// script's value is opaque, and taken at its word. A parameter is what
+// `owner` – the derived projection it belongs to – declares it as; a
+// reader's null is the reader's to be warned about.
+function derivedInputOf(model, operand, seen = [], owner = null) {
   if (typeof operand === 'number') return { base: Number.isInteger(operand) ? 'integer' : 'number', nullable: false };
   if (operand === null) return { base: null, nullable: true };
+  if (operandSource(operand) === 'parameter') {
+    const parameter = projectionParameters(owner).find((p) => p.name === operand.parameterName);
+    const base = parameter && operand.property === undefined && numericBaseOf(model, parameter.type);
+    return base ? { base, nullable: false } : null;
+  }
   if (operandSource(operand) !== 'projection-read') return null;
   const target = model['projection-definitions'][operand.projection];
   if (!target || target.isList) return null;
@@ -1172,7 +1181,7 @@ function derivedInputOf(model, operand, seen = []) {
   const inner = derivedOf(target);
   if (inner) {
     if (!derivedComputes(inner) || seen.includes(operand.projection)) return { base, nullable: false };
-    const sides = derivedOperands(inner).map((o) => derivedInputOf(model, o, [...seen, operand.projection]));
+    const sides = derivedOperands(inner).map((o) => derivedInputOf(model, o, [...seen, operand.projection], target));
     return { base, nullable: sides.some((side) => side && side.nullable) };
   }
   return { base, nullable: !scriptOf(target) && (target.initialValue === null || target.initialValue === undefined) };
@@ -1180,8 +1189,9 @@ function derivedInputOf(model, operand, seen = []) {
 
 // The type a computation yields from its two sides: an integer from two
 // integers, a number otherwise – or null when a side is no number.
-function derivedResultBase(model, derived) {
-  const sides = derivedOperands(derived).map((o) => derivedInputOf(model, o));
+// `owner` is the derived projection, whose parameters a side may name.
+function derivedResultBase(model, derived, owner = null) {
+  const sides = derivedOperands(derived).map((o) => derivedInputOf(model, o, [], owner));
   if (sides.some((side) => !side || !side.base)) return null;
   return sides.every((side) => side.base === 'integer') ? 'integer' : 'number';
 }
@@ -1257,12 +1267,25 @@ function derivedOperands(derived) {
   return derived ? [derived.leftHandSide, derived.rightHandSide] : [];
 }
 
-// What a reader of this projection supplies besides tags: a script's
+// What a reader of this projection supplies besides tags: its
 // arguments, `{name, propertyType}` – the values after the tags in
-// `X(courseId, 14)`. A declared or derived projection takes none.
+// `X(courseId, 14)` (10.0; a script's own until then). A script reads
+// them as `args`, a derived projection compares or computes with them
+// or passes them on; a declared projection's handlers cannot see them,
+// which the advisories say.
 function projectionSlots(projection) {
-  const script = scriptOf(projection);
-  return (script && script.arguments) || [];
+  return (projection && Array.isArray(projection.arguments) ? projection.arguments : [])
+    .filter((argument) => argument && typeof argument === 'object');
+}
+
+// Every parameter a read of this projection gives, tags then
+// arguments, as `{name, type, isTag}` – the one list the editor and the
+// text show, and what a derived operand's `{parameterName}` may name.
+function projectionParameters(projection) {
+  return [
+    ...projectionTagParams(projection).map((tag) => ({ name: tag.name, type: tag.tagType, isTag: true })),
+    ...projectionSlots(projection).map((slot) => ({ name: slot.name, type: slot.propertyType, isTag: false })),
+  ];
 }
 
 // The tags a projection is read by, `[{name, tagType}]`, in declaration
@@ -1397,29 +1420,29 @@ function literalKindOf(model, typeName) {
   return 'string';
 }
 
-// Every scripted projection an entity alias is read through – resolved
-// through the property bindings – which is what decides the arguments
-// its binding has to supply.
-function scriptedPropertiesRead(model, body, binding) {
+// Every projection taking arguments that an entity alias is read
+// through – resolved through the property bindings – which is what
+// decides the arguments its binding has to supply.
+function argumentPropertiesRead(model, body, binding) {
   const entity = model['entity-definitions'][binding.entity];
   if (!entity) return [];
   const found = [];
   forEachCommandOperand(body, (operand) => {
     if (operandSource(operand) !== 'alias-property' || operand.alias !== binding.alias) return;
     const { projection } = entityPropertyTarget(model, binding.entity, operand.property);
-    if (projection && scriptOf(projection) && !found.includes(projection)) found.push(projection);
+    if (projection && projectionSlots(projection).length && !found.includes(projection)) found.push(projection);
   });
   return found;
 }
 
 // The arguments a binding owes, gathered from everything it reads. Two
-// scripted projections asking for the same name ask for the same value –
-// they are read at one instant, through one binding. The instance is
-// never an argument: it is the tag the binding reads by.
+// projections asking for the same name ask for the same value – they
+// are read at one instant, through one binding. The instance is never
+// an argument: it is the tag the binding reads by.
 function argumentsExpected(model, body, binding) {
   const out = [];
-  for (const projection of scriptedPropertiesRead(model, body, binding)) {
-    for (const argument of scriptOf(projection).arguments || []) {
+  for (const projection of argumentPropertiesRead(model, body, binding)) {
+    for (const argument of projectionSlots(projection)) {
       if (!out.some((a) => a.name === argument.name)) out.push(argument);
     }
   }
@@ -1958,9 +1981,9 @@ function projectionHandledTypes(model, projectionName, seen = []) {
 // The reads a read of `read.projection` comes down to, as `[{read,
 // via}]`: itself for a folded projection, and for a derived one each
 // projection it folds in the end, read by the values this read gave –
-// an operand's `{parameterName}` is the derived projection's own tag,
-// so it takes whatever this read gave that tag; a tag literal stays
-// itself. A derived projection's query is its operands' queries, each
+// an operand's `{parameterName}` is one of the derived projection's own
+// parameters, so it takes whatever this read gave it – as a tag or an
+// argument; a literal stays itself. A derived projection's query is its operands' queries, each
 // under its *own* tags: the weekly budget is kept per developer, the
 // week's allocations per developer and week, and one query ANDing both
 // would miss the registration. `seen` stops a cycle, which the advisory
@@ -1970,15 +1993,22 @@ function foldedReads(model, read, seen = []) {
   const derived = projection && derivedOf(projection);
   if (!derived) return [{ read, via: seen.length ? read.projection : null }];
   if (seen.includes(read.projection)) return [];
-  const held = (read.tags && typeof read.tags === 'object') ? read.tags : {};
+  const held = {
+    ...((read.arguments && typeof read.arguments === 'object') ? read.arguments : {}),
+    ...((read.tags && typeof read.tags === 'object') ? read.tags : {}),
+  };
   const out = [];
   for (const operand of derivedOperands(derived)) {
     if (operandSource(operand) !== 'projection-read') continue;
-    const tags = {};
-    for (const [name, value] of readTagEntries(operand)) {
-      tags[name] = operandSource(value) === 'parameter' ? held[value.parameterName] : value;
-    }
-    out.push(...foldedReads(model, { projection: operand.projection, tags }, [...seen, read.projection]));
+    const passed = (values) => {
+      const out_ = {};
+      for (const [name, value] of Object.entries(values || {})) {
+        out_[name] = operandSource(value) === 'parameter' ? held[value.parameterName] : value;
+      }
+      return out_;
+    };
+    const next = { projection: operand.projection, tags: passed(operand.tags), arguments: passed(operand.arguments) };
+    out.push(...foldedReads(model, next, [...seen, read.projection]));
   }
   return out;
 }
@@ -2051,7 +2081,7 @@ function deriveDcb(model, body) {
           for (const type of projectionHandledTypes(model, property.projection)) types.add(type);
           continue;
         }
-        for (const { read } of foldedReads(model, { projection: property.projection, tags: { [tag.name]: binding.id } })) {
+        for (const { read } of foldedReads(model, { projection: property.projection, tags: { [tag.name]: binding.id }, arguments: binding.arguments || {} })) {
           const held = Object.values((read.tags && typeof read.tags === 'object') ? read.tags : {});
           if (held.length === 1 && held[0] === binding.id) {
             for (const type of projectionHandledTypes(model, read.projection)) types.add(type);
@@ -2875,8 +2905,8 @@ function typeArticle(word) {
 
 // Why a read cannot be read as written – or null: a projection that
 // exists, one value for each tag it declares and none it does not, each
-// of the declared type, one fan-out at most, and the arguments its
-// script takes and no others. Shared by an alias's read and a read in
+// of the declared type, one fan-out at most, and the arguments it
+// takes and no others. Shared by an alias's read and a read in
 // place, which are the same read. `chained(operand, what)` lets a
 // binding add its own rule – a value from a binding below it.
 function readProblem(model, body, read, where, chained = () => null) {
@@ -3088,11 +3118,7 @@ function validateScriptedHandlers(model, label, handlers) {
 // the boundary – `propertyType`/`isList` still describe that exposed
 // value, so conditions type-check exactly as they always did.
 //
-// `arguments` are values the command supplies at read time. They are
-// not tags and can never narrow a query: the store returns the same
-// events either way, and the code discards what it does not want. That
-// is the whole difference between an argument and a tag, and it is why
-// a tag must still be an identifier.
+// Its arguments are the projection's (`validateProjectionTags`).
 function validateScript(model, label, target) {
   const script = scriptOf(target);
   if (script.initialState === undefined) {
@@ -3123,21 +3149,13 @@ function validateScript(model, label, target) {
     }
   }
 
-  const seen = new Set();
-  for (const argument of script.arguments || []) {
-    if (!argument || !CAMEL_RE.test(argument.name || '')) {
-      throw new DomainError(`An argument on ${label} needs a camelCase name.`);
-    }
-    if (seen.has(argument.name)) {
-      throw new DomainError(`${label} declares argument "${argument.name}" twice.`);
-    }
-    seen.add(argument.name);
-    if (classifyType(model, argument.propertyType).kind === 'unresolved') {
-      throw new DomainError(
-        `Argument "${argument.name}" on ${label} is typed "${argument.propertyType}", ` +
-        'which does not resolve in this model.'
-      );
-    }
+  // Arguments are the projection's own since 10.0. A 9.x body is
+  // lifted on import; one stored here is a misreading to point out.
+  if (script.arguments !== undefined) {
+    throw new DomainError(
+      `${label} states arguments inside its script. They belong to the projection – ` +
+      'beside its tags, where every kind of projection declares them.'
+    );
   }
 
   // A script is read by the tags its projection declares, like any
@@ -3297,10 +3315,15 @@ function validateProjectionBody(model, projectionName, body) {
   validateHandlers(model, `projection "${projectionName}"`, body, body.handlers);
 }
 
-// A projection's tags: each a camelCase name, once, of a tag type –
-// the key a read's value is rendered under – and no name a script
-// argument also has, since a read gives both in one list. Then whether
-// the events it handles carry them (`projectionTagProblem`).
+// A projection's parameters. Its tags: each a camelCase name, once, of
+// a tag type – the key a read's value is rendered under. Its arguments:
+// a camelCase name each, of any type that resolves, and none a tag also
+// has, since a read gives both in one list. An argument is not a tag
+// and can never narrow a query: the store returns the same events
+// either way – which is why a tag-typed value may still be one, and
+// why a declared projection, whose handlers see only the event, has no
+// use for any. Then whether the events it handles carry the tags
+// (`projectionTagProblem`).
 function validateProjectionTags(model, projectionName, body) {
   const label = `Projection "${projectionName}"`;
   const seen = new Set();
@@ -3320,10 +3343,31 @@ function validateProjectionTags(model, projectionName, body) {
       );
     }
   }
+  const arguments_ = new Set();
   for (const argument of projectionSlots(body)) {
-    if (argument && seen.has(argument.name)) {
+    if (!CAMEL_RE.test(argument.name || '')) {
+      throw new DomainError(`${label} has an argument named "${argument.name}", which is not a camelCase name.`);
+    }
+    if (seen.has(argument.name)) {
       throw new DomainError(`${label} names both a tag and an argument "${argument.name}".`);
     }
+    if (arguments_.has(argument.name)) {
+      throw new DomainError(`${label} declares the argument "${argument.name}" twice.`);
+    }
+    arguments_.add(argument.name);
+    if (classifyType(model, argument.propertyType).kind === 'unresolved') {
+      throw new DomainError(
+        `${label}'s argument "${argument.name}" is typed "${argument.propertyType}", ` +
+        'which does not resolve in this model.'
+      );
+    }
+  }
+  if (arguments_.size && !scriptOf(body) && !derivedOf(body)) {
+    throw new DomainError(
+      `${label} takes ${[...arguments_].map((n) => `"${n}"`).join(', ')} as ` +
+      `${arguments_.size === 1 ? 'an argument' : 'arguments'}, but its handlers see only the event – ` +
+      'nothing uses them. Make each a tag, or drop it.'
+    );
   }
   const problem = projectionTagProblem(model, projectionName);
   if (problem) throw new DomainError(problem);
@@ -3331,12 +3375,12 @@ function validateProjectionTags(model, projectionName, body) {
 
 // The derived predicate: both operands recognised, at least one of
 // them a projection read, every read's arguments covering exactly the
-// arguments its target's script takes, each one a literal, enum
-// members belonging to the type they sit opposite – and no cycle,
-// since a value derived through itself has nowhere to start. An
-// operand gives its projection's tags by name, each one of the derived
-// projection's own (`{parameterName}`) or a typed literal, of the type
-// that tag declares.
+// arguments its target takes, enum members belonging to the type they
+// sit opposite – and no cycle, since a value derived through itself has
+// nowhere to start. A side may be one of the derived projection's own
+// parameters (10.0), and so may an operand's tag or argument
+// (`{parameterName}`), of the type the slot declares; otherwise a tag
+// is a typed literal and an argument a literal.
 function validateDerived(model, projectionName, body) {
   const derived = body.derived;
   const label = `projection "${projectionName}"`;
@@ -3364,14 +3408,32 @@ function validateDerived(model, projectionName, body) {
     );
   }
 
+  const own = projectionParameters(body);
+  const ownText = own.map((p) => p.name).join(', ') || 'it takes none';
+  // A `{parameterName}` – a side, an operand's tag or its argument –
+  // names one of this projection's own parameters, whether it is read
+  // by it as a tag or takes it as an argument: either way the reader
+  // gave its value. Returns the parameter, or throws.
+  const ownParameter = (value, where) => {
+    const parameter = own.find((p) => p.name === value.parameterName);
+    if (!parameter || value.property !== undefined) {
+      throw new DomainError(`${where} ${operandText(value)}, which is none of ${projectionName}'s own parameters (${ownText}).`);
+    }
+    return parameter;
+  };
+
   for (const operand of derivedOperands(derived)) {
     assertRecognisedOperand(operand, `An operand of ${label}`);
     const source = operandSource(operand);
-    if (source === 'parameter' || source === 'alias-property'
-        || source === 'event-property' || source === 'current-value' || source === 'successor') {
+    if (source === 'parameter') {
+      ownParameter(operand, `An operand of ${label} is`);
+      continue;
+    }
+    if (source === 'alias-property' || source === 'event-property'
+        || source === 'current-value' || source === 'successor') {
       throw new DomainError(
         `An operand of ${label} is "${operandText(operand)}" – a derived projection reads other ` +
-        'projections, enum members and literals; nothing else is in scope.'
+        'projections, its own parameters, enum members and literals; nothing else is in scope.'
       );
     }
     if (source !== 'projection-read') continue;
@@ -3382,7 +3444,6 @@ function validateDerived(model, projectionName, body) {
         `${label} derives from "${operand.projection}", which this model does not define.`
       );
     }
-    const own = projectionTagParams(body);
     const held = operand.tags && typeof operand.tags === 'object' && !Array.isArray(operand.tags) ? operand.tags : {};
     for (const tag of projectionTagParams(target)) {
       const value = held[tag.name];
@@ -3391,16 +3452,10 @@ function validateDerived(model, projectionName, body) {
         throw new DomainError(`${where} without a value for its "${tag.name}" tag (${tag.tagType}).`);
       }
       if (operandSource(value) === 'parameter') {
-        const source = own.find((t) => t.name === value.parameterName);
-        if (!source || value.property !== undefined) {
+        const parameter = ownParameter(value, `${where} tagged`);
+        if (parameter.type !== tag.tagType) {
           throw new DomainError(
-            `${where} tagged ${operandText(value)}, which is none of ${projectionName}'s own tags ` +
-            `(${own.map((t) => t.name).join(', ') || 'it is untagged'}).`
-          );
-        }
-        if (source.tagType !== tag.tagType) {
-          throw new DomainError(
-            `${where} tagged ${value.parameterName}, ${typeArticle(source.tagType)} ${source.tagType} – ` +
+            `${where} tagged ${value.parameterName}, ${typeArticle(parameter.type)} ${parameter.type} – ` +
             `but its "${tag.name}" tag is ${typeArticle(tag.tagType)} ${tag.tagType}.`
           );
         }
@@ -3417,7 +3472,7 @@ function validateDerived(model, projectionName, body) {
       }
       throw new DomainError(
         `${where} tagged ${operandText(value)} – an operand's tag is one of ${projectionName}'s own ` +
-        'tags or a typed literal.'
+        'parameters or a typed literal.'
       );
     }
     for (const key of Object.keys(held)) {
@@ -3435,37 +3490,79 @@ function validateDerived(model, projectionName, body) {
       }
     }
     for (const key of supplied) {
-      if (!slots.some((s) => s.name === key)) {
+      const slot = slots.find((s) => s.name === key);
+      if (!slot) {
         throw new DomainError(
           `${label} reads "${operand.projection}" with "${key}", which it does not take as an argument.`
         );
       }
-      const argumentSource = operandSource(operand.arguments[key]);
+      const argument = operand.arguments[key];
+      const argumentSource = operandSource(argument);
+      if (argumentSource === 'parameter') {
+        const parameter = ownParameter(argument, `${label} supplies "${key}" as`);
+        if (parameter.type !== slot.propertyType) {
+          throw new DomainError(
+            `${label} supplies "${key}" as ${argument.parameterName}, ${typeArticle(parameter.type)} ` +
+            `${parameter.type} – but ${operand.projection} takes it as ${typeArticle(slot.propertyType)} ${slot.propertyType}.`
+          );
+        }
+        continue;
+      }
       if (argumentSource !== 'enum-member' && argumentSource !== 'static') {
         throw new DomainError(
-          `${label} supplies "${key}" as "${operandText(operand.arguments[key])}" – an operand's ` +
-          'argument is a literal.'
+          `${label} supplies "${key}" as "${operandText(argument)}" – an operand's ` +
+          `argument is a literal or one of ${projectionName}'s own parameters.`
         );
       }
     }
   }
 
-  // An enum member is checked against the projection it sits opposite,
-  // the same way a condition's is checked against its alias property.
+  // An enum member is checked against the projection or parameter it
+  // sits opposite, the same way a condition's is checked against its
+  // alias property.
+  const typeOfSide = (operand) => {
+    if (operandSource(operand) === 'projection-read') {
+      const target = model['projection-definitions'][operand.projection];
+      return target ? { type: target.valueType, isList: !!target.isList } : null;
+    }
+    if (operandSource(operand) === 'parameter') {
+      const parameter = own.find((p) => p.name === operand.parameterName);
+      return parameter ? { type: parameter.type, isList: false } : null;
+    }
+    return null;
+  };
   const sides = [
     [derived.leftHandSide, derived.rightHandSide],
     [derived.rightHandSide, derived.leftHandSide],
   ];
   for (const [maybeEnum, other] of sides) {
     if (operandSource(maybeEnum) !== 'enum-member') continue;
-    if (operandSource(other) !== 'projection-read') continue;
-    const target = model['projection-definitions'][other.projection];
-    if (!target) continue;
-    const members = enumMembersFor(model, target.valueType);
+    const opposite = typeOfSide(other);
+    if (!opposite) continue;
+    const members = enumMembersFor(model, opposite.type);
     if (members && !members.includes(maybeEnum.enumMember)) {
       throw new DomainError(
-        `"${maybeEnum.enumMember}" is not a member of ${target.valueType} (${label}'s predicate).`
+        `"${maybeEnum.enumMember}" is not a member of ${opposite.type} (${label}'s predicate).`
       );
+    }
+  }
+
+  // A parameter compared with a single value is compared as that kind
+  // of value: an hour count against a count, a title against a title.
+  // A read against a read, or a literal, was always left to evaluation.
+  const ordinary = ['equals', 'lessThan', 'lessThanOrEquals', 'greaterThan', 'greaterThanOrEquals'];
+  if (!derivedComputes(derived) && ordinary.includes(derived.predicate)) {
+    for (const [side, other] of sides) {
+      if (operandSource(side) !== 'parameter') continue;
+      const mine = typeOfSide(side);
+      const theirs = typeOfSide(other);
+      if (!mine || !theirs || theirs.isList) continue;
+      if (literalKindOf(model, mine.type) !== literalKindOf(model, theirs.type)) {
+        throw new DomainError(
+          `${label} compares ${side.parameterName}, ${typeArticle(mine.type)} ${mine.type}, with ` +
+          `${operandText(other)}, ${typeArticle(theirs.type)} ${theirs.type} – they are no values of one kind.`
+        );
+      }
     }
   }
 
@@ -3475,14 +3572,14 @@ function validateDerived(model, projectionName, body) {
   // null is said here first.
   if (derivedComputes(derived)) {
     for (const operand of derivedOperands(derived)) {
-      if (!derivedInputOf(model, operand)) {
+      if (!derivedInputOf(model, operand, [], body)) {
         throw new DomainError(
           `${label} computes from "${operandText(operand)}", which is not a single number – ` +
           `"${derived.operator}" takes an integer or a number on each side.`
         );
       }
     }
-    const result = derivedResultBase(model, derived);
+    const result = derivedResultBase(model, derived, body);
     const declared = numericBaseOf(model, body.valueType);
     if (!declared || body.isList || (result === 'number' && declared === 'integer')) {
       throw new DomainError(
@@ -3492,7 +3589,7 @@ function validateDerived(model, projectionName, body) {
       );
     }
     const nullable = derivedOperands(derived)
-      .find((operand) => (derivedInputOf(model, operand) || {}).nullable);
+      .find((operand) => (derivedInputOf(model, operand, [], body) || {}).nullable);
     if (nullable !== undefined) {
       throw new DomainError(
         `${label} computes from ${operandText(nullable)}, which can be null – a projection it ` +
@@ -4010,8 +4107,8 @@ function validateCommandBody(model, body) {
   });
   if (failure) throw new DomainError(failure);
 
-  // A scripted property is read with the arguments its script asks
-  // for, so the binding that reads one has to supply them. The converse
+  // A property taking arguments is read with them, so the binding that
+  // reads one has to supply them. The converse
   // is an error too, exactly as `excluding` on a singular binding is: a
   // field that cannot apply here was written under a misunderstanding,
   // and saying so is more use than quietly ignoring it.
@@ -4024,8 +4121,8 @@ function validateCommandBody(model, body) {
     for (const argument of expected) {
       if (!supplied.includes(argument.name)) {
         throw new DomainError(
-          `Boundary binding "${binding.alias}" supplies no "${argument.name}", which a scripted ` +
-          `${binding.entity} property it reads asks for.`
+          `Boundary binding "${binding.alias}" supplies no "${argument.name}", which a ` +
+          `${binding.entity} property it reads takes as an argument.`
         );
       }
     }
@@ -4034,7 +4131,7 @@ function validateCommandBody(model, body) {
       if (!argument) {
         throw new DomainError(
           `Boundary binding "${binding.alias}" supplies "${key}", but nothing it reads asks for ` +
-          `it – every ${binding.entity} property it consults is declared, not scripted.`
+          `it – no ${binding.entity} property it consults takes an argument by that name.`
         );
       }
       const operand = binding.arguments[key];
@@ -4374,7 +4471,7 @@ function validateProjectionScenarioBody(model, body) {
   }
   // It reads the projection the way a command does: one value for each
   // tag it declares – literals here, each stating its type,
-  // `CourseId("c1")` – and with the arguments its script takes, required
+  // `CourseId("c1")` – and with the arguments it takes, required
   // there and rejected anywhere else: an argument that means nothing is
   // a mistake, not a no-op.
   if (body.tags !== undefined && (body.tags === null || typeof body.tags !== 'object' || Array.isArray(body.tags))) {
@@ -5000,45 +5097,76 @@ const MEMBER_REWRITES = {
   // operand's, a projection scenario's – and, on a derived projection,
   // in its own operands wherever they pass the tag on (`{parameterName}`).
   // What a script reads as `tags.<name>` is code, and stays as written.
-  'projection-definition:tag': (model, projectionName, previous, next) => {
-    const renamed = (read) => {
-      if (!read || read.projection !== projectionName || !read.tags || !(previous in read.tags)) return false;
-      read.tags = renameKey(read.tags, previous, next);
-      return true;
-    };
-    const out = rewriteCommands(model, (command) => {
-      let touched = false;
-      for (const binding of command.boundary || []) if (binding && renamed(binding)) touched = true;
-      forEachCommandOperand(command, (operand) => {
-        if (operandSource(operand) === 'projection-read' && renamed(operand)) touched = true;
-      });
-      return touched;
-    });
-    for (const [name, projection] of Object.entries(model['projection-definitions'])) {
-      const derived = projection && projection.derived;
-      if (!derived) continue;
-      const body = deepClone(projection);
-      let touched = false;
-      for (const operand of derivedOperands(body.derived)) {
-        if (operandSource(operand) !== 'projection-read') continue;
-        if (renamed(operand)) touched = true;
-        if (name !== projectionName) continue;
-        for (const value of readTagOperands(operand)) {
-          if (operandSource(value) === 'parameter' && value.parameterName === previous) {
-            value.parameterName = next;
-            touched = true;
-          }
-        }
-      }
-      if (touched) out.push({ kind: 'projection-definition', name, body });
-    }
-    for (const [key, scenario] of Object.entries(model['projection-scenario-definitions'] || {})) {
-      const body = deepClone(scenario);
-      if (renamed(body)) out.push({ kind: 'projection-scenario-definition', name: key, body });
-    }
-    return out;
-  },
+  // A projection's parameter is read by name everywhere it is given –
+  // a read's `tags` or `arguments`, a projection scenario's, a derived
+  // operand's – and named by its own derived predicate
+  // (`{parameterName}`). Tags and arguments move the same way, each in
+  // its own map.
+  'projection-definition:tag': (model, projectionName, previous, next) =>
+    renameProjectionParameter(model, projectionName, 'tags', previous, next),
+  'projection-definition:argument': (model, projectionName, previous, next) =>
+    renameProjectionParameter(model, projectionName, 'arguments', previous, next),
 };
+
+// Every `{parameterName}` a derived predicate names one of its owner's
+// parameters by: a side, an operand's tag, an operand's argument.
+function forEachOwnParameterRef(derived, visit) {
+  for (const operand of derivedOperands(derived)) {
+    if (operandSource(operand) === 'parameter') visit(operand);
+    if (operandSource(operand) !== 'projection-read') continue;
+    for (const value of [...readTagOperands(operand), ...Object.values(operand.arguments || {})]) {
+      if (operandSource(value) === 'parameter') visit(value);
+    }
+  }
+}
+
+// Every read of `projectionName`, wherever one is stored, as
+// `{kind, name, body, read}` over a deep copy – the commands' bindings
+// and inline reads, the derived operands, the projection scenarios –
+// and the projections deriving from anything (`owners`), so a caller
+// can also rewrite a derived projection's own references. `mutate`
+// returns whether it changed the read; the changed bodies come back
+// once each, as rewrites.
+function rewriteProjectionReads(model, projectionName, mutate, mutateOwner = () => false) {
+  const changes = (read, kind) => !!read && read.projection === projectionName && mutate(read, kind);
+  const out = rewriteCommands(model, (command) => {
+    let touched = false;
+    for (const binding of command.boundary || []) if (binding && changes(binding, 'command')) touched = true;
+    forEachCommandOperand(command, (operand) => {
+      if (operandSource(operand) === 'projection-read' && changes(operand, 'command')) touched = true;
+    });
+    return touched;
+  });
+  for (const [name, projection] of Object.entries(model['projection-definitions'])) {
+    if (!projection || !projection.derived) continue;
+    const body = deepClone(projection);
+    let touched = false;
+    for (const operand of derivedOperands(body.derived)) {
+      if (operandSource(operand) === 'projection-read' && changes(operand, 'derived')) touched = true;
+    }
+    if (name === projectionName && mutateOwner(body)) touched = true;
+    if (touched) out.push({ kind: 'projection-definition', name, body });
+  }
+  for (const [key, scenario] of Object.entries(model['projection-scenario-definitions'] || {})) {
+    const body = deepClone(scenario);
+    if (changes(body, 'scenario')) out.push({ kind: 'projection-scenario-definition', name: key, body });
+  }
+  return out;
+}
+
+function renameProjectionParameter(model, projectionName, map, previous, next) {
+  return rewriteProjectionReads(model, projectionName, (read) => {
+    if (!read[map] || typeof read[map] !== 'object' || !(previous in read[map])) return false;
+    read[map] = renameKey(read[map], previous, next);
+    return true;
+  }, (body) => {
+    let touched = false;
+    forEachOwnParameterRef(body.derived, (ref) => {
+      if (ref.parameterName === previous) { ref.parameterName = next; touched = true; }
+    });
+    return touched;
+  });
+}
 
 // Applies `mutate` to a deep copy of every scenario and returns the ones
 // it actually changed.
@@ -5102,6 +5230,7 @@ const MEMBER_SHAPE = {
   member: { list: 'schema.enum', named: false, label: 'Member' },
   field: { list: 'properties', named: true, label: 'Field' },
   tag: { list: 'tags', named: true, label: 'Tag' },
+  argument: { list: 'arguments', named: true, label: 'Argument' },
 };
 
 function renameMember(kind, modelId, definitionName, memberKind, previousName, newName) {
@@ -5137,6 +5266,10 @@ function renameMember(kind, modelId, definitionName, memberKind, previousName, n
       `${humanize(kind)} "${definitionName}" already has a ${memberKind} named "${trimmed}".`
     );
   }
+  // A projection's tags and arguments are one list to a read.
+  if (kind === 'projection-definition' && projectionParameters(body).some((p) => p.name === trimmed)) {
+    throw new DomainError(`Projection "${definitionName}" already has a parameter named "${trimmed}".`);
+  }
 
   // A rewrite fixes *references*; the member list itself is renamed
   // here, uniformly, so each rewrite has one job. When a rewrite also
@@ -5160,6 +5293,70 @@ function renameMember(kind, modelId, definitionName, memberKind, previousName, n
       type: `${r.kind}-updated`,
       data: { 'dcb-model-id': modelId, name: r.name, body: r.body },
     });
+  }
+  appendEvents(events);
+}
+
+// A parameter's `tag` toggle (10.0): ticked, it is one of the tags the
+// projection is read by, and narrows its query; unticked, an argument,
+// which narrows nothing. The member moves between the two lists – an
+// argument becomes the last tag, a tag the first argument, so the order
+// a read gives them in holds – and every read's value moves with it,
+// in one append. A literal changes spelling as it moves: a tag states
+// its type (`CourseId("c1")`), an argument is the bare value. Ticking a
+// value that is no tag type is not refused; the advisory says so.
+function setProjectionParameterIsTag(modelId, projectionName, parameterName, isTag) {
+  const model = getCtxOrThrow(modelId);
+  const projection = model['projection-definitions'][projectionName];
+  if (!projection) {
+    throw new DomainError(`No projection named "${projectionName}" exists in this model.`);
+  }
+  const tags = projectionTagParams(projection);
+  const slots = projectionSlots(projection);
+  const tag = tags.find((t) => t.name === parameterName);
+  const slot = slots.find((a) => a.name === parameterName);
+  if (!tag && !slot) {
+    throw new DomainError(`Projection "${projectionName}" has no parameter "${parameterName}".`);
+  }
+  if (isTag ? tag : slot) return;
+
+  const type = isTag ? slot.propertyType : tag.tagType;
+  const body = deepClone(projection);
+  body.tags = isTag ? [...tags, { name: parameterName, tagType: type }] : tags.filter((t) => t !== tag);
+  const nextSlots = isTag ? slots.filter((a) => a !== slot) : [{ name: parameterName, propertyType: type }, ...slots];
+  if (nextSlots.length) body.arguments = nextSlots;
+  else delete body.arguments;
+
+  const [from, to] = isTag ? ['arguments', 'tags'] : ['tags', 'arguments'];
+  const respelled = (value, kind) => {
+    if (isTag) {
+      const literal = kind === 'scenario' || operandSource(value) === 'static';
+      return literal ? { tagType: type, tagValue: value } : value;
+    }
+    return operandSource(value) === 'tag-literal' ? value.tagValue : value;
+  };
+  const rewrites = rewriteProjectionReads(model, projectionName, (read, kind) => {
+    const held = read[from];
+    if (!held || typeof held !== 'object' || !(parameterName in held)) return false;
+    const { [parameterName]: value, ...rest } = held;
+    read[from] = rest;
+    read[to] = { ...(read[to] && typeof read[to] === 'object' ? read[to] : {}), [parameterName]: respelled(value, kind) };
+    if (from === 'arguments' && !Object.keys(rest).length) delete read.arguments;
+    return true;
+  });
+  const own = rewrites.find((r) => r.kind === 'projection-definition' && r.name === projectionName);
+  const ownerBody = own ? { ...own.body, tags: body.tags } : body;
+  if (own) {
+    if (body.arguments) ownerBody.arguments = body.arguments;
+    else delete ownerBody.arguments;
+  }
+  const events = [{
+    type: 'projection-definition-updated',
+    data: { 'dcb-model-id': modelId, name: projectionName, body: ownerBody },
+  }];
+  for (const r of rewrites) {
+    if (r === own) continue;
+    events.push({ type: `${r.kind}-updated`, data: { 'dcb-model-id': modelId, name: r.name, body: r.body } });
   }
   appendEvents(events);
 }
@@ -5524,9 +5721,18 @@ function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
 // vocabulary – an 8.x reader finds no predicate and errors – so a
 // major; every 8.x document is a 9.0 document unchanged, so this build
 // reads 8.x whole.
-const MODEL_VERSION = '9.0';
-const MODEL_SCHEMA_URL = 'https://dcb.events/schemas/model/v9.json';
-const READABLE_MAJORS = [8, 9];
+// 10.0 gave every kind of projection arguments – values a read gives
+// besides its tags, which narrow nothing – where only a script had
+// them: `arguments` moved from `script` onto the projection, and a
+// derived projection compares or computes with its own parameters
+// (`{parameterName}` as a side, or passed on as an operand's tag or
+// argument). A new operand member and a moved field: a 9.x reader would
+// find a derived side it cannot read and a script with no arguments.
+// A 9.x document reads here whole, its scripts' arguments lifted on
+// import (`liftScriptArguments`).
+const MODEL_VERSION = '10.0';
+const MODEL_SCHEMA_URL = 'https://dcb.events/schemas/model/v10.json';
+const READABLE_MAJORS = [8, 9, 10];
 
 const SCHEMA_FIELD = {
   'custom-type-definition': 'customTypeDefinitions',
@@ -5755,6 +5961,19 @@ function envelopeVersionWarning(envelope) {
 // is the sixth and is optional, the same way the schema has it.
 const REQUIRED_SCHEMA_KINDS = SCHEMA_KINDS.filter((kind) => kind !== 'scenario-definition');
 
+// A 9.x scripted projection kept its arguments in its script; 10.0
+// keeps them on the projection, for every kind. The one shape that
+// moved, lifted as it is read – a body that already states both is
+// left to say so (`validateScript`).
+function liftScriptArguments(body) {
+  const script = body && body.script;
+  if (!script || typeof script !== 'object' || script.arguments === undefined) return;
+  if (body.arguments !== undefined) return;
+  const { arguments: lifted, ...rest } = script;
+  if (Array.isArray(lifted) && lifted.length) body.arguments = lifted;
+  body.script = rest;
+}
+
 function importModelFromEnvelope(envelope) {
   assertEnvelopeVersion(envelope);
   // There is no wrapper object to look for any more – the definition
@@ -5775,6 +5994,7 @@ function importModelFromEnvelope(envelope) {
   const events = schemaArrayToDefinitions('event-definition', envelope.eventDefinitions);
   const entities = schemaArrayToDefinitions('entity-definition', envelope.entityDefinitions);
   const projections = schemaArrayToDefinitions('projection-definition', envelope.projectionDefinitions);
+  for (const body of Object.values(projections)) liftScriptArguments(body);
   const commands = schemaArrayToDefinitions('command-definition', envelope.commandDefinitions);
   const scenarios = schemaArrayToDefinitions('scenario-definition', envelope.scenarioDefinitions);
   const propertyScenarios = schemaArrayToDefinitions(
@@ -6973,14 +7193,15 @@ function seedDerivedPending(modelId) {
 // have per week, and every allocation is subtracted from that week's
 // budget. What is left is *computed*, not folded – a derived
 // projection subtracting the hours allocated that week from the weekly
-// budget – so `AllocateHours` reads one value, and its boundary is
-// still both queries: the developer's registration and that week's
-// allocations.
+// budget – and whether it covers a request is derived too, with the
+// hours asked for as an argument (10.0): `AllocateHours` reads one
+// boolean, and its boundary is still both queries: the developer's
+// registration and that week's allocations.
 function seedDeveloperHours(modelId) {
   const prop = seedProp;
   const handler = seedHandler;
   const param = seedParam;
-  const read = (projection, tags) => ({ projection, tags });
+  const read = (projection, tags, args) => ({ projection, tags, ...(args ? { arguments: args } : {}) });
 
   addDefinition('custom-type-definition', modelId, 'ProjectId', { schema: { type: 'string' }, isTag: true });
   addDefinition('custom-type-definition', modelId, 'ProjectStatus', seedEnumType('ProjectStatus', ['Active', 'Archived']));
@@ -7033,6 +7254,17 @@ function seedDeveloperHours(modelId) {
       leftHandSide: read('DeveloperAvailableHoursPerWeek', own),
       operator: 'subtract',
       rightHandSide: read('DeveloperAllocatedHoursForWeek', { ...own, week: param('week') }),
+    },
+  });
+  addDefinition('projection-definition', modelId, 'DeveloperHasHoursForWeek', {
+    tags: developerWeek,
+    arguments: [{ name: 'hours', propertyType: 'integer' }],
+    valueType: 'boolean',
+    isList: false,
+    derived: {
+      leftHandSide: read('DeveloperRemainingHoursForWeek', { ...own, week: param('week') }),
+      predicate: 'greaterThanOrEquals',
+      rightHandSide: param('hours'),
     },
   });
 
@@ -7105,8 +7337,9 @@ function seedDeveloperHours(modelId) {
         rejection: 'Developer seniority level too low',
       },
       {
-        leftHandSide: read('DeveloperRemainingHoursForWeek', { developerId: param('developerId'), week: param('week') }),
-        predicate: 'greaterThanOrEquals', rightHandSide: param('requestedHours'),
+        leftHandSide: read('DeveloperHasHoursForWeek', { developerId: param('developerId'), week: param('week') },
+          { hours: param('requestedHours') }),
+        predicate: 'isTrue',
         rejection: 'Developer does not have enough hours left that week',
       },
     ],
@@ -7157,6 +7390,17 @@ function seedDeveloperHours(modelId) {
       week: { tagType: 'WeekNumber', tagValue: 12 },
     },
     then: 10,
+  });
+  seedProjectionScenario(modelId, '8a4d2f71-c6e9-4b30-a5d8-2e7f1c9b4a06', {
+    name: 'covers a request no larger than what is left',
+    projection: 'DeveloperHasHoursForWeek',
+    given: [registered, { event: 'HoursAllocated', data: allocated(12, 30) }],
+    tags: {
+      developerId: { tagType: 'DeveloperId', tagValue: 'd1' },
+      week: { tagType: 'WeekNumber', tagValue: 12 },
+    },
+    arguments: { hours: 11 },
+    then: false,
   });
 }
 

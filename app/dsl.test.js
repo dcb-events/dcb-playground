@@ -990,8 +990,10 @@ check('a projection says what it is tagged by, or that it is untagged', () => {
   eq(parseModelSource(sandbox.sourceApplyEdits(text, [diagnostics[0].fix])).diagnostics, [], 'whose fix declares it untagged');
   const errors = (source) => parseModelSource(source).diagnostics.map((d) => d.message);
   eq(errors('untagged projection P (tag id: CourseId): integer = 0 {}'), ['P is declared untagged and tagged by id – one or the other.'], 'not both');
-  eq(errors('projection P (days: integer, tag id: CourseId): integer = 0 {}'), ['Tags come first – a read gives the tags, then the values a script takes.'], 'tags first');
-  eq(errors('projection P (tag id: CourseId, days: integer): integer = 0 {}'), ['Only a scripted projection takes values besides its tags – days is not a tag (scripted projection P (…)).'], 'arguments, only for a script');
+  eq(errors('projection P (days: integer, tag id: CourseId): integer = 0 {}'), ['Tags come first – a read gives the tags, then the arguments.'], 'tags first');
+  // A declared projection's handlers cannot see an argument; that is
+  // the advisories' to say, so the text still reads it.
+  eq(errors('projection P (tag id: CourseId, days: integer): integer = 0 {}'), [], 'arguments parse on any projection');
   eq(errors('projection P (tag id: CourseId): integer {\n  script\n}'),
     ['"script" goes in front now, as "scripted": scripted projection P (…).'], 'the kind is said in front');
   eq(errors('projection P (tag id: CourseId): integer = 0 {\n  initialState 0\n}'),
@@ -1001,7 +1003,32 @@ check('a projection says what it is tagged by, or that it is untagged', () => {
   eq(errors('entity Course tagged CourseId {}'), ['Say what Course is tagged by: entity Course (tag courseId: CourseId).'], 'an entity too');
   const scripted = parseModelSource('scripted projection P (tag id: CourseId, days: integer): integer {\n  initialState 0\n}\n');
   eq(scripted.diagnostics, [], 'a script\'s arguments follow its tags');
-  eq(scripted.collections['projection-definition'].P.script.arguments, [{ name: 'days', propertyType: 'integer' }], 'and are stored as its arguments');
+  eq(scripted.collections['projection-definition'].P.arguments, [{ name: 'days', propertyType: 'integer' }], 'and are stored as the projection\'s arguments');
+});
+
+check('a derived projection compares, computes and passes on its own parameters by name', () => {
+  const text = 'tag type CourseId = string\n'
+    + 'projection Taken (tag courseId: CourseId): integer = 0 {}\n'
+    + 'derived projection FreeAfter (tag courseId: CourseId, taken: integer): integer {\n  20 - taken\n}\n'
+    + 'derived projection Fits (tag courseId: CourseId, seats: integer): boolean {\n  FreeAfter(courseId, seats) >= Taken(courseId)\n}\n'
+    + 'derived projection Wants (tag courseId: CourseId, seats: integer): boolean {\n  Taken(courseId) < seats\n}\n';
+  const parsed = parseModelSource(text);
+  eq(parsed.diagnostics, [], 'parses');
+  const projections = parsed.collections['projection-definition'];
+  eq(projections.Fits.arguments, [{ name: 'seats', propertyType: 'integer' }], 'an argument on a derived projection');
+  eq(projections.Fits.derived.leftHandSide,
+    { projection: 'FreeAfter', tags: { courseId: { parameterName: 'courseId' } }, arguments: { taken: { parameterName: 'seats' } } },
+    'passed on as an operand\'s argument');
+  eq(projections.Wants.derived.rightHandSide, { parameterName: 'seats' }, 'a side');
+  eq(projections.FreeAfter.derived, { leftHandSide: 20, operator: 'subtract', rightHandSide: { parameterName: 'taken' } },
+    'computed with');
+  fresh();
+  const id = sandbox.createDcbModel('Parameters');
+  applyModelSource(id, text);
+  const model = projectState()[id];
+  eq(Object.keys(model['projection-definitions']).sort(), ['Fits', 'FreeAfter', 'Taken', 'Wants'], 'applied');
+  eq(modelToSource(model).includes('derived projection Fits (tag courseId: CourseId, seats: integer): boolean {\n'
+    + '  FreeAfter(courseId, seats) >= Taken(courseId)\n}'), true, 'and printed back the same');
 });
 
 check('a derived projection says so in front, and holds one expression', () => {
@@ -1210,10 +1237,12 @@ check('the code view says what is experimental, and offers none of it with the f
   eq(at('|', { experimental: true }).includes('scripted projection'), true, 'unless the flag is on');
   const head = 'tag type CourseId = string\nprojection Cap (tag courseId: CourseId): integer = 0 {}\n';
   const derived = (body) => `${head}derived projection Left (tag courseId: CourseId): integer {\n  ${body}\n}\n`;
-  eq(at(derived('|')), ['min', 'max', 'scenarios', 'Cap'], 'a derived block opens with what it derives from');
-  eq(at(derived('Cap(courseId) - |')), ['Cap'], 'either side of an operator is a read');
-  eq(at(derived('min(|')), ['Cap'], 'and either side of min(…)');
-  eq(at(derived('Cap(|')), ['courseId'], 'a read takes this projection\'s own tags');
+  eq(at(derived('|')), ['min', 'max', 'scenarios', 'Cap', 'courseId'], 'a derived block opens with what it derives from');
+  eq(at(derived('Cap(courseId) - |')), ['Cap', 'courseId'], 'either side of an operator is a read, or its own parameter');
+  eq(at(derived('min(|')), ['Cap', 'courseId'], 'and either side of min(…)');
+  eq(at(derived('Cap(|')), ['courseId'], 'a read takes this projection\'s own parameters');
+  const withSeats = (body) => `${head}derived projection Left (tag courseId: CourseId, seats: integer): integer {\n  ${body}\n}\n`;
+  eq(at(withSeats('Cap(courseId) - |')), ['Cap', 'courseId', 'seats'], 'an argument is one of them');
   eq(at(`${head}projection S (tag courseId: CourseId): integer = 0 {\n  |\n}\n`), ['on', 'scenarios'],
     'a script\'s state is offered only on a scripted projection');
 });

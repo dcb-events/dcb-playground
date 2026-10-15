@@ -258,7 +258,7 @@ function scriptHandlerPreamble(model, body, handler) {
     eventLines.push('declare const event: { readonly type: string; readonly data: { readonly [key: string]: any } };');
   }
 
-  const argFields = (script.arguments || []).filter((argument) => argument && argument.name);
+  const argFields = projectionSlots(body).filter((argument) => argument.name);
   const argsType = argFields.length
     ? '{ ' + argFields
         .map((argument) => scriptTsKey(argument.name) + ': ' + resolveType(argument.propertyType))
