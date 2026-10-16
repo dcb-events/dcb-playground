@@ -1,7 +1,8 @@
 # The same guardrail as the pre-commit hook, run on every push and pull
-# request: the four suites, the generated schemas being current, and no
+# request: the five suites, the generated schemas being current, and no
 # bare .replace() in a suite. It runs the hook itself, so the two cannot
-# drift apart.
+# drift apart. The runner image ships PHP and Composer; DCB_REQUIRE_PHP
+# makes the PHP export checks a failure there rather than a skip.
 name: Tests
 
 on:
@@ -15,5 +16,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
       - run: sh .githooks/pre-commit
+        env:
+          DCB_REQUIRE_PHP: '1'

@@ -55,6 +55,14 @@ documentation; read it before editing the file:
   idea the page is built around). `shared.css` is its stylesheet.
 - `index.html` — the entire UI, one page. Renders from the projected state and
   re-renders after every editing command.
+- `codegen.js` — the model as _implementation source_ (experimental):
+  a language-neutral plan (`codePlan`) spelled by one printer per
+  target (`CODE_TARGETS`: JavaScript, and PHP against
+  wwwision/dcb-eventstore) into a module that decides each command
+  against a DCB event store. Scripted
+  handlers go in verbatim where the target runs JavaScript. What it
+  cannot translate becomes a stub that throws `NotExported`. No DOM. Held to
+  `evaluate.js` by `codegen.test.js`.
 - `webmcp.js` — registers WebMCP tools on `document.modelContext` so an
   in-browser agent can inspect and edit the open model through the same
   command functions the buttons call. Inert without the API or an open model.
@@ -67,21 +75,22 @@ Monaco loads itself through its own AMD loader, outside that scope.)
 
 ## Commands
 
-Tests (plain Node, no runner — run all four after any change):
+Tests (plain Node, no runner — run all five after any change):
 
 ```
 node app/evaluate.test.js   # semantics, against the shipped example models
 node app/ui.test.js         # the pure layer under the interface
 node app/webmcp.test.js     # WebMCP tool seam
 node app/dsl.test.js        # the code view's language: round trips, apply
+node app/codegen.test.js    # code export, against the evaluator, scenario by scenario (PHP parts need php + composer)
 ```
 
 The DOM stub, sandbox, script loader and assertions live once in
-`app/test-harness.js`, `require`d by all four suites. A test edits a
+`app/test-harness.js`, `require`d by all five suites. A test edits a
 fixture text with `swap(text, from, to)`, which throws when `from` is
 gone — a bare `.replace()` that misses leaves the test checking nothing.
 
-`.githooks/pre-commit` runs the four suites, checks that
+`.githooks/pre-commit` runs the five suites, checks that
 `app/webmcp-schemas.js` is current (the vendored Monaco is regenerated
 only on a version bump, so it is not checked) and refuses a bare
 `.replace()` in a suite. CI runs the same hook. Enable it once
@@ -93,6 +102,14 @@ To see a model as the code view prints it:
 node app/print-model.js                  # lists the predefined slugs
 node app/print-model.js course-simple    # a predefined model as code (--json: stored definitions)
 node app/print-model.js some-file.json   # an envelope file as code
+```
+
+To see what the code export makes of a model:
+
+```
+node app/generate-code.js course-simple           # as JavaScript (stubs to stderr)
+node app/generate-code.js course-simple --tests   # with its scenarios as node:test tests
+node app/generate-code.js course-simple --target=php
 ```
 
 Generated files — regenerate, never hand-edit:
@@ -132,6 +149,7 @@ was decided, why, and what was tried and reverted:
   origin_
 - how evaluation gets its events, the read port — _The read port_
 - JSON Schemas of arguments and payloads — _Value schemas_
+- the code export, its targets or what it stubs — _Code export_
 
 ## Conventions and gotchas
 

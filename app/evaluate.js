@@ -32,7 +32,9 @@
 // gone by the time anything folds. What this deliberately avoids is
 // emitting source: a generated fold would be a third copy of semantics
 // that `deriveDcb` and validation already hold, and the only copy of
-// the three you could not read, grep or breakpoint.
+// the three you could not read, grep or breakpoint. The code export
+// (codegen.js) does emit source — for someone to take away, never run
+// here — and codegen.test.js holds that copy to this one.
 //
 // **Scripts run on the main thread, unsandboxed – and unprompted.**
 // The contract is the one the schema states: each body is an

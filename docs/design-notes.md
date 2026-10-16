@@ -1184,3 +1184,82 @@ step at the playhead. Only the step band scrolls.
 - **Held by a test.** Every scenario's arguments, and every event the
   evaluator publishes for it, validate against these schemas
   (evaluate.test.js, with a validator for the keywords in use).
+
+## Code export
+
+- **What it is** (experimental, 2026-10). The model exported as
+  implementation source, for someone to take away (`codegen.js`). In
+  JavaScript it is one dependency-free ES module per model; PHP is
+  below. Each command decides against an
+  `EventStore` port in the shape of the DCB specification (`read`
+  answering the matching events and the store's head position,
+  `append` under a condition). It then appends what it publishes
+  under the condition its reads made: every query it ran, ORed, after
+  the head the first round saw. Later rounds ignore anything past that
+  head, so a decision reads one state. `createApp(store)` gives
+  `handle`, `decide` and `project`. A rule refusing is returned
+  (`{ rejected }`); a decision that cannot be made throws, as the
+  evaluator separates rejected from broken. A failed append throws
+  `AppendConditionFailed` and is not retried: a retry loop is shown in
+  the header, so the DCB mechanics stay visible.
+- **A plan, then printers.** `codePlan` decides every semantic
+  question once, as language-neutral data; a printer
+  (`CODE_TARGETS`) only spells it. A second language is a second
+  printer, not a second reading of the model. JavaScript with JSDoc
+  types came first: it is what dcb.events writes its examples in and
+  runs with no build step. A scripted handler is JavaScript too, so a
+  target that runs it (`runsScripts`) takes it verbatim, under the
+  evaluator's contract: a frozen copy of the event, a fresh state per
+  fold, `exposes`. Any other target stubs it. The page never runs an
+  exported script, so the import gate has nothing to add here.
+- **The third copy of the semantics, on purpose.** The evaluator
+  avoids emitting source because generated folds are a copy nobody can
+  read (its header). The export is that copy, for a reader outside the
+  playground, and `codegen.test.js` holds it to the evaluator. Every
+  scenario of every shipped model and fixture is run both ways and
+  must agree. The models without experimental constructs must export
+  without a stub. Known divergence: the export makes its reads
+  eagerly, a round at a time, and the evaluator folds an inline read
+  where a rule first needs it. So an *error* in a read no earlier
+  rule reached is raised by the export only. Outcomes never differ.
+- **What it does not translate, it stubs.** Entities and a fan-out
+  over a fan-out (`excluding` comes only with entities). A stub
+  throws `NotExported` with the reason. Whatever reads a stubbed
+  projection, a command or a derived projection, is stubbed too. The
+  file's header lists every stub. Nothing is approximated. Fan-out over a
+  projection read is translated (`readEach`, `every`), because
+  `pricing-simple` needs it and is not experimental.
+- **PHP, against wwwision/dcb-eventstore** (`^5.0`). Written
+  against the library directly rather than a port of our own: it is
+  a real store to take the export to, and its in-memory store runs the
+  scenarios. The output is one file in its own namespace
+  (`DcbModel\<Name>`): a final readonly class per event
+  (`fromArray`/`toArray`, the wire names kept), the projections built
+  once, the commands as static methods deciding `Accepted` or
+  `Rejected`, and an `App` that appends. The library's `read` answers
+  no head position. So a command reading in one round appends after
+  the last event it saw. One reading in more first reads the head
+  (`Query::all()`, backwards, limit 1), sees the store only up to it,
+  and appends after it. A projection with no handlers sends no query
+  item, since the library refuses one with neither types nor tags.
+  Scripts are JavaScript, so they are stubbed. The scenarios run
+  without PHPUnit: `php <file>` prints TAP and exits with the number
+  that failed, so the export needs nothing beyond the library.
+  Known divergences: the library refuses a tag outside
+  `[alnum-_:]`, and `strict_types` refuses a value an event's
+  property type does not take (a null for a required one). The
+  playground accepts both. The suite's PHP checks need `php` and
+  `composer`: the library is installed once into a cache under the
+  temporary directory. Without them the checks are skipped, except
+  in CI (`DCB_REQUIRE_PHP`).
+- **Options.** The model's scenarios become `node:test` tests in the
+  same file, behind `import.meta.main`, so importing the module runs
+  nothing. The other options are the bundled in-memory store, each
+  command's derived boundary as a doc comment (`boundarySummary`), and
+  the sandbox's steps as a replayable list. In the interface it is
+  the Export tab's third pill, **As code**, offered only behind the
+  experimental flag. It reuses the tab's Include row, so Scenarios
+  become tests and Sandbox steps a replay list. The language, the
+  in-memory store and the boundary comments are remembered per
+  browser (`CODE_EXPORT_KEY`). WebMCP has no tool for it, and the
+  help has no page for it while it is experimental.

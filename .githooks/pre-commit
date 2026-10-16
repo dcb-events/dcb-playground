@@ -7,13 +7,13 @@
 cd "$(git rev-parse --show-toplevel)" || exit 1
 failed=0
 
-# 1. The four suites, in parallel — each prints its tally.
+# 1. The five suites, in parallel — each prints its tally.
 dir=$(mktemp -d)
-for t in evaluate ui webmcp dsl; do
+for t in evaluate ui webmcp dsl codegen; do
   node "app/$t.test.js" >"$dir/$t" 2>&1 &
   eval "pid_$t=$!"
 done
-for t in evaluate ui webmcp dsl; do
+for t in evaluate ui webmcp dsl codegen; do
   if ! eval "wait \$pid_$t"; then
     echo "pre-commit: app/$t.test.js failed" >&2
     tail -40 "$dir/$t" >&2
