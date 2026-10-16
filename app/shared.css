@@ -58,6 +58,17 @@
   /* Beside a scenarios group in the code: a region, not a kind, so
      not a kind colour. */
   --scenario-stripe: #cbd5e1;
+  /* Compare's marks: what one side has that the other has not. A
+     state, not a kind, so no kind colour – and told apart by glyph and
+     lightness as well as hue. */
+  --added: #15803d;
+  --added-soft: #f0fdf4;
+  --added-word: #bbf7d0;
+  --removed: #b91c1c;
+  --removed-soft: #fef2f2;
+  --removed-word: #fecaca;
+  --changed: #92400e;
+  --changed-soft: #fef3c7;
   --radius: 8px;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
 }
@@ -99,6 +110,14 @@ body.f-dark {
   --danger: #f87171;
   --danger-soft: #2d1414;
   --scenario-stripe: #3a4b69;
+  --added: #4ade80;
+  --added-soft: #0f2a1c;
+  --added-word: #14532d;
+  --removed: #f87171;
+  --removed-soft: #2d1414;
+  --removed-word: #7f1d1d;
+  --changed: #fbbf24;
+  --changed-soft: #2d2410;
 }
 body.f-dark .chip.command { border-color: #1e40af; color: #bfdbfe; }
 body.f-dark .chip.event { border-color: #9a3412; color: #fed7aa; }

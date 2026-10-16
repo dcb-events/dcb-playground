@@ -2530,6 +2530,83 @@ function modelToSource(model) {
   return out.join('\n') + '\n';
 }
 
+// ---------- comparing ----------
+//
+// What Compare's Code tab shows: one definition as each side prints
+// it, line against line. A longest common subsequence – definitions are
+// a few dozen lines, so the plain table is fast enough and no library
+// is worth its weight – with removals before additions inside a change,
+// and a removed line paired with the added one at the same place in it
+// compared again word by word, so a renamed argument reads as one.
+
+function diffSequence(a, b) {
+  const lcs = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
+  for (let i = a.length - 1; i >= 0; i--) {
+    for (let j = b.length - 1; j >= 0; j--) {
+      lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+    }
+  }
+  const out = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length || j < b.length) {
+    if (i < a.length && j < b.length && a[i] === b[j]) { out.push(['same', i++, j++]); continue; }
+    if (i < a.length && (j >= b.length || lcs[i + 1][j] >= lcs[i][j + 1])) out.push(['del', i++, null]);
+    else out.push(['add', null, j++]);
+  }
+  return out;
+}
+
+// A line as parts, `{ text, changed }`, against the line it replaced.
+function diffWords(line, other) {
+  const tokens = (text) => text.match(/\w+|\s+|[^\w\s]/g) || [];
+  const mine = tokens(line);
+  const theirs = tokens(other);
+  const parts = [];
+  for (const [k, i, j] of diffSequence(theirs, mine)) {
+    if (k === 'del') continue;
+    const text = mine[j];
+    const changed = k === 'add';
+    const last = parts[parts.length - 1];
+    if (last && last.changed === changed) last.text += text;
+    else parts.push({ text, changed });
+  }
+  return parts;
+}
+
+function diffLines(older, newer) {
+  const lines = (text) => (text ? text.replace(/\n$/, '').split('\n') : []);
+  const a = lines(older);
+  const b = lines(newer);
+  const rows = diffSequence(a, b).map(([k, i, j]) => ({
+    k, o: i === null ? null : i + 1, n: j === null ? null : j + 1, text: k === 'add' ? b[j] : a[i],
+  }));
+  for (let start = 0; start < rows.length;) {
+    if (rows[start].k === 'same') { start++; continue; }
+    let end = start;
+    while (end < rows.length && rows[end].k !== 'same') end++;
+    const dels = rows.slice(start, end).filter((r) => r.k === 'del');
+    const adds = rows.slice(start, end).filter((r) => r.k === 'add');
+    for (let p = 0; p < Math.min(dels.length, adds.length); p++) {
+      dels[p].parts = diffWords(dels[p].text, adds[p].text);
+      adds[p].parts = diffWords(adds[p].text, dels[p].text);
+    }
+    start = end;
+  }
+  return rows;
+}
+
+// One definition – or scenario, by id – as each model prints it; a
+// side without it prints nothing, so the whole is added or removed.
+function definitionSourceDiff(older, newer, kind, name) {
+  const text = (model) => {
+    const body = model && model[DEF_COLLECTIONS[kind]] && model[DEF_COLLECTIONS[kind]][name];
+    if (body === undefined) return '';
+    return isIdKeyed(kind) ? printScenarioSource(model, kind, body) : printDefinitionSource(kind, name, body, sourceNamesOf(model));
+  };
+  return diffLines(text(older), text(newer));
+}
+
 // Printed once per log revision, the way every other derived view is.
 let sourceCache = null;
 function modelSource(model) {

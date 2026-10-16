@@ -132,6 +132,7 @@ was decided, why, and what was tried and reverted:
   origin_
 - how evaluation gets its events, the read port — _The read port_
 - JSON Schemas of arguments and payloads — _Value schemas_
+- comparing two models, the Compare view — _Comparing models_
 
 ## Conventions and gotchas
 

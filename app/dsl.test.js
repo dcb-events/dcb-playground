@@ -1751,4 +1751,34 @@ check('every keyword outside the experimental ones is shown to an agent', () => 
   });
 }
 
+// ---------- comparing two models as text ----------
+{
+  const rowsOf = (rows) => rows.map((r) => `${r.k} ${r.o || ''}/${r.n || ''} ${r.text}`);
+
+  check('two texts are compared line by line, each numbered on its own side', () => {
+    eq(rowsOf(sandbox.diffLines('a\nb\nc', 'a\nx\nc')), ['same 1/1 a', 'del 2/ b', 'add /2 x', 'same 3/3 c'], 'a line replaced');
+    eq(rowsOf(sandbox.diffLines('', 'a\nb')), ['add /1 a', 'add /2 b'], 'nothing before');
+    eq(rowsOf(sandbox.diffLines('a', '')), ['del 1/ a'], 'nothing after');
+  });
+
+  check('a line replaced by another says which words changed', () => {
+    const [row, other] = sandbox.diffLines('command C(courseId: CourseId) {', 'command C(tenantId: TenantId) {').filter((r) => r.k !== 'same');
+    const changed = (r) => r.parts.filter((p) => p.changed).map((p) => p.text).join('');
+    eq([changed(row), changed(other)], ['courseIdCourseId', 'tenantIdTenantId'], 'only the words that differ');
+    eq(row.parts.map((p) => p.text).join(''), row.text, 'the parts spell the line');
+  });
+
+  check('a definition compared as it prints on each side', () => {
+    store.clear();
+    sandbox.bumpLogRevision();
+    const ids = ['course-simple', 'course-tenant'].map((slug) => loadPredefinedModel(PREDEFINED_MODELS.findIndex((m) => m.slug === slug)));
+    const [simple, tenant] = ids.map((id) => projectState()[id]);
+    const rows = sandbox.definitionSourceDiff(simple, tenant, 'command-definition', 'DefineCourse');
+    eq(rows.some((r) => r.k === 'del' && r.text.includes('require CourseStatus(courseId) == NonExistent')), true, 'the rule it dropped');
+    eq(rows.some((r) => r.k === 'add' && r.text.includes('alias courseNumbering = CourseNumbering()')), true, 'the read it gained');
+    eq(sandbox.definitionSourceDiff(simple, tenant, 'command-definition', 'ArchiveCourse').every((r) => r.k === 'same'), true, 'unchanged');
+    eq(sandbox.definitionSourceDiff(simple, tenant, 'command-definition', 'RegisterTenant').every((r) => r.k === 'add'), true, 'added');
+  });
+}
+
 finish();

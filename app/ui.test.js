@@ -5739,6 +5739,196 @@ check('the export says how to share a hosted file, with this page’s #url= link
   sandbox.location.pathname = '/';
 });
 
+// Comparing two models: what changed between them, by kind and name.
+function twoModels(...slugs) {
+  store.clear();
+  sandbox.bumpLogRevision();
+  const ids = slugs.map((slug) => loadPredefinedModel(sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === slug)));
+  return ids.map((id) => projectState()[id]);
+}
+
+check('a comparison names what was added, changed and removed, by kind', () => {
+  const [simple, tenant] = twoModels('course-simple', 'course-tenant');
+  const diff = sandbox.diffDefinitions(simple, tenant);
+  eq(diff.name, { from: 'Course Example (simple)', to: 'Course Example (with sequence and tenant)' }, 'the name');
+  const types = diff.kinds['custom-type-definition'];
+  eq(types.added, ['TenantId', 'CourseNumber'], 'types added, in the order the newer side has them');
+  eq(types.changed, ['CourseId'], 'a type changed');
+  eq(types.unchanged, ['CourseStatus', 'StudentId'], 'types the same');
+  eq(diff.kinds['event-definition'].added, ['TenantRegistered'], 'an event added');
+  eq(diff.kinds['event-definition'].changed, ['CourseDefined'], 'an event changed');
+  eq(diff.kinds['projection-definition'].added, ['CourseNumbering', 'TenantExists', 'TenantCourseNumbering'], 'projections added');
+  eq(diff.kinds['command-definition'].changed, ['DefineCourse'], 'a command changed');
+  eq(diff.kinds['command-definition'].added, ['RegisterTenant'], 'a command added');
+  for (const kind of Object.keys(diff.kinds)) eq(diff.kinds[kind].removed, [], `${kind}: nothing removed`);
+});
+
+check('a comparison read the other way round swaps added for removed', () => {
+  const [simple, tenant] = twoModels('course-simple', 'course-tenant');
+  const back = sandbox.diffDefinitions(tenant, simple);
+  eq(back.kinds['command-definition'].removed, ['RegisterTenant'], 'removed, in the order the older side had them');
+  eq(back.kinds['command-definition'].added, [], 'nothing added');
+  eq(back.kinds['command-definition'].changed, ['DefineCourse'], 'changed either way');
+});
+
+check('a model compared with itself has no changes, and the same name reads as none', () => {
+  const [simple] = twoModels('course-simple');
+  const diff = sandbox.diffDefinitions(simple, simple);
+  eq(diff.name, null, 'no name change');
+  for (const [kind, entry] of Object.entries(diff.kinds)) {
+    eq([entry.added, entry.changed, entry.removed, entry.reordered], [[], [], [], false], kind);
+  }
+});
+
+check('a body equal up to its spelling is unchanged, and an order of its own is a reordering', () => {
+  const [simple] = twoModels('course-simple');
+  const events = simple['event-definitions'];
+  const names = Object.keys(events);
+  const respelled = { ...simple, 'event-definitions': Object.fromEntries([...names].reverse().map((name) => [name, events[name]])) };
+  const diff = sandbox.diffDefinitions(simple, respelled).kinds['event-definition'];
+  eq([diff.changed, diff.reordered], [[], true], 'the same events, in another order');
+  eq(diff.unchanged, [...names].reverse(), 'listed in the newer side’s order');
+});
+
+check('scenarios are compared too, keyed by their id', () => {
+  const [simple] = twoModels('course-simple');
+  const kinds = Object.keys(sandbox.diffDefinitions(simple, simple).kinds);
+  eq(kinds.includes('scenario-definition') && kinds.includes('projection-scenario-definition'), true, kinds.join(', '));
+});
+
+check('a file read for comparing is built the way an import builds it, and the log never sees it', () => {
+  const [, tenant] = twoModels('course-simple', 'course-tenant');
+  const before = sandbox.loadEvents().length;
+  const revision = sandbox.logRevisionNow();
+  const appended = [];
+  let watching = true;
+  sandbox.onAppend((from, events) => { if (watching) appended.push(...events); });
+  const { model, skipped } = sandbox.modelFromEnvelope(JSON.parse(JSON.stringify(sandbox.buildShareEnvelope(tenant))));
+  eq(sandbox.loadEvents().length, before, 'nothing appended to the log');
+  eq(sandbox.logRevisionNow(), revision, 'and no cache of the real log was invalidated');
+  watching = false;
+  eq(appended, [], 'and nobody was told of an append');
+  eq(skipped, [], 'nothing skipped');
+  eq(model.name, tenant.name, 'its name');
+  const diff = sandbox.diffDefinitions(tenant, model);
+  for (const [kind, entry] of Object.entries(diff.kinds)) eq([entry.added, entry.changed, entry.removed], [[], [], []], kind);
+  eq(Object.keys(projectState()).length, 2, 'no third model');
+});
+
+check('a file read for comparing reports what it could not read, and a malformed one is refused', () => {
+  const [simple] = twoModels('course-simple');
+  const envelope = JSON.parse(JSON.stringify(sandbox.buildShareEnvelope(simple)));
+  envelope.eventDefinitions.push({ name: 'Broken', properties: 'not a list' });
+  const { skipped } = sandbox.modelFromEnvelope(envelope);
+  eq(skipped.map((s) => s.name), ['Broken'], 'the one that failed the structural gate');
+  let message = '';
+  try { sandbox.modelFromEnvelope({ name: 'X' }); } catch (error) { message = error.message; }
+  eq(message !== '', true, 'refused, with a reason');
+  eq(sandbox.loadEvents().length > 0 && Object.keys(projectState()).length, 1, 'the log is as it was');
+});
+
+check('boundaries compared per command: what each now reads, and a read that lost its tags', () => {
+  const [simple, tenant] = twoModels('course-simple', 'course-tenant');
+  const byName = Object.fromEntries(sandbox.compareBoundaries(simple, tenant).map((c) => [c.name, c]));
+  const define = byName.DefineCourse;
+  eq(define.status, 'changed', 'DefineCourse changed');
+  eq(define.items.filter((i) => i.mark === 'removed').map((i) => [i.types, i.tags]),
+    [[['CourseArchived', 'CourseDefined'], ['CourseId:courseId']]], 'the read it dropped');
+  eq(define.items.filter((i) => i.mark === 'added').map((i) => [i.types, i.tags]), [
+    [['CourseDefined'], []],
+    [['CourseDefined'], ['TenantId:tenantId']],
+    [['TenantRegistered'], ['TenantId:tenantId']],
+  ], 'the reads it gained');
+  eq(define.lostTags, [['CourseDefined']], 'CourseDefined, read by courseId before, is read untagged now');
+  eq(byName.RegisterTenant.status, 'added', 'a new command');
+  eq(byName.ChangeCourseCapacity.status, 'same', 'the same boundary');
+  eq(byName.ChangeCourseCapacity.items.every((i) => i.mark === 'same'), true, 'every read the same');
+  const back = Object.fromEntries(sandbox.compareBoundaries(tenant, simple).map((c) => [c.name, c]));
+  eq(back.DefineCourse.lostTags, [], 'narrowing loses nothing');
+  eq(back.RegisterTenant.status, 'removed', 'and the other way round, removed');
+});
+
+check('problems compared: the ones a change introduced and the ones it fixed', () => {
+  const [simple] = twoModels('course-simple');
+  const broken = JSON.parse(JSON.stringify(simple));
+  broken['event-definitions'].CourseArchived.properties.push({ name: 'reason', propertyType: 'NoSuchType', isOptional: false, isList: false });
+  const delta = sandbox.compareProblems(simple, broken);
+  eq(delta.introduced.map((p) => p.name), ['CourseArchived'], 'introduced');
+  eq(delta.fixed, [], 'nothing fixed');
+  eq(sandbox.compareProblems(broken, simple).fixed.map((p) => p.name), ['CourseArchived'], 'fixed the other way round');
+});
+
+// The Compare page itself: offered behind the flag, a picker until
+// something is chosen, then the three tabs over what model.js derives.
+function comparePage(model) {
+  const main = sandbox.document.createElement('div');
+  sandbox.renderCompare(model, main);
+  return main;
+}
+
+check('Compare is offered with the experimental flag only', () => {
+  const [simple] = twoModels('course-simple');
+  const offered = () => sandbox.paletteEntries(simple).some((e) => e.label === 'Compare with…');
+  store.delete('dcb-playground:experimental');
+  eq(offered(), false, 'not without the flag');
+  store.set('dcb-playground:experimental', 'on');
+  eq(offered(), true, 'with it');
+});
+
+check('Compare opens on the picker, and a model chosen there is compared tab by tab', () => {
+  const [simple, tenant] = twoModels('course-simple', 'course-tenant');
+  sessionStore.clear();
+  Object.assign(sandbox.state, { view: 'compare', compareTab: 'overview', compareSwap: false, comparePicking: false, compareFocus: null });
+  const picker = textOf(comparePage(tenant));
+  for (const heading of ['This model, earlier', 'Another model', 'A file']) eq(picker.includes(heading), true, heading);
+  const option = findAll(comparePage(tenant), (n) => n.tag === 'button' && textOf(n) === simple.name)[0];
+  eq(Boolean(option), true, 'the other model is offered');
+  store.set('dcb-playground:model', tenant.id);
+  option.onclick();
+  const overview = textOf(comparePage(tenant));
+  eq(overview.includes('Course Example (simple)') && overview.includes('Boundaries'), true, 'the comparison, with its tabs');
+  eq(overview.includes('grew to every instance'), true, 'the widened boundary called out');
+  sandbox.state.compareTab = 'boundaries';
+  const boundaries = textOf(comparePage(tenant));
+  eq(boundaries.includes('untagged') && boundaries.includes('TenantRegistered'), true, 'what DefineCourse reads now');
+  sandbox.state.compareTab = 'code';
+  eq(textOf(comparePage(tenant)).includes('alias courseNumbering = CourseNumbering()'), true, 'and the text');
+  sandbox.state.compareTab = 'overview';
+});
+
+check('this model as the tab began is compared with what was changed since', () => {
+  const [simple] = twoModels('course-simple');
+  sessionStore.clear();
+  store.set('dcb-playground:model', simple.id);
+  addDefinition('event-definition', simple.id, 'CourseRenamed', { properties: [], tags: [] });
+  const now = projectState()[simple.id];
+  eq(sandbox.earlierVersions(now).length, 1, 'one step to go back to');
+  sandbox.chooseComparison(now, { kind: 'revision', first: true });
+  const found = sandbox.comparison(now);
+  eq(found.diff.kinds['event-definition'].added, ['CourseRenamed'], 'the event added since');
+  eq(textOf(comparePage(now)).includes('this model as this tab began'), true, 'named as what it is');
+});
+
+check('a choice that no longer resolves is dropped and the picker opens again', () => {
+  const [simple, tenant] = twoModels('course-simple', 'course-tenant');
+  sessionStore.clear();
+  sandbox.chooseComparison(tenant, { kind: 'model', id: simple.id });
+  eq(Boolean(sandbox.comparison(tenant)), true, 'compared');
+  sandbox.deleteDcbModel(simple.id);
+  eq(sandbox.comparison(projectState()[tenant.id]), null, 'gone with the model');
+  eq(sandbox.compareChoiceFor(tenant.id), null, 'and forgotten');
+});
+
+check('a model as it was at an earlier position of the log', () => {
+  const [simple] = twoModels('course-simple');
+  const at = sandbox.loadEvents().length;
+  addDefinition('event-definition', simple.id, 'CourseRenamed', { properties: [], tags: [] });
+  const earlier = sandbox.modelAtPosition(simple.id, at);
+  eq('CourseRenamed' in earlier['event-definitions'], false, 'not yet there');
+  eq('CourseRenamed' in projectState()[simple.id]['event-definitions'], true, 'there now');
+  eq(sandbox.modelAtPosition(simple.id, 0), null, 'before it existed');
+});
+
 // A share link or a fetched file is unpacked under a cap: a few hundred
 // kilobytes of gzip can stand for gigabytes of whitespace, and the
 // link is unpacked the moment it is opened.

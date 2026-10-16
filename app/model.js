@@ -223,7 +223,28 @@ const OPERATIONS = ['set', 'increment', 'decrement', 'append', 'remove'];
 // Event store (localStorage-backed append-only log).
 // ============================================================
 
+// A log that is not storage's: while `inScratchLog` runs, every read
+// and write of the log goes to this array instead, nobody is told of
+// an append, nothing compacts, and the revision stays where it was –
+// `projectState` folds the scratch log uncached instead – so every
+// cache of the real log survives it. It exists so a model can be built
+// by the very command functions an import uses – entity identifier
+// types, retries, the structural gate and all – without that model
+// ever reaching the log, the undo history or another tab.
+let scratchLog = null;
+
+function inScratchLog(build) {
+  const saved = scratchLog;
+  scratchLog = [];
+  try {
+    return build(scratchLog);
+  } finally {
+    scratchLog = saved;
+  }
+}
+
 function loadEvents() {
+  if (scratchLog) return scratchLog;
   const raw = localStorage.getItem(EVENT_LOG_KEY);
   if (raw === null) return [];
   let parsed = null;
@@ -267,6 +288,10 @@ const appendListeners = [];
 function onAppend(listener) { appendListeners.push(listener); }
 
 function appendEvents(newEvents) {
+  if (scratchLog) {
+    scratchLog.push(...stampEvents(newEvents, scratchLog.length));
+    return;
+  }
   let log = loadEvents();
   const append = () => {
     const startSeq = log.length;
@@ -314,6 +339,10 @@ function stampEvents(events, from) {
 // with nothing said but the browser's error name.
 // Returns the length written, in characters.
 function writeEventLog(events) {
+  if (scratchLog) {
+    scratchLog.splice(0, scratchLog.length, ...events);
+    return 0;
+  }
   const text = JSON.stringify(events);
   try {
     localStorage.setItem(EVENT_LOG_KEY, text);
@@ -440,6 +469,7 @@ function emptyModel(id, name) {
 let projectionCache = null;
 
 function projectState() {
+  if (scratchLog) return projectEvents(scratchLog);
   if (projectionCache && projectionCache.revision === logRevision) return projectionCache.models;
   const models = {};
   for (const event of loadEvents()) apply(models, event);
@@ -5489,6 +5519,117 @@ function sameDefinition(a, b) {
   return JSON.stringify(normalizedDefinition(a)) === JSON.stringify(normalizedDefinition(b));
 }
 
+// One collection against another, `{ name: body }` each: what the
+// newer side added and changed (in its order), what it removed (in the
+// older side's order), what it kept as it was, and whether it orders
+// the survivors differently from where the fold would leave them –
+// survivors where they were, additions at the end. Sameness is
+// `sameDefinition`'s, so a body respelled is unchanged. The one notion
+// of "the same definition" both Apply and Compare go by.
+function diffCollection(older, newer) {
+  const has = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
+  const out = { added: [], changed: [], removed: [], unchanged: [], reordered: false };
+  const order = Object.keys(older);
+  for (const name of order) if (!has(newer, name)) out.removed.push(name);
+  for (const [name, body] of Object.entries(newer)) {
+    if (!has(older, name)) out.added.push(name);
+    else if (sameDefinition(older[name], body)) out.unchanged.push(name);
+    else out.changed.push(name);
+  }
+  const landed = [
+    ...order.filter((name) => has(newer, name)),
+    ...Object.keys(newer).filter((name) => !has(older, name)),
+  ];
+  out.reordered = landed.join('\n') !== Object.keys(newer).join('\n');
+  return out;
+}
+
+// Two models, every stored kind – scenarios included, keyed by id –
+// and the name: what reading `newer` against `older` shows. Pure and
+// read-only, for models that need not be in the log at all (an earlier
+// revision, a file read for comparing). `name` is null when it is the
+// same.
+function diffDefinitions(older, newer) {
+  const kinds = {};
+  for (const kind of DEF_KINDS) {
+    kinds[kind] = diffCollection((older && older[DEF_COLLECTIONS[kind]]) || {}, (newer && newer[DEF_COLLECTIONS[kind]]) || {});
+  }
+  const from = (older && older.name) || '';
+  const to = (newer && newer.name) || '';
+  return { name: from === to ? null : { from, to }, kinds };
+}
+
+// Each command's derived boundary on both sides, query item by query
+// item and round by round (`boundarySummary`), every item marked
+// `same`, `added` or `removed`. An item is its types and tags, sorted –
+// the alias or projection that brought it is not part of what is read.
+// `lostTags` is the one finding named: an event type the older side
+// read by a tag and the newer side reads untagged – the boundary grew
+// from one instance to all of them. A body the derivation throws on
+// reads as reading nothing; its problem is the advisories' to tell.
+function compareBoundaries(older, newer) {
+  const commandsOf = (model) => (model && model['command-definitions']) || {};
+  const roundsOf = (model, body) => {
+    if (!body) return [];
+    let summary;
+    try { summary = boundarySummary(model, body); } catch { return []; }
+    const rounds = summary.queries.length ? summary.queries : (summary.items.length ? [summary.items] : []);
+    return rounds.map((round) => {
+      const seen = new Map();
+      for (const item of round) {
+        const types = [...item.types].sort();
+        const tags = [...item.tags].sort();
+        const key = `${types.join(',')}|${tags.join(',')}`;
+        if (!seen.has(key)) seen.set(key, { key, types, tags });
+      }
+      return [...seen.values()];
+    });
+  };
+  const olderCommands = commandsOf(older);
+  const newerCommands = commandsOf(newer);
+  const names = [...Object.keys(newerCommands), ...Object.keys(olderCommands).filter((name) => !(name in newerCommands))];
+  return names.map((name) => {
+    const before = roundsOf(older, olderCommands[name]);
+    const after = roundsOf(newer, newerCommands[name]);
+    const items = [];
+    for (let r = 0; r < Math.max(before.length, after.length); r++) {
+      const was = before[r] || [];
+      const now = after[r] || [];
+      const nowKeys = new Set(now.map((item) => item.key));
+      const wasKeys = new Set(was.map((item) => item.key));
+      for (const item of was) items.push({ round: r, types: item.types, tags: item.tags, mark: nowKeys.has(item.key) ? 'same' : 'removed' });
+      for (const item of now) if (!wasKeys.has(item.key)) items.push({ round: r, types: item.types, tags: item.tags, mark: 'added' });
+    }
+    const wasItems = before.flat();
+    const taggedBefore = new Set(wasItems.filter((item) => item.tags.length).flatMap((item) => item.types));
+    const untaggedBefore = new Set(wasItems.filter((item) => !item.tags.length).flatMap((item) => item.types));
+    const lostTags = after.flat()
+      .filter((item) => !item.tags.length)
+      .map((item) => (item.types.length ? item.types : [...taggedBefore].sort())
+        .filter((type) => taggedBefore.has(type) && !untaggedBefore.has(type)))
+      .filter((types) => types.length);
+    const status = !(name in olderCommands) ? 'added'
+      : !(name in newerCommands) ? 'removed'
+      : items.some((item) => item.mark !== 'same') ? 'changed' : 'same';
+    return { name, status, items, lostTags };
+  });
+}
+
+// The Problems panel on both sides: what the newer side reports that
+// the older did not (`introduced`) and the reverse (`fixed`), each
+// advisory known by its kind, name and message.
+function compareProblems(older, newer) {
+  const key = (problem) => `${problem.kind}\n${problem.name}\n${problem.message}`;
+  const was = older ? modelAdvisories(older) : [];
+  const now = newer ? modelAdvisories(newer) : [];
+  const wasKeys = new Set(was.map(key));
+  const nowKeys = new Set(now.map(key));
+  return {
+    introduced: now.filter((problem) => !wasKeys.has(key(problem))),
+    fixed: was.filter((problem) => !nowKeys.has(key(problem))),
+  };
+}
+
 // The whole model at once – every definition kind but the two scenario
 // kinds, as ordered `{ name: body }` maps – written as the difference
 // from what is stored: an added, updated, removed or reordered event
@@ -5532,28 +5673,21 @@ function replaceDefinitions(modelId, next) {
       assertStorableBody(kind, body);
       wanted[name] = body;
     }
-    const order = Object.keys(current);
-    for (const name of order) {
-      if (has(wanted, name)) continue;
+    const diff = diffCollection(current, wanted);
+    for (const name of diff.removed) {
       events.push({ type: `${kind}-removed`, data: { 'dcb-model-id': modelId, name } });
       summary.removed.push({ kind, name });
     }
     for (const [name, body] of Object.entries(wanted)) {
-      if (!has(current, name)) {
+      if (diff.added.includes(name)) {
         events.push({ type: `${kind}-added`, data: { 'dcb-model-id': modelId, name, body } });
         summary.added.push({ kind, name });
-      } else if (!sameDefinition(current[name], body)) {
+      } else if (diff.changed.includes(name)) {
         events.push({ type: `${kind}-updated`, data: { 'dcb-model-id': modelId, name, body } });
         summary.updated.push({ kind, name });
       }
     }
-    // The order the fold will have produced – survivors where they
-    // were, additions at the end – against the order asked for.
-    const landed = [
-      ...order.filter((name) => has(wanted, name)),
-      ...Object.keys(wanted).filter((name) => !has(current, name)),
-    ];
-    if (landed.join('\n') !== Object.keys(wanted).join('\n')) {
+    if (diff.reordered) {
       events.push({ type: `${kind}-reordered`, data: { 'dcb-model-id': modelId, order: Object.keys(wanted) } });
       summary.reordered.push({ kind });
     }
@@ -6157,6 +6291,27 @@ function importModelFromEnvelope(envelope) {
     reorderDefinitions('custom-type-definition', modelId, desired);
   }
   return { modelId, skipped };
+}
+
+// An envelope read as a model to compare against, never stored: the
+// import above, run against a scratch log (`inScratchLog`). The same
+// refusals and the same skipped list as an import; the model returned
+// is a fold of the scratch log and belongs to no one. Nothing in it is
+// compiled or run here, so a scripted envelope needs no gate – what
+// compares never evaluates.
+function modelFromEnvelope(envelope) {
+  return inScratchLog((log) => {
+    const { modelId, skipped } = importModelFromEnvelope(envelope);
+    return { model: projectEvents(log)[modelId], skipped };
+  });
+}
+
+// A stored model as it was when the log was `at` events long – before
+// an undo step, say – or null if it did not exist yet. A fold of the
+// log's prefix; undo positions survive compaction (`onCompact` moves
+// them), so a position the page still holds still means what it did.
+function modelAtPosition(modelId, at) {
+  return projectEvents(loadEvents().slice(0, at))[modelId] || null;
 }
 
 // ============================================================
