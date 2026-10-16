@@ -496,9 +496,9 @@ function build(index) {
   // A fixture carries authored scenarios, so it stands in for its
   // predefined model; every other one is checked as it exports.
   const fixtures = path.join(APP, '..', 'fixtures');
-  const fixtureSlugs = fs.readdirSync(fixtures).filter((file) => file.endsWith('.json')).map((file) => file.replace(/\.json$/, ''));
+  const fixtureSlugs = fs.readdirSync(fixtures).filter((file) => file.endsWith('.dcb.json')).map((file) => file.replace(/\.dcb\.json$/, ''));
   const envelopes = [
-    ...fixtureSlugs.map((slug) => [slug, JSON.parse(fs.readFileSync(path.join(fixtures, slug + '.json'), 'utf8'))]),
+    ...fixtureSlugs.map((slug) => [slug, JSON.parse(fs.readFileSync(path.join(fixtures, slug + '.dcb.json'), 'utf8'))]),
     ...sandbox.PREDEFINED_MODELS.flatMap((entry, index) => (fixtureSlugs.includes(entry.slug) ? []
       : [[entry.slug, sandbox.buildShareEnvelope(build(index).model(), [])]])),
   ];
@@ -5665,10 +5665,10 @@ check('a link carries a packed model or a hosted file’s address, then its opti
   const packed = sandbox.readModelLink('#model=H4sI&surface=code&experimental');
   eq([packed.kind, packed.value, packed.options.get('surface'), packed.options.has('experimental')],
     ['model', 'H4sI', 'code', true], 'packed');
-  const raw = 'https://gist.githubusercontent.com/u/1/raw/m.json?x=1&y=2';
+  const raw = 'https://gist.githubusercontent.com/u/1/raw/m.dcb.json?x=1&y=2';
   const hosted = sandbox.readModelLink('#url=' + encodeURIComponent(raw) + '&surface=visual');
   eq([hosted.kind, hosted.value, hosted.options.get('surface')], ['url', raw, 'visual'], 'hosted, encoded');
-  eq(sandbox.readModelLink('#url=https://x.test/m.json').value, 'https://x.test/m.json', 'hosted, as typed');
+  eq(sandbox.readModelLink('#url=https://x.test/m.dcb.json').value, 'https://x.test/m.dcb.json', 'hosted, as typed');
   eq(sandbox.readModelLink('#url=%E0%A4%A').value, '%E0%A4%A', 'undecodable: as written');
   eq(sandbox.readModelLink(''), null, 'none');
   eq(sandbox.readModelLink('#overview'), null, 'another fragment');
@@ -5677,9 +5677,9 @@ check('a link carries a packed model or a hosted file’s address, then its opti
 check('a hosted file’s link spells its address as typed, encoded only where it must', () => {
   const gist = 'https://gist.github.com/someone/0f1e';
   eq(sandbox.modelUrlLink(gist), '#url=' + gist, 'legible');
-  const query = 'https://x.test/m.json?a=1&b=2';
+  const query = 'https://x.test/m.dcb.json?a=1&b=2';
   eq(sandbox.modelUrlLink(query), '#url=' + encodeURIComponent(query), 'encoded');
-  for (const address of [gist, query, 'https://x.test/a b.json']) {
+  for (const address of [gist, query, 'https://x.test/a b.dcb.json']) {
     eq(sandbox.readModelLink(sandbox.modelUrlLink(address)).value, address, 'reads back: ' + address);
   }
 });
@@ -5705,10 +5705,10 @@ check('a model link stays in the address bar until its model changes', () => {
   sandbox.bumpLogRevision();
   const linked = sandbox.createDcbModel('Linked');
   const other = sandbox.createDcbModel('Other');
-  withAddressBar('#url=https://x.test/m.json', () => {
+  withAddressBar('#url=https://x.test/m.dcb.json', () => {
     sandbox.linkInAddressBar(linked);
     sandbox.addDefinition('event-definition', other, 'Elsewhere', { properties: [], tags: [] });
-    eq(sandbox.location.hash, '#url=https://x.test/m.json', 'another model’s change leaves it');
+    eq(sandbox.location.hash, '#url=https://x.test/m.dcb.json', 'another model’s change leaves it');
     sandbox.addDefinition('event-definition', linked, 'Changed', { properties: [], tags: [] });
     eq(sandbox.location.hash, '', 'its own change drops it');
   });
@@ -5777,7 +5777,7 @@ check('the export says how to share a hosted file, with this page’s #url= link
   const json = (body, init) => new Response(JSON.stringify(body), init);
 
   await check('a URL is fetched as it is and its JSON read', async () => {
-    const raw = 'https://gist.githubusercontent.com/u/abc123/raw/model.json';
+    const raw = 'https://gist.githubusercontent.com/u/abc123/raw/model.dcb.json';
     const { asked, model } = await loadFrom(raw, () => json({ name: 'M' }));
     eq(asked, [raw], 'fetched as given');
     eq(model, { name: 'M' }, 'read');
@@ -5794,11 +5794,21 @@ check('the export says how to share a hosted file, with this page’s #url= link
     eq(model, { name: 'M' }, 'the .json file');
   });
 
+  await check('a gist’s .dcb.json file is preferred over another .json file', async () => {
+    const { model } = await loadFrom('https://gist.github.com/someone/0f1e2d3c4b', () => json({
+      files: {
+        'package.json': { filename: 'package.json', content: '{"name":"P"}' },
+        'course.dcb.json': { filename: 'course.dcb.json', content: '{"name":"M"}' },
+      },
+    }));
+    eq(model, { name: 'M' }, 'the .dcb.json file');
+  });
+
   await check('a truncated gist file is fetched whole from its raw URL', async () => {
-    const rawUrl = 'https://gist.githubusercontent.com/someone/0f1e/raw/1/m.json';
+    const rawUrl = 'https://gist.githubusercontent.com/someone/0f1e/raw/1/m.dcb.json';
     const { asked, model } = await loadFrom('https://gist.github.com/0f1e', (target) => (target === rawUrl
       ? json({ name: 'M' })
-      : json({ files: { 'm.json': { filename: 'm.json', content: '{"na', truncated: true, raw_url: rawUrl } } })));
+      : json({ files: { 'm.dcb.json': { filename: 'm.dcb.json', content: '{"na', truncated: true, raw_url: rawUrl } } })));
     eq(asked, ['https://api.github.com/gists/0f1e', rawUrl], 'then the raw URL');
     eq(model, { name: 'M' }, 'read whole');
   });
@@ -5816,9 +5826,9 @@ check('the export says how to share a hosted file, with this page’s #url= link
   });
 
   await check('what fails to load says why, as a message for whoever pasted the address', async () => {
-    eq((await loadFrom('https://x.test/m.json', () => json({}, { status: 404, statusText: 'Not Found' }))).message,
+    eq((await loadFrom('https://x.test/m.dcb.json', () => json({}, { status: 404, statusText: 'Not Found' }))).message,
       'That file was not loaded: its host answered 404 Not Found.', 'a status');
-    eq(/could not be reached/.test((await loadFrom('https://x.test/m.json', () => { throw new TypeError('Failed to fetch'); })).message),
+    eq(/could not be reached/.test((await loadFrom('https://x.test/m.dcb.json', () => { throw new TypeError('Failed to fetch'); })).message),
       true, 'no response at all');
     eq(/not JSON/.test((await loadFrom('https://x.test/m.html', () => new Response('<html>'))).message), true, 'not JSON');
   });

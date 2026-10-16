@@ -90,9 +90,9 @@ per clone: `git config core.hooksPath .githooks`.
 To see a model as the code view prints it:
 
 ```
-node app/print-model.js                  # lists the predefined slugs
-node app/print-model.js course-simple    # a predefined model as code (--json: stored definitions)
-node app/print-model.js some-file.json   # an envelope file as code
+node app/print-model.js                      # lists the predefined slugs
+node app/print-model.js course-simple        # a predefined model as code (--json: stored definitions)
+node app/print-model.js some-file.dcb.json   # an envelope file as code
 ```
 
 Generated files — regenerate, never hand-edit:

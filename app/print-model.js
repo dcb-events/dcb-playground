@@ -3,9 +3,9 @@
 // a shipped model, an example file or an exported envelope from the
 // shell, without a browser and without writing a sandbox by hand.
 //
-//   node app/print-model.js                    # lists the predefined slugs
-//   node app/print-model.js course-simple      # a predefined model, as code
-//   node app/print-model.js path/to/model.json # an envelope file, as code
+//   node app/print-model.js                        # lists the predefined slugs
+//   node app/print-model.js course-simple          # a predefined model, as code
+//   node app/print-model.js path/to/model.dcb.json # an envelope file, as code
 //   node app/print-model.js course-simple --json   # the stored definitions
 //
 // A slug builds through `PREDEFINED_MODELS` (the seed builders, so it

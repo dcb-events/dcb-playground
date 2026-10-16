@@ -118,15 +118,15 @@ function withBreakouts(model) {
 function importFixture(slug) {
   fresh();
   const { modelId, skipped } = importModelFromEnvelope(
-    JSON.parse(fs.readFileSync(path.join(FIXTURES, slug + '.json'), 'utf8'))
+    JSON.parse(fs.readFileSync(path.join(FIXTURES, slug + '.dcb.json'), 'utf8'))
   );
   eq(skipped, [], `${slug} imported whole`);
   return { id: modelId, model: () => projectState()[modelId] };
 }
 
 check('every fixture file round-trips, scenarios included', () => {
-  for (const file of fs.readdirSync(FIXTURES).filter((f) => f.endsWith('.json'))) {
-    const { id, model } = importFixture(file.replace(/\.json$/, ''));
+  for (const file of fs.readdirSync(FIXTURES).filter((f) => f.endsWith('.dcb.json'))) {
+    const { id, model } = importFixture(file.replace(/\.dcb\.json$/, ''));
     const text = modelToSource(model());
     eq(text.includes(' json {'), false, `${file} falls back to JSON`);
     const parsed = parseModelSource(text);
@@ -151,8 +151,8 @@ check('every fixture file round-trips, scenarios included', () => {
 
 check('no stored string breaks out of the printed text, in any model', () => {
   const models = PREDEFINED_MODELS.map((entry, index) => [entry.slug, build(index).model()]);
-  for (const file of fs.readdirSync(FIXTURES).filter((f) => f.endsWith('.json'))) {
-    models.push([file, importFixture(file.replace(/\.json$/, '')).model()]);
+  for (const file of fs.readdirSync(FIXTURES).filter((f) => f.endsWith('.dcb.json'))) {
+    models.push([file, importFixture(file.replace(/\.dcb\.json$/, '')).model()]);
   }
   for (const [label, original] of models) {
     const model = withBreakouts(original);
@@ -779,8 +779,8 @@ function applyFixes(text) {
 }
 
 check('scenarios sit in one group per block, and a text from before groups is one fix away', () => {
-  for (const file of fs.readdirSync(FIXTURES).filter((f) => f.endsWith('.json'))) {
-    const text = modelToSource(importFixture(file.replace(/\.json$/, '')).model());
+  for (const file of fs.readdirSync(FIXTURES).filter((f) => f.endsWith('.dcb.json'))) {
+    const text = modelToSource(importFixture(file.replace(/\.dcb\.json$/, '')).model());
     const old = ungroup(text);
     if (old === text) continue; // no scenarios
     const diagnostics = parseModelSource(old).diagnostics;
@@ -874,8 +874,8 @@ check('the draft is advised on before it is applied', () => {
 // Every shipped text, printed: the predefined models and the fixtures.
 function shippedTexts() {
   const texts = PREDEFINED_MODELS.map((entry, index) => [entry.slug, modelToSource(build(index).model())]);
-  for (const file of fs.readdirSync(FIXTURES).filter((f) => f.endsWith('.json'))) {
-    texts.push([file, modelToSource(importFixture(file.replace(/\.json$/, '')).model())]);
+  for (const file of fs.readdirSync(FIXTURES).filter((f) => f.endsWith('.dcb.json'))) {
+    texts.push([file, modelToSource(importFixture(file.replace(/\.dcb\.json$/, '')).model())]);
   }
   return texts;
 }
@@ -1711,7 +1711,7 @@ check('every keyword outside the experimental ones is shown to an agent', () => 
   check('a scenario payload nested past the limit is a diagnostic too', () => {
     fresh();
     const { modelId } = importModelFromEnvelope(
-      JSON.parse(fs.readFileSync(path.join(FIXTURES, 'content-decisions-boundary.json'), 'utf8')));
+      JSON.parse(fs.readFileSync(path.join(FIXTURES, 'content-decisions-boundary.dcb.json'), 'utf8')));
     const deep = swap(modelToSource(projectState()[modelId]), 'given DocumentAdded { id: "d1" }',
       'given DocumentAdded { id: "d1", extra: ' + '['.repeat(3000) + ']'.repeat(3000) + ' }');
     eq(nestingDiagnostics(deep).length > 0, true, 'reported');

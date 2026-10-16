@@ -3095,7 +3095,7 @@ function renderImportExportModal() {
       ? h('div', { class: 'ie-field' },
           h('label', {}, 'Model URL'),
           h('input', {
-            type: 'text', placeholder: 'https://…/model.json',
+            type: 'text', placeholder: 'https://…/model.dcb.json',
             oninput: (e) => { urlValue = e.target.value; },
             onkeydown: (e) => { if (e.key === 'Enter') doImportLoad(); },
           }),

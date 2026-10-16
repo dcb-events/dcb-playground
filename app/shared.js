@@ -880,18 +880,19 @@ function modelSourceUrl(url) {
     : { url: url.trim(), gist: false };
 }
 
-// The file in a gist that holds the model: its first `.json` file, or
-// its only file when none is named so.
+// The file in a gist that holds the model: its first `.dcb.json` file,
+// else its first `.json` file, or its only file when none is named so.
 function gistModelFile(gist) {
   const files = Object.values((gist && gist.files) || {});
-  const file = files.find((f) => /\.json$/i.test(f.filename || '')) || (files.length === 1 ? files[0] : null);
+  const named = (pattern) => files.find((f) => pattern.test(f.filename || ''));
+  const file = named(/\.dcb\.json$/i) || named(/\.json$/i) || (files.length === 1 ? files[0] : null);
   if (!file) throw new DomainError('That file was not loaded: the gist holds no .json file.');
   return file;
 }
 
 // A URL someone else hosts – a gist, a bucket, another tool's export.
 // `fetch` only auto-decompresses a gzip `Content-Encoding`; a file whose
-// *content type* says gzip (a plain `.json.gz` sitting on a static
+// *content type* says gzip (a plain `.dcb.json.gz` sitting on a static
 // host) arrives untouched over the wire and has to be inflated by hand.
 // Every way it can fail says so as a DomainError – the reader of the
 // message is whoever pasted or followed the address.
