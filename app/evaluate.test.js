@@ -3700,4 +3700,190 @@ check('every predefined model ships advisory-clean', () => {
   });
 }
 
+// The shipped models and the fixtures, whose scenarios cover scripted,
+// guarded and derived reads.
+function modelsWithScenarios() {
+  return [
+    ...sandbox.PREDEFINED_MODELS.map((shipped, index) => ({ name: shipped.slug, model: build(index) })),
+    ...require('fs').readdirSync(require('path').join(__dirname, '..', 'fixtures')).map((file) => {
+      resetStore();
+      const envelope = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, '..', 'fixtures', file), 'utf8'));
+      const imported = importModelFromEnvelope(envelope).modelId;
+      return { name: file, model: sandbox.projectState()[imported] };
+    }),
+  ];
+}
+
+// ---------------------------------------------------------------
+// A read port in place of the log: a runtime over a real event store
+// hands the evaluator a function that answers a query per round, and
+// must get the very outcome the log gives.
+// ---------------------------------------------------------------
+{
+  // A store as the DCB specification describes one: an event matches
+  // an item when its type is one of the item's and it carries all its
+  // tags, and a query when it matches any of its items.
+  const portOver = (model, log, calls) => (items) => {
+    calls.push(items);
+    return log.filter((event) => items.some((item) => item.types.includes(event.type)
+      && item.tags.every((tag) => tagsOfEvent(model, event.type, event.data).includes(tag))));
+  };
+
+  // The outcome through a port, its calls, and the query it decided on.
+  const sameThroughPort = (model, log, command, args, what) => {
+    const outcome = (events) => {
+      try { return evaluateCommand(model, events, command, args); } catch (e) { return { error: e.message }; }
+    };
+    const calls = [];
+    const { query, ...through } = outcome(portOver(model, log, calls));
+    eq(through, outcome(log), what);
+    eq(calls.flat().every((item) => item.types.length > 0), true, `${what} – every item names its types`);
+    return { calls, query };
+  };
+
+  check('every command scenario decides the same through a read port', () => {
+    let compared = 0;
+    for (const { name, model } of modelsWithScenarios()) {
+      for (const scenario of Object.values(model['scenario-definitions'] || {})) {
+        sameThroughPort(model, sandbox.scenarioLog(scenario), scenario.command,
+          (scenario.when && scenario.when.arguments) || {}, `${name}: ${scenario.name}`);
+        compared++;
+      }
+    }
+    eq(compared > 50, true, `${compared} scenarios compared`);
+  });
+
+  check('a chained boundary reads by what the read it waits for answered', () => {
+    const model = build(PREDEFINED_INDEX('course-schedules'));
+    const log = [];
+    drive(model, log, 'DefineCourse', { capacity: 9, slots: ['2026-03-01T09'] });          // c1
+    drive(model, log, 'DefineCourse', { capacity: 9, slots: ['2026-03-01T11'] });          // c2
+    drive(model, log, 'RegisterStudent', { studentId: 's1' });
+    drive(model, log, 'SubscribeStudentToCourse', { courseId: 'c1', studentId: 's1' });
+    drive(model, log, 'SubscribeStudentToCourse', { courseId: 'c2', studentId: 's1' });
+    eq(sandbox.deriveRounds(model['command-definitions'].RescheduleCourse).length > 1, true, 'chained');
+    const { calls, query } = sameThroughPort(model, log, 'RescheduleCourse', { courseId: 'c1', slots: ['2026-03-01T11'] },
+      'rescheduling onto a subscriber\'s other course');
+    eq(calls.map((items) => items.map((item) => item.tags)), [
+      [['CourseId:c1']],
+      [['StudentId:s1']],
+      [['CourseId:c2']],
+    ], 'one call per link of the chain, c2 known only from c1\'s subscribers');
+    eq(query.map((item) => item.tags), [['CourseId:c1'], ['StudentId:s1'], ['CourseId:c2']], 'the query decided on');
+  });
+
+  check('reads that hang off the arguments alone are asked in one call, merged by their tags', () => {
+    const model = build(PREDEFINED_INDEX('course-simple'));
+    const log = [];
+    drive(model, log, 'DefineCourse', { courseId: 'c1', capacity: 10 });
+    drive(model, log, 'RegisterStudent', { studentId: 's1' });
+    const { calls, query } = sameThroughPort(model, log, 'SubscribeStudentToCourse', { courseId: 'c1', studentId: 's1' },
+      'subscribing');
+    eq(calls.length, 1, 'one call');
+    eq(calls[0].map((item) => item.tags), [['CourseId:c1'], ['StudentId:s1']], 'one item per tag set');
+    eq(query, calls[0], 'and every item asked was read');
+  });
+
+  check('a command refused at its first rule still asked once for every rule', () => {
+    const model = build(PREDEFINED_INDEX('course-simple'));
+    const { calls } = sameThroughPort(model, [], 'SubscribeStudentToCourse', { courseId: 'c1', studentId: 's1' },
+      'subscribing to no course');
+    eq(calls.length, 1, 'one call');
+    eq(calls[0].length, 2, 'both tag sets');
+  });
+
+  check('a fold that handles no event reads nothing', () => {
+    const { id, model } = open_(ENTITIES);
+    addDefinition('projection-definition', id, 'Nothing', {
+      tags: [], valueType: 'integer', isList: false, initialValue: 7, handlers: [],
+    });
+    const calls = [];
+    eq(foldProjection(model(), portOver(model(), [], calls), 'Nothing', { tags: {}, args: {} }), 7, 'initial value');
+    eq(calls, [], 'no query');
+  });
+}
+
+// ---------------------------------------------------------------
+// Value schemas: what a command accepts and an event carries, as JSON
+// Schema. Checked by validating every scenario's arguments, and every
+// event the evaluator publishes for it, against them – with a validator
+// for the keywords the generator writes and the shipped types use, as
+// this suite takes no dependency.
+// ---------------------------------------------------------------
+{
+  const errorsOf = (schema, value, defs, at = '$') => {
+    if (schema.$ref) return errorsOf(defs[schema.$ref.split('/').pop()], value, defs, at);
+    if (schema.anyOf) {
+      return schema.anyOf.some((s) => !errorsOf(s, value, defs, at).length) ? [] : [`${at}: matches no alternative`];
+    }
+    const kind = value === null ? 'null' : Array.isArray(value) ? 'array'
+      : Number.isInteger(value) ? 'integer' : typeof value;
+    if (schema.type && schema.type !== kind && !(schema.type === 'number' && kind === 'integer')) {
+      return [`${at}: ${kind}, not ${schema.type}`];
+    }
+    if (schema.enum && !schema.enum.some((m) => JSON.stringify(m) === JSON.stringify(value))) return [`${at}: not a member`];
+    if (schema.pattern && !new RegExp(schema.pattern, 'u').test(value)) return [`${at}: does not match ${schema.pattern}`];
+    if (schema.minimum !== undefined && value < schema.minimum) return [`${at}: below ${schema.minimum}`];
+    if (kind === 'array' && schema.items) return value.flatMap((v, i) => errorsOf(schema.items, v, defs, `${at}[${i}]`));
+    if (kind === 'object' && schema.properties) {
+      return [
+        ...(schema.required || []).filter((k) => !(k in value)).map((k) => `${at}.${k}: missing`),
+        ...Object.keys(value).filter((k) => !(k in schema.properties)).map((k) => `${at}.${k}: not declared`),
+        ...Object.entries(value).filter(([k]) => k in schema.properties)
+          .flatMap(([k, v]) => errorsOf(schema.properties[k], v, defs, `${at}.${k}`)),
+      ];
+    }
+    return [];
+  };
+  const refOf = (typeName) => ({ $ref: `#/components/schemas/${typeName}` });
+
+  check('every scenario\'s arguments and published events fit their schemas', () => {
+    let checked = 0;
+    for (const { name, model } of modelsWithScenarios()) {
+      const defs = sandbox.customTypeSchemas(model, refOf);
+      for (const scenario of Object.values(model['scenario-definitions'] || {})) {
+        const args = (scenario.when && scenario.when.arguments) || {};
+        eq(errorsOf(sandbox.commandArgumentsSchema(model, scenario.command, refOf), args, defs), [],
+          `${name}: ${scenario.name} – arguments`);
+        let result = null;
+        try { result = evaluateCommand(model, sandbox.scenarioLog(scenario), scenario.command, args); } catch (e) { /* broken */ }
+        for (const event of (result && result.events) || []) {
+          eq(errorsOf(sandbox.eventPayloadSchema(model, event.type, refOf), event.data, defs), [],
+            `${name}: ${scenario.name} – ${event.type}`);
+        }
+        checked++;
+      }
+    }
+    eq(checked > 50, true, `${checked} scenarios checked`);
+  });
+
+  check('a command\'s schema is closed, and an optional argument may be left out or null', () => {
+    const model = build(PREDEFINED_INDEX('course-simple'));
+    const defs = sandbox.customTypeSchemas(model, refOf);
+    const schema = sandbox.commandArgumentsSchema(model, 'DefineCourse', refOf);
+    eq(schema.additionalProperties, false, 'closed');
+    eq(errorsOf(schema, { courseId: 'c1', capacity: 2, capacityy: 3 }, defs), ['$.capacityy: not declared'], 'a misspelt key');
+    eq(errorsOf(schema, { courseId: 'c1' }, defs), ['$.capacity: missing'], 'a required one missing');
+    const optional = { name: 'note', propertyType: 'string', isOptional: true };
+    const withOptional = sandbox.propertiesSchema(model, [optional]);
+    eq([errorsOf(withOptional, {}, {}), errorsOf(withOptional, { note: null }, {})], [[], []], 'absent or null');
+    eq(sandbox.propertiesSchema(model, [optional], undefined, { requireAll: true }).required, ['note'],
+      'but an event always spells it out');
+  });
+
+  check('a custom type is its own schema, a composite its fields', () => {
+    const model = build(PREDEFINED_INDEX('course-schedules'));
+    const types = model['custom-type-definitions'];
+    const scalar = Object.keys(types).find((t) => types[t].schema && types[t].schema.pattern);
+    eq(sandbox.customTypeSchema(model, scalar), types[scalar].schema, `${scalar} carried over whole`);
+    const cart = build(PREDEFINED_INDEX('pricing-simple'));
+    const composite = Object.keys(cart['custom-type-definitions'])
+      .find((t) => Array.isArray(cart['custom-type-definitions'][t].properties));
+    const schema = sandbox.customTypeSchema(cart, composite);
+    eq([schema.type, schema.additionalProperties, schema.required.length],
+      ['object', false, cart['custom-type-definitions'][composite].properties.length], `${composite} as an object`);
+    eq(sandbox.valueTypeSchema(cart, 'NoSuchType'), {}, 'an unresolved type allows anything');
+  });
+}
+
 finish();

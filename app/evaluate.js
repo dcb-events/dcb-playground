@@ -13,6 +13,16 @@
 // from a scenario, from the sandbox, and eventually from a worker,
 // without any of them knowing about the others.
 //
+// **A log or a read port.** Where a log goes in, a function may go in
+// instead: `read(items) → events`, `items` one DCB query – a list of
+// `{ types, tags }`, ORed – answered with the matching events in order.
+// The playground passes its log; a runtime over a real event store
+// passes the port. A command asks it once per round of reads, its
+// folds' items merged (`evDecideThroughPort`), and returns the `query`
+// it decided on – what the runtime's append condition has to cover.
+// The port is synchronous, as everything here is; an asynchronous
+// store is the caller's to block on.
+//
 // **Closures, not generated code.** Every handler compiles to a small
 // JavaScript function `(state, event, args) => state`, one per handler
 // per projection, built by walking the declarative operand tree and
@@ -247,6 +257,21 @@ function evTagIndex(model, events) {
     perModel.set(events, entry = { length: events.length, last, index });
   }
   return entry.index;
+}
+
+// The events a fold reads: those carrying every one of `tags`, of the
+// `types` it handles. `events` is a log – an array – or a *read port*
+// (see the header), asked here with the one item this fold needs.
+// A command does not ask fold by fold: `evDecideThroughPort` hands its
+// folds a port of its own that answers from what it fetched per round.
+// A log keeps the other types in: the fold skips what it has no
+// handler for, and filtering here would cost a pass for nothing.
+function evSelectEvents(model, events, types, tags) {
+  if (typeof events !== 'function') return evEventsTagged(model, events, tags);
+  // A fold that handles nothing reads nothing – and an empty `types`
+  // would mean "any type" to a store.
+  if (!types.length) return [];
+  return events([{ types: [...types], tags: [...tags] }]) || [];
 }
 
 // The events carrying every one of `tags`, in log order.
@@ -648,7 +673,7 @@ function evProjectionFold(model, events, projectionName, read) {
 
   const queryTags = projectionQueryTags(model, projectionName, read);
   const compiled = evCompileTarget(model, projection, `projection "${projectionName}"`);
-  const selected = evEventsTagged(model, events, queryTags)
+  const selected = evSelectEvents(model, events, compiled.types, queryTags)
     .map((event) => evWithExplicitOptionals(model, event));
   return {
     compiled,
@@ -1070,6 +1095,11 @@ function evCheckCondition(model, body, condition, scope) {
   // Quantified over nothing is vacuously true – a course with no
   // subscribers cannot double-book any of them.
   for (let index = 0; index < lengths[0]; index++) {
+    // The dry run reads every instance; see `evDecide`.
+    if (scope.collect) {
+      try { check(index); } catch (error) { /* stepped over */ }
+      continue;
+    }
     const outcome = check(index);
     if (!outcome.held) return outcome;
   }
@@ -1095,16 +1125,33 @@ function evCheckCondition(model, body, condition, scope) {
 // "what did this command see when it decided" is the question a step
 // raises.
 function evaluateCommand(model, events, commandName, args) {
+  if (typeof events === 'function') return evDecideThroughPort(model, events, commandName, args);
+  return evDecide(model, events || [], commandName, args, false);
+}
+
+// One decision over `events` – a log, or the fold-by-fold port
+// `evDecideThroughPort` serves. `collect` is that driver's dry run: it
+// only wants to see which reads the decision makes, so it reads all of
+// them – every rule, every instance of a quantified one, every guard and
+// emission – and steps over whatever fails. Its outcome is discarded.
+function evDecide(model, events, commandName, args, collect) {
   const body = evOwn(model['command-definitions'], commandName);
   if (!body) fail(`This model has no command "${commandName}".`);
 
   const supplied = args || {};
-  const log = events || [];
+  const log = events;
   // `model`, `body` and `events` ride along for an inline read, which is
   // folded from inside an operand; `inline` holds what it folded.
   // `args` and `bound` are keyed by authored names, so have no
   // prototype (see evOwn).
-  const scope = { args: Object.create(null), bound: Object.create(null), inline: new Map(), model, body, events: log };
+  const scope = {
+    args: Object.create(null), bound: Object.create(null), inline: new Map(), model, body, events: log, collect,
+  };
+  // In the dry run a step that fails is stepped over, not reported.
+  const attempt = (step) => {
+    if (!collect) return step();
+    try { return step(); } catch (error) { return undefined; }
+  };
   for (const property of body.properties || []) {
     if (evOwn(supplied, property.name) === undefined) {
       // An optional property may be unset. `null` is the one spelling
@@ -1122,7 +1169,7 @@ function evaluateCommand(model, events, commandName, args) {
   }
 
   for (const round of deriveRounds(body)) {
-    for (const { binding } of round) evResolveBinding(model, log, body, binding, scope);
+    for (const { binding } of round) attempt(() => evResolveBinding(model, log, body, binding, scope));
   }
 
   // Described at each way out rather than here, because a binding
@@ -1132,8 +1179,8 @@ function evaluateCommand(model, events, commandName, args) {
   for (let index = 0; index < conditions.length; index++) {
     const condition = conditions[index];
     if (!condition) continue;
-    const outcome = evCheckCondition(model, body, condition, scope);
-    if (outcome.held) continue;
+    const outcome = attempt(() => evCheckCondition(model, body, condition, scope));
+    if (collect || outcome.held) continue;
     return {
       outcome: 'rejected',
       events: [],
@@ -1167,7 +1214,8 @@ function evaluateCommand(model, events, commandName, args) {
     let held = true;
     for (const condition of emission.when || []) {
       if (!condition) continue;
-      if (!evCheckCondition(model, body, condition, scope).held) { held = false; break; }
+      const guard = attempt(() => evCheckCondition(model, body, condition, scope));
+      if (!collect && !guard.held) { held = false; break; }
     }
     if (!held) continue;
     const data = {};
@@ -1184,12 +1232,80 @@ function evaluateCommand(model, events, commandName, args) {
         }
         fail(`"${commandName}" publishes "${emission.name}" without a value for "${property.name}".`);
       }
-      data[property.name] = evReadOperand(operand, scope);
+      data[property.name] = attempt(() => evReadOperand(operand, scope));
     }
     published.push({ type: emission.name, data });
   }
 
   return { outcome: 'published', events: published, reads: evDescribeReads(scope) };
+}
+
+// A decision through a read port, asking the store as few times as the
+// boundary allows: once per round of reads, never once per fold.
+//
+// Which reads a round makes is a question only evaluation answers – a
+// read's tags are the command's arguments, fanned out, excluded, or an
+// answer from the round before – so it is answered by evaluating. A dry
+// run (`evDecide` collecting) records every query its folds ask that
+// nothing fetched yet answers, and gets nothing back for them; the
+// queries are merged by their tags – types are ORed within a DCB query
+// item, so two items with the same tags are exactly one with both type
+// lists – and asked in one call. The next dry run then reads the round
+// those answers unlock, and so on until a run asks for nothing new: a
+// command whose reads all hang off its arguments asks once, a chained
+// one once per link. A dry run's guesses cost bandwidth, never
+// correctness: the decision is the run after them, over fetched events
+// only.
+//
+// The result carries `query`, the items the deciding run read – what an
+// append condition has to cover.
+const EV_MAX_READ_ROUNDS = 64;
+
+function evDecideThroughPort(model, read, commandName, args) {
+  const keyOf = (tags) => JSON.stringify([...tags].sort());
+  const fetched = new Map();
+  let asked = new Map();
+  let missing = new Map();
+  const note = (into, tags, types) => {
+    const key = keyOf(tags);
+    if (!into.has(key)) into.set(key, { tags: [...tags].sort(), types: new Set() });
+    for (const type of types) into.get(key).types.add(type);
+  };
+  const port = (items) => items.flatMap(({ types, tags }) => {
+    note(asked, tags, types);
+    const have = fetched.get(keyOf(tags));
+    if (have && types.every((type) => have.types.has(type))) {
+      return have.events.filter((event) => types.includes(event.type));
+    }
+    note(missing, tags, types);
+    return [];
+  });
+
+  for (let rounds = 0; ; rounds++) {
+    missing = new Map();
+    try { evDecide(model, port, commandName, args, true); } catch (error) { /* the deciding run reports it */ }
+    if (!missing.size) break;
+    if (rounds === EV_MAX_READ_ROUNDS) fail(`"${commandName}" kept asking for more reads.`);
+    // A tag set asked again with more types is fetched again whole, so
+    // every fold over it reads one answer.
+    const items = [...missing.values()].map(({ tags, types }) => ({
+      tags,
+      types: [...new Set([...((fetched.get(keyOf(tags)) || {}).types || []), ...types])].sort(),
+    }));
+    const answered = read(items) || [];
+    for (const item of items) {
+      fetched.set(keyOf(item.tags), {
+        types: new Set(item.types),
+        events: answered.filter((event) => item.types.includes(event.type) && evMatchesTags(model, event, item.tags)),
+      });
+    }
+  }
+
+  asked = new Map();
+  missing = new Map();
+  const result = evDecide(model, port, commandName, args, false);
+  if (missing.size) throw new Error(`"${commandName}" read past what its dry runs fetched.`);
+  return { ...result, query: [...asked.values()].map(({ tags, types }) => ({ tags, types: [...types].sort() })) };
 }
 
 // The boundary as a plain value – every instance it bound and every

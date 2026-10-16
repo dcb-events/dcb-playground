@@ -1100,3 +1100,87 @@ step at the playhead. Only the step band scrolls.
   is set before the first render and cleared after it, and found still
   set means the last load hung. One load only, so a reload that merely
   interrupted a slow page costs a reload.
+
+## The read port
+
+- **What it is.** Wherever `evaluate.js` takes a log, it also takes
+  a function `read(items) → events`, `items` one DCB query: a list of
+  `{ types, tags }`, ORed. The playground keeps passing its log;
+  nothing in the interface changed.
+- **Why.** A runtime that executes a model against a real DCB event
+  store (`docs/research/2026-10-15-dcb-runtime-wasm.md`) must fetch
+  only what a decision reads, and a chained binding's query is known
+  only after the read it waits for has been folded – so the store has
+  to be asked from inside evaluation, not before it.
+- **Once per round, not once per fold.** A query to a store has an
+  overhead, so a command asks as few as its boundary allows: all its
+  reads that hang off its arguments in one call, then one call per
+  link of a chain (`evDecideThroughPort`). `course-simple`'s
+  `SubscribeStudentToCourse` folds six projections and asks once, with
+  two items; `course-schedules`' `RescheduleCourse` asks three times.
+  The result carries the `query` it decided on, for the runtime's
+  append condition.
+- **Found by dry runs, not derived.** What a round reads is a
+  question of values – arguments fanned out, excluded, answers from
+  the round before – which `deriveDcb` describes but does not compute.
+  Computing it beside the evaluator would be a second copy of its
+  operand semantics, so the evaluator answers it itself: a dry run
+  (`evDecide` collecting) reads through every rule, instance, guard
+  and emission without stopping at a refusal, records what nothing
+  fetched yet answers, and gets nothing back for it. The records,
+  merged by tag set (types are ORed within an item, so that is
+  exact), are one call; the next dry run sees the round they unlock.
+  The deciding run comes after, over fetched events only – a dry run's
+  wrong guesses can cost bandwidth, never correctness.
+- **Planned rounds were weighed and deferred (2026-10).** The
+  definitions know every read's shape and order (`deriveDcb`,
+  `deriveRounds`); only the tag values are missing, and those could be
+  computed per round from the arguments and the aliases bound so far –
+  no dry run, no wasted folds, and the store asked for exactly the
+  displayed DCB. It needs `evResolveBinding` split into resolving
+  identifiers and folding, so the two share one resolution. Store
+  calls and correctness are the same either way, so it waits for
+  something that needs the query *before* evaluating: reading an
+  untagged, state-blind projection as `backwards, limit 1`, a view
+  of the exact query a command with given arguments will run, or
+  dry runs showing in a profile.
+- **Synchronous, deliberately.** An asynchronous port would make the
+  whole fold asynchronous, and every render path that evaluates with
+  it (see _Scripts and the origin_). A WebAssembly host import is a
+  blocking call anyway; a host over an asynchronous client blocks.
+- **A log passes every type; the port asks for the handled ones.**
+  Over a log, filtering by type would be a pass for nothing – the fold
+  skips what it has no handler for. A fold that handles no event reads
+  nothing through the port, because an empty `types` means "any type"
+  to a store.
+- **Held by a test.** Every command scenario of the shipped models
+  and the fixtures decides the same through a port as over the log,
+  and the call counts above are asserted (evaluate.test.js).
+
+## Value schemas
+
+- **What they are.** `commandArgumentsSchema` and
+  `eventPayloadSchema` (model.js) state what a command accepts and an
+  event carries as JSON Schema 2020-12, with `customTypeSchemas` for
+  the types they name. Written for what states or checks values outside
+  the playground – the runtime's API contract and its request
+  validation (`docs/research/2026-10-15-dcb-runtime-wasm.md`).
+- **Nothing in the playground enforces them.** The evaluator checks
+  presence and nothing more, and stays that way: a mistyped value is
+  for the model's author to see, not a reason a model stops running.
+- **A custom scalar type is its own schema.** Its `schema` is already
+  JSON Schema 2020-12 – OpenAPI 3.1's dialect – so it is carried over
+  whole, patterns and enums included. A composite is an object of its
+  fields, all required. How a property names a type is the caller's
+  (`refOf`): a `$ref` into its own components, or the schema inline.
+- **Closed, and null is the one "no value".** An unknown key is
+  refused, so a misspelt optional argument is an error instead of a
+  silent null. A command may leave an optional argument out or send
+  null; an event payload always spells it out, as the evaluator
+  publishes it.
+- **Not in WebMCP.** Its tool schemas are fixed when the tools
+  register; a command's arguments depend on the command named in the
+  call, so a tool cannot declare them.
+- **Held by a test.** Every scenario's arguments, and every event the
+  evaluator publishes for it, validate against these schemas
+  (evaluate.test.js, with a validator for the keywords in use).
