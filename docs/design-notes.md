@@ -1184,3 +1184,46 @@ step at the playhead. Only the step band scrolls.
 - **Held by a test.** Every scenario's arguments, and every event the
   evaluator publishes for it, validate against these schemas
   (evaluate.test.js, with a validator for the keywords in use).
+
+## Comparing models
+
+- **A view, not a mode.** Compare sits in the rail under *Review*,
+  behind the experimental flag, and needs no commands to show. A
+  page-level mode like Code (entered from ⋯, left with an exit) was
+  agreed first and reversed: a view keeps the rail, links leave it like
+  any other page, and coming back finds the same comparison. It is not
+  in `CODE_FOLLOWS` – two models' text is not something to edit.
+- **What it compares with.** This model at one of this tab's undo
+  steps (`modelAtPosition`, a fold of the log's prefix), another stored
+  model, or a file – a URL or pasted JSON – read and never stored
+  (`modelFromEnvelope`). The choice is kept per tab and per model in
+  sessionStorage and dropped silently once it no longer resolves. The
+  picker opens first, *As this tab began* highlighted, so the common
+  question is one click and nothing is chosen unasked.
+- **A file is built by the import, in a scratch log.** Re-deriving an
+  envelope → model step beside the import would drift from it (entity
+  identifier types, retries, custom-type order); `inScratchLog` runs
+  the real import against an array instead – no append listener, no
+  compaction, no revision bump, so no cache of the real log moves.
+- **No import gate for a file.** The gate exists because scripts run
+  unprompted; Compare prints a script and derives boundaries from
+  declared tags, and compiles nothing.
+- **Read-only, and the open model is the one you go to.** "Open" leads
+  to the definition's page in the open model, only when it has it; the
+  other side is often not in the log, so it is read on this page only.
+  Swap turns the reading round and nothing else.
+- **Identity is kind + name** (scenarios: their id), with sameness
+  `sameDefinition`'s – the one notion Apply uses too, through
+  `diffCollection`. A rename reads as a removal and an addition.
+- **Boundaries per command, one named finding.** `compareBoundaries`
+  diffs `boundarySummary`'s query items round by round; the summary
+  line alone can read the same either side while the query changed
+  (`reads 2 types, 1 tag`). The finding is *a read lost its tags* –
+  a type read by a tag before and untagged now, a lock grown to every
+  instance. More findings wait until one has earned its place.
+- **The Code tab is a per-definition line diff** (`diffLines`, dsl.js:
+  a plain LCS, words compared inside a replaced line), over each side's
+  own printing – no dependency for it.
+- **Deferred:** side-by-side and matrix views, replaying one side's
+  scenarios against the other, taking a definition across, a WebMCP
+  tool, rename hints, an arbitrary point in the log.

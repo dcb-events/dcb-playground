@@ -1089,6 +1089,71 @@
      three labelled blocks rather than a form. The status carries the
      colour: agreement is quiet, a difference is not. */
   .tabs { display: flex; gap: 4px; margin: 0 0 20px; border-bottom: 1px solid var(--border); }
+
+  /* Compare */
+  .cmp-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 16px; }
+  .cmp-side { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+  .cmp-mark { display: inline-flex; align-items: center; justify-content: center; flex: none;
+    width: 18px; height: 18px; border-radius: 4px; font-weight: 700; font-size: 12px; line-height: 1; }
+  .cmp-mark.added { background: var(--added-soft); color: var(--added); }
+  .cmp-mark.removed { background: var(--removed-soft); color: var(--removed); }
+  .cmp-mark.changed { background: var(--changed-soft); color: var(--changed); }
+  .cmp-mark.same { color: var(--muted); }
+  .cmp-totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin: 0 0 16px; }
+  .cmp-total { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px;
+    border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+  .cmp-total strong { font-size: 22px; }
+  .cmp-total.added strong { color: var(--added); }
+  .cmp-total.removed strong { color: var(--removed); }
+  .cmp-total.changed strong { color: var(--changed); }
+  .cmp-finding { padding: 10px 12px; margin: 0 0 12px; border-radius: var(--radius);
+    background: var(--rule-soft); border: 1px solid var(--rule); }
+  .cmp-problem-delta { margin: 0 0 16px; }
+  .cmp-problems { margin: 4px 0; padding-left: 18px; }
+  .cmp-split { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+  .cmp-list { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; }
+  .cmp-toggle { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; }
+  .cmp-group { display: flex; align-items: baseline; gap: 8px; margin: 12px 0 4px; }
+  .cmp-group h4 { margin: 0; }
+  .cmp-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; min-height: 32px;
+    border: 0; border-radius: 6px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+  .cmp-row:hover { background: var(--accent-soft); }
+  .cmp-row.on { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
+  .cmp-detail { flex: 2 1 420px; min-width: 0; padding: 12px; border: 1px solid var(--border);
+    border-radius: var(--radius); background: var(--surface); }
+  .cmp-detail-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; }
+  .cmp-code { font-family: var(--mono); font-size: 12px; line-height: 1.6; overflow-x: auto; }
+  .cmp-line { display: grid; grid-template-columns: 3ch 3ch 2ch max-content; min-width: 100%; }
+  .cmp-line .gut { color: var(--muted); text-align: right; padding-right: 6px; user-select: none; }
+  .cmp-line .sign { color: var(--muted); text-align: center; user-select: none; }
+  .cmp-line .txt { white-space: pre; padding-right: 12px; }
+  .cmp-line.add { background: var(--added-soft); }
+  .cmp-line.add .sign { color: var(--added); }
+  .cmp-line.add .w { background: var(--added-word); border-radius: 2px; }
+  .cmp-line.del { background: var(--removed-soft); }
+  .cmp-line.del .sign { color: var(--removed); }
+  .cmp-line.del .w { background: var(--removed-word); border-radius: 2px; }
+  .cmp-command { margin: 0 0 14px; padding: 12px; border: 1px solid var(--border);
+    border-radius: var(--radius); background: var(--surface); }
+  .cmp-command.widened { border-color: var(--rule); }
+  .cmp-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+  .cmp-cols h4 { margin: 0 0 6px; }
+  .cmp-qi { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 5px 6px; border-radius: 6px; }
+  .cmp-qi.added { background: var(--added-soft); }
+  .cmp-qi.removed { background: var(--removed-soft); }
+  .cmp-qi.removed .chip, .cmp-qi.removed .cmp-tag { text-decoration: line-through; }
+  .cmp-tag { font-family: var(--mono); font-size: 12px; }
+  .cmp-untagged { font-size: 12px; font-weight: 600; color: var(--rule); }
+  .cmp-same summary { cursor: pointer; padding: 6px 0; }
+  .cmp-code-kind { margin: 16px 0 8px; }
+  .cmp-picker { display: flex; flex-direction: column; gap: 18px; max-width: 640px; }
+  .cmp-pick-group { display: flex; flex-direction: column; gap: 4px; }
+  .cmp-pick-group h4 { margin: 0 0 4px; }
+  .cmp-option { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; width: 100%;
+    min-height: 40px; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--surface); color: inherit; font: inherit; text-align: left; cursor: pointer; }
+  .cmp-option:hover, .cmp-option:focus-visible { border-color: var(--accent); }
+  .cmp-option.first { border-color: var(--accent); background: var(--accent-soft); }
   .tab {
     background: none; border: none; border-bottom: 2px solid transparent;
     color: var(--muted); font: inherit; font-size: 13px; cursor: pointer;
@@ -1847,6 +1912,12 @@ const state = {
   openProjectionScenarios: new Set(), // keys of every projection scenario whose detail is unfolded
   projectionScenarioDraft: null, // { key, insertAfter, body } – see `scenarioDraft`
   watchDraft: null,         // { projection, tags, arguments } – a projection about to be watched
+  compareTab: 'overview',   // 'overview' | 'boundaries' | 'code' on the Compare page
+  compareFocus: null,       // { kind, name } – the change whose text the Overview shows beside the list
+  compareSwap: false,       // read the comparison the other way round
+  comparePicking: false,    // the source picker open over a comparison already chosen
+  compareLoading: null,     // 'url' | 'json' – the picker's file form that is open
+  compareShowSame: false,   // list what is the same on both sides too
 };
 
 // A decoded share envelope, on its way in – from the URL fragment on
@@ -2252,6 +2323,8 @@ const RAIL_ICONS = {
     + '<path d="M15 3v18"></path>'),
   lifecycles: railIconSvg('<path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"></path><path d="M21 3v5h-5"></path>'),
   sandbox: railIconSvg('<circle cx="12" cy="12" r="9"></circle><path d="M10 8.5v7l5.5-3.5z"></path>'),
+  compare: railIconSvg('<path d="M7 4 3 8l4 4"></path><path d="M3 8h14"></path><path d="m17 20 4-4-4-4"></path>'
+    + '<path d="M21 16H7"></path>'),
 };
 function railIcon(key) { return h('span', { class: 'rail-icon' }, svg(RAIL_ICONS[key])); }
 
@@ -2813,6 +2886,11 @@ const HELP_FAQ = [
     ', for instance – and share ', { urlLinkBase: true }, ' followed by its address. Whoever opens it '
       + 'gets a copy of the file as it is at that moment. Loading it here from a URL puts that link in '
       + 'the address bar, ready to copy.'] },
+  { question: 'How do I review what I changed?', answer: [
+    'With experimental features on, Review → Compare reads this model against itself as it was '
+      + 'before any change made in this tab, against another of your models, or against a file read '
+      + 'just for comparing. It lists what was added, changed and removed, what each command now '
+      + 'reads, and the text side by side – without editing either.'] },
   { question: 'Is anything sent to a server?', answer: [
     'No. The playground runs entirely in your browser; a shared link carries the model after the '
       + '#, which browsers never send to the server. One exception is the demo video, loaded '
@@ -3629,6 +3707,7 @@ function paletteEntries(model) {
   }
   add('do', 'New command…', '', () => beginNewCommand(activeModel()));
   add('do', 'Models…', 'switch, load, or start a model', () => { state.models = true; });
+  if (experimental()) add('do', 'Compare with…', 'this model against another, or itself earlier', () => { closeForms(); state.view = 'compare'; });
   add('do', 'Settings', '', () => { state.settings = true; });
   add('do', isDark() ? 'Switch to light mode' : 'Switch to dark mode', '', toggleTheme);
   add('do', experimental() ? 'Disable experimental features' : 'Enable experimental features', '',
@@ -5303,6 +5382,17 @@ function renderRail() {
     ? h('span', { class: 'gcount' }, session.log.length)
     : null));
 
+  // Reading the model against another needs nothing in it, so unlike
+  // the diagrams it is there for an empty model too.
+  if (experimental()) {
+    rail.appendChild(h('h4', { style: 'margin-top:20px' }, 'Review'));
+    rail.appendChild(h('a', {
+      href: '#', class: 'place' + (state.view === 'compare' ? ' on' : ''),
+      title: 'This model against another, or against itself earlier',
+      onclick: (e) => { e.preventDefault(); closeForms(); state.view = 'compare'; render(); },
+    }, railIcon('compare'), 'Compare'));
+  }
+
 
   // Where an entity ends up once the last thing that used it is gone.
   // Nothing references it, so this is the one place its removal can
@@ -5800,6 +5890,9 @@ function paintBehind(model) {
   // A model with no command has nothing to give an overview of, and its
   // first command is begun from the slice page – so that is where an
   // empty model opens instead.
+  // Compare is offered only with the experimental flag; a tab left on
+  // it when the flag goes off lands where any page would.
+  if (state.view === 'compare' && !experimental()) state.view = 'overview';
   if (state.view === 'overview' && !names.length) state.view = 'slice';
   if (state.view === 'slice' && (!state.slice || !names.includes(state.slice))) {
     state.slice = names[0] || null;
@@ -5835,13 +5928,14 @@ function paintBehind(model) {
     return renderCode(model, main);
   }
   main.className = 'slice'
-    + (['overview', 'coupling', 'rulemap', 'eventmodel', 'lifecycles'].includes(state.view) ? ' wide' : '')
+    + (['overview', 'coupling', 'rulemap', 'eventmodel', 'lifecycles', 'compare'].includes(state.view) ? ' wide' : '')
     + (state.view === 'sandbox' ? ' sandbox' : '');
   const notice = experimentalNotice(model);
   if (notice) main.appendChild(notice);
 
   if (state.view === 'overview') return renderOverview(model, main);
   if (state.view === 'sandbox') return renderSandbox(model, main);
+  if (state.view === 'compare') return renderCompare(model, main);
   if (state.view === 'entity') return renderEntity(model, main);
   if (state.view === 'types') return renderCustomTypes(model, main);
   if (state.view === 'projections') return renderProjections(model, main);
@@ -11644,6 +11738,454 @@ function renderProjections(model, main) {
 // fields – is owned here; a command's own page keeps only how *it*
 // maps its own values into an already-declared field
 // (see `eventFields`).
+// ============================================================
+// Compare
+//
+// The open model read against another: itself earlier in this tab
+// (an undo step), another stored model, or a file read for the purpose
+// and never stored (`modelFromEnvelope`). Read-only – what it offers is
+// the way to a definition's own page in the open model, never into the
+// other side, which is often not in the log at all. The open model is
+// "this model"; the other is named by what it is, not as base or head.
+// Swap only turns the reading round – what reads as added reads as
+// removed – it never makes the other side the one being edited.
+//
+// Everything shown is computed in model.js and dsl.js
+// (`diffDefinitions`, `compareBoundaries`, `compareProblems`,
+// `definitionSourceDiff`); this is only the page. The choice of what to
+// compare with is kept per tab and per model (`COMPARE_KEY`), so a
+// reload comes back to it; one that no longer resolves – a deleted
+// model, an undo step gone – is dropped without a word and the picker
+// opens instead. A file's scripts are printed, never compiled: nothing
+// here evaluates, which is why no file waits at the import gate.
+// ============================================================
+
+const COMPARE_KEY = 'dcb-playground:compare:' + EVENT_LOG_KEY.split(':').pop();
+
+function compareChoices() {
+  try {
+    const stored = JSON.parse(sessionStorage.getItem(COMPARE_KEY));
+    return stored && typeof stored === 'object' ? stored : {};
+  } catch { return {}; }
+}
+function compareChoiceFor(modelId) { return compareChoices()[modelId] || null; }
+function setCompareChoice(modelId, choice) {
+  const all = compareChoices();
+  if (choice) all[modelId] = choice; else delete all[modelId];
+  try {
+    sessionStorage.setItem(COMPARE_KEY, JSON.stringify(all));
+  } catch {
+    toast('This comparison will not survive a reload: this tab’s storage is full.', true);
+  }
+}
+
+// This tab's undo steps that changed this model and still stand where
+// they were taken, oldest first – each one a point to compare with.
+function earlierVersions(model) {
+  const events = loadEvents();
+  return undoLog().done.filter((mark) => logStampAt(events, mark.end) === mark.stamp
+    && events.slice(mark.at, mark.end).some((event) => event.data && event.data['dcb-model-id'] === model.id));
+}
+
+function timeOfPosition(events, at) {
+  const event = events[at];
+  if (!event || !event.timestamp) return '';
+  const when = new Date(event.timestamp);
+  return isNaN(when) ? '' : when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+// A file is read once per choice, not once per paint: it does not
+// change with the log.
+let compareFileCache = null;
+function compareFileModel(choice) {
+  const key = JSON.stringify(choice.envelope);
+  if (compareFileCache && compareFileCache.key === key) return compareFileCache.found;
+  let found = null;
+  try { found = modelFromEnvelope(choice.envelope); } catch { found = null; }
+  compareFileCache = { key, found };
+  return found;
+}
+
+// What the stored choice stands for now: `{ model, label, skipped }`,
+// or null once it no longer resolves.
+function resolveCompareChoice(model, choice) {
+  if (!choice) return null;
+  if (choice.kind === 'revision') {
+    const versions = earlierVersions(model);
+    const mark = choice.first ? versions[0] : versions.find((m) => m.stamp === choice.stamp);
+    if (!mark) return null;
+    return {
+      model: modelAtPosition(model.id, mark.at) || emptyModel(model.id, model.name),
+      label: choice.first ? 'this model as this tab began' : `this model before “${mark.label}”`,
+      skipped: [],
+    };
+  }
+  if (choice.kind === 'model') {
+    const other = projectState()[choice.id];
+    return other && choice.id !== model.id ? { model: other, label: other.name, skipped: [] } : null;
+  }
+  if (choice.kind === 'file') {
+    const read = compareFileModel(choice);
+    return read && read.model ? { model: read.model, label: choice.label, skipped: read.skipped } : null;
+  }
+  return null;
+}
+
+let comparisonCache = null;
+function comparison(model) {
+  const choice = compareChoiceFor(model.id);
+  const key = JSON.stringify([model.id, choice, state.compareSwap]);
+  if (comparisonCache && comparisonCache.revision === logRevisionNow() && comparisonCache.key === key) {
+    return comparisonCache.found;
+  }
+  const other = resolveCompareChoice(model, choice);
+  if (choice && !other) setCompareChoice(model.id, null);
+  let found = null;
+  if (other) {
+    const [older, newer] = state.compareSwap ? [model, other.model] : [other.model, model];
+    found = {
+      other, older, newer,
+      diff: diffDefinitions(older, newer),
+      boundaries: compareBoundaries(older, newer),
+      problems: compareProblems(older, newer),
+    };
+  }
+  comparisonCache = { revision: logRevisionNow(), key, found };
+  return found;
+}
+
+function chooseComparison(model, choice) {
+  setCompareChoice(model.id, choice);
+  Object.assign(state, { comparePicking: false, compareLoading: null, compareFocus: null, compareSwap: false });
+  render();
+}
+
+// A file to compare with is read whole before it is chosen, so a file
+// that is not a model is refused here rather than silently dropped.
+function chooseCompareFile(model, envelope, label) {
+  try {
+    modelFromEnvelope(envelope);
+  } catch (error) {
+    return toast(error && error.message ? error.message : 'That file could not be read as a DCB model.', true);
+  }
+  chooseComparison(model, { kind: 'file', envelope, label });
+}
+
+const COMPARE_KINDS = [
+  ['custom-type-definition', 'Custom types', 'type'],
+  ['event-definition', 'Events', 'event'],
+  ['entity-definition', 'Entities', 'entity'],
+  ['projection-definition', 'Projections', 'projection'],
+  ['command-definition', 'Commands', 'command'],
+  ['scenario-definition', 'Command scenarios', 'scenario'],
+  ['projection-scenario-definition', 'Projection scenarios', 'scenario'],
+];
+
+// What a change is called: a scenario by its name, everything else by
+// its own.
+function compareLabel(found, kind, name) {
+  if (!isIdKeyed(kind)) return named(name);
+  const body = (found.newer[DEF_COLLECTIONS[kind]] || {})[name] || (found.older[DEF_COLLECTIONS[kind]] || {})[name] || {};
+  return h('span', {}, body.name || name, h('span', { class: 'tech' }, body.command || body.projection || ''));
+}
+
+// The way from a change to its page in the open model – only when the
+// open model has it.
+function compareOpener(model, kind, name) {
+  const body = (model[DEF_COLLECTIONS[kind]] || {})[name];
+  if (body === undefined) return null;
+  if (kind === 'event-definition') return () => goToEvent(name);
+  if (kind === 'command-definition') return () => goToCommand(name);
+  if (kind === 'projection-definition') return () => goToProjection(name);
+  if (kind === 'custom-type-definition') return () => goToCustomType(name);
+  if (kind === 'entity-definition') return () => { closeForms(); state.view = 'entity'; state.entity = name; render(); };
+  if (kind === 'scenario-definition') {
+    return () => { goToCommand(body.command); state.tab = 'scenarios'; state.openScenarios.add(name); render(); };
+  }
+  if (kind === 'projection-scenario-definition') return () => goToProjectionScenario(model, name);
+  return null;
+}
+
+const COMPARE_MARK = { added: ['+', 'added'], changed: ['~', 'changed'], removed: ['−', 'removed'], same: ['=', 'the same'] };
+function compareMark(status) {
+  const [glyph, words] = COMPARE_MARK[status];
+  return h('span', { class: 'cmp-mark ' + status, title: words, 'aria-label': words }, glyph);
+}
+
+// The two sides as they are read: from the older, to the newer.
+function compareSides(found) {
+  return state.compareSwap
+    ? { older: 'this model', newer: found.other.label }
+    : { older: found.other.label, newer: 'this model' };
+}
+
+function renderCompare(model, main) {
+  main.appendChild(h('header', {},
+    h('div', { class: 'name' }, 'Compare'),
+    h('div', { class: 'muted small' },
+      'This model against another, or against itself earlier: what changed, what each command '
+      + 'now reads, and the text. Nothing here edits either side.')));
+  const found = comparison(model);
+  if (!found || state.comparePicking) return main.appendChild(comparePicker(model, found));
+
+  const swapped = state.compareSwap;
+  const sides = compareSides(found);
+  main.appendChild(h('div', { class: 'cmp-strip' },
+    h('span', { class: 'cmp-side' }, h('span', { class: 'muted tiny' }, 'from'), h('strong', {}, sides.older)),
+    h('button', {
+      class: 'btn ghost', title: 'Read the comparison the other way round', 'aria-label': 'Swap the two sides',
+      onclick: () => { state.compareSwap = !swapped; render(); },
+    }, '⇄'),
+    h('span', { class: 'cmp-side' }, h('span', { class: 'muted tiny' }, 'to'), h('strong', {}, sides.newer)),
+    h('span', { class: 'grow' }),
+    h('button', { class: 'btn', onclick: () => { state.comparePicking = true; render(); } }, 'Compare with something else')));
+  if (found.other.skipped.length) {
+    main.appendChild(h('div', { class: 'banner' },
+      `${found.other.skipped.length} definition${found.other.skipped.length === 1 ? '' : 's'} in that file could not be read and `
+      + `${found.other.skipped.length === 1 ? 'is' : 'are'} left out: `
+      + found.other.skipped.map((s) => s.name || s.kind).join(', ') + '.'));
+  }
+
+  const changedBoundaries = found.boundaries.filter((c) => c.status !== 'same').length;
+  const tab = (key, label, count) => h('button', {
+    class: 'tab' + (state.compareTab === key ? ' on' : ''),
+    'aria-pressed': state.compareTab === key ? 'true' : 'false',
+    onclick: () => { state.compareTab = key; render(); },
+  }, label, count ? h('span', { class: 'badge clear' }, count) : null);
+  main.appendChild(h('div', { class: 'tabs' },
+    tab('overview', 'Overview'),
+    tab('boundaries', 'Boundaries', changedBoundaries),
+    tab('code', 'Code')));
+
+  if (state.compareTab === 'boundaries') return main.appendChild(compareBoundariesPage(model, found));
+  if (state.compareTab === 'code') return main.appendChild(compareCodePage(model, found));
+  return main.appendChild(compareOverview(model, found));
+}
+
+function comparePicker(model, found) {
+  const box = h('div', { class: 'cmp-picker' });
+  const option = (label, sub, onPick, extra) => h('button', { class: 'cmp-option' + (extra || ''), onclick: onPick },
+    h('span', {}, label), sub ? h('span', { class: 'muted tiny' }, sub) : null);
+
+  const events = loadEvents();
+  const versions = earlierVersions(model);
+  const earlier = h('section', { class: 'cmp-pick-group' }, h('h4', {}, 'This model, earlier'));
+  if (versions.length) {
+    earlier.appendChild(option('As this tab began', `before ${versions.length} change${versions.length === 1 ? '' : 's'} made here`,
+      () => chooseComparison(model, { kind: 'revision', first: true }), ' first'));
+    for (const mark of [...versions].reverse()) {
+      earlier.appendChild(option(`Before “${mark.label}”`, timeOfPosition(events, mark.at),
+        () => chooseComparison(model, { kind: 'revision', stamp: mark.stamp })));
+    }
+  } else {
+    earlier.appendChild(h('div', { class: 'muted small' },
+      'Nothing changed in this tab yet – each change made here is listed as it happens.'));
+  }
+  box.appendChild(earlier);
+
+  const others = Object.values(projectState()).filter((m) => m.id !== model.id).sort((a, b) => a.name.localeCompare(b.name));
+  const stored = h('section', { class: 'cmp-pick-group' }, h('h4', {}, 'Another model'));
+  if (others.length) for (const other of others) stored.appendChild(option(other.name, '', () => chooseComparison(model, { kind: 'model', id: other.id })));
+  else stored.appendChild(h('div', { class: 'muted small' }, 'No other model is stored here.'));
+  box.appendChild(stored);
+
+  const file = h('section', { class: 'cmp-pick-group' }, h('h4', {}, 'A file'),
+    h('div', { class: 'muted small' }, 'Read for comparing only – it is not added to your models.'));
+  if (state.compareLoading === 'url') {
+    file.appendChild(inlineForm({
+      question: 'Model URL', placeholder: 'https://…', submitLabel: 'Compare',
+      onSubmit: (address) => {
+        const trimmed = address.trim();
+        loadModelFromUrl(trimmed)
+          .then((envelope) => chooseCompareFile(activeModel(), envelope, trimmed))
+          .catch((error) => toast(error && error.message ? error.message : 'That file was not loaded.', true));
+      },
+      onCancel: () => { state.compareLoading = null; render(); },
+    }));
+  } else if (state.compareLoading === 'json') {
+    file.appendChild(jsonLoadForm(
+      (envelope) => chooseCompareFile(model, envelope, `pasted JSON “${envelope.name || 'unnamed'}”`),
+      () => { state.compareLoading = null; render(); }));
+  } else {
+    file.appendChild(h('div', { class: 'adder' },
+      h('button', { class: 'btn', onclick: () => { state.compareLoading = 'url'; render(); } }, 'From a URL…'),
+      h('button', { class: 'btn', onclick: () => { state.compareLoading = 'json'; render(); } }, 'From JSON…')));
+  }
+  box.appendChild(file);
+
+  if (found) {
+    box.appendChild(h('div', { class: 'adder' },
+      h('button', { class: 'btn ghost', onclick: () => { state.comparePicking = false; state.compareLoading = null; render(); } },
+        'Keep comparing with ' + found.other.label)));
+  }
+  return box;
+}
+
+function compareOverview(model, found) {
+  const page = h('div', { class: 'cmp-overview' });
+  const totals = { added: 0, changed: 0, removed: 0, same: 0 };
+  for (const entry of Object.values(found.diff.kinds)) {
+    totals.added += entry.added.length;
+    totals.changed += entry.changed.length;
+    totals.removed += entry.removed.length;
+    totals.same += entry.unchanged.length;
+  }
+  page.appendChild(h('div', { class: 'cmp-totals' },
+    ...[['added', 'Added'], ['changed', 'Changed'], ['removed', 'Removed'], ['same', 'The same']].map(([key, label]) =>
+      h('div', { class: 'cmp-total ' + key }, h('span', { class: 'muted tiny' }, label), h('strong', {}, totals[key])))));
+
+  const widened = found.boundaries.filter((c) => c.lostTags.length);
+  if (widened.length) {
+    page.appendChild(h('div', { class: 'cmp-finding' },
+      h('strong', {}, `${widened.length} consistency boundar${widened.length === 1 ? 'y' : 'ies'} grew to every instance`),
+      h('span', {}, ' – ', ...widened.flatMap((c, i) => [i ? ', ' : '', named(c.name),
+        ` now reads ${c.lostTags.flat().join(', ')} untagged`]), '. '),
+      h('a', { href: '#', onclick: (e) => { e.preventDefault(); state.compareTab = 'boundaries'; render(); } }, 'See boundaries')));
+  }
+
+  const { introduced, fixed } = found.problems;
+  if (introduced.length || fixed.length) {
+    const problemList = (list) => h('ul', { class: 'cmp-problems' },
+      ...list.map((p) => h('li', {}, named(p.name), ': ', p.message)));
+    page.appendChild(h('div', { class: 'cmp-problem-delta' },
+      h('h4', {}, `Problems: ${introduced.length} new, ${fixed.length} fixed`),
+      introduced.length ? problemList(introduced) : null,
+      fixed.length ? h('details', {}, h('summary', { class: 'muted small' }, 'Fixed'), problemList(fixed)) : null));
+  }
+
+  const rows = [];
+  if (found.diff.name) {
+    rows.push(h('div', { class: 'cmp-group' }, h('h4', {}, 'Model')),
+      h('div', { class: 'cmp-row' }, compareMark('changed'), h('span', { class: 'muted tiny' }, 'name'),
+        h('span', {}, `“${found.diff.name.from}” → “${found.diff.name.to}”`)));
+  }
+  let first = null;
+  for (const [kind, title] of COMPARE_KINDS) {
+    const entry = found.diff.kinds[kind];
+    const changes = [
+      ...entry.added.map((name) => ['added', name]),
+      ...entry.changed.map((name) => ['changed', name]),
+      ...entry.removed.map((name) => ['removed', name]),
+    ];
+    const same = state.compareShowSame ? entry.unchanged.map((name) => ['same', name]) : [];
+    if (!changes.length && !same.length) continue;
+    rows.push(h('div', { class: 'cmp-group' }, h('h4', {}, title),
+      h('span', { class: 'muted tiny' }, `${changes.length} changed`
+        + (entry.unchanged.length ? ` · ${entry.unchanged.length} the same` : ''))));
+    for (const [status, name] of [...changes, ...same]) {
+      if (!first && status !== 'same') first = { kind, name };
+      const focus = state.compareFocus;
+      const on = focus && focus.kind === kind && focus.name === name;
+      rows.push(h('button', {
+        class: 'cmp-row' + (on ? ' on' : ''),
+        onclick: () => { state.compareFocus = { kind, name }; render(); },
+      }, compareMark(status), compareLabel(found, kind, name)));
+    }
+  }
+  const focus = state.compareFocus && found.diff.kinds[state.compareFocus.kind] ? state.compareFocus : first;
+
+  const list = h('section', { class: 'cmp-list' },
+    h('label', { class: 'muted small cmp-toggle' },
+      h('input', {
+        type: 'checkbox', checked: state.compareShowSame,
+        onchange: () => { state.compareShowSame = !state.compareShowSame; render(); },
+      }), ' List what is the same too'),
+    ...(rows.length ? rows : [h('div', { class: 'empty' }, 'No differences – the two are the same.')]));
+  page.appendChild(h('div', { class: 'cmp-split' }, list, focus ? compareDetail(model, found, focus) : null));
+  return page;
+}
+
+function compareDetail(model, found, { kind, name }) {
+  const open = compareOpener(model, kind, name);
+  const entry = found.diff.kinds[kind];
+  const status = entry.added.includes(name) ? 'added' : entry.removed.includes(name) ? 'removed'
+    : entry.changed.includes(name) ? 'changed' : 'same';
+  return h('aside', { class: 'cmp-detail' },
+    h('div', { class: 'cmp-detail-head' }, compareMark(status), h('strong', {}, compareLabel(found, kind, name)),
+      h('span', { class: 'grow' }),
+      open ? h('button', { class: 'btn', onclick: open }, 'Open in this model') : null),
+    compareSourceRows(definitionSourceDiff(found.older, found.newer, kind, name)));
+}
+
+function compareSourceRows(rows) {
+  const SIGN = { same: ' ', add: '+', del: '−' };
+  return h('div', { class: 'cmp-code', role: 'table' },
+    ...rows.map((row) => h('div', { class: 'cmp-line ' + row.k, role: 'row' },
+      h('span', { class: 'gut' }, row.o || ''),
+      h('span', { class: 'gut' }, row.n || ''),
+      h('span', { class: 'sign' }, SIGN[row.k]),
+      h('span', { class: 'txt' }, ...(row.parts
+        ? row.parts.map((part) => (part.changed ? h('span', { class: 'w' }, part.text) : part.text))
+        : [row.text])))));
+}
+
+function compareBoundariesPage(model, found) {
+  const page = h('div', { class: 'cmp-boundaries' });
+  const item = (command) => (i) => h('div', { class: 'cmp-qi ' + i.mark },
+    compareMark(i.mark === 'same' ? 'same' : i.mark),
+    ...(i.types.length ? i.types.map((t) => h('span', { class: 'chip event' }, t)) : [h('span', { class: 'chip' }, 'any type')]),
+    i.tags.length ? h('span', { class: 'muted tiny' }, 'tagged') : null,
+    ...(i.tags.length ? i.tags.map((t) => h('code', { class: 'cmp-tag' }, t)) : [h('span', { class: 'cmp-untagged' }, 'untagged')]),
+    command.items.some((other) => other.round > 0) ? h('span', { class: 'muted tiny' }, `query ${i.round + 1}`) : null);
+  const moved = found.boundaries.filter((c) => c.status !== 'same');
+  const same = found.boundaries.filter((c) => c.status === 'same');
+  if (!moved.length) page.appendChild(h('div', { class: 'empty' }, 'Every command reads what it read before.'));
+  for (const command of moved) {
+    const open = compareOpener(model, 'command-definition', command.name);
+    const before = command.items.filter((i) => i.mark !== 'added');
+    const after = command.items.filter((i) => i.mark !== 'removed');
+    page.appendChild(h('section', { class: 'cmp-command' + (command.lostTags.length ? ' widened' : '') },
+      h('div', { class: 'cmp-detail-head' }, compareMark(command.status), h('span', { class: 'chip command' }, named(command.name)),
+        h('span', { class: 'grow' }),
+        open ? h('button', { class: 'btn ghost', onclick: open }, 'Open') : null),
+      command.lostTags.length ? h('div', { class: 'cmp-finding' },
+        `Reads ${command.lostTags.flat().join(', ')} untagged now, where it read by a tag before: `
+        + 'every instance is inside its boundary, so it conflicts with every other append of those events.') : null,
+      h('div', { class: 'cmp-cols' },
+        h('div', {}, h('h4', {}, compareSides(found).older),
+          ...(before.length ? before.map(item(command)) : [h('div', { class: 'muted small' }, command.status === 'added' ? 'not there' : 'reads nothing')])),
+        h('div', {}, h('h4', {}, compareSides(found).newer),
+          ...(after.length ? after.map(item(command)) : [h('div', { class: 'muted small' }, command.status === 'removed' ? 'not there' : 'reads nothing')])))));
+  }
+  if (same.length) {
+    page.appendChild(h('details', { class: 'cmp-same' },
+      h('summary', {}, `${same.length} command${same.length === 1 ? '' : 's'} read${same.length === 1 ? 's' : ''} what ${same.length === 1 ? 'it' : 'they'} read before`),
+      ...same.map((command) => h('div', { class: 'cmp-row' }, compareMark('same'), named(command.name)))));
+  }
+  return page;
+}
+
+function compareCodePage(model, found) {
+  const page = h('div', { class: 'cmp-codepage' });
+  if (found.diff.name) {
+    page.appendChild(h('section', { class: 'cmp-command' },
+      h('div', { class: 'cmp-detail-head' }, compareMark('changed'), h('strong', {}, 'model')),
+      compareSourceRows([
+        { k: 'del', o: 1, n: null, text: `model ${JSON.stringify(found.diff.name.from)}` },
+        { k: 'add', o: null, n: 1, text: `model ${JSON.stringify(found.diff.name.to)}` },
+      ])));
+  }
+  let any = false;
+  for (const [kind, title] of COMPARE_KINDS) {
+    const entry = found.diff.kinds[kind];
+    const changes = [
+      ...entry.added.map((name) => ['added', name]),
+      ...entry.changed.map((name) => ['changed', name]),
+      ...entry.removed.map((name) => ['removed', name]),
+    ];
+    if (!changes.length) continue;
+    any = true;
+    page.appendChild(h('h4', { class: 'cmp-code-kind' }, title));
+    for (const [status, name] of changes) {
+      page.appendChild(h('section', { class: 'cmp-command' },
+        h('div', { class: 'cmp-detail-head' }, compareMark(status), h('strong', {}, compareLabel(found, kind, name))),
+        compareSourceRows(definitionSourceDiff(found.older, found.newer, kind, name))));
+    }
+  }
+  if (!any && !found.diff.name) page.appendChild(h('div', { class: 'empty' }, 'No differences – the two are the same.'));
+  return page;
+}
+
 function renderEvents(model, main) {
   main.appendChild(h('header', {},
     h('div', { class: 'name' }, 'Events'),
