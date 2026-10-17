@@ -92,7 +92,10 @@
             return refusal('No model is open in the playground – open or create one first.');
           }
           const before = mutates && model ? modelAdvisories(model) : [];
-          const { summary, payload } = run(model, args || {});
+          // One undo step per model the call changed, marked as the
+          // agent's (`asAgent`, index.html – absent where the page is not).
+          const call = () => run(model, args || {});
+          const { summary, payload } = typeof asAgent === 'function' ? asAgent(call) : call();
           if ((mutates || mutatesSandbox) && typeof render === 'function') render();
           toast('Agent · ' + summary);
           const value = payload === undefined ? summary : payload;

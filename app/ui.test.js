@@ -2101,8 +2101,8 @@ function build(index) {
 
 // ---------------------------------------------------------------
 // Two tabs share one log. Each sees the other's edits as they land,
-// and each undoes only its own – and only while nothing has been
-// appended past it, since undo cuts the log back to a position.
+// and each undoes only its own – and only while the model has not been
+// changed elsewhere since.
 // ---------------------------------------------------------------
 {
   const id = sandbox.createDcbModel('Two Tabs Probe');
@@ -2143,7 +2143,7 @@ function build(index) {
     eq([...sessionStore.keys()].some((k) => k.startsWith('dcb-playground:undo')), true, 'in the tab\'s own');
   });
 
-  check('undo is refused once another tab has appended past it', () => {
+  check('undo is refused once another tab has changed the model since', () => {
     sandbox.run(() => addTaggedEvent(id, 'MineHappened', { properties: [] }));
     otherTabAppends('TheirsHappened');
     const before = sandbox.loadEvents().length;
@@ -2153,7 +2153,7 @@ function build(index) {
     eq(['MineHappened', 'TheirsHappened'].every((name) => name in events), true, 'both edits kept');
   });
 
-  check('a redo is dropped once another tab has appended', () => {
+  check('a redo is dropped once another tab has changed the model', () => {
     sandbox.run(() => addTaggedEvent(id, 'UndoneHere', { properties: [] }));
     sandbox.undo();
     otherTabAppends('ThenThere');
@@ -2203,8 +2203,8 @@ function build(index) {
 
   check('once old steps fall off the history, what they built is folded and the rest still undo', () => {
     // Undo keeps sixty steps; past them, the oldest step's edits are
-    // history nothing can reach, and compaction folds them – moving
-    // every mark still held.
+    // history nothing can reach, and compaction folds them – while
+    // every step still held keeps its events.
     sandbox.run(() => addTaggedEvent(id, 'Flip', { properties: [] }));
     const names = ['Flip', 'Flop'];
     shifts.length = 0;
@@ -2229,6 +2229,135 @@ function build(index) {
     }));
     sandbox.undo();
     eq(events(), before, 'one undo takes the whole gesture back');
+  });
+
+  check('a model\'s oldest step is not folded under another model\'s edits', () => {
+    const other = sandbox.createDcbModel('Busy Elsewhere');
+    sandbox.run(() => addTaggedEvent(id, 'KeptForUndo', { properties: [] }));
+    const before = events();
+    compacting(() => {
+      for (let i = 0; i < 5; i++) sandbox.run(() => addTaggedEvent(other, 'Busy' + i, { properties: [] }));
+    });
+    sandbox.setActiveModelId(id);
+    sandbox.undo();
+    eq(events(), before.filter((name) => name !== 'KeptForUndo'), 'still undoable');
+  });
+
+  sandbox.clearActiveModelId();
+}
+
+// ---------------------------------------------------------------
+// Every model has a history of its own. A step is the model's last
+// events, taken out of the shared log wherever they sit – so what
+// other models appended since stays exactly as it was.
+// ---------------------------------------------------------------
+{
+  sessionStore.clear();
+  const a = sandbox.createDcbModel('History A');
+  const b = sandbox.createDcbModel('History B');
+  const names = (id) => Object.keys(sandbox.projectState()[id]['event-definitions']);
+  const ofModel = (id) => JSON.stringify(sandbox.loadEvents().filter((e) => e.data['dcb-model-id'] === id)
+    .map(({ timestamp, type, data }) => ({ timestamp, type, data })));
+  const history = (id) => sandbox.undoLog().models[id] || { done: [], undone: [] };
+
+  check('creating a model is where its history starts, not a step in it', () => {
+    eq(history(a).done.length, 0, 'nothing to undo');
+  });
+
+  check('undo in one model leaves another model\'s later edits alone', () => {
+    sandbox.setActiveModelId(a);
+    sandbox.run(() => addTaggedEvent(a, 'AFirst', { properties: [] }));
+    sandbox.run(() => addTaggedEvent(b, 'BAfter', { properties: [] }));
+    const bBefore = ofModel(b);
+    sandbox.undo();
+    eq(names(a), [], 'the step undone');
+    eq(ofModel(b), bBefore, 'B exactly as it was');
+    eq(names(b), ['BAfter'], 'and still there');
+    const seq = sandbox.loadEvents().map((e) => e.sequence);
+    eq(seq, seq.map((_, i) => i), 'the log numbered without a gap');
+  });
+
+  check('redo puts the step back, after what other models appended', () => {
+    sandbox.run(() => addTaggedEvent(b, 'BMeanwhile', { properties: [] }));
+    sandbox.redo();
+    eq(names(a), ['AFirst'], 'redone');
+    eq(names(b), ['BAfter', 'BMeanwhile'], 'B untouched');
+  });
+
+  check('each model undoes only its own steps', () => {
+    sandbox.setActiveModelId(b);
+    sandbox.undo();
+    eq(names(b), ['BAfter'], 'B\'s last step');
+    eq(names(a), ['AFirst'], 'A\'s untouched');
+  });
+
+  check('one gesture across two models is one step in each', () => {
+    sandbox.run(() => {
+      addTaggedEvent(a, 'ABoth', { properties: [] });
+      addTaggedEvent(b, 'BBoth', { properties: [] });
+    });
+    sandbox.setActiveModelId(a);
+    sandbox.undo();
+    eq(names(a), ['AFirst'], 'A\'s part undone');
+    eq(names(b).includes('BBoth'), true, 'B\'s part kept');
+  });
+
+  check('a jump moves several steps in one write of the log', () => {
+    sandbox.run(() => addTaggedEvent(a, 'ASecond', { properties: [] }));
+    sandbox.run(() => addTaggedEvent(a, 'AThird', { properties: [] }));
+    let writes = 0;
+    const setItem = sandbox.localStorage.setItem;
+    sandbox.localStorage.setItem = (k, v) => { if (k === sandbox.EVENT_LOG_KEY) writes++; return setItem(k, v); };
+    try {
+      eq(sandbox.travel(a, -3), -3, 'three back');
+      eq(names(a), [], 'to before the first');
+      eq(sandbox.travel(a, 2), 2, 'two forward');
+    } finally { sandbox.localStorage.setItem = setItem; }
+    eq(names(a), ['AFirst', 'ASecond'], 'there');
+    eq(writes, 2, 'one write each way');
+    sandbox.travel(a, 1);
+  });
+
+  check('a model changed elsewhere refuses, and only that model\'s history goes', () => {
+    sandbox.setActiveModelId(a);
+    const events = JSON.parse(store.get(sandbox.EVENT_LOG_KEY));
+    events.push({ sequence: events.length, timestamp: 'elsewhere', type: 'event-definition-added',
+      data: { 'dcb-model-id': a, name: 'FromAnotherTab', body: { properties: [], tags: [] } } });
+    store.set(sandbox.EVENT_LOG_KEY, JSON.stringify(events));
+    dispatch('storage', { key: sandbox.EVENT_LOG_KEY });
+    const before = sandbox.loadEvents().length;
+    sandbox.undo();
+    eq(sandbox.loadEvents().length, before, 'nothing taken out');
+    eq(history(a).done.length, 0, 'A\'s history dropped');
+    eq(history(b).done.length > 0, true, 'B\'s kept');
+  });
+
+  check('an agent\'s tool call is one step, marked as the agent\'s', () => {
+    sandbox.asAgent(() => {
+      addTaggedEvent(a, 'AgentOne', { properties: [] });
+      addTaggedEvent(a, 'AgentTwo', { properties: [] });
+    });
+    eq(history(a).done.length, 1, 'one step');
+    eq(history(a).done[0].agent, true, 'the agent\'s');
+    sandbox.run(() => addTaggedEvent(a, 'Mine', { properties: [] }));
+    eq(history(a).done[1].agent, false, 'a gesture is not');
+  });
+
+  check('a model keeps its last sixty steps', () => {
+    for (let i = 0; i < 65; i++) sandbox.run(() => addTaggedEvent(b, 'Many' + i, { properties: [] }));
+    eq(history(b).done.length, 60, 'sixty');
+    eq(history(b).done[59].label.includes('Many64'), true, 'the newest kept');
+  });
+
+  check('a deleted model is offered back once, and comes back whole', () => {
+    const before = names(b);
+    sandbox.run(() => sandbox.deleteDcbModel(b));
+    eq(b in sandbox.projectState(), false, 'gone');
+    eq(history(b).done.length, 0, 'with its history');
+    const deleted = sandbox.loadEvents().find((e) => e.type === 'dcb-model-deleted' && e.data['dcb-model-id'] === b);
+    sandbox.run(() => sandbox.restoreDeleted(b, sandbox.eventStamp(deleted)));
+    eq(names(b), before, 'back as it was');
+    eq(sandbox.activeModelId(), b, 'and open');
   });
 
   sandbox.clearActiveModelId();
@@ -5920,7 +6049,7 @@ check('this model as the tab began is compared with what was changed since', () 
   sandbox.chooseComparison(now, { kind: 'revision', first: true });
   const found = sandbox.comparison(now);
   eq(found.diff.kinds['event-definition'].added, ['CourseRenamed'], 'the event added since');
-  eq(textOf(comparePage(now)).includes('this model as this tab began'), true, 'named as what it is');
+  eq(textOf(comparePage(now)).includes('this model as you opened it'), true, 'named as what it is');
 });
 
 check('a choice that no longer resolves is dropped and the picker opens again', () => {
@@ -5933,14 +6062,14 @@ check('a choice that no longer resolves is dropped and the picker opens again', 
   eq(sandbox.compareChoiceFor(tenant.id), null, 'and forgotten');
 });
 
-check('a model as it was at an earlier position of the log', () => {
-  const [simple] = twoModels('course-simple');
-  const at = sandbox.loadEvents().length;
+check('a model without its last events, whatever other models appended since', () => {
+  const [simple, tenant] = twoModels('course-simple', 'course-tenant');
   addDefinition('event-definition', simple.id, 'CourseRenamed', { properties: [], tags: [] });
-  const earlier = sandbox.modelAtPosition(simple.id, at);
+  addDefinition('event-definition', tenant.id, 'TenantRenamed', { properties: [], tags: [] });
+  const earlier = sandbox.modelWithoutLast(simple.id, 1);
   eq('CourseRenamed' in earlier['event-definitions'], false, 'not yet there');
   eq('CourseRenamed' in projectState()[simple.id]['event-definitions'], true, 'there now');
-  eq(sandbox.modelAtPosition(simple.id, 0), null, 'before it existed');
+  eq(sandbox.modelWithoutLast(simple.id, sandbox.loadEvents().length), null, 'before it existed');
 });
 
 // A share link or a fetched file is unpacked under a cap: a few hundred

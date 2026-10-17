@@ -6306,12 +6306,13 @@ function modelFromEnvelope(envelope) {
   });
 }
 
-// A stored model as it was when the log was `at` events long – before
-// an undo step, say – or null if it did not exist yet. A fold of the
-// log's prefix; undo positions survive compaction (`onCompact` moves
-// them), so a position the page still holds still means what it did.
-function modelAtPosition(modelId, at) {
-  return projectEvents(loadEvents().slice(0, at))[modelId] || null;
+// A stored model without its last `count` events – as it was before
+// its latest undo steps, say – or null if it did not exist yet. A fold
+// of the model's own events only: every event belongs to one model, so
+// what other models appended in between changes nothing here.
+function modelWithoutLast(modelId, count) {
+  const own = loadEvents().filter((event) => event.data && event.data['dcb-model-id'] === modelId);
+  return projectEvents(own.slice(0, Math.max(0, own.length - count)))[modelId] || null;
 }
 
 // ============================================================

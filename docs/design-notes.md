@@ -1194,11 +1194,11 @@ step at the playhead. Only the step band scrolls.
   any other page, and coming back finds the same comparison. It is not
   in `CODE_FOLLOWS` – two models' text is not something to edit.
 - **What it compares with.** This model at one of this tab's undo
-  steps (`modelAtPosition`, a fold of the log's prefix), another stored
+  steps (`modelWithoutLast`, a fold of the model's own events), another stored
   model, or a file – a URL or pasted JSON – read and never stored
   (`modelFromEnvelope`). The choice is kept per tab and per model in
   sessionStorage and dropped silently once it no longer resolves. The
-  picker opens first, *As this tab began* highlighted, so the common
+  picker opens first, *As you opened it* highlighted, so the common
   question is one click and nothing is chosen unasked.
 - **A file is built by the import, in a scratch log.** Re-deriving an
   envelope → model step beside the import would drift from it (entity
@@ -1227,3 +1227,47 @@ step at the playhead. Only the step band scrolls.
 - **Deferred:** side-by-side and matrix views, replaying one side's
   scenarios against the other, taking a definition across, a WebMCP
   tool, rename hints, an arbitrary point in the log.
+
+## History and undo
+
+- **One history per model, not per tab.** Undo used to cut the shared
+  log back to a position: exact by construction, but one history across
+  every model – undoing in model A took back the edit just made in B –
+  and voided by any write from another tab. Every event belongs to one
+  model and a model's state folds only its own events, so a model's
+  last step can be taken out of the log wherever it sits, leaving what
+  other models appended since untouched. Still exact: nothing is
+  computed, the events come out and go back in as they were.
+- **A step is a count, not a position.** The model's last `n` events,
+  the newest of which must still be the one the step ended with
+  (`eventStamp`: timestamp, type, name – not the sequence number, which
+  every take-out and compaction renumbers). Positions move under
+  another model's undo or another tab's; a model's own tail moves only
+  when the model changes. That is the one refusal left: the model was
+  changed elsewhere since, so undoing would take that change too. The
+  model's history is dropped and starts again from there.
+- **Weighed and rejected: restore by append.** Jumping back by
+  appending a change that sets the model to an earlier version
+  (`replaceDefinitions`) would never refuse, but undo would only be as
+  complete as that diff, the log would grow on every undo, every
+  append hook would fire on it, and a restore of the whole model would
+  silently wipe another tab's later edits to it.
+- **Weighed and rejected: a working copy per tab.** It makes per-tab
+  history fall out for free, but brings a save step, unsaved work to
+  lose on close, and a conflict when two tabs save one model – too
+  much of a change to how the playground keeps models.
+- **What a step is.** A gesture (`run`) or an agent's tool call
+  (`asAgent`, marked as the agent's) makes one step in each model it
+  touched. Creating, importing or duplicating a model is where its
+  history starts, not a step in it. A deleted model has no page to
+  undo from: its deletion is offered back once, in a toast
+  (`restoreDeleted`). Sixty steps per model; the oldest falls off.
+- **The open model is per tab too.** It was one browser-wide choice,
+  so opening B in one tab switched every other tab to it. Each tab
+  keeps its own; localStorage holds only the last one opened, where a
+  fresh tab starts.
+- **Compaction keeps what the histories need.** The floor is the
+  oldest event any of this tab's histories still points at; steps
+  count from a model's end, so nothing moves after a compaction.
+  Another tab's histories are not considered: a step that loses its
+  events is refused like any change made elsewhere.

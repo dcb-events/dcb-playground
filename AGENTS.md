@@ -133,6 +133,7 @@ was decided, why, and what was tried and reverted:
 - how evaluation gets its events, the read port — _The read port_
 - JSON Schemas of arguments and payloads — _Value schemas_
 - comparing two models, the Compare view — _Comparing models_
+- undo, redo, the per-model history — _History and undo_
 
 ## Conventions and gotchas
 
@@ -195,14 +196,15 @@ was decided, why, and what was tried and reverted:
   all write through it; so does the page's `storage` listener for
   another tab's writes. The log compacts itself inside `appendEvents`
   past a size, and on a full storage before refusing: it folds only
-  what lies before the page's oldest undo step (`setCompactionFloor`)
-  and reports how far the rest moved (`onCompact`), so undo marks are
-  moved, never lost — unless storage is full and only folding
-  everything makes room. The projected state and the problems
-  list are cached per revision; a writer that skips its bump is the one way
-  those caches go stale. The log is shared between tabs, the undo history
-  is per tab (sessionStorage) and refuses once another tab has appended
-  past it.
+  what lies before the oldest event this tab's undo histories still
+  need (`setCompactionFloor`), so no step is lost — unless storage is
+  full and only folding everything makes room. The projected state and
+  the problems list are cached per revision; a writer that skips its
+  bump is the one way those caches go stale. The log is shared between
+  tabs; the open model and the undo histories are per tab
+  (sessionStorage), one history per model. Undo takes a model's last
+  events out of the log wherever they sit, and refuses once that model
+  was changed elsewhere — see _History and undo_.
 - **`projectState()` returns one shared object per revision** — never mutate
   it. Editors work on a `deepClone` and route changes through a command
   function (`patch` in index.html is the pattern).

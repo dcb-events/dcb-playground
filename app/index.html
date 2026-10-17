@@ -3289,49 +3289,88 @@ function renderImportExportModal() {
 
 // ---------- undo ----------
 //
-// The model is an append-only log and the state is a fold over it, so
-// the last change is undone by dropping what it appended off the end –
-// not by a second history kept beside the first. The entries that come
-// off are held so redo can put them back exactly as they were – numbered
-// for where they land, which is where they came from unless a
-// compaction has moved the log since.
+// The model is an append-only log and the state is a fold over it, so a
+// change is undone by taking what it appended back out of the log – not
+// by a second history kept beside the first. The entries that come out
+// are held so redo can put them back exactly as they were.
 //
-// The log is shared by every tab; the history is not. Each tab keeps
-// its own, in sessionStorage – undoing in one tab used to take back the
-// other's last edit. And since undo cuts the log back to a position, a
-// mark is only good while the log still ends where it ended – the same
-// length, the same last event: once another tab has appended past it,
-// or the log was compacted, cutting there would take what is not this
-// change's too, so the step is refused and the history dropped.
+// Every model has a history of its own. The log is shared by all of
+// them, but each event belongs to one model and a model's state is the
+// fold over its own events only, so a model's last change can be taken
+// out from the middle of the log without touching what another model
+// appended after it. Undo used to cut the log back to a position instead
+// – one history across every model, so undoing in model A could take
+// back an edit just made in B.
+//
+// A step is therefore not a position but a count: the model's last `n`
+// events, the newest of which still has to be the one the step ended
+// with (`stamp`). Positions move whenever another model's step is taken
+// out or the log is compacted; a model's own tail moves only when the
+// model itself changes. That is the one case a step is refused: the
+// model was changed elsewhere since – another tab, say – and undoing
+// here would take that change with it.
+//
+// The histories are this tab's, in sessionStorage: undoing in one tab
+// used to take back the other's last edit. Creating, importing and
+// duplicating a model are where its history starts, not steps in it; a
+// deleted model has no page to undo from, so its deletion is offered
+// back once, as a toast.
 
-// Versioned in lockstep with the event log: the stack holds raw
-// events and absolute offsets into that log, so marks taken against
-// one log version must never replay against another. Deriving the
-// suffix keeps the two keys impossible to bump apart.
+// Versioned in lockstep with the event log: the histories hold raw
+// events, so steps taken against one log version must never replay
+// against another. Deriving the suffix keeps the two keys impossible to
+// bump apart.
 const UNDO_KEY = 'dcb-playground:undo:' + EVENT_LOG_KEY.split(':').pop();
 // Set while a load is rendering for the first time – see `boot`.
 const BOOT_KEY = 'dcb-playground:booting';
 // Where the history was kept while it was shared; nothing reads it.
 localStorage.removeItem(UNDO_KEY);
 
+// Steps kept per model; the oldest falls off.
+const HISTORY_LIMIT = 60;
+
 function undoLog() {
   try {
     const stored = JSON.parse(sessionStorage.getItem(UNDO_KEY));
-    if (stored && Array.isArray(stored.done) && Array.isArray(stored.undone)) return stored;
-  } catch (e) { /* a corrupt stack is an empty one */ }
-  return { done: [], undone: [] };
+    // The shape before histories were per model reads as empty.
+    if (stored && stored.models && typeof stored.models === 'object') return stored;
+  } catch (e) { /* a corrupt history is an empty one */ }
+  return { models: {} };
 }
-function saveUndoLog(next) { sessionStorage.setItem(UNDO_KEY, JSON.stringify(next)); }
+function saveUndoLog(next) {
+  for (const [id, history] of Object.entries(next.models)) {
+    if (!history.done.length && !history.undone.length) delete next.models[id];
+  }
+  try {
+    sessionStorage.setItem(UNDO_KEY, JSON.stringify(next));
+  } catch (e) {
+    toast('This history will not survive a reload: this tab’s storage is full.', true);
+  }
+}
+function modelHistory(log, modelId) {
+  return log.models[modelId] || (log.models[modelId] = { done: [], undone: [] });
+}
 
-const OVERTAKEN = 'Another tab has changed this playground since, '
-  + 'so there is nothing here to undo or redo any more.';
+function changedElsewhere(modelId) {
+  const model = projectState()[modelId];
+  return `${model ? model.name : 'This model'} was changed elsewhere since – undoing here would take `
+    + 'that change too, so the earlier changes can no longer be undone.';
+}
 
-// The log's last event before position `n`, as a mark remembers it –
-// by when it was written and what it was, not by its sequence number,
-// which a compaction renumbers while the event itself is kept.
-function logStampAt(events, n) {
-  const event = events[n - 1];
-  return event ? `${event.timestamp} ${event.type}` : '';
+// An event as a step remembers it – by when it was written and what it
+// was, not by its sequence number, which a compaction or another
+// model's undo renumbers while the event itself is kept.
+function eventStamp(event) {
+  return event ? `${event.timestamp} ${event.type} ${event.data && event.data.name || ''}` : '';
+}
+function ofModel(event, modelId) {
+  return !!event.data && event.data['dcb-model-id'] === modelId;
+}
+// Where in the log each of a model's events sits, oldest first.
+function modelPositions(events, modelId) {
+  const at = [];
+  events.forEach((event, i) => { if (ofModel(event, modelId)) at.push(i); });
+  return at;
 }
 
 // What a change was, read off what it appended. `event-definition-updated`
@@ -3346,27 +3385,46 @@ function changeLabel(appended) {
     + (appended.length > 1 ? ` (+${appended.length - 1} more)` : '');
 }
 
-// Marks are taken at the append seam itself (`onAppend`, model.js):
+// Steps are taken at the append seam itself (`onAppend`, model.js):
 // every edit path funnels through `appendEvents` – command functions
-// behind buttons and agent tools alike – so nothing can change the
-// log without becoming undoable. `run` only *batches*: however many
-// appends one gesture makes, the gesture is one undo step, and a
-// nested `run` belongs to the gesture that opened it.
+// behind buttons and agent tools alike – so nothing can change the log
+// without becoming undoable. `run` only *batches*: however many appends
+// one gesture makes, the gesture is one step per model it touched, and a
+// nested `run` belongs to the gesture that opened it. `asAgent` batches
+// an agent's tool call the same way and marks its steps as the agent's.
 let undoBatch = null;
 
-function takeUndoMark(at, appended) {
+function takeUndoMark(appended, agent) {
   const log = undoLog();
-  // `end` is where the log stood after this change: undo is sound only
-  // while it still stands there.
-  const last = appended[appended.length - 1];
-  log.done.push({
-    at, end: at + appended.length, stamp: logStampAt([last], 1), label: changeLabel(appended),
-  });
-  // Redoing after a new change would mean re-appending entries that no
-  // longer sit at the end of the log, so the branch is dropped – on an
-  // agent's append exactly as on a button's.
-  log.undone = [];
-  if (log.done.length > 60) log.done.shift();
+  const byModel = new Map();
+  for (const event of appended) {
+    const id = event.data && event.data['dcb-model-id'];
+    if (!id) continue;
+    if (!byModel.has(id)) byModel.set(id, []);
+    byModel.get(id).push(event);
+  }
+  for (const [id, group] of byModel) {
+    if (group.some((event) => event.type === 'dcb-model-deleted')) {
+      delete log.models[id];
+      offerRestore(id, group.find((event) => event.type === 'dcb-model-deleted'));
+      continue;
+    }
+    if (group.some((event) => event.type === 'dcb-model-created')) {
+      delete log.models[id];
+      continue;
+    }
+    const history = modelHistory(log, id);
+    const last = group[group.length - 1];
+    history.done.push({
+      n: group.length, stamp: eventStamp(last), label: changeLabel(group),
+      time: last.timestamp, agent: !!agent,
+    });
+    // Redoing after a new change would mean putting back entries the
+    // model has moved on from, so the branch is dropped – on an agent's
+    // append exactly as on a button's.
+    history.undone = [];
+    if (history.done.length > HISTORY_LIMIT) history.done.shift();
+  }
   saveUndoLog(log);
 }
 
@@ -3376,9 +3434,9 @@ onAppend((at, appended) => {
     undoBatch.events.push(...appended);
     return;
   }
-  // An append outside any gesture – an agent's tool call – is its own
-  // undo step; the tool repaints for itself afterwards.
-  takeUndoMark(at, appended);
+  // An append outside any gesture is its own step; the caller repaints
+  // for itself afterwards.
+  takeUndoMark(appended, false);
 });
 
 // The model the address bar links to has changed: the link is stale.
@@ -3395,97 +3453,160 @@ onAppend((at, appended) => {
   if (id && id === activeModelId()) state.namePrompt = { id, draft: projectState()[id].name };
 });
 
-const runOnce = run;
-run = function (fn) {
-  if (undoBatch) return runOnce(fn);
+function batched(fn, agent, finish) {
+  if (undoBatch) return fn();
   undoBatch = { at: null, events: [] };
   try {
-    const out = runOnce(fn);
+    const out = fn();
     if (undoBatch.events.length) {
-      takeUndoMark(undoBatch.at, undoBatch.events);
-      render();
+      takeUndoMark(undoBatch.events, agent);
+      if (finish) finish();
     }
     return out;
   } finally {
     undoBatch = null;
   }
+}
+
+const runOnce = run;
+run = function (fn) {
+  return batched(() => runOnce(fn), false, render);
 };
 
-function undo() {
+// An agent's tool call (webmcp.js): one step per model it changed,
+// marked as the agent's. Unlike `run` it lets a refusal through – the
+// agent has to hear it.
+function asAgent(fn) {
+  return batched(fn, true);
+}
+
+// Moves a model's history `delta` steps – back when negative, forward
+// when positive – in one write of the log, however far it goes. Returns
+// how many steps it moved, or null when the model was changed elsewhere
+// and the history was dropped.
+function travel(modelId, delta) {
   const log = undoLog();
-  const mark = log.done.pop();
-  if (!mark) return toast('Nothing to undo.');
-  const events = loadEvents();
-  if (events.length !== mark.end || logStampAt(events, mark.end) !== mark.stamp) {
-    saveUndoLog({ done: [], undone: [] });
-    return toast(OVERTAKEN, true);
+  const history = log.models[modelId];
+  if (!history) return 0;
+  let events = loadEvents();
+  let moved = 0;
+  const refuse = () => {
+    delete log.models[modelId];
+    saveUndoLog(log);
+    toast(changedElsewhere(modelId), true);
+    return null;
+  };
+  while (delta < 0 && history.done.length) {
+    const mark = history.done[history.done.length - 1];
+    const at = modelPositions(events, modelId);
+    if (at.length < mark.n || eventStamp(events[at[at.length - 1]]) !== mark.stamp) return refuse();
+    const out = new Set(at.slice(-mark.n));
+    const removed = events.filter((event, i) => out.has(i));
+    events = events.filter((event, i) => !out.has(i));
+    const left = at.length > mark.n ? events[modelPositions(events, modelId).pop()] : null;
+    history.done.pop();
+    history.undone.push({
+      events: removed.map(({ timestamp, type, data }) => ({ timestamp, type, data })),
+      base: eventStamp(left), label: mark.label, time: mark.time, agent: mark.agent,
+    });
+    delta++; moved--;
   }
-  writeEventLog(events.slice(0, mark.at));
-  dropAddressLink();
-  log.undone.push({
-    at: mark.at, stamp: logStampAt(events, mark.at), events: events.slice(mark.at), label: mark.label,
-  });
+  while (delta > 0 && history.undone.length) {
+    const step = history.undone[history.undone.length - 1];
+    const at = modelPositions(events, modelId);
+    const now = at.length ? eventStamp(events[at[at.length - 1]]) : '';
+    if (now !== step.base) return refuse();
+    events = [...events, ...step.events];
+    history.undone.pop();
+    history.done.push({
+      n: step.events.length, stamp: eventStamp(step.events[step.events.length - 1]),
+      label: step.label, time: step.time, agent: step.agent,
+    });
+    delta--; moved++;
+  }
+  if (moved) {
+    writeEventLog(events.map((event, i) => ({ ...event, sequence: i })));
+    dropAddressLink();
+    closeForms();
+  }
   saveUndoLog(log);
-  closeForms();
-  toast('Undone – ' + mark.label);
-  render();
+  return moved;
+}
+
+function undo() {
+  const id = activeModelId();
+  const history = id && undoLog().models[id];
+  if (!history || !history.done.length) return toast('Nothing to undo.');
+  const label = history.done[history.done.length - 1].label;
+  if (travel(id, -1)) {
+    toast('Undone – ' + label);
+    render();
+  }
 }
 
 function redo() {
-  const log = undoLog();
-  const step = log.undone.pop();
-  if (!step) return toast('Nothing to redo.');
-  const events = loadEvents();
-  if (events.length !== step.at || logStampAt(events, step.at) !== step.stamp) {
-    saveUndoLog({ done: [], undone: [] });
-    return toast(OVERTAKEN, true);
+  const id = activeModelId();
+  const history = id && undoLog().models[id];
+  if (!history || !history.undone.length) return toast('Nothing to redo.');
+  const label = history.undone[history.undone.length - 1].label;
+  if (travel(id, 1)) {
+    toast('Redone – ' + label);
+    render();
   }
-  const replayed = step.events.map((event, i) => ({ ...event, sequence: events.length + i }));
-  writeEventLog([...events, ...replayed]);
-  dropAddressLink();
-  log.done.push({
-    at: events.length, end: events.length + replayed.length,
-    stamp: logStampAt(replayed, replayed.length), label: step.label,
-  });
-  saveUndoLog(log);
-  closeForms();
-  toast('Redone – ' + step.label);
-  render();
 }
 
-// Compaction (model.js) folds the log up to this tab's oldest undo
-// step – a gesture still being batched counts – so every step it can
-// undo is kept, and here each is moved the distance the log moved.
-// Another tab's marks are not moved: they no longer match, and its
-// next undo is refused, as after any edit of ours.
+// A deleted model has no history to undo from: its deletion is offered
+// back once, while the toast stands. Restoring takes the deletion out
+// of the log, as undo would – refused once the log no longer holds it.
+function offerRestore(modelId, deleted) {
+  const model = projectState()[modelId];
+  const name = model ? model.name : 'the model';
+  const stamp = eventStamp(deleted);
+  toast(h('span', {}, `Deleted ${name} `, h('button', {
+    class: 'btn ghost', type: 'button',
+    onclick: () => run(() => restoreDeleted(modelId, stamp)),
+  }, 'Restore')));
+}
+
+function restoreDeleted(modelId, stamp) {
+  const events = loadEvents();
+  const at = events.findIndex((event) => ofModel(event, modelId) && event.type === 'dcb-model-deleted'
+    && eventStamp(event) === stamp);
+  if (at < 0) return toast('That model can no longer be restored.', true);
+  writeEventLog(events.filter((event, i) => i !== at).map((event, i) => ({ ...event, sequence: i })));
+  switchToModel(modelId);
+}
+
+// Compaction (model.js) folds the log up to the oldest event any of this
+// tab's histories still needs – the first of a model's oldest step, or,
+// with only redo left, the event its redo has to find in place – and a
+// gesture still being batched counts. Steps are counts from a model's
+// end, so nothing has to move afterwards. Another tab's histories are
+// not considered: a step that loses its events is refused, as after any
+// change made elsewhere.
 setCompactionFloor((events) => {
-  const ats = undoLog().done.map((mark) => mark.at);
+  const ats = [events.length];
+  for (const [id, history] of Object.entries(undoLog().models)) {
+    const at = modelPositions(events, id);
+    const steps = history.done.reduce((sum, mark) => sum + mark.n, 0);
+    if (history.done.length && at.length >= steps) ats.push(at[at.length - steps]);
+    else if (history.undone.length && at.length) ats.push(at[at.length - 1]);
+  }
   if (undoBatch && undoBatch.at !== null) ats.push(undoBatch.at);
-  return Math.min(events.length, ...ats);
+  return Math.min(...ats);
 });
 
 onCompact(({ shift, events, dropped }) => {
-  const log = undoLog();
   if (dropped) {
     // Storage was full and only folding everything made room.
-    if (log.done.length || log.undone.length) {
+    if (Object.keys(undoLog().models).length) {
       toast('The browser\'s storage for this site was full, so the history was compacted: '
         + 'every model is as it was, but undo starts again from here.');
     }
-    saveUndoLog({ done: [], undone: [] });
+    saveUndoLog({ models: {} });
     if (undoBatch && undoBatch.at !== null) undoBatch.at = events.length;
     return;
   }
-  for (const mark of log.done) {
-    mark.at += shift;
-    mark.end += shift;
-    mark.stamp = logStampAt(events, mark.end);
-  }
-  for (const step of log.undone) {
-    step.at += shift;
-    step.stamp = logStampAt(events, step.at);
-  }
-  saveUndoLog(log);
   if (undoBatch && undoBatch.at !== null) undoBatch.at += shift;
 });
 
@@ -11779,18 +11900,23 @@ function setCompareChoice(modelId, choice) {
   }
 }
 
-// This tab's undo steps that changed this model and still stand where
-// they were taken, oldest first – each one a point to compare with.
+// This model's undo steps in this tab, oldest first, each with how many
+// of the model's events came after it began – each one a point to
+// compare with. None once the model was changed elsewhere: the history
+// no longer stands, and its next undo drops it.
 function earlierVersions(model) {
+  const history = undoLog().models[model.id];
+  if (!history || !history.done.length) return [];
   const events = loadEvents();
-  return undoLog().done.filter((mark) => logStampAt(events, mark.end) === mark.stamp
-    && events.slice(mark.at, mark.end).some((event) => event.data && event.data['dcb-model-id'] === model.id));
+  const at = modelPositions(events, model.id);
+  const newest = history.done[history.done.length - 1];
+  if (!at.length || eventStamp(events[at[at.length - 1]]) !== newest.stamp) return [];
+  let since = 0;
+  return history.done.slice().reverse().map((mark) => ({ ...mark, since: since += mark.n })).reverse();
 }
 
-function timeOfPosition(events, at) {
-  const event = events[at];
-  if (!event || !event.timestamp) return '';
-  const when = new Date(event.timestamp);
+function timeOfStep(mark) {
+  const when = new Date(mark.time);
   return isNaN(when) ? '' : when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
@@ -11815,8 +11941,8 @@ function resolveCompareChoice(model, choice) {
     const mark = choice.first ? versions[0] : versions.find((m) => m.stamp === choice.stamp);
     if (!mark) return null;
     return {
-      model: modelAtPosition(model.id, mark.at) || emptyModel(model.id, model.name),
-      label: choice.first ? 'this model as this tab began' : `this model before “${mark.label}”`,
+      model: modelWithoutLast(model.id, mark.since) || emptyModel(model.id, model.name),
+      label: choice.first ? 'this model as you opened it' : `this model before “${mark.label}”`,
       skipped: [],
     };
   }
@@ -11967,14 +12093,13 @@ function comparePicker(model, found) {
   const option = (label, sub, onPick, extra) => h('button', { class: 'cmp-option' + (extra || ''), onclick: onPick },
     h('span', {}, label), sub ? h('span', { class: 'muted tiny' }, sub) : null);
 
-  const events = loadEvents();
   const versions = earlierVersions(model);
   const earlier = h('section', { class: 'cmp-pick-group' }, h('h4', {}, 'This model, earlier'));
   if (versions.length) {
-    earlier.appendChild(option('As this tab began', `before ${versions.length} change${versions.length === 1 ? '' : 's'} made here`,
+    earlier.appendChild(option('As you opened it', `before ${versions.length} change${versions.length === 1 ? '' : 's'} made here`,
       () => chooseComparison(model, { kind: 'revision', first: true }), ' first'));
     for (const mark of [...versions].reverse()) {
-      earlier.appendChild(option(`Before “${mark.label}”`, timeOfPosition(events, mark.at),
+      earlier.appendChild(option(`Before “${mark.label}”`, timeOfStep(mark),
         () => chooseComparison(model, { kind: 'revision', stamp: mark.stamp })));
     }
   } else {
