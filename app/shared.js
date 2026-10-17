@@ -673,6 +673,12 @@ if (typeof window !== 'undefined' && window.matchMedia) {
 
 // ---------- which model is open ----------
 
+//
+// Each tab keeps its own answer, in sessionStorage: opening model B in
+// one tab used to switch every other tab to B as well. The browser-wide
+// copy in localStorage is only the last one opened anywhere – what a
+// fresh tab starts on, and where a tab lands when its own model was
+// deleted elsewhere.
 const MODEL_KEY = 'dcb-playground:model';
 
 // `null` is a real answer here, not an edge case to work around: a
@@ -680,8 +686,18 @@ const MODEL_KEY = 'dcb-playground:model';
 // Models modal is what asks the question rather than the page silently
 // picking an example on someone's behalf.
 function activeModelId() {
-  const stored = localStorage.getItem(MODEL_KEY);
-  return stored && projectState()[stored] ? stored : null;
+  for (const stored of [sessionStorage.getItem(MODEL_KEY), localStorage.getItem(MODEL_KEY)]) {
+    if (stored && projectState()[stored]) return stored;
+  }
+  return null;
+}
+function setActiveModelId(id) {
+  sessionStorage.setItem(MODEL_KEY, id);
+  localStorage.setItem(MODEL_KEY, id);
+}
+function clearActiveModelId() {
+  sessionStorage.removeItem(MODEL_KEY);
+  localStorage.removeItem(MODEL_KEY);
 }
 function activeModel() {
   const id = activeModelId();
@@ -752,7 +768,7 @@ function takeFirstChange(appended) {
 // the toast `run` turns it into.
 function openNewModel(name) {
   const id = createDcbModel(name);
-  localStorage.setItem(MODEL_KEY, id);
+  setActiveModelId(id);
   setPendingFeatures([]);
   return id;
 }

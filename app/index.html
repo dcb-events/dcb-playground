@@ -1978,7 +1978,7 @@ const linkedEnvelopes = new WeakSet();
 // session scrubbed against model A must not render against model B.
 function switchToModel(id) {
   if (addressModelId && id !== addressModelId) dropAddressLink();
-  localStorage.setItem(MODEL_KEY, id);
+  setActiveModelId(id);
   sessionReset();
   setPendingFeatures([]);
   state.namePrompt = null;
@@ -2121,7 +2121,7 @@ function modelsModal() {
               if (rest.length) {
                 switchToModel(rest[0]);
               } else {
-                localStorage.removeItem(MODEL_KEY);
+                clearActiveModelId();
                 sessionReset();
                 setPendingFeatures([]);
                 state.slice = null; state.view = 'slice';

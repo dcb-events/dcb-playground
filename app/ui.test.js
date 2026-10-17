@@ -230,7 +230,7 @@ function build(index) {
 {
   check('the guard rows and their editor render without throwing', () => {
     const { id, model } = build(8);
-    store.set('dcb-playground:model', id);
+    sandbox.setActiveModelId(id);
     store.set('dcb-playground:experimental', 'on');
     sandbox.state.view = 'slice';
     sandbox.state.slice = 'UpdateText';
@@ -252,7 +252,7 @@ function build(index) {
 
   check('the derived detail and its editor render without throwing', () => {
     const { id, model } = build(9);
-    store.set('dcb-playground:model', id);
+    sandbox.setActiveModelId(id);
     store.set('dcb-playground:experimental', 'on');
     sandbox.state.view = 'entity';
     sandbox.state.entity = 'Document';
@@ -659,7 +659,7 @@ function build(index) {
   // `run` repaints on success, and a repaint reads whichever model is
   // open – which is stored, not held – so a gesture cannot be driven
   // until one has been opened.
-  store.set('dcb-playground:model', id);
+  sandbox.setActiveModelId(id);
   const active = () => sandbox.activeModel();
 
   check('the page renders every view without throwing', () => {
@@ -896,7 +896,7 @@ function build(index) {
 // ---------------------------------------------------------------
 {
   const { id, model } = build(1);
-  store.set('dcb-playground:model', id);
+  sandbox.setActiveModelId(id);
   const active = () => sandbox.activeModel();
   const session = sandbox.session;
 
@@ -1004,7 +1004,7 @@ function build(index) {
 // ---------------------------------------------------------------
 {
   const { id, model } = build(sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-simple'));
-  store.set('dcb-playground:model', id);
+  sandbox.setActiveModelId(id);
   const session = sandbox.session;
 
   check('a tag type offers what was used; a plain value does not', () => {
@@ -1039,7 +1039,7 @@ function build(index) {
 // ---------------------------------------------------------------
 {
   const { id, model } = build(1);
-  store.set('dcb-playground:model', id);
+  sandbox.setActiveModelId(id);
 
   const add = (body) => {
     const key = sandbox.generateId();
@@ -1174,7 +1174,7 @@ function build(index) {
   const { id, model } = build(SCHEDULES);
   // Its numbering's scenarios, which the sequence model ships with.
   sandbox.seedSequenceScenarios(id);
-  store.set('dcb-playground:model', id);
+  sandbox.setActiveModelId(id);
   const page = () => {
     const main = sandbox.document.createElement('div');
     return main;
@@ -1308,7 +1308,7 @@ function build(index) {
 // ---------------------------------------------------------------
 {
   const { id, model } = build(ENTITIES);
-  store.set('dcb-playground:model', id);
+  sandbox.setActiveModelId(id);
 
   const type = (adder, text) => {
     const input = findAll(adder, (n) => n.tag === 'input')[0];
@@ -1403,7 +1403,7 @@ function build(index) {
       'and brought its projection with it, same as the button always did');
   });
 
-  store.delete('dcb-playground:model');
+  sandbox.clearActiveModelId();
 }
 
 // ---------------------------------------------------------------
@@ -1413,7 +1413,7 @@ function build(index) {
 // ---------------------------------------------------------------
 {
   const { id, model } = build(ENTITIES);
-  store.set('dcb-playground:model', id);
+  sandbox.setActiveModelId(id);
 
   const slice = () => sandbox.sliceOf(model(), 'CertifyCourse');
 
@@ -1489,7 +1489,7 @@ function build(index) {
     eq(sandbox.state.wizard, null, 'no wizard is running');
   });
 
-  store.delete('dcb-playground:model');
+  sandbox.clearActiveModelId();
 }
 
 // ---------------------------------------------------------------
@@ -1498,7 +1498,7 @@ function build(index) {
 // ---------------------------------------------------------------
 {
   const { id, model } = build(ENTITIES);
-  store.set('dcb-playground:model', id);
+  sandbox.setActiveModelId(id);
 
   const drive = (form, text, buttonLabel) => {
     const input = findAll(form, (n) => n.tag === 'input')[0];
@@ -1597,7 +1597,7 @@ function build(index) {
     sandbox.closeForms();
   });
 
-  store.delete('dcb-playground:model');
+  sandbox.clearActiveModelId();
 }
 
 // ---------------------------------------------------------------
@@ -1607,7 +1607,7 @@ function build(index) {
 // ---------------------------------------------------------------
 {
   const { id, model } = build(ENTITIES);
-  store.set('dcb-playground:model', id);
+  sandbox.setActiveModelId(id);
   const LITERAL = ' literal';
 
   check('a touched, complete change row is recorded by leaving it', () => {
@@ -1780,7 +1780,7 @@ function build(index) {
       '"never mind" is never the gesture that writes');
   });
 
-  store.delete('dcb-playground:model');
+  sandbox.clearActiveModelId();
 }
 
 // ---------------------------------------------------------------
@@ -1790,7 +1790,7 @@ function build(index) {
 // ---------------------------------------------------------------
 {
   const { id, model } = build(ENTITIES);
-  store.set('dcb-playground:model', id);
+  sandbox.setActiveModelId(id);
 
   check('an edited definition is stored without a Save press, row still open', () => {
     sandbox.toggleProjectionRow(model(), 'CourseCapacity');
@@ -1872,7 +1872,7 @@ function build(index) {
     sandbox.state.view = 'slice';
   });
 
-  store.delete('dcb-playground:model');
+  sandbox.clearActiveModelId();
 }
 
 // ---------------------------------------------------------------
@@ -1882,7 +1882,7 @@ function build(index) {
 // ---------------------------------------------------------------
 {
   const { id, model } = build(ENTITIES);
-  store.set('dcb-playground:model', id);
+  sandbox.setActiveModelId(id);
   store.set('dcb-playground:experimental', 'on');
 
   check('each read card carries a query popover, not a query line', () => {
@@ -1930,7 +1930,7 @@ function build(index) {
     eq(text.includes('CourseDefined'), true, 'and the events the fold handles');
   });
 
-  store.delete('dcb-playground:model');
+  sandbox.clearActiveModelId();
 }
 
 // ---------------------------------------------------------------
@@ -1942,7 +1942,7 @@ function build(index) {
 // ---------------------------------------------------------------
 {
   const { id, model } = build(ENTITIES);
-  store.set('dcb-playground:model', id);
+  sandbox.setActiveModelId(id);
 
   check('a half-picked handler is not stored, and the finished one is', () => {
     // Created the way the user does: as a property of Course, so the
@@ -1986,7 +1986,7 @@ function build(index) {
     ), true, 'undefined is not a literal, whatever operandSource thinks');
   });
 
-  store.delete('dcb-playground:model');
+  sandbox.clearActiveModelId();
 }
 
 // A chained boundary cannot be one query – a later trip's tags are
@@ -1994,7 +1994,7 @@ function build(index) {
 // trip. Its own block, because `build` starts a fresh store.
 {
   const { id, model } = build(3);
-  store.set('dcb-playground:model', id);
+  sandbox.setActiveModelId(id);
   store.set('dcb-playground:experimental', 'on');
 
   check('a chained boundary shows one combined query per level of the chain', () => {
@@ -2009,7 +2009,7 @@ function build(index) {
   });
 
   store.set('dcb-playground:experimental', 'on');
-  store.delete('dcb-playground:model');
+  sandbox.clearActiveModelId();
 }
 
 // ---------------------------------------------------------------
@@ -2021,7 +2021,7 @@ function build(index) {
 // ---------------------------------------------------------------
 {
   const { id, model } = build(ENTITIES);
-  store.set('dcb-playground:model', id);
+  sandbox.setActiveModelId(id);
 
   check('a model full of dangling references still renders every page', () => {
     // Every class of representable defect, injected through the same
@@ -2072,7 +2072,7 @@ function build(index) {
     eq(sandbox.problems(current).length > 0, true, 'problems lists the fallout');
   });
 
-  store.delete('dcb-playground:model');
+  sandbox.clearActiveModelId();
 }
 
 // ---------------------------------------------------------------
@@ -2081,7 +2081,7 @@ function build(index) {
 // ---------------------------------------------------------------
 {
   const id = sandbox.createDcbModel('Undo Batch Probe');
-  store.set('dcb-playground:model', id);
+  sandbox.setActiveModelId(id);
 
   check('one gesture with several appends is one undo step', () => {
     const before = sandbox.loadEvents().length;
@@ -2096,7 +2096,7 @@ function build(index) {
     eq(Object.keys(model['event-definitions']), [], 'both definitions gone');
   });
 
-  store.delete('dcb-playground:model');
+  sandbox.clearActiveModelId();
 }
 
 // ---------------------------------------------------------------
@@ -2106,7 +2106,7 @@ function build(index) {
 // ---------------------------------------------------------------
 {
   const id = sandbox.createDcbModel('Two Tabs Probe');
-  store.set('dcb-playground:model', id);
+  sandbox.setActiveModelId(id);
   // Another tab's append: the log grows in storage, behind this tab's
   // back, and the browser says so with a `storage` event.
   const otherTabAppends = (name) => {
@@ -2121,6 +2121,20 @@ function build(index) {
     sandbox.projectState();
     otherTabAppends('ElsewhereHappened');
     eq('ElsewhereHappened' in sandbox.projectState()[id]['event-definitions'], true, 'seen without a write here');
+  });
+
+  check('each tab keeps the model it opened', () => {
+    const other = sandbox.createDcbModel('Opened Elsewhere');
+    // Another tab opens `other`: only the browser-wide last-opened moves.
+    store.set('dcb-playground:model', other);
+    eq(sandbox.activeModelId(), id, 'this tab stays on its own');
+    const tab = new Map(sessionStore);
+    sessionStore.clear();
+    eq(sandbox.activeModelId(), other, 'a fresh tab starts on the last one opened');
+    sessionStore.set('dcb-playground:model', 'deleted-elsewhere');
+    eq(sandbox.activeModelId(), other, 'a tab whose model is gone lands there too');
+    for (const [k, v] of tab) sessionStore.set(k, v);
+    sandbox.setActiveModelId(id);
   });
 
   check('this tab\'s undo history is its own', () => {
@@ -2149,7 +2163,7 @@ function build(index) {
     eq('UndoneHere' in sandbox.projectState()[id]['event-definitions'], false, 'still undone');
   });
 
-  store.delete('dcb-playground:model');
+  sandbox.clearActiveModelId();
 }
 
 // ---------------------------------------------------------------
@@ -2159,7 +2173,7 @@ function build(index) {
 // ---------------------------------------------------------------
 {
   const id = sandbox.createDcbModel('Compaction Probe');
-  store.set('dcb-playground:model', id);
+  sandbox.setActiveModelId(id);
   sessionStore.clear();       // this tab's history starts here
   const events = () => Object.keys(sandbox.projectState()[id]['event-definitions']);
   const shifts = [];
@@ -2217,7 +2231,7 @@ function build(index) {
     eq(events(), before, 'one undo takes the whole gesture back');
   });
 
-  store.delete('dcb-playground:model');
+  sandbox.clearActiveModelId();
 }
 
 // ---------------------------------------------------------------
@@ -2659,7 +2673,7 @@ function build(index) {
   // what a promotion is exercised against.
   const promoted = () => {
     const { id, model } = build(ENTITIES);
-    store.set('dcb-playground:model', id);
+    sandbox.setActiveModelId(id);
     sandbox.mergeIntoLifecycle(model(), 'Student', {
       typeName: 'StudentStatus', property: 'status', initialState: 'NonExistent',
       steps: [{ state: 'Existent', from: 'exists' }, { state: 'Graduated', from: null }],
@@ -2710,7 +2724,7 @@ function build(index) {
     // The case the first cut of the suggestion missed entirely: neither
     // boolean is the designated lifecycle, and both were added by hand.
     const { id, model } = build(ENTITIES);
-    store.set('dcb-playground:model', id);
+    sandbox.setActiveModelId(id);
     addTaggedEvent(id, 'StudentExpelled', {
       properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
     });
@@ -2767,7 +2781,7 @@ function build(index) {
 
   check('two booleans one event moves cannot become one lifecycle', () => {
     const { id, model } = build(ENTITIES);
-    store.set('dcb-playground:model', id);
+    sandbox.setActiveModelId(id);
     // Both set by StudentRegistered, so the merged fold would need two
     // handlers for one event – refused before anything is written.
     addDefinition('projection-definition', id, 'StudentGreeted', {
@@ -2789,7 +2803,7 @@ function build(index) {
 
   check('a non-monotone boolean is refused as a stage', () => {
     const { id, model } = build(ENTITIES);
-    store.set('dcb-playground:model', id);
+    sandbox.setActiveModelId(id);
     addTaggedEvent(id, 'StudentPaused', {
       properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
     });
@@ -2841,7 +2855,7 @@ function build(index) {
   // orthogonal one must not, because collapsing it destroys a dimension.
   const withSecondBoolean = (handlers) => {
     const { id, model } = build(ENTITIES);
-    store.set('dcb-playground:model', id);
+    sandbox.setActiveModelId(id);
     addTaggedEvent(id, 'CourseFlagged', {
       properties: [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false }],
     });
@@ -2985,7 +2999,7 @@ function build(index) {
 
   check('the change adder offers only the operations the target admits', () => {
     const { id, model } = build(ENTITIES);
-    store.set('dcb-playground:model', id);
+    sandbox.setActiveModelId(id);
     const painted = (entity, property) => {
       sandbox.state.adder = 'chg:StudentRegistered';
       sandbox.state.changeDraft = {
@@ -3013,7 +3027,7 @@ function build(index) {
 
   check('a boolean target offers true and false as values', () => {
     const { id, model } = build(ENTITIES);
-    store.set('dcb-playground:model', id);
+    sandbox.setActiveModelId(id);
     sandbox.state.adder = 'chg:StudentRegistered';
     sandbox.state.changeDraft = {
       eventName: 'StudentRegistered',
@@ -3174,7 +3188,7 @@ function build(index) {
 
   check('a touched, complete equalsAny rule is added by leaving it', () => {
     const { id, model } = build(ENTITIES);
-    store.set('dcb-playground:model', id);
+    sandbox.setActiveModelId(id);
     sandbox.state.slice = 'DefineCourse';
     sandbox.state.adder = 'rule';
     const count = model()['command-definitions'].DefineCourse.conditions.length;
@@ -3209,7 +3223,7 @@ function build(index) {
 // ---------------------------------------------------------------
 {
   const { id, model } = build(3);   // Course Example (with schedules)
-  store.set('dcb-playground:model', id);
+  sandbox.setActiveModelId(id);
   const command = (name) => model()['command-definitions'][name];
 
   check('the reasons a read is consulted, on the shipped models', () => {
@@ -3274,7 +3288,7 @@ function build(index) {
 
 {
   const { id, model } = build(3);   // its own copy: this one strips a command down
-  store.set('dcb-playground:model', id);
+  sandbox.setActiveModelId(id);
   const command = (name) => model()['command-definitions'][name];
 
   check('removing a read takes the rules about it, and leaves the chain to dangle', () => {
@@ -3305,7 +3319,7 @@ function build(index) {
 
 {
   const { id, model } = build(ENTITIES);
-  store.set('dcb-playground:model', id);
+  sandbox.setActiveModelId(id);
   const command = (name) => model()['command-definitions'][name];
 
   check('a rule brings its read with it, in a single append', () => {
@@ -3374,7 +3388,7 @@ function build(index) {
 // ---------------------------------------------------------------
 {
   const { id, model } = build(ENTITIES);
-  store.set('dcb-playground:model', id);
+  sandbox.setActiveModelId(id);
   const cmd = () => model()['command-definitions'].SubscribeStudentToCourse;
   const shipped = JSON.parse(JSON.stringify(cmd()));
   const slice = () => sandbox.sliceOf(model(), 'SubscribeStudentToCourse');
@@ -3512,7 +3526,7 @@ function build(index) {
 // ---------------------------------------------------------------
 {
   const id = sandbox.createDcbModel('Entity Free Probe');
-  store.set('dcb-playground:model', id);
+  sandbox.setActiveModelId(id);
   sandbox.applyModelSource(id, [
     'model "Entity Free Probe"',
     'tag type DocumentId = string',
@@ -3768,7 +3782,7 @@ function build(index) {
 // ---------------------------------------------------------------
 {
   const id = sandbox.createDcbModel('Projection Comparison Probe');
-  store.set('dcb-playground:model', id);
+  sandbox.setActiveModelId(id);
   sandbox.applyModelSource(id, [
     'model "Projection Comparison Probe"',
     'tag type ProjectId = string',
@@ -3893,7 +3907,7 @@ function build(index) {
 // ---------------------------------------------------------------
 {
   const id = sandbox.createDcbModel('Membership Probe');
-  store.set('dcb-playground:model', id);
+  sandbox.setActiveModelId(id);
   sandbox.applyModelSource(id, [
     'model "Membership Probe"',
     'tag type ProjectId = string',
@@ -3976,7 +3990,7 @@ function build(index) {
 
 {
   const { id, model } = build(ENTITIES);   // its own copy: this one strips an entity down
-  store.set('dcb-playground:model', id);
+  sandbox.setActiveModelId(id);
   const slice = () => sandbox.sliceOf(model(), 'SubscribeStudentToCourse');
 
   // The bug this guards: what is on screen is derived from what has
@@ -4043,7 +4057,7 @@ function build(index) {
     [5, 'content-decisions-scripted'], [2, 'course-tenant']]) {
     check(`${slug} paints its Lifecycles page`, () => {
       const { model } = build(index);
-      store.set('dcb-playground:model', model().id);
+      sandbox.setActiveModelId(model().id);
       const text = paint('lifecycles', model());
       eq(text.length > 0, true, 'something was drawn');
       const { machines, excluded } = sandbox.lifecycleMachines(model());
@@ -4058,7 +4072,7 @@ function build(index) {
 
   check('a boolean machine is drawn compactly and an enum one is not', () => {
     const { model } = build(ENTITIES);
-    store.set('dcb-playground:model', model().id);
+    sandbox.setActiveModelId(model().id);
     const text = paint('lifecycles', model());
     has(text, 'Existence only', 'the two weights are separated');
     has(text, 'Student registered', 'and a boolean machine names what brings one into being');
@@ -4066,7 +4080,7 @@ function build(index) {
 
   check('an entity page paints its lifecycle in Identity, not the ledger', () => {
     const { model } = build(ENTITIES);
-    store.set('dcb-playground:model', model().id);
+    sandbox.setActiveModelId(model().id);
     sandbox.state.lcOpen = {};
     const text = paint('entity', model(), () => { sandbox.state.entity = 'Student'; });
     has(text, 'identified by', 'the Identity row is there');
@@ -4088,7 +4102,7 @@ function build(index) {
 
   check('an enum lifecycle folds to its state count', () => {
     const { model } = build(ENTITIES);
-    store.set('dcb-playground:model', model().id);
+    sandbox.setActiveModelId(model().id);
     sandbox.state.lcOpen = {};
     const text = paint('entity', model(), () => { sandbox.state.entity = 'Course'; });
     has(text, 'state status · 3 states', 'counted, not listed');
@@ -4097,7 +4111,7 @@ function build(index) {
 
   check('a lifecycle nothing sets still says so, folded', () => {
     const { id, model } = build(ENTITIES);
-    store.set('dcb-playground:model', id);
+    sandbox.setActiveModelId(id);
     const fold = sandbox.lifecycleOf(model(), 'Student').projectionName;
     const body = sandbox.deepClone(model()['projection-definitions'][fold]);
     body.handlers = [];
@@ -4112,7 +4126,7 @@ function build(index) {
 
   check('an entity with no lifecycle offers one and says nothing else about state', () => {
     const { id, model } = build(ENTITIES);
-    store.set('dcb-playground:model', id);
+    sandbox.setActiveModelId(id);
     sandbox.createEntity(model(), 'room');
     sandbox.state.lcMenu = null;
     const text = paint('entity', model(), () => { sandbox.state.entity = 'Room'; });
@@ -4127,7 +4141,7 @@ function build(index) {
 
   check('an enum lifecycle named from nothing needs only two states', () => {
     const { id, model } = build(ENTITIES);
-    store.set('dcb-playground:model', id);
+    sandbox.setActiveModelId(id);
     sandbox.createEntity(model(), 'room');
     const text = paint('entity', model(), () => {
       sandbox.state.entity = 'Room';
@@ -4155,7 +4169,7 @@ function build(index) {
 
   check('an enum lifecycle cannot reuse a property name the entity has', () => {
     const { id, model } = build(ENTITIES);
-    store.set('dcb-playground:model', id);
+    sandbox.setActiveModelId(id);
     sandbox.createEntity(model(), 'room');
     sandbox.addExistenceLifecycle(model(), 'Room');
     sandbox.removeLifecycle(model(), 'Room');
@@ -4191,7 +4205,7 @@ function build(index) {
 
   check('the promotion form paints for a boolean lifecycle', () => {
     const { model } = build(ENTITIES);
-    store.set('dcb-playground:model', model().id);
+    sandbox.setActiveModelId(model().id);
     const tree = paintTree('entity', model(), () => {
       sandbox.state.entity = 'Student';
       sandbox.state.promoting = 'Student';
@@ -4205,7 +4219,7 @@ function build(index) {
 
   check('the merge form can drop a boolean and reorder the stages', () => {
     const { id, model } = build(ENTITIES);
-    store.set('dcb-playground:model', id);
+    sandbox.setActiveModelId(id);
     for (const [prop, event, fold] of [['registered', 'DidRegister', 'DidRegisterFold'],
       ['expelled', 'WasExpelled', 'WasExpelledFold']]) {
       addTaggedEvent(id, event, {
@@ -4241,7 +4255,7 @@ function build(index) {
 
   check('the designation picker offers only properties with states', () => {
     const { id, model } = build(ENTITIES);
-    store.set('dcb-playground:model', id);
+    sandbox.setActiveModelId(id);
     eq(sandbox.lifecycleCandidates(model(), 'Student'), ['exists'],
       'a count is not a lifecycle; a boolean is');
     eq(sandbox.lifecycleCandidates(model(), 'Course'), ['status'],
@@ -4258,7 +4272,7 @@ function build(index) {
 
   check('designating a different property moves the lifecycle', () => {
     const { id, model } = build(ENTITIES);
-    store.set('dcb-playground:model', id);
+    sandbox.setActiveModelId(id);
     // A hand-built state property, which is the case the picker exists
     // for: nothing about it came from the scaffold or a promotion.
     addDefinition('custom-type-definition', id, 'Standing',
@@ -4286,7 +4300,7 @@ function build(index) {
 
   check('un-designating leaves an entity with no lifecycle, which is allowed', () => {
     const { id, model } = build(ENTITIES);
-    store.set('dcb-playground:model', id);
+    sandbox.setActiveModelId(id);
     const body = sandbox.deepClone(model()['entity-definitions'].Student);
     delete body.lifecycle;
     updateDefinition('entity-definition', id, 'Student', body);
@@ -4305,7 +4319,7 @@ function build(index) {
 
   check('the entity page offers the merge where the booleans are', () => {
     const { id, model } = build(ENTITIES);
-    store.set('dcb-playground:model', id);
+    sandbox.setActiveModelId(id);
     addTaggedEvent(id, 'StudentExpelled2', {
       properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
     });
@@ -4326,7 +4340,7 @@ function build(index) {
 
   check('the merge prompt paints in the decide step', () => {
     const { id, model } = build(ENTITIES);
-    store.set('dcb-playground:model', id);
+    sandbox.setActiveModelId(id);
     addTaggedEvent(id, 'StudentSuspended', {
       properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
     });
@@ -4372,7 +4386,7 @@ function build(index) {
   });
 
   const { id, model } = build(ENTITIES);
-  store.set('dcb-playground:model', id);
+  sandbox.setActiveModelId(id);
   const command = 'SubscribeStudentToCourse';
   const lefts = () => model()['command-definitions'][command].conditions
     .map((c) => c.leftHandSide.alias + '.' + c.leftHandSide.property);
@@ -4438,7 +4452,7 @@ function build(index) {
 // ---------------------------------------------------------------
 {
   const { id, model } = build(ENTITIES);
-  store.set('dcb-playground:model', id);
+  sandbox.setActiveModelId(id);
   // Nothing has happened, so the subscription is refused – any
   // scenario will do; what is under test is its row.
   const scenario = {
@@ -4471,7 +4485,7 @@ function build(index) {
 // ---------------------------------------------------------------
 {
   const { id, model } = build(3);
-  store.set('dcb-playground:model', id);
+  sandbox.setActiveModelId(id);
 
   const paint = () => {
     const main = sandbox.document.createElement('div');
@@ -4565,7 +4579,7 @@ function build(index) {
 
   check('the code view paints, and going back to the pages applies what was typed', () => {
     const { id, model: m } = build(ENTITIES);
-    store.set('dcb-playground:model', id);
+    sandbox.setActiveModelId(id);
     const { state } = sandbox;
     Object.assign(state, { view: 'slice', slice: 'ArchiveCourse', code: false });
     sandbox.enterCode();
@@ -4586,7 +4600,7 @@ function build(index) {
 
   check('the code stays the surface across pages it cannot show, and a kind page lands on its section', () => {
     const { id, model: m } = build(ENTITIES);
-    store.set('dcb-playground:model', id);
+    sandbox.setActiveModelId(id);
     const { state, codeView } = sandbox;
     Object.assign(state, { view: 'slice', slice: 'ArchiveCourse', code: true, openEvent: null });
     eq(sandbox.codeShown(), true, 'a command page is code');
@@ -4608,7 +4622,7 @@ function build(index) {
 
   check('the toggle is muted where the code does not follow, and Code on the Overview always opens the code', () => {
     const { id, model: m } = build(ENTITIES);
-    store.set('dcb-playground:model', id);
+    sandbox.setActiveModelId(id);
     const { state, codeView } = sandbox;
     Object.assign(state, { view: 'sandbox', code: true });
     eq(sandbox.codeFollowsPage(), false, 'the sandbox has no code view');
@@ -4656,7 +4670,7 @@ function build(index) {
     const { id, model: m } = build(ENTITIES);
     const other = createDcbModel('Other');
     const { state, codeView } = sandbox;
-    store.set('dcb-playground:model', id);
+    sandbox.setActiveModelId(id);
     Object.assign(state, { view: 'slice', slice: 'ArchiveCourse', code: true });
     const paint = () => sandbox.renderCode(sandbox.activeModel(), sandbox.document.createElement('div'));
     paint();
@@ -4666,10 +4680,10 @@ function build(index) {
     updateDefinition('command-definition', id, 'ArchiveCourse', body);
     paint();
     eq(codeView.stale, true, 'stale on its own model');
-    store.set('dcb-playground:model', other);
+    sandbox.setActiveModelId(other);
     paint();
     eq(sandbox.codeDirty(), false, 'the other model has its own text');
-    store.set('dcb-playground:model', id);
+    sandbox.setActiveModelId(id);
     paint();
     eq([codeView.stale, sandbox.codeDirty()], [true, true], 'still stale, still edited, when it comes back');
     sandbox.leaveCode();
@@ -4678,7 +4692,7 @@ function build(index) {
 
   check('the page paints, guarded emissions and all', () => {
     const { id, model: m } = build(8);
-    store.set('dcb-playground:model', id);
+    sandbox.setActiveModelId(id);
     const main = sandbox.document.createElement('div');
     sandbox.renderEventModel(m(), main);
     const text = textOf(main);
@@ -4916,7 +4930,7 @@ check('the reference links only anchors the website defines', () => {
     store.clear();
     sandbox.bumpLogRevision();
     const id = sandbox.createDcbModel('Empty Probe');
-    store.set('dcb-playground:model', id);
+    sandbox.setActiveModelId(id);
     sandbox.closeForms();
     Object.assign(sandbox.state, { view: 'slice', slice: null, code: false, railOpen: false });
     repaint();
@@ -4930,7 +4944,7 @@ check('the reference links only anchors the website defines', () => {
   });
 
   const { id, model } = build(ENTITIES);
-  store.set('dcb-playground:model', id);
+  sandbox.setActiveModelId(id);
   const feature = sandbox.featureGroups(model()).find((g) => g.name !== sandbox.UNGROUPED).name;
 
   check('the rail\'s "+ Command" opens the page and closes the drawer', () => {
@@ -5012,7 +5026,7 @@ check('the reference links only anchors the website defines', () => {
   // The shipped models are stated without entities, so this is the
   // flag-off page – the one most people see.
   const { id, model } = build(0);
-  store.set('dcb-playground:model', id);
+  sandbox.setActiveModelId(id);
   store.set('dcb-playground:experimental', 'off');
   const openRuleAdder = () => {
     sandbox.state.defFrames = [];
@@ -5227,7 +5241,7 @@ check('the reference links only anchors the website defines', () => {
 // ---------------------------------------------------------------
 {
   const { id, model } = build(0);
-  store.set('dcb-playground:model', id);
+  sandbox.setActiveModelId(id);
   store.set('dcb-playground:experimental', 'off');
   const ADVANCED = 'dcb-playground:projection-advanced';
   const editorOf = (name) => {
@@ -5289,7 +5303,7 @@ check('the reference links only anchors the website defines', () => {
     store.set(ADVANCED, 'off');
     const { id: scriptedId, model: scripted } = build(
       sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'content-decisions-scripted'));
-    store.set('dcb-playground:model', scriptedId);
+    sandbox.setActiveModelId(scriptedId);
     store.set(ADVANCED, 'off');
     const name = Object.keys(scripted()['projection-definitions'])
       .find((n) => scripted()['projection-definitions'][n].script);
@@ -5298,13 +5312,13 @@ check('the reference links only anchors the website defines', () => {
     for (const node of sandbox.projectionFields(scripted(), sandbox.state.projDraft.body)) root.appendChild(node);
     eq(textOf(root).includes('scripted projection'), true, 'the switch hides offers, not what is stored');
     eq(textOf(root).includes('initial state'), true, 'its state is any JSON');
-    store.set('dcb-playground:model', id);
+    sandbox.setActiveModelId(id);
     sandbox.closeForms();
   });
 
   check('a computing derived projection edits as one, and stores back unchanged', () => {
     const { id: hoursId, model: hours } = build(sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'developer-hours'));
-    store.set('dcb-playground:model', hoursId);
+    sandbox.setActiveModelId(hoursId);
     const stored = hours()['projection-definitions'].DeveloperRemainingHoursForWeek;
     eq(cleanProjectionBody(projectionDraftFrom(stored)), stored, 'through the editor and back');
     sandbox.state.projDraft = { name: 'DeveloperRemainingHoursForWeek', body: projectionDraftFrom(stored) };
@@ -5321,7 +5335,7 @@ check('the reference links only anchors the website defines', () => {
     const compareRoot = sandbox.document.createElement('div');
     for (const node of sandbox.projectionFields(hours(), projectionDraftFrom(comparing))) compareRoot.appendChild(node);
     eq(findAll(compareRoot, (node) => node.tag === 'label' && textOf(node) === ' not').length, 1, 'where a comparison has');
-    store.set('dcb-playground:model', id);
+    sandbox.setActiveModelId(id);
     sandbox.closeForms();
   });
 
@@ -5337,7 +5351,7 @@ check('the reference links only anchors the website defines', () => {
 
   check('a projection\'s parameters are one list, each with a tag toggle', () => {
     const { id: hoursId, model: hours } = build(sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'developer-hours'));
-    store.set('dcb-playground:model', hoursId);
+    sandbox.setActiveModelId(hoursId);
     const stored = hours()['projection-definitions'].DeveloperHasHoursForWeek;
     eq(cleanProjectionBody(projectionDraftFrom(stored)), stored, 'its arguments, through the editor and back');
     sandbox.state.projDraft = { name: 'DeveloperHasHoursForWeek', body: projectionDraftFrom(stored) };
@@ -5351,13 +5365,13 @@ check('the reference links only anchors the website defines', () => {
     sandbox.state.projDraft = { name: 'DeveloperAllocatedHoursForWeek', body: projectionDraftFrom(declared) };
     eq(tagToggles(fieldsOf(hours(), sandbox.state.projDraft.body)).every((t) => t.checked && t.disabled), true,
       'a declared projection\'s handlers see only the event: every parameter a tag, and stays one');
-    store.set('dcb-playground:model', id);
+    sandbox.setActiveModelId(id);
     sandbox.closeForms();
   });
 
   check('unticking a saved tag makes it an argument, and moves every read of it', () => {
     const { id: hoursId, model: hours } = build(sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'developer-hours'));
-    store.set('dcb-playground:model', hoursId);
+    sandbox.setActiveModelId(hoursId);
     const stored = hours()['projection-definitions'].DeveloperHasHoursForWeek;
     sandbox.state.projDraft = { name: 'DeveloperHasHoursForWeek', body: projectionDraftFrom(stored) };
     const root = fieldsOf(hours(), sandbox.state.projDraft.body);
@@ -5369,7 +5383,7 @@ check('the reference links only anchors the website defines', () => {
     const read = hours()['command-definitions'].AllocateHours.conditions[3].leftHandSide;
     eq(Object.keys(read.arguments), ['hours', 'week'], 'the command gives it as an argument');
     eq(sandbox.state.projDraft.body.arguments.map((a) => a.name), ['week', 'hours'], 'and the draft says the same');
-    store.set('dcb-playground:model', id);
+    sandbox.setActiveModelId(id);
     sandbox.closeForms();
   });
 }
@@ -5389,7 +5403,7 @@ check('the reference links only anchors the website defines', () => {
   const sectionsOf = (root) => findAll(root, (n) => n.tag === 'section' && /pstep-/.test(n.className || ''))
     .map((n) => /pstep-(\w+)/.exec(n.className)[1]);
   const create = (label) => {
-    store.set('dcb-playground:model', courseId);
+    sandbox.setActiveModelId(courseId);
     sandbox.closeForms();
     sandbox.state.projWizard = null;
     sandbox.createProjectionFromName(course(), label, (name, draft) => { sandbox.state.projDraft = { name, body: draft }; });
@@ -5491,7 +5505,7 @@ check('the app is text: no file carries a raw control byte', () => {
 // ---------------------------------------------------------------
 {
   const id = sandbox.createDcbModel('Dialog Probe');
-  store.set('dcb-playground:model', id);
+  sandbox.setActiveModelId(id);
   const key = (name) => {
     const event = { key: name, defaultPrevented: false, target: {}, preventDefault() { this.defaultPrevented = true; } };
     dispatch('keydown', event);
@@ -5596,7 +5610,7 @@ check('the app is text: no file carries a raw control byte', () => {
     sandbox.document.querySelectorAll = querySelectorAll;
   });
 
-  store.delete('dcb-playground:model');
+  sandbox.clearActiveModelId();
 }
 
 // A model opened from a link is a copy; its first change says so and
@@ -5657,7 +5671,7 @@ check('the app is text: no file carries a raw control byte', () => {
     sandbox.state.namePrompt = null;
   });
 
-  store.delete('dcb-playground:model');
+  sandbox.clearActiveModelId();
 }
 
 sandbox.URLSearchParams = URLSearchParams;
@@ -5883,7 +5897,7 @@ check('Compare opens on the picker, and a model chosen there is compared tab by 
   for (const heading of ['This model, earlier', 'Another model', 'A file']) eq(picker.includes(heading), true, heading);
   const option = findAll(comparePage(tenant), (n) => n.tag === 'button' && textOf(n) === simple.name)[0];
   eq(Boolean(option), true, 'the other model is offered');
-  store.set('dcb-playground:model', tenant.id);
+  sandbox.setActiveModelId(tenant.id);
   option.onclick();
   const overview = textOf(comparePage(tenant));
   eq(overview.includes('Course Example (simple)') && overview.includes('Boundaries'), true, 'the comparison, with its tabs');
@@ -5899,7 +5913,7 @@ check('Compare opens on the picker, and a model chosen there is compared tab by 
 check('this model as the tab began is compared with what was changed since', () => {
   const [simple] = twoModels('course-simple');
   sessionStore.clear();
-  store.set('dcb-playground:model', simple.id);
+  sandbox.setActiveModelId(simple.id);
   addDefinition('event-definition', simple.id, 'CourseRenamed', { properties: [], tags: [] });
   const now = projectState()[simple.id];
   eq(sandbox.earlierVersions(now).length, 1, 'one step to go back to');

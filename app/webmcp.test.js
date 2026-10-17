@@ -154,7 +154,7 @@ async function call(name, args) {
   // the page opens one – stored, not held.
   store.clear();
   const id = loadPredefinedModel(sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-entities'));
-  store.set('dcb-playground:model', id);
+  sandbox.setActiveModelId(id);
   const model = () => projectState()[id];
 
   await check('get_model answers with the open model itself', async () => {
@@ -360,17 +360,17 @@ async function call(name, args) {
   await check('start_model opens a fresh, empty model', async () => {
     const { value, isError } = await call('start_model', { name: 'Agent Scratch Model' });
     eq(isError, false, 'not an error');
-    eq(store.get('dcb-playground:model'), value.id, 'and it is the open one now');
+    eq(sandbox.activeModelId(), value.id, 'and it is the open one now');
     const { value: fresh } = await call('get_model');
     eq(fresh.name, 'Agent Scratch Model', 'get_model answers from it');
     eq(Object.keys(fresh['command-definitions']).length, 0, 'and it is empty');
   });
 
   await check('start_model works with nothing open at all', async () => {
-    store.delete('dcb-playground:model');
+    sandbox.clearActiveModelId();
     const { isError } = await call('start_model', { name: 'From Nothing' });
     eq(isError, false, 'the one tool that needs no open model');
-    eq(typeof store.get('dcb-playground:model'), 'string', 'and opens what it made');
+    eq(typeof sandbox.activeModelId(), 'string', 'and opens what it made');
   });
 
   await check('start_model refuses an empty name', async () => {
@@ -422,8 +422,8 @@ async function call(name, args) {
   });
 
   await check('apply_model_source removes nothing unless it is told it may', async () => {
-    const previous = store.get('dcb-playground:model');
-    store.set('dcb-playground:model', loadPredefinedModel(sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-simple')));
+    const previous = sandbox.activeModelId();
+    sandbox.setActiveModelId(loadPredefinedModel(sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-simple')));
     const { text: source } = await call('get_model_source');
     const before = sandbox.loadEvents().length;
     const refused = await call('apply_model_source', { source: 'model "x"' });
@@ -436,7 +436,7 @@ async function call(name, args) {
     const allowed = await call('apply_model_source', { source: 'model "x"', allowRemovals: true });
     eq(allowed.isError, false, allowed.text);
     eq(Object.keys(sandbox.activeModel()['event-definitions']), [], 'removed when allowed');
-    store.set('dcb-playground:model', previous);
+    sandbox.setActiveModelId(previous);
   });
 
   // A model written whole, the way an agent should build one.
@@ -456,7 +456,7 @@ async function call(name, args) {
   await check('start_model creates a whole model from code, in one call', async () => {
     const { value, isError, text } = await call('start_model', { name: 'Scratch', source: LIBRARY });
     eq(isError, false, text);
-    eq(store.get('dcb-playground:model'), value.id, 'opened');
+    eq(sandbox.activeModelId(), value.id, 'opened');
     const opened = projectState()[value.id];
     eq(opened.name, 'Library', 'the model line names it');
     eq(Object.keys(opened['command-definitions']), ['AddBook'], 'with its definitions');
@@ -520,12 +520,12 @@ async function call(name, args) {
     });
     eq(isError, true, 'refused');
     eq(text.includes('ProbeGuarded uses guarded emissions'), true, text);
-    eq('ProbeGuarded' in projectState()[store.get('dcb-playground:model')]['command-definitions'], false, 'not stored');
+    eq('ProbeGuarded' in projectState()[sandbox.activeModelId()]['command-definitions'], false, 'not stored');
   });
 
   await check('a model already using experimental constructs stays editable', async () => {
     const entitiesId = loadPredefinedModel(sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-entities'));
-    store.set('dcb-playground:model', entitiesId);
+    sandbox.setActiveModelId(entitiesId);
     const { text: source } = await call('get_model_source');
     eq(source.includes('entity Course'), true, 'shown as stored');
     const edited = swap(source, '"Course already exists"', '"Course was already defined"');
@@ -546,7 +546,7 @@ async function call(name, args) {
     eq(sandbox.loadEvents().length, before + 1, 'the edit appended');
     sandbox.undo();
     eq(sandbox.loadEvents().length, before, 'one undo removes exactly the agent\'s edit');
-    const modelId = store.get('dcb-playground:model');
+    const modelId = sandbox.activeModelId();
     eq('ProbeHappened' in sandbox.projectState()[modelId]['event-definitions'], false, 'gone again');
     sandbox.redo();
     eq('ProbeHappened' in sandbox.projectState()[modelId]['event-definitions'], true, 'redo puts it back');
