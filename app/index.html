@@ -1090,6 +1090,96 @@
      colour: agreement is quiet, a difference is not. */
   .tabs { display: flex; gap: 4px; margin: 0 0 20px; border-bottom: 1px solid var(--border); }
 
+  /* History – a timeline: a node per step in its kind's colour, what
+     was undone dimmed above "now", an agent's steps hatched and badged. */
+  .hist-head { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 16px; }
+  .hist-stats { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .hist-stats span { font-size: 12px; padding: 1px 9px; border-radius: 999px; color: var(--muted);
+    background: var(--surface); border: 1px solid var(--border); }
+  .hist-stats strong { color: var(--text); font-weight: 600; }
+  .hist-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; background: var(--surface); }
+  .hist-seg button { display: inline-flex; align-items: center; gap: 7px; height: 36px; padding: 0 14px; border: 0;
+    background: transparent; color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
+  .hist-seg button + button { border-left: 1px solid var(--border); }
+  .hist-seg button:hover:not(:disabled) { background: var(--accent-soft); color: var(--accent-strong); }
+  .hist-seg button:disabled { color: var(--muted); opacity: .5; cursor: default; }
+  .hist-seg svg, .hist-acts svg { width: 15px; height: 15px; }
+  .hist-banner { margin: 0 0 14px; padding: 12px 14px; border-radius: 10px; font-size: 13px;
+    background: var(--changed-soft); color: var(--changed); border: 1px solid var(--border); }
+  .hist-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center;
+    padding: 44px 24px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+  .hist-empty .muted { max-width: 420px; }
+  .hist-empty-icon { display: flex; align-items: center; justify-content: center; width: 52px; height: 52px;
+    border-radius: 50%; background: var(--accent-soft); color: var(--accent); margin-bottom: 4px; }
+  .hist-empty-icon svg { width: 24px; height: 24px; }
+  .hist-list { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 6px 0; }
+  .hist-section { padding: 10px 20px 4px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .hist-section span { text-transform: none; letter-spacing: 0; font-size: 12px; }
+  .hist-row { display: grid; grid-template-columns: 44px 34px minmax(0, 1fr) auto; column-gap: 14px;
+    align-items: start; padding: 0 16px 0 14px; cursor: pointer; }
+  .hist-row:hover { background: var(--elevated); }
+  .hist-row.current { cursor: default; background: var(--accent-soft); }
+  .hist-row.by-agent { background-image: repeating-linear-gradient(135deg, transparent 0 10px,
+    color-mix(in srgb, var(--muted) 8%, transparent) 10px 11px); }
+  .hist-time { font-family: var(--mono); font-size: 11.5px; color: var(--muted); padding-top: 15px; text-align: right; }
+  .hist-time-inline { display: none; }
+  .hist-track { position: relative; display: flex; justify-content: center; align-self: stretch; padding: 9px 0; }
+  .hist-track::before { content: ''; position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--border); }
+  .hist-row.last .hist-track::before { bottom: auto; height: 24px; }
+  .hist-row.future .hist-track::before { background: repeating-linear-gradient(to bottom, var(--border-strong) 0 4px, transparent 4px 8px); }
+  .hist-node { position: relative; z-index: 1; display: flex; align-items: center; justify-content: center;
+    width: 30px; height: 30px; box-sizing: border-box; border-radius: 50%; border: 1.5px solid var(--border-strong);
+    background: var(--elevated); color: var(--text); }
+  .hist-node > svg { width: 15px; height: 15px; }
+  .hist-row.k-command .hist-node { color: var(--command); border-color: var(--command); background: var(--command-soft); }
+  .hist-row.k-event .hist-node { color: var(--event-text); border-color: var(--event); background: var(--event-soft); }
+  .hist-row.k-entity .hist-node, .hist-row.k-projection .hist-node { color: var(--entity-text); border-color: var(--entity); background: var(--entity-soft); }
+  .hist-row.k-custom-type .hist-node, .hist-row.k-scenario .hist-node { color: var(--type); border-color: var(--type); background: var(--type-soft); }
+  .hist-row.k-opened .hist-node { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+  .hist-row.by-agent .hist-node::after { content: ''; position: absolute; inset: -5px; border-radius: 50%;
+    border: 1.5px dashed var(--muted); opacity: .7; }
+  .hist-badge { position: absolute; right: -7px; bottom: -6px; z-index: 2; display: flex; align-items: center; justify-content: center;
+    width: 17px; height: 17px; border-radius: 50%; background: var(--text); color: var(--bg); box-shadow: 0 0 0 2px var(--surface); }
+  .hist-badge svg { width: 11px; height: 11px; }
+  .hist-body { padding: 10px 0; min-width: 0; }
+  .hist-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+  .hist-verb { font-weight: 600; }
+  .hist-line .chip { overflow-wrap: anywhere; }
+  .hist-line .chip i { font-style: normal; font-family: inherit; font-size: 10px; text-transform: uppercase;
+    letter-spacing: .06em; opacity: .75; margin-right: 6px; }
+  .hist-agent { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600;
+    padding: 1px 8px; border-radius: 999px; background: var(--text); color: var(--bg); }
+  .hist-agent svg { width: 12px; height: 12px; }
+  .hist-here { font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px; background: var(--accent); color: var(--bg); }
+  .hist-detail { margin-top: 2px; }
+  .hist-more { display: inline-flex; align-items: center; gap: 4px; margin-top: 4px; padding: 0; border: 0;
+    background: none; font: inherit; font-size: 12.5px; color: var(--accent); cursor: pointer; }
+  .hist-more:hover { color: var(--accent-strong); text-decoration: underline; }
+  .hist-more svg { width: 12px; height: 12px; transition: transform .15s; }
+  .hist-more.open svg { transform: rotate(90deg); }
+  .hist-sub { list-style: none; margin: 6px 0 2px; padding: 6px 10px; display: flex; flex-direction: column; gap: 3px;
+    border: 1px solid var(--border); border-radius: 8px; background: var(--elevated); font-size: 12.5px; }
+  .hist-sub li { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .hist-sub .muted { width: 64px; flex: none; }
+  .hist-sub code { overflow-wrap: anywhere; }
+  .hist-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--type); }
+  .hist-dot.command { background: var(--command); }
+  .hist-dot.event { background: var(--event); }
+  .hist-dot.entity, .hist-dot.projection { background: var(--entity); }
+  .hist-acts { display: flex; gap: 6px; padding-top: 10px; opacity: 0; transition: opacity .12s; }
+  .hist-acts .btn { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .hist-row:hover .hist-acts, .hist-row:focus-within .hist-acts, .hist-row.current .hist-acts { opacity: 1; }
+  .hist-row.future .hist-body, .hist-row.future .hist-time { opacity: .5; }
+  .hist-row.future .hist-node { opacity: .55; border-style: dashed; }
+  .hist-row.future:hover .hist-body, .hist-row.future:hover .hist-time, .hist-row.future:hover .hist-node { opacity: 1; }
+  .hist-foot { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 12px; }
+  @media (hover: none), (pointer: coarse), (max-width: 760px) {
+    .hist-row { grid-template-columns: 34px minmax(0, 1fr); padding-left: 10px; }
+    .hist-time { display: none; }
+    .hist-time-inline { display: inline; }
+    .hist-acts { opacity: 1; grid-column: 2; padding: 0 0 10px; }
+  }
+
   /* Compare */
   .cmp-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 16px; }
   .cmp-side { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
@@ -1918,6 +2008,7 @@ const state = {
   comparePicking: false,    // the source picker open over a comparison already chosen
   compareLoading: null,     // 'url' | 'json' – the picker's file form that is open
   compareShowSame: false,   // list what is the same on both sides too
+  historyOpen: {},          // History steps whose further changes are listed, by step
 };
 
 // A decoded share envelope, on its way in – from the URL fragment on
@@ -2325,6 +2416,7 @@ const RAIL_ICONS = {
   sandbox: railIconSvg('<circle cx="12" cy="12" r="9"></circle><path d="M10 8.5v7l5.5-3.5z"></path>'),
   compare: railIconSvg('<path d="M7 4 3 8l4 4"></path><path d="M3 8h14"></path><path d="m17 20 4-4-4-4"></path>'
     + '<path d="M21 16H7"></path>'),
+  history: railIconSvg('<path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path><path d="M3 3v5h5"></path><path d="M12 7v5l3 3"></path>'),
 };
 function railIcon(key) { return h('span', { class: 'rail-icon' }, svg(RAIL_ICONS[key])); }
 
@@ -2886,11 +2978,18 @@ const HELP_FAQ = [
     ', for instance – and share ', { urlLinkBase: true }, ' followed by its address. Whoever opens it '
       + 'gets a copy of the file as it is at that moment. Loading it here from a URL puts that link in '
       + 'the address bar, ready to copy.'] },
+  { question: 'Can I go back to an earlier version?', answer: [
+    'Review → History lists every change made to this model since you opened it in this tab – '
+      + 'yours and an agent\'s – newest first. Pick one to go back to it; what you went back past '
+      + 'stays listed, so you can go forward again until you make a new change. ', { kbd: 'Mod+Z' },
+    ' undoes one step at a time. Each model has its own history, so undoing never touches another '
+      + 'model.'] },
   { question: 'How do I review what I changed?', answer: [
     'With experimental features on, Review → Compare reads this model against itself as it was '
       + 'before any change made in this tab, against another of your models, or against a file read '
       + 'just for comparing. It lists what was added, changed and removed, what each command now '
-      + 'reads, and the text side by side – without editing either.'] },
+      + 'reads, and the text side by side – without editing either. History offers the same for any '
+      + 'earlier version.'] },
   { question: 'Is anything sent to a server?', answer: [
     'No. The playground runs entirely in your browser; a shared link carries the model after the '
       + '#, which browsers never send to the server. One exception is the demo video, loaded '
@@ -3394,7 +3493,15 @@ function changeLabel(appended) {
 // an agent's tool call the same way and marks its steps as the agent's.
 let undoBatch = null;
 
-function takeUndoMark(appended, agent) {
+// What a step changed, as the History page lists it – capped, since a
+// whole model applied as code can be hundreds of events.
+function changesOfStep(group) {
+  return group.slice(0, 40).map((event) => ({
+    type: event.type, name: event.data.name || null, from: event.data['previous-name'] || null,
+  }));
+}
+
+function takeUndoMark(appended, agent, via) {
   const log = undoLog();
   const byModel = new Map();
   for (const event of appended) {
@@ -3417,13 +3524,16 @@ function takeUndoMark(appended, agent) {
     const last = group[group.length - 1];
     history.done.push({
       n: group.length, stamp: eventStamp(last), label: changeLabel(group),
-      time: last.timestamp, agent: !!agent,
+      time: last.timestamp, agent: !!agent, via: via || null, changes: changesOfStep(group),
     });
     // Redoing after a new change would mean putting back entries the
     // model has moved on from, so the branch is dropped – on an agent's
     // append exactly as on a button's.
     history.undone = [];
-    if (history.done.length > HISTORY_LIMIT) history.done.shift();
+    if (history.done.length > HISTORY_LIMIT) {
+      history.done.shift();
+      history.trimmed = true;
+    }
   }
   saveUndoLog(log);
 }
@@ -3455,11 +3565,11 @@ onAppend((at, appended) => {
 
 function batched(fn, agent, finish) {
   if (undoBatch) return fn();
-  undoBatch = { at: null, events: [] };
+  undoBatch = { at: null, events: [], via: null };
   try {
     const out = fn();
     if (undoBatch.events.length) {
-      takeUndoMark(undoBatch.events, agent);
+      takeUndoMark(undoBatch.events, agent, undoBatch.via);
       if (finish) finish();
     }
     return out;
@@ -3480,6 +3590,13 @@ function asAgent(fn) {
   return batched(fn, true);
 }
 
+// Says how the gesture under way changes the model, where its events
+// alone do not tell – a text applied from the code view is one step of
+// many changes, read as one.
+function markStepVia(via) {
+  if (undoBatch) undoBatch.via = via;
+}
+
 // Moves a model's history `delta` steps – back when negative, forward
 // when positive – in one write of the log, however far it goes. Returns
 // how many steps it moved, or null when the model was changed elsewhere
@@ -3492,6 +3609,7 @@ function travel(modelId, delta) {
   let moved = 0;
   const refuse = () => {
     delete log.models[modelId];
+    log.restarted = { ...log.restarted, [modelId]: new Date().toISOString() };
     saveUndoLog(log);
     toast(changedElsewhere(modelId), true);
     return null;
@@ -3505,9 +3623,10 @@ function travel(modelId, delta) {
     events = events.filter((event, i) => !out.has(i));
     const left = at.length > mark.n ? events[modelPositions(events, modelId).pop()] : null;
     history.done.pop();
+    const { n, stamp, ...about } = mark;
     history.undone.push({
       events: removed.map(({ timestamp, type, data }) => ({ timestamp, type, data })),
-      base: eventStamp(left), label: mark.label, time: mark.time, agent: mark.agent,
+      base: eventStamp(left), ...about,
     });
     delta++; moved--;
   }
@@ -3518,10 +3637,8 @@ function travel(modelId, delta) {
     if (now !== step.base) return refuse();
     events = [...events, ...step.events];
     history.undone.pop();
-    history.done.push({
-      n: step.events.length, stamp: eventStamp(step.events[step.events.length - 1]),
-      label: step.label, time: step.time, agent: step.agent,
-    });
+    const { events: replayed, base, ...about } = step;
+    history.done.push({ n: replayed.length, stamp: eventStamp(replayed[replayed.length - 1]), ...about });
     delta--; moved++;
   }
   if (moved) {
@@ -3828,6 +3945,7 @@ function paletteEntries(model) {
   }
   add('do', 'New command…', '', () => beginNewCommand(activeModel()));
   add('do', 'Models…', 'switch, load, or start a model', () => { state.models = true; });
+  add('do', 'History', 'go back to an earlier version of this model', () => { closeForms(); state.view = 'history'; });
   if (experimental()) add('do', 'Compare with…', 'this model against another, or itself earlier', () => { closeForms(); state.view = 'compare'; });
   add('do', 'Settings', '', () => { state.settings = true; });
   add('do', isDark() ? 'Switch to light mode' : 'Switch to dark mode', '', toggleTheme);
@@ -5503,10 +5621,16 @@ function renderRail() {
     ? h('span', { class: 'gcount' }, session.log.length)
     : null));
 
-  // Reading the model against another needs nothing in it, so unlike
-  // the diagrams it is there for an empty model too.
+  // Its history and reading it against another need nothing in the
+  // model, so unlike the diagrams both are there for an empty one too.
+  const steps = (undoLog().models[model.id] || { done: [] }).done.length;
+  rail.appendChild(h('h4', { style: 'margin-top:20px' }, 'Review'));
+  rail.appendChild(h('a', {
+    href: '#', class: 'place' + (state.view === 'history' ? ' on' : ''),
+    title: 'Every change since you opened this model – go back to any of them',
+    onclick: (e) => { e.preventDefault(); closeForms(); state.view = 'history'; render(); },
+  }, railIcon('history'), h('span', { class: 'grow' }, 'History'), steps ? h('span', { class: 'gcount' }, steps) : null));
   if (experimental()) {
-    rail.appendChild(h('h4', { style: 'margin-top:20px' }, 'Review'));
     rail.appendChild(h('a', {
       href: '#', class: 'place' + (state.view === 'compare' ? ' on' : ''),
       title: 'This model against another, or against itself earlier',
@@ -6057,6 +6181,7 @@ function paintBehind(model) {
   if (state.view === 'overview') return renderOverview(model, main);
   if (state.view === 'sandbox') return renderSandbox(model, main);
   if (state.view === 'compare') return renderCompare(model, main);
+  if (state.view === 'history') return renderHistory(model, main);
   if (state.view === 'entity') return renderEntity(model, main);
   if (state.view === 'types') return renderCustomTypes(model, main);
   if (state.view === 'projections') return renderProjections(model, main);
@@ -11860,6 +11985,228 @@ function renderProjections(model, main) {
 // maps its own values into an already-declared field
 // (see `eventFields`).
 // ============================================================
+// History
+//
+// The open model's undo history in this tab, as a page: every step
+// since it was opened, newest on top, what was undone above a "now"
+// line, and a way back – or forward – to any of them in one move
+// (`travel`). It reads only what each step remembered when it was
+// taken (`takeUndoMark`), never the log, so its length costs nothing.
+// What a step was is read off its first change – a rename's
+// follow-on updates come after it – except a text applied as code,
+// which is many changes read as one. With experimental features on,
+// each earlier version can be compared with the current one.
+// ============================================================
+
+const HISTORY_VERBS = { added: 'Added', updated: 'Changed', removed: 'Removed', renamed: 'Renamed', reordered: 'Reordered' };
+const HISTORY_KINDS = {
+  'entity-definition': 'entity', 'event-definition': 'event', 'projection-definition': 'projection',
+  'command-definition': 'command', 'custom-type-definition': 'type', 'scenario-definition': 'scenario',
+  'projection-scenario-definition': 'projection scenario', 'dcb-model': 'model',
+};
+const historyIcon = (shapes) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" '
+  + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + shapes + '</svg>';
+const HISTORY_ICONS = {
+  added: historyIcon('<path d="M12 5v14M5 12h14"></path>'),
+  updated: historyIcon('<path d="M4 20h4L19 9l-4-4L4 16v4Z"></path><path d="m13.5 6.5 4 4"></path>'),
+  removed: historyIcon('<path d="M5 12h14"></path>'),
+  renamed: historyIcon('<path d="M4 7h10"></path><path d="M4 12h6"></path><path d="m15 13 4 4-4 4"></path><path d="M19 17h-7"></path>'),
+  reordered: historyIcon('<path d="m7 15 5 5 5-5"></path><path d="m7 9 5-5 5 5"></path>'),
+  code: historyIcon('<path d="m8 7-5 5 5 5"></path><path d="m16 7 5 5-5 5"></path>'),
+  opened: historyIcon('<path d="M5 21V4"></path><path d="M5 4h11l-2 4 2 4H5"></path>'),
+  agent: historyIcon('<rect x="5" y="8" width="14" height="11" rx="3"></rect><path d="M12 8V5"></path>'
+    + '<path d="M9.5 13h.01M14.5 13h.01"></path>'),
+  back: historyIcon('<path d="M9 14 4 9l5-5"></path><path d="M4 9h11a5 5 0 0 1 0 10h-3"></path>'),
+  forward: historyIcon('<path d="m15 14 5-5-5-5"></path><path d="M20 9H9a5 5 0 0 0 0 10h3"></path>'),
+  more: historyIcon('<path d="m9 6 6 6-6 6"></path>'),
+};
+
+function describeChange(change) {
+  const parts = change.type.split('-');
+  const verb = parts.pop();
+  const kind = parts.join('-');
+  return {
+    verb, kind, name: change.name, from: change.from,
+    kindLabel: HISTORY_KINDS[kind] || kind.replace(/-definition$/, '').replace(/-/g, ' '),
+    colour: KIND_COLOR_CLASS[kind] || '',
+  };
+}
+
+// How one step reads: its icon, verb, chip and detail, and what else
+// it changed.
+function describeStep(mark) {
+  const changes = (mark.changes || []).map(describeChange);
+  if (mark.via === 'code' || !changes.length) {
+    // A step undone holds its events; one done, their count.
+    const count = mark.events ? mark.events.length : mark.n;
+    return {
+      icon: 'code', verb: mark.via === 'code' ? 'Applied code' : mark.label, kind: '', colour: '',
+      chip: mark.via === 'code' ? `${count} change${count === 1 ? '' : 's'}` : null, chipKind: '',
+      detail: null, more: changes,
+    };
+  }
+  const [first, ...rest] = changes;
+  return {
+    icon: HISTORY_ICONS[first.verb] ? first.verb : 'updated',
+    verb: HISTORY_VERBS[first.verb] || first.verb,
+    kind: first.kind, colour: first.colour,
+    chipKind: first.verb === 'reordered' ? first.kindLabel + 's' : first.kindLabel,
+    chip: first.verb === 'reordered' ? 'order' : first.name,
+    detail: first.from ? `was ${first.from}` : null,
+    more: rest,
+  };
+}
+
+// Moves the open model's history and says how far, with the move itself
+// one click from being taken back.
+function jumpHistory(model, delta) {
+  const moved = travel(model.id, delta);
+  if (moved) {
+    const count = Math.abs(moved);
+    toast(h('span', {}, `${moved < 0 ? 'Went back' : 'Went forward'} ${count} change${count === 1 ? '' : 's'} `,
+      h('button', {
+        class: 'btn ghost', type: 'button',
+        onclick: () => { travel(model.id, -moved); render(); },
+      }, 'Undo')));
+  }
+  render();
+}
+
+function compareWithVersion(model, choice) {
+  state.view = 'compare';
+  chooseComparison(model, choice);
+}
+
+function historyRow(model, about, opts) {
+  const { time, agent, future, current, last, target, compare, key } = opts;
+  const step = about;
+  const open = !!state.historyOpen[key];
+  const stop = (fn) => (e) => { if (e && e.stopPropagation) e.stopPropagation(); fn(); };
+  const jump = () => jumpHistory(model, target);
+  const kindClass = step.colour ? ' k-' + step.colour : step.icon === 'opened' ? ' k-opened' : ' k-plain';
+  return h('div', {
+    class: 'hist-row' + kindClass + (future ? ' future' : '') + (current ? ' current' : '')
+      + (agent ? ' by-agent' : '') + (last ? ' last' : ''),
+    onclick: current ? null : jump,
+  },
+  h('div', { class: 'hist-time' }, time),
+  h('div', { class: 'hist-track' },
+    h('span', { class: 'hist-node' }, svg(HISTORY_ICONS[step.icon]),
+      agent ? h('span', { class: 'hist-badge', 'aria-hidden': 'true' }, svg(HISTORY_ICONS.agent)) : null)),
+  h('div', { class: 'hist-body' },
+    h('div', { class: 'hist-line' },
+      h('span', { class: 'hist-verb' }, step.verb),
+      step.chip ? h('span', { class: 'chip ' + step.colour },
+        step.chipKind ? h('i', {}, step.chipKind) : null, step.chip) : null,
+      agent ? h('span', { class: 'hist-agent', title: 'Made by an agent, through WebMCP' },
+        svg(HISTORY_ICONS.agent), 'Agent') : null,
+      current ? h('span', { class: 'hist-here' }, 'You are here') : null,
+      h('span', { class: 'hist-time-inline muted tiny' }, time)),
+    step.detail ? h('div', { class: 'hist-detail muted small' }, step.detail) : null,
+    step.more.length ? [
+      h('button', {
+        class: 'hist-more' + (open ? ' open' : ''), type: 'button', 'aria-expanded': open ? 'true' : 'false',
+        onclick: stop(() => { state.historyOpen[key] = !open; render(); }),
+      }, svg(HISTORY_ICONS.more), open
+        ? 'Hide the changes'
+        : step.icon === 'code' ? `Show the ${step.more.length} changes` : `and ${step.more.length} more`),
+      open ? h('ul', { class: 'hist-sub' }, ...step.more.map((change) => h('li', {},
+        h('span', { class: 'hist-dot ' + change.colour }),
+        h('span', { class: 'muted' }, (HISTORY_VERBS[change.verb] || change.verb).toLowerCase()),
+        h('code', {}, change.verb === 'reordered' ? change.kindLabel + 's' : change.name || change.kindLabel)))) : null,
+    ] : null),
+  h('div', { class: 'hist-acts' },
+    current ? null : h('button', {
+      class: 'btn primary', type: 'button', onclick: stop(jump),
+    }, svg(future ? HISTORY_ICONS.forward : HISTORY_ICONS.back), future ? 'Go forward to here' : 'Go back to here'),
+    compare && experimental() ? h('button', {
+      class: 'btn', type: 'button', title: 'Compare with current version',
+      onclick: stop(() => compareWithVersion(model, compare)),
+    }, svg(RAIL_ICONS.compare), 'Compare') : null));
+}
+
+function renderHistory(model, main) {
+  const log = undoLog();
+  const history = log.models[model.id] || { done: [], undone: [] };
+  const restarted = log.restarted && log.restarted[model.id];
+  const { done, undone } = history;
+  const agents = done.filter((mark) => mark.agent).length;
+  const nextUndo = done[done.length - 1];
+  const nextRedo = undone[undone.length - 1];
+
+  main.appendChild(h('header', { class: 'hist-head' },
+    h('div', {},
+      h('div', { class: 'name' }, 'History'),
+      h('div', { class: 'muted small' },
+        'Changes to ', h('strong', {}, model.name), ' since you opened it in this tab. '
+        + 'Pick any point to go back to it, or forward again.'),
+      done.length || undone.length ? h('div', { class: 'hist-stats' },
+        h('span', {}, h('strong', {}, done.length), done.length === 1 ? ' change' : ' changes'),
+        undone.length ? h('span', {}, h('strong', {}, undone.length), ' undone') : null,
+        agents ? h('span', {}, h('strong', {}, agents), ' by an agent') : null) : null),
+    h('span', { class: 'grow' }),
+    h('span', { class: 'hist-seg' },
+      h('button', {
+        type: 'button', disabled: !nextUndo, title: nextUndo ? 'Undo: ' + nextUndo.label : 'Nothing to undo',
+        onclick: () => jumpHistory(model, -1),
+      }, svg(HISTORY_ICONS.back), 'Undo ', kbd('Mod+Z')),
+      h('button', {
+        type: 'button', disabled: !nextRedo, title: nextRedo ? 'Redo: ' + nextRedo.label : 'Nothing to redo',
+        onclick: () => jumpHistory(model, 1),
+      }, 'Redo ', kbd('Shift+Mod+Z'), svg(HISTORY_ICONS.forward)))));
+
+  if (restarted && !done.length && !undone.length) {
+    main.appendChild(h('div', { class: 'hist-banner', role: 'status' },
+      h('strong', {}, `${model.name} was changed elsewhere`),
+      ' – undoing here would take that change too, so the history starts again from here.'));
+  }
+
+  if (!done.length && !undone.length) {
+    main.appendChild(h('div', { class: 'hist-empty' },
+      h('span', { class: 'hist-empty-icon' }, svg(RAIL_ICONS.history)),
+      h('strong', {}, restarted ? 'No changes here since then' : 'No changes since you opened this model'),
+      h('div', { class: 'muted small' },
+        'Each change made here – and each one an agent makes – is listed as it happens, '
+        + 'so you can go back to any point and forward again.')));
+    return;
+  }
+
+  const list = h('div', { class: 'hist-list' });
+  if (undone.length) {
+    list.appendChild(h('div', { class: 'hist-section' }, 'Undone',
+      h('span', {}, ' – still here until you make a new change')));
+  }
+  undone.forEach((step, k) => {
+    list.appendChild(historyRow(model, describeStep(step), {
+      time: timeOfStep(step), agent: step.agent, future: true, target: undone.length - k, key: step.stamp || step.base + k,
+    }));
+  });
+  if (undone.length) list.appendChild(h('div', { class: 'hist-section' }, 'Now'));
+  for (let j = done.length - 1; j >= 0; j--) {
+    const mark = done[j];
+    list.appendChild(historyRow(model, describeStep(mark), {
+      time: timeOfStep(mark), agent: mark.agent, current: j === done.length - 1,
+      target: j - (done.length - 1), key: mark.stamp,
+      compare: j < done.length - 1 ? { kind: 'revision', stamp: done[j + 1].stamp } : null,
+    }));
+  }
+  list.appendChild(historyRow(model, {
+    icon: 'opened', colour: '', chip: null, more: [],
+    verb: history.trimmed ? 'Earlier changes' : restarted ? 'From here' : 'Opened',
+    detail: history.trimmed ? `older than the last ${HISTORY_LIMIT} are no longer kept`
+      : restarted ? 'as it was when it was changed elsewhere' : 'as it was when you opened it',
+  }, {
+    time: '', current: !done.length, target: -done.length, last: true, key: 'opened',
+    compare: done.length ? { kind: 'revision', first: true } : null,
+  }));
+  main.appendChild(list);
+
+  main.appendChild(h('div', { class: 'hist-foot muted tiny' },
+    h('span', {}, `Kept in this tab until it closes · the last ${HISTORY_LIMIT} changes of each model`),
+    h('span', {}, 'Going back can be undone – nothing is lost until you make a new change.')));
+}
+
+// ============================================================
 // Compare
 //
 // The open model read against another: itself earlier in this tab
@@ -15976,6 +16323,7 @@ function applyCode() {
   }
   const text = codeView.text;
   const summary = run(() => {
+    markStepVia('code');
     const out = applyModelSource(model.id, text);
     // The text is what the model now says, whatever its print would
     // be – settled before the gesture's repaint reads it.

@@ -469,6 +469,8 @@
     destructive: true,
     run: (model, { source, allowRemovals }) => {
       checkedSource(model, source);
+      // One step of many changes, read as code applied (index.html).
+      if (typeof markStepVia === 'function') markStepVia('code');
       let summary;
       try {
         summary = applyModelSource(model.id, source, { refuseRemovals: allowRemovals !== true, recordOutcomes: true });

@@ -1271,3 +1271,19 @@ step at the playhead. Only the step band scrolls.
   count from a model's end, so nothing moves after a compaction.
   Another tab's histories are not considered: a step that loses its
   events is refused like any change made elsewhere.
+- **History is a page, under Review, flag or no flag.** Going back is
+  ordinary undo, so it is offered to everyone; Compare stays behind
+  the flag and is reached from a row ("Compare with current version").
+  It replaced *Compare*'s role as the way to see what changed in this
+  tab, and split from it: a list of steps and a diff of two models are
+  different questions.
+- **A row reads off what the step remembered**, never the log: the
+  first change's kind, verb and name (a rename's follow-on updates come
+  after it), and the rest behind "and N more". A text applied as code
+  (`markStepVia`) is one row of many changes. An agent's step is
+  hatched, badged and labelled. Clicking a row jumps there in one move
+  (`travel`); what was jumped past waits above "Now", dimmed, until a
+  new change drops it – the same rule as redo, because it is redo.
+- **The bottom row says where the history begins**: *Opened*, *From
+  here* after a change elsewhere dropped it, or *Earlier changes* once
+  the oldest fell off the sixty.

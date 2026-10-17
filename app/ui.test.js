@@ -4885,7 +4885,7 @@ check('the FAQ answers in text, links in a new tab and shortcuts as kbd', () => 
   eq(findAll(modal, (n) => n.tag === 'h4').length, sandbox.HELP_FAQ.length, 'a heading per question');
   const links = findAll(modal, (n) => n.tag === 'a' && n.attributes.target === '_blank');
   eq(links.some((a) => a.attributes.href === sandbox.ISSUES_URL && textOf(a) === 'report it on GitHub ↗'), true, 'a link in an answer');
-  eq(findAll(modal, (n) => n.tag === 'kbd').length, 1, 'the share shortcut');
+  eq(findAll(modal, (n) => n.tag === 'kbd').length, 2, 'the share and undo shortcuts');
   sandbox.state.helpPage = 'start';
 });
 
@@ -6070,6 +6070,110 @@ check('a model without its last events, whatever other models appended since', (
   eq('CourseRenamed' in earlier['event-definitions'], false, 'not yet there');
   eq('CourseRenamed' in projectState()[simple.id]['event-definitions'], true, 'there now');
   eq(sandbox.modelWithoutLast(simple.id, sandbox.loadEvents().length), null, 'before it existed');
+});
+
+// The History page: this model's steps in this tab, newest first, each
+// one a place to go back – or forward – to.
+function historyPage(model) {
+  const main = sandbox.document.createElement('div');
+  sandbox.renderHistory(model, main);
+  return main;
+}
+const historyRows = (page) => findAll(page, (n) => /\bhist-row\b/.test(n.className || ''));
+
+check('History is offered without the experimental flag', () => {
+  const [simple] = twoModels('course-simple');
+  store.delete('dcb-playground:experimental');
+  eq(sandbox.paletteEntries(simple).some((e) => e.label === 'History'), true, 'in quick open');
+  store.set('dcb-playground:experimental', 'on');
+});
+
+check('History says so when nothing was changed yet', () => {
+  const [simple] = twoModels('course-simple');
+  sessionStore.clear();
+  eq(textOf(historyPage(simple)).includes('No changes since you opened this model'), true, 'the empty state');
+});
+
+check('History lists each step by what it did, newest first, down to where it was opened', () => {
+  const [simple] = twoModels('course-simple');
+  sessionStore.clear();
+  sandbox.setActiveModelId(simple.id);
+  sandbox.run(() => addDefinition('event-definition', simple.id, 'CourseRenamed', { properties: [], tags: [] }));
+  sandbox.run(() => sandbox.renameDefinition('event-definition', simple.id, 'CourseRenamed', 'CourseRetitled'));
+  sandbox.asAgent(() => sandbox.removeDefinition('event-definition', simple.id, 'CourseRetitled'));
+  const rows = historyRows(historyPage(projectState()[simple.id])).map(textOf);
+  eq(rows.length, 4, 'three steps and where it was opened');
+  eq(rows[0].includes('Removed') && rows[0].includes('Agent') && rows[0].includes('You are here'), true, rows[0]);
+  eq(rows[1].includes('Renamed') && rows[1].includes('CourseRetitled') && rows[1].includes('was CourseRenamed'), true, rows[1]);
+  eq(rows[2].includes('Added') && rows[2].includes('CourseRenamed'), true, rows[2]);
+  eq(rows[3].includes('Opened'), true, rows[3]);
+  const agentRow = historyRows(historyPage(projectState()[simple.id]))[0];
+  eq(/\bby-agent\b/.test(agentRow.className), true, 'an agent\'s step is marked as such');
+});
+
+check('a row goes back to its version, and what it went past waits above "now"', () => {
+  const [simple] = twoModels('course-simple');
+  sessionStore.clear();
+  sandbox.setActiveModelId(simple.id);
+  for (const name of ['OneHappened', 'TwoHappened', 'ThreeHappened']) {
+    sandbox.run(() => addDefinition('event-definition', simple.id, name, { properties: [], tags: [] }));
+  }
+  const events = () => Object.keys(projectState()[simple.id]['event-definitions']);
+  const before = events();
+  historyRows(historyPage(projectState()[simple.id]))[2].onclick();
+  eq(before.filter((name) => !events().includes(name)), ['TwoHappened', 'ThreeHappened'], 'back to after the first');
+  const page = historyPage(projectState()[simple.id]);
+  eq(textOf(page).includes('Undone'), true, 'what was undone is listed');
+  const rows = historyRows(page);
+  eq(/\bfuture\b/.test(rows[0].className) && /\bfuture\b/.test(rows[1].className), true, 'above now');
+  rows[0].onclick();
+  eq(events(), before, 'and forward again, all the way');
+});
+
+check('a text applied as code reads as one step of many changes', () => {
+  const [simple] = twoModels('course-simple');
+  sessionStore.clear();
+  sandbox.setActiveModelId(simple.id);
+  sandbox.run(() => {
+    sandbox.markStepVia('code');
+    addDefinition('event-definition', simple.id, 'AppliedOne', { properties: [], tags: [] });
+    addDefinition('event-definition', simple.id, 'AppliedTwo', { properties: [], tags: [] });
+  });
+  const row = textOf(historyRows(historyPage(projectState()[simple.id]))[0]);
+  eq(row.includes('Applied code') && row.includes('2 changes'), true, row);
+});
+
+check('an earlier version is compared with the current one only with the flag', () => {
+  const [simple] = twoModels('course-simple');
+  sessionStore.clear();
+  sandbox.setActiveModelId(simple.id);
+  sandbox.run(() => addDefinition('event-definition', simple.id, 'CompareMe', { properties: [], tags: [] }));
+  const compareButton = () => findAll(historyRows(historyPage(projectState()[simple.id]))[1],
+    (n) => n.tag === 'button' && textOf(n) === 'Compare')[0];
+  store.delete('dcb-playground:experimental');
+  eq(Boolean(compareButton()), false, 'not without the flag');
+  store.set('dcb-playground:experimental', 'on');
+  compareButton().onclick({ stopPropagation() {} });
+  eq(sandbox.state.view, 'compare', 'Compare opens');
+  eq(sandbox.comparison(projectState()[simple.id]).other.label, 'this model as you opened it', 'against that version');
+  sandbox.state.view = 'overview';
+});
+
+check('a history dropped because the model changed elsewhere says so', () => {
+  const [simple] = twoModels('course-simple');
+  sessionStore.clear();
+  sandbox.setActiveModelId(simple.id);
+  sandbox.run(() => addDefinition('event-definition', simple.id, 'Mine', { properties: [], tags: [] }));
+  const events = JSON.parse(store.get(sandbox.EVENT_LOG_KEY));
+  events.push({ sequence: events.length, timestamp: 'elsewhere', type: 'event-definition-added',
+    data: { 'dcb-model-id': simple.id, name: 'Theirs', body: { properties: [], tags: [] } } });
+  store.set(sandbox.EVENT_LOG_KEY, JSON.stringify(events));
+  sandbox.bumpLogRevision();
+  sandbox.undo();
+  const page = textOf(historyPage(projectState()[simple.id]));
+  eq(page.includes('was changed elsewhere'), true, 'the banner');
+  sandbox.run(() => addDefinition('event-definition', simple.id, 'Again', { properties: [], tags: [] }));
+  eq(textOf(historyPage(projectState()[simple.id])).includes('From here'), true, 'and where it starts again');
 });
 
 // A share link or a fetched file is unpacked under a cap: a few hundred
