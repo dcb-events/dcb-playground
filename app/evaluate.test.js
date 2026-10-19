@@ -3804,6 +3804,164 @@ function modelsWithScenarios() {
 }
 
 // ---------------------------------------------------------------
+// Through a store: the cycle around a decision – head, reads, the
+// append and its condition – one attempt at a time.
+// ---------------------------------------------------------------
+{
+  const { handleCommand, projectFromStore, memoryStore } = sandbox;
+  const stored = (model, type, data) => ({ type, data, tags: tagsOfEvent(model, type, data) });
+  const storeOf = (model, log) => memoryStore(log.map((e) => stored(model, e.type, e.data)));
+  // A store that lets someone else append while it is read – the n-th
+  // read calls `during(n)` after answering.
+  const racing = (store, during) => {
+    let reads = 0;
+    return { ...store, read: (query) => { const answer = store.read(query); during(++reads); return answer; } };
+  };
+  const calls = (trace) => trace.map((entry) => entry.call || `restart:${entry.restart}`);
+
+  check('every command scenario decides through a store as it does over the log', () => {
+    let compared = 0;
+    for (const { name, model } of modelsWithScenarios()) {
+      for (const scenario of Object.values(model['scenario-definitions'] || {})) {
+        const log = sandbox.scenarioLog(scenario);
+        const args = (scenario.when && scenario.when.arguments) || {};
+        let expected;
+        try { expected = evaluateCommand(model, log, scenario.command, args); } catch (e) { expected = { error: e.message }; }
+        const store = storeOf(model, log);
+        const outcome = handleCommand(model, store, scenario.command, args);
+        const what = `${name}: ${scenario.name}`;
+        if (expected.error) {
+          eq([outcome.outcome, outcome.message], ['error', expected.error], what);
+        } else if (expected.outcome === 'rejected') {
+          eq([outcome.outcome, outcome.failedRule], ['rejected', expected.failedRule], what);
+        } else {
+          eq([outcome.outcome, outcome.events.map(({ type, data }) => ({ type, data }))],
+            ['published', expected.events.map(({ type, data }) => ({ type, data }))], what);
+          eq(store.events.length, log.length + expected.events.length, `${what} – appended`);
+        }
+        compared++;
+      }
+    }
+    eq(compared > 50, true, `${compared} scenarios compared`);
+  });
+
+  const simple = () => {
+    const model = build(PREDEFINED_INDEX('course-simple'));
+    const log = [];
+    drive(model, log, 'DefineCourse', { courseId: 'c1', capacity: 10 });
+    drive(model, log, 'RegisterStudent', { studentId: 's1' });
+    return { model, log };
+  };
+
+  check('reads that hang off the arguments are one read, no head, and the append comes after the last position read', () => {
+    const { model, log } = simple();
+    const store = storeOf(model, log);
+    const trace = [];
+    const outcome = handleCommand(model, store, 'SubscribeStudentToCourse', { courseId: 'c1', studentId: 's1' }, { trace });
+    eq([outcome.outcome, outcome.position], ['published', 3], 'published at 3');
+    eq(outcome.events[0].tags, ['CourseId:c1', 'StudentId:s1'], 'tagged from the model');
+    eq(calls(trace), ['read', 'append'], 'one read, one append');
+    eq(trace[0].events.map((e) => e.position), [1, 2], 'what the read answered, with positions');
+    eq(trace[1].condition, { failIfEventsMatch: trace[0].query, after: 2 }, 'the condition: what was read, after it');
+    eq(trace[1].position, 3, 'and where it landed');
+  });
+
+  check('an append that lost the race is a conflict, and deciding again sees what won', () => {
+    const { model } = simple();
+    const store = memoryStore();
+    const contested = racing(store, (n) => { if (n === 1) store.push(stored(model, 'CourseDefined', { courseId: 'c1', capacity: 5 })); });
+    const trace = [];
+    const first = handleCommand(model, contested, 'DefineCourse', { courseId: 'c1', capacity: 10 }, { trace });
+    eq(first.outcome, 'conflict', 'conflict');
+    eq(trace[trace.length - 1].integrity, true, 'the append said so');
+    eq(store.events.length, 1, 'nothing of ours appended');
+    const second = handleCommand(model, store, 'DefineCourse', { courseId: 'c1', capacity: 10 });
+    eq([second.outcome, second.failedRule.rejection], ['rejected', 'Course already exists'], 'the second attempt is refused');
+  });
+
+  check('a command that publishes nothing appends nothing, and a failing store says at which call', () => {
+    const { model, log } = simple();
+    const store = storeOf(model, log);
+    eq(handleCommand(model, store, 'DefineCourse', { courseId: 'c1', capacity: 10 }).outcome, 'rejected', 'rejected');
+    eq(store.events.length, log.length, 'no append');
+    for (const failing of ['read', 'append']) {
+      const broken = { ...memoryStore(), [failing]: () => { throw new Error('unavailable'); } };
+      const trace = [];
+      const outcome = handleCommand(model, broken, 'DefineCourse', { courseId: 'c2', capacity: 1 }, { trace });
+      eq([outcome.outcome, outcome.message], ['store', `${failing}: unavailable`], failing);
+      eq(trace[trace.length - 1].failed, 'unavailable', `${failing} – traced`);
+    }
+    eq(handleCommand(model, memoryStore(), 'Nope', {}).outcome, 'error', 'no such command');
+  });
+
+  const scheduled = () => {
+    const model = build(PREDEFINED_INDEX('course-schedules'));
+    const log = [];
+    drive(model, log, 'DefineCourse', { capacity: 9, slots: ['2026-03-01T09'] });          // c1
+    drive(model, log, 'DefineCourse', { capacity: 9, slots: ['2026-03-01T11'] });          // c2
+    drive(model, log, 'RegisterStudent', { studentId: 's1' });
+    drive(model, log, 'SubscribeStudentToCourse', { courseId: 'c1', studentId: 's1' });
+    drive(model, log, 'SubscribeStudentToCourse', { courseId: 'c2', studentId: 's1' });
+    return { model, log };
+  };
+
+  check('a chained boundary takes head first, reads once per link, and appends after head', () => {
+    const { model, log } = scheduled();
+    const trace = [];
+    const outcome = handleCommand(model, storeOf(model, log), 'RescheduleCourse', { courseId: 'c1', slots: ['2026-03-01T13'] }, { trace });
+    eq(outcome.outcome, 'published', 'published');
+    eq(calls(trace), ['head', 'read', 'read', 'read', 'append'], 'head, three reads, the append');
+    eq(trace[4].condition.after, log.length, 'after head');
+    eq(trace[4].condition.failIfEventsMatch.length, 3, 'covering every read');
+  });
+
+  check('an event matching the first read is not lost below a later read\'s answer', () => {
+    const { model, log } = scheduled();
+    const store = storeOf(model, log);
+    // While c1 is read, s2 subscribes to c1 – which the first read
+    // covers – and then c2 is rescheduled, which the third read returns.
+    // An `after` taken from the reads would sit above the subscription.
+    const contested = racing(store, (n) => {
+      if (n !== 1) return;
+      store.push(stored(model, 'StudentSubscribedToCourse', { courseId: 'c1', studentId: 's2' }));
+      store.push(stored(model, 'CourseRescheduled', { courseId: 'c2', slots: ['2026-03-01T11'] }));
+    });
+    eq(handleCommand(model, contested, 'RescheduleCourse', { courseId: 'c1', slots: ['2026-03-01T13'] }).outcome,
+      'conflict', 'refused, not appended over the subscription');
+    eq(handleCommand(model, store, 'RescheduleCourse', { courseId: 'c1', slots: ['2026-03-01T13'] }).outcome,
+      'published', 'and decided again');
+  });
+
+  check('a projection is one read, no head, at the last position it folds', () => {
+    const { model, log } = simple();
+    drive(model, log, 'ChangeCourseCapacity', { courseId: 'c1', newCapacity: 12 });
+    drive(model, log, 'DefineCourse', { courseId: 'c2', capacity: 5 });
+    const trace = [];
+    eq(projectFromStore(model, storeOf(model, log), 'CourseCapacity', { courseId: 'c1' }, { trace }),
+      { outcome: 'projected', value: 12, position: 3 }, 'value and position');
+    eq(calls(trace), ['read'], 'one read');
+    eq(projectFromStore(model, memoryStore(), 'CourseCapacity', { courseId: 'c1' }),
+      { outcome: 'projected', value: 0, position: undefined }, 'folding nothing is at no position');
+    eq(projectFromStore(model, memoryStore(), 'Nope', {}).outcome, 'error', 'no such projection');
+  });
+
+  check('a derived projection takes head and folds nothing after it', () => {
+    const { model } = modelsWithScenarios().find((m) => m.name === 'content-decisions-derived.dcb.json');
+    const store = memoryStore([
+      stored(model, 'DocumentAdded', { id: 'd1' }),
+      stored(model, 'TextUpdated', { docId: 'd1', text: 'a' }),
+    ]);
+    // While the current text is read, the document is published: the
+    // published text, read next, would be newer than the current one.
+    const contested = racing(store, (n) => { if (n === 1) store.push(stored(model, 'DocumentPublished', { docId: 'd1', text: 'a' })); });
+    const trace = [];
+    eq(projectFromStore(model, contested, 'DocumentHasPendingChanges', { documentId: 'd1' }, { trace }),
+      { outcome: 'projected', value: true, position: 2 }, 'as of head');
+    eq(calls(trace)[0], 'head', 'head first');
+  });
+}
+
+// ---------------------------------------------------------------
 // Value schemas: what a command accepts and an event carries, as JSON
 // Schema. Checked by validating every scenario's arguments, and every
 // event the evaluator publishes for it, against them – with a validator
