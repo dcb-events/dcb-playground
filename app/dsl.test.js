@@ -1193,7 +1193,7 @@ check('a read fans out where it says so – each, paired by index with its list'
     'one unknown product refuses');
   eq(order([]).outcome, 'published', 'and over no lines, it holds vacuously');
   const items = sandbox.deriveDcb(model(), model()['command-definitions'].OrderProducts).items;
-  eq(items.every((item) => item.fannedOut && item.tags[0] === 'ProductId:each(items.productId)'), true,
+  eq(items.every((item) => item.fannedOut && item.tags[0] === 'ProductId:{each items.productId}'), true,
     'the query says it fans out');
   const bad = sandbox.createDcbModel('Bad');
   applyModelSource(bad, swap(text, 'require ProductPrice(each items.productId)', 'require ProductPrice(each orderId)'));

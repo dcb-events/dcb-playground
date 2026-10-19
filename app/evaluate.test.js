@@ -2936,8 +2936,8 @@ check('every predefined model ships advisory-clean', () => {
     const dcb = sandbox.deriveDcb(model, model['command-definitions'].AllocateHours);
     const derived = dcb.items.filter((item) => item.projection === 'DeveloperHasHoursForWeek');
     eq(derived.map((item) => [item.via, item.tags, item.types]), [
-      ['DeveloperAvailableHoursPerWeek', ['DeveloperId:developerId'], ['DeveloperRegistered']],
-      ['DeveloperAllocatedHoursForWeek', ['DeveloperId:developerId', 'WeekNumber:week'], ['HoursAllocated']],
+      ['DeveloperAvailableHoursPerWeek', ['DeveloperId:{developerId}'], ['DeveloperRegistered']],
+      ['DeveloperAllocatedHoursForWeek', ['DeveloperId:{developerId}', 'WeekNumber:{week}'], ['HoursAllocated']],
     ], 'the registration is not tagged by the week, and is still in the boundary');
   });
 
@@ -3035,7 +3035,7 @@ check('every predefined model ships advisory-clean', () => {
     eq(evaluateCommand(model(), log, 'Book', { courseId: 'c1', seats: 2 }).outcome, 'rejected', 'two are not');
     const dcb = sandbox.deriveDcb(model(), model()['command-definitions'].Book);
     eq(dcb.items.map((item) => [item.via, item.tags, item.types]),
-      [['Free', ['CourseId:courseId'], ['Subscribed']]], 'the argument narrows nothing');
+      [['Free', ['CourseId:{courseId}'], ['Subscribed']]], 'the argument narrows nothing');
   });
 
   check('an argument passes on – as an operand\'s argument, or as its tag', () => {
@@ -3080,7 +3080,7 @@ check('every predefined model ships advisory-clean', () => {
       publishes: [],
     });
     const dcb = sandbox.deriveDcb(model(), model()['command-definitions'].Check);
-    eq(dcb.items.map((item) => item.tags), [['CourseId:courseId', 'StudentId:studentId']],
+    eq(dcb.items.map((item) => item.tags), [['CourseId:{courseId}', 'StudentId:{studentId}']],
       'the operand\'s query carries the tag its argument gave');
   });
 

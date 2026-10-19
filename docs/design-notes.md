@@ -1121,6 +1121,10 @@ Artboards: `design/dcb-queries/` (2026-10).
   one long OR list – the first sketch – made three calls look like
   one, which is exactly the difference the append condition's `after`
   turns on.
+- **The code view's hover draws the same in monospace.** A Monaco
+  hover is markdown, so the boxes become a plain-text block in the
+  same order and words – `query · 1 call · 2 items, ORed`, `types`,
+  `tags`, `── OR ──` – or the JSON, as chosen.
 - **Planned and resolved.** Where no run supplied the values – the
   command page, the code view – a tag's value is a placeholder,
   `CourseId:{courseId}`, a fan-out `{each course.subscribedStudentIds}`

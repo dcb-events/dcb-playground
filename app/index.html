@@ -376,6 +376,40 @@
   .dcb .t { color: var(--entity-text); }
   .dcb .y { color: var(--event-text); }
   .dcb .al { color: var(--command); }
+  /* A DCB query, drawn (_DCB queries, shown_): one box per call to the
+     store, its items inside, ORed; a chain is several boxes. */
+  .dq { display: flex; flex-direction: column; gap: 8px; font-family: var(--mono); font-size: 11.5px; }
+  .dq-box { border: 1.5px solid var(--accent); border-radius: 8px; background: var(--surface); overflow: hidden; }
+  .dq-h { display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+          padding: 4px 10px; background: var(--accent-soft); border-bottom: 1px solid var(--border);
+          color: var(--accent-strong); font-weight: 600; }
+  .dq-h .dq-note { font-weight: 400; color: var(--muted); }
+  .dq-items { display: flex; flex-direction: column; padding: 7px; }
+  .dq-item { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 3px 8px; align-items: baseline;
+             padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); }
+  .dq-or { display: flex; align-items: center; gap: 8px; padding: 3px 6px; color: var(--accent-strong);
+           font-size: 10px; font-weight: 600; letter-spacing: 0.08em; }
+  .dq-or::before, .dq-or::after { content: ""; flex: 1; border-top: 1px dashed var(--border-strong); }
+  .dq-key { color: var(--muted); }
+  .dq-chips { display: flex; flex-wrap: wrap; gap: 4px; align-items: baseline; }
+  .dq-type { color: var(--event-text); background: var(--event-soft); border: 1px solid var(--border);
+             border-radius: 4px; padding: 0 5px; }
+  .dq-tag { color: var(--text); background: var(--type-soft); border: 1px solid var(--border-strong);
+            border-radius: 4px; padding: 0 5px; }
+  .dq-tag i { color: var(--accent); }
+  .dq-from { color: var(--command); }
+  .dq-any, .dq-each { color: var(--muted); }
+  .dq-link { padding: 0 0 0 16px; color: var(--muted); }
+  .dq-link b { color: var(--accent); font-weight: 400; }
+  .dq-head, .dq-cond { padding: 5px 10px; border: 1px dashed var(--border-strong); border-radius: 6px; line-height: 1.7; }
+  .dq-cond b, .dq-head b { color: var(--accent); }
+  .dq-json { margin: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
+             background: var(--elevated); white-space: pre; overflow-x: auto; line-height: 1.55; }
+  .dq-seg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 6px; overflow: hidden; }
+  .dq-seg button { font: inherit; font-size: 11px; border: 0; padding: 2px 8px; background: var(--surface);
+                   color: var(--muted); cursor: pointer; }
+  .dq-seg button.on { background: var(--accent); color: var(--surface); }
+  .dq-seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   /* The query glyph and its popover: a mark where a line used to be.
      Hover and focus peek; `.on` is the pinned state. */
   .qpop { position: relative; display: inline-flex; vertical-align: middle; }
@@ -6447,6 +6481,124 @@ function hint(key, title, lines, href, anchor) {
           : null) : null));
 }
 
+// ---------- DCB queries, drawn ----------
+//
+// One notation wherever a query is shown (_DCB queries, shown_): the
+// specification's own words, a box per call to the store with its
+// items inside, ORed, and a chain as several boxes with the head it
+// starts from above them. Planned queries carry placeholders
+// (`plannedTagValue`, model.js), the sandbox the values it asked with.
+// Rows or JSON is one choice for every query on every page,
+// remembered in this browser like the other view choices.
+const QUERY_VIEW_KEY = 'dcb-playground:query-view';
+function queryAsJson() {
+  try { return localStorage.getItem(QUERY_VIEW_KEY) === 'json'; } catch { return false; }
+}
+function setQueryAsJson(on) {
+  try { localStorage.setItem(QUERY_VIEW_KEY, on ? 'json' : 'rows'); } catch { /* per-viewer only */ }
+  render();
+}
+
+function queryViewSwitch() {
+  const json = queryAsJson();
+  const option = (label, on, value) => h('button', {
+    type: 'button', class: on ? 'on' : '', 'aria-pressed': on ? 'true' : 'false',
+    onclick: (e) => { e.stopPropagation(); setQueryAsJson(value); },
+  }, label);
+  return h('span', { class: 'dq-seg', role: 'group', 'aria-label': 'Show queries as' },
+    option('Rows', !json, false), option('JSON', json, true));
+}
+
+// A tag, its placeholder – the braces of a planned value – set apart.
+function queryTagChip(tag) {
+  const brace = tag.indexOf('{');
+  return h('span', { class: 'dq-tag' },
+    brace < 0 ? tag : [tag.slice(0, brace), h('i', {}, tag.slice(brace))]);
+}
+
+function queryItemRow(item, { from = false } = {}) {
+  return h('div', { class: 'dq-item' },
+    from && item.from && item.from.length
+      ? [h('span', { class: 'dq-key' }, 'from'), h('span', { class: 'dq-from' }, item.from.join(' · '))]
+      : null,
+    h('span', { class: 'dq-key' }, 'types'),
+    h('span', { class: 'dq-chips' }, item.types.length
+      ? item.types.map((type) => h('span', { class: 'dq-type' }, type))
+      : h('span', { class: 'dq-any' }, 'any type')),
+    h('span', { class: 'dq-key' }, 'tags'),
+    h('span', { class: 'dq-chips' },
+      item.tags.length ? item.tags.map(queryTagChip) : h('span', { class: 'dq-any' }, 'none – every event of these types'),
+      item.fannedOut ? h('span', { class: 'dq-each' }, '× each') : null));
+}
+
+// One query: its items, ORed, in a box that is one call to the store.
+function queryBox(items, title, note, opts) {
+  return h('div', { class: 'dq-box' },
+    h('div', { class: 'dq-h' }, h('span', {}, title), h('span', { class: 'dq-note' }, note)),
+    h('div', { class: 'dq-items' },
+      items.flatMap((item, i) => [i ? h('div', { class: 'dq-or' }, 'OR') : null, queryItemRow(item, opts)])));
+}
+
+const queryItemsJson = (items) => ({ items: items.map(({ types, tags }) => ({ types, tags })) });
+
+// JSON as a person reads it: indented, but a list of plain values –
+// the types, the tags – on one line, as the specification prints them.
+function queryJsonText(value) {
+  const scalar = '(?:"(?:[^"\\\\]|\\\\.)*"|-?[\\d.eE+-]+|true|false|null)';
+  return JSON.stringify(value, null, 2)
+    .replace(new RegExp(`\\[\\s+(${scalar}(?:,\\s+${scalar})*)\\s+\\]`, 'g'),
+      (all, inner) => `[${inner.split(/,\n\s*/).join(', ')}]`);
+}
+
+// Where an append condition's `after` comes from: a position, or –
+// planned – 'read' (the last position read) or 'head'.
+function queryAfterWords(after) {
+  if (after === 'head') return 'head';
+  if (after === 'read') return 'the last position read';
+  return after === undefined || after === null ? 'none – the store was empty' : String(after);
+}
+
+// `queries` – one list of items per call, in order; `condition` –
+// `{ after }`, or null for none; `key` keeps each place's hints apart.
+function dcbQueries(queries, { key, from = false, condition = null } = {}) {
+  const many = queries.length > 1;
+  const hintQuery = hint(`${key}:query`, 'DCB query', [
+    'What a call to the event store asks for: every event matching any of its items.',
+    'An item matches an event of one of its types that carries all of its tags.',
+    many ? 'Each box is one call. A later one waits for the answer of the one above: its tags are values from it.' : null,
+  ].filter(Boolean), undefined, 'consistency-boundary');
+  const hintCondition = hint(`${key}:condition`, 'Append condition', [
+    'failIfEventsMatch: the append fails if an event matching this query was appended after `after`.',
+    'after: the position the decision saw the store at – the last position read, or head, taken first, when the command reads more than once.',
+  ], undefined, 'consistency-boundary');
+  const all = queries.flat();
+  if (queryAsJson()) {
+    const text = [
+      ...queries.map((items, i) => (many ? `// query ${i + 1}\n` : '// query\n') + queryJsonText(queryItemsJson(items))),
+      ...(condition ? ['// append condition\n' + queryJsonText({
+        failIfEventsMatch: queryItemsJson(all),
+        after: typeof condition.after === 'number' ? condition.after : `{${queryAfterWords(condition.after)}}`,
+      })] : []),
+    ].join('\n\n');
+    return h('div', { class: 'dq' }, h('pre', { class: 'dq-json' }, text));
+  }
+  return h('div', { class: 'dq' },
+    many && condition ? h('div', { class: 'dq-head' }, h('b', {}, 'head'), ' – taken first: the queries wait on each other') : null,
+    many
+      ? queries.flatMap((items, i) => [
+          i ? h('div', { class: 'dq-link' }, h('b', {}, '↓ '), `its tags come from the answer of query ${i}`) : null,
+          queryBox(items, h('span', {}, `query ${i + 1}`, i ? null : hintQuery), `call ${i + 1} of ${queries.length}`, { from }),
+        ])
+      : queryBox(queries[0] || [], h('span', {}, 'query', hintQuery),
+          `1 call · ${all.length} item${all.length === 1 ? '' : 's'}${all.length > 1 ? ', ORed' : ''}`, { from }),
+    condition
+      ? h('div', { class: 'dq-cond' },
+          h('div', { class: 'dq-key' }, 'append condition', hintCondition),
+          h('div', {}, h('b', {}, 'failIfEventsMatch'), ': ', many ? `the items of queries 1–${queries.length}, as one query` : 'the query'),
+          h('div', {}, h('b', {}, 'after'), ': ', queryAfterWords(condition.after)))
+      : null);
+}
+
 // A query is one hover away rather than one more line on the page:
 // the glyph marks everything that goes to the log, and the popover
 // states what it asks. Hover or focus peeks, a click pins it across
@@ -6467,28 +6619,6 @@ function queryPopover(key, title, ...lines) {
     h('span', { class: 'qpanel dcb', onclick: (e) => e.stopPropagation() },
       title ? h('div', { class: 'k qtitle' }, title) : null,
       ...lines));
-}
-
-// One DCB query, spelled the same everywhere one appears: the tags
-// ANDed, then the event types – "any type" when the query is tag-only,
-// and a plain word about reading the whole log when it is type-only.
-// Every place that shows a query goes through here, so a reader who
-// has learned the spelling once has learned all of them.
-function dcbQueryWords(item) {
-  const tags = item.tags || [];
-  const types = item.types || [];
-  return h('span', {},
-    tags.length
-      ? h('span', {}, h('span', { class: 'k' }, 'tag '),
-          ...tags.flatMap((tag, j) => [
-            j ? h('span', { class: 'k' }, ' and ') : null,
-            h('span', { class: 't' }, tag),
-          ]),
-          h('span', { class: 'k' }, ' and '))
-      : null,
-    h('span', { class: 'y' }, types.join(', ') || 'any type'),
-    tags.length ? null : h('span', { class: 'k' }, '  (no tag – the whole log)'),
-    item.fannedOut ? h('span', { class: 'k' }, '  – one per element') : null);
 }
 
 // One binding, as a card. `index` is its position in the authored
@@ -6558,8 +6688,8 @@ function readCard(model, slice, binding, index, waitsFor) {
       // is answered where the binding is, not only in the union at the
       // foot of the page.
       queryItems.length
-        ? queryPopover('read:' + binding.alias, 'what this binding queries',
-            ...queryItems.map((item) => h('div', {}, dcbQueryWords(item))))
+        ? queryPopover('read:' + binding.alias, 'what this binding adds to the query',
+            h('div', { class: 'dq' }, ...queryItems.map((item) => queryItemRow(item))))
         : null,
       h('span', { class: 'grow' }),
       reveal(
@@ -13808,48 +13938,30 @@ function eventFieldsEditor(model, name, event) {
 }
 
 function stepConsistency(model, slice) {
-  // Every item is a binding, projections included – there is no
-  // longer a query that arrives from outside the boundary. An item's
-  // tags are ANDed with each other and with its types; the items are
-  // ORed. No tags at all is a type-only query, which is what a
-  // projection with no parameters reads.
-  // Each line names the read it came from, so the union is legible as
-  // "which binding contributed what" and not only as one long OR.
-  const itemLine = (item, i) => h('div', {},
-    i === 0 ? '  ' : h('span', { class: 'k' }, 'or '),
-    item.alias
-      ? h('span', {}, h('span', { class: 'al' }, item.alias), h('span', { class: 'k' }, ' · '))
-      : null,
-    dcbQueryWords(item));
-
-  // The queries, in the order they run. A chained boundary cannot be
-  // one query – a later query's tags are answers from an earlier one –
-  // so what reaches the log is one combined query per level of the
-  // chain, and the append condition is all of them, ORed. The summary
-  // and the layout are `boundarySummary`'s, which the code view's
-  // command line speaks from too.
+  // The queries, open, in the order they run (_DCB queries, shown_):
+  // one per call to the store, each item a tag set and the reads that
+  // brought it. A chained boundary cannot be one query – a later
+  // query's tags are answers from an earlier one – so it is one box per
+  // level of the chain, and the append condition is all of them in one.
+  // The layout is `boundarySummary`'s, which the code view's command
+  // line speaks from too.
   const summary = boundarySummary(model, slice.body);
-  const { items, queries } = summary;
-  const combined = queries.length > 1
-    ? [...queries.map((query, r) => h('div', { class: 'trip' },
-        h('div', { class: 'k' },
-          `query ${r + 1}${r ? ` – its tags are answers from ${r === 1 ? 'query 1' : 'the queries above'}` : ''}`),
-        query.map((item, i) => itemLine(item, i)))),
-      h('div', { class: 'trip k' }, 'append condition: all of the above, ORed')]
-    : items.map((item, i) => itemLine(item, i));
-
+  const planned = plannedQueries(summary);
   return step('consistency', 'Consistency boundary',
-    h('div', { class: 'card dcb' },
-      items.length
-        ? h('div', { class: 'row' },
-            h('span', { class: 'k' }, summary.words),
-            queryPopover('dcb:' + slice.name,
-              queries.length > 1 ? 'the queries, in order' : 'the query',
-              ...combined))
+    h('div', { class: 'card' },
+      summary.items.length
+        ? [
+            h('div', { class: 'row', style: 'justify-content:space-between;margin-bottom:8px' },
+              h('span', { class: 'k small' }, summary.words), queryViewSwitch()),
+            dcbQueries(planned, {
+              key: 'dcb:' + slice.name, from: true,
+              condition: { after: planned.length > 1 ? 'head' : 'read' },
+            }),
+          ]
         : h('div', { class: 'empty' }, 'Unguarded.'),
-      h('div', { style: 'margin-top:6px' },
-        h('span', { class: 'k' }, 'appends '),
-        h('span', { class: 't' }, slice.dcb.writes.join(', ') || 'no tags'))),
+      h('div', { class: 'dq-chips', style: 'margin-top:8px' },
+        h('span', { class: 'k small' }, 'appends '),
+        slice.dcb.writes.length ? slice.dcb.writes.map(queryTagChip) : h('span', { class: 'k small' }, 'no tags'))),
     slice.coverage.length
       ? h('div', { class: 'card', style: 'border-color:var(--danger)' },
           h('span', { class: 'small' }, 'Writes a tag it never consulted: '
@@ -15496,8 +15608,10 @@ function projectionWatchCard(model, watch) {
         };
       });
     } catch (error) { return null; }
+    // A derived projection folds each operand on its own: a call each.
     return queryPopover('watch:' + watchKey(watch), 'what this watch queries',
-      ...queries.map((query) => h('div', {}, dcbQueryWords(query))));
+      h('div', { class: 'dq' }, ...queries.map((query, i) => queryBox([query], 'query',
+        queries.length > 1 ? `call ${i + 1} of ${queries.length}` : '1 call'))));
   })() : null;
   const head = (...rest) => h('div', { class: 'card' },
     h('div', { class: 'sc-line' },
@@ -16690,13 +16804,13 @@ function registerSourceLanguage() {
   });
   const readHover = (q) => {
     const code = (words) => words.map((w) => `\`${w}\``).join(', ');
-    const types = q.types.length ? code(q.types) : 'any type';
     return {
       range: new monaco.Range(q.start.line, q.start.col, q.end.endLine, q.end.endCol),
       contents: [
         { value: `**Alias \`${q.alias}\`** – what it adds to the append condition` },
-        { value: (q.tags.length ? `${code(q.tags)} ∧ ${types}` : `${types} (no tag – the whole log)`)
-          + (q.fannedOut ? ' – one per element' : '') },
+        { value: '```text\n'
+          + `types  ${q.types.join(', ') || 'any type'}\n`
+          + `tags   ${q.tags.join(', ') || 'none – every event of these types'}${q.fannedOut ? '  × each' : ''}\n` + '```' },
         ...(q.properties.length ? [{ value: q.properties
           .map((p) => `- \`${q.alias}.${p.name}\`: ${p.types.length ? code(p.types) : 'no events'}`).join('\n') }] : []),
         ...(q.unread.length ? [{ value: `Not read: ${code(q.unread)}` }] : []),
@@ -16706,28 +16820,52 @@ function registerSourceLanguage() {
   };
   // A command's whole boundary, on its header – the question the tool
   // exists to answer, asked of the text before it is applied: the
-  // queries in the order they run, each read's share ORed within one,
-  // and what the command appends. The same layout as the Consistency
-  // boundary step's popover.
+  // queries in the order they run, one per call to the store, and what
+  // the command appends. The Consistency boundary step's notation
+  // (_DCB queries, shown_), in the monospace a hover can draw – and in
+  // JSON when that is the chosen view.
   const commandHover = (q) => {
     const code = (words) => words.map((w) => `\`${w}\``).join(', ');
-    const itemLine = (item) => `- \`${item.alias}\`: `
-      + (item.tags.length ? `${item.tags.map((t) => `\`${t}\``).join(' ∧ ')} ∧ ` : '')
-      + (item.types.length ? code(item.types) : 'any type')
-      + (item.tags.length ? '' : ' (no tag – the whole log)')
-      + (item.fannedOut ? ' – one per element' : '');
-    const queries = q.queries.length > 1
-      ? q.queries.map((items, i) => ({
-          value: `query ${i + 1}${i ? ` – its tags are answers from ${i === 1 ? 'query 1' : 'the queries above'}` : ''}\n\n`
-            + items.map(itemLine).join('\n'),
-        }))
-      : [{ value: q.items.length ? q.items.map(itemLine).join('\n') : 'Reads nothing: the append is unconditional.' }];
+    const planned = plannedQueries(q);
+    const many = planned.length > 1;
+    const fence = (lines, lang = 'text') => '```' + lang + '\n' + lines.join('\n') + '\n```';
+    const after = many ? 'head' : 'read';
+    let queries;
+    if (!planned.length) {
+      queries = [{ value: 'Reads nothing: the append is unconditional.' }];
+    } else if (queryAsJson()) {
+      const text = [
+        ...planned.map((items, i) => `${many ? `// query ${i + 1}` : '// query'}\n${queryJsonText(queryItemsJson(items))}`),
+        `// append condition\n${queryJsonText({ failIfEventsMatch: queryItemsJson(planned.flat()), after: `{${queryAfterWords(after)}}` })}`,
+      ];
+      queries = [{ value: fence(text.join('\n\n').split('\n'), 'json') }];
+    } else {
+      const box = (items, title) => [title, ...items.flatMap((item, i) => [
+        ...(i ? ['  ── OR ──'] : []),
+        `  types  ${item.types.join(', ') || 'any type'}`,
+        `  tags   ${item.tags.join(', ') || 'none – every event of these types'}${item.fannedOut ? '  × each' : ''}`,
+      ])];
+      const all = planned.flat().length;
+      queries = [{
+        value: fence([
+          ...(many ? ['head – taken first: the queries wait on each other', ''] : []),
+          ...planned.flatMap((items, i) => [
+            ...(i ? ['', `  ↓ its tags come from the answer of query ${i}`, ''] : []),
+            ...box(items, many ? `query ${i + 1} · call ${i + 1} of ${planned.length}`
+              : `query · 1 call · ${all} item${all === 1 ? '' : 's'}${all > 1 ? ', ORed' : ''}`),
+          ]),
+          '',
+          `append condition`,
+          `  failIfEventsMatch  ${many ? `the items of queries 1–${planned.length}, as one query` : 'the query'}`,
+          `  after              ${queryAfterWords(after)}`,
+        ]),
+      }];
+    }
     return {
       range: new monaco.Range(q.start.line, q.start.col, q.end.endLine, q.end.endCol),
       contents: [
         { value: `**Consistency boundary** – ${q.words}` },
         ...queries,
-        ...(q.queries.length > 1 ? [{ value: 'append condition: all of the above, ORed' }] : []),
         { value: `appends ${q.writes.length ? code(q.writes) : 'no tags'}` },
         ...(q.coverage.length ? [{ value: `⚠ Writes a tag it never consulted: ${q.coverage.map((c) => readable(c.entity)).join(', ')}` }] : []),
       ],

@@ -626,6 +626,16 @@ function renderTag(identifierType, valueText) {
     .replace('{value}', () => valueText);
 }
 
+// A tag's value as a planned query shows it (_DCB queries, shown_):
+// a tag literal's value as it is – `CourseId:c1` – and anything else,
+// not known until a run supplies it, in braces: `{courseId}`, and a
+// fan-out `{each course.subscribedStudentIds}`. A value missing
+// mid-edit stays `?`.
+function plannedTagValue(operand, shown, each = false) {
+  if (shown === '?' || operandSource(operand) === 'tag-literal') return shown;
+  return `{${each ? `each ${shown}` : shown}}`;
+}
+
 // The fields of a composite value type, or null for anything else.
 // Universal – a composite's fields may be any value type, tag-marked
 // or not; `idLeavesOfType` is what picks out the tag-marked ones.
@@ -1887,8 +1897,10 @@ function operandForLeaf(operand, leaf) {
 function tagsForIdentifierValue(model, identifierTypeName, operand, { each } = {}) {
   const leaves = idLeavesOfType(model, identifierTypeName);
   // A tag literal shows its value, not its own spelling: the tag it
-  // renders is `CourseId:c1`, never `CourseId:CourseId("c1")`.
+  // renders is `CourseId:c1`, never `CourseId:CourseId("c1")`; anything
+  // else is a placeholder (`plannedTagValue`).
   const literal = operandSource(operand) === 'tag-literal';
+  const placeholder = (shown) => plannedTagValue(operand, shown, !!each);
   const shownFor = (leaf) => {
     if (operand === undefined) return '?';
     if (literal) {
@@ -1900,13 +1912,9 @@ function tagsForIdentifierValue(model, identifierTypeName, operand, { each } = {
   if (!leaves.length) {
     // Unresolved mid-edit – nothing to render through, so fall back to
     // the type name literally rather than showing nothing at all.
-    const shown = shownFor(null);
-    return [`${identifierTypeName}:${each ? `each(${shown})` : shown}`];
+    return [`${identifierTypeName}:${placeholder(shownFor(null))}`];
   }
-  return leaves.map((leaf) => {
-    const shown = shownFor(leaf);
-    return renderTag(identifierTypeOf(model, leaf.identifierType), each ? `each(${shown})` : shown);
-  });
+  return leaves.map((leaf) => renderTag(identifierTypeOf(model, leaf.identifierType), placeholder(shownFor(leaf))));
 }
 
 // The type a tag operand holds – `{propertyType, isList}` – in the
@@ -1975,17 +1983,14 @@ function entityBindingTags(model, entityName, idOperand, excludingOperand, fanne
     // An unknown entity mid-edit has no derived identifier to look up –
     // fall back to its bare name so a body still being typed renders
     // something rather than nothing.
-    const shown = operandText(idOperand);
-    return [fannedOut ? `${entityName}:each(${shown})` : `${entityName}:${shown}`];
+    return [`${entityName}:${plannedTagValue(idOperand, operandText(idOperand), fannedOut)}`];
   }
   return leaves.map((leaf) => {
     const shownValue = operandText(operandForLeaf(idOperand, leaf));
     const shownExcluding = excludingOperand !== undefined
       ? operandText(operandForLeaf(excludingOperand, leaf)) : null;
-    const valueText = fannedOut
-      ? `each(${shownValue}${shownExcluding !== null ? ` except ${shownExcluding}` : ''})`
-      : shownValue;
-    return renderTag(identifierTypeOf(model, leaf.identifierType), valueText);
+    const shown = fannedOut && shownExcluding !== null ? `${shownValue} except ${shownExcluding}` : shownValue;
+    return renderTag(identifierTypeOf(model, leaf.identifierType), plannedTagValue(idOperand, shown, fannedOut));
   });
 }
 
@@ -2171,7 +2176,7 @@ function deriveDcb(model, body) {
         && (body.properties || []).some((p) => p.name === operand.parameterName && p.isList));
       for (const leaf of eventTagLeaves(model, event).filter((l) => l.property === property.name)) {
         const shown = operand === undefined ? '?' : operandText(operandForLeaf(operand, leaf));
-        writes.push(renderTag(identifierTypeOf(model, leaf.identifierType), listed ? `each(${shown})` : shown));
+        writes.push(renderTag(identifierTypeOf(model, leaf.identifierType), plannedTagValue(operand, shown, listed)));
       }
     }
   }
@@ -2377,6 +2382,32 @@ function boundarySummary(model, body) {
       + `${tags.length ? count(tags.length, 'tag') : 'no tag'}`
       + (queries.length > 1 ? `, in ${queries.length} queries` : '');
   return { items, queries, types, tags, anyType, writes: dcb.writes, coverage: coverageIssues(model, body), words };
+}
+
+// The boundary as the store is asked it (_DCB queries, shown_): one
+// query per call, in the order they run, each item a tag set and every
+// type read under it. `boundarySummary` lists one item per read; the
+// store is asked one per tag set (`evDecideThroughPort` merges them),
+// so two reads of the same course are one item here – `from` names
+// the reads that contributed. A read of any type makes its item any
+// type: `types` empty, as the specification spells it.
+function plannedQueries(summary) {
+  const rounds = summary.queries.length ? summary.queries : (summary.items.length ? [summary.items] : []);
+  return rounds.map((round) => {
+    const byTags = new Map();
+    for (const item of round) {
+      const tags = [...item.tags].sort();
+      const key = JSON.stringify(tags);
+      if (!byTags.has(key)) byTags.set(key, { types: new Set(), anyType: false, tags, from: [], fannedOut: false });
+      const merged = byTags.get(key);
+      if (!item.types.length) merged.anyType = true;
+      for (const type of item.types) merged.types.add(type);
+      const from = item.alias || item.projection;
+      if (from && !merged.from.includes(from)) merged.from.push(from);
+      if (item.fannedOut) merged.fannedOut = true;
+    }
+    return [...byTags.values()].map(({ types, anyType, ...rest }) => ({ types: anyType ? [] : [...types].sort(), ...rest }));
+  });
 }
 
 // Every entity-id property of every published event must resolve to a

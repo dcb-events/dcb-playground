@@ -1890,9 +1890,9 @@ function build(index) {
     const step = sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'SubscribeStudentToCourse'));
     const panels = findAll(step, (n) => /\bqpanel\b/.test(n.className || '')).map(textOf);
     eq(panels.length, 2, 'one per read');
-    eq(panels[0].includes('CourseId:courseId') && panels[0].includes('CourseDefined'),
+    eq(panels[0].includes('CourseId:{courseId}') && panels[0].includes('CourseDefined'),
       true, 'the course read: its tag and the events its read properties fold');
-    eq(panels[1].includes('StudentId:studentId') && panels[1].includes('StudentRegistered'),
+    eq(panels[1].includes('StudentId:{studentId}') && panels[1].includes('StudentRegistered'),
       true, 'the student read likewise');
   });
 
@@ -1908,17 +1908,27 @@ function build(index) {
     sandbox.state.queryPop = null;
   });
 
-  check('the consistency step offers the combined query behind one glyph', () => {
-    const step = sandbox.stepConsistency(model(), sandbox.sliceOf(model(), 'SubscribeStudentToCourse'));
-    const panel = findAll(step, (n) => /\bqpanel\b/.test(n.className || ''))[0];
-    const text = textOf(panel);
-    eq(text.includes('course · '), true, 'each line names the read it came from');
-    eq(text.includes('student · '), true, 'both of them');
-    eq(text.includes('or '), true, 'ORed between items');
+  check('the consistency step shows its one query open: a box, items ORed, each naming its reads', () => {
+    const slice = sandbox.sliceOf(model(), 'SubscribeStudentToCourse');
+    const step = sandbox.stepConsistency(model(), slice);
+    const boxes = findAll(step, (n) => /\bdq-box\b/.test(n.className || ''));
+    eq(boxes.length, 1, 'one box – one call to the store');
+    const text = textOf(boxes[0]);
+    eq(text.includes('1 call · 2 items, ORed'), true, 'it says what it is');
+    eq(text.includes('from') && text.includes('course') && text.includes('student'), true, 'each item names the reads behind it');
+    eq(findAll(boxes[0], (n) => /\bdq-or\b/.test(n.className || '')).length, 1, 'ORed between its two items');
     eq(text.includes('query 1'), false, 'not numbered – this boundary is one query');
-    eq(text.includes('append condition'), false, 'and that one query is the append condition');
-    eq(textOf(step).includes('reads 6 types, 2 tags'), true, 'the card itself only summarises');
-    eq(textOf(step).includes('in '), false, 'one query, so no count of them');
+    eq(textOf(step).includes('failIfEventsMatch') && textOf(step).includes('the last position read'), true,
+      'the append condition, in the specification\'s words');
+    eq(textOf(step).includes('reads 6 types, 2 tags'), true, 'under the summary');
+    store.set('dcb-playground:query-view', 'json');
+    try {
+      const json = textOf(findAll(sandbox.stepConsistency(model(), slice), (n) => n.tag === 'pre')[0]);
+      eq(json.includes('"items"') && json.includes('"failIfEventsMatch"'), true, 'and as JSON, in the specification\'s shape');
+      eq(json.includes('"after": "{the last position read}"'), true, 'a planned `after` a placeholder');
+    } finally {
+      store.delete('dcb-playground:query-view');
+    }
   });
 
   check('a watched projection shows the query it actually runs', () => {
@@ -1997,15 +2007,16 @@ function build(index) {
   sandbox.setActiveModelId(id);
   store.set('dcb-playground:experimental', 'on');
 
-  check('a chained boundary shows one combined query per level of the chain', () => {
+  check('a chained boundary is one box per call, after head', () => {
     sandbox.state.slice = 'RescheduleCourse';
     const step = sandbox.stepConsistency(model(), sandbox.sliceOf(model(), 'RescheduleCourse'));
-    const panel = findAll(step, (n) => /\bqpanel\b/.test(n.className || ''))[0];
-    const text = textOf(panel);
-    eq(text.includes('query 1') && text.includes('query 2') && text.includes('query 3'), true,
-      'three queries, because each one\'s tags are answers from the ones before');
-    eq(text.includes('append condition: all of the above, ORed'), true, 'and the append condition is all of them');
-    eq(/reads \d+ types, \d+ tags, in 3 queries/.test(textOf(step)), true, 'and the summary says so');
+    const boxes = findAll(step, (n) => /\bdq-box\b/.test(n.className || ''));
+    eq(boxes.map((box) => textOf(box).includes(`call ${boxes.indexOf(box) + 1} of 3`)), [true, true, true],
+      'three calls, because each one\'s tags are answers from the ones before');
+    const text = textOf(step);
+    eq(text.includes('head') && text.includes('the items of queries 1–3, as one query'), true,
+      'taken after head, and the append condition is all of them');
+    eq(/reads \d+ types, \d+ tags, in 3 queries/.test(text), true, 'and the summary says so');
   });
 
   store.set('dcb-playground:experimental', 'on');
@@ -6001,17 +6012,36 @@ check('a skipped definition, a defective one and a tag named like an argument ke
   eq(sandbox.modelAdvisories(model).length > 0, true, 'the playground still only advises');
 });
 
+check('a planned query is one item per tag set, as the store is asked, naming the reads behind it', () => {
+  const [simple] = twoModels('course-simple');
+  const subscribe = sandbox.plannedQueries(sandbox.boundarySummary(simple, simple['command-definitions'].SubscribeStudentToCourse));
+  eq(subscribe.length, 1, 'one query');
+  eq(subscribe[0].map((item) => item.tags), [['CourseId:{courseId}'], ['StudentId:{studentId}']], 'two items, by tag set');
+  eq(subscribe[0][0].types.includes('CourseDefined') && subscribe[0][0].types.includes('StudentSubscribedToCourse'), true,
+    'the types of every read under that tag');
+  eq(subscribe[0][0].from.length > 1, true, `several reads behind the course item: ${subscribe[0][0].from.join(', ')}`);
+  const id = loadPredefinedModel(sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-schedules'));
+  const schedules = projectState()[id];
+  const reschedule = sandbox.plannedQueries(sandbox.boundarySummary(schedules, schedules['command-definitions'].RescheduleCourse));
+  eq(reschedule.map((query) => query.map((item) => item.tags)), [
+    [['CourseId:{courseId}']],
+    [['StudentId:{each course.subscribedStudentIds}']],
+    [['CourseId:{each students.subscribedCourseIds except courseId}']],
+  ], 'a chain: one query per call, its placeholders saying where the values come from');
+  eq(reschedule[1][0].fannedOut, true, 'a fan-out says so');
+});
+
 check('boundaries compared per command: what each now reads, and a read that lost its tags', () => {
   const [simple, tenant] = twoModels('course-simple', 'course-tenant');
   const byName = Object.fromEntries(sandbox.compareBoundaries(simple, tenant).map((c) => [c.name, c]));
   const define = byName.DefineCourse;
   eq(define.status, 'changed', 'DefineCourse changed');
   eq(define.items.filter((i) => i.mark === 'removed').map((i) => [i.types, i.tags]),
-    [[['CourseArchived', 'CourseDefined'], ['CourseId:courseId']]], 'the read it dropped');
+    [[['CourseArchived', 'CourseDefined'], ['CourseId:{courseId}']]], 'the read it dropped');
   eq(define.items.filter((i) => i.mark === 'added').map((i) => [i.types, i.tags]), [
     [['CourseDefined'], []],
-    [['CourseDefined'], ['TenantId:tenantId']],
-    [['TenantRegistered'], ['TenantId:tenantId']],
+    [['CourseDefined'], ['TenantId:{tenantId}']],
+    [['TenantRegistered'], ['TenantId:{tenantId}']],
   ], 'the reads it gained');
   eq(define.lostTags, [['CourseDefined']], 'CourseDefined, read by courseId before, is read untagged now');
   eq(byName.RegisterTenant.status, 'added', 'a new command');
