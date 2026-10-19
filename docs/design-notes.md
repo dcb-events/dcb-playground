@@ -926,6 +926,41 @@ step at the playhead. Only the step band scrolls.
   refuses (the course is already defined), and a refusal stops short
   of later reads, which crashed the page. Each projection read is now
   folded on its own, with the tags and arguments the step resolved.
+- **A run travels as its events, not its commands (2026-10).** Export
+  and Import in the header write and read a sandbox log
+  (`*.sandbox.jsonl`, `dcb-sandbox.schema.json`): one `{type, data}`
+  per line, nothing else. Steps were weighed, and are what a share
+  link still carries; but a step replays through the decisions, so
+  a file written before an edit replays into refusals partway, and an
+  event store's dump could never be one. Both, a seed of events
+  followed by steps, was weighed too, and dropped as two formats for
+  one file. JSON with a header line (a version, the model's name) was
+  the last thing dropped: no header means any store's export drops in
+  as it is, at the price of nothing to dispatch on and no warning when
+  the file came from another model. So the line's shape is the one
+  thing that has to stay readable by an old reader.
+  Tags are always derived from the model; a line's own `tags` are
+  only compared, and a difference said once. A line that is not an
+  event of the model, or whose payload does not fit it
+  (`checkScenarioPayload`, the same structure a Given owes), is
+  skipped and reported, and the rest load (`parseSandboxLog`).
+- **An import is one step that decided nothing.** It replaces the run
+  with `{ imported: true, from, to }`: Reads and Now have nothing to
+  show for it, the Append column shows the events around the playhead
+  rather than all of them, a watch's "was …" is against the event
+  before the playhead, and its history samples the import along its
+  length (at most `SANDBOX_HISTORY_POINTS`). Commands are driven on
+  top as usual. Steps driven on top of an import cannot ride a share
+  link – replayed from nothing they would decide differently – so such
+  a run carries none, and the Export dialog says so. Replacing a run,
+  or importing more than `SANDBOX_IMPORT_LARGE` events, asks first.
+- **Long runs are slow, and that is the ceiling, not a bug.** Every
+  drive evaluates over the whole log, every position is a fold from
+  zero, and every watch's history folds once per sample – quadratic,
+  as the sandbox's header in index.html accepts. Estimated rather than
+  measured: a thousand events is comfortable, ten thousand sluggish,
+  a hundred thousand out of reach without incremental folds and
+  snapshots, which would reopen its _Scrubbing replays from zero_.
 
 ## The code view's language
 

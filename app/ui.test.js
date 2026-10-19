@@ -36,7 +36,8 @@ loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js', 'shared.js'], {
     + ' globalThis.EVENT_LOG_KEY = EVENT_LOG_KEY; globalThis.PAGE_BEHIND = PAGE_BEHIND;'
     + ' globalThis.NOTATION_GUIDE_URL = NOTATION_GUIDE_URL; globalThis.NOTATION_REFERENCE_URL = NOTATION_REFERENCE_URL;'
     + ' globalThis.HELP_FEATURES = HELP_FEATURES; globalThis.HELP_CLAIM = HELP_CLAIM; globalThis.HELP_FAQ = HELP_FAQ;'
-    + ' globalThis.FEEDBACK_URL = FEEDBACK_URL; globalThis.ISSUES_URL = ISSUES_URL;',
+    + ' globalThis.FEEDBACK_URL = FEEDBACK_URL; globalThis.ISSUES_URL = ISSUES_URL;'
+    + ' globalThis.SANDBOX_HISTORY_POINTS = SANDBOX_HISTORY_POINTS; globalThis.SANDBOX_IMPORT_LARGE = SANDBOX_IMPORT_LARGE;',
 });
 const { check, eq, finish } = makeChecker();
 
@@ -994,6 +995,115 @@ function build(index) {
       sandbox.render = realRender;
       sandbox.sessionReset();
     }
+  });
+}
+
+// ---------------------------------------------------------------
+// A sandbox run as a file: its events, one per line, and back. An
+// import is one step that decided nothing, with commands driven on
+// top of it as usual.
+// ---------------------------------------------------------------
+{
+  const { id } = build(1);
+  sandbox.setActiveModelId(id);
+  const active = () => sandbox.activeModel();
+  const session = sandbox.session;
+
+  check('a run prints as one event per line and reads back the same', () => {
+    sandbox.sessionReset();
+    sandbox.sessionRun(active(), 'DefineCourse', { capacity: 5 });
+    sandbox.sessionRun(active(), 'DefineCourse', { capacity: 7 });
+    const text = sandbox.printSandboxLog(session.log);
+    eq(text.split('\n').filter(Boolean).length, 2, 'a line per event');
+    eq(JSON.parse(text.split('\n')[0]), { type: 'CourseDefined', data: { courseId: 'c1', capacity: 5 } },
+      'type and data, nothing else');
+    const parsed = sandbox.parseSandboxLog(active(), text);
+    eq(parsed.events, JSON.parse(JSON.stringify(session.log)), 'the same events');
+    eq(parsed.skipped, [], 'nothing skipped');
+    sandbox.sessionReset();
+  });
+
+  check('a line that is not an event of the model is skipped, and the rest load', () => {
+    const text = [
+      '{"type":"CourseDefined","data":{"courseId":"c1","capacity":3},"position":17,"tags":["x"]}',
+      '',
+      'not json',
+      '{"data":{}}',
+      '{"type":"CourseRenamed","data":{}}',
+      '{"type":"CourseDefined","data":{"courseId":"c2"}}',
+      '{"type":"CourseDefined","data":{"courseId":"c3","capacity":1,"title":"x"}}',
+      '{"type":"CourseArchived","data":{"courseId":"c1"}}',
+    ].join('\r\n');
+    const parsed = sandbox.parseSandboxLog(active(), text);
+    eq(parsed.events.map((e) => e.type), ['CourseDefined', 'CourseArchived'], 'the two that fit');
+    eq(parsed.events[0], { type: 'CourseDefined', data: { courseId: 'c1', capacity: 3 } },
+      'whatever else a line carries is left behind');
+    eq(parsed.stated, [['x'], null], 'stated tags handed back, to compare');
+    eq(parsed.skipped.map((s) => s.line), [3, 4, 5, 6, 7], 'each skip by its line, blank lines aside');
+    eq(parsed.skipped[0].reason, 'not JSON', 'not JSON');
+    eq(parsed.skipped[2].reason.includes('CourseRenamed'), true, 'an unknown type, named');
+    eq(parsed.skipped[3].reason.includes('capacity'), true, 'a missing property, named');
+    eq(parsed.skipped[4].reason.includes('title'), true, 'an invented one, named');
+  });
+
+  check('stated tags that differ from the derived ones are said once', () => {
+    const event = { type: 'CourseDefined', data: { courseId: 'c1', capacity: 3 } };
+    const derived = sandbox.tagsOfEvent(active(), event.type, event.data);
+    const agreeing = sandbox.sandboxImportReport(active(), { events: [event], stated: [derived], skipped: [] });
+    eq(agreeing, '', 'nothing to say when they agree');
+    const differing = sandbox.sandboxImportReport(active(),
+      { events: [event, event], stated: [['course:c1'], null], skipped: [] });
+    eq(differing.startsWith('1 event states tags'), true, 'one differs; the unstated one is not counted');
+  });
+
+  check('an import is one step that decided nothing, driven on top of as usual', () => {
+    sandbox.sessionReset();
+    const events = sandbox.parseSandboxLog(active(),
+      '{"type":"CourseDefined","data":{"courseId":"c1","capacity":3}}\n'
+      + '{"type":"CourseDefined","data":{"courseId":"c2","capacity":3}}\n').events;
+    sandbox.sessionImport(events);
+    eq(session.steps, [{ imported: true, from: 0, to: 2 }], 'one imported step');
+    eq(sandbox.sessionStepAt(1).imported, true, 'the playhead inside it is inside the import');
+    eq(textOf(sandbox.sandboxDecision(active())).includes('Imported'), true, 'no reads to show');
+    sandbox.sessionRun(active(), 'DefineCourse', { capacity: 5 });
+    eq(session.log.map((e) => e.data.courseId), ['c1', 'c2', 'c3'], 'the numbering follows the imported log');
+    eq(session.steps[1].command, 'DefineCourse', 'and the command is a step of its own');
+    eq(sandbox.exportEnvelope(active(), { includeScenarios: true, includeSandbox: true }).sandbox, undefined,
+      'a share link carries no steps that would replay differently');
+    sandbox.sessionReset();
+  });
+
+  check('a watch\'s history samples a long import along its length', () => {
+    sandbox.sessionReset();
+    const events = [];
+    for (let n = 1; n <= 450; n++) events.push({ type: 'CourseDefined', data: { courseId: 'c' + n, capacity: 1 } });
+    sandbox.sessionImport(events);
+    const series = sandbox.watchSeries(active(), sandbox.projectionWatch('CourseNumbering', []));
+    eq(series.length <= sandbox.SANDBOX_HISTORY_POINTS + 2, true, 'bounded, however long the import');
+    eq(series[0].at, 0, 'from the start');
+    eq(series[series.length - 1].at, 450, 'to the end');
+    eq(series.length > 2, true, 'with points in between');
+    sandbox.sessionReset();
+  });
+
+  check('a file replacing a run, or a long one, waits to be confirmed', () => {
+    sandbox.sessionReset();
+    sandbox.state.sandboxImport = null;
+    const line = '{"type":"CourseDefined","data":{"courseId":"c1","capacity":3}}\n';
+    sandbox.sandboxImportText(active(), line);
+    eq(session.log.length, 1, 'into an empty run, at once');
+    eq(sandbox.state.sandboxImport, null, 'without asking');
+    sandbox.sandboxImportText(active(), line + line);
+    eq(session.log.length, 1, 'over a run, not yet');
+    eq(sandbox.state.sandboxImport.events.length, 2, 'it asks first');
+    sandbox.finishSandboxImport(sandbox.state.sandboxImport.events, '');
+    eq(session.log.length, 2, 'and replaces the run once confirmed');
+    sandbox.sessionReset();
+    sandbox.sandboxImportText(active(), line.repeat(sandbox.SANDBOX_IMPORT_LARGE + 1));
+    eq(session.log.length, 0, 'a long one into an empty run asks too');
+    sandbox.state.sandboxImport = null;
+    sandbox.sandboxImportText(active(), '{"type":"Nope"}\n');
+    eq(session.log.length, 0, 'a file with no event of the model imports nothing');
   });
 }
 

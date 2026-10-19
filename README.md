@@ -28,6 +28,8 @@ The playground is hosted at [dcb.events/playground](https://dcb.events/playgroun
   link — either carrying the model itself (`#model=…`) or pointing to the
   JSON hosted elsewhere, e.g. in a gist (`#url=<address>`; a gist's page
   address works as is).
+- **Sandbox logs**: a sandbox run's events export and import on their own,
+  as newline-delimited JSON (one `{"type", "data"}` per line).
 - **WebMCP**: an in-browser agent can inspect and edit the open model
   through the same commands the UI uses.
 
@@ -64,6 +66,8 @@ node app/dsl.test.js
   one stylesheet. Each file's header comment documents its role.
 - [`dcb-model.schema.json`](dcb-model.schema.json) — JSON Schema of the
   model interchange format (`https://dcb.events/schemas/model/v10.json`).
+- [`dcb-sandbox.schema.json`](dcb-sandbox.schema.json) — JSON Schema of one
+  line of a sandbox log (`*.sandbox.jsonl`, `https://dcb.events/schemas/sandbox/v1.json`).
 - [`fixtures/`](fixtures/) — models with authored scenarios, read by the
   tests only.
 - [`docs/research/`](docs/research/) — dated notes behind design decisions.
