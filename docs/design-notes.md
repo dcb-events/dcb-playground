@@ -840,9 +840,22 @@ One breakpoint, 760px (shared.css, _narrow screens_), and a floor of
 
 ## The sandbox
 
-The page is the viewport, in four fixed bands (`renderSandbox`): the
-header holding the driver, the timeline, the watched strip, and the
-step at the playhead. Only the step band scrolls.
+The page is the viewport, in three fixed bands (`renderSandbox`): the
+header holding the driver, the timeline, and a panel of three tabs –
+Watched, Decision, Store. Only the panel scrolls.
+
+- **One panel, three tabs (2026-10).** Until then the watches were a
+  strip of their own and the step's Append, Reads, Now and Store sat
+  side by side under it: everything at once, and with the Store column
+  added it read as clutter. Four layouts were drawn (on a design
+  canvas, outside the repo): a watch table beside a step inspector,
+  these tabs, the watches as rows on the timeline's own axis, and the
+  run as a log with the watches beside it. The rows were built first
+  and dropped for the tabs (kept on the `sandbox-grid-c` branch). Each
+  of the three gets the whole width, one at a time. Watched is the
+  default, since a run is watched through it, and its tab counts how
+  many the step at the playhead changed, so a change is noticed from
+  the other two; Store counts its calls.
 
 - **Fixed bands, because a run gets long.** It used to be one column:
   driver, a row of event icons that wrapped, every visible event as a
@@ -898,7 +911,8 @@ step at the playhead. Only the step band scrolls.
   filled mark hid the playhead wherever the two met. Rows are told
   apart by a rule between lanes, not a line through the marks. There
   is no "Latest" button: `End` and the lanes do the same.
-- **A watch is a tile with a history.** It is the card it always was,
+- **A watch is a tile with a history**, in a grid that fills the
+  Watched tab's width, so many stay one screen. It is the card it always was,
   plus "was …" when the step at the playhead changed it, and its value
   at the end of every step drawn under it. A number (a list, by its
   length) is drawn as a level that holds between steps; anything else
@@ -919,7 +933,7 @@ step at the playhead. Only the step band scrolls.
   same keying (`identifiersInUse`).
 - **The playhead can sit inside a step.** `sessionStepAt` is the step
   the last visible event belongs to, even when only some of its events
-  are visible. The step band shows those; the rest are faint.
+  are visible. The Decision tab shows those; the rest are faint.
 - **Now folds the read again; it does not decide again.** The Now
   column used to evaluate the command again over the visible log and
   take its reads. At the end of the command's own step that usually
@@ -1141,8 +1155,8 @@ Artboards: `design/dcb-queries/` (2026-10).
   it is the queries' items again, and repeating them buried the one
   thing it adds, `after`.
 - **The sandbox runs through the cycle** (`handleCommand` against a
-  `memoryStore` of its log), and its step band gains a fourth column,
-  **Store**: the step's calls – head, each read with its query and the
+  `memoryStore` of its log), and its panel has a **Store** tab: the
+  step's calls – head, each read with its query and the
   events it returned, the append with its condition and where it
   landed. Hovering a read lights its events up on the timeline: the
   slice of the log the boundary really is. Like Reads, it is worked

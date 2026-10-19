@@ -1384,7 +1384,7 @@
 
   /* ---------- sandbox ----------
      The page is the viewport, in fixed bands: header with the driver,
-     the timeline, the watched strip, and the step at the playhead (the
+     the timeline, and the panel of Watched, Decision and Store tabs (the
      one band that scrolls). See `renderSandbox`. */
   .slice.sandbox {
     max-width: none; padding: 0; display: flex; flex-direction: column;
@@ -1404,14 +1404,8 @@
   }
   .sbx-driver .grow { flex: 1; }
 
-  .sbx-watch {
-    display: flex; align-items: flex-start; gap: 10px; padding: 12px 24px;
-    border-bottom: 1px solid var(--border); overflow-x: auto; max-height: 40vh; overflow-y: auto;
-  }
-  .sbx-watch > * { flex: none; }
-  .sbx-watch > .adder, .sbx-watch > .card { margin-top: 0 !important; }
-  .sbx-watch-none { align-self: center; }
-  .sbx-tile { width: 280px; margin: 0; }
+  .sbx-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; align-items: start; }
+  .sbx-tile { margin: 0; min-width: 0; }
   .sbx-tile.changed { border-color: var(--accent); }
   .sbx-tile .val { font-size: 15px; font-weight: 600; color: var(--text); }
   .sbx-delta { font-size: 11px; color: var(--muted); }
@@ -1423,14 +1417,23 @@
   .sbx-hist .played { stroke: var(--projection); stroke-width: 2; }
   .sbx-hist .head { stroke: var(--accent); stroke-width: 2; }
 
-  .slice.sandbox > .sbx-body {
-    flex: 1 1 auto; min-height: 120px; overflow: auto;
-    display: flex; flex-wrap: wrap; align-content: flex-start; gap: 0 28px; padding: 14px 24px;
-  }
+  /* The panel under the timeline: Watched, Decision and Store as tabs,
+     the body scrolling inside the rest of the page's height. */
+  .slice.sandbox > .sbx-panel { flex: 1 1 auto; min-height: 140px; display: flex; flex-direction: column; }
+  .sbx-tabs { display: flex; align-items: center; gap: 2px; padding: 0 20px; border-bottom: 1px solid var(--border);
+              background: var(--surface); flex: none; }
+  .sbx-tabs .grow { flex: 1; }
+  .sbx-tab { border: 0; background: none; font: inherit; font-size: 13px; padding: 9px 12px; color: var(--muted);
+             border-bottom: 2px solid transparent; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+  .sbx-tab.on { color: var(--accent-strong); border-bottom-color: var(--accent); font-weight: 600; }
+  .sbx-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .sbx-badge { font-size: 11px; font-weight: 600; padding: 0 7px; border-radius: 10px;
+               background: var(--accent-soft); color: var(--accent-strong); }
+  .sbx-badge.changed { background: var(--changed-soft); color: var(--changed); }
+  .sbx-panel-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 14px 24px; }
+  .sbx-cols { display: flex; flex-wrap: wrap; gap: 0 28px; }
   .sbx-col { flex: 1 1 300px; min-width: 0; }
   .sbx-col > h4 { margin: 0 0 8px; }
-  .sbx-col.store { flex: 2 1 420px; }
-  .sbx-col.store > h4 { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .sbx-calls { display: flex; flex-direction: column; gap: 8px; }
   .sbx-call { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; padding: 8px 10px;
               border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
@@ -1551,8 +1554,8 @@
   }
   @media (max-width: 760px) {
     .slice.sandbox { height: auto; }
-    .slice.sandbox > .sbx-body { overflow: visible; }
-    .slice.sandbox > header, .sbx-watch, .slice.sandbox > .sbx-body, .sbx-transport { padding-left: 16px; padding-right: 16px; }
+    .sbx-panel-body { overflow: visible; }
+    .slice.sandbox > header, .sbx-tabs, .sbx-panel-body, .sbx-transport { padding-left: 16px; padding-right: 16px; }
     .slanes-in { --lw: 108px; }
     .slanes-in.compact { --lw: 16px; }
     .slabel { padding-left: 16px; }
@@ -2049,6 +2052,7 @@ const state = {
   scenarioDraft: null,
   sandboxDraft: null,       // { command, arguments } – a command about to be driven
   sandboxLanes: 'compact',  // the timeline's lanes: 'compact' | 'tag' | 'type'
+  sandboxTab: 'watched',    // the panel under the timeline: 'watched' | 'decision' | 'store'
   projTab: 'definition',    // 'definition' | 'checks' inside the opened ledger row
   openProjectionScenarios: new Set(), // keys of every projection scenario whose detail is unfolded
   projectionScenarioDraft: null, // { key, insertAfter, body } – see `scenarioDraft`
@@ -15736,20 +15740,32 @@ function instanceStateCard(model, tag) {
 
 // ---------- what is watched ----------
 //
-// A strip under the timeline that does not move with the run: a watch is
-// the thing you came to see change, so it keeps its place while
-// everything else scrolls or scrubs. Each tile is the card a watch has
-// always been, plus two things only a strip of them can afford: whether
+// The panel's first tab, and the one it opens on: a watch is the thing
+// you came to see change. Tiles in a grid that fills the panel's width,
+// so many of them stay one screen. Each tile is the card a watch has
+// always been, plus two things only a board of them can afford: whether
 // the step at the playhead changed it, and its value over the whole
 // run, squeezed to the tile's width – a glance at its shape, where the
 // timeline above is the run at full length.
-function sandboxWatchStrip(model) {
+function sandboxWatched(model) {
   const names = Object.keys(model['projection-definitions']).sort();
-  return h('section', { class: 'sbx-watch', 'aria-label': 'Watching' },
-    session.pinned.length ? null : h('div', { class: 'sbx-watch-none muted small' },
-      'Nothing watched. ☆ a read to follow it here at every point of the run.'),
-    session.pinned.map((watch) => watchTile(model, watch)),
-    names.length ? watchProjectionAdder(model, names) : null);
+  return h('div', { class: 'sbx-watched' },
+    state.watchDraft && names.length ? watchProjectionAdder(model, names) : null,
+    session.pinned.length
+      ? h('div', { class: 'sbx-tiles' }, session.pinned.map((watch) => watchTile(model, watch)))
+      : h('div', { class: 'muted small' }, 'Nothing watched. ☆ a read in Decision, or + Watch, to follow it here at every point of the run.'));
+}
+
+// How many watches the step at the playhead changed – said on the tab,
+// so a change is noticed without opening it.
+function watchesChangedByStep(model) {
+  const step = sessionStepAt(sessionPosition());
+  if (!step) return 0;
+  return session.pinned.filter((watch) => {
+    const before = watchValueAt(model, watch, session.log.slice(0, step.from));
+    const now = watchValueAt(model, watch, sessionVisible());
+    return before && now && before.key !== now.key;
+  }).length;
 }
 
 // What one watch reads as after `log` – comparable as `key`, plottable
@@ -15869,16 +15885,7 @@ function watchTile(model, watch) {
 // arguments are values typed in, exactly as a scenario's are – there is
 // no command here to draw an operand from.
 function watchProjectionAdder(model, names) {
-  if (!state.watchDraft) {
-    return h('div', { class: 'adder', style: 'margin-top:8px' },
-      h('button', {
-        class: 'btn tiny ghost',
-        onclick: () => {
-          state.watchDraft = { projection: names[0], tags: blankScenarioTags(model, names[0]), arguments: {} };
-          render();
-        },
-      }, '+ watch a projection'));
-  }
+  if (!state.watchDraft) return null;
 
   const draft = state.watchDraft;
   const projection = model['projection-definitions'][draft.projection];
@@ -15893,7 +15900,7 @@ function watchProjectionAdder(model, names) {
     draft.tags[tag.name] = { tagType: tag.tagType, tagValue: value && value.tagValue !== undefined ? value.tagValue : '' };
   }
 
-  return h('div', { class: 'card sc-step', style: 'margin-top:8px' },
+  return h('div', { class: 'card sc-step', style: 'margin-bottom:12px;max-width:640px' },
     h('div', { class: 'row' },
       pick(names.map((n) => [n, readable(n)]), draft.projection, (v) => {
         state.watchDraft = { projection: v, tags: blankScenarioTags(model, v), arguments: {} };
@@ -16012,11 +16019,11 @@ function sandboxNow(model) {
 
 // ---------- the page ----------
 //
-// Four fixed bands, top to bottom: the header with the driver, the
-// timeline, the watched strip, the step at the playhead. Only
-// the step scrolls – a long run must not push the watches or the
-// timeline off the screen, which is what the one long column did. Below
-// the narrow breakpoint the bands go back to flowing with the page.
+// Three fixed bands, top to bottom: the header with the driver, the
+// timeline, and the panel – Watched, Decision, Store. Only the panel
+// scrolls – a long run must not push the timeline off the screen, which
+// is what the one long column did. Below the narrow breakpoint the
+// bands go back to flowing with the page.
 
 // The step at the playhead: what it was asked, and what it appended.
 // Its events past the playhead are on the page but faint – the
@@ -16056,11 +16063,18 @@ function sandboxHighlight(positions) {
   }
 }
 
-function sandboxStore(model) {
-  const step = sessionStepAt(sessionPosition());
-  if (!step) return h('div', { class: 'card' }, h('div', { class: 'empty' }, 'Nothing has happened yet.'));
+// The step decided again, against the log as it stood before it, with
+// every call to the store traced.
+function sandboxStoreRun(model, step) {
   const trace = [];
   const outcome = handleCommand(model, sessionStore(model, session.log.slice(0, step.from)), step.command, step.args, { trace });
+  return { trace, outcome };
+}
+
+function sandboxStore(model, run) {
+  const step = sessionStepAt(sessionPosition());
+  if (!step) return h('div', { class: 'card' }, h('div', { class: 'empty' }, 'Nothing has happened yet.'));
+  const { trace, outcome } = run || sandboxStoreRun(model, step);
   const json = queryAsJson();
   const reads = [];
   let n = 0;
@@ -16127,6 +16141,64 @@ function sandboxStore(model) {
     calls.length ? calls : h('div', { class: 'card' }, h('div', { class: 'empty' }, 'It asked the store nothing.')));
 }
 
+// ---------- the panel under the timeline ----------
+//
+// Three things a run is looked at with, one at a time: what is watched,
+// what the step at the playhead decided, and what it asked the store.
+// Shown together they crowded each other out; as tabs each gets the
+// whole width. Watched is the default – it is what a run is watched
+// through – and its tab says how many the step changed, so a change is
+// noticed from the others.
+function sandboxPanel(model) {
+  const step = sessionStepAt(sessionPosition());
+  const current = state.sandboxTab || 'watched';
+  const run = step && current === 'store' ? sandboxStoreRun(model, step) : null;
+  const changed = watchesChangedByStep(model);
+  const badge = (text, cls = '') => h('span', { class: 'sbx-badge' + cls }, text);
+  const tab = (key, ...label) => h('button', {
+    class: 'sbx-tab' + (current === key ? ' on' : ''), type: 'button', role: 'tab',
+    'aria-selected': current === key ? 'true' : 'false',
+    onclick: () => { state.sandboxTab = key; render(); },
+  }, ...label);
+  const names = Object.keys(model['projection-definitions']).sort();
+  let body;
+  if (current === 'watched') body = sandboxWatched(model);
+  else if (!step) body = h('div', { class: 'empty' }, session.log.length ? 'Before the first step – nothing decided yet.' : 'Nothing has happened yet – run a command.');
+  else if (current === 'store') body = sandboxStore(model, run);
+  else {
+    body = h('div', { class: 'sbx-cols' },
+      h('div', { class: 'sbx-col' }, h('h4', {}, 'Append'), sandboxAppended(model)),
+      h('div', { class: 'sbx-col' }, h('h4', {}, 'Reads'), sandboxDecision(model)),
+      h('div', { class: 'sbx-col' }, h('h4', {}, 'Now'), sandboxNow(model)));
+  }
+  return h('section', { class: 'sbx-panel', 'aria-label': 'Watched, and the step at the playhead' },
+    h('div', { class: 'sbx-tabs', role: 'tablist' },
+      tab('watched', 'Watched ', badge(String(session.pinned.length)),
+        changed ? badge(`${changed} changed`, ' changed') : null),
+      tab('decision', 'Decision', step ? h('span', { class: 'muted small' }, ` step ${session.steps.indexOf(step) + 1}`) : null),
+      tab('store', 'Store', run ? [' ', badge(`${run.trace.filter((t) => t.call).length} calls`)] : null),
+      h('span', { class: 'grow' }),
+      current === 'watched' && names.length
+        ? h('button', {
+            class: 'btn tiny', type: 'button', 'aria-expanded': state.watchDraft ? 'true' : 'false',
+            onclick: () => {
+              state.watchDraft = state.watchDraft ? null
+                : { projection: names[0], tags: blankScenarioTags(model, names[0]), arguments: {} };
+              render();
+            },
+          }, '+ Watch')
+        : null,
+      current === 'store' && step ? [
+        hint('sandbox:store', 'Store', [
+          'What the step asked the event store, call by call: head, each read with its DCB query and the events it returned, and the append with its condition.',
+          'The append fails if an event matching failIfEventsMatch came after `after` – the position the decision saw.',
+          'Hover a read to see its events on the timeline.',
+        ], undefined, 'consistency-boundary'),
+        queryViewSwitch(),
+      ] : null),
+    h('div', { class: 'sbx-panel-body' }, body));
+}
+
 function renderSandbox(model, main) {
   main.appendChild(h('header', {},
     h('div', { class: 'name' }, 'Sandbox',
@@ -16150,26 +16222,7 @@ function renderSandbox(model, main) {
   // one – a numbering's first value is the whole of what its initial
   // value states.
   main.appendChild(sandboxTimeline(model));
-  main.appendChild(sandboxWatchStrip(model));
-
-  main.appendChild(h('section', { class: 'sbx-body', 'aria-label': 'The step at the playhead' },
-    session.log.length
-      ? [
-          h('div', { class: 'sbx-col' }, h('h4', {}, 'Append'), sandboxAppended(model)),
-          h('div', { class: 'sbx-col' }, h('h4', {}, 'Reads'), sandboxDecision(model)),
-          h('div', { class: 'sbx-col' }, h('h4', {}, 'Now'), sandboxNow(model)),
-          h('div', { class: 'sbx-col store' },
-            h('h4', {},
-              h('span', {}, 'Store',
-                hint('sandbox:store', 'Store', [
-                  'What the step asked the event store, call by call: head, each read with its DCB query and the events it returned, and the append with its condition.',
-                  'The append fails if an event matching failIfEventsMatch came after `after` – the position the decision saw.',
-                  'Hover a read to see its events on the timeline.',
-                ], undefined, 'consistency-boundary')),
-              queryViewSwitch()),
-            sandboxStore(model)),
-        ]
-      : h('div', { class: 'empty' }, 'Nothing has happened yet – run a command.')));
+  main.appendChild(sandboxPanel(model));
 
   keepLanesInView();
 }

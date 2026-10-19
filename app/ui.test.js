@@ -926,6 +926,30 @@ function build(index) {
     session.at = null;
   });
 
+  check('the panel under the timeline opens on Watched, and its tabs say what is behind them', () => {
+    sandbox.sessionReset();
+    sandbox.sessionRun(active(), 'DefineCourse', { capacity: 5 });
+    sandbox.sessionRun(active(), 'DefineCourse', { capacity: 5 });
+    session.pinned.push(sandbox.projectionWatch('CourseNumbering', []));
+    sandbox.state.sandboxTab = 'watched';
+    const tabsOf = (panel) => findAll(panel, (n) => /\bsbx-tab\b/.test(n.className || '')).map(textOf);
+    try {
+      let panel = sandbox.sandboxPanel(active());
+      eq(tabsOf(panel)[0].includes('Watched') && tabsOf(panel)[0].includes('1 changed'), true,
+        `the watch the step moved on is counted on its tab: ${tabsOf(panel)[0]}`);
+      eq(findAll(panel, (n) => n.className === 'sbx-tiles')[0].children.length, 1, 'and shown as a tile');
+      sandbox.state.sandboxTab = 'store';
+      panel = sandbox.sandboxPanel(active());
+      eq(tabsOf(panel)[2].includes('2 calls'), true, `Store counts its calls: ${tabsOf(panel)[2]}`);
+      eq(findAll(panel, (n) => /\bsbx-call\b/.test(n.className || '')).length, 2, 'and lists them');
+      sandbox.state.sandboxTab = 'decision';
+      eq(textOf(sandbox.sandboxPanel(active())).includes('Append'), true, 'Decision: what it appended, read, and holds now');
+    } finally {
+      sandbox.state.sandboxTab = 'watched';
+      session.pinned.length = 0;
+    }
+  });
+
   check('a watched projection folds at the position being looked at', () => {
     const watch = sandbox.projectionWatch('CourseNumbering', []);
     session.at = null;
@@ -1005,7 +1029,7 @@ function build(index) {
       const tags = (w) => Object.values(w.tags).map((t) => t.tagValue);
       watchAt('c1');
       eq(session.pinned.map(tags), [['c1']], 'the first is watched');
-      eq(findAll(screen, (n) => n.tag === 'input').length, 0,
+      eq(screen === null ? 0 : findAll(screen, (n) => n.tag === 'input').length, 0,
         'and the paint the pin triggered no longer shows the form');
       watchAt('c2');
       eq(session.pinned.map(tags), [['c1'], ['c2']], 'both reads stay watched');
