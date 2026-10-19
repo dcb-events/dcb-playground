@@ -1621,8 +1621,8 @@ function evDecideFromStore(model, store, commandName, args, withHead, record) {
 
 // One attempt at a command against `store`:
 //
-//   { outcome: 'published', events: [{ type, data, tags }], position }
-//   { outcome: 'rejected', failedRule }
+//   { outcome: 'published', events: [{ type, data, tags }], position, reads }
+//   { outcome: 'rejected', failedRule, reads }
 //   { outcome: 'conflict', condition }   the append lost the race
 //   { outcome: 'error', message }        the command cannot be decided
 //   { outcome: 'store', message }        the store failed
@@ -1648,13 +1648,13 @@ function handleCommand(model, store, commandName, args, { trace } = {}) {
     return { outcome: 'error', message: evErrorText(error) };
   }
   const { result, after } = decided;
-  if (result.outcome === 'rejected') return { outcome: 'rejected', failedRule: result.failedRule };
+  if (result.outcome === 'rejected') return { outcome: 'rejected', failedRule: result.failedRule, reads: result.reads };
   const events = result.events.map((event) => ({
     type: event.type,
     data: event.data,
     tags: tagsOfEvent(model, event.type, event.data),
   }));
-  if (!events.length) return { outcome: 'published', events, position: undefined };
+  if (!events.length) return { outcome: 'published', events, position: undefined, reads: result.reads };
   const query = result.query.map(({ types, tags }) => ({ types, tags }));
   const condition = query.length ? { failIfEventsMatch: query, after } : undefined;
   let appended;
@@ -1665,7 +1665,7 @@ function handleCommand(model, store, commandName, args, { trace } = {}) {
   }
   record({ call: 'append', events, condition, ...appended });
   if (appended && appended.integrity) return { outcome: 'conflict', condition };
-  return { outcome: 'published', events, position: appended.position };
+  return { outcome: 'published', events, position: appended.position, reads: result.reads };
 }
 
 // A projection folded from `store`, read by `params` – its tags and its

@@ -907,6 +907,25 @@ function build(index) {
     eq(session.log.map((e) => e.data.courseId), ['c1', 'c2'], 'two courses, minted');
   });
 
+  check('the Store column shows what a step asked the store: its read, and the append after it', () => {
+    sandbox.sessionReset();
+    sandbox.sessionRun(active(), 'DefineCourse', { capacity: 5 });
+    sandbox.sessionRun(active(), 'DefineCourse', { capacity: 5 });
+    session.at = null;
+    const column = sandbox.sandboxStore(active());
+    const calls = findAll(column, (n) => /\bsbx-call\b/.test(n.className || ''));
+    eq(calls.map((call) => textOf(findAll(call, (n) => n.className === 'verb')[0])), ['read', 'append'], 'a read, then the append');
+    eq(textOf(calls[0]).includes('1 event'), true, 'what the read returned');
+    eq(findAll(calls[0], (n) => /\bdq-box\b/.test(n.className || '')).length, 1, 'its query, as a box');
+    const append = textOf(calls[1]);
+    eq(append.includes('position 2') && append.includes('failIfEventsMatch') && append.includes('after: 1'), true,
+      `where it landed, and its condition: ${append}`);
+    session.at = 1;
+    eq(findAll(sandbox.sandboxStore(active()), (n) => /\bsbx-call\b/.test(n.className || '')).length, 2,
+      'and the first step, worked out against the log as it stood before it');
+    session.at = null;
+  });
+
   check('a watched projection folds at the position being looked at', () => {
     const watch = sandbox.projectionWatch('CourseNumbering', []);
     session.at = null;
