@@ -907,6 +907,35 @@ function build(index) {
     eq(session.log.map((e) => e.data.courseId), ['c1', 'c2'], 'two courses, minted');
   });
 
+  check('a reload loses nothing of the sandbox, and each model keeps its own', () => {
+    sandbox.sessionReset();
+    sandbox.sessionRun(active(), 'DefineCourse', { capacity: 5 });
+    sandbox.sessionRun(active(), 'DefineCourse', { capacity: 5 });
+    sandbox.togglePinned(sandbox.projectionWatch('CourseNumbering', []));
+    session.at = 1;
+    sandbox.state.sandboxDraft = { command: 'DefineCourse', arguments: { capacity: 7 } };
+    sandbox.saveSession();
+    // What a reload leaves: sessionStorage, and nothing in memory.
+    Object.assign(session, { log: [], steps: [], at: null, pinned: [], model: null });
+    sandbox.state.sandboxDraft = null;
+    sandbox.loadSession(id);
+    eq(session.log.map((e) => e.data.courseId), ['c1', 'c2'], 'the run');
+    eq(session.steps.length, 2, 'its steps');
+    eq(session.at, 1, 'the playhead');
+    eq(session.pinned.map((w) => w.projection), ['CourseNumbering'], 'the watches');
+    eq(sandbox.state.sandboxDraft.arguments.capacity, 7, 'the draft');
+    const other = sandbox.createDcbModel('Other');
+    sandbox.switchToModel(other);
+    eq([session.log.length, session.pinned.length, sandbox.state.sandboxDraft], [0, 0, null], 'another model starts empty');
+    sandbox.switchToModel(id);
+    eq(session.log.length, 2, 'and switching back finds the run put aside');
+    sandbox.deleteDcbModel(other);
+    sandbox.saveSession();
+    eq(Object.keys(JSON.parse(sandbox.sessionStorage.getItem('dcb-playground:sandbox:' + sandbox.EVENT_LOG_KEY.split(':').pop()))), [id], 'a deleted model’s session is dropped');
+    sandbox.sessionReset();
+    sandbox.state.view = 'overview';
+  });
+
   check('the Store column shows what a step asked the store: its read, and the append after it', () => {
     sandbox.sessionReset();
     sandbox.sessionRun(active(), 'DefineCourse', { capacity: 5 });

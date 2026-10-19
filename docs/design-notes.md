@@ -844,6 +844,15 @@ The page is the viewport, in three fixed bands (`renderSandbox`): the
 header holding the driver, the timeline, and a panel of three tabs –
 Watched, Decision, Store. Only the panel scrolls.
 
+- **A reload loses nothing (2026-10).** The session used to live in
+  a variable and be gone on reload, on the ground that an experiment
+  outliving its question is history the model would have to carry.
+  But a reload is rarely a decision to throw a run away, and the run
+  never touches the model anyway. It is kept per tab and per model in
+  sessionStorage (`SANDBOX_KEY`), like the undo histories: the log,
+  its steps, the playhead, the watches and the driver's draft.
+  Switching models puts a session aside instead of discarding it;
+  Start over is the one way to throw it away.
 - **One panel, three tabs (2026-10).** Until then the watches were a
   strip of their own and the step's Append, Reads, Now and Store sat
   side by side under it: everything at once, and with the Store column

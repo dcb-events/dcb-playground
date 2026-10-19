@@ -2119,13 +2119,13 @@ const linkedEnvelopes = new WeakSet();
 
 // What opening a different stored model means, wherever it happens –
 // the models dialog, an import, the fallback after a delete. The
-// sandbox session and the pending feature groups are browser-global,
-// not part of any model, so neither may survive the crossing: a
-// session scrubbed against model A must not render against model B.
+// pending feature groups are browser-global, not part of any model, so
+// they may not survive the crossing; the sandbox session is per model,
+// so A's is put aside and B's, if it has one, comes back.
 function switchToModel(id) {
   if (addressModelId && id !== addressModelId) dropAddressLink();
   setActiveModelId(id);
-  sessionReset();
+  loadSession(id);
   setPendingFeatures([]);
   state.namePrompt = null;
   state.slice = null;
@@ -6053,6 +6053,7 @@ function restoreMainFocusRank(rank) {
 // to on screen. It is out here because the painter below returns early
 // once it knows which view it is drawing.
 function render() {
+  loadSession(activeModelId());
   const focusRank = mainFocusRank();
   const modalRank = definitionModalFocusRank();
   paintPage();
@@ -15133,12 +15134,15 @@ function draftStartedAt(model, draft, start) {
 // Given, but a run of them against each other, with the events piling
 // up and the state responding as they go.
 //
-// Nothing here is kept. It exists to answer "what happens if", and an
-// experiment that outlived the question would be history the model has
-// to carry – so it lives in this variable and is gone on reload. What
-// makes that affordable is that the model itself is untouched: driving
-// a command here appends to `session.log`, never to the event log the
-// playground stores its own definitions in.
+// It is not part of the model: driving a command here appends to
+// `session.log`, never to the event log the playground stores its own
+// definitions in, and an export carries it only when asked. But a
+// reload loses nothing, so the session is kept per tab and per model
+// in sessionStorage (`SANDBOX_KEY`), like the undo histories: the
+// run, the playhead, the watches and the driver's draft. It used to
+// live in this variable alone and be gone on reload – and a reload is
+// rarely a decision to throw a run away. Switching models puts the
+// session aside rather than discarding it.
 //
 // **Scrubbing replays from zero.** Every position is a fold of the
 // events up to it, computed fresh. An incremental fold would only help
@@ -15161,13 +15165,65 @@ const session = {
   // arguments}` for one fold – a numbering, a running total, anything
   // no command in view happens to have read.
   pinned: [],
+  model: null,    // the id of the model this session belongs to
 };
+
+// Versioned with the event log: the session holds events in the shape
+// the model's definitions give them, and a new log version starts from
+// models that no longer exist.
+const SANDBOX_KEY = 'dcb-playground:sandbox:' + EVENT_LOG_KEY.split(':').pop();
+
+function storedSessions() {
+  try {
+    const stored = JSON.parse(sessionStorage.getItem(SANDBOX_KEY));
+    return stored && typeof stored === 'object' ? stored : {};
+  } catch { return {}; }
+}
+
+// Called after every change to the session; the draft, edited in place
+// by the value editors, is caught up on `pagehide` too. Sessions of
+// models deleted since are dropped here.
+function saveSession() {
+  if (!session.model) return;
+  const all = storedSessions();
+  const models = projectState();
+  for (const id of Object.keys(all)) if (!models[id]) delete all[id];
+  const draft = typeof state === 'object' && state ? state.sandboxDraft : null;
+  if (!models[session.model]) delete all[session.model];
+  else if (session.log.length || session.pinned.length || draft) {
+    all[session.model] = { log: session.log, steps: session.steps, at: session.at, pinned: session.pinned, draft };
+  } else delete all[session.model];
+  try {
+    sessionStorage.setItem(SANDBOX_KEY, JSON.stringify(all));
+  } catch {
+    toast('This sandbox will not survive a reload: this tab’s storage is full.', true);
+  }
+}
+
+// Makes `modelId`'s session the one on screen, from where it was put
+// aside – a no-op when it already is. `render` asks on every paint, so
+// a model deleted in another tab cannot leave its session showing
+// against the one this tab falls back to.
+function loadSession(modelId) {
+  if (session.model === modelId) return;
+  saveSession();
+  const stored = (modelId && storedSessions()[modelId]) || {};
+  const list = (value) => (Array.isArray(value) ? value : []);
+  session.log = list(stored.log);
+  session.steps = list(stored.steps);
+  session.at = Number.isInteger(stored.at) && stored.at >= 0 && stored.at < session.log.length ? stored.at : null;
+  session.pinned = list(stored.pinned);
+  session.model = modelId;
+  if (typeof state === 'object' && state) state.sandboxDraft = stored.draft || null;
+}
+window.addEventListener('pagehide', saveSession);
 
 function sessionReset() {
   session.log = [];
   session.steps = [];
   session.at = null;
   session.pinned = [];
+  saveSession();
 }
 
 // A watch, as a string – its identity for pinning and unpinning.
@@ -15187,6 +15243,7 @@ function togglePinned(watch) {
   session.pinned = isPinned(watch)
     ? session.pinned.filter((w) => watchKey(w) !== key)
     : [...session.pinned, watch];
+  saveSession();
   render();
 }
 
@@ -15221,6 +15278,7 @@ function sessionStore(model, log) {
 // evaluated at all throws. Nothing else writes to the store, so it
 // never loses a race.
 function sessionDrive(model, commandName, args) {
+  loadSession(model.id);
   const result = handleCommand(model, sessionStore(model, session.log), commandName, args);
   if (result.outcome === 'rejected') return { outcome: 'rejected', failedRule: result.failedRule, reads: result.reads };
   if (result.outcome !== 'published') throw new EvaluationError(result.message || 'The decision lost a race nothing ran.');
@@ -15229,6 +15287,7 @@ function sessionDrive(model, commandName, args) {
   session.log.push(...events);
   session.steps.push({ command: commandName, args, from, to: session.log.length });
   session.at = null;
+  saveSession();
   return { outcome: 'published', events, reads: result.reads };
 }
 
@@ -15400,6 +15459,7 @@ function sandboxTimeline(model) {
     const at = Math.max(0, Math.min(total, next));
     if (at === position) return;
     session.at = at === total ? null : at;
+    saveSession();
     render();
   };
   const mode = state.sandboxLanes;
@@ -16203,8 +16263,8 @@ function renderSandbox(model, main) {
   main.appendChild(h('header', {},
     h('div', { class: 'name' }, 'Sandbox',
       hint('sandbox', 'Sandbox', [
-        'Run commands against each other and watch what happens. Nothing here is kept – it is gone '
-        + 'when this page reloads, and the model itself is never written to.',
+        'Run commands against each other and watch what happens. The run is kept in this tab '
+        + 'across reloads; the model itself is never written to.',
         'A command always runs after the last event, wherever the playhead is.',
       ])),
     sandboxDriver(model),
@@ -16213,7 +16273,7 @@ function renderSandbox(model, main) {
           label: 'Start over',
           title: 'Throw all of this away and start from nothing',
           confirm: 'Really start over?',
-          onRemove: () => { sessionReset(); state.sandboxDraft = null; render(); },
+          onRemove: () => { state.sandboxDraft = null; sessionReset(); render(); },
         })
       : null));
 

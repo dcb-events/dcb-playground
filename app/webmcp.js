@@ -616,8 +616,8 @@
     mutatesSandbox: true,
     destructive: true,
     run: () => {
-      sessionReset();
       if (typeof state === 'object' && state) state.sandboxDraft = null;
+      sessionReset();
       return { summary: 'reset the sandbox' };
     },
   });
