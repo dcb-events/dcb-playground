@@ -5970,6 +5970,37 @@ check('a file read for comparing reports what it could not read, and a malformed
   eq(sandbox.loadEvents().length > 0 && Object.keys(projectState()).length, 1, 'the log is as it was');
 });
 
+check('nothing keeps a shipped model or a fixture from running outside the playground', () => {
+  const [simple] = twoModels('course-simple');
+  for (const shipped of sandbox.PREDEFINED_MODELS) {
+    const id = loadPredefinedModel(sandbox.PREDEFINED_MODELS.indexOf(shipped));
+    eq(sandbox.executionBlockers(projectState()[id]), [], shipped.slug);
+  }
+  const fixtures = path.join(__dirname, '..', 'fixtures');
+  for (const file of fs.readdirSync(fixtures)) {
+    const { model, skipped } = sandbox.modelFromEnvelope(JSON.parse(fs.readFileSync(path.join(fixtures, file), 'utf8')));
+    eq(sandbox.executionBlockers(model, skipped), [], file);
+  }
+  eq(simple.name, 'Course Example (simple)', 'the model loaded first is untouched');
+});
+
+check('a skipped definition, a defective one and a tag named like an argument keep a model from running', () => {
+  const [simple] = twoModels('course-simple');
+  const envelope = JSON.parse(JSON.stringify(sandbox.buildShareEnvelope(simple)));
+  envelope.eventDefinitions.push({ name: 'Broken', properties: 'not a list' });
+  envelope.commandDefinitions[0].publishes[0].name = 'CourseInvented';
+  const status = envelope.projectionDefinitions.find((p) => p.name === 'CourseStatus');
+  status.arguments = [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false }];
+  const { model, skipped } = sandbox.modelFromEnvelope(envelope);
+  const blockers = sandbox.executionBlockers(model, skipped);
+  eq([blockers[0].kind, blockers[0].name], ['event-definition', 'Broken'], 'what the import skipped, first');
+  const has = (kind, name, message) => blockers.some((b) => b.kind === kind && b.name === name && (!message || b.message === message));
+  eq(has('command-definition', 'DefineCourse'), true, 'a command publishing an event the model lacks');
+  eq(has('projection-definition', 'CourseStatus', '"courseId" is a tag and an argument'), true, 'the clash');
+  eq(blockers.every((b) => typeof b.message === 'string' && b.message !== ''), true, 'each with a reason');
+  eq(sandbox.modelAdvisories(model).length > 0, true, 'the playground still only advises');
+});
+
 check('boundaries compared per command: what each now reads, and a read that lost its tags', () => {
   const [simple, tenant] = twoModels('course-simple', 'course-tenant');
   const byName = Object.fromEntries(sandbox.compareBoundaries(simple, tenant).map((c) => [c.name, c]));

@@ -1287,3 +1287,78 @@ step at the playhead. Only the step band scrolls.
 - **The bottom row says where the history begins**: *Opened*, *From
   here* after a change elsewhere dropped it, or *Earlier changes* once
   the oldest fell off the sixty.
+
+## The core and its other consumers
+
+- **What the core is.** The semantic half of `model.js` (types,
+  references, operands, validation and advisories, DCB derivation,
+  value schemas, reading the wire format), `evaluate.js`, and the
+  parse/print half of `dsl.js`. Not in it: the playground's own event
+  log, undo and compaction, the editing commands, `PREDEFINED_MODELS`,
+  anything touching the DOM, the Monaco widget. It is not a directory
+  yet – it is the set of functions the other consumers call, until
+  the log can come out of it (the last phase below).
+- **Why (2026-10).** dcb-runtime already runs the playground's
+  semantics: its build concatenates `model.js` and `evaluate.js` from
+  the submodule into one component. But it did so through an
+  undeclared seam – global names, a fake `localStorage`, an import
+  replayed into a log – and carried every editing command into the
+  WebAssembly. Further tools (a CLI that verifies, a language server,
+  generators for other languages) would each need the same fakes. One
+  explicit seam keeps one copy of the semantics, so no consumer can
+  disagree with the playground.
+- **What drives it.** Headless reuse, and the playground showing the
+  traffic between a command and an event store: every `head`, `read`
+  and `append`, the append condition, a conflict and its retry. Shown
+  against an in-memory store over the sandbox's log; a real store is
+  reached only through a runtime host that reports a trace, so the
+  evaluator stays synchronous (_The read port_).
+- **Stays here, stays JavaScript, stays classic scripts.** The
+  semantics change in lockstep with the interface (wire-format majors,
+  `EVENT_LOG_KEY` bumps), so a third repository would only add version
+  skew; dcb-runtime keeps consuming it through the submodule, and
+  nothing goes to npm until a consumer outside the two repositories
+  exists. A second implementation in another language would be the
+  drift the runtime promises cannot happen. Node and npm consumers get
+  a small generated wrapper exporting the public names, so the app
+  keeps needing no build step.
+- **No language in it, and no IR yet.** Nothing in the playground or
+  the runtime knows a target language. A generator is a separate
+  package on top of the core's functions; the public API is whatever
+  the real consumers – the OpenAPI builder, the slice view, the
+  runtime's adapter, the sandbox – call, documented in the file
+  headers. A resolved-model format comes only when a generator misses
+  something the functions do not give. A model with scripted handlers
+  is refused by any generator (`envelopeHasScript`): translating
+  JavaScript is not on offer.
+- **The phases.** Each leaves both repositories green, and the
+  runtime's conformance test guards the first three as they happen.
+  1. `modelFromEnvelope` (the import inside `inScratchLog`) and
+     `executionBlockers` – what makes a model unrunnable outside the
+     playground: a definition the import skipped, a defective
+     definition, a tag and an argument of one name. The runtime loads
+     through them and drops its storage shim.
+  2. A store port in the DCB specification's shapes (query items,
+     sequenced events, an append condition with `after`, an integrity
+     failure), and the decision cycle around `evDecideThroughPort` –
+     head or reads, the condition, a rerun on conflict, a derived
+     projection cut off at head – as `runCommand` and `runProjection`,
+     with a trace. The runtime's WIT mirrors the port; its
+     `runtime.js` shrinks to the adapter (positions as BigInt, field
+     names, jco's error payloads).
+  3. The OpenAPI builder (the runtime's `contract.js`) moves here.
+  4. The playground: the store trace per command, Export OpenAPI, and
+     `executionBlockers` as a severity of its own above the
+     advisories – "would not run outside the playground".
+  5. Conformance cases as data – model, given events, command,
+     expected outcome and store calls – runnable by the core, the
+     runtime and anything generated.
+  6. A simulated concurrent append: a store that slips an event in
+     before `append`, showing the integrity failure and the retry.
+  7. `modelFromEnvelope` as a pure reader, without the log, so the
+     core can shed the log and the editing commands. Held by a test
+     that every fixture and shipped model reads the same both ways –
+     editing commands and the reader are two routes to one model.
+- **Weighed and deferred.** An asynchronous evaluator, or planned
+  rounds computed before evaluating, so a browser could talk to a
+  real store directly: only if that becomes a goal.

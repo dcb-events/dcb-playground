@@ -2890,6 +2890,37 @@ function modelAdvisories(model) {
   return found;
 }
 
+// What keeps a model from running anywhere but here, as `{kind, name,
+// message}`. The playground loads, renders and evaluates a defective
+// model, and says what is wrong as advisories; something that decides
+// for real – dcb-runtime – refuses it instead, and this is its list,
+// so the two cannot disagree on what is runnable. A definition an
+// import skipped (`skipped`, from `modelFromEnvelope`), one that fails
+// the semantic check (`validateReferences`: a command publishing
+// nothing, a dangling reference), and a projection whose tag and
+// argument share a name – they would be one parameter.
+function executionBlockers(model, skipped = []) {
+  const found = skipped.map(({ kind, name, reason }) => ({ kind, name, message: reason }));
+  for (const kind of DEF_KINDS) {
+    for (const [name, body] of Object.entries(model[DEF_COLLECTIONS[kind]] || {})) {
+      try {
+        validateReferences(model, kind, name, body);
+      } catch (error) {
+        found.push({ kind, name, message: error && error.message ? error.message : String(error) });
+      }
+    }
+  }
+  for (const [name, body] of Object.entries(model['projection-definitions'] || {})) {
+    const tags = new Set(projectionTagParams(body).map((tag) => tag.name));
+    for (const argument of body.arguments || []) {
+      if (argument && tags.has(argument.name)) {
+        found.push({ kind: 'projection-definition', name, message: `"${argument.name}" is a tag and an argument` });
+      }
+    }
+  }
+  return found;
+}
+
 // Why a tag operand cannot fill a projection's tag `tag` (`{name,
 // tagType}`) – or null. It must be one value of the declared type,
 // which is the tag's key: a literal states its type (`CourseId("c1")`),
