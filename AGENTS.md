@@ -134,6 +134,8 @@ was decided, why, and what was tried and reverted:
 - JSON Schemas of arguments and payloads — _Value schemas_
 - comparing two models, the Compare view — _Comparing models_
 - undo, redo, the per-model history — _History and undo_
+- what dcb-runtime or another tool calls, the store port, the
+  decision cycle — _The core and its other consumers_
 
 ## Conventions and gotchas
 
