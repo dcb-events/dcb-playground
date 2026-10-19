@@ -3932,6 +3932,67 @@ function modelsWithScenarios() {
       'published', 'and decided again');
   });
 
+  // course-tenant, and a command whose inline read is tagged by an
+  // alias's value: a query the chain of aliases alone does not count.
+  const nextCourse = () => {
+    const { id, model } = open_(PREDEFINED_INDEX('course-tenant'));
+    addDefinition('command-definition', id, 'DefineNextCourse', {
+      properties: [
+        { name: 'tenantId', propertyType: 'TenantId', isOptional: false, isList: false },
+        { name: 'capacity', propertyType: 'integer', isOptional: false, isList: false },
+      ],
+      boundary: [
+        { alias: 'next', projection: 'CourseNumbering' },
+        { alias: 'number', projection: 'TenantCourseNumbering', tags: { tenantId: { parameterName: 'tenantId' } } },
+      ],
+      conditions: [{
+        leftHandSide: { projection: 'CourseStatus', tags: { courseId: { alias: 'next' } } },
+        predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' }, rejection: 'That course exists',
+      }],
+      publishes: [{ name: 'CourseDefined', parameters: {
+        courseId: { alias: 'next' }, capacity: { parameterName: 'capacity' },
+        tenantId: { parameterName: 'tenantId' }, courseNumber: { alias: 'number' },
+      } }],
+    });
+    const m = model();
+    eq(sandbox.deriveRounds(m['command-definitions'].DefineNextCourse).length, 1, 'one level of aliases');
+    // With c1 defined, the dry run's first guess – the numbering's
+    // initial "c1" – is wrong, so CourseStatus is asked a second time.
+    const store = memoryStore([
+      stored(m, 'TenantRegistered', { tenantId: 't1' }),
+      stored(m, 'CourseDefined', { tenantId: 't1', courseId: 'c1', capacity: 5, courseNumber: '1' }),
+    ]);
+    return { model: m, store };
+  };
+
+  check('an inline read tagged by an alias is a second query, so head comes first', () => {
+    const { model, store } = nextCourse();
+    const trace = [];
+    const outcome = handleCommand(model, store, 'DefineNextCourse', { tenantId: 't1', capacity: 5 }, { trace });
+    eq(outcome.outcome, 'published', 'published');
+    eq(outcome.events[0].data.courseId, 'c2', 'the next course');
+    eq(calls(trace), ['head', 'read', 'read', 'append'], 'no restart');
+    eq(trace[3].condition.after, 2, 'after head');
+  });
+
+  check('a second read nobody planned for restarts the decision with head', () => {
+    const { model, store } = nextCourse();
+    // Should the planned count ever fall short, the cycle must still not
+    // take `after` from the reads.
+    const planned = sandbox.boundarySummary;
+    sandbox.boundarySummary = (...args) => ({ ...planned(...args), queries: [[]] });
+    const trace = [];
+    let outcome;
+    try {
+      outcome = handleCommand(model, store, 'DefineNextCourse', { tenantId: 't1', capacity: 5 }, { trace });
+    } finally {
+      sandbox.boundarySummary = planned;
+    }
+    eq(outcome.outcome, 'published', 'published');
+    eq(calls(trace), ['read', 'restart:head', 'head', 'read', 'read', 'append'], 'restarted with head');
+    eq(trace[5].condition.after, 2, 'after head, not after the reads');
+  });
+
   check('a projection is one read, no head, at the last position it folds', () => {
     const { model, log } = simple();
     drive(model, log, 'ChangeCourseCapacity', { courseId: 'c1', newCapacity: 12 });

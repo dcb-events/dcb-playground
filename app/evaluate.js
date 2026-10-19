@@ -1558,7 +1558,8 @@ function runProjectionScenario(model, spec) {
 // Taking `after` from the reads when there are several would lose an
 // update: an event matching read 1 that lands before read 2 returns
 // would sit below it. Whether a command reads more than once is known
-// from its boundary's chain (`deriveRounds`); should a second read come
+// from its boundary's queries (`boundarySummary` – the chain of aliases
+// and the inline reads tagged by them); should a second read come
 // unannounced anyway, the decision restarts with head.
 //
 // **One attempt, no retry.** An append whose condition fails is a
@@ -1632,9 +1633,9 @@ function evDecideFromStore(model, store, commandName, args, withHead, record) {
 function handleCommand(model, store, commandName, args, { trace } = {}) {
   const record = trace ? (entry) => trace.push(entry) : () => {};
   const body = evOwn(model['command-definitions'], commandName);
-  const chained = !!body && deriveRounds(body).length > 1;
   let decided;
   try {
+    const chained = !!body && boundarySummary(model, body).queries.length > 1;
     try {
       decided = evDecideFromStore(model, store, commandName, args, chained, record);
     } catch (error) {
