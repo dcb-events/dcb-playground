@@ -405,6 +405,10 @@
   .dq-cond b, .dq-head b { color: var(--accent); }
   .dq-json { margin: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
              background: var(--elevated); white-space: pre; overflow-x: auto; line-height: 1.55; }
+  .dq-json .jk { color: var(--json-key); }
+  .dq-json .js { color: var(--json-string); }
+  .dq-json .jn { color: var(--json-number); }
+  .dq-json .jc { color: var(--muted); }
   .dq-seg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 6px; overflow: hidden; }
   .dq-seg button { font: inherit; font-size: 11px; border: 0; padding: 2px 8px; background: var(--surface);
                    color: var(--muted); cursor: pointer; }
@@ -6563,6 +6567,25 @@ function queryJsonText(value) {
       (all, inner) => `[${inner.split(/,\n\s*/).join(', ')}]`);
 }
 
+// JSON, coloured: keys, strings, numbers and literals, and the `//`
+// lines that name a block. Nodes, never markup – the text holds values
+// a model wrote.
+const JSON_TOKEN = /("(?:[^"\\]|\\.)*")(\s*:)?|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|\btrue\b|\bfalse\b|\bnull\b)|(\/\/[^\n]*)/g;
+function jsonBlock(text) {
+  const parts = [];
+  let last = 0;
+  for (const match of text.matchAll(JSON_TOKEN)) {
+    if (match.index > last) parts.push(text.slice(last, match.index));
+    const [all, string, colon, literal, comment] = match;
+    if (string) parts.push(h('span', { class: colon ? 'jk' : 'js' }, string), colon || null);
+    else if (literal) parts.push(h('span', { class: 'jn' }, literal));
+    else parts.push(h('span', { class: 'jc' }, comment));
+    last = match.index + all.length;
+  }
+  parts.push(text.slice(last));
+  return h('pre', { class: 'dq-json' }, parts);
+}
+
 // Where an append condition's `after` comes from: a position, or –
 // planned – 'read' (the last position read) or 'head'.
 function queryAfterWords(after) {
@@ -6585,15 +6608,18 @@ function dcbQueries(queries, { key, from = false, condition = null } = {}) {
     'after: the position the decision saw the store at – the last position read, or head, taken first, when the command reads more than once.',
   ], undefined, 'consistency-boundary');
   const all = queries.flat();
+  const conditionBlock = condition
+    ? h('div', { class: 'dq-cond' },
+        h('div', { class: 'dq-key' }, 'append condition', hintCondition),
+        h('div', {}, h('b', {}, 'failIfEventsMatch'), ': ', many ? `the items of queries 1–${queries.length}, as one query` : 'the query'),
+        h('div', {}, h('b', {}, 'after'), ': ', queryAfterWords(condition.after)))
+    : null;
+  // As JSON, the queries only: the append condition is their items
+  // again, so it stays in words rather than repeating them.
   if (queryAsJson()) {
-    const text = [
-      ...queries.map((items, i) => (many ? `// query ${i + 1}\n` : '// query\n') + queryJsonText(queryItemsJson(items))),
-      ...(condition ? ['// append condition\n' + queryJsonText({
-        failIfEventsMatch: queryItemsJson(all),
-        after: typeof condition.after === 'number' ? condition.after : `{${queryAfterWords(condition.after)}}`,
-      })] : []),
-    ].join('\n\n');
-    return h('div', { class: 'dq' }, h('pre', { class: 'dq-json' }, text));
+    return h('div', { class: 'dq' },
+      jsonBlock(queries.map((items, i) => (many ? `// query ${i + 1}\n` : '') + queryJsonText(queryItemsJson(items))).join('\n\n')),
+      conditionBlock);
   }
   return h('div', { class: 'dq' },
     many && condition ? h('div', { class: 'dq-head' }, h('b', {}, 'head'), ' – taken first: the queries wait on each other') : null,
@@ -6604,12 +6630,7 @@ function dcbQueries(queries, { key, from = false, condition = null } = {}) {
         ])
       : queryBox(queries[0] || [], h('span', {}, 'query', hintQuery),
           `1 call · ${all.length} item${all.length === 1 ? '' : 's'}${all.length > 1 ? ', ORed' : ''}`, { from }),
-    condition
-      ? h('div', { class: 'dq-cond' },
-          h('div', { class: 'dq-key' }, 'append condition', hintCondition),
-          h('div', {}, h('b', {}, 'failIfEventsMatch'), ': ', many ? `the items of queries 1–${queries.length}, as one query` : 'the query'),
-          h('div', {}, h('b', {}, 'after'), ': ', queryAfterWords(condition.after)))
-      : null);
+    conditionBlock);
 }
 
 // A query is one hover away rather than one more line on the page:
@@ -16047,10 +16068,10 @@ function sandboxStore(model) {
     position !== undefined ? h('span', { class: 'k' }, String(position)) : null,
     h('span', { class: 'dq-type' }, event.type),
     (event.tags || []).map(queryTagChip));
-  const jsonBlock = (value) => {
+  const copyable = (value) => {
     const text = queryJsonText(value);
     return h('div', {},
-      h('pre', { class: 'dq-json' }, text),
+      jsonBlock(text),
       h('button', {
         class: 'btn tiny', type: 'button', style: 'margin-top:4px',
         onclick: (e) => { e.stopPropagation(); navigator.clipboard.writeText(text).then(() => toast('Copied.')); },
@@ -16073,7 +16094,7 @@ function sandboxStore(model) {
       const positions = answered.map((e) => e.position);
       return card(entry, 'read', entry.failed ? 'failed' : `${answered.length} event${answered.length === 1 ? '' : 's'}`, [
         json
-          ? jsonBlock({ items: entry.query })
+          ? copyable({ items: entry.query })
           : queryBox(entry.query, 'query', `${entry.query.length} item${entry.query.length === 1 ? '' : 's'}${entry.query.length > 1 ? ', ORed' : ''}`),
         ...answered.map((sequenced) => eventLine(sequenced.event, sequenced.position)),
       ], {
@@ -16087,10 +16108,8 @@ function sandboxStore(model) {
     const result = entry.failed ? 'failed'
       : entry.integrity ? 'refused – an event matching the condition came after'
         : `position ${entry.position}`;
-    return card(entry, 'append', result, json
-      ? [jsonBlock({ events: entry.events, condition: condition || null })]
-      : [
-          ...entry.events.map((event) => eventLine(event)),
+    return card(entry, 'append', result, [
+          json ? copyable(entry.events) : entry.events.map((event) => eventLine(event)),
           condition
             ? h('div', { class: 'dq-cond' },
                 h('div', {}, h('b', {}, 'failIfEventsMatch'), ': ',
@@ -16945,47 +16964,19 @@ function registerSourceLanguage() {
   };
   // A command's whole boundary, on its header – the question the tool
   // exists to answer, asked of the text before it is applied: the
-  // queries in the order they run, one per call to the store, and what
-  // the command appends. The Consistency boundary step's notation
-  // (_DCB queries, shown_), in the monospace a hover can draw – and in
-  // JSON when that is the chosen view.
+  // queries in the order they run, one per call to the store, as the
+  // JSON a store is sent (_DCB queries, shown_), and what the command
+  // appends.
   const commandHover = (q) => {
     const code = (words) => words.map((w) => `\`${w}\``).join(', ');
     const planned = plannedQueries(q);
     const many = planned.length > 1;
     const fence = (lines, lang = 'text') => '```' + lang + '\n' + lines.join('\n') + '\n```';
-    const after = many ? 'head' : 'read';
-    let queries;
-    if (!planned.length) {
-      queries = [{ value: 'Reads nothing: the append is unconditional.' }];
-    } else if (queryAsJson()) {
-      const text = [
-        ...planned.map((items, i) => `${many ? `// query ${i + 1}` : '// query'}\n${queryJsonText(queryItemsJson(items))}`),
-        `// append condition\n${queryJsonText({ failIfEventsMatch: queryItemsJson(planned.flat()), after: `{${queryAfterWords(after)}}` })}`,
-      ];
-      queries = [{ value: fence(text.join('\n\n').split('\n'), 'json') }];
-    } else {
-      const box = (items, title) => [title, ...items.flatMap((item, i) => [
-        ...(i ? ['  ── OR ──'] : []),
-        `  types  ${item.types.join(', ') || 'any type'}`,
-        `  tags   ${item.tags.join(', ') || 'none – every event of these types'}${item.fannedOut ? '  × each' : ''}`,
-      ])];
-      const all = planned.flat().length;
-      queries = [{
-        value: fence([
-          ...(many ? ['head – taken first: the queries wait on each other', ''] : []),
-          ...planned.flatMap((items, i) => [
-            ...(i ? ['', `  ↓ its tags come from the answer of query ${i}`, ''] : []),
-            ...box(items, many ? `query ${i + 1} · call ${i + 1} of ${planned.length}`
-              : `query · 1 call · ${all} item${all === 1 ? '' : 's'}${all > 1 ? ', ORed' : ''}`),
-          ]),
-          '',
-          `append condition`,
-          `  failIfEventsMatch  ${many ? `the items of queries 1–${planned.length}, as one query` : 'the query'}`,
-          `  after              ${queryAfterWords(after)}`,
-        ]),
-      }];
-    }
+    // The queries alone, as JSON – what a store is asked; the page's
+    // Consistency boundary step has the rest.
+    const queries = planned.length
+      ? [{ value: fence(planned.map((items, i) => (many ? `// query ${i + 1}\n` : '') + queryJsonText(queryItemsJson(items))).join('\n\n').split('\n'), 'json') }]
+      : [{ value: 'Reads nothing: the append is unconditional.' }];
     return {
       range: new monaco.Range(q.start.line, q.start.col, q.end.endLine, q.end.endCol),
       contents: [

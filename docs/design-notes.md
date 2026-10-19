@@ -1121,10 +1121,10 @@ Artboards: `design/dcb-queries/` (2026-10).
   one long OR list – the first sketch – made three calls look like
   one, which is exactly the difference the append condition's `after`
   turns on.
-- **The code view's hover draws the same in monospace.** A Monaco
-  hover is markdown, so the boxes become a plain-text block in the
-  same order and words – `query · 1 call · 2 items, ORed`, `types`,
-  `tags`, `── OR ──` – or the JSON, as chosen.
+- **The code view's hover is the JSON alone**: the queries, as a store
+  is sent them. Text in a text view; the Consistency boundary step a
+  click away has the rest. A plain-text rendering of the boxes was
+  tried first, and read as noise beside the code.
 - **Planned and resolved.** Where no run supplied the values – the
   command page, the code view – a tag's value is a placeholder,
   `CourseId:{courseId}`, a fan-out `{each course.subscribedStudentIds}`
@@ -1135,8 +1135,11 @@ Artboards: `design/dcb-queries/` (2026-10).
   same command. The command page names the reads that contributed to
   an item ("from"), which keeps what the per-alias list said.
 - **Rows or JSON**, one remembered choice for every query on every
-  page. JSON is the specification's shape; a planned one keeps its
-  placeholders, so Copy is offered only where values are resolved.
+  page. JSON is the specification's shape, coloured; a planned one
+  keeps its placeholders, so Copy is offered only where values are
+  resolved. The append condition stays in words either way: as JSON
+  it is the queries' items again, and repeating them buried the one
+  thing it adds, `after`.
 - **The sandbox runs through the cycle** (`handleCommand` against a
   `memoryStore` of its log), and its step band gains a fourth column,
   **Store**: the step's calls – head, each read with its query and the

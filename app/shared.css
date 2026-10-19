@@ -69,6 +69,10 @@
   --removed-word: #fecaca;
   --changed: #92400e;
   --changed-soft: #fef3c7;
+  /* JSON's own syntax colours – not kinds, so not kind colours. */
+  --json-key: #0f5e8c;
+  --json-string: #a3421a;
+  --json-number: #6d28d9;
   --radius: 8px;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
 }
@@ -118,6 +122,9 @@ body.f-dark {
   --removed-word: #7f1d1d;
   --changed: #fbbf24;
   --changed-soft: #2d2410;
+  --json-key: #7dd3fc;
+  --json-string: #fdba74;
+  --json-number: #c4b5fd;
 }
 body.f-dark .chip.command { border-color: #1e40af; color: #bfdbfe; }
 body.f-dark .chip.event { border-color: #9a3412; color: #fed7aa; }

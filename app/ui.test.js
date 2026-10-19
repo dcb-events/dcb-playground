@@ -1942,9 +1942,13 @@ function build(index) {
     eq(textOf(step).includes('reads 6 types, 2 tags'), true, 'under the summary');
     store.set('dcb-playground:query-view', 'json');
     try {
-      const json = textOf(findAll(sandbox.stepConsistency(model(), slice), (n) => n.tag === 'pre')[0]);
-      eq(json.includes('"items"') && json.includes('"failIfEventsMatch"'), true, 'and as JSON, in the specification\'s shape');
-      eq(json.includes('"after": "{the last position read}"'), true, 'a planned `after` a placeholder');
+      const asJson = sandbox.stepConsistency(model(), slice);
+      const pre = findAll(asJson, (n) => n.tag === 'pre')[0];
+      const json = textOf(pre);
+      eq(json.includes('"items"') && json.includes('"CourseId:{courseId}"'), true, 'and as JSON, in the specification\'s shape');
+      eq(json.includes('failIfEventsMatch'), false, 'the queries only – the condition would repeat their items');
+      eq(textOf(asJson).includes('failIfEventsMatch'), true, 'it stays in words beside them');
+      eq(findAll(pre, (n) => n.className === 'jk').length > 0, true, 'coloured: its keys apart');
     } finally {
       store.delete('dcb-playground:query-view');
     }
