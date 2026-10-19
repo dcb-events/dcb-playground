@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dcb.events/schemas/sandbox/v1.json",
+  "title": "DCB Sandbox log line",
+  "description": "One line of a sandbox log (`*.sandbox.jsonl`): newline-delimited JSON,\none recorded event per line, in the order they were recorded. This\nschema describes a line, not the file.\n\nThe file is a log and nothing more: no header, no version, no model\nname, and no record of which command published what. The playground\nwrites it from a sandbox run and reads it back as one imported stretch\nof events, against whichever model is open.\n\n**Tags are not part of the line.** A reader works out an event's tags\nfrom the model's event definition, as for every other event. A line\nmay carry `tags` – an event store's export usually does – and any\nother field (a position, a timestamp, metadata); a reader ignores them,\nthough it may say where stated tags differ from the derived ones.\n\nA line whose type the model does not define, or whose `data` does not\nfit the event's properties, is skipped and reported; the rest load.\n",
+  "x-dcb-schema-revision": "1.0.0",
+  "type": "object",
+  "properties": {
+    "type": {
+      "description": "The event's type – an `eventDefinitions` entry of the model, by name.\n",
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 100,
+      "pattern": "^[A-Z][A-Za-z0-9]+$",
+      "examples": [
+        "CourseDefined",
+        "StudentSubscribedToCourse"
+      ]
+    },
+    "data": {
+      "description": "One entry per property the event declares – all of them, and\nnothing else. An optional property's entry holds `null` when it is\nunset; an absent entry on an optional property reads the same way,\nand an absent `data` reads as an empty object.\n",
+      "type": "object"
+    }
+  },
+  "required": [
+    "type"
+  ],
+  "examples": [
+    {
+      "type": "CourseDefined",
+      "data": {
+        "courseId": "c1",
+        "capacity": 10
+      }
+    }
+  ]
+}

@@ -20,6 +20,9 @@ and a model someone asked for by address: Import's URL field or a
 - `dcb-model.schema.json` — canonical JSON Schema for the interchange format
   (`https://dcb.events/schemas/model/v10.json`). Source of truth for what a
   DCB Model file contains; `app/webmcp-schemas.js` is generated from it.
+- `dcb-sandbox.schema.json` — JSON Schema of one line of a sandbox log
+  (`*.sandbox.jsonl`, `https://dcb.events/schemas/sandbox/v1.json`): a
+  run's events, exported and imported apart from the model.
 - `fixtures/` — test data only: models carrying scenarios authored in
   the playground, which no seed builder produces; `dsl.test.js` reads
   them. Hand-edited, never served.

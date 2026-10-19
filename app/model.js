@@ -6026,6 +6026,70 @@ function modelMatchingEnvelope(envelope) {
   return Object.keys(models).find((id) => JSON.stringify(buildShareEnvelope(models[id])) === wanted) || null;
 }
 
+// ============================================================
+// Sandbox logs – a run's events as a file of their own.
+//
+// One event per line, `{"type": …, "data": …}`, and nothing else: no
+// header, no version, no model name (`dcb-sandbox.schema.json`). It is
+// a log, so it carries no steps – which command published what is the
+// model's to say, and a file that said it as well would be replayed
+// rather than read. The shape is what an event store's export already
+// is, near enough, so a dump drops in as it is: every other field a
+// line carries (a position, a timestamp, metadata) is ignored, and tags
+// are always worked out from the model, never taken from the file.
+// Stated tags are handed back so the caller can say where the two
+// disagree.
+//
+// Reading is best-effort, like an import: a line that is not JSON, or
+// not an event of this model, or whose payload does not fit it
+// (`checkScenarioPayload` – the same structure a Given owes) is skipped
+// and reported, and the rest load. An unset optional property is
+// spelled out as null, as every writer does.
+// ============================================================
+
+const SANDBOX_LOG_EXTENSION = '.sandbox.jsonl';
+
+function printSandboxLog(events) {
+  return events.map((event) => JSON.stringify({ type: event.type, data: event.data || {} }) + '\n').join('');
+}
+
+function parseSandboxLog(model, text) {
+  const events = [];
+  const stated = [];
+  const skipped = [];
+  String(text).split(/\r?\n/).forEach((raw, index) => {
+    const line = raw.trim();
+    if (!line) return;
+    const skip = (reason) => skipped.push({ line: index + 1, reason });
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      return skip('not JSON');
+    }
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry) || typeof entry.type !== 'string') {
+      return skip('names no event type');
+    }
+    const definition = model['event-definitions'][entry.type];
+    if (!definition) return skip(`"${entry.type}" is not an event of this model`);
+    const given = entry.data === undefined || entry.data === null ? {} : entry.data;
+    if (typeof given !== 'object' || Array.isArray(given)) return skip(`"${entry.type}" carries no data object`);
+    try {
+      checkScenarioPayload(given, definition.properties, `"${entry.type}"`);
+    } catch (error) {
+      if (!(error instanceof DomainError)) throw error;
+      return skip(error.message);
+    }
+    const data = { ...given };
+    for (const property of definition.properties || []) {
+      if (!(property.name in data)) data[property.name] = null;
+    }
+    events.push({ type: entry.type, data });
+    stated.push(Array.isArray(entry.tags) && entry.tags.every((t) => typeof t === 'string') ? entry.tags : null);
+  });
+  return { events, stated, skipped };
+}
+
 // Whether importing this envelope would run authored code the moment
 // anything touches it – a property or a projection carrying a `script`
 // both compile through the same unsandboxed path (see `evCompileHandler`
