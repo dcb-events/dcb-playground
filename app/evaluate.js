@@ -22,6 +22,9 @@
 // it decided on – what the runtime's append condition has to cover.
 // The port is synchronous, as everything here is; an asynchronous
 // store is the caller's to block on.
+// Around it, the cycle against a whole DCB event store – head, reads,
+// the append and its condition – is `handleCommand` and
+// `projectFromStore`, one attempt each (_Through a store_, below).
 //
 // **Closures, not generated code.** Every handler compiles to a small
 // JavaScript function `(state, event, args) => state`, one per handler
@@ -1533,6 +1536,190 @@ function runProjectionScenario(model, spec) {
   };
 }
 
+// ============================================================
+// Through a store.
+//
+// The read port answers a decision's reads; this is the cycle around
+// it against a DCB event store – what dcb-runtime runs, and what the
+// playground can show call by call. A store is
+//
+//   head()                    → the last position, undefined when empty
+//   read(query)               → [{ position, event: { type, data, tags } }]
+//   append(events, condition) → { position } | { integrity: true }
+//
+// in the DCB specification's shapes, positions as numbers; any throw is
+// the store failing. One attempt:
+//
+//   one read    read(query) → decide → after = last position read
+//               → append(events, failIfEventsMatch: query, after)
+//   more        head → after → reads 1…n → decide
+//               → append(events, failIfEventsMatch: all reads, after)
+//
+// Taking `after` from the reads when there are several would lose an
+// update: an event matching read 1 that lands before read 2 returns
+// would sit below it. Whether a command reads more than once is known
+// from its boundary's chain (`deriveRounds`); should a second read come
+// unannounced anyway, the decision restarts with head.
+//
+// **One attempt, no retry.** An append whose condition fails is a
+// `conflict`: the caller may decide again. How often, and how long to
+// wait in between, is timing – and this file is synchronous and owns no
+// clock, so the loop belongs to whoever does.
+//
+// `trace`, an array, receives every call as it happens – `{ call,
+// …what was asked, …what came back }`, `failed` when it threw – and a
+// `{ restart: 'head' }` where the decision started over.
+// ============================================================
+
+class EvStoreFailure extends Error {}
+const EV_RESTART_WITH_HEAD = Symbol('restart with head');
+
+function evStoreCall(record, call, asked, invoke) {
+  try {
+    return invoke();
+  } catch (error) {
+    record({ call, ...asked, failed: evErrorText(error) });
+    throw new EvStoreFailure(`${call}: ${evErrorText(error)}`);
+  }
+}
+
+function evHead(store, record) {
+  const position = evStoreCall(record, 'head', {}, () => store.head());
+  record({ call: 'head', position });
+  return position;
+}
+
+// A read port over the store; `last` is the highest position it saw,
+// `cut` a position nothing after which is folded.
+function evStorePort(store, record, { cut, onRead } = {}) {
+  const port = (items) => {
+    if (onRead) onRead();
+    const query = items.map(({ types, tags }) => ({ types: [...types], tags: [...tags] }));
+    const answered = evStoreCall(record, 'read', { query }, () => store.read(query));
+    record({ call: 'read', query, events: answered });
+    return answered
+      .filter(({ position }) => !cut || (cut.at !== undefined && position <= cut.at))
+      .map(({ position, event }) => {
+        if (port.last === undefined || position > port.last) port.last = position;
+        return { type: event.type, data: event.data };
+      });
+  };
+  port.last = undefined;
+  return port;
+}
+
+function evDecideFromStore(model, store, commandName, args, withHead, record) {
+  const after = withHead ? evHead(store, record) : undefined;
+  let reads = 0;
+  const port = evStorePort(store, record, {
+    onRead: () => { if (++reads > 1 && !withHead) throw EV_RESTART_WITH_HEAD; },
+  });
+  const result = evaluateCommand(model, port, commandName, args);
+  return { result, after: withHead ? after : port.last };
+}
+
+// One attempt at a command against `store`:
+//
+//   { outcome: 'published', events: [{ type, data, tags }], position }
+//   { outcome: 'rejected', failedRule }
+//   { outcome: 'conflict', condition }   the append lost the race
+//   { outcome: 'error', message }        the command cannot be decided
+//   { outcome: 'store', message }        the store failed
+//
+// A command that publishes nothing is not appended, and one that reads
+// nothing appends without a condition: it has nothing to be consistent
+// with.
+function handleCommand(model, store, commandName, args, { trace } = {}) {
+  const record = trace ? (entry) => trace.push(entry) : () => {};
+  const body = evOwn(model['command-definitions'], commandName);
+  const chained = !!body && deriveRounds(body).length > 1;
+  let decided;
+  try {
+    try {
+      decided = evDecideFromStore(model, store, commandName, args, chained, record);
+    } catch (error) {
+      if (error !== EV_RESTART_WITH_HEAD) throw error;
+      record({ restart: 'head' });
+      decided = evDecideFromStore(model, store, commandName, args, true, record);
+    }
+  } catch (error) {
+    if (error instanceof EvStoreFailure) return { outcome: 'store', message: error.message };
+    return { outcome: 'error', message: evErrorText(error) };
+  }
+  const { result, after } = decided;
+  if (result.outcome === 'rejected') return { outcome: 'rejected', failedRule: result.failedRule };
+  const events = result.events.map((event) => ({
+    type: event.type,
+    data: event.data,
+    tags: tagsOfEvent(model, event.type, event.data),
+  }));
+  if (!events.length) return { outcome: 'published', events, position: undefined };
+  const query = result.query.map(({ types, tags }) => ({ types, tags }));
+  const condition = query.length ? { failIfEventsMatch: query, after } : undefined;
+  let appended;
+  try {
+    appended = evStoreCall(record, 'append', { events, condition }, () => store.append(events, condition));
+  } catch (error) {
+    return { outcome: 'store', message: error.message };
+  }
+  record({ call: 'append', events, condition, ...appended });
+  if (appended && appended.integrity) return { outcome: 'conflict', condition };
+  return { outcome: 'published', events, position: appended.position };
+}
+
+// A projection folded from `store`, read by `params` – its tags and its
+// arguments, by name:
+//
+//   { outcome: 'projected', value, position }   the last position folded
+//   { outcome: 'error', message } | { outcome: 'store', message }
+//
+// One read – or, a derived projection reading one per operand, head
+// first and every read cut off at it, so the operands are folded as of
+// one position rather than each as of its own.
+function projectFromStore(model, store, projectionName, params, { trace } = {}) {
+  const record = trace ? (entry) => trace.push(entry) : () => {};
+  const body = evOwn(model['projection-definitions'], projectionName);
+  if (!body) return { outcome: 'error', message: `This model has no projection "${projectionName}".` };
+  try {
+    const cut = derivedOf(body) ? { at: evHead(store, record) } : null;
+    const port = evStorePort(store, record, { cut });
+    const tags = {};
+    const args = {};
+    for (const tag of projectionTagParams(body)) tags[tag.name] = evOwn(params, tag.name);
+    for (const argument of body.arguments || []) args[argument.name] = evOwn(params, argument.name);
+    const value = evNormalize(foldProjection(model, port, projectionName, { tags, args }));
+    return { outcome: 'projected', value, position: port.last };
+  } catch (error) {
+    if (error instanceof EvStoreFailure) return { outcome: 'store', message: error.message };
+    return { outcome: 'error', message: evErrorText(error) };
+  }
+}
+
+// A DCB event store in memory – for the playground, and for tests. An
+// item's empty `types` matches any type; its tags must all be carried.
+function memoryStore(seed = []) {
+  const events = [];
+  const push = (event) => { events.push({ position: events.length + 1, event }); };
+  const matches = (query, event) => query.some((item) =>
+    (!item.types.length || item.types.includes(event.type))
+    && item.tags.every((tag) => event.tags.includes(tag)));
+  seed.forEach(push);
+  return {
+    events,
+    push,
+    head: () => (events.length ? events[events.length - 1].position : undefined),
+    read: (query) => events.filter(({ event }) => matches(query, event)),
+    append(newEvents, condition) {
+      if (condition && events.some(({ position, event }) =>
+        (condition.after === undefined || position > condition.after) && matches(condition.failIfEventsMatch, event))) {
+        return { integrity: true };
+      }
+      newEvents.forEach(push);
+      return { position: events.length };
+    },
+  };
+}
+
 // Loadable both as a classic script – the way the playground loads
 // everything, so it opens from the filesystem without a server – and as
 // a module, so this can be exercised outside a browser.
@@ -1549,5 +1736,8 @@ if (typeof module !== 'undefined' && module.exports) {
     scenarioLog,
     deriveProjectionScenarioThen,
     runProjectionScenario,
+    handleCommand,
+    projectFromStore,
+    memoryStore,
   };
 }

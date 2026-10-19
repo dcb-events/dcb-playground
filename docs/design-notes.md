@@ -1341,11 +1341,11 @@ step at the playhead. Only the step band scrolls.
   2. A store port in the DCB specification's shapes (query items,
      sequenced events, an append condition with `after`, an integrity
      failure), and the decision cycle around `evDecideThroughPort` –
-     head or reads, the condition, a rerun on conflict, a derived
-     projection cut off at head – as `runCommand` and `runProjection`,
-     with a trace. The runtime's WIT mirrors the port; its
-     `runtime.js` shrinks to the adapter (positions as BigInt, field
-     names, jco's error payloads).
+     head or reads, the condition, a derived projection cut off at
+     head – as `handleCommand` and `projectFromStore` (evaluate.js),
+     with a trace, and `memoryStore`. The runtime's `runtime.js`
+     shrinks to the adapter (positions as BigInt, field names, jco's
+     error payloads).
   3. The OpenAPI builder (the runtime's `contract.js`) moves here.
   4. The playground: the store trace per command, Export OpenAPI, and
      `executionBlockers` as a severity of its own above the
@@ -1359,6 +1359,14 @@ step at the playhead. Only the step band scrolls.
      core can shed the log and the editing commands. Held by a test
      that every fixture and shipped model reads the same both ways –
      editing commands and the reader are two routes to one model.
+- **One attempt; the retry is the caller's (2026-10).** A lost race
+  comes back as `conflict` rather than being decided again in here.
+  Retrying well means waiting – a backoff, jitter – and this layer is
+  synchronous and owns no clock; inside the WebAssembly a wait would
+  block the instance. What has to have one owner is all within one
+  attempt: where `after` comes from, the restart with head, the
+  condition. So dcb-runtime's host loops, with its own backoff, and
+  the playground loops without one.
 - **Weighed and deferred.** An asynchronous evaluator, or planned
   rounds computed before evaluating, so a browser could talk to a
   real store directly: only if that becomes a goal.
