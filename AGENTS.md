@@ -130,6 +130,8 @@ was decided, why, and what was tried and reverted:
   view's language_, and the `dsl.js` header
 - what a script can reach, a CSP, sandboxing scripts — _Scripts and the
   origin_
+- how a DCB query is drawn, the sandbox's Store column — _DCB queries,
+  shown_
 - how evaluation gets its events, the read port — _The read port_
 - JSON Schemas of arguments and payloads — _Value schemas_
 - comparing two models, the Compare view — _Comparing models_

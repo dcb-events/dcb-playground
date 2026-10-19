@@ -1101,6 +1101,48 @@ step at the playhead. Only the step band scrolls.
   set means the last load hung. One load only, so a reload that merely
   interrupted a slow page costs a reload.
 
+## DCB queries, shown
+
+Artboards: `design/dcb-queries/` (2026-10).
+
+- **One notation, wherever a query is shown**: the command page's
+  Consistency boundary step, the code view's hover over a command's
+  summary, and the sandbox. A query is drawn in the specification's
+  own words – items of `types` and `tags`, ORed – not paraphrased, so
+  what is learned here is what any DCB event store's API says. Every
+  term (`head`, `failIfEventsMatch`, `after`, a query item) carries a
+  one-line ⓘ; until the reference has anchors for them, they link the
+  nearest one there is (`consistency-boundary`).
+- **A query is one box; a chain is several.** One call to the store
+  is one outlined box, its items inside it split by an OR divider. A
+  chained boundary is one box per call, numbered "call 1 of 3",
+  joined by arrows that say where the next one's tags come from, with
+  the head it starts from above them. Drawing the items of a chain as
+  one long OR list – the first sketch – made three calls look like
+  one, which is exactly the difference the append condition's `after`
+  turns on.
+- **Planned and resolved.** Where no run supplied the values – the
+  command page, the code view – a tag's value is a placeholder,
+  `CourseId:{courseId}`, a fan-out `{each course.subscribedStudentIds}`
+  marked "× each"; the sandbox shows the values it asked with.
+- **Items are merged by tag set, as the store is asked.** The planned
+  view listed one item per alias, the store is asked one item per tag
+  set (`evDecideThroughPort`): six items planned, two asked, for the
+  same command. The command page names the reads that contributed to
+  an item ("from"), which keeps what the per-alias list said.
+- **Rows or JSON**, one remembered choice for every query on every
+  page. JSON is the specification's shape; a planned one keeps its
+  placeholders, so Copy is offered only where values are resolved.
+- **The sandbox runs through the cycle** (`handleCommand` against a
+  `memoryStore` of its log), and its step band gains a fourth column,
+  **Store**: the step's calls – head, each read with its query and the
+  events it returned, the append with its condition and where it
+  landed. Hovering a read lights its events up on the timeline: the
+  slice of the log the boundary really is. Like Reads, it is worked
+  out again on every repaint, not remembered, so an edit to the model
+  shows at once; a step that would be refused now shows its calls as
+  far as they got, with the same note Reads gives.
+
 ## The read port
 
 - **What it is.** Wherever `evaluate.js` takes a log, it also takes

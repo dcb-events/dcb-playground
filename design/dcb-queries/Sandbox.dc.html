@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sandbox – the Store column</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.col h4{margin:0 0 8px;font:600 11px/1 system-ui,sans-serif;color:#64748b;letter-spacing:.04em;text-transform:uppercase}
+.card{border:1px solid #e2e8f0;border-radius:8px;background:#ffffff;padding:10px}
+.ev{font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#9a3412;background:#fff7ed;border:1px solid #fed7aa;border-radius:4px;padding:0 5px}
+.tag{font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#0f172a;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:4px;padding:0 5px}
+.query{border:1.5px solid #007a6c;border-radius:8px;background:#f6fbfa;overflow:hidden}
+.query-h{display:flex;justify-content:space-between;align-items:baseline;padding:5px 10px;border-bottom:1px solid #b6e0da;background:#e6f4f2;font:600 11px ui-monospace,SFMono-Regular,Menlo,monospace;color:#00594f}
+.query-h span{font-weight:400}
+.items{display:flex;flex-direction:column;padding:7px}
+.q-item{display:grid;grid-template-columns:40px minmax(0,1fr);gap:3px 6px;align-items:baseline;padding:5px 7px;border:1px solid #e2e8f0;border-radius:6px;background:#ffffff}
+.or{display:flex;align-items:center;gap:8px;padding:3px 6px;font:600 10px ui-monospace,SFMono-Regular,Menlo,monospace;color:#00594f;letter-spacing:.08em}
+.or::before,.or::after{content:"";flex:1;border-top:1px dashed #9fd3cb}
+.q-key{font:11px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;color:#64748b}
+.q-chips{display:flex;flex-wrap:wrap;gap:3px}
+.call{display:grid;grid-template-columns:22px minmax(0,1fr);gap:8px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;background:#ffffff}
+.num{font:600 11px/22px ui-monospace,SFMono-Regular,Menlo,monospace;color:#00594f;background:#e6f4f2;border-radius:50%;width:22px;height:22px;text-align:center}
+.verb{font:600 13px ui-monospace,SFMono-Regular,Menlo,monospace;color:#00594f}
+.row{font:12px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;color:#334155}
+.cond b{color:#007a6c;font-weight:600}
+.mark{width:34px;height:34px;box-sizing:border-box;border:2px solid #f97316;border-radius:6px;display:flex;align-items:center;justify-content:center;font:600 11px ui-monospace,Menlo,monospace;color:#9a3412}
+.seg{display:inline-flex;border:1px solid #b6e0da;border-radius:6px;overflow:hidden}
+.seg button{font:11px system-ui,sans-serif;border:0;padding:3px 8px;min-height:24px;background:#ffffff;color:#00594f}
+.seg button.on{background:#007a6c;color:#ffffff}
+.json{margin:0;padding:10px 12px;border-radius:6px;background:#0f172a;color:#e2e8f0;font:11px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre;overflow:hidden}
+.json .k{color:#5eead4}.json .s{color:#fdba74}.json .n{color:#93c5fd}
+</style>
+</helmet>
+<div style="width:1440px;height:980px;box-sizing:border-box;display:flex;flex-direction:column;background:#f8fafc;color:#0f172a;font-family:system-ui,-apple-system,'Segoe UI',sans-serif">
+  <header style="display:flex;align-items:center;gap:16px;padding:14px 24px;border-bottom:1px solid #e2e8f0;background:#ffffff">
+    <span style="font-size:18px;font-weight:650">Sandbox</span>
+    <span style="font-size:13px;color:#64748b">SubscribeStudentToCourse</span>
+    <span class="tag">courseId c1</span><span class="tag">studentId s1</span>
+    <button style="margin-left:auto;font:13px system-ui,sans-serif;color:#ffffff;background:#007a6c;border:0;border-radius:6px;padding:8px 14px;min-height:36px">Run</button>
+  </header>
+
+  <section style="padding:14px 24px;border-bottom:1px solid #e2e8f0;background:#ffffff;display:flex;gap:10px;align-items:center">
+    <span style="font-size:12px;color:#64748b;width:80px">Timeline</span>
+    <div class="mark" style="background:#e6f4f2;border-color:#007a6c;color:#00594f">1</div>
+    <div class="mark" style="background:#e6f4f2;border-color:#007a6c;color:#00594f">2</div>
+    <div class="mark">3</div>
+    <div style="width:2px;height:40px;background:#0f172a;margin-left:-6px"></div>
+    <span style="font-size:12px;color:#007a6c;margin-left:12px">◀ hovering call 1 lights up the events its query returned</span>
+  </section>
+
+  <section style="flex-grow:1;padding:18px 24px;display:grid;grid-template-columns:minmax(0,0.9fr) minmax(0,0.9fr) minmax(0,0.9fr) minmax(0,1.8fr);gap:20px;align-items:start">
+    <div class="col">
+      <h4>Append</h4>
+      <div class="card row">
+        <div>3 <span class="ev">StudentSubscribedToCourse</span></div>
+        <div style="color:#64748b">courseId c1 · studentId s1</div>
+      </div>
+    </div>
+    <div class="col">
+      <h4>Reads</h4>
+      <div class="card row" style="display:flex;flex-direction:column;gap:2px">
+        <div>course <span style="color:#64748b">Existent</span></div>
+        <div>capacity <span style="color:#64748b">10</span></div>
+        <div>subscriptions <span style="color:#64748b">0</span></div>
+      </div>
+    </div>
+    <div class="col">
+      <h4>Now</h4>
+      <div class="card row" style="display:flex;flex-direction:column;gap:2px">
+        <div>course <span style="color:#64748b">Existent</span></div>
+        <div>subscriptions <span style="color:#64748b">1</span></div>
+      </div>
+    </div>
+    <div class="col">
+      <div style="display:flex;justify-content:space-between;align-items:baseline"><h4>Store · 2 calls ⓘ</h4><span class="seg"><button class="on">Rows</button><button>JSON</button></span></div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div class="call" style="border-color:#007a6c;box-shadow:0 0 0 3px #e6f4f2">
+          <span class="num">1</span>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <div><span class="verb">read</span> <span class="mono" style="font-size:12px;color:#64748b">→ 2 events</span></div>
+            <div class="query">
+              <div class="query-h">query <span>2 items, ORed</span></div>
+              <div class="items">
+                <div class="q-item">
+                  <span class="q-key">types</span><span class="q-chips"><span class="ev">CourseArchived</span><span class="ev">CourseCapacityChanged</span><span class="ev">CourseDefined</span><span class="ev">StudentSubscribedToCourse</span><span class="ev">StudentUnsubscribedFromCourse</span></span>
+                  <span class="q-key">tags</span><span class="q-chips"><span class="tag">CourseId:c1</span></span>
+                </div>
+                <div class="or">OR</div>
+                <div class="q-item">
+                  <span class="q-key">types</span><span class="q-chips"><span class="ev">StudentRegistered</span><span class="ev">StudentSubscribedToCourse</span><span class="ev">StudentUnsubscribedFromCourse</span></span>
+                  <span class="q-key">tags</span><span class="q-chips"><span class="tag">StudentId:s1</span></span>
+                </div>
+              </div>
+            </div>
+            <div class="row" style="padding-left:4px">
+              <div>1 <span class="ev">CourseDefined</span> <span class="tag">CourseId:c1</span></div>
+              <div>2 <span class="ev">StudentRegistered</span> <span class="tag">StudentId:s1</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="call">
+          <span class="num">2</span>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <div><span class="verb">append</span> <span class="mono" style="font-size:12px;color:#64748b">→ position 3</span></div>
+            <div class="row"><span class="ev">StudentSubscribedToCourse</span> <span class="tag">CourseId:c1</span> <span class="tag">StudentId:s1</span></div>
+            <div class="row cond" style="border-top:1px dashed #e2e8f0;padding-top:6px">
+              <div><b>failIfEventsMatch</b>: the query of call 1</div>
+              <div><b>after</b>: 2 <span style="color:#64748b">– the last position it read</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div style="font:600 11px system-ui,sans-serif;color:#64748b;letter-spacing:.04em;text-transform:uppercase;padding-top:6px">Call 2, JSON selected</div>
+        <pre class="json"><span style="color:#94a3b8">// append – events</span>
+[ { <span class="k">"type"</span>: <span class="s">"StudentSubscribedToCourse"</span>,
+    <span class="k">"data"</span>: { <span class="k">"courseId"</span>: <span class="s">"c1"</span>, <span class="k">"studentId"</span>: <span class="s">"s1"</span> },
+    <span class="k">"tags"</span>: [<span class="s">"CourseId:c1"</span>, <span class="s">"StudentId:s1"</span>] } ]
+<span style="color:#94a3b8">// append – condition</span>
+{ <span class="k">"failIfEventsMatch"</span>: { <span class="k">"items"</span>: [
+    { <span class="k">"types"</span>: [<span class="s">"CourseArchived"</span>, …], <span class="k">"tags"</span>: [<span class="s">"CourseId:c1"</span>] },
+    { <span class="k">"types"</span>: [<span class="s">"StudentRegistered"</span>, …], <span class="k">"tags"</span>: [<span class="s">"StudentId:s1"</span>] } ] },
+  <span class="k">"after"</span>: <span class="n">2</span> }</pre>
+
+        <div class="card row" style="border-style:dashed;color:#64748b">A chained step lists <span class="verb" style="font-size:12px">head</span> → 5, then one <span class="verb" style="font-size:12px">read</span> per query – each its own call with its own query box – then <span class="verb" style="font-size:12px">append</span> <b style="color:#007a6c">after</b>: 5.</div>
+      </div>
+    </div>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":980}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>
