@@ -2580,17 +2580,42 @@ function build(index) {
         property,
       ],
     });
-    const values = { anordnungId: 'a1' };
-    sandbox.fillUnsetOptionals(values, model()['event-definitions'].NotizErfasst.properties);
-    eq(values, { anordnungId: 'a1', notiz: null }, 'the unset optional is now the explicit null');
+    const given = (data) => sandbox.canonicalScenario(model(), 'projection-scenario-definition',
+      { given: [{ event: 'NotizErfasst', data }] }).given[0].data;
+    eq(given({ anordnungId: 'a2' }), { anordnungId: 'a2', notiz: null }, 'the unset optional is now the explicit null');
+    eq(given({ anordnungId: 'a1', notiz: '' }).notiz, '', 'the empty string is a value and stays one');
+  });
 
-    const body = { given: [{ event: 'NotizErfasst', data: { anordnungId: 'a2' } }] };
-    sandbox.fillGivenOptionals(model(), body);
-    eq(body.given[0].data, { anordnungId: 'a2', notiz: null }, 'a Given step gets the same spelling');
+  check('a stored scenario runs once per revision, wherever its status is shown', () => {
+    let shipped = null;
+    for (let i = 0; !shipped; i++) {
+      const loadedId = sandbox.loadPredefinedModel(i);
+      const loaded = projectState()[loadedId];
+      if (Object.keys(loaded['scenario-definitions'] || {}).length) shipped = loaded;
+      else sandbox.deleteDcbModel(loaded.id);
+    }
+    const [body] = Object.values(shipped['scenario-definitions']);
+    const run = sandbox.storedScenarioRun('scenario-definition', shipped, body);
+    eq(sandbox.storedScenarioRun('scenario-definition', shipped, body) === run, true, 'the same run while nothing changed');
+    eq(run.status, 'current', 'and it holds');
+    const entries = Object.values(shipped['scenario-definitions']).map((b) => ({ body: b }));
+    eq(sandbox.failingScenarios('scenario-definition', shipped, entries), 0, 'none of the shipped ones failing');
+    sandbox.deleteDcbModel(shipped.id);
+  });
 
-    const set = { anordnungId: 'a1', notiz: '' };
-    sandbox.fillUnsetOptionals(set, model()['event-definitions'].NotizErfasst.properties);
-    eq(set.notiz, '', 'the empty string is a value and stays one');
+  check('saved from the page or applied as code, a scenario is stored the same', () => {
+    addTaggedEvent(id, 'NotizenErfasst', {
+      properties: [
+        { name: 'anordnungId', propertyType: 'string', isOptional: false, isList: false },
+        { name: 'notiz', propertyType: 'string', isOptional: true, isList: false },
+        { name: 'anhaenge', propertyType: 'string', isOptional: true, isList: true },
+      ],
+    });
+    const body = () => ({ projection: 'X', given: [{ event: 'NotizenErfasst', data: { anordnungId: 'a1' } }] });
+    const saved = sandbox.canonicalScenario(model(), 'projection-scenario-definition', body());
+    const applied = sandbox.completeScenario(model(), { kind: 'projection-scenario-definition', body: body() }).body;
+    eq(applied.given, saved.given, 'one spelling');
+    eq(saved.given[0].data, { anordnungId: 'a1', notiz: null }, 'an optional list left unset, as evaluation leaves it');
   });
 }
 

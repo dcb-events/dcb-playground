@@ -9976,10 +9976,7 @@ function projectionDetail(model, entry, { owner }) {
   const draft = state.projDraft.body;
   const entries = projectionScenariosFor(model, projection);
   const tab = state.projTab === 'checks' ? 'checks' : 'definition';
-  const trouble = entries.filter((e) => {
-    const status = runProjectionScenario(model, e.body).status;
-    return status === 'drifted' || status === 'broken';
-  }).length;
+  const trouble = failingScenarios('projection-scenario-definition', model, entries);
 
   const tabButton = (key, label, extra) => h('button', {
     class: 'tab' + (tab === key ? ' on' : ''),
@@ -11850,10 +11847,7 @@ function projectionSection(title, info, action, ...body) {
 function projectionUsage(model, draft, savedName, { entityName, advanced, onChecks }) {
   const block = (title, ...body) => h('div', { class: 'pusage-block' }, h('div', { class: 'pk' }, title), ...body);
   const checks = savedName ? projectionScenariosFor(model, savedName) : [];
-  const trouble = checks.filter((e) => {
-    const status = runProjectionScenario(model, e.body).status;
-    return status === 'drifted' || status === 'broken';
-  }).length;
+  const trouble = failingScenarios('projection-scenario-definition', model, checks);
   const readers = savedName ? projectionReaders(model, savedName) : [];
   const bound = savedName ? boundAs(model, savedName) : [];
   const checksWords = checks.length
@@ -13937,36 +13931,14 @@ function stepConsistency(model, slice) {
 // subject, which state slot holds the draft and which set holds the
 // open rows, and how "current" and "drifted" read. That lives here,
 // so the staleness rule, the save path and the status ladder exist
-// once and cannot drift apart.
-// Writes the explicit null into every unset optional property of one
-// payload – the canonical stored spelling, so "one entry per property,
-// all of them" stays true on disk while the evaluator reads an absent
-// key the same way. The empty string is untouched: it is a value.
-function fillUnsetOptionals(values, properties) {
-  for (const property of properties || []) {
-    if (!property.isOptional || property.isList) continue;
-    if (values[property.name] === undefined) values[property.name] = null;
-  }
-}
-
-function fillGivenOptionals(model, body) {
-  for (const step of body.given || []) {
-    step.data = step.data || {};
-    fillUnsetOptionals(step.data, (model['event-definitions'][step.event] || {}).properties);
-  }
-}
-
+// once and cannot drift apart. What a stored scenario looks like is
+// model.js's (`canonicalScenario`), shared with a text applied as code.
 const SCENARIO_KINDS = {
   'scenario-definition': {
     subjectField: 'command',
     run: (model, body) => runScenario(model, body),
     deriveThen: (model, body) => deriveThen(model, body),
-    canonicalize: (model, body) => {
-      fillGivenOptionals(model, body);
-      body.when = body.when || {};
-      body.when.arguments = body.when.arguments || {};
-      fillUnsetOptionals(body.when.arguments, (model['command-definitions'][body.command] || {}).properties);
-    },
+    canonicalize: (model, body) => canonicalScenario(model, 'scenario-definition', body),
     draftKey: 'scenarioDraft',
     openSet: () => state.openScenarios,
     words: {
@@ -13979,7 +13951,7 @@ const SCENARIO_KINDS = {
     subjectField: 'projection',
     run: (model, body) => runProjectionScenario(model, body),
     deriveThen: (model, body) => deriveProjectionScenarioThen(model, body),
-    canonicalize: (model, body) => fillGivenOptionals(model, body),
+    canonicalize: (model, body) => canonicalScenario(model, 'projection-scenario-definition', body),
     draftKey: 'projectionScenarioDraft',
     openSet: () => state.openProjectionScenarios,
     words: {
@@ -13989,6 +13961,28 @@ const SCENARIO_KINDS = {
     },
   },
 };
+
+// A stored scenario's run, kept for as long as the model's revision
+// is: a page paints the same scenario's status on its row, its tab's
+// count and the problems list, and every repaint did each again. Keyed
+// by the stored objects themselves – `projectState()` hands out one per
+// revision – so an edit is a new model and runs afresh, and a draft,
+// never stored, is never kept.
+const storedRuns = new WeakMap();
+function storedScenarioRun(kind, model, body) {
+  let runs = storedRuns.get(model);
+  if (!runs) storedRuns.set(model, runs = new WeakMap());
+  if (!runs.has(body)) runs.set(body, SCENARIO_KINDS[kind].run(model, body));
+  return runs.get(body);
+}
+
+// How many of these stored scenarios no longer say what they did.
+function failingScenarios(kind, model, entries) {
+  return entries.filter((e) => {
+    const status = storedScenarioRun(kind, model, e.body).status;
+    return status === 'drifted' || status === 'broken';
+  }).length;
+}
 
 // Every scenario of one kind about one subject – a command's, or a
 // projection's.
@@ -14083,7 +14077,7 @@ function reorderByDrag(kind, model, fromKey, toKey, before) {
 // moment something upstream drifts.
 function currentScenarioThens(model, commandName) {
   return scenariosOf(model, commandName)
-    .map(({ body: scenario }) => runScenario(model, scenario).actual)
+    .map(({ body: scenario }) => storedScenarioRun('scenario-definition', model, scenario).actual)
     .filter(Boolean);
 }
 
@@ -14114,7 +14108,7 @@ function happyPathUntested(model, commandName) {
 function scenarioTrouble(model) {
   const out = [];
   for (const [key, body] of Object.entries(model['scenario-definitions'] || {})) {
-    const result = runScenario(model, body);
+    const result = storedScenarioRun('scenario-definition', model, body);
     if (result.status === 'current') continue;
     out.push({ key, body, result });
   }
@@ -14417,7 +14411,7 @@ function scenarioHead(openSet, key, status, [mark, word, why], name, actions) {
 
 function scenarioRow(model, entry) {
   const { key, body } = entry;
-  const result = runScenario(model, body);
+  const result = storedScenarioRun('scenario-definition', model, body);
   const [mark, word, why] = STATUS_WORDS[result.status];
   const open = state.openScenarios.has(key);
 
@@ -14653,10 +14647,7 @@ function scenarioPanel(model, commandName) {
 
 function scenarioTabs(model, slice) {
   const entries = scenariosOf(model, slice.name);
-  const trouble = entries.filter((e) => {
-    const status = runScenario(model, e.body).status;
-    return status === 'drifted' || status === 'broken';
-  }).length;
+  const trouble = failingScenarios('scenario-definition', model, entries);
   const tab = (key, label, extra) => h('button', {
     class: 'tab' + (state.tab === key ? ' on' : ''),
     'aria-pressed': state.tab === key ? 'true' : 'false',
@@ -14732,7 +14723,7 @@ function projectionOutcomeCard(value, title) {
 
 function projectionScenarioRow(model, entry) {
   const { key, body } = entry;
-  const result = runProjectionScenario(model, body);
+  const result = storedScenarioRun('projection-scenario-definition', model, body);
   const [mark, word, why] = PROJECTION_SCENARIO_STATUS_WORDS[result.status];
   const open = state.openProjectionScenarios.has(key);
 

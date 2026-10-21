@@ -1300,6 +1300,43 @@ function derivedText(derived) {
   return symbol ? `${left} ${symbol} ${right}` : `${derived.operator}(${left}, ${right})`;
 }
 
+// A scenario as it is stored, whoever writes it – the page's save, a
+// text applied as code: every optional property it leaves unset spelt
+// out as the explicit null, in each Given step, a command's arguments
+// and a published Then. Optional lists are left alone, as evaluation
+// leaves them (`evWithExplicitOptionals`): they evaluate as plain
+// lists, and the advisories point the combination out. Fills `body`
+// in place and returns it.
+function canonicalScenario(model, kind, body) {
+  const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
+  const fill = (data, properties) => {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return;
+    for (const property of properties || []) {
+      if (!property || !property.isOptional || property.isList) continue;
+      if (!own(data, property.name) || data[property.name] === undefined) data[property.name] = null;
+    }
+  };
+  const eventProperties = (name) => {
+    const event = own(model['event-definitions'], name) ? model['event-definitions'][name] : null;
+    return event && event.properties;
+  };
+  for (const step of body.given || []) {
+    if (!step) continue;
+    step.data = step.data || {};
+    fill(step.data, eventProperties(step.event));
+  }
+  if (kind === 'scenario-definition') {
+    body.when = body.when || {};
+    body.when.arguments = body.when.arguments || {};
+    const commands = model['command-definitions'];
+    fill(body.when.arguments, own(commands, body.command) ? commands[body.command].properties : null);
+  }
+  if (body.then && body.then.outcome === 'published') {
+    for (const event of body.then.events || []) if (event) fill(event.data, eventProperties(event.type));
+  }
+  return body;
+}
+
 // What a scenario is called. The stored name wins; without one it is
 // read off the outcome, which is why it changes when the outcome does –
 // and why the interface freezes it the moment a scenario drifts, rather

@@ -2739,24 +2739,7 @@ function sourceSpanOf(parsed, kind, name) {
 // out are written as null (as the page's save does), and an omitted
 // Then is what the text's definitions make of the scenario.
 function completeScenario(draft, record) {
-  const body = deepClone(record.body);
-  const has = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
-  const fill = (properties, data) => {
-    if (!data || typeof data !== 'object' || Array.isArray(data)) return;
-    for (const property of properties || []) {
-      if (property && property.isOptional && !has(data, property.name)) data[property.name] = null;
-    }
-  };
-  const eventProperties = (name) => {
-    const event = draft['event-definitions'][name];
-    return event && event.properties;
-  };
-  for (const step of body.given || []) if (step) fill(eventProperties(step.event), step.data);
-  const command = record.kind === 'scenario-definition' && draft['command-definitions'][body.command];
-  if (command && body.when) fill(command.properties, body.when.arguments);
-  if (body.then && body.then.outcome === 'published') {
-    for (const event of body.then.events || []) if (event) fill(eventProperties(event.type), event.data);
-  }
+  const body = canonicalScenario(draft, record.kind, deepClone(record.body));
 
   let actual = null;
   let reason = null;
