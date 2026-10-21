@@ -523,6 +523,20 @@ function markHistories(histories, appended, { agent = false, via = null, label }
   return deleted;
 }
 
+// One model's history as a reader takes it: its steps, oldest first,
+// what was undone, newest last, whether the oldest fell off the limit,
+// and when it last started again after a change elsewhere – the same
+// shape whether or not the model has a history at all.
+function historySteps(histories, modelId) {
+  const history = histories.models[modelId];
+  return {
+    done: history ? history.done : [],
+    undone: history ? history.undone : [],
+    trimmed: !!(history && history.trimmed),
+    restarted: (histories.restarted && histories.restarted[modelId]) || null,
+  };
+}
+
 // Moves a model's history `delta` steps – back when negative, forward
 // when positive – over `events`, however far it goes: `{ events, moved }`,
 // the log as it then is and how many steps it moved. A model changed

@@ -3611,9 +3611,9 @@ function travel(modelId, delta) {
 
 function undo() {
   const id = activeModelId();
-  const history = id && undoLog().models[id];
-  if (!history || !history.done.length) return toast('Nothing to undo.');
-  const label = history.done[history.done.length - 1].label;
+  const { done } = historySteps(undoLog(), id);
+  if (!id || !done.length) return toast('Nothing to undo.');
+  const label = done[done.length - 1].label;
   if (travel(id, -1)) {
     toast('Undone – ' + label);
     render();
@@ -3622,9 +3622,9 @@ function undo() {
 
 function redo() {
   const id = activeModelId();
-  const history = id && undoLog().models[id];
-  if (!history || !history.undone.length) return toast('Nothing to redo.');
-  const label = history.undone[history.undone.length - 1].label;
+  const { undone } = historySteps(undoLog(), id);
+  if (!id || !undone.length) return toast('Nothing to redo.');
+  const label = undone[undone.length - 1].label;
   if (travel(id, 1)) {
     toast('Redone – ' + label);
     render();
@@ -5575,7 +5575,7 @@ function renderRail() {
 
   // Its history and reading it against another need nothing in the
   // model, so unlike the diagrams both are there for an empty one too.
-  const steps = (undoLog().models[model.id] || { done: [] }).done.length;
+  const steps = historySteps(undoLog(), model.id).done.length;
   rail.appendChild(h('h4', { style: 'margin-top:20px' }, 'Review'));
   rail.appendChild(h('a', {
     href: '#', class: 'place' + (state.view === 'history' ? ' on' : ''),
@@ -12186,10 +12186,7 @@ function historyRow(model, about, opts) {
 }
 
 function renderHistory(model, main) {
-  const log = undoLog();
-  const history = log.models[model.id] || { done: [], undone: [] };
-  const restarted = log.restarted && log.restarted[model.id];
-  const { done, undone } = history;
+  const { done, undone, trimmed, restarted } = historySteps(undoLog(), model.id);
   const agents = done.filter((mark) => mark.agent).length;
   const nextUndo = done[done.length - 1];
   const nextRedo = undone[undone.length - 1];
@@ -12252,8 +12249,8 @@ function renderHistory(model, main) {
   }
   list.appendChild(historyRow(model, {
     icon: 'opened', colour: '', chip: null, more: [],
-    verb: history.trimmed ? 'Earlier changes' : restarted ? 'From here' : 'Opened',
-    detail: history.trimmed ? `older than the last ${HISTORY_LIMIT} are no longer kept`
+    verb: trimmed ? 'Earlier changes' : restarted ? 'From here' : 'Opened',
+    detail: trimmed ? `older than the last ${HISTORY_LIMIT} are no longer kept`
       : restarted ? 'as it was when it was changed elsewhere' : 'as it was when you opened it',
   }, {
     time: '', current: !done.length, target: -done.length, last: true, key: 'opened',

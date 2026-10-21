@@ -1376,8 +1376,11 @@ Artboards: `design/dcb-queries/` (2026-10).
   `historyFloor`, `historyVersions`) take a tab's histories and the
   log's events and return what follows, so they are tested over plain
   arrays. The page stores the histories, batches a gesture's appends,
-  writes the log and says what happened. Before, all of it lived in
-  the page, and the history's shape was read in four places.
+  writes the log and says what happened. Its readers – the History
+  page, the rail's count, undo and redo – take a model's history
+  through `historySteps`, the same shape whether it has one or not.
+  Before, all of it lived in the page, and the history's shape was
+  read in four places.
 
 ## The core and its other consumers
 

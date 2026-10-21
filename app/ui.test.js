@@ -2431,7 +2431,7 @@ function build(index) {
   const names = (id) => Object.keys(sandbox.projectState()[id]['event-definitions']);
   const ofModel = (id) => JSON.stringify(sandbox.loadEvents().filter((e) => e.data['dcb-model-id'] === id)
     .map(({ timestamp, type, data }) => ({ timestamp, type, data })));
-  const history = (id) => sandbox.undoLog().models[id] || { done: [], undone: [] };
+  const history = (id) => sandbox.historySteps(sandbox.undoLog(), id);
 
   check('creating a model is where its history starts, not a step in it', () => {
     eq(history(a).done.length, 0, 'nothing to undo');
