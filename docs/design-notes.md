@@ -476,8 +476,9 @@ on Projections, on an entity's page, and in the definition modals.
   `initial state` (type, cardinality, `starts at` – `value` for a
   derived projection, which has none), `handlers` (or the
   derived predicate) and `advanced`, each headed in monospace with its
-  one `ⓘ`; on the right, `projectionUsage`: the query, spelled out
-  rather than behind the query popover, the checks count (a way to the
+  one `ⓘ`; on the right, `projectionUsage`: the query as one line
+  ("1 call · 2 types · 1 tag") with the query itself behind the query
+  glyph, the checks count (a way to the
   Checks tab on an open row) and, behind the switch, who reads it and
   what binds it. The two columns wrap into one where they do not fit,
   which is the modal and a phone. This replaced one column of
@@ -1130,7 +1131,7 @@ Artboards: `design/dcb-queries/` (2026-10).
 
 - **One notation, wherever a query is shown**: the command page's
   Consistency boundary step, the code view's hover over a command's
-  summary, and the sandbox. A query is drawn in the specification's
+  summary, the sandbox and the projection editor. A query is drawn in the specification's
   own words – items of `types` and `tags`, ORed – not paraphrased, so
   what is learned here is what any DCB event store's API says. Every
   term (`head`, `failIfEventsMatch`, `after`, a query item) carries a
@@ -1162,6 +1163,18 @@ Artboards: `design/dcb-queries/` (2026-10).
   traced, at the playhead. It used to rebuild them from
   `foldedReads` and the handlers: a second derivation of the query that
   nothing kept in step with the one that runs.
+- **A projection's query, one line and a glyph (2026-10).** The
+  editor used to spell the query out in words of its own (`tag
+  CourseId:<courseId> and CourseDefined, …`), always open – the one
+  page with a notation of its own, and a block of the side column. It
+  is now a line saying how much it reads, and the boxes behind the
+  query glyph, as on a command's read cards. A Query tab beside
+  Definition and Checks, and a dialog, were drawn and passed over: a
+  tab for one box, a dialog for what a popover already does
+  elsewhere. The plan is `projectionPlan` (model.js) – the items a
+  command reading it asks, its own parameters as placeholders – and
+  a test holds it to the reads `projectFromStore` makes for every
+  projection scenario.
 - **Rows or JSON**, one remembered choice for every query on every
   page. JSON is the specification's shape, coloured; a planned one
   keeps its placeholders, so Copy is offered only where values are

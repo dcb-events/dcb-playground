@@ -586,7 +586,10 @@
   }
   .peditor .pusage-block { padding: 10px 12px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
   .peditor .pusage-block:last-child { border-bottom: 0; }
-  .peditor .pquery { font-family: var(--mono); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+  .peditor .pquery { display: inline-flex; align-items: center; gap: 4px; }
+  /* The column is on the right: its popover opens leftwards, into the
+     editor, rather than off the page. */
+  .peditor .pusage .qpop .qpanel { left: auto; right: -10px; }
   .peditor .linkish { background: none; border: 0; padding: 0; font: inherit; font-size: 12px; color: var(--text); cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
   .peditor .linkish:hover { color: var(--accent); }
   .pswitch { display: inline-flex; align-items: center; gap: 6px; background: none; border: 0; padding: 4px 0; font-size: 11px; color: var(--muted); cursor: pointer; }
@@ -11854,7 +11857,7 @@ function projectionUsage(model, draft, savedName, { entityName, advanced, onChec
     ? (trouble ? `${trouble} of ${checks.length} failing` : `${checks.length} passing`)
     : 'none';
   return h('aside', { class: 'pusage' },
-    block('query', projectionQueryWords(model, draft)),
+    block('query', projectionQuerySummary(model, draft, savedName)),
     savedName ? block('checks', onChecks
       ? h('button', { type: 'button', class: 'linkish', onclick: onChecks },
           checks.length ? h('span', { class: 'badge' + (trouble ? '' : ' clear') }, trouble || checks.length) : null,
@@ -11875,26 +11878,43 @@ function projectionUsage(model, draft, savedName, { entityName, advanced, onChec
       : h('span', { class: 'empty' }, '–')) : null);
 }
 
-// The DCB this projection derives, as the query it really runs: the
-// tags it declares, each with a placeholder for the value a read gives
-// it, and the events it handles. A derived draft's query is its
-// operands', recursively, as the fold reads.
-function projectionQueryWords(model, draft) {
-  const derivedReads = draft.derived
-    ? derivedOperands(draft.derived)
-      .filter((o) => operandSource(o) === 'projection-read' && o.projection)
-    : [];
-  const tags = (draft.tags || []).filter((tag) => tag && tag.tagType).flatMap((tag) =>
-    idLeavesOfType(model, tag.tagType).map((leaf) =>
-      renderTag(identifierTypeOf(model, leaf.identifierType), `<${tag.name || '?'}>`)));
-  const handledTypes = draft.derived
-    ? uniq(derivedReads.flatMap((o) => projectionHandledTypes(model, o.projection)))
-    : (draft.handlers || []).map((handler) => handler.event).filter(Boolean);
-  return h('div', { class: 'dcb pquery' },
-    tags.length ? h('div', {}, h('span', { class: 'k' }, 'tag '),
-      ...tags.flatMap((tag, i) => [i ? h('span', { class: 'k' }, ' and ') : null, h('span', { class: 't' }, tag)])) : null,
-    h('div', {}, tags.length ? h('span', { class: 'k' }, 'and ') : null,
-      h('span', { class: 'y' }, handledTypes.join(', ') || '(nothing)')));
+// The query this projection makes, as it stands in the editor: one
+// line saying how much it reads, and the query itself behind the query
+// glyph, drawn as every other query is (_DCB queries, shown_) – a box
+// per call, its values the placeholders a reader fills in. It used to
+// be spelt out in words of its own, always open, which took the column
+// and spoke a notation no other page did. Worked out from the draft,
+// so it moves as the editor does (`projectionPlan` over the model with
+// the draft in place of the stored body).
+function projectionQuerySummary(model, draft, savedName) {
+  const name = savedName || draft.name || 'Draft';
+  let calls;
+  try {
+    const withDraft = {
+      ...model,
+      'projection-definitions': { ...model['projection-definitions'], [name]: cleanProjectionBody(draft) },
+    };
+    calls = projectionPlan(withDraft, name).calls;
+  } catch (error) {
+    return h('span', { class: 'empty' }, '–');
+  }
+  if (!calls.length) return h('span', { class: 'k small' }, 'reads nothing');
+  const items = calls.flat();
+  const count = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  const words = [count(calls.length, 'call'), count(uniq(items.flatMap((item) => item.types)).length, 'type'),
+    count(uniq(items.flatMap((item) => item.tags)).length, 'tag')].join(' · ');
+  const many = calls.length > 1;
+  const body = queryAsJson()
+    ? jsonBlock(calls.map((call, i) => (many ? `// query ${i + 1}\n` : '') + queryJsonText(queryItemsJson(call))).join('\n\n'))
+    : h('div', { class: 'dq' },
+        many ? h('div', { class: 'dq-head' }, h('b', {}, 'head'), ' – taken first: each projection it folds is read up to it') : null,
+        calls.map((call, i) => queryBox(call, 'query', many ? `call ${i + 1} of ${calls.length}` : '1 call')));
+  return h('span', { class: 'pquery' },
+    h('span', { class: 'small' }, words),
+    queryPopover('projection:' + name, 'what this projection queries',
+      h('div', { class: 'row', style: 'justify-content:flex-end;margin-bottom:6px' }, queryViewSwitch()),
+      body,
+      h('div', { class: 'k tiny', style: 'margin-top:6px' }, 'Its values come from whoever reads it – a command, a watch.')));
 }
 
 // Where a declared projection starts, as one picker: the values of its

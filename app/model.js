@@ -2634,6 +2634,32 @@ function commandPlan(summary) {
   return { calls, after: calls.length > 1 ? 'head' : 'read' };
 }
 
+// A projection's query as its readers fill it in (_DCB queries, shown_):
+// `{ calls }`, one query per read its fold makes of the store, each
+// value a placeholder for the projection's own parameter –
+// `CourseId:{courseId}`. A folded projection reads once; a derived one
+// reads each projection it folds, under that one's own tags
+// (`foldedReads`). A command reading it asks the same items with its
+// values in place of the placeholders (`readItems`, which this is). A
+// fold that handles no event reads nothing, so it has no call.
+function projectionPlan(model, projectionName) {
+  const projection = model['projection-definitions'][projectionName];
+  if (!projection) return { calls: [] };
+  const ownParameters = (list) => Object.fromEntries((list || [])
+    .filter((parameter) => parameter && parameter.name)
+    .map((parameter) => [parameter.name, { parameterName: parameter.name }]));
+  const read = {
+    projection: projectionName,
+    tags: ownParameters(projectionTagParams(projection)),
+    arguments: ownParameters(projection.arguments),
+  };
+  return {
+    calls: readItems(model, {}, read, {})
+      .filter((item) => item.types.length)
+      .map(({ types, tags, fannedOut }) => [{ types, tags, fannedOut }]),
+  };
+}
+
 // Every entity-id property of every published event must resolve to a
 // binding in the boundary – a command may not write a tag it did not
 // consult. A value read from a projection binding is exempt when that

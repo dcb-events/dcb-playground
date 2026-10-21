@@ -1332,6 +1332,22 @@ function build(index) {
     eq(sandbox.state.projDraft, null, 'and clicking it again folds it shut');
   });
 
+  check('the editor says what the projection queries in a line, and shows the query behind the glyph', () => {
+    const body = model()['projection-definitions'].CourseCapacity;
+    const draft = projectionDraftFrom(body);
+    const types = new Set(body.handlers.map((handler) => handler.event)).size;
+    const usage = () => sandbox.projectionUsage(model(), draft, 'CourseCapacity', {});
+    eq(textOf(usage()).includes(`1 call · ${types} type${types === 1 ? '' : 's'} · 1 tag`), true, `one line: ${textOf(usage())}`);
+    sandbox.state.queryPop = 'projection:CourseCapacity';
+    try {
+      const open = usage();
+      eq(findAll(open, (n) => /\bdq-box\b/.test(n.className || '')).length, 1, 'the query, as the box every page draws');
+      eq(textOf(open).includes('CourseId:{courseId}'), true, 'its value a placeholder for whoever reads it');
+    } finally {
+      sandbox.state.queryPop = null;
+    }
+  });
+
   check('an opened row renders both of its tabs', () => {
     store.set('dcb-playground:experimental', 'on');
     const open = (name) => {

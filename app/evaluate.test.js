@@ -3930,6 +3930,26 @@ function modelsWithScenarios() {
     eq(item, { tags: ['CounterId:{counterId}'], from: ['counter'], fannedOut: false }, 'no types key at all');
   });
 
+  check('a projection\'s plan is the reads its fold makes: a call each, of the types planned', () => {
+    let compared = 0;
+    for (const { name, model } of modelsWithScenarios()) {
+      for (const scenario of Object.values(model['projection-scenario-definitions'] || {})) {
+        const plan = sandbox.projectionPlan(model, scenario.projection);
+        const params = { ...(scenario.arguments || {}) };
+        for (const [tag, value] of Object.entries(scenario.tags || {})) params[tag] = value && value.tagValue;
+        const trace = [];
+        const outcome = projectFromStore(model, storeOf(model, sandbox.scenarioLog(scenario)), scenario.projection, params, { trace });
+        if (outcome.outcome !== 'projected') continue;
+        const reads = trace.filter((entry) => entry.call === 'read');
+        const sorted = (types) => [...types].sort();
+        eq(reads.map((entry) => entry.query.map((item) => sorted(item.types))), plan.calls.map((call) => call.map((item) => sorted(item.types))),
+          `${name}: ${scenario.projection}`);
+        compared++;
+      }
+    }
+    eq(compared > 10, true, `${compared} projection scenarios compared`);
+  });
+
   const simple = () => {
     const model = build(PREDEFINED_INDEX('course-simple'));
     const log = [];
