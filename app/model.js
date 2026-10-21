@@ -2545,16 +2545,26 @@ function boundarySummary(model, body) {
   return { items, queries, types, tags, anyType, writes: dcb.writes, coverage: coverageIssues(model, body), words };
 }
 
-// The boundary as the store is asked it (_DCB queries, shown_): one
-// query per call, in the order they run, each item a tag set and every
-// type read under it. `boundarySummary` lists one item per read; the
-// store is asked one per tag set (`evDecideThroughPort` merges them),
-// so two reads of the same course are one item here – `from` names
-// the reads that contributed. A read of any type makes its item any
-// type: `types` empty, as the specification spells it.
-function plannedQueries(summary) {
+// The boundary as the store is asked it (_DCB queries, shown_), and the
+// one place that says how a command's cycle runs:
+//
+//   { calls: [[item]], after: 'head' | 'read' }
+//
+// `calls` is one query per call, in the order they run, each item a tag
+// set and every type read under it. `boundarySummary` lists one item
+// per read; the store is asked one per tag set (`evDecideThroughPort`
+// merges them), so two reads of the same course are one item here –
+// `from` names the reads that contributed. A read of any type makes its
+// item any type: `types` empty, as the specification spells it.
+//
+// `after` is where the append condition's position comes from. A chain
+// – more than one call – takes head first, since no one read's last
+// position covers the others; a single call uses the last position it
+// read. `handleCommand` runs by this, and every page that draws the
+// condition says it from this.
+function commandPlan(summary) {
   const rounds = summary.queries.length ? summary.queries : (summary.items.length ? [summary.items] : []);
-  return rounds.map((round) => {
+  const calls = rounds.map((round) => {
     const byTags = new Map();
     for (const item of round) {
       const tags = [...item.tags].sort();
@@ -2569,6 +2579,7 @@ function plannedQueries(summary) {
     }
     return [...byTags.values()].map(({ types, anyType, ...rest }) => ({ types: anyType ? [] : [...types].sort(), ...rest }));
   });
+  return { calls, after: calls.length > 1 ? 'head' : 'read' };
 }
 
 // Every entity-id property of every published event must resolve to a

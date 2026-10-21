@@ -6176,7 +6176,7 @@ check('a skipped definition, a defective one and a tag named like an argument ke
 
 check('a planned query is one item per tag set, as the store is asked, naming the reads behind it', () => {
   const [simple] = twoModels('course-simple');
-  const subscribe = sandbox.plannedQueries(sandbox.boundarySummary(simple, simple['command-definitions'].SubscribeStudentToCourse));
+  const subscribe = sandbox.commandPlan(sandbox.boundarySummary(simple, simple['command-definitions'].SubscribeStudentToCourse)).calls;
   eq(subscribe.length, 1, 'one query');
   eq(subscribe[0].map((item) => item.tags), [['CourseId:{courseId}'], ['StudentId:{studentId}']], 'two items, by tag set');
   eq(subscribe[0][0].types.includes('CourseDefined') && subscribe[0][0].types.includes('StudentSubscribedToCourse'), true,
@@ -6184,13 +6184,14 @@ check('a planned query is one item per tag set, as the store is asked, naming th
   eq(subscribe[0][0].from.length > 1, true, `several reads behind the course item: ${subscribe[0][0].from.join(', ')}`);
   const id = loadPredefinedModel(sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-schedules'));
   const schedules = projectState()[id];
-  const reschedule = sandbox.plannedQueries(sandbox.boundarySummary(schedules, schedules['command-definitions'].RescheduleCourse));
-  eq(reschedule.map((query) => query.map((item) => item.tags)), [
+  const reschedule = sandbox.commandPlan(sandbox.boundarySummary(schedules, schedules['command-definitions'].RescheduleCourse));
+  eq(reschedule.after, 'head', 'a chain takes head first');
+  eq(reschedule.calls.map((query) => query.map((item) => item.tags)), [
     [['CourseId:{courseId}']],
     [['StudentId:{each course.subscribedStudentIds}']],
     [['CourseId:{each students.subscribedCourseIds except courseId}']],
   ], 'a chain: one query per call, its placeholders saying where the values come from');
-  eq(reschedule[1][0].fannedOut, true, 'a fan-out says so');
+  eq(reschedule.calls[1][0].fannedOut, true, 'a fan-out says so');
 });
 
 check('boundaries compared per command: what each now reads, and a read that lost its tags', () => {

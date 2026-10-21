@@ -1457,7 +1457,13 @@ Artboards: `design/dcb-queries/` (2026-10).
   block the instance. What has to have one owner is all within one
   attempt: where `after` comes from, the restart with head, the
   condition. So dcb-runtime's host loops, with its own backoff, and
-  the playground loops without one.
+  the playground loops without one. Where `after` comes from is
+  `commandPlan`'s (model.js): `handleCommand` runs by it, and the
+  pages that draw the condition say it from it, rather than each
+  counting the calls again. A test holds every scenario's trace to its
+  plan – head exactly when the plan says, no restart, no call beyond
+  the planned ones. The plan shares the calls' shape, not their
+  values: it is not the planned rounds deferred below.
 - **Weighed and deferred.** An asynchronous evaluator, or planned
   rounds computed before evaluating, so a browser could talk to a
   real store directly: only if that becomes a goal.

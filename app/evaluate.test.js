@@ -3845,6 +3845,32 @@ function modelsWithScenarios() {
     eq(compared > 50, true, `${compared} scenarios compared`);
   });
 
+  check('every command scenario asks the store as its plan says: head when chained, never a call too many', () => {
+    let compared = 0;
+    for (const { name, model } of modelsWithScenarios()) {
+      for (const scenario of Object.values(model['scenario-definitions'] || {})) {
+        const body = model['command-definitions'][scenario.command];
+        if (!body) continue;
+        const plan = sandbox.commandPlan(sandbox.boundarySummary(model, body));
+        const trace = [];
+        const outcome = handleCommand(model, storeOf(model, sandbox.scenarioLog(scenario)), scenario.command,
+          (scenario.when && scenario.when.arguments) || {}, { trace });
+        if (outcome.outcome === 'error') continue;
+        const what = `${name}: ${scenario.name}`;
+        const reads = trace.filter((entry) => entry.call === 'read').length;
+        eq(trace.some((entry) => entry.restart), false, `${what} – no read the plan did not expect`);
+        eq(trace.some((entry) => entry.call === 'head'), plan.after === 'head', `${what} – head exactly when the plan says`);
+        eq(reads <= plan.calls.length, true, `${what} – ${reads} reads, ${plan.calls.length} planned`);
+        if (outcome.outcome === 'published' && outcome.events.length && plan.calls.length) {
+          const append = trace.find((entry) => entry.call === 'append');
+          eq(!!append.condition, true, `${what} – a command that reads appends on a condition`);
+        }
+        compared++;
+      }
+    }
+    eq(compared > 50, true, `${compared} scenarios compared`);
+  });
+
   const simple = () => {
     const model = build(PREDEFINED_INDEX('course-simple'));
     const log = [];

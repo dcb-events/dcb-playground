@@ -1635,7 +1635,7 @@ function handleCommand(model, store, commandName, args, { trace } = {}) {
   const body = evOwn(model['command-definitions'], commandName);
   let decided;
   try {
-    const chained = !!body && boundarySummary(model, body).queries.length > 1;
+    const chained = !!body && commandPlan(boundarySummary(model, body)).after === 'head';
     try {
       decided = evDecideFromStore(model, store, commandName, args, chained, record);
     } catch (error) {

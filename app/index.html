@@ -13873,16 +13873,16 @@ function stepConsistency(model, slice) {
   // The layout is `boundarySummary`'s, which the code view's command
   // line speaks from too.
   const summary = boundarySummary(model, slice.body);
-  const planned = plannedQueries(summary);
+  const plan = commandPlan(summary);
   return step('consistency', 'Consistency boundary',
     h('div', { class: 'card' },
       summary.items.length
         ? [
             h('div', { class: 'row', style: 'justify-content:space-between;margin-bottom:8px' },
               h('span', { class: 'k small' }, summary.words), queryViewSwitch()),
-            dcbQueries(planned, {
+            dcbQueries(plan.calls, {
               key: 'dcb:' + slice.name, from: true,
-              condition: { after: planned.length > 1 ? 'head' : 'read' },
+              condition: { after: plan.after },
             }),
           ]
         : h('div', { class: 'empty' }, 'Unguarded.'),
@@ -16981,7 +16981,7 @@ function registerSourceLanguage() {
   // appends.
   const commandHover = (q) => {
     const code = (words) => words.map((w) => `\`${w}\``).join(', ');
-    const planned = plannedQueries(q);
+    const planned = commandPlan(q).calls;
     const many = planned.length > 1;
     const fence = (lines, lang = 'text') => '```' + lang + '\n' + lines.join('\n') + '\n```';
     // The queries alone, as JSON – what a store is asked; the page's
