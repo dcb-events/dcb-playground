@@ -6441,7 +6441,7 @@ function queryItemRow(item, { from = false } = {}) {
       ? [h('span', { class: 'dq-key' }, 'from'), h('span', { class: 'dq-from' }, item.from.join(' · '))]
       : null,
     h('span', { class: 'dq-key' }, 'types'),
-    h('span', { class: 'dq-chips' }, item.types.length
+    h('span', { class: 'dq-chips' }, item.types
       ? item.types.map((type) => h('span', { class: 'dq-type' }, type))
       : h('span', { class: 'dq-any' }, 'any type')),
     h('span', { class: 'dq-key' }, 'tags'),

@@ -2606,7 +2606,8 @@ function boundarySummary(model, body) {
 // per read; the store is asked one per tag set (`evDecideThroughPort`
 // merges them), so two reads of the same course are one item here –
 // `from` names the reads that contributed. A read of any type makes its
-// item any type: `types` empty, as the specification spells it.
+// item any type: `types` left out. An empty list is never written – the
+// specification reads it as matching nothing (`memoryStore`).
 //
 // `after` is where the append condition's position comes from. A chain
 // – more than one call – takes head first, since no one read's last
@@ -2628,7 +2629,7 @@ function commandPlan(summary) {
       if (from && !merged.from.includes(from)) merged.from.push(from);
       if (item.fannedOut) merged.fannedOut = true;
     }
-    return [...byTags.values()].map(({ types, anyType, ...rest }) => ({ types: anyType ? [] : [...types].sort(), ...rest }));
+    return [...byTags.values()].map(({ types, anyType, ...rest }) => (anyType ? rest : { types: [...types].sort(), ...rest }));
   });
   return { calls, after: calls.length > 1 ? 'head' : 'read' };
 }

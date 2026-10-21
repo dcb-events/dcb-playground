@@ -3871,6 +3871,65 @@ function modelsWithScenarios() {
     eq(compared > 50, true, `${compared} scenarios compared`);
   });
 
+  check('a query item names at least one type, or leaves types out to match any type', () => {
+    const tagged = (type, tags) => ({ type, data: {}, tags });
+    const store = sandbox.memoryStore([tagged('A', ['X:1']), tagged('B', ['X:1']), tagged('A', ['X:2'])]);
+    eq(store.read([{ types: ['A'], tags: ['X:1'] }]).map((e) => e.position), [1], 'types given: one of them');
+    eq(store.read([{ tags: ['X:1'] }]).map((e) => e.position), [1, 2], 'types left out: any type');
+    let refused = null;
+    try { store.read([{ types: [], tags: ['X:1'] }]); } catch (error) { refused = error.message; }
+    eq(/empty types list matches nothing/.test(refused || ''), true, `an empty list is refused, not read as any type: ${refused}`);
+    refused = null;
+    try { store.append([tagged('A', [])], { failIfEventsMatch: [{ types: [], tags: [] }], after: 3 }); } catch (error) { refused = error.message; }
+    eq(/empty types list/.test(refused || ''), true, 'in an append condition too');
+    eq(store.events.length, 3, 'and nothing appended');
+  });
+
+  check('no plan, read or append condition ever carries an empty types list', () => {
+    const empty = (item) => Array.isArray(item.types) && !item.types.length;
+    let looked = 0;
+    for (const { name, model } of modelsWithScenarios()) {
+      for (const [command, body] of Object.entries(model['command-definitions'])) {
+        const plan = sandbox.commandPlan(sandbox.boundarySummary(model, body));
+        eq(plan.calls.flat().filter(empty), [], `${name}: ${command} – planned`);
+        looked++;
+      }
+      for (const scenario of Object.values(model['scenario-definitions'] || {})) {
+        const trace = [];
+        handleCommand(model, storeOf(model, sandbox.scenarioLog(scenario)), scenario.command,
+          (scenario.when && scenario.when.arguments) || {}, { trace });
+        const items = trace.flatMap((entry) => (entry.call === 'read' ? entry.query
+          : entry.call === 'append' && entry.condition ? entry.condition.failIfEventsMatch : []));
+        eq(items.filter(empty), [], `${name}: ${scenario.name} – asked`);
+        eq(trace.some((entry) => entry.failed), false, `${name}: ${scenario.name} – the store took every call`);
+      }
+    }
+    eq(looked > 20, true, `${looked} commands planned`);
+  });
+
+  check('a read of any type under a tag is planned with types left out', () => {
+    const { id, model } = openBlank('Any type');
+    addDefinition('entity-definition', id, 'Counter', { properties: [] });
+    addTaggedEvent(id, 'Ticked', {
+      properties: [{ name: 'counterId', propertyType: 'CounterId', isOptional: false, isList: false }],
+    });
+    addDefinition('projection-definition', id, 'CounterTotal', {
+      tags: [{ name: 'counterId', tagType: 'CounterId' }], valueType: 'integer', isList: false,
+      initialValue: 0, handlers: [{ event: 'Ticked', operation: 'increment', value: 1 }],
+    });
+    updateDefinition('entity-definition', id, 'Counter', { properties: [{ name: 'total', projection: 'CounterTotal' }] });
+    // Bound, and nothing of it read: the boundary still names the
+    // counter's tag, with no type to narrow it.
+    addDefinition('command-definition', id, 'Tick', {
+      properties: [{ name: 'counterId', propertyType: 'CounterId', isOptional: false, isList: false }],
+      boundary: [{ alias: 'counter', entity: 'Counter', id: { parameterName: 'counterId' } }],
+      conditions: [],
+      publishes: [{ name: 'Ticked', parameters: { counterId: { parameterName: 'counterId' } } }],
+    });
+    const [[item]] = sandbox.commandPlan(sandbox.boundarySummary(model(), model()['command-definitions'].Tick)).calls;
+    eq(item, { tags: ['CounterId:{counterId}'], from: ['counter'], fannedOut: false }, 'no types key at all');
+  });
+
   const simple = () => {
     const model = build(PREDEFINED_INDEX('course-simple'));
     const log = [];

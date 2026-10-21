@@ -1234,8 +1234,16 @@ Artboards: `design/dcb-queries/` (2026-10).
 - **A log passes every type; the port asks for the handled ones.**
   Over a log, filtering by type would be a pass for nothing – the fold
   skips what it has no handler for. A fold that handles no event reads
-  nothing through the port, because an empty `types` means "any type"
-  to a store.
+  nothing through the port.
+- **`types` is left out, or names at least one type (2026-10).** The
+  specification asks that an event's type match one of an item's
+  types, so `types: []` matches nothing; a store reading it as "any
+  type" would turn a fold that reads nothing into a condition on every
+  event. So an empty list is refused (`memoryStore`), an item without
+  `types` matches any type, and a plan that reads any type under a tag
+  leaves `types` out rather than writing it empty. A test holds every
+  plan, read and append condition of the shipped models and fixtures
+  to it.
 - **Held by a test.** Every command scenario of the shipped models
   and the fixtures decides the same through a port as over the log,
   and the call counts above are asserted (evaluate.test.js).
