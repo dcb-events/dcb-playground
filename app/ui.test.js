@@ -2368,6 +2368,58 @@ function build(index) {
 }
 
 // ---------------------------------------------------------------
+// The history over plain values (model.js): a tab's histories and a
+// log's events in, the log as it then is out – no storage, no page.
+// ---------------------------------------------------------------
+{
+  const ev = (id, name) => ({ timestamp: 't-' + name, type: 'event-definition-added', data: { 'dcb-model-id': id, name } });
+  const label = (group) => group.map((e) => e.data.name).join('+');
+  const names = (events) => events.map((e) => e.data.name);
+  const start = () => {
+    const events = [ev('a', 'a1'), ev('b', 'b1'), ev('a', 'a2'), ev('b', 'b2')];
+    const histories = { models: {} };
+    sandbox.markHistories(histories, [events[0]], { label });
+    sandbox.markHistories(histories, [events[1]], { label });
+    sandbox.markHistories(histories, [events[2]], { label, agent: true });
+    return { events, histories };
+  };
+
+  check('a step is taken out of the middle of the log, and put back at its end', () => {
+    const { events, histories } = start();
+    const back = sandbox.travelHistory(histories, events, 'a', -1);
+    eq([names(back.events), back.moved], [['a1', 'b1', 'b2'], -1], 'a2 out, b2 untouched');
+    eq(back.events.map((e) => e.sequence), [0, 1, 2], 'renumbered');
+    eq(histories.models.a.undone.map((step) => [step.label, step.agent]), [['a2', true]], 'held for redo, as it was marked');
+    const forth = sandbox.travelHistory(histories, back.events, 'a', 1);
+    eq([names(forth.events), forth.moved], [['a1', 'b1', 'b2', 'a2'], 1], 'and back, after what came since');
+  });
+
+  check('a model changed elsewhere refuses, and its history starts again', () => {
+    const { events, histories } = start();
+    const result = sandbox.travelHistory(histories, [...events, ev('a', 'a3')], 'a', -1, 'now');
+    eq(result, { refused: true }, 'refused');
+    eq([histories.models.a, histories.restarted.a], [undefined, 'now'], 'dropped, and when noted');
+    eq(sandbox.travelHistory(histories, events.slice(0, 3), 'b', -1).moved, -1, 'another model\'s history still moves');
+  });
+
+  check('compaction may fold up to the oldest event a history still needs', () => {
+    const { events, histories } = start();
+    eq(sandbox.historyFloor(histories, events), 0, 'a1 is the first of model a\'s oldest step');
+    eq(sandbox.historyFloor({ models: {} }, events), events.length, 'no history needs nothing');
+  });
+
+  check('creating or deleting a model is no step; a deletion comes back to be offered', () => {
+    const histories = { models: {} };
+    sandbox.markHistories(histories, [ev('a', 'a1')], { label });
+    const deletion = { timestamp: 't', type: 'dcb-model-deleted', data: { 'dcb-model-id': 'a' } };
+    eq(sandbox.markHistories(histories, [deletion], { label }), [['a', deletion]], 'the deletion, to offer back');
+    eq(histories.models.a, undefined, 'and the history gone with the model');
+    sandbox.markHistories(histories, [{ timestamp: 't', type: 'dcb-model-created', data: { 'dcb-model-id': 'c' } }], { label });
+    eq(histories.models.c, undefined, 'a creation starts nothing to undo');
+  });
+}
+
+// ---------------------------------------------------------------
 // Every model has a history of its own. A step is the model's last
 // events, taken out of the shared log wherever they sit – so what
 // other models appended since stays exactly as it was.

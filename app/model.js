@@ -434,6 +434,167 @@ function compactLog() {
   notifyCompacted(compacted);
 }
 
+// ---------- undo histories ----------
+//
+// What a model's undo history is and how it moves, over plain values:
+// a tab's histories, `{ models: { [id]: { done, undone, trimmed } },
+// restarted }`, and the log's events. Nothing here stores, toasts or
+// repaints – the page keeps the histories in sessionStorage and says
+// what happened (see _History and undo_). Each function changes the
+// histories value it is handed, which the caller then stores.
+//
+// A step is not a position but a count: the model's last `n` events,
+// the newest of which still has to be the one the step ended with
+// (`stamp`). Positions move whenever another model's step is taken out
+// or the log is compacted; a model's own tail moves only when the model
+// itself changes. That is the one case a step is refused: the model was
+// changed elsewhere since, and undoing here would take that change too.
+
+// Steps kept per model; the oldest falls off.
+const HISTORY_LIMIT = 60;
+
+// An event as a step remembers it – by when it was written and what it
+// was, not by its sequence number, which a compaction or another
+// model's undo renumbers while the event itself is kept.
+function eventStamp(event) {
+  return event ? `${event.timestamp} ${event.type} ${event.data && event.data.name || ''}` : '';
+}
+function ofModel(event, modelId) {
+  return !!event.data && event.data['dcb-model-id'] === modelId;
+}
+// Where in the log each of a model's events sits, oldest first.
+function modelPositions(events, modelId) {
+  const at = [];
+  events.forEach((event, i) => { if (ofModel(event, modelId)) at.push(i); });
+  return at;
+}
+
+function historyOf(histories, modelId) {
+  return histories.models[modelId] || (histories.models[modelId] = { done: [], undone: [] });
+}
+
+// What a step changed, as the History page lists it – capped, since a
+// whole model applied as code can be hundreds of events.
+function changesOfStep(group) {
+  return group.slice(0, 40).map((event) => ({
+    type: event.type, name: event.data.name || null, from: event.data['previous-name'] || null,
+  }));
+}
+
+// One gesture's appends, as one step per model they touched. Creating a
+// model starts its history rather than being a step in it; deleting one
+// ends it, and the deletions come back – `[[id, event]]` – for the page
+// to offer to take back. `label` names a step from its events.
+function markHistories(histories, appended, { agent = false, via = null, label }) {
+  const byModel = new Map();
+  for (const event of appended) {
+    const id = event.data && event.data['dcb-model-id'];
+    if (!id) continue;
+    if (!byModel.has(id)) byModel.set(id, []);
+    byModel.get(id).push(event);
+  }
+  const deleted = [];
+  for (const [id, group] of byModel) {
+    const deletion = group.find((event) => event.type === 'dcb-model-deleted');
+    if (deletion) {
+      delete histories.models[id];
+      deleted.push([id, deletion]);
+      continue;
+    }
+    if (group.some((event) => event.type === 'dcb-model-created')) {
+      delete histories.models[id];
+      continue;
+    }
+    const history = historyOf(histories, id);
+    const last = group[group.length - 1];
+    history.done.push({
+      n: group.length, stamp: eventStamp(last), label: label(group),
+      time: last.timestamp, agent: !!agent, via: via || null, changes: changesOfStep(group),
+    });
+    // Redoing after a new change would mean putting back entries the
+    // model has moved on from, so the branch is dropped – on an agent's
+    // append exactly as on a button's.
+    history.undone = [];
+    if (history.done.length > HISTORY_LIMIT) {
+      history.done.shift();
+      history.trimmed = true;
+    }
+  }
+  return deleted;
+}
+
+// Moves a model's history `delta` steps – back when negative, forward
+// when positive – over `events`, however far it goes: `{ events, moved }`,
+// the log as it then is and how many steps it moved. A model changed
+// elsewhere since is `{ refused: true }`: its history is dropped and
+// the time noted in `restarted`, and the log is left as it was.
+function travelHistory(histories, events, modelId, delta, now = new Date().toISOString()) {
+  const history = histories.models[modelId];
+  if (!history) return { events, moved: 0 };
+  let moved = 0;
+  const refuse = () => {
+    delete histories.models[modelId];
+    histories.restarted = { ...histories.restarted, [modelId]: now };
+    return { refused: true };
+  };
+  while (delta < 0 && history.done.length) {
+    const mark = history.done[history.done.length - 1];
+    const at = modelPositions(events, modelId);
+    if (at.length < mark.n || eventStamp(events[at[at.length - 1]]) !== mark.stamp) return refuse();
+    const out = new Set(at.slice(-mark.n));
+    const removed = events.filter((event, i) => out.has(i));
+    events = events.filter((event, i) => !out.has(i));
+    const left = at.length > mark.n ? events[modelPositions(events, modelId).pop()] : null;
+    history.done.pop();
+    const { n, stamp, ...about } = mark;
+    history.undone.push({
+      events: removed.map(({ timestamp, type, data }) => ({ timestamp, type, data })),
+      base: eventStamp(left), ...about,
+    });
+    delta++; moved--;
+  }
+  while (delta > 0 && history.undone.length) {
+    const step = history.undone[history.undone.length - 1];
+    const at = modelPositions(events, modelId);
+    const newest = at.length ? eventStamp(events[at[at.length - 1]]) : '';
+    if (newest !== step.base) return refuse();
+    events = [...events, ...step.events];
+    history.undone.pop();
+    const { events: replayed, base, ...about } = step;
+    history.done.push({ n: replayed.length, stamp: eventStamp(replayed[replayed.length - 1]), ...about });
+    delta--; moved++;
+  }
+  return { events: moved ? events.map((event, i) => ({ ...event, sequence: i })) : events, moved };
+}
+
+// The first position of `events` some history still needs – the first
+// of a model's oldest step, or, with only redo left, the event its redo
+// has to find in place: how far compaction may fold.
+function historyFloor(histories, events) {
+  const ats = [events.length];
+  for (const [id, history] of Object.entries(histories.models)) {
+    const at = modelPositions(events, id);
+    const steps = history.done.reduce((sum, mark) => sum + mark.n, 0);
+    if (history.done.length && at.length >= steps) ats.push(at[at.length - steps]);
+    else if (history.undone.length && at.length) ats.push(at[at.length - 1]);
+  }
+  return Math.min(...ats);
+}
+
+// A model's undo steps, oldest first, each with how many of the model's
+// events came after it began – each one a point it can be compared
+// with. None once the model was changed elsewhere: the history no
+// longer stands, and its next undo drops it.
+function historyVersions(histories, events, modelId) {
+  const history = histories.models[modelId];
+  if (!history || !history.done.length) return [];
+  const at = modelPositions(events, modelId);
+  const newest = history.done[history.done.length - 1];
+  if (!at.length || eventStamp(events[at[at.length - 1]]) !== newest.stamp) return [];
+  let since = 0;
+  return history.done.slice().reverse().map((mark) => ({ ...mark, since: since += mark.n })).reverse();
+}
+
 function generateId() {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
     const r = (Math.random() * 16) | 0;

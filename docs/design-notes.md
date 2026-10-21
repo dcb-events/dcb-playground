@@ -1370,6 +1370,14 @@ Artboards: `design/dcb-queries/` (2026-10).
 - **The bottom row says where the history begins**: *Opened*, *From
   here* after a change elsewhere dropped it, or *Earlier changes* once
   the oldest fell off the sixty.
+- **The algorithm is model.js's; the page keeps the rest.** What a
+  step is, how a history moves, how far compaction may fold and which
+  steps Compare offers (`markHistories`, `travelHistory`,
+  `historyFloor`, `historyVersions`) take a tab's histories and the
+  log's events and return what follows, so they are tested over plain
+  arrays. The page stores the histories, batches a gesture's appends,
+  writes the log and says what happened. Before, all of it lived in
+  the page, and the history's shape was read in four places.
 
 ## The core and its other consumers
 
