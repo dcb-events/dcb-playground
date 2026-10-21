@@ -940,7 +940,7 @@ Watched, Decision, Store. Only the panel scrolls.
   entity: keyed by entity, a model without entities (every shipped one
   but the experimental ones) was offered nothing. Scenarios use the
   same keying (`identifiersInUse`).
-- **The playhead can sit inside a step.** `sessionStepAt` is the step
+- **The playhead can sit inside a step.** `session.stepAt` is the step
   the last visible event belongs to, even when only some of its events
   are visible. The Decision tab shows those; the rest are faint.
 - **Now folds the read again; it does not decide again.** The Now

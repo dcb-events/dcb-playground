@@ -239,6 +239,19 @@ async function call(name, args) {
     eq(staged.steps.length, 1, 'still the one step');
   });
 
+  await check('the sandbox tools read the open model\'s session, not the one last shown', async () => {
+    const previous = sandbox.activeModelId();
+    sandbox.setActiveModelId(loadPredefinedModel(sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-simple')));
+    try {
+      const { value: other } = await call('get_sandbox');
+      eq(other.steps.length, 0, 'another model has a sandbox of its own');
+    } finally {
+      sandbox.setActiveModelId(previous);
+    }
+    const { value: back } = await call('get_sandbox');
+    eq(back.steps.length, 1, 'and this one still has its step');
+  });
+
   await check('reset_sandbox empties the timeline, leaving the model alone', async () => {
     await call('reset_sandbox');
     const { value: staged } = await call('get_sandbox');

@@ -2125,7 +2125,7 @@ const linkedEnvelopes = new WeakSet();
 function switchToModel(id) {
   if (addressModelId && id !== addressModelId) dropAddressLink();
   setActiveModelId(id);
-  loadSession(id);
+  session.open(id);
   setPendingFeatures([]);
   state.namePrompt = null;
   state.slice = null;
@@ -2268,7 +2268,7 @@ function modelsModal() {
                 switchToModel(rest[0]);
               } else {
                 clearActiveModelId();
-                sessionReset();
+                session.reset();
                 setPendingFeatures([]);
                 state.slice = null; state.view = 'slice';
               }
@@ -6053,7 +6053,7 @@ function restoreMainFocusRank(rank) {
 // to on screen. It is out here because the painter below returns early
 // once it knows which view it is drawing.
 function render() {
-  loadSession(activeModelId());
+  session.open(activeModelId());
   const focusRank = mainFocusRank();
   const modalRank = definitionModalFocusRank();
   paintPage();
@@ -15155,75 +15155,15 @@ function draftStartedAt(model, draft, start) {
 // loud at the moment you try it, and then it is gone.
 // ============================================================
 
-const session = {
-  log: [],        // events so far – the shape `evaluate.js` reads
-  steps: [],      // one per command that went through: { command, args, from, to }
-  at: null,       // how many events are visible; null means all of them
-  // What to show wherever you are on the timeline. Two shapes, because
-  // there are two things worth following: `{kind:'entity', tag}` for
-  // one instance's whole state, and `{kind:'projection', projection,
-  // arguments}` for one fold – a numbering, a running total, anything
-  // no command in view happens to have read.
-  pinned: [],
-  model: null,    // the id of the model this session belongs to
-};
-
 // Versioned with the event log: the session holds events in the shape
 // the model's definitions give them, and a new log version starts from
 // models that no longer exist.
 const SANDBOX_KEY = 'dcb-playground:sandbox:' + EVENT_LOG_KEY.split(':').pop();
 
-function storedSessions() {
-  try {
-    const stored = JSON.parse(sessionStorage.getItem(SANDBOX_KEY));
-    return stored && typeof stored === 'object' ? stored : {};
-  } catch { return {}; }
-}
-
-// Called after every change to the session; the draft, edited in place
-// by the value editors, is caught up on `pagehide` too. Sessions of
-// models deleted since are dropped here.
-function saveSession() {
-  if (!session.model) return;
-  const all = storedSessions();
-  const models = projectState();
-  for (const id of Object.keys(all)) if (!models[id]) delete all[id];
-  const draft = typeof state === 'object' && state ? state.sandboxDraft : null;
-  if (!models[session.model]) delete all[session.model];
-  else if (session.log.length || session.pinned.length || draft) {
-    all[session.model] = { log: session.log, steps: session.steps, at: session.at, pinned: session.pinned, draft };
-  } else delete all[session.model];
-  try {
-    sessionStorage.setItem(SANDBOX_KEY, JSON.stringify(all));
-  } catch {
-    toast('This sandbox will not survive a reload: this tab’s storage is full.', true);
-  }
-}
-
-// Makes `modelId`'s session the one on screen, from where it was put
-// aside – a no-op when it already is. `render` asks on every paint, so
-// a model deleted in another tab cannot leave its session showing
-// against the one this tab falls back to.
-function loadSession(modelId) {
-  if (session.model === modelId) return;
-  saveSession();
-  const stored = (modelId && storedSessions()[modelId]) || {};
-  const list = (value) => (Array.isArray(value) ? value : []);
-  session.log = list(stored.log);
-  session.steps = list(stored.steps);
-  session.at = Number.isInteger(stored.at) && stored.at >= 0 && stored.at < session.log.length ? stored.at : null;
-  session.pinned = list(stored.pinned);
-  session.model = modelId;
-  if (typeof state === 'object' && state) state.sandboxDraft = stored.draft || null;
-}
-window.addEventListener('pagehide', saveSession);
-
-function sessionReset() {
-  session.log = [];
-  session.steps = [];
-  session.at = null;
-  session.pinned = [];
-  saveSession();
+// The log as a DCB event store (`memoryStore`, evaluate.js): each
+// event at its position, tagged as the model tags it.
+function sessionStore(model, log) {
+  return memoryStore(log.map((event) => ({ type: event.type, data: event.data, tags: tagsOfEvent(model, event.type, event.data) })));
 }
 
 // A watch, as a string – its identity for pinning and unpinning.
@@ -15233,68 +15173,146 @@ function watchKey(watch) {
     : 'projection:' + watch.projection + ':' + JSON.stringify(watch.tags || {}) + ':' + JSON.stringify(watch.arguments || {});
 }
 
-function isPinned(watch) {
-  const key = watchKey(watch);
-  return session.pinned.some((w) => watchKey(w) === key);
+// The session, as one module: what was run, where the playhead is,
+// what is watched, and the storage all of it outlives a reload in.
+// Everything that changes it goes through here – the driver, the
+// scrubber, the pins, an import's recorded steps and the agent tools –
+// so the rules a change has to keep live once: the session written
+// back after every change, the right model's session loaded before
+// any, the draft thrown away with the run. Readers take `log`, `steps`
+// and `pinned` as they are and never write to them.
+//
+// The driver's draft stays in `state.sandboxDraft`, because the value
+// editors fill it in place and `closeForms` treats it as an open form;
+// the session only keeps it with the run and drops it with the run.
+//
+// A factory rather than one object so a test can stand up a second
+// session over the same storage – which is what a reload is.
+function sandboxSession() {
+  let log = [];       // events so far – the shape `evaluate.js` reads
+  let steps = [];     // one per command that went through: { command, args, from, to }
+  let at = null;      // how many events are visible; null means all of them
+  // What to show wherever you are on the timeline. Two shapes, because
+  // there are two things worth following: `{kind:'entity', tag}` for
+  // one instance's whole state, and `{kind:'projection', projection,
+  // arguments}` for one fold – a numbering, a running total, anything
+  // no command in view happens to have read.
+  let pinned = [];
+  let owner = null;   // the id of the model this session belongs to
+
+  const hasState = () => typeof state === 'object' && state;
+
+  function stored() {
+    try {
+      const all = JSON.parse(sessionStorage.getItem(SANDBOX_KEY));
+      return all && typeof all === 'object' ? all : {};
+    } catch { return {}; }
+  }
+
+  // Called after every change; the draft, edited in place by the value
+  // editors, is caught up on `pagehide` too. Sessions of models deleted
+  // since are dropped here.
+  function save() {
+    if (!owner) return;
+    const all = stored();
+    const models = projectState();
+    for (const id of Object.keys(all)) if (!models[id]) delete all[id];
+    const draft = hasState() ? state.sandboxDraft : null;
+    if (!models[owner]) delete all[owner];
+    else if (log.length || pinned.length || draft) all[owner] = { log, steps, at, pinned, draft };
+    else delete all[owner];
+    try {
+      sessionStorage.setItem(SANDBOX_KEY, JSON.stringify(all));
+    } catch {
+      toast('This sandbox will not survive a reload: this tab’s storage is full.', true);
+    }
+  }
+
+  // Makes `modelId`'s session the one on screen, from where it was put
+  // aside – a no-op when it already is. `render` asks on every paint, so
+  // a model deleted in another tab cannot leave its session showing
+  // against the one this tab falls back to.
+  function open(modelId) {
+    if (owner === modelId) return;
+    save();
+    const kept = (modelId && stored()[modelId]) || {};
+    const list = (value) => (Array.isArray(value) ? value : []);
+    log = list(kept.log);
+    steps = list(kept.steps);
+    at = Number.isInteger(kept.at) && kept.at >= 0 && kept.at < log.length ? kept.at : null;
+    pinned = list(kept.pinned);
+    owner = modelId;
+    if (hasState()) state.sandboxDraft = kept.draft || null;
+  }
+
+  const position = () => (at === null ? log.length : at);
+  const isWatched = (watch) => pinned.some((w) => watchKey(w) === watchKey(watch));
+
+  return {
+    get log() { return log; },
+    get steps() { return steps; },
+    get pinned() { return pinned; },
+    open,
+    save,
+    position,
+    visible: () => log.slice(0, position()),
+    // The step a position sits inside – the command whose events were
+    // the last to arrive, all of them or, scrubbed into the middle of
+    // a step, some. Nothing at position zero: before the first command
+    // there is no decision to look at.
+    stepAt: (p) => steps.find((s) => p > s.from && p <= s.to) || null,
+    // Moves the playhead, clamped to the run; the end is kept as
+    // "wherever the end is", so the next step stays in view.
+    seek(next) {
+      const to = Math.max(0, Math.min(log.length, next));
+      at = to === log.length ? null : to;
+      save();
+    },
+    isWatched,
+    toggleWatch(watch) {
+      pinned = isWatched(watch) ? pinned.filter((w) => watchKey(w) !== watchKey(watch)) : [...pinned, watch];
+      save();
+    },
+    // The run, the watches and the draft go together: a draft kept
+    // across "start over" would be the one thing that did not.
+    reset() {
+      log = [];
+      steps = [];
+      at = null;
+      pinned = [];
+      if (hasState()) state.sandboxDraft = null;
+      save();
+    },
+    // Drives a command against everything recorded so far. It runs what
+    // dcb-runtime runs: the cycle against an event store
+    // (`handleCommand`), here one in memory over the log. A refusal
+    // changes nothing – not the log, not the position – and comes back
+    // as the ordinary outcome it is; only a run that cannot be
+    // evaluated at all throws. Nothing else writes to the store, so it
+    // never loses a race.
+    drive(model, commandName, args) {
+      open(model.id);
+      const result = handleCommand(model, sessionStore(model, log), commandName, args);
+      if (result.outcome === 'rejected') return { outcome: 'rejected', failedRule: result.failedRule, reads: result.reads };
+      if (result.outcome !== 'published') throw new EvaluationError(result.message || 'The decision lost a race nothing ran.');
+      const events = result.events.map(({ type, data }) => ({ type, data }));
+      const from = log.length;
+      log = [...log, ...events];
+      steps = [...steps, { command: commandName, args, from, to: log.length }];
+      at = null;
+      save();
+      return { outcome: 'published', events, reads: result.reads };
+    },
+  };
 }
 
-function togglePinned(watch) {
-  const key = watchKey(watch);
-  session.pinned = isPinned(watch)
-    ? session.pinned.filter((w) => watchKey(w) !== key)
-    : [...session.pinned, watch];
-  saveSession();
-  render();
-}
-
-function sessionPosition() {
-  return session.at === null ? session.log.length : session.at;
-}
-
-function sessionVisible() {
-  return session.log.slice(0, sessionPosition());
-}
-
-// The step the current position sits inside – the command whose
-// events were the last to arrive, all of them or, scrubbed into the
-// middle of a step, some. Nothing at position zero: before the first
-// command there is no decision to look at.
-function sessionStepAt(position) {
-  return session.steps.find((s) => position > s.from && position <= s.to) || null;
-}
-
-// The log as a DCB event store (`memoryStore`, evaluate.js): each
-// event at its position, tagged as the model tags it.
-function sessionStore(model, log) {
-  return memoryStore(log.map((event) => ({ type: event.type, data: event.data, tags: tagsOfEvent(model, event.type, event.data) })));
-}
-
-// Drives a command against everything recorded so far – the one seam
-// the driver button, an import's recorded steps and the agent tools
-// all go through. It runs what dcb-runtime runs: the cycle against an
-// event store (`handleCommand`), here one in memory over the log. A
-// refusal changes nothing – not the log, not the position – and comes
-// back as the ordinary outcome it is; only a run that cannot be
-// evaluated at all throws. Nothing else writes to the store, so it
-// never loses a race.
-function sessionDrive(model, commandName, args) {
-  loadSession(model.id);
-  const result = handleCommand(model, sessionStore(model, session.log), commandName, args);
-  if (result.outcome === 'rejected') return { outcome: 'rejected', failedRule: result.failedRule, reads: result.reads };
-  if (result.outcome !== 'published') throw new EvaluationError(result.message || 'The decision lost a race nothing ran.');
-  const events = result.events.map(({ type, data }) => ({ type, data }));
-  const from = session.log.length;
-  session.log.push(...events);
-  session.steps.push({ command: commandName, args, from, to: session.log.length });
-  session.at = null;
-  saveSession();
-  return { outcome: 'published', events, reads: result.reads };
-}
+const session = sandboxSession();
+window.addEventListener('pagehide', () => session.save());
 
 function sessionRun(model, commandName, args) {
   let result;
   try {
-    result = sessionDrive(model, commandName, args);
+    result = session.drive(model, commandName, args);
   } catch (error) {
     return toast(evaluationFailure(error), true);
   }
@@ -15309,7 +15327,7 @@ function sessionRun(model, commandName, args) {
 // folds the same way a declared one does: the binding's one
 // identifier-typed argument is the instance itself, which is all this
 // card has to give it.
-function sessionInstanceState(model, tag, log = sessionVisible()) {
+function sessionInstanceState(model, tag, log = session.visible()) {
   const [entityName, id] = [tag.slice(0, tag.indexOf(':')), tag.slice(tag.indexOf(':') + 1)];
   const entity = model['entity-definitions'][entityName];
   if (!entity) return null;
@@ -15454,12 +15472,11 @@ function trackPointer(onMove) {
 
 function sandboxTimeline(model) {
   const total = session.log.length;
-  const position = sessionPosition();
+  const position = session.position();
   const goTo = (next) => {
     const at = Math.max(0, Math.min(total, next));
     if (at === position) return;
-    session.at = at === total ? null : at;
-    saveSession();
+    session.seek(at);
     render();
   };
   const mode = state.sandboxLanes;
@@ -15470,7 +15487,7 @@ function sandboxTimeline(model) {
 
   // The step the playhead is inside – its events are the ones the page
   // above is about, so they are banded across every lane.
-  const current = sessionStepAt(position);
+  const current = session.stepAt(position);
   const pitch = sandboxPitch();
   const compact = mode === 'compact';
   const at = (n) => `${n * pitch}px`;
@@ -15588,7 +15605,7 @@ function keepLanesInView() {
   const view = sandboxLanesView;
   lanes.scrollTop = view.top;
   lanes.scrollLeft = view.left;
-  const position = sessionPosition();
+  const position = session.position();
   if (position !== view.position) {
     view.position = position;
     const pitch = sandboxPitch();
@@ -15610,8 +15627,8 @@ function keepLanesInView() {
 // command would no longer go through, that is worth being told rather
 // than being shown a boundary that no longer applies.
 function sandboxDecision(model) {
-  const position = sessionPosition();
-  const step = sessionStepAt(position);
+  const position = session.position();
+  const step = session.stepAt(position);
   if (!step) {
     return h('div', { class: 'card' },
       h('div', { class: 'empty' }, 'Nothing has happened yet.'));
@@ -15664,11 +15681,11 @@ function sandboxDecision(model) {
 }
 
 function pinButton(watch) {
-  const on = isPinned(watch);
+  const on = session.isWatched(watch);
   return h('button', {
     class: 'pin' + (on ? ' on' : ''),
     title: on ? 'Stop watching this one' : 'Watch this one wherever you are on the timeline',
-    onclick: () => togglePinned(watch),
+    onclick: () => { session.toggleWatch(watch); render(); },
   }, on ? '★' : '☆');
 }
 
@@ -15763,7 +15780,7 @@ function projectionWatchCard(model, watch) {
           : JSON.stringify(inside.value)))) : null);
 }
 
-function foldWatch(model, watch, fold, log = sessionVisible()) {
+function foldWatch(model, watch, fold, log = session.visible()) {
   try {
     return { value: (fold || foldProjection)(model, log, watch.projection, watchRead(watch)) };
   } catch (error) {
@@ -15819,11 +15836,11 @@ function sandboxWatched(model) {
 // How many watches the step at the playhead changed – said on the tab,
 // so a change is noticed without opening it.
 function watchesChangedByStep(model) {
-  const step = sessionStepAt(sessionPosition());
+  const step = session.stepAt(session.position());
   if (!step) return 0;
   return session.pinned.filter((watch) => {
     const before = watchValueAt(model, watch, session.log.slice(0, step.from));
-    const now = watchValueAt(model, watch, sessionVisible());
+    const now = watchValueAt(model, watch, session.visible());
     return before && now && before.key !== now.key;
   }).length;
 }
@@ -15879,7 +15896,7 @@ function watchHistory(model, watch) {
   if (!total) return null;
   const series = watchSeries(model, watch).filter((p) => p.value);
   if (!series.length) return null;
-  const position = sessionPosition();
+  const position = session.position();
   const x = (n) => (n / total * 100).toFixed(2);
   const nums = series.map((p) => p.value.num);
   const gap = (p) => p.value.num === null && (p.value.key === 'null' || p.value.key[0] === '\0');
@@ -15926,11 +15943,11 @@ function watchHistory(model, watch) {
 function watchTile(model, watch) {
   const card = watchCard(model, watch);
   card.classList.add('sbx-tile');
-  const position = sessionPosition();
-  const step = sessionStepAt(position);
+  const position = session.position();
+  const step = session.stepAt(position);
   if (step) {
     const before = watchValueAt(model, watch, session.log.slice(0, step.from));
-    const now = watchValueAt(model, watch, sessionVisible());
+    const now = watchValueAt(model, watch, session.visible());
     const changed = before && now && before.key !== now.key;
     if (changed) card.classList.add('changed');
     card.appendChild(h('div', { class: 'sbx-delta' + (changed ? ' changed' : '') },
@@ -15986,14 +16003,15 @@ function watchProjectionAdder(model, names) {
               return toast(`Say which ${readable(tag.tagType)} to watch it tagged by.`, true);
             }
           }
-          // The draft must close before the pin repaints: `togglePinned`
-          // renders, and a paint with the draft still set leaves this
+          // The draft must close before the pin repaints: a paint
+          // with the draft still set leaves this
           // form on screen holding a stale closure – whose resubmission
           // carries the old arguments and so *unpins* the watch it just
           // added.
           const watch = projectionWatch(draft.projection, deepClone(draft.tags || {}), { ...draft.arguments });
           state.watchDraft = null;
-          togglePinned(watch);
+          session.toggleWatch(watch);
+          render();
         },
       }, 'Watch it'),
       h('button', {
@@ -16031,8 +16049,8 @@ function sessionIdentifiers(model, typeName) {
 // Deciding the command again would not do: a refusal stops short of
 // the reads after the rule that refused it.
 function sandboxNow(model) {
-  const position = sessionPosition();
-  const step = sessionStepAt(position);
+  const position = session.position();
+  const step = session.stepAt(position);
   if (!step) {
     return h('div', { class: 'card' },
       h('div', { class: 'empty' }, 'Nothing has happened yet.'));
@@ -16089,8 +16107,8 @@ function sandboxNow(model) {
 // Its events past the playhead are on the page but faint – the
 // position can sit inside a step, and those have not happened yet.
 function sandboxAppended(model) {
-  const position = sessionPosition();
-  const step = sessionStepAt(position);
+  const position = session.position();
+  const step = session.stepAt(position);
   if (!step) return h('div', { class: 'empty' }, '–');
   return h('div', {},
     h('div', { class: 'sc-line' },
@@ -16132,7 +16150,7 @@ function sandboxStoreRun(model, step) {
 }
 
 function sandboxStore(model, run) {
-  const step = sessionStepAt(sessionPosition());
+  const step = session.stepAt(session.position());
   if (!step) return h('div', { class: 'card' }, h('div', { class: 'empty' }, 'Nothing has happened yet.'));
   const { trace, outcome } = run || sandboxStoreRun(model, step);
   const json = queryAsJson();
@@ -16210,7 +16228,7 @@ function sandboxStore(model, run) {
 // through – and its tab says how many the step changed, so a change is
 // noticed from the others.
 function sandboxPanel(model) {
-  const step = sessionStepAt(sessionPosition());
+  const step = session.stepAt(session.position());
   const current = state.sandboxTab || 'watched';
   const run = step && current === 'store' ? sandboxStoreRun(model, step) : null;
   const changed = watchesChangedByStep(model);
@@ -16273,7 +16291,7 @@ function renderSandbox(model, main) {
           label: 'Start over',
           title: 'Throw all of this away and start from nothing',
           confirm: 'Really start over?',
-          onRemove: () => { state.sandboxDraft = null; sessionReset(); render(); },
+          onRemove: () => { session.reset(); render(); },
         })
       : null));
 

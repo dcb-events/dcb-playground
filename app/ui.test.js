@@ -901,28 +901,28 @@ function build(index) {
   const session = sandbox.session;
 
   check('driving a command fills the sandbox log', () => {
-    sandbox.sessionReset();
+    session.reset();
     sandbox.sessionRun(active(), 'DefineCourse', { capacity: 5 });
     sandbox.sessionRun(active(), 'DefineCourse', { capacity: 5 });
     eq(session.log.map((e) => e.data.courseId), ['c1', 'c2'], 'two courses, minted');
   });
 
   check('a reload loses nothing of the sandbox, and each model keeps its own', () => {
-    sandbox.sessionReset();
+    session.reset();
     sandbox.sessionRun(active(), 'DefineCourse', { capacity: 5 });
     sandbox.sessionRun(active(), 'DefineCourse', { capacity: 5 });
-    sandbox.togglePinned(sandbox.projectionWatch('CourseNumbering', []));
-    session.at = 1;
+    session.toggleWatch(sandbox.projectionWatch('CourseNumbering', []));
+    session.seek(1);
     sandbox.state.sandboxDraft = { command: 'DefineCourse', arguments: { capacity: 7 } };
-    sandbox.saveSession();
-    // What a reload leaves: sessionStorage, and nothing in memory.
-    Object.assign(session, { log: [], steps: [], at: null, pinned: [], model: null });
+    session.save();
+    // What a reload leaves: sessionStorage, and a fresh session over it.
     sandbox.state.sandboxDraft = null;
-    sandbox.loadSession(id);
-    eq(session.log.map((e) => e.data.courseId), ['c1', 'c2'], 'the run');
-    eq(session.steps.length, 2, 'its steps');
-    eq(session.at, 1, 'the playhead');
-    eq(session.pinned.map((w) => w.projection), ['CourseNumbering'], 'the watches');
+    const reloaded = sandbox.sandboxSession();
+    reloaded.open(id);
+    eq(reloaded.log.map((e) => e.data.courseId), ['c1', 'c2'], 'the run');
+    eq(reloaded.steps.length, 2, 'its steps');
+    eq(reloaded.position(), 1, 'the playhead');
+    eq(reloaded.pinned.map((w) => w.projection), ['CourseNumbering'], 'the watches');
     eq(sandbox.state.sandboxDraft.arguments.capacity, 7, 'the draft');
     const other = sandbox.createDcbModel('Other');
     sandbox.switchToModel(other);
@@ -930,17 +930,24 @@ function build(index) {
     sandbox.switchToModel(id);
     eq(session.log.length, 2, 'and switching back finds the run put aside');
     sandbox.deleteDcbModel(other);
-    sandbox.saveSession();
+    session.save();
     eq(Object.keys(JSON.parse(sandbox.sessionStorage.getItem('dcb-playground:sandbox:' + sandbox.EVENT_LOG_KEY.split(':').pop()))), [id], 'a deleted model’s session is dropped');
-    sandbox.sessionReset();
+    session.reset();
     sandbox.state.view = 'overview';
   });
 
+  check('starting over throws the draft away with the run', () => {
+    sandbox.sessionRun(active(), 'DefineCourse', { capacity: 5 });
+    sandbox.state.sandboxDraft = { command: 'DefineCourse', arguments: { capacity: 7 } };
+    session.reset();
+    eq([session.log.length, sandbox.state.sandboxDraft], [0, null], 'nothing left of either');
+  });
+
   check('the Store column shows what a step asked the store: its read, and the append after it', () => {
-    sandbox.sessionReset();
+    session.reset();
     sandbox.sessionRun(active(), 'DefineCourse', { capacity: 5 });
     sandbox.sessionRun(active(), 'DefineCourse', { capacity: 5 });
-    session.at = null;
+    session.seek(Infinity);
     const column = sandbox.sandboxStore(active());
     const calls = findAll(column, (n) => /\bsbx-call\b/.test(n.className || ''));
     eq(calls.map((call) => textOf(findAll(call, (n) => n.className === 'verb')[0])), ['read', 'append'], 'a read, then the append');
@@ -949,17 +956,18 @@ function build(index) {
     const append = textOf(calls[1]);
     eq(append.includes('position 2') && append.includes('failIfEventsMatch') && append.includes('after: 1'), true,
       `where it landed, and its condition: ${append}`);
-    session.at = 1;
+    session.seek(1);
     eq(findAll(sandbox.sandboxStore(active()), (n) => /\bsbx-call\b/.test(n.className || '')).length, 2,
       'and the first step, worked out against the log as it stood before it');
-    session.at = null;
+    session.seek(Infinity);
   });
 
   check('the panel under the timeline opens on Watched, and its tabs say what is behind them', () => {
-    sandbox.sessionReset();
+    session.reset();
     sandbox.sessionRun(active(), 'DefineCourse', { capacity: 5 });
     sandbox.sessionRun(active(), 'DefineCourse', { capacity: 5 });
-    session.pinned.push(sandbox.projectionWatch('CourseNumbering', []));
+    const numbering = sandbox.projectionWatch('CourseNumbering', []);
+    session.toggleWatch(numbering);
     sandbox.state.sandboxTab = 'watched';
     const tabsOf = (panel) => findAll(panel, (n) => /\bsbx-tab\b/.test(n.className || '')).map(textOf);
     try {
@@ -975,36 +983,36 @@ function build(index) {
       eq(textOf(sandbox.sandboxPanel(active())).includes('Append'), true, 'Decision: what it appended, read, and holds now');
     } finally {
       sandbox.state.sandboxTab = 'watched';
-      session.pinned.length = 0;
+      session.toggleWatch(numbering);
     }
   });
 
   check('a watched projection folds at the position being looked at', () => {
     const watch = sandbox.projectionWatch('CourseNumbering', []);
-    session.at = null;
+    session.seek(Infinity);
     eq(sandbox.foldWatch(active(), watch), { value: 'c3' }, 'at the end, the next to issue');
-    session.at = 1;
+    session.seek(1);
     eq(sandbox.foldWatch(active(), watch), { value: 'c2' }, 'one event in');
-    session.at = 0;
+    session.seek(0);
     eq(sandbox.foldWatch(active(), watch), { value: 'c1' }, 'before anything');
-    session.at = null;
+    session.seek(Infinity);
   });
 
   check('watching is toggled by one identity, arguments included', () => {
     const global_ = sandbox.projectionWatch('CourseNumbering', []);
-    eq(sandbox.isPinned(global_), false, 'not watched to begin with');
-    sandbox.togglePinned(global_);
-    eq(sandbox.isPinned(global_), true, 'watched');
+    eq(session.isWatched(global_), false, 'not watched to begin with');
+    session.toggleWatch(global_);
+    eq(session.isWatched(global_), true, 'watched');
     // The same projection at a different partition is a different watch.
-    eq(sandbox.isPinned(sandbox.projectionWatch('CourseNumbering', [{ tagType: 'TenantId', tagValue: 't1' }])), false,
+    eq(session.isWatched(sandbox.projectionWatch('CourseNumbering', [{ tagType: 'TenantId', tagValue: 't1' }])), false,
       'another partition is another thing to watch');
-    sandbox.togglePinned(global_);
-    eq(sandbox.isPinned(global_), false, 'unwatched');
+    session.toggleWatch(global_);
+    eq(session.isWatched(global_), false, 'unwatched');
   });
 
   check('an entity instance and a projection are both watchable, side by side', () => {
-    sandbox.togglePinned(sandbox.entityWatch('CourseId:c1'));
-    sandbox.togglePinned(sandbox.projectionWatch('CourseNumbering', []));
+    session.toggleWatch(sandbox.entityWatch('CourseId:c1'));
+    session.toggleWatch(sandbox.projectionWatch('CourseNumbering', []));
     eq(session.pinned.map((w) => w.kind), ['entity', 'projection'], 'one of each');
     sandbox.render();
   });
@@ -1015,7 +1023,7 @@ function build(index) {
   });
 
   check('a projection can be watched before anything has happened', () => {
-    sandbox.sessionReset();
+    session.reset();
     eq(sandbox.foldWatch(active(), sandbox.projectionWatch('CourseNumbering', [])), { value: 'c1' },
       'its initial value, which is the whole of what it states');
     sandbox.state.view = 'sandbox';
@@ -1025,7 +1033,7 @@ function build(index) {
 
   check('the sandbox renders with things watched', () => {
     store.set('dcb-playground:experimental', 'on');
-    sandbox.togglePinned(sandbox.projectionWatch('CourseNumbering', []));
+    session.toggleWatch(sandbox.projectionWatch('CourseNumbering', []));
     sandbox.state.view = 'sandbox';
     sandbox.render();
     // And with the watch picker open, which is the path a projection
@@ -1033,7 +1041,7 @@ function build(index) {
     sandbox.state.watchDraft = { projection: 'CourseNumbering', tags: [], arguments: {} };
     sandbox.render();
     sandbox.state.watchDraft = null;
-    sandbox.sessionReset();
+    session.reset();
   });
 
   check('watching a second partition keeps the first – the form closes with the pin', () => {
@@ -1043,7 +1051,7 @@ function build(index) {
     // submitted form open holding a stale closure – resubmitting it
     // carried the old arguments and unpinned the watch it had just
     // added, so watching two partitions ended with neither watched.
-    sandbox.sessionReset();
+    session.reset();
     const names = ['CourseCapacity'];
     const realRender = sandbox.render;
     let screen = null;
@@ -1064,7 +1072,7 @@ function build(index) {
       eq(session.pinned.map(tags), [['c1'], ['c2']], 'both reads stay watched');
     } finally {
       sandbox.render = realRender;
-      sandbox.sessionReset();
+      session.reset();
     }
   });
 }
@@ -1085,15 +1093,15 @@ function build(index) {
   });
 
   check('the sandbox offers the identifiers its run used, per type', () => {
-    sandbox.sessionReset();
+    session.reset();
     sandbox.sessionRun(model(), 'DefineCourse', { courseId: 'c2', capacity: 5 });
     sandbox.sessionRun(model(), 'DefineCourse', { courseId: 'c1', capacity: 5 });
     sandbox.sessionRun(model(), 'RegisterStudent', { studentId: 's1' });
-    session.at = 0;
+    session.seek(0);
     eq(sandbox.sandboxWhere(model()).suggest('CourseId'), ['c1', 'c2'],
       'every course so far, wherever the playhead is');
     eq(sandbox.sandboxWhere(model()).suggest('StudentId'), ['s1'], 'and only students for a student');
-    sandbox.sessionReset();
+    session.reset();
   });
 
   check('a scenario offers the identifiers written in it', () => {
