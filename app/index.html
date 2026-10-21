@@ -15728,32 +15728,14 @@ function watchRead(watch) {
 function projectionWatchCard(model, watch) {
   const projection = model['projection-definitions'][watch.projection];
   // The query this watch actually runs, with the watched values in it –
-  // not `<courseId>` but `course:c1`. The sandbox is the one place the
-  // arguments are concrete, so it is the one place the query can be
-  // shown the way the store would receive it.
-  // A derived projection runs its operands' queries, each under its own
-  // tags (`foldedReads`), so it shows one line per projection it folds.
-  const queryIcon = projection ? (() => {
-    const read = watchRead(watch);
-    let queries;
-    try {
-      queries = foldedReads(model, { projection: watch.projection, tags: read.tags }).map(({ read: folded }) => {
-        const tags = {};
-        for (const [name, value] of Object.entries(folded.tags || {})) {
-          tags[name] = operandSource(value) === 'tag-literal' ? value.tagValue : value;
-        }
-        const target = model['projection-definitions'][folded.projection];
-        return {
-          tags: projectionQueryTags(model, folded.projection, { tags, args: read.args }),
-          types: uniq(((target && target.handlers) || []).map((x) => x && x.event).filter(Boolean)).sort(),
-        };
-      });
-    } catch (error) { return null; }
-    // A derived projection folds each operand on its own: a call each.
-    return queryPopover('watch:' + watchKey(watch), 'what this watch queries',
-      h('div', { class: 'dq' }, ...queries.map((query, i) => queryBox([query], 'query',
-        queries.length > 1 ? `call ${i + 1} of ${queries.length}` : '1 call'))));
-  })() : null;
+  // not `<courseId>` but `course:c1`: the reads the fold makes of the
+  // store, traced (`projectFromStore`), not a description of them. A
+  // derived projection folds each operand on its own, so it shows one
+  // call per read. Worked out only while the popover is open: a card
+  // repaints on every move of the playhead.
+  const queryKey = 'watch:' + watchKey(watch);
+  const queryIcon = projection ? queryPopover(queryKey, 'what this watch queries',
+    state.queryPop === queryKey ? watchQuery(model, watch) : null) : null;
   const head = (...rest) => h('div', { class: 'card' },
     h('div', { class: 'sc-line' },
       pinButton(watch),
@@ -15791,6 +15773,18 @@ function projectionWatchCard(model, watch) {
         : (inside.value !== null && typeof inside.value === 'object' && !Array.isArray(inside.value)
           ? payloadText(inside.value)
           : JSON.stringify(inside.value)))) : null);
+}
+
+// The store calls a watch's fold makes at the position looked at: one
+// box per read, in order, with the values it asked with.
+function watchQuery(model, watch) {
+  const trace = [];
+  const read = watchRead(watch);
+  projectFromStore(model, sessionStore(model, session.visible()), watch.projection, { ...read.args, ...read.tags }, { trace });
+  const reads = trace.filter((entry) => entry.call === 'read');
+  if (!reads.length) return h('div', { class: 'k' }, 'It cannot be worked out here, so it asks nothing.');
+  return h('div', { class: 'dq' }, ...reads.map((entry, i) => queryBox(entry.query, 'query',
+    reads.length > 1 ? `call ${i + 1} of ${reads.length}` : '1 call')));
 }
 
 function foldWatch(model, watch, fold, log = session.visible()) {

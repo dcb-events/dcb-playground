@@ -1157,6 +1157,11 @@ Artboards: `design/dcb-queries/` (2026-10).
   set (`evDecideThroughPort`): six items planned, two asked, for the
   same command. The command page names the reads that contributed to
   an item ("from"), which keeps what the per-alias list said.
+- **A watch's query is the fold's own reads.** The popover on a
+  watched projection shows the calls `projectFromStore` makes for it,
+  traced, at the playhead. It used to rebuild them from
+  `foldedReads` and the handlers: a second derivation of the query that
+  nothing kept in step with the one that runs.
 - **Rows or JSON**, one remembered choice for every query on every
   page. JSON is the specification's shape, coloured; a planned one
   keeps its placeholders, so Copy is offered only where values are

@@ -2032,12 +2032,22 @@ function build(index) {
   });
 
   check('a watched projection shows the query it actually runs', () => {
-    const card = sandbox.projectionWatchCard(model(),
-      sandbox.projectionWatch('CourseCapacity', { courseId: { tagType: 'CourseId', tagValue: 'c1' } }));
-    const text = textOf(card);
-    eq(text.includes('CourseId:c1'), true, 'the concrete tag, not a placeholder');
-    eq(text.includes('tagged CourseId("c1")'), true, 'said in the spelling the code uses');
-    eq(text.includes('CourseDefined'), true, 'and the events the fold handles');
+    const watch = sandbox.projectionWatch('CourseCapacity', { courseId: { tagType: 'CourseId', tagValue: 'c1' } });
+    eq(textOf(sandbox.projectionWatchCard(model(), watch)).includes('tagged CourseId("c1")'), true,
+      'said in the spelling the code uses');
+    sandbox.state.queryPop = 'watch:' + sandbox.watchKey(watch);
+    try {
+      const card = sandbox.projectionWatchCard(model(), watch);
+      const text = textOf(card);
+      eq(text.includes('CourseId:c1'), true, 'the concrete tag, not a placeholder');
+      eq(text.includes('CourseDefined'), true, 'and the events the fold handles');
+      const trace = [];
+      sandbox.projectFromStore(model(), sandbox.memoryStore([]), 'CourseCapacity', { courseId: 'c1' }, { trace });
+      eq(findAll(card, (n) => /\bdq-box\b/.test(n.className || '')).length, trace.filter((t) => t.call === 'read').length,
+        'a box for every read the fold makes of the store');
+    } finally {
+      sandbox.state.queryPop = null;
+    }
   });
 
   sandbox.clearActiveModelId();

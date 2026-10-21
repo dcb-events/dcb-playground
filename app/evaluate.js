@@ -543,11 +543,11 @@ function evReadTagLeaves(model, projectionName, tag, value) {
   }));
 }
 
-// The tags a read's query carries, rendered. Extracted so the interface
-// can *say* what a fold will read – a watched projection's query, with
-// the actual values in it – without running the fold to find out. A
-// derived projection's operands are read by the tags it passes them, so
-// its query is theirs.
+// The tags a read's query carries, rendered. A derived projection's
+// operands are read by the tags it passes them, so its query is
+// theirs. The interface does not call this to say what a fold reads:
+// it traces the fold's reads (`projectFromStore`), so what it shows is
+// what was asked.
 function projectionQueryTags(model, projectionName, read) {
   const projection = evOwn(model['projection-definitions'], projectionName);
   if (!projection) fail(`This model has no projection "${projectionName}".`);
