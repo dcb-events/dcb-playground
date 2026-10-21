@@ -11645,6 +11645,14 @@ function projectionFields(model, draft, { entityName, onNewType, onChecks } = {}
     ];
   };
 
+  // A handler's event reads as the event it is – its chip's colours –
+  // until it is pointed at or picked again; then it is a picker like
+  // the rest of the row (`select.kind-event`, shared.css).
+  const eventPick = (select) => {
+    select.className = 'kind-event';
+    return select;
+  };
+
   const declaredHandlerRows = (draft.handlers || []).map((handler, i) => {
     const event = model['event-definitions'][handler.event];
     const operations = operationsFor(model, draft);
@@ -11661,9 +11669,9 @@ function projectionFields(model, draft, { entityName, onNewType, onChecks } = {}
     }
     return h('div', { class: 'phandler' },
       h('span', { class: 'pk' }, 'on'),
-      pick(eventChoicesFor(handler), handler.event,
+      eventPick(pick(eventChoicesFor(handler), handler.event,
         (v) => { handler.event = v; handler.value = ''; handler.valueText = ''; render(); },
-        'event'),
+        'event')),
       h('span', { class: 'pk' }, '⇒'),
       // The verb is a word or two and keeps its width; the names
       // beside it are what give way.
@@ -11680,8 +11688,8 @@ function projectionFields(model, draft, { entityName, onNewType, onChecks } = {}
   const scriptedHandlerRows = !draft.script ? [] : (draft.handlers || []).map((handler, i) => h('div', { class: 'script-handler' },
     h('div', { class: 'phandler' },
       h('span', { class: 'pk' }, 'on'),
-      pick(eventChoicesFor(handler), handler.event,
-        (v) => { handler.event = v; render(); }, 'event'),
+      eventPick(pick(eventChoicesFor(handler), handler.event,
+        (v) => { handler.event = v; render(); }, 'event')),
       h('button', {
         class: 'btn tiny danger', title: 'Remove this handler',
         onclick: () => { draft.handlers.splice(i, 1); render(); },
@@ -11699,7 +11707,11 @@ function projectionFields(model, draft, { entityName, onNewType, onChecks } = {}
       ...(draft.script ? ['Scripted: each handler is a body over state, event, args and tags '
         + '(the values it is read by, by name), returning the next state. Nothing here runs or checks it.'] : []),
     ]),
-    h('button', {
+    null,
+    (draft.handlers || []).length ? (draft.script ? scriptedHandlerRows : declaredHandlerRows) : null,
+    // Under the handlers, where the next one goes – not up in the
+    // heading, where with a few rows it read as belonging to none.
+    h('div', { class: 'adder' }, h('button', {
       class: 'btn ghost tiny',
       onclick: () => {
         (draft.handlers = draft.handlers || []).push(draft.script
@@ -11707,10 +11719,7 @@ function projectionFields(model, draft, { entityName, onNewType, onChecks } = {}
           : { event: '', operation: 'set', value: '' });
         render();
       },
-    }, '+ handler'),
-    (draft.handlers || []).length
-      ? (draft.script ? scriptedHandlerRows : declaredHandlerRows)
-      : h('div', { class: 'empty' }, '–'));
+    }, '+ handler')));
 
   // ---- derived: one predicate or computation over other projections ----
 

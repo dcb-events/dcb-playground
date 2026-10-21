@@ -386,6 +386,15 @@ select:disabled {
   color: var(--muted); background: var(--bg);
   border-style: dashed; cursor: not-allowed;
 }
+/* A picker whose answer is an event – a projection's handler – reads
+   as the event's chip while it rests, and as a picker again once
+   pointed at, focused or open. Unanswered, it stays a plain picker. */
+select.kind-event:not(:has(> option.placeholder:checked)):not(:hover):not(:focus) {
+  background: var(--event-soft); border-color: #fed7aa; color: #9a3412;
+}
+body.f-dark select.kind-event:not(:has(> option.placeholder:checked)):not(:hover):not(:focus) {
+  border-color: #9a3412; color: #fed7aa;
+}
 select option { color: var(--text); font-style: normal; }
 select option.none { color: var(--muted); font-style: italic; }
 select option.action { color: var(--accent); }

@@ -1348,6 +1348,16 @@ function build(index) {
     }
   });
 
+  check('a handler is added under the handlers, and its event reads as an event', () => {
+    const draft = projectionDraftFrom(model()['projection-definitions'].CourseCapacity);
+    const [editor] = sandbox.projectionFields(model(), draft);
+    const order = findAll(editor, (n) => /\bphandler\b/.test(n.className || '')
+      || (n.tag === 'button' && textOf(n) === '+ handler'));
+    eq(order.length > 1 && textOf(order[order.length - 1]) === '+ handler', true, 'the adder comes after every row');
+    eq(findAll(editor, (n) => n.tag === 'select' && n.className === 'kind-event').length, draft.handlers.length,
+      'each handler\'s event picker wears the event\'s look');
+  });
+
   check('an opened row renders both of its tabs', () => {
     store.set('dcb-playground:experimental', 'on');
     const open = (name) => {

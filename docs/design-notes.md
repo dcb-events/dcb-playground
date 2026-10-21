@@ -533,6 +533,13 @@ on Projections, on an entity's page, and in the definition modals.
   give way and end in an ellipsis, the event's first, then the value's
   (the end of `event.data.…` is the part that says anything); the
   operation keeps its width. A phone lets the row wrap again.
+- **A handler's event reads as the event** (`select.kind-event`): the
+  picker wears the event chip's colours while it rests, and is a
+  picker again once pointed at or focused – the rows read as which
+  events move the value, not as a stack of controls.
+- **`+ handler` sits under the handlers**, not in the section's
+  heading: with a few rows the heading's button read as belonging to
+  none of them, and the next handler goes at the bottom anyway.
 
 ## Guarded emissions, rejection messages, derived projections
 
