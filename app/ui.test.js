@@ -962,6 +962,22 @@ function build(index) {
     session.seek(Infinity);
   });
 
+  check('a step is decided once, the way it ran, and every tab shows that one decision', () => {
+    session.reset();
+    sandbox.sessionRun(active(), 'DefineCourse', { capacity: 5 });
+    const step = session.stepAt(session.position());
+    const replay = sandbox.stepReplay(active(), step);
+    eq(replay.outcome.outcome, 'published', 'it goes through again');
+    eq(replay.trace.map((t) => t.call), ['read', 'append'], 'through the store');
+    eq(sandbox.stepReplay(active(), step) === replay, true, 'and is not decided again while nothing changed');
+    eq(Object.keys(replay.outcome.reads), Object.keys(sandbox.evaluateCommand(active(), [], 'DefineCourse', { capacity: 5 }).reads),
+      'Reads are the reads of the run that went through the store');
+    const gone = { command: 'NoSuchCommand', args: {}, from: 0, to: 1 };
+    const broken = sandbox.stepReplay(active(), gone);
+    eq(broken.trouble.startsWith('No such command can no longer be worked out here'), true, `one sentence for it: ${broken.trouble}`);
+    session.reset();
+  });
+
   check('the panel under the timeline opens on Watched, and its tabs say what is behind them', () => {
     session.reset();
     sandbox.sessionRun(active(), 'DefineCourse', { capacity: 5 });

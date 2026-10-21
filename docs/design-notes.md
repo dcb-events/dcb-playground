@@ -1168,10 +1168,16 @@ Artboards: `design/dcb-queries/` (2026-10).
   step's calls – head, each read with its query and the
   events it returned, the append with its condition and where it
   landed. Hovering a read lights its events up on the timeline: the
-  slice of the log the boundary really is. Like Reads, it is worked
-  out again on every repaint, not remembered, so an edit to the model
-  shows at once; a step that would be refused now shows its calls as
-  far as they got, with the same note Reads gives.
+  slice of the log the boundary really is. Reads, Now and Store render
+  one replay of the step (`stepReplay`): one `handleCommand` with its
+  calls traced, so what Reads says was read is what Store says was
+  asked. It is worked out again for every revision of the model, not
+  remembered across one, so an edit shows at once; within a revision
+  it is kept, so scrubbing inside a step does not decide it again. A
+  step that would be refused now shows its calls as far as they got,
+  under the note Reads gives. The Decision tab and Now used to call
+  `evaluateCommand` each, beside the Store tab's `handleCommand`: three
+  decisions of one step per repaint, two of them not the one that ran.
 
 ## The read port
 

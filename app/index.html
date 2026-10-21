@@ -15619,13 +15619,40 @@ function keepLanesInView() {
   view.top = lanes.scrollTop;
 }
 
-// ---------- what the current step saw ----------
+// ---------- the step at the playhead, decided again ----------
 //
 // The boundary is re-derived rather than remembered. A definition
 // edited while a session is open changes what this shows, which is the
 // point of having both open at once – and if the edit means the
 // command would no longer go through, that is worth being told rather
 // than being shown a boundary that no longer applies.
+//
+// Decided once, the way it ran: the cycle against the store
+// (`handleCommand`), with every call traced. Reads, Now and Store all
+// render this one replay, so what Reads says the step read is what
+// Store says it asked for. Kept for as long as the model's revision,
+// the run and the step stay the same – scrubbing within a step repaints
+// on every move and need not decide again.
+let stepReplayCache = null;
+function stepReplay(model, step) {
+  const cached = stepReplayCache;
+  if (cached && cached.model === model && cached.log === session.log && cached.step === step) return cached.replay;
+  const trace = [];
+  const outcome = handleCommand(model, sessionStore(model, session.log.slice(0, step.from)), step.command, step.args, { trace });
+  const trouble = outcome.outcome === 'rejected'
+    ? 'This went through when it was done, and would be refused now: '
+      + (outcome.failedRule.rejection ? `\u201c${outcome.failedRule.rejection}\u201d (${outcome.failedRule.text})`
+        : outcome.failedRule.text) + '.'
+    : outcome.outcome === 'published' ? null
+      : `${readable(step.command)} can no longer be worked out here: ${outcome.message}`;
+  const replay = { outcome, trace, trouble };
+  stepReplayCache = { model, log: session.log, step, replay };
+  return replay;
+}
+
+const troubleCard = (words) => h('div', { class: 'card', style: 'border-color:var(--danger);margin-bottom:8px' },
+  h('div', { class: 'small' }, words));
+
 function sandboxDecision(model) {
   const position = session.position();
   const step = session.stepAt(position);
@@ -15634,25 +15661,11 @@ function sandboxDecision(model) {
       h('div', { class: 'empty' }, 'Nothing has happened yet.'));
   }
 
-  let result;
-  try {
-    result = evaluateCommand(model, session.log.slice(0, step.from), step.command, step.args);
-  } catch (error) {
-    return h('div', { class: 'card', style: 'border-color:var(--danger)' },
-      h('div', { class: 'small' },
-        readable(step.command) + ' can no longer be worked out here: ' + evaluationFailure(error)));
-  }
+  const { outcome, trouble } = stepReplay(model, step);
+  if (outcome.outcome !== 'published' && outcome.outcome !== 'rejected') return troubleCard(trouble);
+  const stale = trouble ? troubleCard(trouble + ' Everything after it on the timeline followed from it.') : null;
 
-  const stale = result.outcome === 'rejected'
-    ? h('div', { class: 'card', style: 'border-color:var(--danger);margin-bottom:8px' },
-        h('div', { class: 'small' },
-          'This went through when it was done, and would be refused now: '
-          + (result.failedRule.rejection ? `\u201c${result.failedRule.rejection}\u201d (${result.failedRule.text})`
-            : result.failedRule.text)
-          + '. Everything after it on the timeline followed from it.'))
-    : null;
-
-  const reads = Object.entries(result.reads || {});
+  const reads = Object.entries(outcome.reads || {});
   return h('div', {},
     stale,
     reads.length
@@ -16056,15 +16069,13 @@ function sandboxNow(model) {
       h('div', { class: 'empty' }, 'Nothing has happened yet.'));
   }
 
-  let then;
-  try {
-    then = evaluateCommand(model, session.log.slice(0, step.from), step.command, step.args);
-  } catch (error) {
+  const { outcome } = stepReplay(model, step);
+  if (outcome.outcome !== 'published' && outcome.outcome !== 'rejected') {
     return h('div', { class: 'card' },
       h('div', { class: 'empty' }, 'See Reads.'));
   }
 
-  const reads = Object.entries(then.reads || {});
+  const reads = Object.entries(outcome.reads || {});
   if (!reads.length) {
     return h('div', { class: 'card' }, h('div', { class: 'empty' }, 'It involved nothing.'));
   }
@@ -16129,11 +16140,10 @@ function sandboxAppended(model) {
 //
 // The step's calls to the event store, in order (_DCB queries, shown_):
 // head, each read with its query and what it returned, the append with
-// its condition and where it landed. Worked out again on every repaint,
-// like Reads – the command decided anew against the log as it stood
-// before the step – so an edit to the model shows here at once, and a
-// step that would not go through now shows its calls as far as they
-// got.
+// its condition and where it landed – the trace of `stepReplay`, the
+// replay Reads shows too – so an edit to the model shows here at once,
+// and a step that would not go through now shows its calls as far as
+// they got.
 function sandboxHighlight(positions) {
   for (const node of document.querySelectorAll('.smark.sbx-hit')) node.classList.remove('sbx-hit');
   for (const at of positions || []) {
@@ -16141,18 +16151,10 @@ function sandboxHighlight(positions) {
   }
 }
 
-// The step decided again, against the log as it stood before it, with
-// every call to the store traced.
-function sandboxStoreRun(model, step) {
-  const trace = [];
-  const outcome = handleCommand(model, sessionStore(model, session.log.slice(0, step.from)), step.command, step.args, { trace });
-  return { trace, outcome };
-}
-
-function sandboxStore(model, run) {
+function sandboxStore(model) {
   const step = session.stepAt(session.position());
   if (!step) return h('div', { class: 'card' }, h('div', { class: 'empty' }, 'Nothing has happened yet.'));
-  const { trace, outcome } = run || sandboxStoreRun(model, step);
+  const { trace, outcome, trouble } = stepReplay(model, step);
   const json = queryAsJson();
   const reads = [];
   let n = 0;
@@ -16211,11 +16213,8 @@ function sandboxStore(model, run) {
             : h('div', { class: 'k' }, 'no condition – it read nothing, so there is nothing to be consistent with'),
         ]);
   });
-  const now = outcome.outcome === 'rejected'
-    ? `This went through when it was done, and would be refused now: \u201c${outcome.failedRule.rejection || outcome.failedRule.text}\u201d. These are the calls it makes now.`
-    : outcome.outcome === 'error' ? `${readable(step.command)} can no longer be worked out here: ${outcome.message}` : null;
   return h('div', { class: 'sbx-calls' },
-    now ? h('div', { class: 'card', style: 'border-color:var(--danger)' }, h('div', { class: 'small' }, now)) : null,
+    trouble ? troubleCard(outcome.outcome === 'rejected' ? trouble + ' These are the calls it makes now.' : trouble) : null,
     calls.length ? calls : h('div', { class: 'card' }, h('div', { class: 'empty' }, 'It asked the store nothing.')));
 }
 
@@ -16230,7 +16229,7 @@ function sandboxStore(model, run) {
 function sandboxPanel(model) {
   const step = session.stepAt(session.position());
   const current = state.sandboxTab || 'watched';
-  const run = step && current === 'store' ? sandboxStoreRun(model, step) : null;
+  const run = step && current === 'store' ? stepReplay(model, step) : null;
   const changed = watchesChangedByStep(model);
   const badge = (text, cls = '') => h('span', { class: 'sbx-badge' + cls }, text);
   const tab = (key, ...label) => h('button', {
@@ -16242,7 +16241,7 @@ function sandboxPanel(model) {
   let body;
   if (current === 'watched') body = sandboxWatched(model);
   else if (!step) body = h('div', { class: 'empty' }, session.log.length ? 'Before the first step – nothing decided yet.' : 'Nothing has happened yet – run a command.');
-  else if (current === 'store') body = sandboxStore(model, run);
+  else if (current === 'store') body = sandboxStore(model);
   else {
     body = h('div', { class: 'sbx-cols' },
       h('div', { class: 'sbx-col' }, h('h4', {}, 'Append'), sandboxAppended(model)),
