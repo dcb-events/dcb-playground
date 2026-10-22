@@ -280,7 +280,7 @@ body.f-dark .disclaimer { background: #2d2408; color: #fcd34d; border-bottom-col
    One breakpoint, everything the bar and the rail need to keep working
    down to a 320px phone: the rail becomes a drawer (see .rail below),
    its toggle appears, the bar keeps only what is used while modelling
-   – the model, the surface toggle (icons only), quick open – and folds
+   – the model, quick open – and folds
    import/export, help, theme and Settings behind ⋯ (`moreMenu`). Touch
    targets grow to the ~40px a finger actually needs – the desktop 30px
    stays for a mouse. Every dialog goes fullscreen here; that lives

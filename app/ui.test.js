@@ -4973,28 +4973,33 @@ function build(index) {
     state.code = false;
   });
 
-  check('the toggle is muted where the code does not follow, and Code on the Overview always opens the code', () => {
+  check('the switch rides the header of the code, and unapplied code leads back to where it was left', () => {
     const { id, model: m } = build(ENTITIES);
     sandbox.setActiveModelId(id);
     const { state, codeView } = sandbox;
-    Object.assign(state, { view: 'sandbox', code: true });
-    eq(sandbox.codeFollowsPage(), false, 'the sandbox has no code view');
-    state.view = 'overview';
-    eq(sandbox.codeFollowsPage(), true, 'the Overview has, through its Code');
-    codeView.last = null;
-    sandbox.enterCode();
-    eq([state.code, state.view, sandbox.codeShown()], [true, 'slice', true], 'already Code, and the code opens');
-    Object.assign(state, { view: 'overview', slice: null });
+    Object.assign(state, { view: 'slice', slice: 'ArchiveCourse', code: true });
+    const main = sandbox.document.createElement('div');
+    sandbox.renderCode(m(), main);
+    const header = findAll(main, (n) => n.tag === 'header')[0];
+    eq(findAll(header, (n) => n.className === 'surface').length, 1, 'the switch, in the header');
+    eq(textOf(header).includes('Command') && textOf(header).includes('Archive'), true, 'which definition the code is at');
+    eq(sandbox.unappliedCodeButton(m()), null, 'a clean text leaves the bar alone');
+    sandbox.onCodeInput(codeView.text + '\n');
+    eq(sandbox.unappliedCodeButton(m()), null, 'and so does an edited one on screen');
+    state.view = 'sandbox';
+    eq(!!sandbox.unappliedCodeButton(m()), true, 'off screen, it is in the bar');
     codeView.last = { modelId: id, kind: 'command-definition', name: 'ArchiveCourse' };
-    sandbox.enterCode();
-    eq([state.view, state.slice], ['slice', 'ArchiveCourse'], 'where the code was left');
+    Object.assign(state, { code: false, slice: null });
+    sandbox.resumeCode();
+    eq([state.code, state.view, state.slice], [true, 'slice', 'ArchiveCourse'], 'where the code was left');
     codeView.last = { modelId: id, kind: 'event-definition', name: 'NoSuchEvent' };
     state.view = 'overview';
-    sandbox.enterCode();
+    sandbox.resumeCode();
     eq(state.view, 'slice', 'a definition gone since: where the commands start');
-    state.view = 'sandbox';
-    sandbox.enterCode();
-    eq(state.view, 'sandbox', 'elsewhere, Code when it is the surface does nothing');
+    state.view = 'projections';
+    sandbox.resumeCode();
+    eq(state.view, 'projections', 'already on a page the code follows: it stays');
+    sandbox.revertCode();
     state.code = false;
   });
 

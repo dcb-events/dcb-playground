@@ -128,6 +128,8 @@ was decided, why, and what was tried and reverted:
 - the sandbox's layout, its timeline lanes or watches — _The sandbox_
 - the code view's language, its editor or language service — _The code
   view's language_, and the `dsl.js` header
+- where the Visual/Code switch sits, what follows the code — _The
+  surface switch_
 - what a script can reach, a CSP, sandboxing scripts — _Scripts and the
   origin_
 - how a DCB query is drawn, the sandbox's Store column — _DCB queries,

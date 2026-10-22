@@ -1851,22 +1851,31 @@
   }
   .surface button + button { border-left: 1px solid var(--border); }
   .surface button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
-  .surface.muted button { opacity: .55; }
-  .surface.muted button.on { background: var(--bg); color: var(--muted); }
   .surface button:not(.on):hover { color: var(--text); background: var(--bg); }
   /* Each label is as wide as its bold self, so turning on does not
      shift the bar: a hidden bold copy holds the width. */
   .surface .label { display: inline-grid; }
   .surface .label::after { content: attr(data-text); font-weight: 600; visibility: hidden; height: 0; overflow: hidden; }
-  .surface-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--event); }
+  .surface-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--event); flex: none; }
   .surface-icon { display: flex; }
   .surface-icon svg { width: 14px; height: 14px; display: block; }
-  /* Icons alone on a phone, and the Problems button down to its count –
-     the width goes to the model's name (shared.css). */
+  .unapplied-btn { display: inline-flex; align-items: center; gap: 6px; }
+  /* Beside the switch, a header's name gives way first – the switch
+     keeps its size, the name is cut short. */
+  .head-row { flex: 1; min-width: 0; }
+  .slice > header .row > .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .code-kind {
+    font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--muted); flex: none;
+  }
+  /* The code bar sits at the right, so its hint opens leftwards. */
+  .code-bar .hint .hpanel { left: auto; right: -10px; }
+  /* Icons alone on a phone, and the bar's buttons down to their marks –
+     the width goes to the name beside them. */
   @media (max-width: 760px) {
     .surface { height: 40px; }
     .surface button { padding: 0 8px; }
-    .surface .label, .problems-btn .label { display: none; }
+    .surface .label, .problems-btn .label, .unapplied-btn .label { display: none; }
     .surface-icon svg { width: 17px; height: 17px; }
   }
   /* The tools over the text, quiet and to the right; what follows the
@@ -2344,7 +2353,7 @@ const MORE_ICON_SVG = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden=
   + '<circle cx="19" cy="12" r="2"></circle></svg>';
 
 // The surface toggle's marks, beside its words – and in place of them
-// on a phone, where the bar cannot spare the width (shared.css).
+// on a phone, where the header cannot spare the width.
 const VISUAL_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
   + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
   + '<rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect>'
@@ -2353,25 +2362,36 @@ const CODE_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor
   + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
   + '<polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>';
 
-// Pages or code – two surfaces over one model, see `renderCode`. The
-// dot says a text is waiting to be applied, wherever you are.
-// On a page the code does not follow it is muted, not gone: it still
-// says and sets the surface, and still carries the dot.
+// Pages or code – two surfaces over one model, see `renderCode`. It
+// sits in the header of the pages the code follows (`CODE_FOLLOWS`)
+// and nowhere else: the Overview, the sandbox and the cross-cutting
+// pages have no code to switch to, and a switch in the bar said they
+// did. Both surfaces share that header, so it stays where it was when
+// the code is on screen. The dot says a text is waiting to be applied.
 function surfaceToggle(model) {
   const waiting = codeView.modelId === model.id && codeDirty();
-  const muted = !codeFollowsPage();
-  const hint = muted ? ' – no code view for this page; applies on definition pages' : '';
-  return h('span', { class: 'surface' + (muted ? ' muted' : ''), role: 'group', 'aria-label': 'Show the model as' },
+  return h('span', { class: 'surface', role: 'group', 'aria-label': 'Show the model as' },
     h('button', {
       type: 'button', class: state.code ? '' : 'on', 'aria-pressed': state.code ? 'false' : 'true',
-      title: 'The model as pages' + hint, 'aria-label': 'Visual', onclick: leaveCode,
+      title: 'The model as pages', 'aria-label': 'Visual', onclick: leaveCode,
     }, h('span', { class: 'surface-icon' }, svg(VISUAL_ICON_SVG)), h('span', { class: 'label', 'data-text': 'Visual' }, 'Visual')),
     h('button', {
       type: 'button', class: state.code ? 'on' : '', 'aria-pressed': state.code ? 'true' : 'false',
-      title: (waiting ? 'The model as code – edited, not applied' : 'The model as code') + hint,
+      title: waiting ? 'The model as code – edited, not applied' : 'The model as code',
       'aria-label': 'Code', onclick: enterCode,
     }, h('span', { class: 'surface-icon' }, svg(CODE_ICON_SVG)), h('span', { class: 'label', 'data-text': 'Code' }, 'Code'),
     waiting ? h('span', { class: 'surface-dot' }) : null));
+}
+
+// The one trace of the code in the bar: a text typed and not applied,
+// while the code is not on screen – on a page the switch is not on, it
+// would otherwise be forgotten. It leads back to where it was left.
+function unappliedCodeButton(model) {
+  if (codeShown() || codeView.modelId !== model.id || !codeDirty()) return null;
+  return h('button', {
+    class: 'btn ghost unapplied-btn', type: 'button', title: 'Code typed and not applied yet – open it',
+    'aria-label': 'Unapplied code', onclick: resumeCode,
+  }, h('span', { class: 'surface-dot' }), h('span', { class: 'label' }, 'Unapplied code'));
 }
 
 // Light or dark – the one interface choice that sits in the bar rather
@@ -6063,9 +6083,10 @@ function paintPage() {
   // A scenario that no longer agrees with its command, or a loose end
   // nobody has tied – the one count of what needs attention, shown
   // only when there is any.
-  tools.appendChild(surfaceToggle(model));
   const problemsBtn = problemsButton(model);
   if (problemsBtn) tools.appendChild(problemsBtn);
+  const unapplied = unappliedCodeButton(model);
+  if (unapplied) tools.appendChild(unapplied);
 
   jump.appendChild(h('button', {
     class: 'trigger', type: 'button', onclick: openPalette, 'aria-label': 'Quick open',
@@ -6200,7 +6221,9 @@ function paintBehind(model) {
       ? renameDefinitionForm(model, 'command-definition', slice.name, {
           stateKey: 'renamingCommand', after: (next) => { state.slice = next; },
         })
-      : qrow('div', { cls: 'row', key: 'cmd:' + slice.name },
+      // The switch beside the row, not in it: a click on it repaints,
+      // and the focus would come back to the row as if it were chosen.
+      : h('div', { class: 'row' }, qrow('div', { cls: 'row head-row', key: 'cmd:' + slice.name },
           h('button', {
             class: 'icon-btn' + fallbackIconClass(commandIcon(model, slice.name)),
             title: 'Choose the mark this is shown with',
@@ -6229,6 +6252,7 @@ function paintBehind(model) {
                 state.slice = null;
               }),
             }))),
+        surfaceToggle(model)),
   ));
 
   if (state.commandIconPicker === slice.name) {
@@ -9141,7 +9165,7 @@ function renderEntity(model, main) {
     })));
   } else {
     main.appendChild(h('header', {},
-      qrow('div', { cls: 'row', key: 'ent:' + name },
+      h('div', { class: 'row' }, qrow('div', { cls: 'row head-row', key: 'ent:' + name },
         // The mark leads, because it is what this thing will be
         // recognised by everywhere else. Clicking it is how it is
         // chosen – there is nowhere else to put a setting that belongs
@@ -9169,6 +9193,7 @@ function renderEntity(model, main) {
               state.entity = null;
             }),
           }))),
+        surfaceToggle(model)),
       h('div', { class: 'muted small summary' },
         `${properties.length} propert${properties.length === 1 ? 'y' : 'ies'} · `
         + `moved by ${writers.size} command${writers.size === 1 ? '' : 's'}, `
@@ -10301,7 +10326,7 @@ function commandIconPicker(model, name, command) {
 // editor declines to ask rather than asking and then refusing.
 function renderCustomTypes(model, main) {
   main.appendChild(h('header', {},
-    h('div', { class: 'name' }, 'Custom types'),
+    h('div', { class: 'row' }, h('div', { class: 'name' }, 'Custom types'), h('span', { class: 'grow' }), surfaceToggle(model)),
     h('div', { class: 'muted small' },
       'Records with no identity of their own – a price, an order line – and identifiers: a '
       + 'tag type is a single value every event carrying it is tagged with. An entity’s own derived identifier lives here too, created automatically '
@@ -12003,7 +12028,8 @@ function renderProjections(model, main) {
           state.newProjection = true;
           render();
         },
-      }, '+ new projection'))));
+      }, '+ new projection'),
+      surfaceToggle(model))));
 
   const projectionAdvisories = advisoryBanner(model, 'projection-definition');
   if (projectionAdvisories) main.appendChild(projectionAdvisories);
@@ -12737,7 +12763,7 @@ function compareCodePage(model, found) {
 
 function renderEvents(model, main) {
   main.appendChild(h('header', {},
-    h('div', { class: 'name' }, 'Events'),
+    h('div', { class: 'row' }, h('div', { class: 'name' }, 'Events'), h('span', { class: 'grow' }), surfaceToggle(model)),
     h('div', { class: 'muted small' },
       'Everything that has ever happened, named and shaped. An event may be recorded by no '
       + 'command, one, or several – and read by no projection, one, or several – which is why it '
@@ -12927,9 +12953,9 @@ function renderOverview(model, main) {
   // The same rule the rail follows: what the experimental flag keeps out
   // of the rail it keeps out of the count, unless the model already has one.
   main.appendChild(h('div', { class: 'overview-stats' },
-    // Listed right below on the page; in the code, where they start.
+    // The command last open; in the code, where they start.
     stat('Commands', 'command', bodies.length, plural(ruleCount, 'rule'),
-      state.code && bodies.length ? () => { codeView.section = 'command-definition'; openKindPage('slice'); } : null),
+      bodies.length ? () => { if (state.code) codeView.section = 'command-definition'; openKindPage('slice'); } : null),
     stat('Events', 'event', events.length, unappended ? unappended + ' not appended' : null, show('events')),
     experimental() || entities.length
       ? stat('Entities', 'entity', entities.length, lifecycles ? lifecycles + ' with a lifecycle' : null,
@@ -16248,17 +16274,13 @@ function storedCodeFold() {
   return stored === 'open' || stored === 'all' ? stored : 'scenarios';
 }
 
-// The pages about definitions – what the code follows. Any other page
-// (the Overview, the sandbox, the cross-cutting overviews) is shown as
-// a page while the surface stays Code: only the Visual button leaves
-// it, and a way from that page to a definition – an Overview card, a
-// chip – lands on it in the code. Switching to Code on the Overview
-// itself goes to the code (`enterCode`).
+// The pages about definitions – what the code follows, and the only
+// pages that carry the switch. Any other page (the Overview, the
+// sandbox, the cross-cutting overviews) is shown as a page while the
+// surface stays Code, and a way from that page to a definition – an
+// Overview card, a chip – lands on it in the code.
 const CODE_FOLLOWS = ['slice', 'entity', 'events', 'projections', 'types'];
 function codeShown() { return !!state.code && CODE_FOLLOWS.includes(state.view); }
-// Where the toggle does something: the definition pages, and the
-// Overview, whose Code always opens the code (`enterCode`).
-function codeFollowsPage() { return CODE_FOLLOWS.includes(state.view) || state.view === 'overview'; }
 
 // The definition under the cursor as the code is left, to come back to
 // from the Overview.
@@ -16401,7 +16423,7 @@ function refreshCodeChrome() {
   }
   if (codeView.statusEl) codeView.statusEl.replaceWith(codeView.statusEl = codeStrip());
   if (codeView.listEl) codeView.listEl.replaceWith(codeView.listEl = codeProblemList(analysis));
-  const toggle = document.querySelector('#tools .surface');
+  const toggle = document.querySelector('#main > header .surface');
   if (toggle) toggle.replaceWith(surfaceToggle(model));
 }
 
@@ -16636,23 +16658,28 @@ function revertCode() {
 
 // Into the code view, revealing what the page was about.
 function enterCode() {
-  // The Overview has no definition of its own to stay on, and staying
-  // on it would make the toggle look like it did nothing: Code opens the
-  // code – even when it is the surface already – where it was left, or
-  // where the commands start, as the Overview's Commands card does.
-  const fromOverview = state.view === 'overview';
-  if (state.code && !fromOverview) return;
+  if (state.code) return;
   closeForms(); // commits whatever a page had half-typed
   setCodeSurface(true);
   codeView.shownView = null;
   codeView.focus = null;
-  if (fromOverview) {
-    const model = activeModel();
-    const last = codeView.last;
-    if (model && last && last.modelId === model.id && model[DEF_COLLECTIONS[last.kind]][last.name] !== undefined) {
-      codeView.section = [last.kind, last.name];
-      return openDefinition(last.kind, last.name);
-    }
+  render();
+}
+
+// Back into the code from anywhere – the bar's unapplied-code button –
+// where it was left, or where the commands start.
+function resumeCode() {
+  closeForms();
+  setCodeSurface(true);
+  codeView.shownView = null;
+  codeView.focus = null;
+  const model = activeModel();
+  const last = codeView.last;
+  if (model && last && last.modelId === model.id && model[DEF_COLLECTIONS[last.kind]][last.name] !== undefined) {
+    codeView.section = [last.kind, last.name];
+    return openDefinition(last.kind, last.name);
+  }
+  if (!CODE_FOLLOWS.includes(state.view)) {
     codeView.section = 'command-definition';
     state.view = 'slice';
   }
@@ -17177,22 +17204,18 @@ function downloadCode(model) {
 
 function renderCode(model, main) {
   syncCodeView(model);
+  // The page's own header, less what only the page can do (its mark,
+  // Rename, Remove, adding): which definition the code is at, and the
+  // switch back. Renaming in the code is F2.
+  const [kindLabel, title] = state.view === 'slice' ? ['Command', named(state.slice)]
+    : state.view === 'entity' ? ['Entity', named(state.entity)]
+      : [null, { events: 'Events', projections: 'Projections', types: 'Custom types' }[state.view]];
   main.appendChild(h('header', {},
-    h('div', { class: 'name' }, 'Code',
-      hint('code', 'The model as code', [
-        ['Every type, event, entity, projection and command on the other pages, as one text. '
-          + 'Edit it and apply with ', kbd('Mod+S'), '; going back to the pages applies it too. An apply is one undo step.'],
-        'Scenarios sit in a scenarios group at the end of the command or projection they exercise, '
-          + 'folded to one line until opened. The fold button steps through nothing folded, scenarios folded, '
-          + 'and every definition folded with its scenarios still folded inside. Leave a then out and '
-          + 'applying records what the model does; a drifted one is marked, with a fix that accepts it. '
-          + 'Comments are not stored – they last as long as the text in this editor.',
-        ['Hover a command\'s name for the consistency boundary it derives; ', kbd('Mod+click'),
-          ' a name to go to it; ', kbd('Mod+Shift+O'), ' lists every definition. ', kbd('Ctrl+Space'),
-          ' suggests what fits where the cursor is; ', kbd('F2'), ' renames a name everywhere it means '
-          + 'the same thing, and ', kbd('Shift+F12'), ' lists where it is used.'],
-      ], NOTATION_GUIDE_URL, 'notation')),
-    h('div', { class: 'muted small' }, 'The same definitions as the pages, written out.')));
+    h('div', { class: 'row' },
+      kindLabel ? h('span', { class: 'code-kind' }, kindLabel) : null,
+      h('div', { class: 'name' }, title),
+      h('span', { class: 'grow' }),
+      surfaceToggle(model))));
 
   const editorElement = codeEditorElement();
   main.appendChild(h('div', { class: 'code-bar' },
@@ -17206,6 +17229,19 @@ function renderCode(model, main) {
     h('button', { class: 'btn ghost tiny code-tool', type: 'button', onclick: () => downloadCode(model) },
       codeToolIcon('<path d="M12 3v12"></path><polyline points="7 10 12 15 17 10"></polyline><path d="M5 21h14"></path>'),
       'Download ' + SOURCE_EXTENSION),
+    hint('code', 'The model as code', [
+      ['Every type, event, entity, projection and command on the other pages, as one text. '
+        + 'Edit it and apply with ', kbd('Mod+S'), '; going back to the pages applies it too. An apply is one undo step.'],
+      'Scenarios sit in a scenarios group at the end of the command or projection they exercise, '
+        + 'folded to one line until opened. The fold button steps through nothing folded, scenarios folded, '
+        + 'and every definition folded with its scenarios still folded inside. Leave a then out and '
+        + 'applying records what the model does; a drifted one is marked, with a fix that accepts it. '
+        + 'Comments are not stored – they last as long as the text in this editor.',
+      ['Hover a command\'s name for the consistency boundary it derives; ', kbd('Mod+click'),
+        ' a name to go to it; ', kbd('Mod+Shift+O'), ' lists every definition. ', kbd('Ctrl+Space'),
+        ' suggests what fits where the cursor is; ', kbd('F2'), ' renames a name everywhere it means '
+        + 'the same thing, and ', kbd('Shift+F12'), ' lists where it is used.'],
+    ], NOTATION_GUIDE_URL, 'notation'),
     h('a', { class: 'small code-ref', href: NOTATION_REFERENCE_URL, target: '_blank', rel: 'noopener' }, 'Notation reference ↗')));
 
   codeView.statusEl = codeStrip();

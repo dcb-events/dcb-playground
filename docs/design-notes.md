@@ -818,13 +818,13 @@ One breakpoint, 760px (shared.css, _narrow screens_), and a floor of
 320px: at or above it, nothing runs past the right edge of the page.
 
 - **The bar keeps what is used while modelling.** Below the breakpoint
-  it holds the rail's toggle, the model's name, the Visual/Code toggle
-  (icons only), the Problems count (no word) and quick open. Import &
-  export, help, theme and Settings fold behind ⋯ (`moreMenu`) — a
-  dropdown, four rows, each doing exactly what its desktop button does.
-  The dcb.events mark is hidden; the footer links the site. The Visual/Code
-  toggle stays in the bar rather than in ⋯ because it is switched too
-  often to be two taps away.
+  it holds the rail's toggle, the model's name, the Problems count (no
+  word) and quick open. Import & export, help, theme and Settings fold
+  behind ⋯ (`moreMenu`) — a dropdown, four rows, each doing exactly what
+  its desktop button does. The dcb.events mark is hidden; the footer
+  links the site. The Visual/Code switch is not in the bar at all (see
+  _The surface switch_); in a page's header it keeps its icons only, and
+  the name beside it ellipsizes first.
 - **The name is the part of the bar that gives.** It ellipsizes into
   whatever the rest leaves, by flex shrinking. It used to be a
   `100vw - 266px` budget; controls were added after it was written,
@@ -957,6 +957,31 @@ Watched, Decision, Store. Only the panel scrolls.
   refuses (the course is already defined), and a refusal stops short
   of later reads, which crashed the page. Each projection read is now
   folded on its own, with the tags and arguments the step resolved.
+
+## The surface switch
+
+- **It sits in the header of the pages the code follows** — command,
+  entity, events, projections, types (`CODE_FOLLOWS`) — on the right,
+  and nowhere else. It used to be in the bar, which said every page had
+  a code form; the Overview, the sandbox and the cross-cutting pages
+  showed it muted, doing nothing. A strip of its own above the content
+  was sketched and dropped: every one of those pages already has a
+  sticky header, so the switch joins it.
+- **Both surfaces share that header**, so the switch stays put when the
+  code is on screen — a switch on the page alone would vanish exactly
+  when someone wants to switch back. In the code the header is the
+  page's less what only the page can do: the kind and name, no mark,
+  Rename or Remove (F2 renames in the code). The code's ⓘ moved into
+  its toolbar. The switch stands beside the header's selectable row
+  (`qrow`), not in it: a click repaints, and the focus would come back
+  to the row as if the row had been chosen.
+- **Unapplied code leaves one trace in the bar**: while a text is typed
+  and not applied and the code is not on screen, an *Unapplied code*
+  button (`unappliedCodeButton`) leads back to it where it was left
+  (`resumeCode`). The switch's dot says the same where the switch is.
+- **The Overview's Commands card always opens the commands**, in
+  whichever surface is current — it was the way into the code from
+  the Overview once Code there had no switch to press.
 
 ## The code view's language
 
