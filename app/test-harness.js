@@ -20,6 +20,7 @@ const noop = () => {};
 const element = (text, tag) => {
   const node = {
     tag: tag || '',
+    get tagName() { return node.tag.toUpperCase(); },
     nodeText: text === undefined ? '' : String(text),
     appendChild(child) { if (child) node.children.push(child); return child; },
     insertBefore(child) { if (child) node.children.unshift(child); return child; },
@@ -33,7 +34,7 @@ const element = (text, tag) => {
     addEventListener: noop, removeAttribute: noop, focus: noop, blur: noop,
     scrollIntoView: noop, contains: () => false, closest: () => null,
     classList: { add: noop, remove: noop, toggle: noop, contains: () => false },
-    style: {}, dataset: {}, children: [], childNodes: [],
+    style: { setProperty: noop }, dataset: {}, children: [], childNodes: [],
     querySelector: () => null, querySelectorAll: () => [],
     getBoundingClientRect: () => ({ top: 0, left: 0, width: 0, height: 0 }),
   };

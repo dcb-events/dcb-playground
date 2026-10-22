@@ -5003,6 +5003,59 @@ function build(index) {
     state.code = false;
   });
 
+  check('the split shows the page and its code, only where it fits, and follows the cursor', () => {
+    const { id, model: m } = build(ENTITIES);
+    sandbox.setActiveModelId(id);
+    const { state, codeView } = sandbox;
+    const narrow = sandbox.matchMedia;
+    const cursorLine = sandbox.codeCursorLine;
+    try {
+      Object.assign(state, { view: 'slice', slice: 'ArchiveCourse', code: false, split: false });
+      sandbox.enterSplit();
+      eq([state.code, state.split, sandbox.splitShown()], [true, true, false], 'too narrow: the choice is kept, the pages shown');
+      sandbox.matchMedia = () => ({ matches: true, addEventListener() {} });
+      eq([sandbox.codeShown(), sandbox.splitShown()], [true, true], 'wide enough: both');
+      state.view = 'sandbox';
+      eq(sandbox.splitShown(), false, 'a page without code is a page');
+      state.view = 'slice';
+
+      const main = sandbox.document.createElement('div');
+      sandbox.renderSplit(m(), main);
+      const header = main.children[0];
+      eq(header.tag, 'header', 'the page\'s header leads, over both');
+      eq(findAll(header, (n) => n.className === 'surface')[0].children.length, 3, 'Visual, Split, Code');
+      const columns = findAll(main, (n) => n.className === 'split')[0].children;
+      eq(columns.map((c) => c.className), ['split-page', 'split-code'], 'the page, then the code');
+      eq(findAll(columns[1], (n) => n.tag === 'header').length, 0, 'the code brings no header of its own');
+      eq(findAll(columns[1], (n) => n.tag === 'textarea').length, 1, 'but its text');
+
+      sandbox.syncCodeView(m());
+      const lines = codeView.text.split('\n');
+      const lineOf = (start) => lines.findIndex((l) => l.startsWith(start)) + 1;
+      sandbox.codeCursorLine = () => lineOf('command ArchiveCourse');
+      eq(sandbox.followCodeCursor(), false, 'the page already shows it');
+      sandbox.codeCursorLine = () => lineOf('command DefineCourse');
+      eq(sandbox.followCodeCursor(), true, 'another command: the page follows');
+      eq([state.view, state.slice], ['slice', 'DefineCourse'], 'to it');
+      eq(codeView.following, false, 'and the code took the move as the cursor\'s, not the page\'s');
+      state.view = 'events';
+      state.openEvent = null;
+      sandbox.codeCursorLine = () => lineOf('event ');
+      eq(sandbox.followCodeCursor(), false, 'the whole kind\'s page covers each of its kind');
+
+      state.view = 'slice';
+      sandbox.enterCode();
+      eq([state.code, state.split], [true, false], 'Code from the split: the text alone');
+      sandbox.codeCursorLine = () => lineOf('command ArchiveCourse');
+      sandbox.enterSplit();
+      eq([state.split, state.slice], [true, 'ArchiveCourse'], 'and back, the page at the cursor');
+    } finally {
+      sandbox.matchMedia = narrow;
+      sandbox.codeCursorLine = cursorLine;
+      Object.assign(state, { code: false, split: false });
+    }
+  });
+
   check('the fold modes: nothing, the scenarios groups, then every definition around them', () => {
     const text = [
       'event A { x: integer }',

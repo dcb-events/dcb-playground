@@ -982,6 +982,35 @@ Watched, Decision, Store. Only the panel scrolls.
 - **The Overview's Commands card always opens the commands**, in
   whichever surface is current — it was the way into the code from
   the Overview once Code there had no switch to press.
+- **Three surfaces, one control**: Visual · Split · Code. Two
+  independent toggles (Page, Code; both on is the split) were sketched
+  and dropped — they can both be off, which has to be refused, and the
+  refusal needs explaining. A drawer the code slides out of was the
+  runner-up, the pick if the split ever becomes the usual way to work.
+- **The split is the page's header over both columns**, the page on
+  the left as anywhere (`paintView` paints into its column), the code
+  toolbar and text on the right, sticky under the header
+  (`renderSplit`). The columns are half each, no max-width; a
+  draggable divider is not there yet.
+- **Split needs the room** (`SPLIT_MEDIA`, about 1100px beside the
+  rail). Narrower, the button is not offered and a split surface shows
+  the pages; the choice is kept and comes back with the width.
+- **Two editors, one model.** In the code alone, a page edit under an
+  unapplied text marks it stale; side by side that would be constant.
+  So clicking into the page applies a text that parses — on
+  `pointerdown`, before the page acts, so the page's edit lands on the
+  model the text says. That click does nothing else: the repaint takes
+  what it was aimed at. A text that does not parse stays as typed, and
+  a page edit then marks it stale, as it would anywhere. Applying on
+  every typing pause was weighed and not taken: it fills the history
+  with half-typed steps.
+- **The page follows the cursor**, a beat after it stops
+  (`followCodeCursor`), never the other way round by surprise: a page
+  already showing that definition — or the kind's page, for any of its
+  kind — stays, so the cursor a page put there never moves the page.
+  The text keeps the keyboard when the page moves (`codeView.following`),
+  and a reveal the page caused does not take it (`revealCodeAt`'s
+  `focus`). After a switch the keyboard stays on the switch.
 
 ## The code view's language
 

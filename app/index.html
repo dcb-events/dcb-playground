@@ -1916,6 +1916,22 @@
     font-size: 12.5px; line-height: 19px; tab-size: 2; white-space: pre; overflow: auto;
   }
   .code-problems { margin-top: 10px; }
+  /* The split: the page's header over both columns, the page on the
+     left as it is anywhere, the code on the right held under the
+     header while the page scrolls – its text takes what the column has
+     left after the toolbar, the strip and the problems. No max-width:
+     each column is half of what the window gives. */
+  .slice.split-view { max-width: none; }
+  .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; align-items: start; }
+  .split-page { min-width: 0; }
+  .split-code {
+    position: sticky; top: calc(var(--topbar-h) + var(--split-head, 60px) + 12px); min-width: 0;
+    height: calc(100vh - var(--topbar-h) - var(--split-head, 60px) - 28px);
+    display: flex; flex-direction: column;
+  }
+  .split-code .code-box { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .split-code .code-editor, .split-code .code-text { flex: 1; height: auto; min-height: 0; }
+  .split-code .code-problems { flex: none; max-height: 30%; overflow: auto; }
   .code-problems .issue .mono { color: var(--muted); font-size: 11px; }
   .code-problems .issue .why { flex: 1; white-space: pre-line; }
   .diag-mark.err { color: var(--danger); }
@@ -1982,10 +1998,12 @@
 
 const state = {
   view: 'overview',         // 'overview' | 'slice' | 'entity' | 'types' | 'projections' | 'events' | …
-  // The main area shows the model as code instead of its pages – see
-  // `renderCode`. Remembered per browser, like the other view choices;
-  // the key is spelled out because SURFACE_KEY is declared further down.
-  code: localStorage.getItem('dcb-playground:surface') === 'code',
+  // The main area shows the model as code – see `renderCode` – instead
+  // of its pages, or with `split` beside them (`renderSplit`).
+  // Remembered per browser, like the other view choices; the key is
+  // spelled out because SURFACE_KEY is declared further down.
+  code: ['code', 'split'].includes(localStorage.getItem('dcb-playground:surface')),
+  split: localStorage.getItem('dcb-playground:surface') === 'split',
   slice: null,
   sel: null,                // the row being attended to
   adder: null,              // which "add another" is unfolded
@@ -2361,26 +2379,30 @@ const VISUAL_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentCol
 const CODE_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
   + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
   + '<polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>';
+const SPLIT_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+  + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<rect x="3" y="4" width="18" height="16" rx="2"></rect><line x1="12" y1="4" x2="12" y2="20"></line></svg>';
 
-// Pages or code – two surfaces over one model, see `renderCode`. It
-// sits in the header of the pages the code follows (`CODE_FOLLOWS`)
-// and nowhere else: the Overview, the sandbox and the cross-cutting
-// pages have no code to switch to, and a switch in the bar said they
-// did. Both surfaces share that header, so it stays where it was when
-// the code is on screen. The dot says a text is waiting to be applied.
+// Pages, code, or both side by side – surfaces over one model, see
+// `renderCode` and `renderSplit`. It sits in the header of the pages
+// the code follows (`CODE_FOLLOWS`) and nowhere else: the Overview,
+// the sandbox and the cross-cutting pages have no code to switch to,
+// and a switch in the bar said they did. Every surface shares that
+// header, so it stays where it was. One control of three, not two
+// toggles: two can both be off. Split is offered only where it fits
+// (`splitFits`); the dot says a text is waiting to be applied.
 function surfaceToggle(model) {
   const waiting = codeView.modelId === model.id && codeDirty();
+  const shown = splitShown() ? 'split' : codeShown() ? 'code' : 'visual';
+  const button = (surface, label, icon, title, onclick, extra) => h('button', {
+    type: 'button', class: shown === surface ? 'on' : '', 'aria-pressed': shown === surface ? 'true' : 'false',
+    title, 'aria-label': label, onclick,
+  }, h('span', { class: 'surface-icon' }, svg(icon)), h('span', { class: 'label', 'data-text': label }, label), extra);
   return h('span', { class: 'surface', role: 'group', 'aria-label': 'Show the model as' },
-    h('button', {
-      type: 'button', class: state.code ? '' : 'on', 'aria-pressed': state.code ? 'false' : 'true',
-      title: 'The model as pages', 'aria-label': 'Visual', onclick: leaveCode,
-    }, h('span', { class: 'surface-icon' }, svg(VISUAL_ICON_SVG)), h('span', { class: 'label', 'data-text': 'Visual' }, 'Visual')),
-    h('button', {
-      type: 'button', class: state.code ? 'on' : '', 'aria-pressed': state.code ? 'true' : 'false',
-      title: waiting ? 'The model as code – edited, not applied' : 'The model as code',
-      'aria-label': 'Code', onclick: enterCode,
-    }, h('span', { class: 'surface-icon' }, svg(CODE_ICON_SVG)), h('span', { class: 'label', 'data-text': 'Code' }, 'Code'),
-    waiting ? h('span', { class: 'surface-dot' }) : null));
+    button('visual', 'Visual', VISUAL_ICON_SVG, 'The model as pages', leaveCode),
+    splitFits() ? button('split', 'Split', SPLIT_ICON_SVG, 'The page and its code side by side', enterSplit) : null,
+    button('code', 'Code', CODE_ICON_SVG, waiting ? 'The model as code – edited, not applied' : 'The model as code',
+      enterCode, waiting ? h('span', { class: 'surface-dot' }) : null));
 }
 
 // The one trace of the code in the bar: a text typed and not applied,
@@ -3007,7 +3029,8 @@ const HELP_VIDEO = { id: '9II9RcaYYBk' };
 // pages say that where it is done. Cards on Getting started.
 const HELP_FEATURES = [
   { name: 'Visual and Code',
-    what: 'Edit a model through its pages, or as text in the Code view – two spellings of the same model.' },
+    what: 'Edit a model through its pages, or as text in the Code view – two spellings of the same model. '
+      + 'On a wide screen, Split shows a page and its code side by side.' },
   { name: 'Derived boundaries',
     what: 'Every command shows the queries it issues and the append condition its rules lead to.' },
   { name: 'Scenarios',
@@ -3084,7 +3107,8 @@ const HELP_FAQ = [
   { question: 'Should I use the Visual or the Code view?', answer: [
     'Whichever you prefer – they are two spellings of the same model, and a change in one shows '
       + 'in the other. The pages guide you through each definition; the code is faster once you '
-      + 'know the notation.'] },
+      + 'know the notation. Split, in the same switch, shows both: the page follows the definition '
+      + 'your cursor is in, and clicking into the page applies what you typed.'] },
   { question: 'Can I generate production code from my model?', answer: [
     'Not yet. The playground is for exploring a design quickly – trying out events, commands and '
       + 'their boundaries before writing any code. A code export may come later; until then, the '
@@ -6145,6 +6169,10 @@ function paintBehind(model) {
   // A page shown while the surface is Code: whatever leads back into
   // the code from here is revealed there, even the definition it was on.
   if (state.code && !codeShown()) codeView.focus = undefined;
+  if (splitShown()) {
+    main.className = 'slice split-view code-view';
+    return renderSplit(model, main);
+  }
   if (codeShown()) {
     main.className = 'slice wide code-view';
     return renderCode(model, main);
@@ -6152,6 +6180,12 @@ function paintBehind(model) {
   main.className = 'slice'
     + (['overview', 'coupling', 'rulemap', 'eventmodel', 'lifecycles', 'compare'].includes(state.view) ? ' wide' : '')
     + (state.view === 'sandbox' ? ' sandbox' : '');
+  paintView(model, main);
+}
+
+// The page for the view, into `main` – #main itself, or the split's
+// page column (`renderSplit`).
+function paintView(model, main) {
   const notice = experimentalNotice(model);
   if (notice) main.appendChild(notice);
 
@@ -16259,9 +16293,10 @@ function renderSandbox(model, main) {
 // ============================================================
 
 const SURFACE_KEY = 'dcb-playground:surface';
-function setCodeSurface(on) {
-  state.code = on;
-  localStorage.setItem(SURFACE_KEY, on ? 'code' : 'visual');
+function setSurface(surface) {
+  state.code = surface !== 'visual';
+  state.split = surface === 'split';
+  localStorage.setItem(SURFACE_KEY, surface);
 }
 
 // How folded a model's text opens – nothing, its scenarios groups, or
@@ -16280,7 +16315,22 @@ function storedCodeFold() {
 // surface stays Code, and a way from that page to a definition – an
 // Overview card, a chip – lands on it in the code.
 const CODE_FOLLOWS = ['slice', 'entity', 'events', 'projections', 'types'];
-function codeShown() { return !!state.code && CODE_FOLLOWS.includes(state.view); }
+// Split needs room for a page and the text beside it: the rail and two
+// columns of about 550px. Narrower, a split surface shows the pages –
+// the choice is kept, and comes back with the width.
+const SPLIT_MEDIA = '(min-width: 1360px)';
+function splitFits() { return typeof matchMedia !== 'function' || matchMedia(SPLIT_MEDIA).matches; }
+function codeShown() {
+  return !!state.code && CODE_FOLLOWS.includes(state.view) && (!state.split || splitFits());
+}
+function splitShown() { return codeShown() && !!state.split; }
+// Crossing the width repaints, so a split surface turns into pages and
+// back as the window is resized.
+if (typeof matchMedia === 'function') {
+  matchMedia(SPLIT_MEDIA).addEventListener('change', () => {
+    if (state.split && CODE_FOLLOWS.includes(state.view) && activeModel()) render();
+  });
+}
 
 // The definition under the cursor as the code is left, to come back to
 // from the Overview.
@@ -16320,6 +16370,8 @@ const codeView = {
   editor: null,         // { root, editor, model } once Monaco is up
   loading: false,       // writing into Monaco, not the author typing
   timer: null,
+  following: false,     // the split's page moved after the cursor (`followCodeCursor`)
+  followTimer: null,
   statusEl: null,       // the strip under the editor
   cursorEl: null,
   listEl: null,
@@ -16424,7 +16476,15 @@ function refreshCodeChrome() {
   if (codeView.statusEl) codeView.statusEl.replaceWith(codeView.statusEl = codeStrip());
   if (codeView.listEl) codeView.listEl.replaceWith(codeView.listEl = codeProblemList(analysis));
   const toggle = document.querySelector('#main > header .surface');
-  if (toggle) toggle.replaceWith(surfaceToggle(model));
+  if (toggle) {
+    // Its dot follows the text; the keyboard, if it was on the switch,
+    // stays on the same button.
+    const held = toggle.contains(document.activeElement) && document.activeElement.getAttribute('aria-label');
+    const fresh = surfaceToggle(model);
+    toggle.replaceWith(fresh);
+    const again = held && fresh.querySelector(`[aria-label="${held}"]`);
+    if (again) again.focus({ preventScroll: true });
+  }
 }
 
 // The scenarios groups, set apart from the definitions they exercise:
@@ -16656,21 +16716,49 @@ function revertCode() {
   render();
 }
 
-// Into the code view, revealing what the page was about.
+// Into the code view, revealing what the page was about – or, from
+// the split, the text alone, the cursor where it was.
 function enterCode() {
-  if (state.code) return;
+  if (codeShown() && !state.split) return;
+  const fromSplit = splitShown();
   closeForms(); // commits whatever a page had half-typed
-  setCodeSurface(true);
-  codeView.shownView = null;
-  codeView.focus = null;
+  setSurface('code');
+  if (!fromSplit) {
+    codeView.shownView = null;
+    codeView.focus = null;
+  }
   render();
+  focusSurfaceSwitch();
+}
+
+// The page and its code side by side. From the code, the page is the
+// one for the definition under the cursor, as leaving the code does.
+function enterSplit() {
+  if (splitShown()) return;
+  const fromCode = codeShown();
+  closeForms();
+  setSurface('split');
+  if (!fromCode) {
+    codeView.shownView = null;
+    codeView.focus = null;
+  }
+  if (!fromCode || !followCodeCursor()) render();
+  focusSurfaceSwitch();
+}
+
+// After a switch the keyboard stays on the switch: restored by its
+// rank (`restoreMainFocusRank`) it would land on whatever the new
+// surface has in that place.
+function focusSurfaceSwitch() {
+  const on = document.querySelector('#main > header .surface .on');
+  if (on && on.focus) on.focus({ preventScroll: true });
 }
 
 // Back into the code from anywhere – the bar's unapplied-code button –
 // where it was left, or where the commands start.
 function resumeCode() {
   closeForms();
-  setCodeSurface(true);
+  setSurface(state.split && splitFits() ? 'split' : 'code');
   codeView.shownView = null;
   codeView.focus = null;
   const model = activeModel();
@@ -16712,12 +16800,14 @@ function leaveCode() {
       toast('Your edits were not applied – the model changed under them. They are kept for when you come back.', true);
     }
   }
-  setCodeSurface(false);
+  setSurface('visual');
   const current = activeModel();
   if (at && current && current[DEF_COLLECTIONS[at.kind]][at.name] !== undefined) {
-    return openDefinition(at.kind, at.name, { scenarios: at.scenarios });
+    openDefinition(at.kind, at.name, { scenarios: at.scenarios });
+  } else {
+    render();
   }
-  render();
+  focusSurfaceSwitch();
 }
 
 function openDefinition(kind, name, { scenarios } = {}) {
@@ -16777,20 +16867,22 @@ function codeCursorLine() {
 
 // `from` is where a whole declaration starts – its annotations – and
 // is put near the top, the way a jump to a definition reads.
-function revealCodeAt(line, col, from) {
+// `focus: false` is the split's: the page moved the text, and the
+// keyboard stays on the page.
+function revealCodeAt(line, col, from, { focus = true } = {}) {
   if (codeView.editor) {
     const { editor } = codeView.editor;
     if (from) editor.revealLineNearTop(from);
     else editor.revealLineInCenterIfOutsideViewport(line);
     editor.setPosition({ lineNumber: line, column: col || 1 });
-    editor.focus();
+    if (focus) editor.focus();
     return;
   }
   const area = document.querySelector('.code-text');
   if (!area || typeof area.value !== 'string') return;
   const lines = area.value.split('\n');
   const offset = lines.slice(0, line - 1).reduce((sum, l) => sum + l.length + 1, 0) + (col || 1) - 1;
-  area.focus();
+  if (focus) area.focus();
   area.setSelectionRange(offset, offset);
   // A textarea scrolls to its caret only when it gains focus; put the
   // line near the top explicitly.
@@ -17083,7 +17175,10 @@ function createCodeEditor() {
   editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, applyCode);
   editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, applyCode);
   model.onDidChangeContent(() => { if (!codeView.loading) onCodeInput(model.getValue()); });
-  editor.onDidChangeCursorPosition(() => { if (codeView.cursorEl) codeView.cursorEl.textContent = codeCursorWords(); });
+  editor.onDidChangeCursorPosition(() => {
+    if (codeView.cursorEl) codeView.cursorEl.textContent = codeCursorWords();
+    followCodeCursorSoon();
+  });
   // Escape belongs to the editor's own widgets, never to the page.
   root.addEventListener('keydown', (e) => { if (e.key === 'Escape') e.stopPropagation(); });
   return { root, editor, model, textFor: codeView.modelId };
@@ -17202,20 +17297,23 @@ function downloadCode(model) {
   setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 }
 
-function renderCode(model, main) {
+function renderCode(model, main, { split = false } = {}) {
   syncCodeView(model);
   // The page's own header, less what only the page can do (its mark,
   // Rename, Remove, adding): which definition the code is at, and the
-  // switch back. Renaming in the code is F2.
-  const [kindLabel, title] = state.view === 'slice' ? ['Command', named(state.slice)]
-    : state.view === 'entity' ? ['Entity', named(state.entity)]
-      : [null, { events: 'Events', projections: 'Projections', types: 'Custom types' }[state.view]];
-  main.appendChild(h('header', {},
-    h('div', { class: 'row' },
-      kindLabel ? h('span', { class: 'code-kind' }, kindLabel) : null,
-      h('div', { class: 'name' }, title),
-      h('span', { class: 'grow' }),
-      surfaceToggle(model))));
+  // switch back. Renaming in the code is F2. In the split the page's
+  // header is there, whole, over both.
+  if (!split) {
+    const [kindLabel, title] = state.view === 'slice' ? ['Command', named(state.slice)]
+      : state.view === 'entity' ? ['Entity', named(state.entity)]
+        : [null, { events: 'Events', projections: 'Projections', types: 'Custom types' }[state.view]];
+    main.appendChild(h('header', {},
+      h('div', { class: 'row' },
+        kindLabel ? h('span', { class: 'code-kind' }, kindLabel) : null,
+        h('div', { class: 'name' }, title),
+        h('span', { class: 'grow' }),
+        surfaceToggle(model))));
+  }
 
   const editorElement = codeEditorElement();
   main.appendChild(h('div', { class: 'code-bar' },
@@ -17256,6 +17354,17 @@ function renderCode(model, main) {
   // page's own definition, which is then taken as shown – so the next
   // paint stays where the section put the text.
   const page = pageDefinition();
+  // The page moved because the cursor did (`followCodeCursor`): the
+  // text stays where it is, and keeps the keyboard.
+  if (codeView.following) {
+    codeView.following = false;
+    codeView.section = null;
+    codeView.focus = page ? page.join(':') : null;
+    codeView.shownView = state.view;
+    setTimeout(() => { if (codeView.editor) codeView.editor.editor.focus(); }, 0);
+    setTimeout(refreshCodeChrome, 0);
+    return;
+  }
   const target = Array.isArray(codeView.section) ? codeView.section
     : codeView.section ? [codeView.section, null] : page;
   codeView.section = null;
@@ -17274,11 +17383,61 @@ function renderCode(model, main) {
     // After this paint has attached the editor – a timeout rather than
     // a frame, which a background tab never gets.
     setTimeout(() => {
-      if (span) revealCodeAt(span.nameLine, span.nameCol, span.line);
-      else if (codeView.editor) codeView.editor.editor.focus();
+      if (span) revealCodeAt(span.nameLine, span.nameCol, span.line, { focus: !split });
+      else if (codeView.editor && !split) codeView.editor.editor.focus();
     }, 0);
   }
   setTimeout(refreshCodeChrome, 0);
+}
+
+// The page and its code side by side: the page's header over both,
+// the page beneath it on the left, the code toolbar and text on the
+// right, held in view while the page scrolls. Clicking into the page
+// applies a text that parses, as leaving the code does, and before the
+// page acts – so its edit lands on the model the text says, and never
+// marks that text stale. That click only applies: the repaint takes
+// what it was aimed at. A text that does not parse stays as typed; a
+// page edit then marks it stale, as anywhere else.
+function renderSplit(model, main) {
+  const pageColumn = h('div', { class: 'split-page' });
+  paintView(model, pageColumn);
+  const header = [...pageColumn.children].find((child) => child.tagName === 'HEADER');
+  if (header) main.appendChild(header);
+  pageColumn.addEventListener('pointerdown', () => {
+    if (codeView.modelId !== model.id || !codeDirty() || codeView.stale) return;
+    if (analyseCode(model).errors.length) return;
+    applyCode();
+  }, true);
+  const codeColumn = h('div', { class: 'split-code' });
+  renderCode(model, codeColumn, { split: true });
+  main.appendChild(h('div', { class: 'split' }, pageColumn, codeColumn));
+  // The code column is held under the header, whatever its height.
+  setTimeout(() => {
+    if (header) main.style.setProperty('--split-head', header.offsetHeight + 'px');
+  }, 0);
+}
+
+// In the split, the page follows the definition the cursor is in, a
+// beat after it stops. A page already showing it – its own definition,
+// or the whole kind's page for one of that kind – stays, so the cursor
+// a page put there never moves the page. A definition typed and not
+// applied yet has no page to go to.
+function followCodeCursorSoon() {
+  if (!splitShown()) return;
+  clearTimeout(codeView.followTimer);
+  codeView.followTimer = setTimeout(followCodeCursor, 300);
+}
+function followCodeCursor() {
+  const model = activeModel();
+  if (!model || !splitShown()) return false;
+  const line = codeCursorLine();
+  const at = line ? sourceSpanAt(analyseCode(model).parsed, line) : null;
+  if (!at || model[DEF_COLLECTIONS[at.kind]][at.name] === undefined) return false;
+  const page = pageDefinition();
+  if (page && page[0] === at.kind && (page[1] === at.name || page[1] === null)) return false;
+  codeView.following = true;
+  openDefinition(at.kind, at.name);
+  return true;
 }
 
 // Escape backs out of one layer, wherever the focus happens to be, and
@@ -17449,7 +17608,7 @@ document.getElementById('rail').addEventListener('click', (e) => {
 // model changes or another is opened (`addressModelId`); one that does
 // not is cleared at once. A `#url=` link fetches its file anew on every
 // open; the copy it makes is of the file as it is then. A link may add `&surface=code` (or
-// `visual`) to say which surface the model opens on – dcb.events does
+// `visual`, or `split`) to say which surface the model opens on – dcb.events does
 // on the pages explaining the notation, whose reader came for the text –
 // and `&experimental` to show experimental features for this session.
 async function boot() {
@@ -17499,7 +17658,7 @@ async function boot() {
 async function openModelLink(link) {
   addressModelId = null;
   const surface = link.options.get('surface');
-  if (surface === 'code' || surface === 'visual') setCodeSurface(surface === 'code');
+  if (['code', 'visual', 'split'].includes(surface)) setSurface(surface);
   if (link.options.has('experimental')) enableExperimentalForSession();
   let envelope;
   try {
