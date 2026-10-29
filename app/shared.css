@@ -12,22 +12,19 @@
   --command-soft: #eff6ff;
   --event: #f97316;
   --event-soft: #fff7ed;
-  --entity: #16a34a;
-  --entity-soft: #f0fdf4;
-  /* Projections share the entity green: a standalone projection and an
-     entity property are the same thing – folded state – and a second
+  /* Projections, grouped or not, and the tags they are kept per: one
+     green – a group is only a name over projections, and a second
      colour would suggest a distinction the model does not make. */
-  --projection: var(--entity);
-  --projection-soft: var(--entity-soft);
+  --projection: #16a34a;
+  --projection-soft: #f0fdf4;
   /* A kind's colour as text. The kind colours above are tuned for
      borders and fills, and as text on the light page orange and green
      fall below a readable contrast (2.8:1, 3.3:1); text takes the
      chips' own darker shades instead. The dark theme maps these back to
      the kind colours, which read fine on dark. */
   --event-text: #9a3412;
-  --entity-text: #166534;
-  --projection-text: var(--entity-text);
-  /* Constraints. Fuchsia rather than a shade of the entity green: a
+  --projection-text: #166534;
+  /* Constraints. Fuchsia rather than a shade of the projection green: a
      rule is not a kind of thing in the model, it is the gate in front
      of one, and it should not read as belonging to whatever it guards. */
   --rule: #c026d3;
@@ -87,15 +84,10 @@ body.f-dark {
   --command-soft: #16243d;
   --event: #fb923c;
   --event-soft: #2d1c0d;
-  --entity: #4ade80;
-  --entity-soft: #0f2a1c;
+  --projection: #4ade80;
+  --projection-soft: #0f2a1c;
   --event-text: var(--event);
-  --entity-text: var(--entity);
-  /* An alias resolves where it is declared, on :root – restated here,
-     or the dark page would get the light values behind it. */
-  --projection: var(--entity);
-  --projection-soft: var(--entity-soft);
-  --projection-text: var(--entity-text);
+  --projection-text: var(--projection);
   --rule: #e879f9;
   --rule-soft: #2a1130;
   --type: #94a3b8;
@@ -128,7 +120,7 @@ body.f-dark {
 }
 body.f-dark .chip.command { border-color: #1e40af; color: #bfdbfe; }
 body.f-dark .chip.event { border-color: #9a3412; color: #fed7aa; }
-body.f-dark .chip.entity, body.f-dark .chip.projection { border-color: #166534; color: #bbf7d0; }
+body.f-dark .chip.projection { border-color: #166534; color: #bbf7d0; }
 body.f-dark .chip.rule { border-color: #86198f; color: #f5d0fe; }
 body.f-dark .btn.primary { color: #06121f; }
 body.f-dark .btn.primary:hover { color: #06121f; }
@@ -350,7 +342,7 @@ kbd {
 }
 .chip.command { background: var(--command-soft); border-color: #bfdbfe; color: #1e40af; }
 .chip.event { background: var(--event-soft); border-color: #fed7aa; color: #9a3412; }
-.chip.entity, .chip.projection { background: var(--entity-soft); border-color: #bbf7d0; color: #166534; }
+.chip.projection { background: var(--projection-soft); border-color: #bbf7d0; color: #166534; }
 .chip.rule { background: var(--rule-soft); border-color: #f5d0fe; color: #86198f; }
 /* No value yet. Drawn as an absence – dashed, unfilled, italic – so it
    never reads as a value someone typed. `""` and `[]` are values and

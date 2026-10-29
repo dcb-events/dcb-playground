@@ -3,7 +3,7 @@
 An in-browser modeling tool for designing and testing event-sourced systems
 built on [Dynamic Consistency Boundaries](https://dcb.events) (DCB).
 
-You build a _DCB Model_ — custom types, events, entities, projections and
+You build a _DCB Model_ — custom types, events, projections (optionally in groups) and
 commands — drive commands against a hypothetical event log, and see which
 consistency boundary each command derives: which events it has to read, and
 which append condition protects its decision.
@@ -63,7 +63,7 @@ node app/dsl.test.js
 - [`app/`](app/) — the application: plain classic scripts, one HTML page,
   one stylesheet. Each file's header comment documents its role.
 - [`dcb-model.schema.json`](dcb-model.schema.json) — JSON Schema of the
-  model interchange format (`https://dcb.events/schemas/model/v10.json`).
+  model interchange format (`https://dcb.events/schemas/model/v11.json`).
 - [`fixtures/`](fixtures/) — models with authored scenarios, read by the
   tests only.
 - [`docs/research/`](docs/research/) — dated notes behind design decisions.

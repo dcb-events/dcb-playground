@@ -49,6 +49,15 @@
 // URL, or after a load that hung – compiles every script handler to a
 // thrower instead, so the model still loads and the script can be reached and fixed.
 //
+// **Groups are invisible here.** A grouped projection is folded by its
+// qualified name, `Course.capacity`, as the body `projectionsOf`
+// (model.js) flattens it to – tagged by its group's tag, its sibling
+// reads spelled from outside – so the fold, the derivation and the
+// query below never ask whether a projection is grouped. What a group
+// adds is only a way of *reading*: a group binding names an instance
+// (or, `each`, many) by the group's tag, and each member a rule reads,
+// `course.capacity`, is folded on first use as the read it stands for.
+//
 // **Failure has two kinds and they are not the same.** A command whose
 // conditions do not hold is *rejected* – an ordinary, expected outcome
 // this returns. A scenario that cannot be run at all – an event that no
@@ -293,8 +302,7 @@ function evEventsTagged(model, events, tags) {
 // ============================================================
 // Compiling a fold.
 //
-// A projection – an entity property or a standalone one – becomes three
-// things: the state it starts from, a step function per event type, and
+// A projection – grouped or top-level – becomes three things: the state it starts from, a step function per event type, and
 // the reading a condition sees. Declared and scripted projections
 // produce the same three, which is the point: below this line nothing
 // knows the difference.
@@ -424,7 +432,7 @@ function evCompileHandler(handler, label, scripted) {
   }
 }
 
-// A projection or entity property, compiled once and folded many times –
+// A projection, grouped or not, compiled once and folded many times –
 // once per model and target, so a fan-out reading the same projection
 // two hundred times compiles it (scripts included) once. Safe mode
 // changes what a script compiles to, so switching it starts afresh.
@@ -488,8 +496,8 @@ function evCompileTargetAfresh(model, target, label) {
 // projection declares (8.0), keyed by its name, and the arguments it
 // takes. The declared type of each tag is its key, so the
 // projection and the read together say which events it folds. Reading
-// an entity's property is the same read, its one tag the instance's
-// identifier: nothing left for two paths to disagree about.
+// a group member is the same read, its one tag the group's: nothing
+// left for two paths to disagree about.
 //
 // `foldProjectionState` is not a second fold but a second reading of
 // the same one: the state before `exposes` trims it to the exposed
@@ -501,27 +509,6 @@ function evCompileTargetAfresh(model, target, label) {
 // helps scrubbing forwards, and pays for it with a snapshot regime that
 // a replay does not need.
 // ============================================================
-
-// One property of one entity instance – the projection it binds, read
-// by its one tag, the instance's identifier.
-function foldEntityProperty(model, events, entityName, propertyName, instanceId, args) {
-  const entity = evOwn(model['entity-definitions'], entityName);
-  if (!entity) fail(`This model has no entity "${entityName}".`);
-  const binding = (entity.properties || []).find((p) => p && p.name === propertyName);
-  if (!binding) fail(`"${entityName}" has no property "${propertyName}".`);
-  const projection = evOwn(model['projection-definitions'], binding.projection);
-  if (!projection) {
-    fail(`"${entityName}.${propertyName}" binds projection "${binding.projection}", which this model no longer defines.`);
-  }
-  const [tag, ...more] = projectionTagParams(projection);
-  if (!tag || more.length || tag.tagType !== idTypeOf(model, entityName)) {
-    fail(`"${entityName}.${propertyName}" binds "${binding.projection}", which is not tagged by one ${idTypeOf(model, entityName)}.`);
-  }
-  return foldProjection(model, events, binding.projection, {
-    tags: { [tag.name]: instanceId },
-    args: args || {},
-  });
-}
 
 // The value a read gives one declared tag (`{name, tagType}`), as the
 // leaves it renders to – a scalar tag type renders one tag, a record
@@ -550,7 +537,7 @@ function evReadTagLeaves(model, projectionName, tag, value) {
 // it traces the fold's reads (`projectFromStore`), so what it shows is
 // what was asked.
 function projectionQueryTags(model, projectionName, read) {
-  const projection = evOwn(model['projection-definitions'], projectionName);
+  const projection = evOwn(projectionsOf(model), projectionName);
   if (!projection) fail(`This model has no projection "${projectionName}".`);
   const held = (read && read.tags) || {};
   return [...new Set(projectionTagParams(projection)
@@ -563,7 +550,7 @@ function projectionQueryTags(model, projectionName, read) {
 function evScriptTags(model, projectionName, read) {
   const out = {};
   const held = (read && read.tags) || {};
-  for (const tag of projectionTagParams(evOwn(model['projection-definitions'], projectionName))) {
+  for (const tag of projectionTagParams(evOwn(projectionsOf(model), projectionName))) {
     out[tag.name] = evNormalize(evOwn(held, tag.name));
   }
   return out;
@@ -587,7 +574,7 @@ function evWithExplicitOptionals(model, event) {
 }
 
 function foldProjection(model, events, projectionName, read, seen = []) {
-  const projection = evOwn(model['projection-definitions'], projectionName);
+  const projection = evOwn(projectionsOf(model), projectionName);
   if (projection && derivedOf(projection)) {
     return evDeriveProjection(model, events, projectionName, read, seen);
   }
@@ -596,7 +583,7 @@ function foldProjection(model, events, projectionName, read, seen = []) {
 }
 
 function foldProjectionState(model, events, projectionName, read) {
-  const projection = evOwn(model['projection-definitions'], projectionName);
+  const projection = evOwn(projectionsOf(model), projectionName);
   if (projection && derivedOf(projection)) {
     // A derived projection keeps no bookkeeping: its whole state is
     // the one value its predicate or computation yields.
@@ -617,7 +604,7 @@ function evDeriveProjection(model, events, projectionName, read, seen = []) {
   if (seen.includes(projectionName)) {
     fail(`Projection "${projectionName}" derives from itself – a cycle has no value to start from.`);
   }
-  const projection = evOwn(model['projection-definitions'], projectionName);
+  const projection = evOwn(projectionsOf(model), projectionName);
   const derived = derivedOf(projection);
 
   // One of this projection's own parameters, as the read gave it – a
@@ -672,7 +659,7 @@ function evApplyOperator(projectionName, derived, left, right) {
 }
 
 function evProjectionFold(model, events, projectionName, read) {
-  const projection = evOwn(model['projection-definitions'], projectionName);
+  const projection = evOwn(projectionsOf(model), projectionName);
   if (!projection) fail(`This model has no projection "${projectionName}".`);
 
   const queryTags = projectionQueryTags(model, projectionName, read);
@@ -691,23 +678,34 @@ function evProjectionFold(model, events, projectionName, read) {
 // Command scope.
 //
 // What a command's operands can see: its own arguments, and whatever
-// the boundary has bound so far. An entity binding may hold one
-// instance or many – the boundary is resolved in rounds, and a later
-// round may read an earlier one, so this grows as the rounds run.
+// the boundary has bound so far. A group binding may hold one instance
+// or many – the boundary is resolved in rounds, and a later round may
+// read an earlier one, so this grows as the rounds run.
 // ============================================================
 
-function evEntityInstance(model, events, entityName, id, args) {
+// One instance of a group, by its tag's value. A member is folded when
+// a rule first reads it, once per spelling – `seatsOn(slot: s1)` and
+// `seatsOn(slot: s2)` are two reads – as the qualified projection read
+// by this instance's tag and the member's own arguments.
+function evGroupInstance(model, events, groupName, tag, id) {
   const cache = new Map();
   return {
     id,
-    // Exposed so the boundary can be reported afterwards as the set of
-    // properties the decision actually depended on.
+    // Exposed so the boundary can be reported afterwards as the
+    // members the decision actually depended on, keyed as they read.
     cache,
-    read(propertyName) {
-      if (!cache.has(propertyName)) {
-        cache.set(propertyName, foldEntityProperty(model, events, entityName, propertyName, id, args));
+    read(operand, scope) {
+      const args = {};
+      for (const [name, argument] of Object.entries(operand.arguments || {})) args[name] = evReadOperand(argument, scope);
+      const key = Object.keys(args).length
+        ? `${operand.property}(${Object.values(args).map((v) => JSON.stringify(v)).join(', ')})`
+        : operand.property;
+      if (!cache.has(key)) {
+        const name = qualifiedProjectionName(groupName, operand.property);
+        if (!evOwn(projectionsOf(model), name)) fail(`${groupName} has no projection "${operand.property}".`);
+        cache.set(key, foldProjection(model, events, name, { tags: { [tag.name]: id }, args }));
       }
-      return cache.get(propertyName);
+      return cache.get(key);
     },
   };
 }
@@ -740,20 +738,20 @@ function evReadOperand(operand, scope) {
           fail(`"${operand.alias}" reads a projection, which holds one value and has no properties.`);
         }
         // Fanned out, it is one value per element; read whole, a list
-        // of lists flattens, as a fanned entity property's does.
+        // of lists flattens, as a fanned group member's does.
         if (binding.fanned) return binding.value.some(Array.isArray) ? binding.value.flat() : binding.value;
         return binding.value;
       }
       if (!operand.property) {
-        fail(`"${operand.alias}" is an entity, so reading it needs a property.`);
+        fail(`"${operand.alias}" reads the group ${binding.group}, so reading it needs one of its projections.`);
       }
       if (!binding.fanned) {
         // An absent optional binding bound nothing; reading it yields
         // null – the one spelling of "no value" – rather than erroring.
         if (!binding.instances.length) return null;
-        return binding.instances[0].read(operand.property);
+        return binding.instances[0].read(operand, scope);
       }
-      const each = binding.instances.map((instance) => instance.read(operand.property));
+      const each = binding.instances.map((instance) => instance.read(operand, scope));
       return each.some(Array.isArray) ? each.flat() : each;
     }
     case 'enum-member':
@@ -784,15 +782,15 @@ function evReadOperand(operand, scope) {
 // itself fanned out (`Course(each student.courses)`), it is the index
 // the instance it was read off came from: every course of the first
 // student pairs with the first element the students were fanned from,
-// however many courses each holds and whichever students `excluding`
-// left out. The values are flattened the way reading the alias whole
-// flattens them, a list per instance into its elements.
+// however many courses each holds. The values are flattened the way
+// reading the alias whole flattens them, a list per instance into its
+// elements.
 function evFanSourceIndexes(operand, scope, count) {
   const parent = operandSource(operand) === 'alias-property' ? scope.bound[operand.alias] : null;
   if (parent && parent.fanned && parent.instances) {
     const out = [];
     parent.instances.forEach((instance, j) => {
-      const value = parent.kind === 'projection' ? instance.value : instance.read(operand.property);
+      const value = parent.kind === 'projection' ? instance.value : instance.read(operand, scope);
       const root = parent.sourceIndexes && parent.sourceIndexes[j] !== undefined ? parent.sourceIndexes[j] : j;
       const many = Array.isArray(value) ? value.length : 1;
       for (let k = 0; k < many; k++) out.push(root);
@@ -816,7 +814,7 @@ function evFanSourceIndexes(operand, scope, count) {
 // in the list's order so a zipped parameter pairs by index – and `value`
 // is then every one of them, in order.
 function evProjectionRead(model, events, body, read, scope, label) {
-  const projection = evOwn(model['projection-definitions'], read.projection);
+  const projection = evOwn(projectionsOf(model), read.projection);
   if (!projection) fail(`${label} reads "${read.projection}", which this model does not define.`);
   const held = (read.tags && typeof read.tags === 'object' && !Array.isArray(read.tags)) ? read.tags : {};
   let fanned = null;
@@ -875,74 +873,60 @@ function evResolveBinding(model, events, body, binding, scope) {
     scope.bound[binding.alias] = evProjectionRead(model, events, body, binding, scope, `Binding "${binding.alias}"`);
     return;
   }
-
-  if (!evOwn(model['entity-definitions'], binding.entity)) {
-    fail(`Binding "${binding.alias}" reads entity "${binding.entity}", which this model does not define.`);
+  if (binding.group === undefined) {
+    fail(`Binding "${binding.alias}" reads neither a projection nor a group.`);
+  }
+  const group = evOwn(model['group-definitions'], binding.group);
+  if (!group) fail(`Binding "${binding.alias}" reads group "${binding.group}", which this model does not define.`);
+  const tag = groupTagOf(group);
+  if (!tag) fail(`Group "${binding.group}" declares no tag, so "${binding.alias}" has nothing to read it by.`);
+  const label = `Binding "${binding.alias}"`;
+  const operand = evOwn((binding.tags && typeof binding.tags === 'object') ? binding.tags : {}, tag.name);
+  if (operand === undefined) fail(`${label} gives no value for ${binding.group}'s "${tag.name}" tag.`);
+  const resolved = tagOperandType(model, body, operand);
+  if (resolved && resolved.propertyType !== tag.tagType) {
+    fail(`${label} is tagged by ${operandText(operand)}, ${typeArticle(resolved.propertyType)} ` +
+      `${resolved.propertyType} – but ${binding.group}'s "${tag.name}" tag is ` +
+      `${typeArticle(tag.tagType)} ${tag.tagType}.`);
   }
 
-  const values = {};
-  for (const [name, operand] of Object.entries(binding.arguments || {})) {
-    values[name] = evReadOperand(operand, scope);
-  }
-
-  const fanned = isFannedOut(model, body, binding);
-  const held = evReadOperand(entityIdOperand(binding), scope);
   // Many instances are read where the binding says so, `each`; a list
-  // read as one identifier has no one instance to be.
+  // read as one value has no one instance to be.
+  const fanned = operandSource(operand) === 'each';
+  const held = fanned ? evReadOperand(operand.each, scope)
+    : operandSource(operand) === 'tag-literal' ? operand.tagValue : evReadOperand(operand, scope);
   if (!fanned && Array.isArray(evNormalize(held))) {
-    fail(`Binding "${binding.alias}" reads ${binding.entity} by ${operandText(binding.id)}, which holds ` +
-      `many – ${binding.entity}(each ${operandText(binding.id)}) reads one instance per element.`);
+    fail(`${label} reads ${binding.group} by ${operandText(operand)}, which holds ` +
+      `many – ${binding.group}(each ${operandText(operand)}) reads one instance per element.`);
   }
-  // A null identifier binds nothing. Folding at "Entity:null" would
-  // invent one phantom instance every unset value shares. A binding
-  // flagged `isOptional` declares the absence expected and binds zero
-  // instances instead: conditions over it hold vacuously and reading a
-  // property of it yields null. Without the flag the error stays – an
-  // unset identifier nobody declared possible is an accident, and this
-  // is the error the optional-parameter advisory promises.
+  // A null tag binds nothing. Folding at "Type:null" would invent one
+  // phantom instance every unset value shares. A binding flagged
+  // `isOptional` declares the absence expected and binds zero instances
+  // instead: conditions over it hold vacuously and reading a member of
+  // it yields null. Without the flag the error stays – an unset value
+  // nobody declared possible is an accident, and this is the error the
+  // optional-parameter advisory promises.
   if (!fanned && evNormalize(held) === null) {
     if (binding.isOptional) {
       scope.bound[binding.alias] = {
-        kind: 'entity',
-        entity: binding.entity,
-        fanned: false,
-        absent: true,
-        sourceIndexes: [],
-        instances: [],
+        kind: 'group', group: binding.group, fanned: false, absent: true, sourceIndexes: [], instances: [],
       };
       return;
     }
-    fail(`Binding "${binding.alias}" has no instance to read: ${operandText(binding.id)} is unset (null).`);
+    fail(`${label} has no instance to read: ${operandText(operand)} is unset (null).`);
   }
   // Order is preserved and duplicates are kept: a binding fanned from a
   // list parameter is read at the same index as that parameter, and
   // collapsing it would silently pair a line of the cart with the wrong
   // one's price.
   const ids = fanned ? evAsList(held) : [held];
-  const roots = fanned ? evFanSourceIndexes(entityIdOperand(binding), scope, ids.length) : [0];
-
-  // Each instance remembers the index it was fanned out from, because
-  // a zipped parameter is read at *that* index – `excluding` compacts
-  // the instance list, but it must not shift the pairing against the
-  // list the fan came from.
-  let entries = ids.map((id, i) => ({ id, sourceIndex: roots[i] }));
-  if (binding.excluding !== undefined) {
-    const excludedHeld = evReadOperand(binding.excluding, scope);
-    // Same rule as the identifier above: null is not "exclude
-    // nothing", it is a value that never got supplied.
-    if (evNormalize(excludedHeld) === null) {
-      fail(`Binding "${binding.alias}" excludes ${operandText(binding.excluding)}, which is unset (null).`);
-    }
-    const excluded = evAsList(excludedHeld);
-    entries = entries.filter(({ id }) => !excluded.some((other) => evDeepEqual(id, other)));
-  }
-
   scope.bound[binding.alias] = {
-    kind: 'entity',
-    entity: binding.entity,
+    kind: 'group',
+    group: binding.group,
+    tag,
     fanned,
-    sourceIndexes: entries.map((entry) => entry.sourceIndex),
-    instances: entries.map(({ id }) => evEntityInstance(model, events, binding.entity, evNormalize(id), values)),
+    sourceIndexes: fanned ? evFanSourceIndexes(operand.each, scope, ids.length) : [0],
+    instances: ids.map((id) => evGroupInstance(model, events, binding.group, tag, evNormalize(id))),
   };
 }
 
@@ -1038,7 +1022,7 @@ function evCheckCondition(model, body, condition, scope) {
   for (const operand of conditionOperands(condition)) {
     if (operandSource(operand) !== 'alias-property') continue;
     const binding = scope.bound[operand.alias];
-    if (binding && binding.kind === 'entity' && binding.absent) {
+    if (binding && binding.kind === 'group' && binding.absent) {
       return { held: true, index: null, skippedFor: operand.alias };
     }
   }
@@ -1055,9 +1039,9 @@ function evCheckCondition(model, body, condition, scope) {
     ...fannedReads.map(inlineOf),
   ];
 
-  // The instance list may be compacted by `excluding`, so a zipped
-  // parameter is read at the instance's original fan-out index, never
-  // at its position in the compacted list.
+  // A zipped parameter is read at the index the instance was fanned out
+  // from – the instance's own position for a fan over a list, the
+  // index of the element it was reached through for a chained one.
   const sourceIndexAt = (index) => {
     const indexes = fannedSources[0].sourceIndexes;
     return indexes && indexes[index] !== undefined ? indexes[index] : index;
@@ -1068,7 +1052,7 @@ function evCheckCondition(model, body, condition, scope) {
     const source = operandSource(operand);
     if (source === 'alias-property' && fannedAliases.includes(operand.alias)) {
       const bound = scope.bound[operand.alias];
-      return bound.kind === 'projection' ? bound.instances[index].value : bound.instances[index].read(operand.property);
+      return bound.kind === 'projection' ? bound.instances[index].value : bound.instances[index].read(operand, scope);
     }
     if (source === 'projection-read' && fannedReads.includes(operand)) {
       return inlineOf(operand).instances[index].value;
@@ -1328,18 +1312,20 @@ function evDescribeReads(scope) {
       };
       continue;
     }
+    // A group's instances, each with the members the decision read –
+    // keyed by local name, or `name(args…)` where the member took
+    // arguments – and nothing it did not.
     out[alias] = {
-      kind: 'entity',
-      entity: binding.entity,
+      kind: 'group',
+      group: binding.group,
+      ...(binding.tag ? { tag: { name: binding.tag.name, type: binding.tag.tagType } } : {}),
       fanned: binding.fanned,
-      // An optional binding whose identifier was unset – it bound
-      // nothing, and the reader deserves to see that said, not an
-      // empty list that looks like a fan-out over nothing.
+      // An optional binding whose tag was unset – it bound nothing, and
+      // the reader deserves to see that said, not an empty list that
+      // looks like a fan-out over nothing.
       ...(binding.absent ? { absent: true } : {}),
       instances: binding.instances.map((instance) => {
         const properties = {};
-        // `read` memoises, so re-reading here costs nothing and reports
-        // exactly the properties the decision depended on.
         for (const [name, value] of instance.cache || []) properties[name] = value;
         return { id: instance.id, properties };
       }),
@@ -1510,7 +1496,7 @@ function deriveProjectionScenarioThen(model, spec) {
     }
   });
 
-  if (!evOwn(model['projection-definitions'], spec.projection)) {
+  if (!evOwn(projectionsOf(model), spec.projection)) {
     fail(`This scenario is about "${spec.projection}", which this model no longer defines.`);
   }
   const tags = {};
@@ -1680,7 +1666,7 @@ function handleCommand(model, store, commandName, args, { trace } = {}) {
 // one position rather than each as of its own.
 function projectFromStore(model, store, projectionName, params, { trace } = {}) {
   const record = trace ? (entry) => trace.push(entry) : () => {};
-  const body = evOwn(model['projection-definitions'], projectionName);
+  const body = evOwn(projectionsOf(model), projectionName);
   if (!body) return { outcome: 'error', message: `This model has no projection "${projectionName}".` };
   try {
     const cut = derivedOf(body) ? { at: evHead(store, record) } : null;
@@ -1743,7 +1729,6 @@ if (typeof module !== 'undefined' && module.exports) {
     EvaluationError,
     evaluationFailure,
     evaluateCommand,
-    foldEntityProperty,
     foldProjection,
     tagsOfEvent,
     deriveThen,

@@ -62,11 +62,49 @@
 // emission's `courseId: CourseNumbering()`, another read's value
 // `OwnedCourses(CourseOwner(courseId))` – and an `alias` only names
 // one; written twice, it is one query. A call is a read when a
-// projection is declared by its name and a tag literal otherwise,
-// settled once every declaration is known. An entity (experimental) is
-// declared the same way, `entity Course (tag courseId: CourseId)`, and
-// read `Course(courseId)` – `Course(each …)` for many, its scripted
-// properties' arguments given by name after the identifier.
+// projection or a group is declared by its name and a tag literal
+// otherwise, settled once every declaration is known.
+//
+// **A group owns projections that share one partition tag** (11.0):
+//
+//   @icon("📚")
+//   group Course (tag courseId: CourseId) {
+//     projection capacity: integer = 0 {
+//       on CourseDefined => set event.data.capacity
+//     }
+//
+//     derived projection remaining: integer {
+//       capacity - subscriptionCount
+//     }
+//   }
+//
+// Inside it each projection is spelled as at the top level minus the
+// tag header – the group's one tag, explicit in its own header, is
+// theirs. A derived one names its siblings bare, `capacity`, and has
+// the tag's name in scope for reads outside the group,
+// `Other(courseId)`. Outside, a projection of the group is read through
+// it: `Course(courseId).capacity` in place, or `alias course =
+// Course(courseId)` and then `course.capacity` – `Course(each
+// courseIds)` for many. Its arguments go on the projection, by name,
+// never on the group: `course.seatsOn(slot: s)`. A group is a name
+// and nothing more – reading `course.capacity` queries `capacity`'s
+// events alone – so the alias reads as the read of an instance it is
+// not, and the editor says what it adds beside it. A grouped projection
+// may also be named on its own, `alias capacity =
+// Course(courseId).capacity`, the stored shape of an alias bound to it.
+// `entity`, its `lifecycle` and `excluding` were 10.0's; each is an
+// error that says what replaced it.
+//
+// **The casing rule.** A capitalised name is a declaration that can be
+// named from anywhere: a type, an event, a group, a top-level
+// projection, a command, an enum member. A lowercase one is reached
+// through something in scope: an alias, a property or field, a tag or
+// parameter name, a projection of a group – `course.capacity` through
+// the alias, `capacity` among its siblings. It is what lets the parser
+// tell `Existent` (a member) from `existent` (a name) by sight, and why
+// a group's projections are lowercase: `course.Capacity` would be the
+// one `x.Y` in the language, and a bare sibling `Capacity` would read
+// as an enum member.
 //
 // The read is a function application, and spelled as one on purpose: a
 // projection is a pure function of the log, its tags and its arguments.
@@ -83,7 +121,7 @@
 // JSON does not store. Where a convenience would have needed inference
 // it was left out: an alias is always written, since the schema stores
 // it. A fan-out is marked where the schema marks it, `{each: …}`, on a
-// projection read's tag and an entity read's identifier alike. A read's
+// projection read's tag and a group read's alike. A read's
 // values are positional in the text and named in the stored shape –
 // which is why the printer and the parser take what each projection
 // declares (`sourceNamesOf`), and why a read of a projection the text
@@ -132,7 +170,7 @@
 // operation stores. The vocabulary is closed because it is analysed,
 // not only run – what an editor offers per type (`operationsFor`),
 // whether a boolean only ever moves one way (`isMonotoneBoolean`),
-// which event moves a lifecycle – and a keyword shows that edge where
+// which event moves an enum on – and a keyword shows that edge where
 // an expression would hide it. Arithmetic *between* values is a derived
 // projection's (9.0): `derived projection Left (…): integer { Cap(x) -
 // Taken(x) }`, one operator – `+`, `-`, `*`, `min(a, b)`, `max(a, b)` –
@@ -235,8 +273,8 @@
 // it, since a text being typed rarely parses there. And beside every
 // `alias` it says how many event types that alias adds to the append
 // condition, and names them on hover (`sourceReadQueries`) – only the
-// used properties' – since `alias course = Course(courseId)` otherwise
-// reads as the whole entity; and beside each command, what it reads in
+// used projections' – since `alias course = Course(courseId)` otherwise
+// reads as the whole group; and beside each command, what it reads in
 // all (`sourceCommandQueries`), in the same words.
 // ============================================================
 
@@ -245,7 +283,7 @@ const SOURCE_EXTENSION = '.dcb';
 const SOURCE_KINDS = [
   'custom-type-definition',
   'event-definition',
-  'entity-definition',
+  'group-definition',
   'projection-definition',
   'command-definition',
 ];
@@ -253,7 +291,7 @@ const SOURCE_KINDS = [
 const SOURCE_KEYWORD = {
   'custom-type-definition': 'type',
   'event-definition': 'event',
-  'entity-definition': 'entity',
+  'group-definition': 'group',
   'projection-definition': 'projection',
   'command-definition': 'command',
 };
@@ -261,7 +299,7 @@ const SOURCE_KEYWORD = {
 const SOURCE_SECTION = {
   'custom-type-definition': 'Types',
   'event-definition': 'Events',
-  'entity-definition': 'Entities',
+  'group-definition': 'Groups',
   'projection-definition': 'Projections',
   'command-definition': 'Commands',
 };
@@ -272,14 +310,18 @@ const SOURCE_BASE_TYPES = ['string', 'number', 'integer', 'boolean', 'object', '
 
 // Which annotation goes on which kind, and the body field it fills.
 const SOURCE_ANNOTATIONS = {
-  icon: ['entity-definition', 'event-definition', 'command-definition'],
+  icon: ['group-definition', 'event-definition', 'command-definition'],
   feature: ['command-definition'],
   tagSchema: ['custom-type-definition'],
 };
 
 const SOURCE_IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const SOURCE_MEMBER_RE = /^[A-Z][A-Za-z0-9_]*$/;
-const SOURCE_DECL_STARTS = ['@', 'model', 'type', 'tag', 'enum', 'record', 'event', 'entity', 'untagged', 'derived', 'scripted', 'projection', 'command'];
+// `entity` is 10.0's, still a start so that an old text's error stays
+// on its own declaration.
+const SOURCE_DECL_STARTS = ['@', 'model', 'type', 'tag', 'enum', 'record', 'event', 'group', 'entity', 'untagged', 'derived', 'scripted', 'projection', 'command'];
+// A grouped projection's local name, and a group's member read by it.
+const SOURCE_LOCAL_RE = /^[a-z][A-Za-z0-9]*$/;
 // What a derived projection computes with, spelled as the symbols a
 // developer would type; `min` and `max` are calls, `min(a, b)`.
 const SOURCE_OPERATORS = { '+': 'add', '-': 'subtract', '*': 'multiply' };
@@ -420,14 +462,14 @@ function describeToken(token) {
   return `"${token.v}"`;
 }
 
-// The text, read back: `{ name, collections, spans, diagnostics,
-// implicit }`. `collections` holds one ordered `{ name: body }` map per
-// source kind – the shape `replaceDefinitions` takes. `spans` says
-// where each definition sits (1-based, Monaco's convention), for
-// markers, navigation and the outline. `implicit` names the identifier
-// types synthesized for entities whose type the text never declared:
-// writing `entity Tenant {}` should not also require `tag type TenantId
-// = string`, any more than creating one on its page does.
+// The text, read back: `{ name, collections, spans, diagnostics }`.
+// `collections` holds one ordered `{ name: body }` map per source kind
+// – the shape `replaceDefinitions` takes. `spans` says where each
+// definition sits (1-based, Monaco's convention), for markers,
+// navigation and the outline; a group's projections have spans of
+// their own, under their qualified names (`Course.capacity`), ahead of
+// their group's, so the innermost is found first. Nothing is
+// synthesized: a group's tag type is written, as everything else is.
 //
 // Errors never stop the read: a declaration that fails is reported
 // and skipped to the next line that starts one, so a typo in one
@@ -442,7 +484,7 @@ function parseModelSource(text, options = {}) {
     const collections = {};
     for (const kind of SOURCE_KINDS) collections[kind] = {};
     return {
-      name: null, collections, spans: [], implicit: [], scenarios: [], groups: [], marks: new WeakMap(),
+      name: null, collections, spans: [], scenarios: [], groups: [], marks: new WeakMap(),
       diagnostics: [{
         severity: 'error', message: 'This text could not be read: it is nested too deeply.',
         line: 1, col: 1, endLine: 1, endCol: 2,
@@ -456,7 +498,7 @@ function parseModelSourceText(text, options) {
   const collections = {};
   for (const kind of SOURCE_KINDS) collections[kind] = {};
   const result = {
-    name: null, collections, spans: [], diagnostics, implicit: [], scenarios: [], groups: [], marks: new WeakMap(),
+    name: null, collections, spans: [], diagnostics, scenarios: [], groups: [], marks: new WeakMap(),
   };
   let at = 0;
 
@@ -509,20 +551,28 @@ function parseModelSourceText(text, options) {
   // word followed by a name, or an annotation – ends whatever block is
   // still open, so a missing "}" is reported where it is missing
   // rather than as nonsense about the declaration below it. "Plainly",
-  // because `type: string` is a property called type.
-  const startsDeclaration = () => {
+  // because `type: string` is a property called type. A projection
+  // named in lowercase is one of a group's, and starts a declaration
+  // only within the group (`inner`).
+  const startsDeclaration = (inner = false) => {
     const token = peek();
     if (!token.first) return false;
     if (token.t === 'punct') return token.v === '@' && peek(1).t === 'ident';
     // `tag courseId: CourseId` is an event's property, marked.
     if (token.v === 'tag') return ['type', 'enum', 'record'].includes(peek(1).v);
-    if (token.v === 'untagged') return ['projection', 'derived', 'scripted'].includes(peek(1).v);
-    if (token.v === 'derived' || token.v === 'scripted') return peek(1).v === 'projection' || peek(1).v === 'untagged';
+    let k = 0;
+    while (['untagged', 'derived', 'scripted'].includes(peek(k).v) && k < 3) k += 1;
+    if (k && peek(k).v !== 'projection') return false;
+    if (k || token.v === 'projection') {
+      const name = peek(k + 1);
+      const local = name.t === 'ident' && SOURCE_LOCAL_RE.test(name.v);
+      return local ? inner : name.t === 'ident' || name.t === 'string';
+    }
     return token.t === 'ident' && SOURCE_DECL_STARTS.includes(token.v)
       && (peek(1).t === 'ident' || peek(1).t === 'string');
   };
-  const guardBlock = (close) => {
-    if (!startsDeclaration()) return;
+  const guardBlock = (close, inner = false) => {
+    if (!startsDeclaration(inner)) return;
     const end = last();
     fail(`Expected "${close}" before the next declaration.`,
       { line: end.endLine, col: end.endCol, endLine: end.endLine, endCol: end.endCol + 1 });
@@ -608,7 +658,9 @@ function parseModelSourceText(text, options) {
   };
 
   // A name in a command, resolved once the whole command is read –
-  // which `alias` declares it is not known until then.
+  // which `alias` declares it is not known until then. A group's
+  // projection takes its arguments where it is named, by name:
+  // `course.seatsOn(slot: s)`.
   const nameRef = () => {
     const headToken = next();
     const ref = { '%ref': [headToken.v] };
@@ -617,8 +669,19 @@ function parseModelSourceText(text, options) {
       const property = ident('a property name');
       ref['%ref'].push(property.v);
       mark(ref, 'property', property);
+      if (is('(')) ref['%args'] = memberArguments(property, commandOperand);
     }
     return ref;
+  };
+
+  // `(slot: s, days: 3)` after a group's projection: its arguments, each
+  // by name – a read of a top-level projection gives them in order, but
+  // a member has no order to give them in beside the group's tag.
+  const memberArguments = (member, valueOf) => {
+    const open = peek();
+    const { values, named } = callArguments(valueOf);
+    if (values.length) fail(`A group's projection takes its arguments by name: ${member.v}(name: …).`, open);
+    return named || {};
   };
 
   // An operand in a command. A capitalised name followed by `(` is a
@@ -642,17 +705,28 @@ function parseModelSourceText(text, options) {
     return literalValue();
   };
 
-  // `Name(a, each b, key: c)`: the values in order – `each` marking the
-  // one a read fans out over – and `key: value` pairs, which only an
-  // entity read takes (its scripted properties' arguments).
+  // `Name(a, each b)`: the values in order – `each` marking the one a
+  // read fans out over – and, after a group's, the projection read of
+  // it and that projection's arguments: `Course(courseId).seatsOn(slot:
+  // s)`. `key: value` pairs in the first parentheses are read only to
+  // be refused where the call is settled.
   const call = (valueOf) => {
     const callee = next();
     const out = { '%call': callee.v, ...callArguments(valueOf) };
     mark(out, 'callee', callee);
+    readMember(out, valueOf);
     // Its closing parenthesis: a read's extent, for introducing an
     // alias for it (`sourceIntroduceAlias`).
     mark(out, 'close', last());
     return out;
+  };
+  const readMember = (out, valueOf) => {
+    if (!is('.') || peek(1).t !== 'ident') return;
+    next();
+    const member = next();
+    out['%member'] = member.v;
+    mark(out, 'member', member);
+    if (is('(')) out['%memberArgs'] = memberArguments(member, valueOf);
   };
   const callArguments = (valueOf) => {
     expect('(');
@@ -691,8 +765,9 @@ function parseModelSourceText(text, options) {
   // A derived projection's operand: another projection's value – read
   // with the values it declares, each one of this projection's own
   // parameters by name or a literal – one of its own parameters by name
-  // (10.0), or an enum member or a literal. Settled like a command's
-  // (`settle`).
+  // (10.0), or an enum member or a literal. In a group, a lowercase name
+  // may be a sibling instead, `capacity` or `seatsOn(slot: 3)`; which it
+  // is, is settled like a command's names (`settle`).
   const derivedOperand = () => {
     const token = peek();
     if (token.t === 'ident' && SOURCE_MEMBER_RE.test(token.v) && is('(', 1)) return call(derivedValue);
@@ -701,6 +776,14 @@ function parseModelSourceText(text, options) {
       const ref = { '%pascal': token.v };
       mark(ref, 'pascal', token);
       return ref;
+    }
+    if (token.t === 'ident' && !startsLiteral()) {
+      next();
+      const local = { '%local': token.v };
+      mark(local, 'local', token);
+      if (is('(')) local['%memberArgs'] = memberArguments(token, derivedValue);
+      mark(local, 'close', last());
+      return local;
     }
     return derivedValue();
   };
@@ -1033,52 +1116,83 @@ function parseModelSourceText(text, options) {
     return define('event-definition', nameToken, annotate('event-definition', body, annotations), start);
   };
 
-  const entityDecl = (start, annotations) => {
+  // `group Course (tag courseId: CourseId) { … }`: the one tag its
+  // projections are read by, said in its header with nothing inferred,
+  // then the projections themselves, each spelled as at the top level
+  // minus its own tag header. An empty block is a group still to be
+  // filled, which the advisories mention and the text allows.
+  const groupDecl = (start, annotations) => {
     next();
-    const nameToken = declName('an entity name');
-    if (is('json')) return define('entity-definition', nameToken, annotate('entity-definition', jsonBody(), annotations), start);
-    const body = {};
-    // `(tag courseId: CourseId)` – the one tag an instance is read by,
-    // named. The defaults, `<Name>Id` named `<name>Id`, are the entity
-    // tracking its own name and are stored as absent, which is how the
-    // model keeps them.
-    const lowered = nameToken.v.charAt(0).toLowerCase() + nameToken.v.slice(1);
-    if (!is('(')) {
-      fail(`Say what ${nameToken.v} is tagged by: entity ${nameToken.v} (tag ${lowered}Id: ${nameToken.v}Id).`, peek());
-    }
+    const nameToken = declName('a group name');
+    if (is('json')) return define('group-definition', nameToken, annotate('group-definition', jsonBody(), annotations), start);
+    const body = annotate('group-definition', {}, annotations);
+    const lowered = String(nameToken.v).charAt(0).toLowerCase() + String(nameToken.v).slice(1);
+    const example = `group ${nameToken.v} (tag ${lowered}Id: ${nameToken.v}Id)`;
+    if (!is('(')) fail(`Say what ${nameToken.v}'s projections are read by – one tag: ${example}.`, peek());
     next();
-    expect('tag', '"tag" – an entity is read by one tag, its identifier');
-    const idName = ident('the name of its tag');
+    if (!is('tag')) fail(`A group is read by one tag, named: ${example}.`);
+    next();
+    const tagName = ident('the name of its tag');
     expect(':');
-    const typeToken = ident('the identifier type');
-    expect(')', '")" – an entity has one tag');
-    if (typeToken.v !== nameToken.v + 'Id') body.identifierType = typeToken.v;
-    if (idName.v !== typeToken.v.charAt(0).toLowerCase() + typeToken.v.slice(1)) body.identifierName = idName.v;
-    mark(body, 'identifierType', typeToken);
-    mark(body, 'identifierName', idName);
-    expect('{');
-    body.properties = [];
+    const tagType = ident('the tag\'s type');
+    if (is(',')) fail(`A group has one tag – a projection read by several stays outside any group.`);
+    expect(')', '")" – a group has one tag');
+    body.tag = { name: tagName.v, tagType: tagType.v };
+    mark(body.tag, 'name', tagName);
+    mark(body.tag, 'tagType', tagType);
+    expect('{', `"{" and its projections – ${example} { projection … }`);
+    body.projections = [];
+    const group = { name: nameToken.v, body };
     while (!is('}')) {
-      guardBlock('}');
-      if (is('lifecycle') && peek(1).t === 'ident' && !is('=', 1)) {
-        next();
-        if (body.lifecycle !== undefined) fail('An entity has one lifecycle.', last());
-        const lifecycle = ident('the lifecycle property');
-        body.lifecycle = lifecycle.v;
-        mark(body, 'lifecycle', lifecycle);
-      } else {
-        const nameToken = ident('a property name, or "lifecycle"');
-        expect('=', '"=" and the projection this property is');
-        const projectionToken = ident('a projection name');
-        const property = { name: nameToken.v, projection: projectionToken.v };
-        mark(property, 'name', nameToken);
-        mark(property, 'projection', projectionToken);
-        body.properties.push(property);
+      let k = 0;
+      while (['untagged', 'derived', 'scripted'].includes(peek(k).v) && k < 3) k += 1;
+      // A name that is no local one is reported and read on, unless the
+      // line is plainly a top-level projection – untagged, or with a tag
+      // in its header – after a group left open.
+      const named = is('projection', k) && peek(k + 1).t === 'ident' ? peek(k + 1) : null;
+      const topLevel = is('untagged') || (is('(', k + 2) && is('tag', k + 3));
+      if (named && peek().first && !SOURCE_LOCAL_RE.test(named.v) && !topLevel) {
+        const local = named.v.charAt(0).toLowerCase() + named.v.slice(1);
+        diagnostics.push({
+          severity: 'error',
+          message: SOURCE_MEMBER_RE.test(named.v)
+            ? `${named.v} is capitalised – a projection in a group is named in lowerCamel, as it is read `
+              + `(projection ${local} …); a top-level one goes after the group's "}".`
+            : `A projection in a group is named in lowerCamel, letters and digits – it is read as ${nameToken.v}(…).name.`,
+          line: named.line, col: named.col, endLine: named.endLine, endCol: named.endCol,
+        });
+      } else guardBlock('}');
+      const at = peek();
+      if (is('lifecycle')) {
+        fail('A group has no lifecycle – a lifecycle is an ordinary projection its rules read: projection status: … { … }.');
       }
-      accept(',');
+      if (at.t === 'ident' && is('=', 1)) {
+        fail(`A group owns its projections – declare ${at.v} in it: projection ${at.v}: … { … }.`);
+      }
+      if (is('scenarios') || is('scenario')) {
+        fail('Scenarios sit in the block of the projection they are about, inside the group.');
+      }
+      if (is('@')) fail('A projection in a group carries no annotations.');
+      const untagged = is('untagged') ? next() : null;
+      if (untagged) fail(`A group's projections are read by its tag, ${tagName.v} – an untagged projection stays outside it.`, untagged);
+      const kind = (is('derived') || is('scripted')) && is('projection', 1) ? next() : null;
+      if (!is('projection')) {
+        fail(`Expected projection, derived projection or scripted projection, found ${describeToken(peek())}.`);
+      }
+      projectionDecl(at, [], null, kind, group);
     }
     expect('}');
-    return define('entity-definition', nameToken, annotate('entity-definition', body, annotations), start);
+    return define('group-definition', nameToken, body, start);
+  };
+
+  // `entity` was 10.0's: a name over top-level projections, read as the
+  // thing it was not. A group owns its projections instead.
+  const entityDecl = () => {
+    const keyword = next();
+    const name = peek().t === 'ident' ? peek().v : 'Course';
+    const lowered = name.charAt(0).toLowerCase() + name.slice(1);
+    fail(`"entity" is gone – a group owns the projections it names: group ${name} (tag ${lowered}Id: ${name}Id) `
+      + '{ projection status: … }.', keyword);
   };
 
   // `untagged` before `projection` says the projection folds the whole
@@ -1090,11 +1204,19 @@ function parseModelSourceText(text, options) {
   // is, so the header already knows what the block may hold: a script
   // takes arguments after its tags, a derived projection holds one
   // expression and no initial value.
-  const projectionDecl = (start, annotations, untagged, kind) => {
+  //
+  // In a group (`group`, the one being read), a projection is named in
+  // lowerCamel, declares no tags – the group's is its – and is kept in
+  // the group's body rather than declared on its own; its span, and the
+  // block its scenarios name, go by its qualified name.
+  const projectionDecl = (start, annotations, untagged, kind, group = null) => {
     const keyword = next();
-    const nameToken = declName('a projection name');
+    // In a group, a name that is no local one was reported by the group.
+    const nameToken = group ? ident('the projection\'s name') : declName('a projection name');
+    const qualified = group ? `${group.name}.${nameToken.v}` : nameToken.v;
     const derivedKind = !!kind && kind.v === 'derived';
     const scriptedKind = !!kind && kind.v === 'scripted';
+    if (group && is('json')) fail('A projection in a group is spelled out – the group as a whole may be json.');
     if (is('json')) {
       if (untagged) fail('A json body says its own tags – drop "untagged".', untagged);
       if (kind) fail(`A json body says what it is – drop "${kind.v}".`, kind);
@@ -1106,8 +1228,12 @@ function parseModelSourceText(text, options) {
     // reads it, a derived projection compares or computes with it. A
     // declared one's handlers cannot, which is the advisories' to say.
     const header = is('(') ? projectionParameterList() : { tags: [], args: [] };
+    if (group && header.tags.length) {
+      fail(`${qualified} is read by its group's tag, ${group.body.tag.name} – it declares none of its own. `
+        + 'A projection read by other tags stays outside the group.', (marksOf(header.tags[0]) || {}).name);
+    }
     if (untagged && header.tags.length) fail(`${nameToken.v} is declared untagged and tagged by ${header.tags.map((t) => t.name).join(', ')} – one or the other.`, untagged);
-    if (!untagged && !header.tags.length) {
+    if (!group && !untagged && !header.tags.length) {
       const lowered = nameToken.v.charAt(0).toLowerCase() + nameToken.v.slice(1);
       diagnostics.push({
         severity: 'error',
@@ -1119,7 +1245,7 @@ function parseModelSourceText(text, options) {
         },
       });
     }
-    body.tags = header.tags;
+    if (!group) body.tags = header.tags;
     if (header.args.length) body.arguments = header.args.map((a) => a.argument);
     expect(':', '":" and the type it holds');
     const valueType = ident('the type it holds');
@@ -1129,11 +1255,11 @@ function parseModelSourceText(text, options) {
     if (is('=') && derivedKind) fail(`A derived projection has no initial value – before any event it is what its operands start at.`);
     if (accept('=')) body.initialValue = literalValue();
     if (is('derived')) {
-      fail(`"derived" goes in front, and what it derives in the block: derived projection ${nameToken.v} (…): `
+      fail(`"derived" goes in front, and what it derives in the block: derived projection ${nameToken.v}${group ? '' : ' (…)'}: `
         + `${body.valueType} { … }.`);
     }
     if (derivedKind) {
-      expect('{', `"{" and what it derives – derived projection ${nameToken.v} (…): ${body.valueType} { A(…) - B(…) }`);
+      expect('{', `"{" and what it derives – derived projection ${nameToken.v}${group ? '' : ' (…)'}: ${body.valueType} { A(…) - B(…) }`);
       body.derived = derivedExpression();
     }
     if (derivedKind || accept('{')) {
@@ -1144,17 +1270,17 @@ function parseModelSourceText(text, options) {
         if (script[key] !== undefined) fail(`${key} is given twice.`, last());
         script[key] = value;
       };
-      const owner = { kind: 'projection-definition', name: nameToken.v };
-      let group = null;
+      const owner = { kind: 'projection-definition', name: qualified };
+      let scenarios = null;
       const bare = [];
       while (!is('}')) {
-        guardBlock('}');
-        if (group && !is('scenarios')) fail('The scenarios group comes last – nothing follows it in the block.');
+        guardBlock('}', !!group);
+        if (scenarios && !is('scenarios')) fail('The scenarios group comes last – nothing follows it in the block.');
         if (derivedKind && !is('scenarios') && !is('scenario')) {
           fail(`A derived projection's block holds what it derives, then its scenarios – found ${describeToken(peek())}.`);
         }
         if (!scriptedKind && (is('initialState') || is('exposes'))) {
-          fail(`Only a scripted projection has ${peek().v} – scripted projection ${nameToken.v} (…).`);
+          fail(`Only a scripted projection has ${peek().v} – scripted projection ${nameToken.v}${group ? '' : ' (…)'}.`);
         }
         if (accept('on')) {
           const eventToken = ident('an event name');
@@ -1176,7 +1302,7 @@ function parseModelSourceText(text, options) {
             handlers.push(handler);
           }
         } else if (is('script')) {
-          fail(`"script" goes in front now, as "scripted": scripted projection ${nameToken.v} (…).`);
+          fail(`"script" goes in front now, as "scripted": scripted projection ${nameToken.v}${group ? '' : ' (…)'}.`);
         } else if (accept('initialState')) {
           mark(body, 'initialState', peek());
           scriptField('initialState', jsonValue());
@@ -1185,7 +1311,7 @@ function parseModelSourceText(text, options) {
           mark(body, 'exposes', exposed);
           scriptField('exposes', exposed.v);
         } else if (is('scenarios')) {
-          group = scenariosGroup(owner, group);
+          scenarios = scenariosGroup(owner, scenarios);
         } else if (is('scenario')) {
           bare.push(scenarioDecl(peek(), owner));
         } else {
@@ -1200,7 +1326,25 @@ function parseModelSourceText(text, options) {
     } else if (scriptedKind) {
       body.script = {};
     }
-    return define('projection-definition', nameToken, body, start);
+    if (!group) return define('projection-definition', nameToken, body, start);
+    if (group.body.projections.some((inner) => inner.name === nameToken.v)) {
+      diagnostics.push({
+        severity: 'error', message: `${group.name} already has a projection named ${nameToken.v} – one of the two has to go.`,
+        line: nameToken.line, col: nameToken.col, endLine: nameToken.endLine, endCol: nameToken.endCol,
+      });
+      return null;
+    }
+    const inner = { name: nameToken.v, ...body };
+    copyMarks(body, inner);
+    mark(inner, 'declName', nameToken);
+    group.body.projections.push(inner);
+    const end = last();
+    result.spans.push({
+      kind: 'projection-definition', name: qualified, group: group.name,
+      line: start.line, col: start.col, endLine: end.endLine, endCol: end.endCol,
+      nameLine: nameToken.line, nameCol: nameToken.col, nameEndCol: nameToken.endCol,
+    });
+    return inner;
   };
 
   const commandDecl = (start, annotations) => {
@@ -1228,14 +1372,19 @@ function parseModelSourceText(text, options) {
         const alias = aliasToken.v;
         const isOptional = !!accept('?');
         expect('=');
-        const target = ident('an entity or a projection');
+        const target = ident('a group or a projection');
         // Which of the two it is, is settled once every declaration is
         // known (after the parse): the spelling is the same.
         const binding = { '%target': target.v };
         mark(binding, 'target', target);
         if (is('tagged') || is('with')) oldReadSpelling(target);
-        if (is('(')) Object.assign(binding, { '%call': callArguments(commandOperand) });
-        if (accept('excluding')) binding.excluding = commandOperand();
+        if (is('(')) {
+          Object.assign(binding, { '%call': callArguments(commandOperand) });
+          readMember(binding, commandOperand);
+        }
+        if (is('excluding')) {
+          fail('"excluding" is gone – a fan-out reads every element of its list; a rule over it says what to leave out.');
+        }
         binding.alias = alias;
         mark(binding, 'alias', aliasToken);
         // The statement's extent, for what the editor says about the
@@ -1291,6 +1440,16 @@ function parseModelSourceText(text, options) {
         const out = asRead
           ? (property === undefined ? { alias: head } : { alias: head, property })
           : (property === undefined ? { parameterName: head } : { parameterName: head, property });
+        if (value['%args'] !== undefined) {
+          if (!asRead) {
+            const token = (marksOf(value) || {}).property;
+            diagnostics.push({
+              severity: 'error', message: `${head} is a payload property – only a group's projection takes arguments.`,
+              line: token.line, col: token.col, endLine: token.endLine, endCol: token.endCol,
+            });
+          }
+          out.arguments = resolve(value['%args']);
+        }
         return copyMarks(value, out);
       }
       const out = {};
@@ -1383,6 +1542,28 @@ function parseModelSourceText(text, options) {
       if (!accept(',')) break;
     }
     expect(')', '")" or ","');
+    // A group's projection, `Course(CourseId("c1")).seatsOn(slot: "x")`:
+    // the group's tag in the first parentheses, the projection's
+    // arguments by name after it.
+    if (is('.') && peek(1).t === 'ident') {
+      next();
+      const member = next();
+      item.projection = `${name.v}.${member.v}`;
+      item.memberToken = member;
+      if (is('(')) {
+        next();
+        item.named = {};
+        while (!is(')')) {
+          const key = ident('an argument name');
+          expect(':', `":" – a group's projection takes its arguments by name`);
+          mark(item.named, 'key:' + key.v, key);
+          sourcePut(item.named, key.v, scenarioValue());
+          mark(item.named, 'value:' + key.v, memberToken);
+          if (!accept(',')) break;
+        }
+        expect(')', '")" or ","');
+      }
+    }
     if (accept('==')) {
       item.value = scenarioValue();
       item.valueToken = memberToken;
@@ -1499,7 +1680,7 @@ function parseModelSourceText(text, options) {
           subjectToken = item.subjectToken;
           body.projection = item.projection;
           // Named against the projection once every declaration is known.
-          record.call = { values: item.values, tokens: item.valueTokens, callee: item.subjectToken };
+          record.call = { values: item.values, tokens: item.valueTokens, callee: item.subjectToken, named: item.named };
           body.given = given;
           if ('value' in item) body.then = item.value;
         } else if (block && block.kind === 'projection-definition') {
@@ -1516,6 +1697,7 @@ function parseModelSourceText(text, options) {
       }
       if (projections.length) {
         mark(body, 'projection', projections[0].subjectToken);
+        mark(body, 'member', projections[0].memberToken);
         if ('value' in projections[0]) mark(body, 'then', projections[0].valueToken);
       }
     }
@@ -1625,9 +1807,10 @@ function parseModelSourceText(text, options) {
     if (lead && !is('projection')) fail(`Expected projection after "${lead.v}", found ${describeToken(peek())}.`);
     if (is('projection')) return projectionDecl(start, annotations, untagged, kind);
     if (is('event')) return eventDecl(start, annotations);
-    if (is('entity')) return entityDecl(start, annotations);
+    if (is('group')) return groupDecl(start, annotations);
+    if (is('entity')) return entityDecl();
     if (is('command')) return commandDecl(start, annotations);
-    return fail(`Expected a declaration – type, enum, record, event, entity, projection or command – `
+    return fail(`Expected a declaration – type, enum, record, event, group, projection or command – `
       + `found ${describeToken(peek())}.`);
   };
 
@@ -1655,20 +1838,31 @@ function parseModelSourceText(text, options) {
   }
   ungrouped(topLevelBare);
 
-  // A read names its target the same way whether it is an entity or a
+  // A read names its target the same way whether it is a group or a
   // projection, a call is a read or a tag literal by whether its name is
-  // a projection, and a bare capitalised name an enum member – all
-  // settled here, once every declaration in the text (and, for a
+  // a projection or a group, a lowercase name in a group's derived
+  // projection a sibling or a parameter by whether the group has a
+  // projection of that name, and a bare capitalised name an enum member
+  // – all settled here, once every declaration in the text (and, for a
   // fragment, every one handed in) is known. Resolving by name, the way
   // an operand resolves to an alias or a payload property: nothing about
   // the stored shape is guessed. A read's values are given in the order
   // its projection declares them – tags, then its arguments – and
-  // stored by name.
+  // stored by name; a group's projection takes the group's tag in the
+  // first parentheses and its arguments by name.
+  const has = (object, key) => !!object && Object.prototype.hasOwnProperty.call(object, key);
   const declares = (kind, option, name) =>
-    Object.prototype.hasOwnProperty.call(collections[kind], name)
-    || (Array.isArray(options[option]) && options[option].includes(name));
+    has(collections[kind], name) || (Array.isArray(options[option]) && options[option].includes(name));
+  const declaresGroup = (name) => declares('group-definition', 'groupNames', name);
+  const groupTagName = (name) => {
+    if (has(collections['group-definition'], name)) {
+      const tag = groupTagOf(collections['group-definition'][name]);
+      return tag && typeof tag.name === 'string' ? tag.name : null;
+    }
+    return (options.groupTags && has(options.groupTags, name) && options.groupTags[name]) || null;
+  };
   const parametersOf = (name) => {
-    if (Object.prototype.hasOwnProperty.call(collections['projection-definition'], name)) {
+    if (has(collections['projection-definition'], name)) {
       const body = collections['projection-definition'][name] || {};
       return {
         tags: projectionTagParams(body).map((tag) => tag.name),
@@ -1705,19 +1899,56 @@ function parseModelSourceText(text, options) {
     mark(read, 'projection', token);
     return read;
   };
+  // `Course(courseId).capacity(…)`, settled: the group's one tag, keyed
+  // by its name, and the projection's own arguments as written. `target`
+  // carries the parse's `%member` and `%memberArgs`; `named` is what the
+  // group's own parentheses held by name, which is refused.
+  const groupRead = (name, values, named, target, token) => {
+    const marked = marksOf(target) || {};
+    const member = target['%member'];
+    const read = { projection: `${name}.${member}` };
+    if (!declaresGroup(name)) {
+      report(token, declares('projection-definition', 'projectionNames', name)
+        ? `${name} is a projection, not a group – it is read as ${name}(…), with nothing after it.`
+        : `${name} is no group – a "." after a read names a projection of a group: Course(courseId).capacity.`);
+    } else {
+      const tag = groupTagName(name);
+      if (named) report(token, `Arguments go on the projection, not on the group: ${name}(…).${member}(name: …).`);
+      if (!tag) report(token, `${name} declares no tag to read it by.`);
+      else if (values.length !== 1) report(token, `${name} is read by its one tag, ${tag} – this gives ${count(values.length, 'value')}.`);
+      if (tag && values.length) {
+        read.tags = {};
+        sourcePut(read.tags, tag, values[0]);
+      }
+    }
+    if (target['%memberArgs'] !== undefined) read.arguments = settle(target['%memberArgs']);
+    mark(read, 'projection', token);
+    mark(read, 'member', marked.member);
+    return read;
+  };
   const isLiteral = (value) => value === null || ['string', 'number', 'boolean'].includes(typeof value);
   const settle = (value) => {
-    if (Array.isArray(value)) return value.map(settle);
+    if (Array.isArray(value)) return value.map((v) => settle(v));
     if (!value || typeof value !== 'object') return value;
     if (value['%call'] !== undefined) {
       const name = value['%call'];
-      const token = (marksOf(value) || {}).callee;
-      const values = value.values.map(settle);
+      const marked = marksOf(value) || {};
+      const token = marked.callee;
+      const values = value.values.map((v) => settle(v));
       if (value.named) for (const key of Object.keys(value.named)) value.named[key] = settle(value.named[key]);
+      if (value['%member'] !== undefined) {
+        const read = groupRead(name, values, value.named, value, token);
+        mark(read, 'close', marked.close);
+        return read;
+      }
+      if (declaresGroup(name)) {
+        report(token, `${name} is a group – read one of its projections: ${name}(…).name.`);
+        return { projection: name };
+      }
       if (declares('projection-definition', 'projectionNames', name)) {
         if (value.named) report(token, `A read gives its values in order, as ${name} declares them – no names.`);
         const read = readOf(name, values, value.named ? null : token);
-        mark(read, 'close', (marksOf(value) || {}).close);
+        mark(read, 'close', marked.close);
         return read;
       }
       // `CourseId("c1")`: a tag literal, its type and one value.
@@ -1750,6 +1981,31 @@ function parseModelSourceText(text, options) {
     for (const key of Object.keys(value)) value[key] = settle(value[key]);
     return value;
   };
+  // A side of a derived projection's expression: a lowercase name is a
+  // sibling when its group has a projection of that name, and one of
+  // this projection's own parameters – the group's tag among them –
+  // otherwise.
+  const settleDerived = (value, group) => {
+    if (!value || typeof value !== 'object' || value['%local'] === undefined) return settle(value);
+    const name = value['%local'];
+    const marked = marksOf(value) || {};
+    const sibling = !!group && groupProjections(group).some((inner) => inner.name === name);
+    if (sibling) {
+      const read = { projection: name };
+      if (value['%memberArgs'] !== undefined) read.arguments = settle(value['%memberArgs']);
+      mark(read, 'projection', marked.local);
+      mark(read, 'close', marked.close);
+      return read;
+    }
+    if (value['%memberArgs'] !== undefined) {
+      report(marked.local, group
+        ? `${name} is no projection of this group – a sibling is read by its name, a top-level projection by its capitalised one.`
+        : `${name}(…) would read a sibling, and only a projection in a group has siblings.`);
+    }
+    const own = { parameterName: name };
+    mark(own, 'parameter', marked.local);
+    return own;
+  };
   for (const body of Object.values(collections['command-definition'])) {
     if (!body || !Array.isArray(body.boundary)) continue;
     body.boundary = body.boundary.map((binding) => {
@@ -1757,34 +2013,36 @@ function parseModelSourceText(text, options) {
       const target = binding['%target'];
       const token = (marksOf(binding) || {}).target;
       const called = binding['%call'];
-      const values = called ? called.values.map(settle) : [];
+      const values = called ? called.values.map((v) => settle(v)) : [];
       const named = called && called.named;
       if (named) for (const key of Object.keys(named)) named[key] = settle(named[key]);
       const out = { alias: binding.alias };
       if (!called) {
         report(token, `${target} is read with its values in parentheses – ${target}(…), empty for an untagged projection.`);
       }
-      if (declares('entity-definition', 'entityNames', target)) {
-        out.entity = target;
-        if (called && values.length !== 1) {
-          report(token, `${target} is an entity, read by its identifier – one value: ${target}(…).`);
+      if (binding['%member'] !== undefined) {
+        // A group's projection bound on its own: a projection read.
+        Object.assign(out, groupRead(target, values, named, binding, token));
+      } else if (declaresGroup(target)) {
+        out.group = target;
+        const tag = groupTagName(target);
+        if (named) report(token, `Arguments go on the projection, not on the group: ${binding.alias}.name(…: …).`);
+        if (!tag) report(token, `${target} declares no tag to read it by.`);
+        else if (called && values.length !== 1) {
+          report(token, `${target} is a group, read by its one tag, ${tag} – this gives ${count(values.length, 'value')}.`);
         }
-        out.id = values[0];
-        if (named) out.arguments = named;
-        if (binding.excluding !== undefined) out.excluding = settle(binding.excluding);
+        out.tags = {};
+        if (tag && values.length) sourcePut(out.tags, tag, values[0]);
       } else {
         const read = readOf(target, values, called && !named ? token : null);
         out.projection = target;
         if (read.tags) out.tags = read.tags;
         if (read.arguments) out.arguments = read.arguments;
         if (named) report(token, `A read gives its values in order, as ${target} declares them – no names.`);
-        if (binding.excluding !== undefined) {
-          report(token, `${target} is a projection – "excluding" narrows an entity's fan-out.`);
-        }
       }
       if (binding.isOptional) out.isOptional = true;
       copyMarks(binding, out);
-      mark(out, out.entity !== undefined ? 'entity' : 'projection', token);
+      mark(out, out.group !== undefined ? 'group' : 'projection', token);
       return out;
     });
   }
@@ -1794,20 +2052,29 @@ function parseModelSourceText(text, options) {
       if (Array.isArray(body[key])) body[key] = settle(body[key]);
     }
   }
-  for (const body of Object.values(collections['projection-definition'])) {
-    if (!body || !body.derived || typeof body.derived !== 'object') continue;
-    body.derived.leftHandSide = settle(body.derived.leftHandSide);
-    body.derived.rightHandSide = settle(body.derived.rightHandSide);
+  const settleProjection = (body, group) => {
+    if (!body || !body.derived || typeof body.derived !== 'object') return;
+    body.derived.leftHandSide = settleDerived(body.derived.leftHandSide, group);
+    body.derived.rightHandSide = settleDerived(body.derived.rightHandSide, group);
+  };
+  for (const body of Object.values(collections['projection-definition'])) settleProjection(body, null);
+  for (const body of Object.values(collections['group-definition'])) {
+    for (const inner of groupProjections(body)) settleProjection(inner, body);
   }
-  // A projection scenario's `then X(…)`: its values named against X.
+  // A projection scenario's `then X(…)`: its values named against X –
+  // or, for a group's projection, the group's tag and the arguments as
+  // named.
   for (const record of result.scenarios) {
     const { call: written, body } = record;
     if (!written) continue;
-    if (!declares('projection-definition', 'projectionNames', body.projection)) continue;
-    const params = parametersOf(body.projection) || { tags: [], arguments: [] };
+    const split = splitQualifiedName(body.projection);
+    if (written.named) body.arguments = written.named;
+    if (split ? !declaresGroup(split.group) : !declares('projection-definition', 'projectionNames', body.projection)) continue;
+    const tag = split && groupTagName(split.group);
+    const params = split ? { tags: tag ? [tag] : [], arguments: [] } : parametersOf(body.projection) || { tags: [], arguments: [] };
     const slots = [...params.tags.map((key) => ['tags', key]), ...params.arguments.map((key) => ['arguments', key])];
     if (written.values.length !== slots.length) {
-      report(written.callee, `${body.projection} takes ${count(slots.length, 'value')}`
+      report(written.callee, `${split ? split.group : body.projection} takes ${count(slots.length, 'value')}`
         + `${slots.length ? ` (${slots.map(([, key]) => key).join(', ')})` : ''} – this gives ${written.values.length}.`);
     }
     written.values.forEach((value, index) => {
@@ -1820,14 +2087,6 @@ function parseModelSourceText(text, options) {
   }
   for (const record of result.scenarios) settle(record.body);
 
-  // Every entity's identifier type, declared or not – see above.
-  const types = collections['custom-type-definition'];
-  for (const [name, body] of Object.entries(collections['entity-definition'])) {
-    const idType = (body && typeof body.identifierType === 'string' && body.identifierType) || name + 'Id';
-    if (Object.prototype.hasOwnProperty.call(types, idType)) continue;
-    sourcePut(types, idType, { schema: { type: 'string' }, isTag: true });
-    result.implicit.push(idType);
-  }
   diagnostics.sort((a, b) => a.line - b.line || a.col - b.col);
   return result;
 }
@@ -1975,10 +2234,12 @@ function sourceCondition(condition, operand) {
 }
 
 // The names a printer needs beyond the definition it prints: which
-// names are entities and projections, and what each projection declares
-// – a read is written positionally, so its values are put in that order.
+// names are groups and projections – a group's by their qualified names
+// – what each projection declares, since a read is written positionally
+// and its values are put in that order, and the tag each group is read
+// by.
 function sourceNamesOf(model) {
-  const projections = model['projection-definitions'] || {};
+  const projections = projectionsOf(model);
   const projectionParameters = {};
   for (const [name, body] of Object.entries(projections)) {
     projectionParameters[name] = {
@@ -1986,8 +2247,14 @@ function sourceNamesOf(model) {
       arguments: projectionSlots(body).map((argument) => argument && argument.name),
     };
   }
+  const groupTags = {};
+  for (const [name, body] of Object.entries(model['group-definitions'] || {})) {
+    const tag = groupTagOf(body);
+    if (tag && typeof tag.name === 'string') sourcePut(groupTags, name, tag.name);
+  }
   return {
-    entityNames: Object.keys(model['entity-definitions'] || {}),
+    groupNames: Object.keys(model['group-definitions'] || {}),
+    groupTags,
     projectionNames: Object.keys(projections),
     projectionParameters,
   };
@@ -2001,10 +2268,51 @@ function sourceTagLiteral(tag) {
   return `${tag.tagType}(${sourceLiteral(tag.tagValue)})`;
 }
 
+// `name: value, …` – a group's projection's arguments, which it takes
+// by name.
+function sourceNamedArguments(args, operand) {
+  if (args === null || typeof args !== 'object' || Array.isArray(args)) unprintable('its arguments are not an object');
+  return Object.entries(args).map(([key, value]) => `${sourceRef(key, 'argument')}: ${operand(value)}`).join(', ');
+}
+
+// One value of a read: `each x`, a tag literal, or an operand.
+function sourceReadValue(value, operand) {
+  if (value && typeof value === 'object' && !Array.isArray(value) && value.each !== undefined) {
+    if (Object.keys(value).length !== 1) unprintable('an each carries extra fields');
+    return `each ${operand(value.each)}`;
+  }
+  if (value && typeof value === 'object' && !Array.isArray(value) && value.tagType !== undefined) return sourceTagLiteral(value);
+  return operand(value);
+}
+
+// `Course(courseId)` – a group, read by its one tag: the first
+// parentheses of a group read, alias or projection.
+function sourceGroupCall(groupName, tags, names, operand) {
+  const name = sourceRef(groupName, 'group');
+  if (!SOURCE_MEMBER_RE.test(name)) unprintable(`the group ${JSON.stringify(name)} does not start with a capital`);
+  const tag = names && names.groupTags && Object.prototype.hasOwnProperty.call(names.groupTags, name) ? names.groupTags[name] : null;
+  if (!tag) unprintable(`it reads the group "${name}", which declares no tag the code form can give a value`);
+  const held = tags === undefined ? {} : tags;
+  if (held === null || typeof held !== 'object' || Array.isArray(held)) unprintable('its tags are not an object');
+  const given = Object.keys(held);
+  if (given.length !== 1 || given[0] !== tag) unprintable(`it reads ${name} by ${given.join(', ') || 'nothing'}, where ${name} is read by ${tag}`);
+  return `${name}(${sourceReadValue(held[tag], operand)})`;
+}
+
 // `X(a, each b, 14)` – a read, its values in the order `X` declares
 // them: the tags, then its arguments. A read whose names are not
-// exactly the declared ones has no positional spelling.
+// exactly the declared ones has no positional spelling. A group's
+// projection is `Course(courseId).seatsOn(slot: s)`: the group's tag,
+// then the projection's arguments by name.
 function sourceRead(read, names, operand) {
+  const split = splitQualifiedName(read.projection);
+  if (split) {
+    const member = sourceRef(split.local, 'projection');
+    if (!SOURCE_LOCAL_RE.test(member)) unprintable(`the projection ${JSON.stringify(member)} of a group is not lowerCamel`);
+    const args = read.arguments === undefined || isEmptyContainer(read.arguments) ? ''
+      : `(${sourceNamedArguments(read.arguments, operand)})`;
+    return `${sourceGroupCall(split.group, read.tags, names, operand)}.${member}${args}`;
+  }
   const name = sourceRef(read.projection, 'projection');
   if (!SOURCE_MEMBER_RE.test(name)) unprintable(`the projection ${JSON.stringify(name)} does not start with a capital`);
   const params = names && names.projectionParameters && names.projectionParameters[name];
@@ -2019,14 +2327,7 @@ function sourceRead(read, names, operand) {
     }
     for (const n of declared) values.push(held[n]);
   }
-  return `${name}(${values.map((value) => {
-    if (value && typeof value === 'object' && !Array.isArray(value) && value.each !== undefined) {
-      if (Object.keys(value).length !== 1) unprintable('an each carries extra fields');
-      return `each ${operand(value.each)}`;
-    }
-    if (value && typeof value === 'object' && !Array.isArray(value) && value.tagType !== undefined) return sourceTagLiteral(value);
-    return operand(value);
-  }).join(', ')})`;
+  return `${name}(${values.map((value) => sourceReadValue(value, operand)).join(', ')})`;
 }
 
 function sourceHandlerOperand(operand) {
@@ -2043,8 +2344,11 @@ function sourceHandlerOperand(operand) {
 
 // A derived operand: another projection's read – its values each one
 // of this projection's own parameters by name, or a literal – one of
-// its own parameters by name, or a literal.
-function sourceDerivedOperand(names) {
+// its own parameters by name, or a literal. In a group (`siblings`, the
+// local names of its projections), a sibling is named bare, its
+// arguments by name, and a parameter that shares a sibling's name has
+// no spelling.
+function sourceDerivedOperand(names, siblings = null) {
   const value = (v) => {
     if (v && typeof v === 'object' && !Array.isArray(v) && v.parameterName !== undefined) {
       if (Object.keys(v).length !== 1) unprintable('a derived operand\'s parameter reaches into a field');
@@ -2055,7 +2359,18 @@ function sourceDerivedOperand(names) {
   return (operand) => {
     if (operand && typeof operand === 'object' && !Array.isArray(operand) && operand.projection !== undefined) {
       if (Object.keys(operand).some((k) => !['projection', 'tags', 'arguments'].includes(k))) unprintable('a derived operand carries extra fields');
+      if (typeof operand.projection === 'string' && isLocalProjectionName(operand.projection)) {
+        if (!siblings) unprintable(`it reads "${operand.projection}", a sibling, outside any group`);
+        if (operand.tags !== undefined && !isEmptyContainer(operand.tags)) unprintable('a sibling read gives tags – the group\'s is implied');
+        const local = sourceRef(operand.projection, 'sibling');
+        const args = operand.arguments === undefined || isEmptyContainer(operand.arguments) ? ''
+          : `(${sourceNamedArguments(operand.arguments, value)})`;
+        return local + args;
+      }
       return sourceRead(operand, names, value);
+    }
+    if (siblings && operand && typeof operand === 'object' && siblings.includes(operand.parameterName)) {
+      unprintable(`"${operand.parameterName}" names both a parameter and a projection of the group`);
     }
     return value(operand);
   };
@@ -2110,27 +2425,44 @@ function printEvent(name, body) {
   return sourceAnnotations(body, ['icon']) + sourceBlock(`event ${sourceDeclName(name)}`, fields);
 }
 
-function printEntity(name, body) {
-  const idType = sourceRef(body.identifierType !== undefined ? body.identifierType : name + 'Id', 'identifier type');
-  const idName = body.identifierName !== undefined ? sourceRef(body.identifierName, 'tag')
-    : idType.charAt(0).toLowerCase() + idType.slice(1);
-  const head = `entity ${sourceDeclName(name)} (tag ${idName}: ${idType})`;
-  const items = [];
-  if (body.lifecycle !== undefined && body.lifecycle !== null) items.push(`lifecycle ${sourceRef(body.lifecycle, 'lifecycle')}`);
-  for (const p of body.properties || []) {
-    items.push(`${sourceRef(p.name, 'property')} = ${sourceRef(p.projection, 'projection')}`);
-  }
-  return sourceAnnotations(body, ['icon']) + sourceBlock(head, items, { inline: 0 });
+// `group Course (tag courseId: CourseId) { … }`, its projections in
+// their stored order, each as a top-level one is printed minus the tag
+// header. `nest`, from `modelToSource`, gives each projection's printed
+// scenarios to put in its block; the round trip a definition is held to
+// is the group's without them, as for a command.
+function printGroup(name, body, names, nest = null) {
+  if (Object.keys(body).some((k) => !['icon', 'tag', 'projections'].includes(k))) unprintable('it carries fields the code form does not know');
+  const tag = groupTagOf(body);
+  if (!tag) unprintable('it declares no tag');
+  if (Object.keys(tag).some((k) => k !== 'name' && k !== 'tagType')) unprintable('its tag is not { name, tagType }');
+  const head = `group ${sourceDeclName(name)} (tag ${sourceRef(tag.name, 'tag')}: ${sourceRef(tag.tagType, 'tag type')})`;
+  const projections = body.projections === undefined ? [] : body.projections;
+  if (!Array.isArray(projections)) unprintable('its projections are not a list');
+  const siblings = projections.map((inner) => inner && inner.name);
+  const items = projections.map((inner) => {
+    if (!inner || typeof inner !== 'object' || Array.isArray(inner)) unprintable('a projection of it is not an object');
+    const { name: local, ...rest } = inner;
+    if (typeof local !== 'string' || !SOURCE_LOCAL_RE.test(local)) {
+      unprintable(`its projection ${JSON.stringify(local)} is not named in lowerCamel`);
+    }
+    const text = printProjection(local, rest, names, { siblings });
+    return nest ? sourceNest(text, nest(local)) : text;
+  });
+  const block = items.length ? `${head} {\n${items.map(sourceIndent).join('\n\n')}\n}` : `${head} {}`;
+  return sourceAnnotations(body, ['icon']) + block;
 }
 
 // `projection Name (tag courseId: CourseId): T = v` – or `untagged
 // projection Name: T = v`, `derived projection Name (…): T { a - b }`,
 // `scripted projection Name (tag courseId: CourseId, days: integer): T
 // { … }`. The tags come first, then its arguments, which
-// is the order a read gives them in.
-function printProjection(name, body, names) {
+// is the order a read gives them in. In a group (`inGroup`, the local
+// names of its projections) there are no tags to give and no
+// `untagged` to say: the group's tag is its.
+function printProjection(name, body, names, inGroup = null) {
   const tags = body.tags === undefined ? [] : body.tags;
   if (!Array.isArray(tags)) unprintable('its tags are not a list');
+  if (inGroup && tags.length) unprintable('it is in a group and declares tags of its own');
   const script = body.script;
   if (script !== undefined && (script === null || typeof script !== 'object' || Array.isArray(script))) unprintable('its script is not an object');
   if (script && script.arguments !== undefined) unprintable('its script states arguments, which are the projection\'s');
@@ -2150,13 +2482,13 @@ function printProjection(name, body, names) {
   // has no spelling.
   if (body.derived !== undefined && script !== undefined) unprintable('it is both derived and scripted');
   const kind = body.derived !== undefined ? 'derived ' : script !== undefined ? 'scripted ' : '';
-  let head = `${tags.length ? '' : 'untagged '}${kind}projection ${sourceDeclName(name)}`
+  let head = `${tags.length || inGroup ? '' : 'untagged '}${kind}projection ${sourceDeclName(name)}`
     + (parameters.length ? ` (${parameters.join(', ')})` : '')
     + `: ${sourceRef(body.valueType, 'value type')}${body.isList ? '[]' : ''}`;
   if (body.derived !== undefined) {
     if (body.initialValue !== undefined) unprintable('it is derived and states an initial value');
     if (body.handlers !== undefined) unprintable('it is derived and states handlers');
-    return `${head} {\n  ${sourceDerived(body.derived, sourceDerivedOperand(names))}\n}`;
+    return `${head} {\n  ${sourceDerived(body.derived, sourceDerivedOperand(names, inGroup && inGroup.siblings))}\n}`;
   }
   if (body.initialValue !== undefined) head += ` = ${sourceLiteral(body.initialValue)}`;
   const lines = [head];
@@ -2203,10 +2535,14 @@ function sourceCommandOperand(body, names) {
         const declared = aliases.has(head);
         if (!declared && parameters.has(head)) unprintable(`"${head}" names both a payload property and an alias`);
         if (value.property === undefined) {
+          if (value.arguments !== undefined && !isEmptyContainer(value.arguments)) unprintable('an alias without a property is given arguments');
           if (!declared) unprintable(`it reads "${head}", which no alias here declares`);
           return head;
         }
-        return `${head}.${sourceRef(value.property, 'property')}`;
+        // A group's projection, its arguments by name.
+        const args = value.arguments === undefined || isEmptyContainer(value.arguments) ? ''
+          : `(${sourceNamedArguments(value.arguments, sourceCommandOperand(body, names))})`;
+        return `${head}.${sourceRef(value.property, 'property')}${args}`;
       }
       if (value.projection !== undefined) {
         if (Object.keys(value).some((k) => !['projection', 'tags', 'arguments'].includes(k))) unprintable('an inline read carries extra fields');
@@ -2233,28 +2569,19 @@ function printCommand(name, body, names) {
   const reads = boundary.map((binding) => {
     if (!binding || typeof binding !== 'object') unprintable('an alias is not an object');
     const alias = sourceRef(binding.alias, 'alias') + (binding.isOptional === true ? '?' : '');
-    if (binding.entity !== undefined && binding.projection === undefined) {
-      if (binding.id === undefined) unprintable(`the alias "${binding.alias}" has no identifier`);
-      if (Object.keys(binding).some((k) => !['alias', 'entity', 'id', 'excluding', 'isOptional', 'arguments'].includes(k))) {
-        unprintable(`the alias "${binding.alias}" carries fields the code form does not know`);
+    if (binding.group !== undefined && binding.projection === undefined) {
+      if (Object.keys(binding).some((k) => !['alias', 'group', 'tags', 'isOptional'].includes(k))) {
+        unprintable(`the alias "${binding.alias}" carries fields a group read does not have`);
       }
-      const id = binding.id;
-      const idText = id && typeof id === 'object' && !Array.isArray(id) && id.each !== undefined
-        ? (Object.keys(id).length === 1 ? `each ${operand(id.each)}` : unprintable('an each carries extra fields'))
-        : id && typeof id === 'object' && !Array.isArray(id) && id.tagType !== undefined ? sourceTagLiteral(id) : operand(id);
-      const args = binding.arguments !== undefined && Object.keys(binding.arguments).length
-        ? `, ${Object.entries(binding.arguments).map(([key, value]) => `${sourceRef(key, 'argument')}: ${operand(value)}`).join(', ')}` : '';
-      let text = `alias ${alias} = ${sourceRef(binding.entity, 'entity')}(${idText}${args})`;
-      if (binding.excluding !== undefined) text += ` excluding ${operand(binding.excluding)}`;
-      return text;
+      return `alias ${alias} = ${sourceGroupCall(binding.group, binding.tags, names, operand)}`;
     }
-    if (binding.projection !== undefined && binding.entity === undefined) {
+    if (binding.projection !== undefined && binding.group === undefined) {
       if (Object.keys(binding).some((k) => !['alias', 'projection', 'tags', 'arguments', 'isOptional'].includes(k))) {
         unprintable(`the alias "${binding.alias}" carries fields a projection read does not have`);
       }
       return `alias ${alias} = ${sourceRead(binding, names, operand)}`;
     }
-    return unprintable(`the alias "${binding.alias}" is neither an entity nor a projection`);
+    return unprintable(`the alias "${binding.alias}" is neither a group nor a projection`);
   });
   const rules = (body.conditions || []).map((c) => {
     if (!c || typeof c.rejection !== 'string') unprintable('a rule has no rejection message');
@@ -2287,7 +2614,7 @@ function printCommand(name, body, names) {
 const SOURCE_PRINTERS = {
   'custom-type-definition': printCustomType,
   'event-definition': printEvent,
-  'entity-definition': printEntity,
+  'group-definition': printGroup,
   'projection-definition': printProjection,
   'command-definition': printCommand,
 };
@@ -2396,7 +2723,7 @@ function sourceCommandThen(model, commandName, then) {
 // its arguments, in the order it declares them – and the
 // value it folds to.
 function sourceProjectionThen(model, body) {
-  const projection = model['projection-definitions'][body.projection];
+  const projection = projectionsOf(model)[body.projection];
   const slots = projectionSlots(projection);
   const typeOf = (key) => {
     const slot = slots.find((p) => p && p.name === key);
@@ -2484,25 +2811,30 @@ function sourceNest(text, scenarios) {
 // the text's order *is* the order an apply stores – and consecutive
 // one-liners stay together, so twenty value types read as a table.
 // Scenarios sit in a group at the end of their command's or
-// projection's block; one whose subject is gone, or whose subject is
-// printed as JSON, sits in a group at the end of the text instead.
+// projection's block – a group's projection's too, inside the group;
+// one whose subject is gone, or whose subject is printed as JSON, sits
+// in a group at the end of the text instead.
 function modelToSource(model) {
   const SUBJECT = {
     'scenario-definition': ['command-definition', 'command'],
     'projection-scenario-definition': ['projection-definition', 'projection'],
   };
-  const nested = { 'command-definition': new Map(), 'projection-definition': new Map() };
+  const nested = { 'command-definition': new Map(), 'projection-definition': new Map(), 'group-definition': new Map() };
   const loose = [];
+  const view = projectionsOf(model);
   for (const kind of ID_KEYED_KINDS) {
     const [subjectKind, field] = SUBJECT[kind];
     for (const body of Object.values(model[DEF_COLLECTIONS[kind]] || {})) {
       const subject = body && body[field];
-      const owner = typeof subject === 'string'
-        && Object.prototype.hasOwnProperty.call(model[DEF_COLLECTIONS[subjectKind]], subject);
+      const owner = typeof subject === 'string' && (subjectKind === 'projection-definition'
+        ? Object.prototype.hasOwnProperty.call(view, subject)
+        : Object.prototype.hasOwnProperty.call(model[DEF_COLLECTIONS[subjectKind]], subject));
       if (!owner) { loose.push([kind, body]); continue; }
-      const list = nested[subjectKind].get(subject) || [];
+      const split = subjectKind === 'projection-definition' ? splitQualifiedName(subject) : null;
+      const [into, key] = split ? ['group-definition', split.group] : [subjectKind, subject];
+      const list = nested[into].get(key) || [];
       list.push([kind, body]);
-      nested[subjectKind].set(subject, list);
+      nested[into].set(key, list);
     }
   }
   const out = [`model ${JSON.stringify(model.name)}`];
@@ -2516,7 +2848,11 @@ function modelToSource(model) {
       let text = printDefinitionSource(kind, name, body, names);
       const own = (nested[kind] && nested[kind].get(name)) || [];
       if (text.startsWith('// Written as JSON')) loose.push(...own);
-      else text = sourceNest(text, own.map(([k, b]) => printScenarioSource(model, k, b)));
+      else if (kind === 'group-definition') {
+        const of = (local) => own.filter(([, b]) => b.projection === qualifiedProjectionName(name, local))
+          .map(([k, b]) => printScenarioSource(model, k, b));
+        text = printGroup(name, body, names, of);
+      } else text = sourceNest(text, own.map(([k, b]) => printScenarioSource(model, k, b)));
       const oneLine = !text.includes('\n');
       if (index > 0 && !(oneLine && previousWasLine)) out.push('');
       out.push(text);
@@ -2633,30 +2969,31 @@ function sourceDraftModel(model, parsed) {
   return draft;
 }
 
-// What the advisories would say about the text if it were applied.
+// What the advisories would say about the text if it were applied – a
+// group's projections each under its qualified name, as the model's
+// own advisories name them (`checkedDefinitions`).
 function sourceAdvisories(model, parsed) {
   const draft = sourceDraftModel(model, parsed);
   const found = [];
-  for (const kind of SOURCE_KINDS) {
-    for (const [name, body] of Object.entries(parsed.collections[kind])) {
-      for (const message of definitionAdvisories(draft, kind, name, body)) found.push({ kind, name, message });
-    }
+  for (const { kind, name, body } of checkedDefinitions(draft, SOURCE_KINDS)) {
+    for (const message of definitionAdvisories(draft, kind, name, body)) found.push({ kind, name, message });
   }
   return found;
 }
 
 // What each `alias` adds to its command's append condition, as the text
-// stands. `alias course = Course[courseId]` names an instance, not what
-// is queried of it: only the properties a rule, guard or emission
+// stands. `alias course = Course(courseId)` names an instance, not what
+// is queried of it: only the projections a rule, guard or emission
 // actually uses put their projections' events in the query
 // (`deriveDcb`), so a command testing `course.status` never conflicts
 // with a `CourseCapacityChanged`. The line says the opposite at a
 // glance, which is why the editor says beside it how many event types
 // it reads (`hint`, in the command line's words: "reads 2 types") and
 // the rest – the types themselves, tag, per-property events, the
-// properties left out, why the read is made – on hover. One whose
-// properties nothing uses is queried by tag alone, every event under
-// it, and the hint says so rather than reading as empty.
+// projections left out, why the read is made – on hover. A group alias
+// whose projections nothing reads queries nothing, and says so; a
+// projection alias nothing uses is still queried, every event under
+// its tags, and the hint says that rather than reading as empty.
 function sourceReadQueries(model, parsed) {
   const draft = sourceDraftModel(model, parsed);
   const found = [];
@@ -2671,18 +3008,22 @@ function sourceReadQueries(model, parsed) {
       const slots = (binding && parsed.marks.get(binding)) || {};
       // A derived read is several queries; the hint says them as one.
       const parts = dcb.items.filter((i) => i.alias === binding.alias);
-      if (!slots.statement || !slots.statementEnd || !parts.length) continue;
+      // A group whose projections nothing reads queries nothing at all.
+      const nothing = binding && binding.group !== undefined && !parts.length;
+      if (!slots.statement || !slots.statementEnd || (!parts.length && !nothing)) continue;
       const item = {
-        ...parts[0],
+        ...(parts[0] || {}),
         tags: uniq(parts.flatMap((part) => part.tags)),
         types: uniq(parts.flatMap((part) => part.types)).sort(),
         fannedOut: parts.some((part) => part.fannedOut),
+        readProperties: uniq(parts.flatMap((part) => part.readProperties || [])),
       };
-      const entity = binding.entity !== undefined ? draft['entity-definitions'][binding.entity] : null;
-      const properties = ((entity && entity.properties) || []).filter((p) => p && p.name);
+      const group = binding.group !== undefined && Object.prototype.hasOwnProperty.call(draft['group-definitions'], binding.group)
+        ? draft['group-definitions'][binding.group] : null;
+      const properties = groupProjections(group).filter((p) => typeof p.name === 'string' && p.name);
       const read = properties.filter((p) => item.readProperties.includes(p.name));
       const reasons = [...(references.get(binding.alias) || [])];
-      const types = item.types.length
+      const types = nothing ? 'nothing' : item.types.length
         ? `${item.types.length} type${item.types.length === 1 ? '' : 's'}` : 'any type';
       found.push({
         command,
@@ -2692,7 +3033,9 @@ function sourceReadQueries(model, parsed) {
         tags: item.tags,
         types: item.types,
         fannedOut: !!item.fannedOut,
-        properties: read.map((p) => ({ name: p.name, types: projectionHandledTypes(draft, p.projection).sort() })),
+        properties: read.map((p) => ({
+          name: p.name, types: projectionHandledTypes(draft, qualifiedProjectionName(binding.group, p.name)).sort(),
+        })),
         unread: properties.filter((p) => !read.includes(p)).map((p) => p.name),
         reasons,
         hint: `‹reads ${types}${item.fannedOut ? ', one per element' : ''}${reasons.length ? '' : ' – unused'}›`,
@@ -2875,14 +3218,14 @@ function sourceOutcomesAt(model, text, line) {
     const one = outcome(parsed, record);
     return one ? [one] : [];
   }
-  const named = typed.match(/^\s*then\s+([A-Za-z_]\w*\s*\(.*\))\s*(==\s*)?$/);
+  const named = typed.match(/^\s*then\s+([A-Za-z_]\w*\s*\(.*\)(?:\.[A-Za-z_]\w*)?)\s*(==\s*)?$/);
   const draft = sourceDraftModel(model, parsed);
   let calls;
   if (named) {
     calls = [named[1]];
   } else {
     const name = record.subject;
-    const projection = draft['projection-definitions'][name];
+    const projection = projectionsOf(draft)[name];
     if (!projection || projectionSlots(projection).length) return [];
     const valuesOf = (tagType) => {
       const found = [];
@@ -2900,7 +3243,9 @@ function sourceOutcomesAt(model, text, line) {
     for (const tag of projection.tags || []) {
       combos = combos.flatMap((combo) => valuesOf(tag.tagType).map((value) => [...combo, `${tag.tagType}(${JSON.stringify(value)})`]));
     }
-    calls = combos.slice(0, 8).map((combo) => `${name}(${combo.join(', ')})`);
+    const split = splitQualifiedName(name);
+    calls = combos.slice(0, 8).map((combo) => (split
+      ? `${split.group}(${combo.join(', ')}).${split.local}` : `${name}(${combo.join(', ')})`));
   }
   return calls.map((call) => {
     const { parsed: withCall, record: asked } = at(`${indent}then ${call}`);
@@ -2975,15 +3320,7 @@ function sourceScenarioReport(model, parsed, { recordOutcomes = false } = {}) {
 }
 
 // Parses, refuses on any error, and writes the difference – one
-// append, one undo step, nothing at all when nothing changed. An
-// identifier type the text left implicit keeps whatever the model
-// already says about it, and its place, so leaving `tag type CourseId
-// = string` out of a hand-written file does not reset a pattern
-// someone gave it on the Types page. And one is only ever *created*
-// for an entity the text adds, the way creating one on its page does:
-// an existing entity whose identifier type is missing keeps it missing,
-// which is a dangling reference the advisories report, not something an
-// apply should quietly repair.
+// append, one undo step, nothing at all when nothing changed.
 // `options.refuseRemovals` refuses a text that leaves a definition or
 // scenario out, rather than removing it (see replaceDefinitions).
 // A scenario written without a Then is refused, as the editor refuses
@@ -2999,30 +3336,6 @@ function applyModelSource(modelId, text, options = {}) {
       + `applied. Line ${first.line}: ${first.message}`);
   }
   const model = getCtxOrThrow(modelId);
-  const has = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
-  const current = model['custom-type-definitions'];
-  const types = parsed.collections['custom-type-definition'];
-  const entities = parsed.collections['entity-definition'];
-  const ownersAreNew = (typeName) => Object.entries(entities)
-    .filter(([name, body]) => ((body && body.identifierType) || name + 'Id') === typeName)
-    .every(([name]) => !has(model['entity-definitions'], name));
-  const dropped = parsed.implicit.filter((name) => !has(current, name) && !ownersAreNew(name));
-  const implicit = new Set(parsed.implicit.filter((name) => has(current, name)));
-  if (implicit.size || dropped.length) {
-    const order = Object.keys(types).filter((name) => !implicit.has(name) && !dropped.includes(name));
-    const currentOrder = Object.keys(current);
-    for (const name of implicit) {
-      let insertAt = 0;
-      for (let k = currentOrder.indexOf(name) - 1; k >= 0; k -= 1) {
-        const position = order.indexOf(currentOrder[k]);
-        if (position >= 0) { insertAt = position + 1; break; }
-      }
-      order.splice(insertAt, 0, name);
-    }
-    const merged = {};
-    for (const name of order) sourcePut(merged, name, implicit.has(name) ? current[name] : types[name]);
-    parsed.collections['custom-type-definition'] = merged;
-  }
   const scenarios = sourceScenarioCollections(model, parsed);
   if (scenarios.errors.length) {
     const [first] = scenarios.errors;
@@ -3083,16 +3396,16 @@ function sourceApplySummary(summary) {
 // keeps `Existent` apart from `NonExistent`, and the projection called
 // CourseStatus apart from the enum of the same name.
 const SOURCE_SYMBOL_WORDS = {
-  type: 'type', event: 'event', entity: 'entity', projection: 'projection', command: 'command',
+  type: 'type', event: 'event', group: 'group', projection: 'projection', command: 'command',
   member: 'enum member', field: 'record field', eventProperty: 'event property',
-  entityProperty: 'entity property', commandProperty: 'command property', alias: 'alias',
-  projectionParameter: 'projection parameter', projectionTag: 'projection tag', entityTag: 'entity tag',
+  groupProjection: 'projection', commandProperty: 'command property', alias: 'alias',
+  projectionParameter: 'projection parameter', projectionTag: 'projection tag', groupTag: 'group tag',
 };
 
 const SOURCE_KIND_SYMBOL = {
   'custom-type-definition': 'type',
   'event-definition': 'event',
-  'entity-definition': 'entity',
+  'group-definition': 'group',
   'projection-definition': 'projection',
   'command-definition': 'command',
 };
@@ -3126,11 +3439,14 @@ function sourceTextModel(parsed, fallback) {
 //
 // It walks the bodies, not the tokens: the parser marked which token
 // each part came from (`parsed.marks`), and the bodies say what that
-// part *is* – whose property `course.status` reads is the read's
-// entity's, and which enum `Existent` belongs to is the type on the
+// part *is* – whose projection `course.status` reads is the read's
+// group's, and which enum `Existent` belongs to is the type on the
 // other side of its rule. `{ courseId }` is one token and two symbols,
 // the emitted event's property and the command's own, told apart by
-// `shorthand: 'key' | 'value'`.
+// `shorthand: 'key' | 'value'`. A group's projection is `groupProjection
+// Course capacity` – its local name, owned by its group – wherever it
+// is named: declared, as a sibling, after an alias, after a read of the
+// group.
 function sourceSymbols(parsed) {
   if (parsed.symbols) return parsed.symbols;
   const { collections, marks } = parsed;
@@ -3148,7 +3464,7 @@ function sourceSymbols(parsed) {
   };
   const types = collections['custom-type-definition'];
   const events = collections['event-definition'];
-  const entities = collections['entity-definition'];
+  const groups = collections['group-definition'];
   const projections = collections['projection-definition'];
   const commands = collections['command-definition'];
   const own = (collection, name) => (typeof name === 'string' && has(collection, name) ? collection[name] : null);
@@ -3182,7 +3498,26 @@ function sourceSymbols(parsed) {
     if (slots.json) { opaque.push({ token: slots.json, text: JSON.stringify(body), json: true }); return false; }
     return true;
   };
+  // A projection by the name it is read by: a top-level one, or a
+  // group's – `Course.capacity` – as its group stores it.
+  const projectionBody = (name) => {
+    const split = splitQualifiedName(name);
+    if (!split) return own(projections, name);
+    return groupProjections(own(groups, split.group)).find((inner) => inner.name === split.local) || null;
+  };
   const parameters = (projection) => list(projection && projection.arguments);
+  // A read's projection: the top-level one it names, or the group and
+  // its projection – `Course(…).capacity`, or a sibling bare in `group`.
+  const projectionRef = (name, marked, group = null) => {
+    if (typeof name !== 'string') return;
+    const split = splitQualifiedName(name);
+    if (split) {
+      add(sourceSymbol('group', split.group), marked.projection);
+      add(sourceSymbol('groupProjection', split.group, split.local), marked.member);
+    } else if (group && isLocalProjectionName(name)) {
+      add(sourceSymbol('groupProjection', group, name), marked.projection);
+    } else add(sourceSymbol('projection', name), marked.projection);
+  };
   // A read's tags, by name: a literal names its tag type, anything else
   // is an operand in the read's scope.
   const tagOperands = (tags, operandOf) => {
@@ -3194,7 +3529,7 @@ function sourceSymbols(parsed) {
     });
   };
   const parameterType = (projectionName, key) => {
-    const found = parameters(own(projections, projectionName)).find((p) => p.name === key);
+    const found = parameters(projectionBody(projectionName)).find((p) => p.name === key);
     return found ? found.propertyType : null;
   };
   // `name: value` pairs, keyed by the symbol each key names.
@@ -3210,7 +3545,7 @@ function sourceSymbols(parsed) {
     }
   };
 
-  // ---------- types, events, entities ----------
+  // ---------- types, events ----------
   for (const [name, body] of Object.entries(types)) {
     if (!declare('type', name, body)) continue;
     const members = body && body.schema && body.schema.enum;
@@ -3239,27 +3574,20 @@ function sourceSymbols(parsed) {
       }
     });
   }
-  for (const [name, body] of Object.entries(entities)) {
-    if (!declare('entity', name, body)) continue;
-    const slots = slotsOf(body);
-    add(sourceSymbol('entityTag', name, slots.identifierName ? slots.identifierName.v : ''), slots.identifierName, { decl: true });
-    typeRef(slots.identifierType);
-    if (slots.lifecycle) add(sourceSymbol('entityProperty', name, body.lifecycle), slots.lifecycle);
-    for (const property of list(body.properties)) {
-      add(sourceSymbol('entityProperty', name, property.name), slotsOf(property).name, { decl: true });
-      add(sourceSymbol('projection', property.projection), slotsOf(property).projection);
-    }
-  }
 
-  // ---------- projections ----------
+  // ---------- projections, top-level and grouped ----------
   const handlerValue = (value, typeName, event) => {
     if (has(value, 'eventProperty')) add(sourceSymbol('eventProperty', event, value.eventProperty), slotsOf(value).eventProperty);
     else if (has(value, 'successor')) handlerValue(value.successor, typeName, event);
     else literal(value, typeName);
   };
-  for (const [name, body] of Object.entries(projections)) {
-    if (!declare('projection', name, body)) continue;
+  // One projection's body, read as `name` (qualified in a group). In a
+  // group (`inGroup`: its name and tag) a parameter may be the group's
+  // tag, and a lowercase read a sibling.
+  const projectionBodySymbols = (name, body, inGroup = null) => {
     const slots = slotsOf(body);
+    const group = inGroup && inGroup.name;
+    const groupTag = inGroup && inGroup.tag;
     for (const tag of list(body.tags)) {
       add(sourceSymbol('projectionTag', name, tag.name), slotsOf(tag).name, { decl: true });
       typeRef(slotsOf(tag).tagType);
@@ -3276,38 +3604,65 @@ function sourceSymbols(parsed) {
       if (typeof handler.code === 'string') opaque.push({ token: slotsOf(handler).code, text: handler.code });
       if (handler.value !== undefined) handlerValue(handler.value, body.valueType, handler.event);
     }
-    if (body.derived && typeof body.derived === 'object') {
-      const typeOf = (operand) => {
-        if (has(operand, 'projection')) { const p = own(projections, operand.projection); return p ? p.valueType : null; }
-        if (has(operand, 'parameterName')) {
-          const found = [...list(body.tags).map((t) => [t.name, t.tagType]), ...list(body.arguments).map((a) => [a.name, a.propertyType])]
-            .find(([n]) => n === operand.parameterName);
-          return found ? found[1] : null;
-        }
-        return null;
-      };
-      // A name is one of this projection's own parameters – a tag or an
-      // argument, as it declares it – whether compared, computed with or
-      // passed on.
-      const ownRef = (ref) => add(sourceSymbol(
-        list(body.tags).some((t) => t.name === ref.parameterName) ? 'projectionTag' : 'projectionParameter',
-        name, ref.parameterName,
-      ), slotsOf(ref).parameter);
-      const operand = (value, expected) => {
-        if (Array.isArray(value)) return value.forEach((v) => operand(v, expected));
-        const marked = slotsOf(value);
-        if (has(value, 'parameterName')) ownRef(value);
-        else if (has(value, 'projection')) {
-          add(sourceSymbol('projection', value.projection), marked.projection);
-          tagOperands(value.tags, (tag) => { if (has(tag, 'parameterName')) ownRef(tag); });
-          keyed(value.arguments, (key) => sourceSymbol('projectionParameter', value.projection, key),
-            (arg, key) => operand(arg, parameterType(value.projection, key)));
-        } else literal(value, expected);
-      };
-      const { leftHandSide, rightHandSide } = body.derived;
-      operand(leftHandSide, typeOf(rightHandSide));
-      if (rightHandSide !== undefined) operand(rightHandSide, typeOf(leftHandSide));
+    if (!body.derived || typeof body.derived !== 'object') return;
+    const readType = (projectionName) => {
+      const read = group && isLocalProjectionName(projectionName)
+        ? projectionBody(qualifiedProjectionName(group, projectionName)) : projectionBody(projectionName);
+      return read ? read.valueType : null;
+    };
+    const ownParameters = [
+      ...list(body.tags).map((t) => [t.name, t.tagType, 'projectionTag']),
+      ...(groupTag ? [[groupTag.name, groupTag.tagType, 'groupTag']] : []),
+      ...list(body.arguments).map((a) => [a.name, a.propertyType, 'projectionParameter']),
+    ];
+    const typeOf = (operand) => {
+      if (has(operand, 'projection')) return readType(operand.projection);
+      if (has(operand, 'parameterName')) {
+        const found = ownParameters.find(([n]) => n === operand.parameterName);
+        return found ? found[1] : null;
+      }
+      return null;
+    };
+    // A name is one of this projection's own parameters – a tag, the
+    // group's tag or an argument, as it declares it – whether compared,
+    // computed with or passed on.
+    const ownRef = (ref) => {
+      const found = ownParameters.find(([n]) => n === ref.parameterName);
+      const kind = found ? found[2] : 'projectionParameter';
+      add(kind === 'groupTag' ? sourceSymbol('groupTag', group, ref.parameterName)
+        : sourceSymbol(kind, name, ref.parameterName), slotsOf(ref).parameter);
+    };
+    const operand = (value, expected) => {
+      if (Array.isArray(value)) return value.forEach((v) => operand(v, expected));
+      const marked = slotsOf(value);
+      if (has(value, 'parameterName')) ownRef(value);
+      else if (has(value, 'projection')) {
+        projectionRef(value.projection, marked, group);
+        const owner = group && isLocalProjectionName(value.projection) ? qualifiedProjectionName(group, value.projection) : value.projection;
+        tagOperands(value.tags, (tag) => { if (has(tag, 'parameterName')) ownRef(tag); });
+        keyed(value.arguments, (key) => sourceSymbol('projectionParameter', owner, key),
+          (arg, key) => operand(arg, parameterType(owner, key)));
+      } else literal(value, expected);
+    };
+    const { leftHandSide, rightHandSide } = body.derived;
+    operand(leftHandSide, typeOf(rightHandSide));
+    if (rightHandSide !== undefined) operand(rightHandSide, typeOf(leftHandSide));
+  };
+  for (const [name, body] of Object.entries(groups)) {
+    if (!declare('group', name, body)) continue;
+    const tag = groupTagOf(body);
+    if (tag) {
+      add(sourceSymbol('groupTag', name, tag.name), slotsOf(tag).name, { decl: true });
+      typeRef(slotsOf(tag).tagType);
     }
+    for (const inner of groupProjections(body)) {
+      add(sourceSymbol('groupProjection', name, inner.name), slotsOf(inner).declName, { decl: true });
+      projectionBodySymbols(qualifiedProjectionName(name, inner.name), inner, { name, tag });
+    }
+  }
+  for (const [name, body] of Object.entries(projections)) {
+    if (!declare('projection', name, body)) continue;
+    projectionBodySymbols(name, body);
   }
 
   // ---------- commands ----------
@@ -3333,7 +3688,7 @@ function sourceSymbols(parsed) {
     } else if (has(value, 'projection')) {
       // An inline read: its projection, and its tags and arguments in
       // the same scope as everything around it.
-      add(sourceSymbol('projection', value.projection), marked.projection);
+      projectionRef(value.projection, marked);
       tagOperands(value.tags, (tag) => commandOperand(commandName, body, tag, null));
       keyed(value.arguments, (key) => sourceSymbol('projectionParameter', value.projection, key),
         (arg, key) => commandOperand(commandName, body, arg, parameterType(value.projection, key)));
@@ -3342,8 +3697,12 @@ function sourceSymbols(parsed) {
     if (alias !== undefined) {
       add(sourceSymbol('alias', commandName, alias), marked.head);
       const binding = list(body.boundary).find((b) => b.alias === alias);
-      if (binding && binding.entity && property !== undefined) {
-        add(sourceSymbol('entityProperty', binding.entity, property), marked.property);
+      if (binding && binding.group !== undefined && property !== undefined) {
+        // A projection of the group the alias reads, and its arguments.
+        const qualified = qualifiedProjectionName(binding.group, property);
+        add(sourceSymbol('groupProjection', binding.group, property), marked.property);
+        keyed(value.arguments, (key) => sourceSymbol('projectionParameter', qualified, key),
+          (arg, key) => commandOperand(commandName, body, arg, parameterType(qualified, key)));
       }
       return;
     }
@@ -3385,25 +3744,15 @@ function sourceSymbols(parsed) {
       const slots = slotsOf(binding);
       add(sourceSymbol('alias', name, binding.alias), slots.alias, { decl: true });
       if (binding.projection !== undefined) {
-        add(sourceSymbol('projection', binding.projection), slots.projection);
+        projectionRef(binding.projection, slots);
         tagOperands(binding.tags, (tag) => commandOperand(name, body, tag, null));
         keyed(binding.arguments, (key) => sourceSymbol('projectionParameter', binding.projection, key),
           (arg, key) => commandOperand(name, body, arg, parameterType(binding.projection, key)));
         continue;
       }
-      add(sourceSymbol('entity', binding.entity), slots.entity);
-      const entity = own(entities, binding.entity);
-      const idType = (entity && entity.identifierType) || binding.entity + 'Id';
-      tagOperands({ id: binding.id }, (id) => commandOperand(name, body, id, idType));
-      if (binding.excluding !== undefined) commandOperand(name, body, binding.excluding, idType);
-      // `key: value` after the identifier hands values to the entity's
-      // scripted properties: a key is the parameter of every property
-      // projection declaring it.
-      const propertyProjections = list(entity && entity.properties).map((p) => p.projection);
-      keyed(binding.arguments,
-        (key) => propertyProjections.filter((p) => parameterType(p, key) !== null)
-          .map((p) => sourceSymbol('projectionParameter', p, key)),
-        (arg) => commandOperand(name, body, arg, null));
+      add(sourceSymbol('group', binding.group), slots.group);
+      const tag = groupTagOf(own(groups, binding.group));
+      tagOperands(binding.tags, (value) => commandOperand(name, body, value, tag ? tag.tagType : null));
     }
     for (const rule of list(body.conditions)) condition(name, body, rule);
     for (const emission of list(body.publishes)) {
@@ -3456,8 +3805,8 @@ function sourceSymbols(parsed) {
         eventPayload(event.type, event.data);
       }
     } else {
-      const projection = own(projections, body.projection);
-      add(sourceSymbol('projection', body.projection), slots.projection);
+      const projection = projectionBody(body.projection);
+      projectionRef(body.projection, slots);
       tagOperands(body.tags, null);
       payload(body.arguments, parameters(projection), (key) => sourceSymbol('projectionParameter', body.projection, key));
       member(slots.then, body.then, projection && projection.valueType);
@@ -3499,7 +3848,7 @@ function sourceSymbolAt(parsed, line, col) {
 }
 
 // Where a symbol is declared – or nothing, for a name the text only
-// uses (an identifier type left implicit, a dangling reference).
+// uses (a type the text does not declare, a dangling reference).
 function sourceDeclarationOf(parsed, symbol) {
   return sourceSymbols(parsed).occurrences.find((o) => o.symbol === symbol && o.decl) || null;
 }
@@ -3513,15 +3862,16 @@ const SOURCE_RENAME_RULES = {
   member: [SOURCE_MEMBER_RE, 'an enum member starts with a capital letter'],
   type: [SOURCE_IDENT_RE, 'a name is letters, digits and _'],
   event: [SOURCE_IDENT_RE, 'a name is letters, digits and _'],
-  entity: [SOURCE_IDENT_RE, 'a name is letters, digits and _'],
+  group: [SOURCE_MEMBER_RE, 'a group starts with a capital letter'],
   projection: [SOURCE_MEMBER_RE, 'a projection starts with a capital letter'],
+  groupProjection: [SOURCE_LOCAL_RE, 'a projection in a group is lowerCamel, letters and digits'],
   command: [SOURCE_IDENT_RE, 'a name is letters, digits and _'],
 };
 const SOURCE_LOWER_NAME_RE = /^[a-z_][A-Za-z0-9_]*$/;
 // What a script can name: an event's or a record's field
 // (`event.data.x`, `state.x`), a member as the string it is, and the
 // values it is read by (`tags.x`, `args.x`). A json body can name anything.
-const SOURCE_SCRIPT_VISIBLE = ['eventProperty', 'field', 'member', 'projectionParameter', 'projectionTag', 'type'];
+const SOURCE_SCRIPT_VISIBLE = ['eventProperty', 'field', 'member', 'projectionParameter', 'projectionTag', 'groupTag', 'type'];
 const sourceArticle = (word) => (/^[aeiou]/.test(word) ? 'an' : 'a');
 const SOURCE_RESERVED_NAMES = ['true', 'false', 'null', 'enum', 'not', 'count', 'event', 'currentValue', 'successor'];
 
@@ -3533,10 +3883,10 @@ const SOURCE_RESERVED_NAMES = ['true', 'false', 'null', 'enum', 'not', 'count', 
 // told; and a result that would not read back as the same model with
 // one name changed – checked by renaming, re-reading, and counting.
 //
-// An entity whose identifier type is still `<Name>Id` takes the type
-// along, as renaming it on its page does; a type an entity tracks that
-// way is pinned on the entity (`entity Course[CourseKey]`) instead of
-// silently cut loose from it.
+// A group and a top-level projection share one namespace, since both
+// are read by their names; a projection of a group is renamed by its
+// local name, wherever it is named – the way renaming it on its page
+// does (`renameMember`).
 function sourceRename(text, line, col, newName) {
   const parsed = parseModelSource(text);
   const target = sourceRenameTarget(parsed, line, col);
@@ -3569,29 +3919,17 @@ function sourceRenameSymbol(text, parsed, symbol, newName) {
   }
   const renamed = (s, to) => sourceSymbol(sourceSymbolParts(s).kind, ...sourceSymbolParts(s).names.slice(0, -1), to);
   const group = [[symbol, newName]];
-  // An entity tracking `<Name>Id` takes its type along. Renaming the
-  // type alone renames the `tagged` in the entity's header like any
-  // other use, and the entity reads back pinned to the new name.
-  const entities = parsed.collections['entity-definition'];
-  const tracks = (entity) => entity && typeof entity === 'object' && !entity.identifierType;
-  const lowered = (word) => word.charAt(0).toLowerCase() + word.slice(1);
-  if (kind === 'entity' && tracks(entities[name])) {
-    group.push([sourceSymbol('type', name + 'Id'), newName + 'Id']);
-    // Its tag's name tracks the type's, as long as nothing pinned it.
-    if (entities[name].identifierName === undefined) {
-      const to = lowered(newName) + 'Id';
-      group.push([sourceSymbol('entityTag', name, lowered(name) + 'Id'), to, sourceSymbol('entityTag', newName, to)]);
-    }
-  }
 
   const edits = [];
   for (const [from, to, as] of group) {
     const target = as || renamed(from, to);
     // A read and a command property are one namespace in the text,
     // which resolves a name to whichever the command declares.
+    // So are a group and a top-level projection, read by their names alike.
     const clashes = kind === 'alias' || kind === 'commandProperty'
       ? [sourceSymbol('alias', names[0], to), sourceSymbol('commandProperty', names[0], to)]
-      : [target];
+      : kind === 'group' || kind === 'projection' ? [sourceSymbol('group', to), sourceSymbol('projection', to)]
+        : [target];
     const clash = occurrences.find((o) => clashes.includes(o.symbol));
     if (clash) {
       const parts = sourceSymbolParts(clash.symbol);
@@ -3657,8 +3995,8 @@ function sourceApplyEdits(text, edits) {
 // the cursor is the one named; it is declared after the command's last
 // alias, or first in its block, and every equal read in the command is
 // replaced by the name, since written twice it is one query anyway.
-// The name is the projection's, lowercased, numbered past what the
-// command already names; `at` is where it lands, and the editor opens
+// The name is the projection's, lowercased – a group's projection's
+// local name – numbered past what the command already names; `at` is where it lands, and the editor opens
 // a rename there, so it is named as it is introduced.
 //
 // Nothing about the boundary may change – a read in place and an alias
@@ -3699,7 +4037,10 @@ function sourceIntroduceAlias(text, line, col) {
   const taken = new Set([
     ...body.boundary.map((b) => b && b.alias), ...body.properties.map((p) => p.name), ...SOURCE_RESERVED_NAMES,
   ]);
-  const base = target.projection.charAt(0).toLowerCase() + target.projection.slice(1);
+  // A group's projection is named by its local name: `capacity` for
+  // `Course(courseId).capacity`.
+  const split = splitQualifiedName(target.projection);
+  const base = split ? split.local : target.projection.charAt(0).toLowerCase() + target.projection.slice(1);
   let name = base;
   for (let n = 2; taken.has(name); n += 1) name = base + n;
 
@@ -3775,7 +4116,7 @@ const SOURCE_GROUP_SNIPPET = 'scenarios {\n\tscenario "${1}" {\n\t\t$0\n\t}\n}';
 const SOURCE_DECLARATION_SNIPPETS = [
   ['command', 'command ${1:Name}(${2}) {\n\t$0\n}'],
   ['event', 'event ${1:Name} { $0 }'],
-  ['entity', 'entity ${1:Name} (tag ${2:nameId}: ${3:NameId}) {\n\t$0\n}'],
+  ['group', 'group ${1:Name} (tag ${2:nameId}: ${3:NameId}) {\n\t$0\n}'],
   ['projection', 'projection ${1:Name} (tag ${2:id}: ${3:Type}): ${4:integer} = ${5:0} {\n\t$0\n}'],
   ['untagged projection', 'untagged projection ${1:Name}: ${2:integer} = ${3:0} {\n\t$0\n}'],
   ['derived projection', 'derived projection ${1:Name} (tag ${2:id}: ${3:Type}): ${4:integer} {\n\t$0\n}'],
@@ -3785,6 +4126,13 @@ const SOURCE_DECLARATION_SNIPPETS = [
   ['type', 'type ${1:Name} = ${2:string}'],
   ['record', 'record ${1:Name} {\n\t$0\n}'],
   ['scenarios', SOURCE_GROUP_SNIPPET],
+];
+
+// A group's projections: the top-level forms minus the tag header.
+const SOURCE_GROUP_PROJECTION_SNIPPETS = [
+  ['projection', 'projection ${1:name}: ${2:integer} = ${3:0} {\n\t$0\n}'],
+  ['derived projection', 'derived projection ${1:name}: ${2:integer} {\n\t$0\n}'],
+  ['scripted projection', 'scripted projection ${1:name}: ${2:integer} {\n\tinitialState ${3:0}\n\t$0\n}'],
 ];
 
 function sourceOffset(text, line, col) {
@@ -3812,8 +4160,11 @@ function sourceOffset(text, line, col) {
 // whole text's parse, with `model`'s definitions filling in for any
 // that fail to parse while being typed.
 // `experimental: false` leaves out what the experimental flag keeps off
-// the pages – entities, lifecycles, scripted projections and guards.
-// A text using them still reads.
+// the pages – scripted projections and guards. A text using them still
+// reads. Groups are not among them: a name is nothing to hide.
+// A group's projections complete as top-level ones do, by their
+// qualified names (`Course.capacity`), with the group's tag among a
+// derived one's parameters and its siblings among what it reads.
 function sourceCompletions(text, line, col, { model = null, experimental = true } = {}) {
   const none = { items: [], slot: false };
   const prefix = text.slice(0, sourceOffset(text, line, col));
@@ -3827,7 +4178,7 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
   const atLineStart = !tokens.length || tokens[tokens.length - 1].endLine < line;
 
   // ---------- where the cursor is ----------
-  const DECL_WORDS = ['model', 'type', 'tag', 'enum', 'record', 'event', 'entity', 'untagged', 'derived', 'scripted', 'projection', 'command', 'scenarios', 'scenario', '@'];
+  const DECL_WORDS = ['model', 'type', 'tag', 'enum', 'record', 'event', 'group', 'untagged', 'derived', 'scripted', 'projection', 'command', 'scenarios', 'scenario', '@'];
   // The words before a declaration's keyword, which say what it is.
   const LEAD_WORDS = ['tag', 'untagged', 'derived', 'scripted'];
   const unled = (s) => { let i = 0; while (LEAD_WORDS.includes(v(s[i]))) i += 1; return s.slice(i); };
@@ -3853,7 +4204,7 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     const prev = v(s[s.length - 1]);
     const base = {
       decl: frame.decl || decl, command: frame.command, event: frame.event, projection: frame.projection,
-      entity: frame.entity, block: frame.block, scenarioCommand: frame.scenarioCommand,
+      group: frame.group, block: frame.block, scenarioCommand: frame.scenarioCommand,
     };
     const own = (kind, extra) => ({ ...base, kind, ...extra });
     const k = frame.kind;
@@ -3862,11 +4213,11 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
       if (opener === '{') {
         if (prev === 'json' || kw === 'type' || kw === 'model') return own('json');
         const kinds = {
-          enum: 'enum', record: 'fields', event: 'fields', entity: 'entity', projection: 'projection', command: 'command',
+          enum: 'enum', record: 'fields', event: 'fields', group: 'group', projection: 'projection', command: 'command',
           scenarios: 'scenarios', scenario: 'scenario',
         };
         return own(kinds[kw] || 'json', {
-          entity: kw === 'entity' ? decl.name : undefined,
+          group: kw === 'group' ? decl.name : undefined,
           command: kw === 'command' ? decl.name : undefined,
           projection: kw === 'projection' ? decl.name : undefined,
           event: kw === 'event' ? decl.name : undefined,
@@ -3875,11 +4226,22 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
       }
       if (opener === '(') {
         const head = unled(s);
-        if (head.length === 2 && (kw === 'command' || kw === 'projection' || kw === 'entity')) return own('params', { header: kw });
+        if (head.length === 2 && (kw === 'command' || kw === 'projection' || kw === 'group')) return own('params', { header: kw });
         return own('json');
       }
       if (kw === 'projection' && prev === '=') return own('list', { valueOf: 'projection' });
       return own('json');
+    }
+    // A group's block holds its projections; one being declared is the
+    // frame's `inner`, a declaration of its own.
+    if (k === 'group') {
+      const inner = frame.inner;
+      if (!inner) return own('json');
+      const qualified = `${frame.group}.${inner.name}`;
+      const innerDecl = { ...inner, name: qualified, group: frame.group, groupStart: frame.decl ? frame.decl.start : decl.start };
+      if (opener === '{') return own('projection', { projection: qualified, decl: innerDecl });
+      if (opener === '(' && unled(s).length === 2) return own('params', { header: 'groupProjection', decl: innerDecl });
+      return own('json', { decl: innerDecl });
     }
     if (k === 'command') {
       if (opener === '{' && v(s[0]) === 'emit' && s.length === 2) return own('emitArgs', { event: v(s[1]) });
@@ -3960,7 +4322,18 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
         };
         frame.stmt = i;
       }
-    } else if (token.first && token.v !== 'else') frame.stmt = i;
+    } else if (token.first && token.v !== 'else') {
+      frame.stmt = i;
+      if (frame.kind === 'group' && (LEAD_WORDS.includes(token.v) || token.v === 'projection')) {
+        let j = i;
+        while (LEAD_WORDS.includes(v(tokens[j])) && tokens[j + 1]) j += 1;
+        const words = tokens.slice(i, j).map((t) => t.v);
+        frame.inner = {
+          keyword: 'projection', name: v(tokens[j + 1]), start: i,
+          derived: words.includes('derived'), scripted: words.includes('scripted'),
+        };
+      }
+    }
     if (token.t === 'punct' && ['{', '(', '['].includes(token.v)) {
       const next = classify(frame, statement(frame, i), token.v);
       if (next.kind === 'scenario') next.scenarioCommand = next.block && next.block.kind === 'command' ? next.block.name : null;
@@ -3999,7 +4372,11 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
   const known = sourceTextModel(parsed, model);
   const coll = (kind) => known[DEF_COLLECTIONS[kind]];
   const has = (object, key) => !!object && Object.prototype.hasOwnProperty.call(object, key);
-  const def = (kind, name) => (typeof name === 'string' && has(coll(kind), name) ? coll(kind)[name] : null);
+  // A projection is found by the name it is read by, a group's too.
+  const def = (kind, name) => {
+    const collection = kind === 'projection-definition' ? projectionsOf(known) : coll(kind);
+    return typeof name === 'string' && has(collection, name) ? collection[name] : null;
+  };
   const list = (value) => (Array.isArray(value) ? value.filter((x) => x && typeof x === 'object') : []);
   const typeText = (p) => `${p.propertyType}${p.isList ? '[]' : ''}${p.isOptional ? '?' : ''}`;
   const items = [];
@@ -4082,7 +4459,16 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
         const eq = v(d[i + 2]) === '?' ? i + 3 : i + 2;
         if (v(d[eq]) !== '=' || !d[eq + 1]) continue;
         const target = d[eq + 1].v;
-        boundary.push(def('entity-definition', target) ? { alias: d[i + 1].v, entity: target } : { alias: d[i + 1].v, projection: target });
+        // `Course(…)` is the group; `Course(…).capacity`, its projection.
+        let close = eq + 2;
+        for (let depth = 0; close < d.length; close += 1) {
+          if (v(d[close]) === '(') depth += 1;
+          else if (v(d[close]) === ')' && --depth === 0) break;
+        }
+        const member = v(d[close + 1]) === '.' && d[close + 2] && d[close + 2].t === 'ident' ? d[close + 2].v : null;
+        const alias = d[i + 1].v;
+        if (member) boundary.push({ alias, projection: `${target}.${member}` });
+        else boundary.push(def('group-definition', target) ? { alias, group: target } : { alias, projection: target });
       }
     }
     for (const p of list(body && body.properties)) if (!properties.some((q) => q.name === p.name)) properties.push(p);
@@ -4105,23 +4491,39 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
   };
   const operandItems = (scope, { sort = 0, prefer } = {}) => {
     for (const b of scope.boundary) {
-      push(b.alias, 'alias', b.entity ? `alias ${b.entity}(…)` : `alias ${b.projection}(…)`, { sort: prefer && !prefer(b) ? sort + 1 : sort });
+      push(b.alias, 'alias', b.group !== undefined ? `alias ${b.group}(…)` : `alias ${b.projection}(…)`, { sort: prefer && !prefer(b) ? sort + 1 : sort });
     }
     for (const p of scope.properties) push(p.name, 'commandProperty', typeText(p), { sort: prefer && !prefer(p) ? sort + 1 : sort });
   };
-  const entityPropertyItems = (entityName) => {
-    const entity = def('entity-definition', entityName);
-    for (const p of list(entity && entity.properties)) {
-      const projection = def('projection-definition', p.projection);
-      const type = projection ? `${projection.valueType}${projection.isList ? '[]' : ''}` : '';
-      push(p.name, 'entityProperty', `${type}${type ? ' · ' : ''}${p.projection}`, { sort: 0 });
+  // A group's projections, by their local names – after an alias of
+  // it, or after a read of it in place.
+  const groupProjectionItems = (groupName) => {
+    for (const p of groupProjections(def('group-definition', groupName))) {
+      if (typeof p.name !== 'string') continue;
+      const type = p.valueType ? `${p.valueType}${p.isList ? '[]' : ''}` : '';
+      const args = projectionSlots(p);
+      push(p.name, 'groupProjection', type, {
+        sort: 0, ...(args.length ? { insert: `${p.name}(${args.map((a, n) => `${a.name}: $${n + 1}`).join(', ')})`, snippet: true } : {}),
+      });
     }
   };
+  // The group a read ending in `)` before the cursor names, if any.
+  const groupCalled = () => {
+    if (v(s[s.length - 2]) !== ')') return null;
+    let depth = 0;
+    for (let i = s.length - 2; i >= 0; i -= 1) {
+      if (v(s[i]) === ')') depth += 1;
+      else if (v(s[i]) === '(' && --depth === 0) return s[i - 1] && def('group-definition', s[i - 1].v) ? s[i - 1].v : null;
+    }
+    return null;
+  };
   const dotted = (scope) => {
+    const called = groupCalled();
+    if (called) { groupProjectionItems(called); return done(); }
     const head = s[s.length - 2];
     if (!head || head.t !== 'ident') return done();
     const binding = scope.boundary.find((b) => b.alias === head.v);
-    if (binding && binding.entity) entityPropertyItems(binding.entity);
+    if (binding && binding.group !== undefined) groupProjectionItems(binding.group);
     const parameter = scope.properties.find((p) => p.name === head.v);
     for (const f of (parameter && recordFields(parameter.propertyType)) || []) push(f.name, 'field', f.propertyType, { sort: 0 });
     return done();
@@ -4132,8 +4534,10 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     if (!cond.length || last === 'not') {
       operandItems(scope);
       // A rule may read a projection in place, so every projection is
-      // a way for one to start – after what the command already has.
+      // a way for one to start – after what the command already has –
+      // and so is every group, for one of its projections.
       definitionItems('projection-definition', { sort: 1, call: projectionCall, detail: (n, b) => `${b.valueType}${b.isList ? '[]' : ''}` });
+      definitionItems('group-definition', { sort: 1, call: (n) => `${n}($1).` });
       push('count', 'keyword', 'count(…)', { insert: 'count($1)', snippet: true, sort: 1 });
       if (!cond.length) push('not', 'keyword', '', { sort: 2 });
       return done();
@@ -4187,13 +4591,43 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     }
     return done();
   };
+  // A group's tag, `{ name, propertyType, tag }` – off its header's
+  // tokens while it is being written, as parsed otherwise.
+  const groupTagParameter = (groupName, start) => {
+    if (start !== undefined && v(tokens[start]) === 'group' && v(tokens[start + 2]) === '(' && v(tokens[start + 3]) === 'tag'
+      && v(tokens[start + 5]) === ':') {
+      return { name: v(tokens[start + 4]), propertyType: v(tokens[start + 6]), tag: true };
+    }
+    const tag = groupTagOf(def('group-definition', groupName));
+    return tag ? { name: tag.name, propertyType: tag.tagType, tag: true } : null;
+  };
+  // The local names of a group's projections: those parsed, and those
+  // declared in its block as far as the tokens go.
+  const groupSiblings = (groupName, start) => {
+    const names = groupProjections(def('group-definition', groupName)).map((p) => p.name).filter((n) => typeof n === 'string');
+    if (start === undefined) return names;
+    const around = [...tokens.slice(start + 1).filter((t, i) => level[start + 1 + i] > 0), ...restOfDeclaration];
+    around.forEach((token, i) => {
+      if (!token.first || ![...LEAD_WORDS, 'projection'].includes(token.v)) return;
+      let j = i;
+      while (LEAD_WORDS.includes(v(around[j])) && around[j + 1]) j += 1;
+      const name = around[j + 1];
+      if (v(around[j]) === 'projection' && name && SOURCE_LOCAL_RE.test(name.v) && !names.includes(name.v)) names.push(name.v);
+    });
+    return names;
+  };
   // What a read of a projection gives, in order: its tags, then its
-  // arguments – `{ name, propertyType, tag }` each.
+  // arguments – `{ name, propertyType, tag }` each. A group's
+  // projection is read by the group's tag.
   const projectionParameters = (name) => {
     const ownDecl = frame.decl || decl;
     if (ownDecl.keyword === 'projection' && ownDecl.name === name) {
       const header = projectionHeader(ownDecl.start);
-      if (header) return header.parameters;
+      if (header && !ownDecl.group) return header.parameters;
+      if (header) {
+        const tag = groupTagParameter(ownDecl.group, ownDecl.groupStart);
+        return [...(tag ? [tag] : []), ...header.parameters.filter((p) => !p.tag)];
+      }
     }
     const body = def('projection-definition', name);
     return [
@@ -4209,10 +4643,27 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
         { sort: !preferred || p.propertyType === preferred ? 0 : 1 });
     }
   };
+  // A derived projection's siblings in its group, read bare – or with
+  // their arguments by name.
+  const siblingItems = (inner) => {
+    const own = splitQualifiedName(inner.name);
+    for (const local of groupSiblings(inner.group, inner.groupStart)) {
+      if (own && local === own.local) continue;
+      const body = def('projection-definition', qualifiedProjectionName(inner.group, local));
+      const args = projectionSlots(body);
+      push(local, 'groupProjection', body ? `${body.valueType}${body.isList ? '[]' : ''}` : inner.group, {
+        sort: 0, ...(args.length ? { insert: `${local}(${args.map((a, n) => `${a.name}: $${n + 1}`).join(', ')})`, snippet: true } : {}),
+      });
+    }
+  };
   // A projection is read with its values in parentheses – empty for an
   // untagged one, so the cursor lands inside only when there is
   // something to fill in.
-  const projectionCall = (name) => (projectionParameters(name).length ? `${name}($1)` : `${name}()`);
+  const projectionCall = (name) => {
+    const split = splitQualifiedName(name);
+    if (split) return `${split.group}($1).${split.local}`;
+    return projectionParameters(name).length ? `${name}($1)` : `${name}()`;
+  };
 
   // A projection's own header, read off the tokens: its body is
   // mid-edit while a handler is typed, and so rarely in the parse.
@@ -4257,6 +4708,8 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
       return done();
     }
     if (commandName) return dotted(commandScope(commandName));
+    const called = groupCalled();
+    if (called) { groupProjectionItems(called); return done(); }
     if (frame.decl && frame.decl.keyword === 'projection') {
       const parameter = projectionParameters(frame.decl.name).find((p) => p.name === v(s[s.length - 2]));
       for (const f of (parameter && recordFields(parameter.propertyType)) || []) push(f.name, 'field', f.propertyType, { sort: 0 });
@@ -4269,7 +4722,7 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     const kw = decl.keyword;
     if (!s.length) {
       for (const [label, insert] of SOURCE_DECLARATION_SNIPPETS) {
-        if (experimental || (label !== 'entity' && label !== 'scripted projection')) push(label, 'keyword', 'declaration', { insert, snippet: true, sort: 0 });
+        if (experimental || label !== 'scripted projection') push(label, 'keyword', 'declaration', { insert, snippet: true, sort: 0 });
       }
       return done(false);
     }
@@ -4305,30 +4758,32 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
   if (k === 'params' || k === 'fields') {
     const tagged = v(segment[0]) === 'tag';
     if (prev === ':') { typeItems({ tagsFirst: tagged }); return done(); }
-    // A projection's or an entity's tag, and an event's tagged property,
-    // start with `tag`; a property line in an event may too.
+    // A projection's or a group's tag, and an event's tagged property,
+    // start with `tag`; a property line in an event may too. A group's
+    // projection has no tag of its own to declare.
     const lineStart = k === 'fields' ? atLineStart || prev === ',' || prev === '{' : !segment.length;
-    if (lineStart && (frame.header === 'projection' || frame.header === 'entity' || (k === 'fields' && (frame.decl || decl).keyword === 'event'))) {
+    if (lineStart && (frame.header === 'projection' || (frame.header === 'group' && !s.length)
+      || (k === 'fields' && (frame.decl || decl).keyword === 'event'))) {
       keywords([['tag', 'tag ']]);
       return done(false);
     }
     return done(false);
   }
-  if (k === 'entity') {
-    if (!s.length) { if (experimental) keywords([['lifecycle', 'lifecycle ']]); return done(false); }
-    if (prev === 'lifecycle') {
-      const names = framed.filter((t, i) => t.t === 'ident' && v(framed[i + 1]) === '=').map((t) => t.v);
-      const parsedEntity = def('entity-definition', frame.entity);
-      for (const p of list(parsedEntity && parsedEntity.properties)) if (!names.includes(p.name)) names.push(p.name);
-      names.forEach((n) => push(n, 'entityProperty', '', { sort: 0 }));
-      return done();
+  // A group's block: its projections, each declared the way a
+  // top-level one is, minus the tag header.
+  if (k === 'group') {
+    if (!s.length) {
+      for (const [label, insert] of SOURCE_GROUP_PROJECTION_SNIPPETS) {
+        if (experimental || label !== 'scripted projection') push(label, 'keyword', 'projection', { insert, snippet: true, sort: 0 });
+      }
+      return done(false);
     }
-    if (prev === '=') {
-      const idType = (def('entity-definition', frame.entity) || {}).identifierType || `${frame.entity}Id`;
-      definitionItems('projection-definition', {
-        sort: (n, b) => (projectionParameters(n).some((p) => p.propertyType === idType) ? 0 : 1),
-        detail: (n, b) => `${b.valueType}${b.isList ? '[]' : ''}`,
-      });
+    if (s.length === 1 && (prev === 'derived' || prev === 'scripted')) { keywords([['projection', 'projection ']]); return done(false); }
+    const colon = s.findIndex((t) => t.v === ':');
+    if (prev === ':') { typeItems(); return done(); }
+    if (prev === '=' && colon >= 0) {
+      valueItems(v(s[colon + 1]));
+      keywords([['null'], ['[]']], 1);
       return done();
     }
     return done(false);
@@ -4348,7 +4803,9 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     // its scenarios.
     if (frame.decl && frame.decl.derived) {
       const reads = () => {
+        if (frame.decl.group) siblingItems(frame.decl);
         definitionItems('projection-definition', { exclude: [ownName], sort: 0, call: projectionCall, detail: (n, b) => `${b.valueType}` });
+        definitionItems('group-definition', { sort: 1, call: (n) => `${n}($1).` });
         ownParameterItems(ownName);
         return done();
       };
@@ -4397,12 +4854,10 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     const first = v(s[0]);
     if (first === 'alias') {
       if (prev === '=' && s.length <= 4) {
-        if (experimental) definitionItems('entity-definition', { sort: 0, call: (n) => `${n}($1)` });
+        definitionItems('group-definition', { sort: 0, call: (n) => `${n}($1)` });
         definitionItems('projection-definition', { sort: 1, call: projectionCall, detail: (n, b) => `${b.valueType}${b.isList ? '[]' : ''}` });
         return done();
       }
-      // What an entity read may exclude: a value in the command's scope.
-      if (prev === 'excluding') { operandItems(scope); return done(); }
       return done(false);
     }
     if (first === 'emit') {
@@ -4452,13 +4907,12 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
   }
   // A call's values, in order: what the projection declares at this
   // position – a tag, offered the values in scope of its type first, and
-  // `each` for a list – or an entity's identifier.
+  // `each` for a list – or a group's one tag.
   if (k === 'callArgs') {
     const scope = commandScope(commandName);
     const position = framed.filter((t) => t.v === ',').length - restOfFrame.filter((t) => t.v === ',').length;
-    const entity = def('entity-definition', frame.callee);
-    const slot = entity
-      ? (position === 0 ? { propertyType: entity.identifierType || `${frame.callee}Id`, tag: true } : null)
+    const slot = def('group-definition', frame.callee)
+      ? (position === 0 ? groupTagParameter(frame.callee) : null)
       : projectionParameters(frame.callee)[position];
     if (segment.length > (v(segment[0]) === 'each' ? 1 : 0)) return done(false);
     if (slot && slot.tag && !segment.length) push('each', 'keyword', 'once per element of a list', { insert: 'each ', sort: 2 });
@@ -4478,6 +4932,7 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
   // this projection's own parameters.
   if (k === 'derivedOperands') {
     if (segment.length) return done(false);
+    if (frame.decl && frame.decl.group) siblingItems(frame.decl);
     definitionItems('projection-definition', { exclude: [frame.decl && frame.decl.name], sort: 0, call: projectionCall, detail: (n, b) => `${b.valueType}` });
     ownParameterItems(frame.decl && frame.decl.name);
     return done();
@@ -4632,10 +5087,9 @@ function sourceExperimentalMarks(text) {
     if (token.t === 'punct' && v === '?' && tokens[i - 2] && tokens[i - 2].v === 'alias') { said(token, 'An optional read'); return; }
     if (token.t !== 'ident') return;
     if (v === 'scenario') { scenarioNext = true; return; }
-    if (v === 'entity' && next && next.t === 'ident') said(token, 'An entity');
-    else if (v === 'lifecycle' && next && next.t === 'ident' && !(prev && prev.v === '=')) said(token, 'A lifecycle');
-    else if (v === 'scripted' && next && (next.v === 'projection' || next.v === 'untagged')) said(token, 'A scripted projection');
-    else if (v === 'excluding') said(token, '"excluding"');
+    // A group is not marked: a name is nothing to hide. A scripted
+    // projection is, in a group as anywhere.
+    if (v === 'scripted' && next && (next.v === 'projection' || next.v === 'untagged')) said(token, 'A scripted projection');
     else if (v === 'currentValue') said(token, 'currentValue');
     else if (v === 'when' && !frames.includes(true)) said(token, 'A guarded emission');
   });
@@ -4666,10 +5120,11 @@ The text get_model_source returns, apply_model_source applies and start_model ta
 - A text is the whole model: a model "Name" line, then types, events, projections and commands. A definition left out of an applied text is removed – apply_model_source refuses that unless told allowRemovals: true – so to change a model, edit what get_model_source returned and send all of it back.
 - A text with any error is refused whole, with each error's line and column; fix them and send it again. What does not stop it (an event nothing emits, a read of a projection nobody declared) comes back as advisories with the result; fix those as well.
 - DCB in brief: events are tagged by identifier values; a projection folds the events that carry its tags into one value; a command reads projections, checks its rules and emits events. Its consistency boundary is exactly what it reads – derived, never declared (derive_boundary shows it).
-- Definitions, enum members and records are PascalCase; properties, parameters, tags and aliases are camelCase.
+- A capitalised name is a declaration you can name from anywhere: types, events, groups, top-level projections, commands, enum members. A lowercase one is reached through something in scope: properties, parameters, tags, aliases, and the projections of a group (course.capacity).
 - // and /* */ are comments. They are not stored.
 - @tagSchema("{type}={value}") on the line before a tag type changes how its values render as tags; "{type}:{value}" is the default.
-- @icon("📦") on the line before an event or a command gives it the mark the pages show it with – one emoji or short glyph.
+- @icon("📦") on the line before an event, a group or a command gives it the mark the pages show it with – one emoji or short glyph.
+- A group names projections that share one tag. It owns them – they are declared inside it, without a tag header – and means nothing for consistency: reading course.capacity queries only capacity's events. Read one in place as Course(courseId).capacity, or name the group once with alias course = Course(courseId) and read course.capacity. Projections tagged by several tags, or untagged, stay top-level.
 - @feature("Course management") on the line before a command puts it in that feature group; the pages list commands by feature. A command without one is ungrouped.`;
 
 const SOURCE_REFERENCE_FORMS = `Rules (after require), each negated by a leading not:
@@ -4681,13 +5136,14 @@ const SOURCE_REFERENCE_FORMS = `Rules (after require), each negated by a leading
   a is empty    a is not empty    a is true    a is false
 
 Operands: a parameter (courseId) or its record field (items.price), an alias or its field,
-a read P(…), a literal ("text", 3, true, null, [..]), an enum member (Archived),
-a tag literal naming its type (CourseId("c1")).
+a read P(…), a group's projection G(…).p, a literal ("text", 3, true, null, [..]),
+an enum member (Archived), a tag literal naming its type (CourseId("c1")).
 
 Scenarios sit in one scenarios { … } group at the end of the block of the command or
 projection they exercise, and name it:
   scenario "<what it shows>" { given E { … }  and E2 { … }  when C { … }  then E { … }  and E3 { … } }
   then rejected "<rule message>"    then nothing    then P(CourseId("c1")) == <value>
+  then G(CourseId("c1")).p == <value>      (a group's projection, in its block inside the group)
 Say given, when and then once each, one command per scenario; further events continue with and.
 Leave then out and applying records what the model does, and the result says which scenarios it recorded.
 
@@ -4740,15 +5196,6 @@ projection BookTitle (tag bookId: BookId): string = null {
   on BookAdded => set event.data.title
 }
 
-projection MemberExists (tag memberId: MemberId): boolean = false {
-  on MemberJoined => set true
-}
-
-projection MemberLoanCount (tag memberId: MemberId): integer = 0 {
-  on BookLent => increment 1
-  on BookReturned => decrement 1
-}
-
 projection BookBorrowers (tag bookId: BookId): MemberId[] = [] {
   on BookLent => append event.data.memberId
 }
@@ -4772,25 +5219,45 @@ untagged projection LoanNumbering: LoanId = "l1" {
   on BookLent => set successor(event.data.loanId)
 }
 
-// A derived projection handles no events: its block holds one
-// expression over other projections, read with this one's own
-// parameters, and it starts from what they start at. It computes a
-// number – a + b, a - b, a * b, min(a, b), max(a, b) – or compares two
-// values, written as a rule is, and holds the boolean. Its query is
-// theirs.
-derived projection MemberLoansLeft (tag memberId: MemberId): integer {
-  5 - MemberLoanCount(memberId)
+// ---- Groups ----
+// A group names projections that share one tag. It owns them: they are
+// declared inside it, lowercase and without a tag header – the group's
+// is theirs. Outside, one is read through the group: Member(memberId).
+// exists in place, or "alias member = Member(memberId)" and then
+// member.exists. A group is a name and nothing more – a read queries
+// only the projection it names.
+@icon("🪪")
+group Member (tag memberId: MemberId) {
+  projection exists: boolean = false {
+    on MemberJoined => set true
+  }
+
+  projection loanCount: integer = 0 {
+    on BookLent => increment 1
+    on BookReturned => decrement 1
+  }
+
+  // A derived projection handles no events: its block holds one
+  // expression over other projections, and it starts from what they
+  // start at. It computes a number – a + b, a - b, a * b, min(a, b),
+  // max(a, b) – or compares two values, written as a rule is, and holds
+  // the boolean. Its query is theirs. In a group it names its siblings
+  // bare.
+  derived projection loansLeft: integer {
+    5 - loanCount
+  }
 }
 
 // A parameter without "tag" is an argument: a read gives it after the
 // tags, and it narrows nothing. A derived projection compares or
-// computes with it by name, or passes it on to a read.
+// computes with it by name, or passes it on to a read – here, the tag
+// to a projection of a group.
 derived projection MemberCanBorrow (tag memberId: MemberId, books: integer): boolean {
-  MemberLoansLeft(memberId) >= books
+  Member(memberId).loansLeft >= books
 }
 
 derived projection MemberLoansLeftCapped (tag memberId: MemberId): integer {
-  min(MemberLoansLeft(memberId), 3)
+  min(Member(memberId).loansLeft, 3)
 }
 
 // ---- Commands ----
@@ -4838,7 +5305,7 @@ command DonateCopies(donor: string, copies: Copy[]) {
 }
 
 command JoinLibrary(memberId: MemberId, name: string) {
-  require MemberExists(memberId) is false
+  require Member(memberId).exists is false
     else reject "Already a member"
   require not name startsWith " "
     else reject "A name starts with a letter"
@@ -4846,12 +5313,14 @@ command JoinLibrary(memberId: MemberId, name: string) {
   emit MemberJoined { memberId, name }
 }
 
-// "alias" names a read for the rules and emissions below it.
+// "alias" names a read for the rules and emissions below it – of a
+// projection, or of a group, whose projections are read through it.
 command LendBook(bookId: BookId, memberId: MemberId) {
   alias loanNumber = LoanNumbering()
+  alias member = Member(memberId)
   require BookStatus(bookId) == Available
     else reject "Book is not available"
-  require MemberExists(memberId) is true
+  require member.exists is true
     else reject "Not a member"
   require MemberCanBorrow(memberId, 1) is true
     else reject "Too many loans"
@@ -4981,9 +5450,9 @@ command UnsubscribeStudentFromCourse(courseId: CourseId, studentId: StudentId) {
 // by dsl.test.js.
 const SOURCE_REFERENCE_EXAMPLE_SLUG = 'course-simple';
 
-const SOURCE_REFERENCE_UNOFFERED = 'Not offered to agents: entities, lifecycles, scripted projections, '
-  + 'guarded emissions (emit … when …), optional reads (alias x? = …), excluding '
-  + 'and currentValue. A text or '
+const SOURCE_REFERENCE_UNOFFERED = 'Not offered to agents: scripted projections, '
+  + 'guarded emissions (emit … when …), optional reads (alias x? = …), arguments on a group\'s projection '
+  + 'read through an alias (x.p(a: …)) and currentValue. A text or '
   + 'definition that adds one is refused. A model that already uses them shows them in get_model_source; keep those parts as they are.';
 
 function sourceLanguageReference() {
@@ -5002,9 +5471,9 @@ function sourceLanguageReference() {
 // ============================================================
 
 const SOURCE_KEYWORDS = [
-  'model', 'type', 'tag', 'enum', 'record', 'event', 'entity', 'lifecycle', 'untagged', 'derived', 'scripted',
+  'model', 'type', 'tag', 'enum', 'record', 'event', 'group', 'untagged', 'derived', 'scripted',
   'projection', 'min', 'max', 'initialState', 'exposes', 'on', 'set', 'increment', 'decrement', 'append',
-  'remove', 'command', 'alias', 'each', 'excluding', 'require', 'emit', 'when', 'and', 'not', 'is',
+  'remove', 'command', 'alias', 'each', 'require', 'emit', 'when', 'and', 'not', 'is',
   'empty', 'in', 'contains', 'containsAny', 'startsWith', 'endsWith', 'count', 'successor',
   'currentValue', 'json', 'true', 'false', 'null', 'scenarios', 'scenario', 'given', 'then', 'nothing', 'rejected',
   'else', 'reject',

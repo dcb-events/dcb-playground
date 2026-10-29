@@ -9,17 +9,14 @@ and prune what no longer holds.
 
 ## Shipped models
 
-- **The shipped models are stated without entities** (8.0): the seed
-  builders still build the course and content models with entities —
-  the record of how they were designed — and a last layer,
-  `seedWithoutEntities` (model.js), restates them as reads in place
-  through the ordinary commands — each projection already tagged by
-  the identifier the entity read it by (`seedEntityTag`), so a
-  course's and a student's subscription counts stay the two folds they
-  are. The entity forms live on as the experimental
-  `course-entities` and `course-schedules` (which needs `excluding`).
-  Entity tests build those, or a model from seed layers alone
-  (`seeded(...)` in ui.test.js). A `PREDEFINED_MODELS` entry's
+- **The shipped models use no groups**: the examples on dcb.events
+  read projections in place, and a group is a naming device they do
+  not need. The suites build their grouped course models from code
+  view text (`FIXTURE_TEXTS` in ui.test.js: `course-groups`, and
+  `course-schedules` with a chain of three reads) or by moving a
+  shipped model's projections into a group (`grouped(...)`) — what
+  the retired `course-entities` and `course-schedules` became (11.0).
+  A model from seed layers alone is `seeded(...)`. A `PREDEFINED_MODELS` entry's
   `experimental` mark says whether it uses anything experimental, and
   a test holds the mark to the built model's `experimentalFeatures`.
 - **The playground ships no examples.** The examples live on
@@ -36,11 +33,11 @@ and prune what no longer holds.
   (`experimental()`, shared.js; it replaced the simple/advanced mode).
   What DCB is made of — types, events, projections, commands, the
   derived boundary — is always on screen; what the examples on
-  dcb.events do not need is behind the flag: entities and lifecycles,
-  scripted projections, guarded
-  emissions, optional reads, `excluding`, `currentValue`, and the
-  Coupling /
-  Rule map / Event model / Lifecycles views. A model that uses any of
+  dcb.events do not need is behind the flag: scripted projections,
+  guarded emissions, optional reads, `currentValue`, and the Coupling /
+  Rule map / Event model views. Groups are not on the list: a naming
+  device with no consistency meaning has nothing to hide. Entities,
+  lifecycles and `excluding` were on it until 11.0 removed them. A model that uses any of
   it still loads, renders and evaluates whole; `experimentalFeatures`
   (model.js) names what it uses and `experimentalNotice` says so on
   every page. Gate an *offer* (an adder, a picker row, a tab), never
@@ -65,8 +62,8 @@ and prune what no longer holds.
   variants (`-derived`, `-guarded`) already ship beside it, and it is
   not rewritten — its five-state status needs a case expression, which
   no real model has asked for yet.
-- **WebMCP offers nothing experimental, flag or no flag.** No entity
-  tools, no experimental member in a tool schema (cut by
+- **WebMCP offers nothing experimental, flag or no flag.** No
+  experimental member in a tool schema (cut by
   `generate-webmcp-schemas.js`), nothing experimental in the language
   reference (`sourceLanguageReference`), and an agent's edit that would
   introduce a use is refused (`introducedExperimentalFeatures`). Following
@@ -107,8 +104,10 @@ and prune what no longer holds.
   seniority (developer)`: the name in the projection colour, the
   brackets muted, and each value an `opRef` of its own, so a tag lights
   the input it came from (`projectionReadRef`). It replaced "Developer
-  seniority tagged developer", which was too long to scan in a rule. Entity reads
-  are still bindings. Inline reads are walked by `forEachCommandOperand`
+  seniority tagged developer", which was too long to scan in a rule. A
+  grouped projection is read the same way, `Course(courseId).capacity`,
+  or through a group alias (`alias course = Course(courseId)`, then
+  `course.capacity`), which is a binding. Inline reads are walked by `forEachCommandOperand`
   (it descends into their tags), counted once per spelling
   (`inlineReads`), placed in the query their tags wait for
   (`operandDepth`), and folded once per evaluation (`scope.inline`). So the rule adder
@@ -121,15 +120,15 @@ and prune what no longer holds.
   (`projectionReadChoices`): with no bindings to put a second projection
   in scope, two projections could otherwise never be compared
   (`DeveloperSeniority(developerId) >= RequiredSeniority(projectId)`).
-  `bindingReferences` / `unreferencedBindings` (model.js) name the six
-  reasons a read is consulted — rule, guard, emission, coverage, chain,
+  `bindingReferences` / `unreferencedBindings` (model.js) name the five
+  reasons a read is consulted — rule, guard, emission, chain,
   serialisation —
   and `updateDefinitions` prunes what nothing consults, transitively, in
   the same append: deleting the last rule about `theirs` takes the
   `students` hop with it. Pruning is deliberately *not* in
   `addDefinition`: a body arriving whole, from a file or a WebMCP tool,
   keeps what it came with and earns an advisory instead, and the next
-  edit to that command is what drops it. All six reasons are
+  edit to that command is what drops it. All five reasons are
   load-bearing in the shipped models, and a test holds them free of
   unreferenced reads. Serialisation is the one that names no alias: a
   binding to a projection that takes no tags reads every event that
@@ -152,7 +151,7 @@ and prune what no longer holds.
   row's correctness, not a style choice — gate a question on a change
   event and any pre-filled picker deadlocks, because a `<select>`
   already showing the value you want fires nothing when you pick it,
-  which is what stranded an entity whose single property was filled in
+  which is what stranded a group whose single projection was filled in
   for you. The first question is deliberately *not* pre-answered, or the
   row would answer itself and put every control on screen at once.
   Its picker lists the reads the command already makes first, by
@@ -165,19 +164,20 @@ and prune what no longer holds.
   rule's message trails it, muted, as ` — else "…"`. A test authors
   `SubscribeStudentToCourse` through the three questions and compares
   the result to the shipped definition. Its first question offers only
-  what the command can reach — entities some operand already in scope
-  could identify, and every projection, with a picker per tag it
-  declares beside it — values in scope of that tag's type, `each` of a
-  list of them, and `+ new input …`, the only offer when nothing in
-  scope has the type: committing adds a command property named after
-  the tag (`newReadInputs`). Inventing an entity there likewise gives
-  the command the input that says *which* one, since a fresh
-  identifier type is reachable from nothing. A projection an entity property
-  binds is not offered: it is read through the entity
-  (`course.capacity`), and offering it bare too would make one fact
-  reachable as two different reads. The others are what lets a model
-  without entities or lifecycles state its rules on the pages, not
-  only in the code view (`require Label(documentId) == …`).
+  what the command can reach — groups (`group:Course`, read through a
+  new alias, the group's tag a picker beside it), and every top-level
+  projection, with a picker per tag it declares beside it — values in
+  scope of that tag's type, `each` of a list of them, and `+ new input
+  …`, the only offer when nothing in scope has the type: committing
+  adds a command property named after the tag (`newReadInputs`). A
+  grouped projection is not offered on its own: it is read through
+  its group (`course.capacity`), and offering it bare too would make
+  one fact reachable as two different reads. A rule never creates a
+  group. The top-level projections are what lets a model without
+  groups state its rules on the pages, not only in the code view
+  (`require Label(documentId) == …`). Existence rows ("the student
+  exists" as one pick) went with lifecycles: `student.exists is true`
+  is an ordinary rule about a boolean.
 - **Reads split by their reason** (`decisionAliases`, model.js): a read
   a rule or guard names, and every hop it was reached through, belongs
   to the decide step; everything else is read in order to *record*
@@ -190,21 +190,14 @@ and prune what no longer holds.
   DCB is their union. Reads stay removable, and removing one takes the
   rules and guards about it while leaving reads further down the chain
   to dangle with an advisory — narrowing the boundary is never silent.
-- **Write coverage is narrow, and advice only** (`emittedTagRequirements`,
-  model.js): it flags a tag whose value this command *derived* — read
-  off some instance it bound — and is silent for one taken straight
-  from a command property, which the caller asserted. The reason is
-  that an uncovered tag is not unsound: the append condition is the
-  union of the bindings' queries, so the tag this command writes is
-  what makes every *other* command that read that instance conflict
-  with it, read or not. What an uncovered tag gives up is only this
-  command's own protection against concurrent change, and where the
-  decision never depended on that instance there was nothing to
-  protect. One walk decides both what the advisory says and which reads
-  a tag keeps alive, so pruning and the advisory cannot disagree about
-  what a read is for. `UnsubscribeStudentFromCourse` therefore binds
-  the course only: which student is asserted by the caller, and whether
-  they are in the course is answered off the course.
+- **No write coverage** (gone with entities, 11.0). It flagged an
+  emitted tag whose value was read off an entity instance the command
+  had not bound; a group names no instance an event writes, so there is
+  nothing to cover. An uncovered tag was never unsound anyway — the
+  append condition is the union of the reads' queries, and the tag this
+  command writes is what makes every *other* command that read that
+  instance conflict with it. `UnsubscribeStudentFromCourse` binds the
+  course only: which student is asserted by the caller.
 
 - **An editor offers what the held type admits.** `operationsFor` and
   `hasSuccessor` (model.js) are the two rules, and both the change adder
@@ -272,9 +265,10 @@ and prune what no longer holds.
   and arguments; brackets were rejected as reading like a stored
   table. What a projection is kept per is its own to say, so a count
   per course and per student are two projections — the reuse the
-  tagless draft allowed was dropped for the coupling it caused. An
-  entity property binds a projection tagged by exactly the entity's
-  identifier (`entityTagParam`); a derived operand gives its target's
+  tagless draft allowed was dropped for the coupling it caused. A
+  grouped projection declares no tags: it is read by its group's one
+  (`projectionsOf` gives it its effective body, `tags: [group.tag]`).
+  A derived operand gives its target's
   tags by name, each one of the owner's own (`{parameterName}`) or a
   literal. Scripts see `tags.<name>` and `args.<name>`, and have no
   `tagFilter`. Evaluation takes a *read* —
@@ -284,7 +278,7 @@ and prune what no longer holds.
   keyed by it. A read fans out where it says so, `each` on the value
   (`{each: operand}`): it is made once per element, and a rule over it
   holds for every one, paired by index with values read from the same
-  list (`fanRootOf` / `isZipped`). An entity read fans out the same way,
+  list (`fanRootOf` / `isZipped`). A group read fans out the same way,
   `Course(each …)`, and a list read without `each` is an advisory and
   an error. An emission cannot take a fanned read.
 - **A projection's parameters are its tags, then its arguments**
@@ -308,9 +302,8 @@ and prune what no longer holds.
   the lists and every read's value with it, a literal respelled
   (`setProjectionParameterIsTag`); renaming one is a member rename
   (`projection-definition:argument` beside `:tag`), and a tag and an
-  argument share one namespace. An entity binding supplies the
-  arguments of any property it reads that takes some
-  (`argumentsExpected`), not only a scripted one's.
+  argument share one namespace. Through a group, arguments go on the
+  member read, never the group call: `course.seatsOn(slot: s)`.
 - **One handler per event type, per projection** — and it is a real
   constraint, not a convenience: tag matching is by _value_, whichever
   listed property carries it, so an event listing one identifier type
@@ -353,123 +346,113 @@ and prune what no longer holds.
   below): a moved field and a new operand member. The one 9.x shape
   that moved is lifted on import (`liftScriptArguments`), so this build
   reads 8.x to 10.x; the stored shape moved, so `EVENT_LOG_KEY` did.
-  **6.1 is the contrast worth knowing**: entity `lifecycle` is additive
+  11.0 removed entities (and `lifecycle`, `excluding`) and added
+  `groupDefinitions`, which own their projections. This build reads
+  8.x to 11.x: an entity is converted on import
+  (`groupsFromEntities`, see _Groups_), and the import's toast says
+  what became of each.
+  **6.1 is the contrast worth knowing**: entity `lifecycle` was additive
   in shape *and* a minor, because a 6.0 reader that ignores it loses a
   derived diagram and misreads nothing — where 4.0's equally additive
   flag made the old reader error on the case it declared expected.
 
-## Entity lifecycles
+## Groups
 
-- **A lifecycle is designated, not named** (6.1): an entity carries
-  `lifecycle`, naming one of its *own* property bindings — a local name
-  like a command's alias, so it is not a reference slot and
-  `MEMBER_REWRITES['entity-definition:property']` is what moves it on a
-  rename. Nothing keys off the property's spelling any more: `exists` is
-  what the one-click lifecycle types, `course-simple`'s Course calls its
-  `status`, and both read the same.
-  **No entity gets one unasked** (reversed 2026-10-01): `createEntity`
-  makes a bare entity, from every place one is created, and a lifecycle
-  is added only from the Identity block's `+ lifecycle` (`lifecycleAdder`)
-  — *Exists (boolean)* in one click (`addExistenceLifecycle`, which
-  re-designates a leftover usable `exists` rather than adding a second,
-  and is withdrawn when `exists` is taken: `existenceLifecycleOffer`),
-  *Named states (enum)* (the promotion form in `scratch` mode, where two
-  states suffice), or an existing property. Since the existence wording
-  keys off the designation, an entity without one never says "exists"
-  anywhere. **Remove lifecycle** (`⋮`, `removeLifecycle`) drops only the
-  designation; the property stays. Don't reintroduce a lifecycle from
-  the change adder or the rule wizard — that is the scaffold back
-  through another door. Pointing at a *projection* instead was
-  rejected because a condition reads `{alias, property}`, so a lifecycle
-  not bound as a property could never be guarded — which is the one
-  thing a lifecycle is for.
-  **The two-state case is a `boolean`**, not a two-member enum: no
-  custom type, no vocabulary, nothing to learn before writing "the
-  course must exist". `lifecycleOf` (model.js) flattens both spellings
-  into one `states` list of strings (`['false','true']` for a boolean),
-  so the machine, the constraint reader and the diagram never ask which
-  they got; `isBoolean` is for the one thing that differs, how a
-  condition names a state. A third state is a **promotion**
-  (`promoteLifecycle`, index.html): it must invent an enum and name its
-  members, so it is a form, never inferred, and it runs in one `run` —
-  a model whose conditions still say `isTrue` while the projection has
-  become an enum is the incoherent state the log has no migration for.
-  Existence conditions are stored as ordinary `isTrue`/`isFalse` over an
-  ordinary property and only *read* as "course exists"
-  (`existenceRead` / `conditionParts`, shared.js) — no new predicate,
-  and `evaluate.js` did not change. The rule wizard *writes* them the
-  same way: its value picker offers `exists` / `does not exist` in
-  place of the bare property, and that one pick stores `isTrue` /
-  `isFalse` (never a negated `isTrue`) and skips the predicate
-  question. The bare row comes back only for a rule opened with
-  another spelling, so editing never silently rewrites one. A **dangling** designation is an
-  advisory; scripted, derived, list or stateless ones are not — they are
-  legitimate models (`content-decisions-scripted` ships one) whose
-  machine cannot be drawn, which is the Lifecycles page's business to
-  say (`lifecycleRefusal`). That page now shows every entity, compact
-  for existence-only and the full band for three states or more,
-  because the unguarded dot matters most in the simplest machine.
-  The offer to promote is made in **two places, never in Problems**: the
-  rule wizard, at the moment a rule brings two of them together, and the
-  entity's own Identity block, where an author who just added two
-  booleans is actually looking and no command need exist yet
-  (`lifecycleMergeSuggestion` / `entityMergeCandidates`). It fires for
-  **two or more monotone booleans of one entity** — whether one is the
-  designation is irrelevant and requiring it was a bug: `registered` and
-  `expelled` added by hand are exactly the shape, and neither is
-  designated. **Monotonicity is the gate that matters**
-  (`isMonotoneBoolean`): `registered`/`expelled` are stages,
-  `registered`/`isPublic` are not, and collapsing the second pair
-  destroys a dimension.
-  `mergeIntoLifecycle` absorbs *n* booleans into one enum, and the
-  condition translation is the subtle part: a boolean absorbed at step
-  *i* held in **every state from *i* onward**, so `exists isTrue` becomes
-  `equalsAny [Existent, Graduated]` — narrowing it to `equals Existent`
-  silently strengthens the rule, which an earlier cut did.
-  `statesWhereHeld` is that translation. Two guards fall out of it: two
-  booleans moved by one event cannot merge (the merged fold would need
-  two handlers for that event), and a non-monotone boolean is refused as
-  a stage even when asked for directly.
-  **Which property is the lifecycle is author-settable** from the
-  Identity row (`designationPicker` / `lifecycleCandidates`) — offering
-  only single-valued boolean and enum properties, plus "none". This
-  reverses an earlier "no picker" decision: it left an author who builds
-  a state property by hand unable to say so, and the promotion is no
-  door to that, since it invents an enum rather than adopting one. A
-  designation is never inferred — imports from before it existed did
-  that once, at the gate, until 7.0 stopped reading them. The
-  decisions and what was rejected are in
-  `docs/research/2026-09-30-entity-lifecycle-as-boolean-existence.md`.
-  **The Identity row is folded, not hidden**: with no lifecycle there
-  is no row and no `not designated` — the identifier line carries
-  `+ lifecycle` and nothing else. A lifecycle that exists was asked
-  for, so it always shows, even unmoved (`set by —` is the next step);
-  the old "quiet" case hid a boolean nobody had requested. The row draws
-  the machine rather than describing it (`lifecycleTrack`, off
-  `lifecycleMachines`, so the row and the Lifecycles band cannot
-  disagree about what moves what). That row **starts folded**
-  (`lifecycleFold`, `state.lcOpen`, session-only): folded, it rides on
-  the identifier line — `state exists · set by …`, or `state status ·
-  3 states` for an enum — and the `⋮` lives on that line in both
-  states, so unfolding moves nothing. A refused lifecycle never folds;
-  a fault is not hidden.
-  The track is drawable only as a
-  *chain* — up to three states, short names, every transition the step
-  from one state to the next — and gives up to `lifecycleShapeWords`
-  rather than wrapping; a jump or a way back is a machine, and a machine
-  belongs on the Lifecycles page. The chip is the **property** in every
-  branch: it used to be the setters when there were any and the property
-  when there were none, which is why the empty case read worst, naming
-  itself twice beside a label saying `exists once`. The actions sit
-  behind one `⋮` (`lifecycleMenu`, faded not hidden, so it keeps its
-  place in the tab order); `+ lifecycle` opens the same kind of panel
-  (`lifecyclePanel`) but is never faded — with nothing designated it is
-  the only lifecycle control on the page.
+- **A group names projections that share one partition tag** (11.0).
+  `group Course (tag courseId: CourseId) { … }` owns its projections:
+  they are declared inside it, carry no tag of their own, inherit its
+  one, and have lowercase local names — `Course.capacity` outside,
+  `Course(courseId).capacity` or `alias course = Course(courseId)` then
+  `course.capacity` in a command. It means nothing for consistency
+  (reading `course.capacity` queries only `capacity`'s events), so it
+  is not experimental and nothing about it is gated. It replaced
+  entities, which kept being read as aggregates, and their lifecycles;
+  the decision and what was rejected are in
+  `docs/research/2026-10-28-groups-replace-entities.md`.
+- **Everything reads the flattened view** (`projectionsOf`, model.js):
+  top-level projections and every group's under its qualified name,
+  with effective bodies. The interface asks it for any projection by
+  name, so a grouped one opens the ordinary projection editor
+  (`state.projDraft.name` is `Course.capacity`), autosaves into its
+  group (`updateDefinition` takes the qualified name), and is renamed
+  by its local name.
+- **On Projections a group is a section, not a page** (`groupSection`,
+  index.html): a heading with its mark, name, one tag chip and size,
+  over a ledger of what it owns — the top-level rows minus the tag
+  column, named locally. **Folded by default** (`state.groupOpen`,
+  session-only): a model with several groups reads as their headings
+  first. The heading's actions — its own `+ projection`, Icon, Rename,
+  Remove — show only once it is open; folded, it is only the way in.
+  Anything that goes to a group (a chip, a problem, the code view)
+  unfolds it and lands on its heading (`goToGroup`).
+- **Making one.** `+ group` beside `+ projection` (`newGroupForm`) asks
+  a name, the one tag — a tag the model already reads by
+  (`groupTagChoices`) or a new name and type — and an optional mark;
+  the group is made empty (an advisory says so) and shown open. A
+  group's own `+ projection` makes one inside it, whose wizard skips
+  the partition step. A projection made from a command's modal may go
+  into an existing group (`newProjectionQuestion`'s `in` picker), but
+  nothing on a command page creates a group.
+- **Moving in and out are refactorings, one append each.** A
+  projection with exactly one tag offers "Move into group…"
+  (`projectionMoveChoices`): every group whose tag it matches
+  (`groupsAccepting`), and "New group…", which prefills that tag and
+  suggests the name from its type (`suggestGroupName`, `CourseId` →
+  `Course`), then moves it in. Offering "New group…" even when no group
+  accepts it is what makes the first group reachable from a
+  projection. A grouped projection offers "Move out of group". Both
+  rewrite every read (`moveProjectionIntoGroup` /
+  `moveProjectionOutOfGroup`) and keep the row open under the new name.
+  **A command's reads move in through an alias** (`aliasGroupReads`,
+  shared with the import of 10.x entities): `CourseExists(courseId)`
+  becomes `course.exists` beside `alias course = Course(courseId)`,
+  not `Course(courseId).exists` repeated in every rule. An alias bound
+  to the projection itself folds into the group's. An alias of the group
+  with the same tags and optionality is reused, so moving several in
+  gathers them under one; an optional read never merges with a
+  required one, since that would change when the command refuses. A
+  new alias is named off its value (`aliasBaseFor`: `courseId` →
+  `course`, `each subscribedCourseIds` → `subscribedCourses`) and
+  numbered past the command's names. Derived projections and scenarios
+  have no aliases and keep the read in place. Moving out goes back to a
+  read in place, and drops an alias nothing reads any more.
+- **Agents get groups too** (webmcp.js). `group-definition` is one of
+  the generic definition kinds (`add_`/`update_group_definition`,
+  `remove_definition`, `rename_definition`, `rename_member` with
+  memberKind `projection`), and the projection tools take a qualified
+  `Course.capacity` the way `addDefinition` / `updateDefinition` do —
+  so the generator widens the projection kinds' `name` pattern to a
+  qualified name and requires `tags` only in words (top-level only).
+  The page's gestures are tools of their own, on the same functions:
+  `create_group` (`createGroup`, tag type made alongside),
+  `add_group_projection` (`addGroupProjection`, its schema the group's
+  inner projection shape) and `move_projection_into_group` /
+  `move_projection_out_of_group`. A scripted grouped projection is
+  cut from the schemas and refused like any experimental use.
+- **A grouped read shows the group, then the member**: `Course (course
+  id) · capacity` with the group's mark, wherever a read is shown
+  (`projectionReadRef`, `operandWords`); a group alias reads as
+  `course · capacity`. The event model's read columns are per group.
+- **Old files convert on import** (`groupsFromEntities`): an entity
+  becomes a group when every projection it binds is tagged by exactly
+  its identifier and bound by no other entity, under its binding names,
+  with direct reads rewritten to go through the group; any other is
+  restated as plain reads. `importModelFromEnvelope` reports each as
+  `converted`, and `finishImport` says so in the import toast, as news
+  rather than an error — nothing was lost.
+- **No designated lifecycle replaces the old one.** A lifecycle is an
+  ordinary boolean or enum projection that conditions read; the
+  Lifecycles view, the Identity row, the designation and the
+  promote/merge offers went with entities. What came back is the
+  drawing, for every enum projection and with nothing designated (see
+  _The projection editor_, the Lifecycle tab). The event model orders commands by feature and, within
+  one, as they were written (`eventModel`, shared.js), which puts the
+  creating command first in practice; it used to follow the lifecycles.
 
 ## The projection editor
 
 `projectionFields` (index.html) is the one editor for a projection —
-on Projections, on an entity's page, and in the definition modals.
+on Projections, inside a group's section, and in the definition modals.
 
 - **Sections, with what it works out to beside them.** On the left:
   `partition` (its tags, then its arguments – `tags` until 10.0),
@@ -526,9 +509,8 @@ on Projections, on an entity's page, and in the definition modals.
   left out rather than made badly. The check folds the *first* handled
   event – one of each would let a subscribe and an unsubscribe cancel
   out. Asked from a command (the definition modal), a name that says no
-  partition takes the command's one tag-typed input. The entity page
-  still adds a property as a name and a type: its partition is the
-  entity's, and it is not a wizard yet.
+  partition takes the command's one tag-typed input. A projection made
+  inside a group skips the partition step: its tag is the group's.
 - **A handler is one line** however long the event's name: the pickers
   give way and end in an ellipsis, the event's first, then the value's
   (the end of `event.data.…` is the part that says anything); the
@@ -540,6 +522,42 @@ on Projections, on an entity's page, and in the definition modals.
 - **`+ handler` sits under the handlers**, not in the section's
   heading: with a few rows the heading's button read as belonging to
   none of them, and the next handler goes at the bottom anyway.
+- **A projection with handlers has a Lifecycle tab** (`projectionLifecycle`
+  and `projectionMovements`, index.html; `lifecycleOf`, shared.js),
+  beside Definition and Checks: how its value moves. Nothing is stored
+  or designated; it is worked out from the draft, so an edit shows the
+  moment the tab is switched. Derived and scripted projections have
+  none. A single-valued enum or boolean is a machine
+  (`lifecycleMachine`); anything else – a number, a string, a list – is
+  its movements (`lifecycleMovements`): where it starts, each handler
+  with the commands appending its event and their rules over the value,
+  then the commands that only read it. No states are invented for
+  those, and no command is marked unguarded there: a counter is guarded
+  through other projections as a rule. In the machine, states are the
+  members or `false`/`true` (`null` first when it starts or can be set
+  there); a handler setting
+  a member is an arrow, starting where its publishers' rules allow
+  (`require` and the emission's own `when`, read as a direct read or a
+  group alias alike). A command nothing guards gets the pink dot, and
+  its arrow starts at the initial state, dashed – or, when it leads
+  back there, at every other state reached. What cannot be read
+  is said under the machine, not drawn: a state taken from event data,
+  a rule comparing with a parameter, a command reading two instances
+  or `each`. While any of that is there no state is called terminal.
+  A tab, not a section of Definition: it answers a different question
+  from what the projection is, the way Checks does. Decided in
+  docs/research/2026-10-28-lifecycles-for-enum-projections.md.
+- **The mindmap where it fits, a list where it does not.** Both views
+  are built and a container query on the tab's width shows one: the
+  mindmap of design/lifecycles/Main.dc.html when its computed width
+  fits, else the states down a spine with the arrows leaving each one
+  as rows (`lifecycleList`). The detail is never wider than about
+  700px, so a machine of five states is a list on any screen. Curves
+  were tried for the narrow view and dropped: a few transitions back
+  and forth piled their labels onto each other. The commands allowed
+  in a state open on hover, focus or a tap that pins them, and close
+  on Escape or a press anywhere else. Nothing in it navigates – events
+  and commands are kept free to become draggable.
 
 ## Guarded emissions, rejection messages, derived projections
 
@@ -698,9 +716,9 @@ on Projections, on an entity's page, and in the definition modals.
   Explanations live in `hint(...)` — one `ⓘ` per section, never one per
   row, in both modes, linking dcb.events only where a page exists.
   Inline field hints are deleted; *derived facts* stay on the page,
-  terse (`not designated`, `scripted fold`, `appended by: —`), because
+  terse (`untagged`, `scripted fold`, `appended by: —`), because
   hiding a fact about the model behind a popover is the opposite of what
-  the register is for. An entity carries a mark only if one was
+  the register is for. A group carries a mark only if one was
   authored — there is no hashed fallback, and `iconPrefix` is what
   keeps an unmarked name from rendering behind a stray space. A command
   or event does carry one either way: unmarked, it shows its kind's
@@ -743,8 +761,8 @@ missing: "+ New custom type…" in the payload's type pickers, "+ New
 projection…" in a rule's (or guard's) first question and in the change
 adder, a pencil beside every referenced projection a command page
 shows, and "Edit the type …" in an input's (or an event field's) edit
-mode (`openDefinitionModal`, index.html). Events and entities keep the
-inline forms they already had.
+mode (`openDefinitionModal`, index.html). Events keep the inline forms
+they already had.
 
 - **A modal, not a page or an inline form.** Naming a new command is a
   page because nothing is half-built yet; here something is — the rule
@@ -776,10 +794,9 @@ inline forms they already had.
   value is so often a type not yet written, and its header names what
   is underneath ("‹ Back to …"). Nothing deeper is offered.
 - **What the modal leaves out.** Removal — the command behind it may be
-  using the definition; it stays on the page. Navigation off to an
-  owning entity. Projections an entity binds: the modal creates and
-  edits only free-standing ones, so it never touches the experimental
-  flag. "Open its page" is the one way out to the definition's page,
+  using the definition; it stays on the page. Groups: a new projection
+  may go into one the model has, picked beside its name, but the modal
+  never makes a group or moves a projection in or out. "Open its page" is the one way out to the definition's page,
   and it goes through ordinary navigation, which commits or drops the
   command's pending forms as any other move does.
 - **A member's type is edited from the member's edit mode, not its
@@ -797,8 +814,7 @@ inline forms they already had.
   before — so it is first and the primary button. A single value's card (`singleValueEditor`) shows
   its base type, picked (string, integer, number, boolean) — or an
   enum's members — and, for a tag type, the tag it writes. The JSON
-  Schema, the tag schema and the form (single value | tag type, pinned
-  for an entity's identifier) sit behind an Advanced switch — per card
+  Schema, the tag schema and the form (single value | tag type) sit behind an Advanced switch — per card
   and session-only, unlike the projection editor's: every card opens
   collapsed, and opening one opens no other. The form replaced a
   "represented as a tag" checkbox on every card, which asked a question
@@ -842,7 +858,7 @@ One breakpoint, 760px (shared.css, _narrow screens_), and a floor of
   nothing to show through — the setting most worth watching land, the
   theme, is in ⋯.
 - **Pages are not given phone layouts.** A strip that is wider than the
-  window (the overview table, Coupling's matrix, a lifecycle band)
+  window (the overview table, Coupling's matrix, an event-model band)
   scrolls inside itself, as on desktop; only overflow of the page
   itself is a bug.
 
@@ -945,9 +961,9 @@ Watched, Decision, Store. Only the panel scrolls.
   An identifier field offers every value of its type the run has
   used so far (`sessionIdentifiers`), read from the events' payloads
   and the commands' arguments. These are keyed by tag type, not by
-  entity: keyed by entity, a model without entities (every shipped one
-  but the experimental ones) was offered nothing. Scenarios use the
-  same keying (`identifiersInUse`).
+  group: keyed by group, a model without groups (every shipped one)
+  would be offered nothing — as it was when they were keyed by entity.
+  Scenarios use the same keying (`identifiersInUse`).
 - **The playhead can sit inside a step.** `session.stepAt` is the step
   the last visible event belongs to, even when only some of its events
   are visible. The Decision tab shows those; the rest are faint.
@@ -961,7 +977,7 @@ Watched, Decision, Store. Only the panel scrolls.
 ## The surface switch
 
 - **It sits in the header of the pages the code follows** — command,
-  entity, events, projections, types (`CODE_FOLLOWS`) — on the right,
+  events, projections, types (`CODE_FOLLOWS`) — on the right,
   and nowhere else. It used to be in the bar, which said every page had
   a code form; the Overview, the sandbox and the cross-cutting pages
   showed it muted, doing nothing. A strip of its own above the content
@@ -1366,8 +1382,8 @@ Artboards: `design/dcb-queries/` (2026-10).
   picker opens first, *As you opened it* highlighted, so the common
   question is one click and nothing is chosen unasked.
 - **A file is built by the import, in a scratch log.** Re-deriving an
-  envelope → model step beside the import would drift from it (entity
-  identifier types, retries, custom-type order); `inScratchLog` runs
+  envelope → model step beside the import would drift from it
+  (converted entities, retries, custom-type order); `inScratchLog` runs
   the real import against an array instead – no append listener, no
   compaction, no revision bump, so no cache of the real log moves.
 - **No import gate for a file.** The gate exists because scripts run
