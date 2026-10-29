@@ -9,8 +9,7 @@
 // and what those events change. The model layer stores none of that as
 // a unit; it is derived here, from the definitions. The overview pages
 // read the same material across every command at once – the coupling
-// matrix, and each entity's status as a lifecycle machine – and those
-// derivations live here too.
+// matrix and the event model – and those derivations live here too.
 // ============================================================
 
 // ---------- DOM ----------
@@ -546,8 +545,8 @@ function createScriptEditorEntry(key) {
 //
 // Everything that is DCB is always on screen: types, events, projections,
 // the consistency boundary each command derives. What the examples on
-// dcb.events never need – entities and their lifecycles, scripted
-// projections, guarded emissions, the overview pages
+// dcb.events never need – scripted projections, guarded emissions,
+// optional reads, the overview pages
 // (`EXPERIMENTAL_FEATURES`, model.js) – waits behind this flag.
 //
 // It gates *authoring*, never reading: a model that already uses an
@@ -601,8 +600,8 @@ const ISSUES_URL = 'https://github.com/dcb-events/dcb-events.github.io/issues/ne
   + '?labels=playground&title=%5BPlayground%5D%20';
 const NOTATION_ANCHORS = [
   'model', 'comments', 'literals', 'annotations', 'json', 'tag-type', 'type', 'enum', 'record', 'event',
-  'projection', 'on', 'event-data', 'successor', 'current-value', 'entity', 'lifecycle', 'require',
-  'derived', 'script', 'command', 'read', 'read-entity', 'fan-out', 'optional-read', 'with', 'emit',
+  'projection', 'on', 'event-data', 'successor', 'current-value', 'require',
+  'derived', 'script', 'command', 'read', 'fan-out', 'optional-read', 'with', 'emit',
   'emit-when', 'consistency-boundary', 'scenario', 'projection-scenario',
 ];
 
@@ -755,7 +754,7 @@ function takeFirstChange(appended) {
   return changed;
 }
 
-// A model with nothing in it at all – no entities, no events, no
+// A model with nothing in it at all – no types, no events, no
 // commands. Everything downstream has to cope with that, because it is
 // where a real model actually starts.
 //
@@ -970,24 +969,22 @@ async function runAsync(fn) {
 
 // ---------- the slice ----------
 
-// Every entity property that handles this event – i.e. everything the
-// event changes. This is the link the original interface made you go
-// and find for yourself, one entity at a time.
-//
-// A property is a binding, so what handles the event is the projection
-// behind it; `property` carries both halves, since a reader wants the
-// name the entity calls it and the fold that answers for it.
+// Every grouped projection that handles this event – i.e. everything
+// the event changes that a group gives a name. `group` and the local
+// name (`property.name`) are what a reader wants to see, `projectionName`
+// the qualified name the fold answers to (`Course.capacity`).
 function effectsOf(model, eventName) {
   const out = [];
-  for (const [entityName, entity] of Object.entries(model['entity-definitions'])) {
-    for (const binding of entity.properties || []) {
-      const projection = model['projection-definitions'][(binding || {}).projection];
+  for (const [groupName, group] of Object.entries(model['group-definitions'] || {})) {
+    for (const inner of groupProjections(group)) {
+      const projectionName = qualifiedProjectionName(groupName, inner.name);
+      const projection = projectionsOf(model)[projectionName];
       for (const handler of (projection && projection.handlers) || []) {
         if (handler && handler.event === eventName) {
           out.push({
-            entity: entityName,
-            property: { ...binding, ...projection },
-            projectionName: binding.projection,
+            group: groupName,
+            property: { ...projection, name: inner.name },
+            projectionName,
             handler,
           });
         }
@@ -998,8 +995,8 @@ function effectsOf(model, eventName) {
 }
 
 // Every command that publishes this event – zero, one, or many. An
-// event has no single owner the way an entity does, so this answers
-// "who records this" instead of a boundary binding.
+// event has no single owner, so this answers "who records this"
+// instead of a boundary binding.
 function publishersOf(model, eventName) {
   const out = [];
   for (const [name, body] of Object.entries(model['command-definitions'])) {
@@ -1010,30 +1007,13 @@ function publishersOf(model, eventName) {
   return out;
 }
 
-// Every projection that handles this event and is *not* bound as some
-// entity's property – the ones `effectsOf` does not already name,
-// listed beside it rather than twice.
+// Every top-level projection that handles this event – the ones
+// `effectsOf` does not already name, listed beside it rather than twice.
 function projectionsHandling(model, eventName) {
   const out = [];
   for (const [name, body] of Object.entries(model['projection-definitions'])) {
-    if (boundAs(model, name).length) continue;
     for (const handler of body.handlers || []) {
       if (handler && handler.event === eventName) out.push({ projection: name, body, handler });
-    }
-  }
-  return out;
-}
-
-// Every entity property binding this projection – `{entity, property}`
-// each. Empty for one no entity binds, which is what everywhere else
-// calls a standalone projection.
-function boundAs(model, projectionName) {
-  const out = [];
-  for (const [entityName, entity] of Object.entries(model['entity-definitions'])) {
-    for (const binding of entity.properties || []) {
-      if (binding && binding.projection === projectionName) {
-        out.push({ entity: entityName, property: binding.name });
-      }
     }
   }
   return out;
@@ -1076,7 +1056,6 @@ function sliceOf(model, commandName) {
     // its length. Derived here so nothing has to author it.
     rounds: deriveRounds(body),
     dcb: deriveDcb(model, body),
-    coverage: coverageIssues(model, body),
   };
 }
 
@@ -1109,7 +1088,7 @@ function couplingRow(model, name, events) {
   for (const item of slice.dcb.items) {
     if (!item.types.length) continue;
     const binding = !item.projection && (slice.body.boundary || []).find((b) => b.alias === item.alias);
-    const entity = binding && model['entity-definitions'][binding.entity];
+    const group = binding && binding.group;
     for (const eventType of item.types) {
       if (!via[eventType]) via[eventType] = new Set();
       if (item.projection) {
@@ -1117,7 +1096,7 @@ function couplingRow(model, name, events) {
         continue;
       }
       const sources = (item.readProperties || []).filter((propName) => {
-        const projection = entity && entityPropertyTarget(model, binding.entity, propName).projection;
+        const projection = group && projectionsOf(model)[qualifiedProjectionName(group, propName)];
         return projection && (projection.handlers || []).some((h) => h && h.event === eventType);
       });
       if (sources.length) sources.forEach((propName) => via[eventType].add(memberWords(item.alias, propName)));
@@ -1274,207 +1253,313 @@ function couplingClusters(matrix) {
 
 // ---------- lifecycles ----------
 //
-// Each entity's lifecycle read as a state machine. Nothing here is
-// authored – every part is derived from definitions that already exist,
-// through the designation `model.js` resolves: an entity's `lifecycle`
-// names one of its own properties, and `lifecycleOf` flattens the two
-// spellings that property may have (a boolean, or an enum) into one
-// list of states.
+// How a projection's value moves over time. Nothing here is authored
+// or stored: every part is worked out from definitions that already
+// exist, which is why a lifecycle is a view of a projection and not a
+// construct of the language (it was one, an entity's designated
+// property, until 11.0 – see
+// docs/research/2026-10-28-lifecycles-for-enum-projections.md).
 //
-//   states       `lifecycleOf`'s states – an enum's members, or
-//                `false`/`true` for the two-state boolean case;
-//   transitions  the lifecycle projection's declared handlers – a
-//                handler that sets a state is an arrow into it, and the
-//                arrow starts wherever the commands publishing its
-//                event are allowed to run;
-//   commands     every command binding the entity, placed by its
-//                conditions over the lifecycle.
+// Where the values are finite – an enum, a boolean – it is a state
+// machine (`lifecycleMachine`). Anywhere else there are no states to
+// draw, only movements (`lifecycleMovements`): each handler, the
+// commands appending its event, and their rules over the value. No
+// states are invented for those – "empty / not empty" or "0 / more"
+// would be buckets the model does not state.
 //
-// A command with no condition over a lifecycle it touches is
-// *unguarded*: nothing refuses it at any state. That is a fact worth
-// surfacing, not papering over – an unguarded transition is drawn from
-// the initial state only as a convention, and flagged as such, so a
-// missing guard stays visible. It is also why the two-state machines
-// are on this page at all rather than filtered off it: a command that
-// creates a thing without checking that it does not exist yet is
-// exactly this bug, and it is commonest in the simplest machine.
+// The machine:
+//   states       the enum's members, in declared order – with `null`
+//                first when the projection can hold no state at all
+//                (starts at null, or a handler sets it);
+//   transitions  the projection's handlers: one that sets a member is
+//                an arrow into it, starting wherever the commands
+//                publishing its event are allowed to run;
+//   per state    the commands allowed to run there, read off their
+//                rules over this projection.
+//
+// A command that moves the projection with nothing guarding it is
+// *unguarded*, and stays visible rather than papered over: its arrow is
+// drawn from the initial state only as a convention, and flagged. What
+// cannot be read – a state taken from event data, a rule comparing to a
+// parameter, a command reading two instances at once – is said beside
+// the machine, never guessed into an arrow.
 
-// Which of `lifecycle`'s states a condition allows, or `null` when this
-// condition says nothing readable about it.
-//
-// An enum is read off `equals` against a member reference and
-// `equalsAny` against a list whose every entry is one – a bare literal
-// in the list makes it unreadable rather than guessed at. A boolean is
-// read off the unary `isTrue`/`isFalse` and off `equals` against a bare
-// `true`/`false`. Any other predicate leaves it unread.
-function lifecycleAllowedStates(condition, lifecycle, other) {
-  const states = lifecycle.states;
-  const only = (keep) => (condition.negate
-    ? states.filter((state) => !keep.includes(state))
-    : states.filter((state) => keep.includes(state)));
+// What a projection's lifecycle is made of, or null when it has none:
+// `{kind: 'enum' | 'boolean', states}` for a machine, `{kind:
+// 'movements'}` otherwise. A derived projection has no handlers of its
+// own, and a scripted one's are code, so neither has one.
+function lifecycleOf(model, body) {
+  if (!body || scriptOf(body) || derivedOf(body)) return null;
+  if (body.isList) return { kind: 'movements' };
+  const members = enumMembersFor(model, body.valueType);
+  if (members && members.every((member) => typeof member === 'string')) {
+    return { kind: 'enum', states: [...members] };
+  }
+  if (!members && literalKindOf(model, body.valueType) === 'boolean') return { kind: 'boolean', states: [false, true] };
+  return { kind: 'movements' };
+}
 
-  if (lifecycle.isBoolean) {
-    if (condition.predicate === 'isTrue') return only(['true']);
-    if (condition.predicate === 'isFalse') return only(['false']);
-    if (condition.predicate === 'equals' && typeof other === 'boolean') {
-      return only([String(other)]);
-    }
-    return null;
+// A literal state an operand names: an enum member, a boolean, or
+// `null` – the empty state. `undefined` when the operand names no state
+// this can read.
+function lifecycleStateOperand(operand, states) {
+  if (operand === null) return null;
+  if (typeof operand === 'boolean') return states.includes(operand) ? operand : undefined;
+  if (operandSource(operand) === 'enum-member' && states.includes(operand.enumMember)) return operand.enumMember;
+  return undefined;
+}
+
+// Which states a condition over the projection allows, given the other
+// side; null when the condition says nothing readable. `equals` against
+// a state and `equalsAny` against a list of them are read, negated or
+// not – an empty list too, which allows nothing, as it evaluates – and
+// a boolean's `isTrue` / `isFalse`.
+function lifecycleAllowedStates(condition, states, other) {
+  const only = (keep) => states.filter((state) => keep.includes(state) !== !!condition.negate);
+  if (condition.predicate === 'isTrue' && states.includes(true)) return only([true]);
+  if (condition.predicate === 'isFalse' && states.includes(false)) return only([false]);
+  if (condition.predicate === 'equals') {
+    const state = lifecycleStateOperand(other, states);
+    return state === undefined ? null : only([state]);
   }
-  if (condition.predicate === 'equals' && operandSource(other) === 'enum-member') {
-    return only([String(other.enumMember)]);
-  }
-  if (condition.predicate === 'equalsAny' && Array.isArray(other)
-      && other.length && other.every((entry) => operandSource(entry) === 'enum-member')) {
-    return only(other.map((entry) => String(entry.enumMember)));
-  }
-  // An empty `equalsAny` list is still read: "one of nothing" allows no
-  // state, which is what it evaluates to – unreadable would claim the
-  // opposite.
-  if (condition.predicate === 'equalsAny' && Array.isArray(other) && !other.length) {
-    return only([]);
+  if (condition.predicate === 'equalsAny' && Array.isArray(other)) {
+    const named = other.map((entry) => lifecycleStateOperand(entry, states));
+    return named.includes(undefined) ? null : only(named);
   }
   return null;
 }
 
-// The states `body`'s conditions allow `entityName`'s lifecycle to be
-// in, read off every condition over an alias binding that entity.
-// `states: null` means unguarded: the command binds the entity but no
-// condition constrains its lifecycle. Several conditions (or several
-// aliases) intersect: each is one more thing that must hold.
-function lifecycleConstraint(model, body, entityName, lifecycle) {
-  const aliases = new Set((body.boundary || [])
-    .filter((binding) => binding && binding.entity === entityName)
-    .map((binding) => binding.alias));
-  if (!aliases.size) return { binds: false, states: null };
+// The instance of `projectionName` an operand reads, as a key – the
+// read's tags, or its binding's – or null when it does not read it.
+// `each` says the read fans out, so no one instance is meant.
+function lifecycleReadOf(operand, body, projectionName) {
+  const instance = (tags) => {
+    const entries = Object.entries(tags && typeof tags === 'object' && !Array.isArray(tags) ? tags : {});
+    return { key: JSON.stringify(entries), each: entries.some(([, value]) => operandSource(value) === 'each') };
+  };
+  const source = operandSource(operand);
+  if (source === 'projection-read') return operand.projection === projectionName ? instance(operand.tags) : null;
+  if (source !== 'alias-property') return null;
+  const binding = (body.boundary || []).find((b) => b && b.alias === operand.alias);
+  if (!binding) return null;
+  if (binding.projection === projectionName && !operand.property) return instance(binding.tags);
+  if (binding.group && operand.property
+      && qualifiedProjectionName(binding.group, operand.property) === projectionName) return instance(binding.tags);
+  return null;
+}
+
+// What one command's conditions say about the projection: whether they
+// read it, the states they allow (null: unconstrained), and whether a
+// rule over it could not be read. Several rules intersect.
+function lifecycleConstraint(conditions, body, projectionName, states) {
   let allowed = null;
-  for (const condition of body.conditions || []) {
+  let reads = false;
+  let unreadable = false;
+  for (const condition of conditions) {
+    if (!condition) continue;
     for (const side of ['leftHandSide', 'rightHandSide']) {
-      const operand = condition[side];
-      if (operandSource(operand) !== 'alias-property') continue;
-      if (!aliases.has(operand.alias) || operand.property !== lifecycle.property) continue;
+      if (!lifecycleReadOf(condition[side], body, projectionName)) continue;
+      reads = true;
       const other = condition[side === 'leftHandSide' ? 'rightHandSide' : 'leftHandSide'];
-      const these = lifecycleAllowedStates(condition, lifecycle, other);
-      if (these === null) continue;
+      const these = lifecycleAllowedStates(condition, states, other);
+      if (these === null) { unreadable = true; continue; }
       allowed = allowed === null ? these : allowed.filter((state) => these.includes(state));
     }
   }
-  return { binds: true, states: allowed };
+  return { reads, states: allowed, unreadable };
 }
 
-// Every entity's machine, plus the entities that do not yield one and
-// why – an entity whose lifecycle cannot be read is not an error, it is
-// simply not drawable, and the page should say so rather than silently
-// thin out.
+// Why a command cannot be placed on the machine, or null when it can:
+// it reads two instances of the projection (which one moves?), reads it
+// through `each`, or guards it in a way `lifecycleAllowedStates` cannot
+// read.
+function lifecycleUnplaced(body, projectionName, states) {
+  const conditions = [
+    ...(body.conditions || []),
+    ...(body.publishes || []).flatMap((emission) => (emission && emission.when) || []),
+  ];
+  const instances = new Set();
+  let each = false;
+  for (const condition of conditions) {
+    if (!condition) continue;
+    for (const side of ['leftHandSide', 'rightHandSide']) {
+      const read = lifecycleReadOf(condition[side], body, projectionName);
+      if (!read) continue;
+      instances.add(read.key);
+      each = each || read.each;
+    }
+  }
+  if (each || instances.size > 1) return 'ambiguous';
+  if (lifecycleConstraint(conditions, body, projectionName, states).unreadable) return 'unreadable';
+  return null;
+}
+
+// The machine, or null when the projection has no lifecycle. `body` is
+// the projection as it is being edited – the stored one by default.
 //
-// Per machine:
-//   compact               a boolean lifecycle: two states, existence
-//                         and nothing else, which the page draws in one
-//                         row rather than as a diagram;
-//   states / initial      off `lifecycleOf` and the projection's initial
-//                         value;
-//   transitions           `{event, target, publishers, sources,
-//                         unguarded, conventional}` – `sources` is the
-//                         union of the publishing commands' allowed
-//                         states; a transition only unguarded
-//                         publishers reach is drawn from the initial
-//                         state (`conventional: true`);
-//   perState              state -> the commands allowed there, each
-//                         `{command, movesTo, unguarded}`;
-//   terminal              states no drawn transition leaves – with the
-//                         conventional arrows counted, so "terminal"
-//                         matches what the page draws;
-//   opaque                events whose handler touches the lifecycle in
-//                         a way this cannot read (a computed value, an
-//                         operation other than `set`).
-function lifecycleMachines(model) {
-  const machines = [];
-  const excluded = [];
-  for (const entityName of Object.keys(model['entity-definitions'])) {
-    const lifecycle = lifecycleOf(model, entityName);
-    if (!lifecycle) {
-      excluded.push({ entity: entityName, reason: lifecycleRefusal(model, entityName) });
-      continue;
-    }
-    const { projection, states } = lifecycle;
+//   transitions  `{event, target, sources, conventional, unguarded,
+//                unpublished}` – `sources` the union of where its
+//                publishers may emit it (an emission's `when` narrowing
+//                its own); with none to read, it is drawn from the
+//                initial state (`conventional`), and `unguarded` names
+//                the publishers nothing guards;
+//   opaque       events whose handler sets a state this cannot read;
+//   unplaced     `{command, reason}` – commands left off the machine;
+//   neverSet     states neither the start nor any arrow reaches;
+//   terminal     reached states no arrow leaves – none claimed while
+//                anything is opaque or unplaced, since an unread arrow
+//                may be the one that leaves;
+//   perState     `[{state, commands: [{command, movesTo, unguarded}]}]`.
+function lifecycleMachine(model, projectionName, body = projectionsOf(model)[projectionName]) {
+  const lifecycle = lifecycleOf(model, body);
+  if (!lifecycle || !lifecycle.states) return null;
+  const members = lifecycle.states;
+  // An initial value that names no member is drawn as the empty state.
+  const initial = body.initialValue === undefined ? null : lifecycleStateOperand(body.initialValue, members);
+  const start = initial === undefined ? null : initial;
+  const handlers = (body.handlers || []).filter((handler) => handler && handler.event);
+  const targetOf = (handler) => (handler.operation === 'set' ? lifecycleStateOperand(handler.value, members) : undefined);
+  const states = start === null || handlers.some((handler) => targetOf(handler) === null)
+    ? [null, ...members] : members;
+  const commands = model['command-definitions'] || {};
 
-    const initialOperand = projection.initialValue;
-    const initial = lifecycle.isBoolean
-      ? (typeof initialOperand === 'boolean' ? String(initialOperand) : null)
-      : (operandSource(initialOperand) === 'enum-member'
-        && states.includes(String(initialOperand.enumMember))
-        ? String(initialOperand.enumMember) : null);
+  const unplaced = [];
+  for (const [command, commandBody] of Object.entries(commands)) {
+    const reason = commandBody && lifecycleUnplaced(commandBody, projectionName, states);
+    if (reason) unplaced.push({ command, reason });
+  }
+  const isPlaced = (command) => !unplaced.some((entry) => entry.command === command);
 
-    const transitions = [];
-    const opaque = [];
-    for (const handler of projection.handlers || []) {
-      if (!handler || !handler.event) continue;
-      const target = handler.operation !== 'set' ? null
-        : (lifecycle.isBoolean
-          ? (typeof handler.value === 'boolean' ? String(handler.value) : null)
-          : (operandSource(handler.value) === 'enum-member'
-            ? String(handler.value.enumMember) : null));
-      if (target === null || !states.includes(target)) {
-        opaque.push(handler.event);
-        continue;
-      }
-      const publishers = publishersOf(model, handler.event).map(({ command }) => ({
-        command,
-        sources: lifecycleConstraint(
-          model, model['command-definitions'][command], entityName, lifecycle
-        ).states,
-      }));
-      const sources = [...new Set(publishers.flatMap((p) => p.sources || []))];
-      const unguarded = publishers.some((p) => p.sources === null);
-      const conventional = !sources.length && unguarded && initial !== null && initial !== target;
-      transitions.push({
-        event: handler.event, target, publishers, unguarded, conventional,
-        sources: conventional ? [initial] : sources,
-        unpublished: !publishers.length,
-      });
-    }
-
-    const perState = {};
-    for (const state of states) perState[state] = [];
-    for (const [commandName, body] of Object.entries(model['command-definitions'])) {
-      const constraint = lifecycleConstraint(model, body, entityName, lifecycle);
-      if (!constraint.binds) continue;
-      const moved = transitions.find((t) =>
-        (body.publishes || []).some((emission) => emission && emission.name === t.event));
-      const entry = {
-        command: commandName,
-        movesTo: moved ? moved.target : null,
-        unguarded: constraint.states === null,
-      };
-      for (const state of constraint.states === null ? states : constraint.states) {
-        perState[state].push(entry);
+  const transitions = [];
+  const opaque = [];
+  for (const handler of handlers) {
+    const target = targetOf(handler);
+    if (target === undefined) { opaque.push(handler.event); continue; }
+    const publishers = publishersOf(model, handler.event);
+    const sources = new Set();
+    const unguarded = [];
+    for (const { command, emission } of publishers) {
+      if (!isPlaced(command)) continue;
+      const constraint = lifecycleConstraint(
+        [...(commands[command].conditions || []), ...(emission.when || [])], commands[command], projectionName, states);
+      if (constraint.states === null) {
+        if (!unguarded.includes(command)) unguarded.push(command);
+      } else {
+        for (const state of constraint.states) sources.add(state);
       }
     }
-
-    const leads = new Set();
-    for (const t of transitions) {
-      for (const from of t.sources) if (from !== t.target) leads.add(from);
-    }
-
-    machines.push({
-      entity: entityName,
-      property: lifecycle.property,
-      projection: lifecycle.projectionName,
-      valueType: lifecycle.valueType,
-      isBoolean: lifecycle.isBoolean,
-      compact: lifecycle.isBoolean,
-      states, initial, transitions, opaque, perState,
-      terminal: states.filter((state) => !leads.has(state)),
+    const conventional = !sources.size;
+    transitions.push({
+      event: handler.event,
+      target,
+      sources: conventional ? [start] : states.filter((state) => sources.has(state)),
+      conventional,
+      unguarded,
+      unpublished: !publishers.length,
     });
   }
-  return { machines, excluded };
+  // An arrow with nothing to read its source from starts at the initial
+  // state – unless it leads back there, where that would be no move at
+  // all: then it comes from every other state the machine reaches, so
+  // `set false` after `set true` is still drawn.
+  const reachedBefore = new Set([start, ...transitions.map((t) => t.target)]);
+  for (const transition of transitions) {
+    if (!transition.conventional || transition.target !== start) continue;
+    transition.sources = states.filter((state) => state !== start && reachedBefore.has(state));
+  }
+
+  const handled = new Set(handlers.map((handler) => handler.event));
+  const perState = states.map((state) => ({ state, commands: [] }));
+  for (const [command, commandBody] of Object.entries(commands)) {
+    if (!commandBody || !isPlaced(command)) continue;
+    const moving = (commandBody.publishes || []).filter((emission) => emission && handled.has(emission.name));
+    const constraint = lifecycleConstraint(commandBody.conditions || [], commandBody, projectionName, states);
+    if (!moving.length && constraint.states === null) continue;
+    const entry = {
+      command,
+      movesTo: [...new Set(transitions
+        .filter((t) => moving.some((emission) => emission.name === t.event)).map((t) => t.target))],
+      unguarded: !!moving.length && lifecycleConstraint(
+        [...(commandBody.conditions || []), ...moving.flatMap((emission) => emission.when || [])],
+        commandBody, projectionName, states).states === null,
+    };
+    for (const slot of perState) {
+      if (constraint.states === null || constraint.states.includes(slot.state)) slot.commands.push(entry);
+    }
+  }
+
+  const reached = new Set([start, ...transitions.map((t) => t.target)]);
+  const leaves = new Set(transitions.flatMap((t) => t.sources.filter((state) => state !== t.target)));
+  const complete = !opaque.length && !unplaced.length;
+  return {
+    projection: projectionName,
+    kind: lifecycle.kind,
+    states,
+    initial: start,
+    transitions,
+    opaque,
+    unplaced,
+    neverSet: states.filter((state) => !reached.has(state)),
+    terminal: complete ? states.filter((state) => reached.has(state) && !leaves.has(state)) : [],
+    perState,
+  };
 }
 
-// The initial state leads; the rest keep the enum's declared order,
-// which is the order the modeller wrote the lifecycle in.
-function lifecycleOrder(machine) {
-  if (machine.initial === null) return machine.states;
-  return [machine.initial, ...machine.states.filter((s) => s !== machine.initial)];
+// A command's rules that read the projection – either side of them, in
+// place or through an alias – out of `conditions`.
+function lifecycleRulesOver(conditions, body, projectionName) {
+  return conditions.filter((condition) => condition
+    && ['leftHandSide', 'rightHandSide'].some((side) => lifecycleReadOf(condition[side], body, projectionName)));
+}
+
+// The movements of a projection that has no states to draw, or null
+// when it has a machine (or no lifecycle at all).
+//
+//   initial    its initial value, as stored;
+//   handlers   `{event, operation, value, appendedBy: [{command,
+//              rules}]}` – a command's rules over the value are its
+//              conditions and the guards of the emissions appending
+//              that event;
+//   readers    `{command, rules}` – commands with a rule over it that
+//              append nothing moving it: where the value matters.
+//
+// No command is called unguarded here: a counter is ordinarily guarded
+// through another projection (subscribing, by the capacity), so a mark
+// would be noise.
+function lifecycleMovements(model, projectionName, body = projectionsOf(model)[projectionName]) {
+  const lifecycle = lifecycleOf(model, body);
+  if (!lifecycle || lifecycle.kind !== 'movements') return null;
+  const commands = model['command-definitions'] || {};
+  const handlers = (body.handlers || []).filter((handler) => handler && handler.event);
+  const handled = new Set(handlers.map((handler) => handler.event));
+  return {
+    projection: projectionName,
+    kind: lifecycle.kind,
+    initial: body.initialValue === undefined ? null : body.initialValue,
+    handlers: handlers.map((handler) => ({
+      event: handler.event,
+      operation: handler.operation,
+      value: handler.value,
+      appendedBy: Object.entries(commands).flatMap(([command, commandBody]) => {
+        const emissions = ((commandBody && commandBody.publishes) || [])
+          .filter((emission) => emission && emission.name === handler.event);
+        if (!emissions.length) return [];
+        const rules = lifecycleRulesOver(
+          [...(commandBody.conditions || []), ...emissions.flatMap((emission) => emission.when || [])],
+          commandBody, projectionName);
+        return [{ command, rules }];
+      }),
+    })),
+    readers: Object.entries(commands).flatMap(([command, commandBody]) => {
+      if (!commandBody) return [];
+      const publishes = (commandBody.publishes || []).filter(Boolean);
+      if (publishes.some((emission) => handled.has(emission.name))) return [];
+      const rules = lifecycleRulesOver(
+        [...(commandBody.conditions || []), ...publishes.flatMap((emission) => emission.when || [])],
+        commandBody, projectionName);
+      return rules.length ? [{ command, rules }] : [];
+    }),
+  };
 }
 
 // ---------- event model ----------
@@ -1489,32 +1574,19 @@ function lifecycleOrder(machine) {
 // id is one card across both lanes – the fact a stream-per-aggregate
 // model would have to split in two, which is the whole case for DCB.
 //
-// A definition holds no time, so the order is derived, along the
-// lifecycles: a command that brings something into being comes first,
-// one that only works on what exists next, and one that moves a thing
-// further along – or back to where it started, which ends it – after
-// that. Feature order breaks every tie, which is all it is for a model
-// without lifecycles.
+// A definition holds no time, so the order is the features' – the
+// order the rail lists them in – and, within one, the order the
+// commands were written in: an author writes the creating command
+// first far more often than the rail's alphabet puts it there. (It
+// used to follow the entities' lifecycles; those went with entities,
+// 11.0.)
 function eventModel(model) {
   const commands = model['command-definitions'];
-  const CREATES = 1;
-  const WORKS_ON = 1.5;
-  const rank = {};
-  for (const machine of lifecycleMachines(model).machines) {
-    const order = lifecycleOrder(machine);
-    for (const transition of machine.transitions) {
-      const step = order.indexOf(transition.target);
-      if (step < 0) continue;
-      const position = step === 0 ? order.length : Math.max(step, CREATES);
-      for (const { command } of transition.publishers) {
-        rank[command] = Math.max(rank[command] === undefined ? -Infinity : rank[command], position);
-      }
-    }
-  }
-  const featureOrder = featureGroups(model).flatMap((group) => group.commands);
-  const ordered = Object.keys(commands)
-    .map((name) => ({ name, rank: rank[name] === undefined ? WORKS_ON : rank[name], at: featureOrder.indexOf(name) }))
-    .sort((a, b) => a.rank - b.rank || a.at - b.at)
+  const features = featureGroups(model).map((group) => group.name);
+  const written = Object.keys(commands);
+  const ordered = written
+    .map((name, at) => ({ name, at, feature: features.indexOf(featureOf(commands[name])) }))
+    .sort((a, b) => a.feature - b.feature || a.at - b.at)
     .map((entry) => entry.name);
 
   const lanes = [];
@@ -1554,20 +1626,20 @@ function eventModel(model) {
     for (const event of events) {
       const fresh = new Map();
       for (const effect of effectsOf(model, event.name)) {
-        const key = effect.entity + '.' + effect.property.name;
-        if (shown.has(key)) continue;
-        shown.add(key);
-        if (!fresh.has(effect.entity)) fresh.set(effect.entity, []);
-        fresh.get(effect.entity).push(effect.property.name);
+        if (shown.has(effect.projectionName)) continue;
+        shown.add(effect.projectionName);
+        if (!fresh.has(effect.group)) fresh.set(effect.group, []);
+        fresh.get(effect.group).push(effect.property.name);
       }
       // In lane order, so the read models under a two-tag event come
       // in the order its lanes do.
-      const laneRank = (entity) => {
-        const at = lanes.indexOf(idTypeOf(model, entity));
+      const laneRank = (group) => {
+        const tag = groupTagOf(model['group-definitions'][group]);
+        const at = tag ? lanes.indexOf(tag.tagType) : -1;
         return at < 0 ? lanes.length : at;
       };
-      for (const [entity, properties] of [...fresh].sort((a, b) => laneRank(a[0]) - laneRank(b[0]))) {
-        columns.push({ kind: 'read', entity, properties, from: event.name });
+      for (const [group, properties] of [...fresh].sort((a, b) => laneRank(a[0]) - laneRank(b[0]))) {
+        columns.push({ kind: 'read', group, properties, from: event.name });
       }
       for (const { projection } of projectionsHandling(model, event.name)) {
         if (shown.has(projection)) continue;
@@ -1581,137 +1653,6 @@ function eventModel(model) {
     for (const event of untagged) event.lanes = [lane];
   }
   return { lanes, columns };
-}
-
-// ---------- promoting a lifecycle ----------
-//
-// Whether a boolean property is a *one-way door*: every handler sets it
-// away from where it starts, and none sets it back.
-//
-// This is the whole discriminator behind the promotion suggestion, and
-// it is worth being exact about why. `exists && !archived` folds into a
-// three-state lifecycle soundly, because archiving never un-archives –
-// the states are successive and a thing is in exactly one of them.
-// `exists && !isPublic` must not: a course can be existent-and-public
-// or existent-and-private, those are not stages, and collapsing them
-// into one enum destroys a dimension the model was using. Monotonicity
-// is the readable difference. A property nothing sets at all is not a
-// door either way, so it does not qualify.
-function isMonotoneBoolean(model, entityName, propertyName) {
-  const { binding, projection } = entityPropertyTarget(model, entityName, propertyName);
-  if (!binding || !projection) return false;
-  if (projection.valueType !== 'boolean' || projection.isList) return false;
-  if (scriptOf(projection) || derivedOf(projection)) return false;
-  if (typeof projection.initialValue !== 'boolean') return false;
-  const handlers = (projection.handlers || []).filter((handler) => handler && handler.event);
-  if (!handlers.length) return false;
-  return handlers.every((handler) => handler.operation === 'set'
-    && typeof handler.value === 'boolean'
-    && handler.value !== projection.initialValue);
-}
-
-// Which of an entity's properties could be designated its lifecycle:
-// single-valued, folded (not scripted or derived), and holding either a
-// boolean or an enum – the two things that have states to be in.
-//
-// This is what the designation picker offers, and it is deliberately
-// the same test `lifecycleOf` applies, so the picker can never offer a
-// property that would then fail to resolve.
-function lifecycleCandidates(model, entityName) {
-  const entity = model['entity-definitions'][entityName];
-  if (!entity) return [];
-  return (entity.properties || []).filter((binding) => {
-    const projection = model['projection-definitions'][binding.projection];
-    if (!projection || projection.isList) return false;
-    if (scriptOf(projection) || derivedOf(projection)) return false;
-    return projection.valueType === 'boolean' || !!enumMembersFor(model, projection.valueType);
-  }).map((binding) => binding.name);
-}
-
-// What the one-click existence lifecycle would do for this entity:
-// `'create'` the `exists` boolean, `'designate'` the one it already has
-// (the round trip after removing a lifecycle, which leaves the property
-// behind), or `null` when `exists` is taken by something that cannot
-// be one – then the option is not offered at all, rather than inventing
-// `exists2`. The projection name is uniquified like any property's;
-// the property name is what conditions read, so it is not.
-function existenceLifecycleOffer(model, entityName) {
-  const entity = model['entity-definitions'][entityName];
-  if (!entity) return null;
-  const existing = (entity.properties || []).find((p) => p && p.name === LIFECYCLE_PROPERTY);
-  if (!existing) return 'create';
-  const projection = model['projection-definitions'][existing.projection];
-  return projection && projection.valueType === 'boolean'
-    && lifecycleCandidates(model, entityName).includes(LIFECYCLE_PROPERTY) ? 'designate' : null;
-}
-
-// The monotone booleans of one entity that `body` guards – the raw
-// material of a merge. In the entity's own declaration order, with the
-// designated lifecycle first when it is one of them, because existence
-// is always the first stage of anything.
-function guardedMonotoneBooleans(model, body, entityName, alias) {
-  const found = new Set();
-  const walk = (condition) => {
-    const operand = condition.leftHandSide;
-    if (operandSource(operand) !== 'alias-property') return;
-    if (operand.alias !== alias || !operand.property) return;
-    if (isMonotoneBoolean(model, entityName, operand.property)) found.add(operand.property);
-  };
-  for (const condition of body.conditions || []) walk(condition);
-  for (const emission of body.publishes || []) {
-    for (const condition of emission.when || []) walk(condition);
-  }
-  return orderedMonotoneBooleans(model, entityName, found);
-}
-
-// Declaration order, lifecycle first. Shared by the rule wizard's offer
-// and the entity page's, so the two can never propose different
-// progressions for the same booleans.
-function orderedMonotoneBooleans(model, entityName, names) {
-  const entity = model['entity-definitions'][entityName];
-  if (!entity) return [];
-  const lifecycle = lifecycleOf(model, entityName);
-  const declared = (entity.properties || []).map((p) => p.name).filter((n) => names.has(n));
-  if (lifecycle && lifecycle.isBoolean && names.has(lifecycle.property)) {
-    return [lifecycle.property, ...declared.filter((n) => n !== lifecycle.property)];
-  }
-  return declared;
-}
-
-// The promotion this command's rules are asking for, or null.
-//
-// Two or more monotone booleans of one entity, guarded by one command.
-// Whether one of them is the designated lifecycle does not matter – what
-// matters is that they are successive one-way doors, which is the same
-// question either way. (It mattered in the first cut of this, and that
-// was a bug: two booleans an author had just added by hand – `registered`
-// and `expelled` – are exactly the shape this is for, and neither of
-// them was the designation.)
-//
-// Still narrow in the way that counts: **monotone**. `registered` and
-// `expelled` are stages; `registered` and `isPublic` are not, and
-// collapsing the second pair into one enum would destroy a dimension.
-// See `isMonotoneBoolean`.
-function lifecycleMergeSuggestion(model, body) {
-  for (const binding of body.boundary || []) {
-    if (!binding || !binding.entity) continue;
-    const booleans = guardedMonotoneBooleans(model, body, binding.entity, binding.alias);
-    if (booleans.length < 2) continue;
-    return { entity: binding.entity, alias: binding.alias, booleans };
-  }
-  return null;
-}
-
-// The same offer, for the entity's own page – where an author who has
-// just added two booleans by hand is actually looking, and where no
-// command need exist yet. Every monotone boolean the entity has, not
-// only the ones some command guards.
-function entityMergeCandidates(model, entityName) {
-  const entity = model['entity-definitions'][entityName];
-  if (!entity) return [];
-  const monotone = new Set((entity.properties || []).map((p) => p.name)
-    .filter((name) => isMonotoneBoolean(model, entityName, name)));
-  return orderedMonotoneBooleans(model, entityName, monotone);
 }
 
 // ---------- features ----------
@@ -1762,79 +1703,76 @@ function featureGroups(model) {
   }));
 }
 
-// Events no feature emits, and entities nothing reads – the loose ends
-// a command-centred view would otherwise hide.
+// Events no feature emits – the loose ends a command-centred view
+// would otherwise hide.
 function orphans(model) {
   const emitted = new Set();
-  const boundEntities = new Set();
   for (const body of Object.values(model['command-definitions'])) {
     for (const e of body.publishes || []) emitted.add(e.name);
-    for (const b of body.boundary || []) boundEntities.add(b.entity);
   }
   return {
     events: Object.keys(model['event-definitions']).filter((n) => !emitted.has(n)),
-    entities: Object.keys(model['entity-definitions']).filter((n) => !boundEntities.has(n)),
   };
 }
 
-// Everything that happens to one property: which features move it, and
-// which features consult it. The inspector needs both halves to answer
-// "is this still earning its place?".
-function propertyUsage(model, entityName, propertyName) {
-  const { binding, projection } = entityPropertyTarget(model, entityName, propertyName);
-  // `property` is what a caller renders: the binding's name over the
-  // bound projection's shape, which between them is everything the old
-  // single definition carried.
-  const property = binding ? { ...binding, ...(projection || {}) } : undefined;
-  const changedBy = [];
-  const readBy = [];
-  for (const [command, body] of Object.entries(model['command-definitions'])) {
-    for (const emission of body.publishes || []) {
-      const handler = ((projection && projection.handlers) || []).find((x) => x.event === emission.name);
-      if (handler) changedBy.push({ command, event: emission.name, handler });
-    }
-    const aliases = (body.boundary || []).filter((b) => b.entity === entityName).map((b) => b.alias);
-    let reads = false;
-    forEachCommandOperand(body, (operand) => {
-      if (operandSource(operand) === 'alias-property'
-          && aliases.includes(operand.alias) && operand.property === propertyName) reads = true;
-    });
-    if (reads) readBy.push(command);
-  }
-  return { property, binding, projection, changedBy, readBy };
-}
-
-// Which commands read a projection, however they reach it: directly by
-// name when nothing binds it, and through an entity alias when
-// something does. One question rather than two, because a projection
-// does not know which of the two it is – that is the whole point of a
-// property being a binding.
+// Which commands read a projection, however they reach it: by name –
+// an alias's read or one in place – or, for a grouped one, as the
+// member of a group alias (`course.capacity`, `course` bound to the
+// group). One question rather than two, because the member read *is*
+// the qualified read, spelled through the alias.
 function projectionReaders(model, projectionName) {
-  const owners = boundAs(model, projectionName);
+  const split = splitQualifiedName(projectionName);
   const readers = [];
   for (const [command, body] of Object.entries(model['command-definitions'])) {
-    // An alias's read, or one in place – the same read either way.
-    let reads = (body.boundary || []).some((b) => b.projection === projectionName)
+    let reads = (body.boundary || []).some((b) => b && b.projection === projectionName)
       || inlineReads(body).some(({ read }) => read.projection === projectionName);
-    if (!reads) {
-      // Every (alias, property) pair that lands on this projection: an
-      // alias bound to an entity that calls it something, under the
-      // name that entity calls it.
-      const pairs = new Set();
-      for (const binding of body.boundary || []) {
-        if (!binding.entity) continue;
-        for (const owner of owners) {
-          if (owner.entity === binding.entity) pairs.add(binding.alias + '\0' + owner.property);
-        }
-      }
+    if (!reads && split) {
+      const aliases = new Set((body.boundary || [])
+        .filter((b) => b && b.group === split.group).map((b) => b.alias));
       forEachCommandOperand(body, (operand) => {
         if (operandSource(operand) === 'alias-property'
-            && pairs.has(operand.alias + '\0' + operand.property)) reads = true;
+            && aliases.has(operand.alias) && operand.property === split.local) reads = true;
       });
     }
     if (reads) readers.push(command);
   }
   return readers;
+}
+
+// ---------- groups ----------
+//
+// What the `+ group` form offers and proposes. A group is read by one
+// tag, `{name, tagType}`, so the tags a model already reads things by
+// are the likeliest answers: every projection's, every group's, and a
+// tag type nobody reads by yet under the name it would get (`CourseId`
+// → `courseId`). In that order, each once.
+function groupTagChoices(model) {
+  const out = [];
+  const seen = new Set();
+  const add = (tag) => {
+    if (!tag || !tag.name || !tag.tagType) return;
+    const key = tag.name + ':' + tag.tagType;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ name: tag.name, tagType: tag.tagType });
+  };
+  for (const body of Object.values(model['projection-definitions'] || {})) projectionTagParams(body).forEach(add);
+  for (const group of Object.values(model['group-definitions'] || {})) add(groupTagOf(group));
+  const typed = new Set(out.map((tag) => tag.tagType));
+  for (const [type, body] of Object.entries(model['custom-type-definitions'] || {})) {
+    if (body && body.isTag && !Array.isArray(body.properties) && !typed.has(type)) {
+      add({ name: type.charAt(0).toLowerCase() + type.slice(1), tagType: type });
+    }
+  }
+  return out;
+}
+
+// The name a group is offered under, read off its tag's type: what the
+// type identifies – `CourseId` → `Course`, `OrderKey` → `Order`.
+function suggestGroupName(tagType) {
+  const type = String(tagType || '');
+  const stem = type.replace(/(Id|ID|Key|Identifier|Number)$/, '');
+  return stem && /^\p{Lu}/u.test(stem) ? stem : type;
 }
 
 // ---------- names ----------
@@ -1862,8 +1800,13 @@ function splitWords(name) {
 }
 
 // `CourseDefined` -> "Course defined". For things with a name of their
-// own: a command, an event, an entity, a value type, a status.
+// own: a command, an event, a group, a value type, a status. A grouped
+// projection's qualified name reads as the group and its member, the
+// way an alias's member does – `Course.subscriptionCount` -> "Course ·
+// subscription count".
 function readable(name) {
+  const split = splitQualifiedName(name);
+  if (split) return memberWords(readable(split.group), split.local);
   const words = splitWords(name);
   if (!words.length) return '';
   return words.map((w, i) => (i === 0 ? w[0].toUpperCase() + w.slice(1) : w.toLowerCase())).join(' ');
@@ -1915,8 +1858,13 @@ function operandWords(operand) {
   switch (operandSource(operand)) {
     case 'alias-property':
       // No property means a bound projection's single value, which the
-      // alias already names.
+      // alias already names. A group member's arguments are its own,
+      // so they follow it, the way a read in place's do.
       if (!operand.property) return propertyWords(operand.alias);
+      if (operand.arguments && Object.keys(operand.arguments).length) {
+        return memberWords(operand.alias, operand.property) + ' (' + Object.entries(operand.arguments)
+          .map(([name, value]) => `${name} = ${operandWords(value)}`).join(', ') + ')';
+      }
       return memberWords(operand.alias, operand.property);
     case 'parameter':
       return operand.property
@@ -1937,9 +1885,13 @@ function operandWords(operand) {
     // it gives its tags and arguments – `Developer seniority level
     // (developer)`. The code view's spelling with the words a reader
     // reads; `projectionReadParts` hands the pieces to a renderer.
+    // A grouped one reads as the group's instance and then its member,
+    // `Course (course id) · seats on (slot = slot)` – the code view's
+    // `Course(courseId).seatsOn(slot: slot)`, in words.
     case 'projection-read': {
-      const { name, values } = projectionReadParts(operand);
-      return values.length ? `${name} (${values.map((v) => v.words).join(', ')})` : name;
+      const { name, values, member, memberValues } = projectionReadParts(operand);
+      const call = (head, list) => (list.length ? `${head} (${list.map((v) => v.words).join(', ')})` : head);
+      return member === undefined ? call(name, values) : `${call(name, values)} · ${call(member, memberValues)}`;
     }
     case 'tag-literal': return operandText(operand);
     case 'each': return 'each ' + operandWords(operand.each);
@@ -1987,77 +1939,10 @@ const PREDICATE_WORDS = {
   isFalse: ['does not hold', 'holds'],
 };
 
-// A boolean property is named as a predicate, so its false state is
-// that predicate denied. Two shapes cover what the one-click lifecycle
-// and ordinary naming produce – `isArchived` -> "is not archived",
-// `exists` -> "does not exist" – and anything else falls back to a bare
-// "not …", which is graceless but never wrong. This is the one thing
-// the two-state spelling gives up: an enum's states are named, a
-// boolean's have to be said.
-function negatedPredicateWords(words) {
-  if (/^is\b/.test(words)) return words.replace(/^is\b/, 'is not');
-  const single = /^([a-z]{3,})(e?s)$/.exec(words);
-  if (single) return `does not ${single[1]}`;
-  return 'not ' + words;
-}
-
-// One of a machine's states, in words. An enum state is its member's
-// name; a boolean state has none, so it is said off the property –
-// which is why the page labels the two nodes "exists" and "does not
-// exist" rather than "true" and "false".
-function lifecycleStateWords(machine, state) {
-  if (!machine.isBoolean) return readable(state);
-  const words = propertyWords(machine.property);
-  return state === 'true' ? words : negatedPredicateWords(words);
-}
-
-// A read of a *boolean* designated lifecycle, or null. This is what
-// licenses saying "the course exists" instead of "course · exists
-// holds": the entity designated that property, so the condition is
-// about the thing's existence and can be said that way. Nothing is
-// stored differently – the condition is an ordinary `isTrue` over an
-// ordinary property, and this only decides how it reads.
-//
-// An enum lifecycle is deliberately not sugared. Its states are named,
-// those names are what the modeller chose, and "document · status is
-// one of Draft, Published" is already the sentence they wrote.
-function existenceRead(model, body, operand) {
-  if (!model || !body) return null;
-  if (operandSource(operand) !== 'alias-property' || !operand.property) return null;
-  const binding = (body.boundary || []).find((b) => b && b.alias === operand.alias);
-  if (!binding || !binding.entity) return null;
-  const lifecycle = lifecycleOf(model, binding.entity);
-  if (!lifecycle || !lifecycle.isBoolean) return null;
-  if (lifecycle.property !== operand.property) return null;
-  return { alias: operand.alias, lifecycle };
-}
-
 // A condition as a sentence. Returns parts so a renderer can style the
-// operands without re-parsing the text.
-//
-// `model` and `body` are optional and only buy the existence wording: a
-// caller without them gets the literal reading, which is correct, just
-// less fluent.
+// operands without re-parsing the text. `model` and `body` are accepted
+// for the callers that pass them; the literal reading needs neither.
 function conditionParts(condition, model, body) {
-  const read = existenceRead(model, body, condition.leftHandSide);
-  if (read) {
-    // Only when the condition pins the lifecycle to exactly one of its
-    // two states. Anything else is not "it exists" or "it does not" and
-    // is left to say itself.
-    const states = lifecycleAllowedStates(condition, read.lifecycle, condition.rightHandSide);
-    if (states && states.length === 1) {
-      const words = propertyWords(read.lifecycle.property);
-      return {
-        // No article: every other condition row starts with the bare
-        // alias, and "the course exists" beside "course · capacity is at
-        // most 10" is one sentence pretending to be a different kind of
-        // thing from the other.
-        left: propertyWords(read.alias),
-        verb: states[0] === 'true' ? words : negatedPredicateWords(words),
-        right: null,
-      };
-    }
-  }
   const words = PREDICATE_WORDS[condition.predicate] || [condition.predicate, 'not ' + condition.predicate];
   const verb = words[condition.negate ? 1 : 0];
   const left = operandWords(condition.leftHandSide);
@@ -2068,16 +1953,21 @@ function conditionParts(condition, model, body) {
 // A read in place in pieces: the projection's name, and each value
 // it is read with – tags first, then arguments as `name = value` – with
 // the operand each came from, so a renderer can point back at it.
+//
+// A grouped projection's read splits in two, the way the code view
+// writes it: the group and the tag that picks its instance (`name`,
+// `values`, `group` set), then the member and its own arguments
+// (`member`, `memberValues`).
 function projectionReadParts(operand) {
   const tagWords = (tag) => (operandSource(tag) === 'tag-literal' ? operandText(tag) : operandWords(tag));
-  return {
-    name: readable(operand.projection || '?'),
-    values: [
-      ...readTagOperands(operand).map((tag) => ({ operand: tag, words: tagWords(tag) })),
-      ...Object.entries(operand.arguments || {})
-        .map(([name, value]) => ({ operand: value, words: `${name} = ${operandWords(value)}` })),
-    ],
-  };
+  const tags = readTagOperands(operand).map((tag) => ({ operand: tag, words: tagWords(tag) }));
+  const args = Object.entries(operand.arguments || {})
+    .map(([name, value]) => ({ operand: value, words: `${name} = ${operandWords(value)}` }));
+  const split = splitQualifiedName(operand.projection);
+  if (split) {
+    return { name: readable(split.group), group: split.group, values: tags, member: propertyWords(split.local), memberValues: args };
+  }
+  return { name: readable(operand.projection || '?'), values: [...tags, ...args] };
 }
 
 // The message a rule is refused with when its author wrote none: the
@@ -2095,8 +1985,7 @@ function derivedRejection(model, body, condition) {
     ? { ...condition, predicate: 'equalsAny', leftHandSide: condition.rightHandSide, rightHandSide: condition.leftHandSide }
     : condition;
   const p = conditionParts(said, model, body);
-  // Only where the sentence named the operand itself – "course exists"
-  // already said the lifecycle property its own way.
+  // Only where the sentence named the operand itself.
   const words = (operand, fallback) => {
     if (fallback !== operandWords(operand)) return fallback;
     if (operandSource(operand) === 'projection-read') return readable(operand.projection || '?');
@@ -2137,10 +2026,10 @@ function ruleSentence(model, body, condition) {
 }
 
 function effectParts(effect) {
-  // A standalone projection (`projectionsHandling`) is its own subject;
-  // an entity property is named through its entity.
-  const subject = effect.entity
-    ? memberWords(readable(effect.entity), effect.property.name)
+  // A top-level projection (`projectionsHandling`) is its own subject;
+  // a grouped one is named through its group.
+  const subject = effect.group
+    ? memberWords(readable(effect.group), effect.property.name)
     : readable(effect.projection);
   // A scripted handler has no operation and no operand to name – the
   // code is both, and nothing here reads it.
@@ -2159,7 +2048,7 @@ function effectParts(effect) {
 // A binding, in words: what it is and how the command found it.
 function readParts(model, body, binding) {
   if (binding.projection) {
-    const projection = model['projection-definitions'][binding.projection] || {};
+    const projection = projectionsOf(model)[binding.projection] || {};
     return {
       alias: binding.alias,
       projection: binding.projection,
@@ -2178,15 +2067,20 @@ function readParts(model, body, binding) {
       })),
     };
   }
+  // A group alias: the instance its one tag picks, and nothing else –
+  // arguments are given per member read, never to the group.
+  const tags = readTagEntries(binding);
   return {
     alias: binding.alias,
-    entity: binding.entity,
+    group: binding.group,
     plural: isFannedOut(model, body, binding),
-    from: operandWords(binding.id),
-    excluding: binding.excluding !== undefined ? operandWords(binding.excluding) : null,
-    // What the command hands a scripted property it reads.
-    arguments: Object.entries(binding.arguments || {})
-      .map(([name, operand]) => ({ name, words: operandWords(operand) })),
+    from: tags.length ? operandWords(tags[0][1]) : '?',
+    tags: tags.map(([name, operand]) => ({
+      name,
+      operand,
+      words: operandSource(operand) === 'tag-literal' ? operandText(operand) : operandWords(operand),
+    })),
+    arguments: [],
   };
 }
 
@@ -2201,12 +2095,12 @@ function typeLabel(member) {
 
 // ---------- what a thing looks like ----------
 //
-// An entity is named in a dozen places – the rail, a read, a change, a
-// loose end – and a page with five kinds of thing on it is scanned by
-// shape long before it is read by name. So every entity carries one
-// mark, and the mark goes wherever the entity does.
+// A group is named in a dozen places – the projections list, a read, a
+// change – and a page with five kinds of thing on it is scanned by
+// shape long before it is read by name. So a group carries one mark,
+// and the mark goes wherever the group does.
 //
-// An entity's mark is authored and only authored. An unmarked entity
+// A group's mark is authored and only authored. An unmarked group
 // carries no glyph: a hashed stand-in was tried and did not earn its
 // place – a shape nobody chose says nothing about the thing, so every
 // page paid a column of noise for a legibility that never arrived. What
@@ -2237,8 +2131,8 @@ function iconPrefix(icon, separator) {
   return icon ? icon + (separator === undefined ? ' ' : separator) : '';
 }
 
-function entityIcon(model, name) {
-  return chosenIcon(model, 'entity-definitions', name);
+function groupIcon(model, name) {
+  return chosenIcon(model, 'group-definitions', name);
 }
 
 const COMMAND_FALLBACK_ICON = '➜';

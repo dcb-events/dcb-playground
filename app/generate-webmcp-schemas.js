@@ -20,10 +20,11 @@
 //     operand more than doubled a command's schema.
 //
 // The experimental members are cut before anything is inlined, since
-// WebMCP does not offer them (see webmcp.js): no entity kind, and no
-// schema so much as mentions an entity binding, a guard, a script –
-// its code handlers and the arguments its readers pass included – or
-// `currentValue`. The canonical schema keeps them – a model using them
+// WebMCP does not offer them (see webmcp.js): no schema so much as
+// mentions a guard, a script – its code handlers and the arguments its
+// readers pass included, a group member's among them – an optional
+// read, or `currentValue`. Groups themselves are not experimental and
+// stay. The canonical schema keeps everything – a model using them
 // still imports.
 //
 // Run with `node app/generate-webmcp-schemas.js` after changing
@@ -42,14 +43,16 @@ const defs = schema.$defs;
 // is not there stops the build – the schema moved, and so must this.
 const EXPERIMENTAL_PROPERTIES = {
   ProjectionDefinition: ['script'],
+  GroupProjectionDefinition: ['script'],
   PropertyHandler: ['code'],
   ProjectionBinding: ['arguments'],
   ProjectionReadValue: ['arguments'],
   ProjectionScenarioDefinition: ['arguments'],
+  AliasPropertyValue: ['arguments'],
+  GroupBinding: ['isOptional'],
   EventEmission: ['when'],
 };
 const EXPERIMENTAL_BRANCHES = {
-  Binding: ['EntityBinding'],
   HandlerOperand: ['CurrentValue'],
 };
 for (const [name, properties] of Object.entries(EXPERIMENTAL_PROPERTIES)) {
@@ -73,8 +76,39 @@ for (const [name, branches] of Object.entries(EXPERIMENTAL_BRANCHES)) {
   defs[name] = kept.length === 1 ? kept[0] : { ...defs[name], [choice]: kept };
 }
 
-// The six kinds an agent may author, each rooted at its $def.
+// A grouped projection is edited through the projection tools by the
+// name it is read by, `Course.capacity` (model.js routes it to its
+// group), so the projection kinds' name admits that too, and `tags`
+// is required only of a top-level one – a grouped projection has the
+// group's. The canonical schema keeps them apart: there a group stores
+// its projections under local names, and only a top-level one is a
+// `ProjectionDefinition`.
+{
+  const def = defs.ProjectionDefinition;
+  const local = defs.LocalProjectionName && defs.LocalProjectionName.pattern;
+  if (!def || !def.properties.name || !def.properties.tags || !def.required.includes('tags')
+      || !defs.ProjectionName || !local) {
+    throw new Error('dcb-model.schema.json moved: ProjectionDefinition.name/tags or the name patterns');
+  }
+  def.properties.name = {
+    ...defs.ProjectionName,
+    description: (def.properties.name.description || '').trim()
+      + ' A grouped projection is named qualified, `<Group>.<localName>` (`Course.capacity`):'
+      + ' that adds it to, or edits it in, its group.',
+    pattern: defs.ProjectionName.pattern.replace(/\$$/, '') + '(\\.' + local.slice(1, -1) + ')?$',
+  };
+  def.properties.tags = {
+    ...def.properties.tags,
+    description: (def.properties.tags.description || '').trim()
+      + ' Required for a top-level projection; a grouped one has none of its own – it is read by'
+      + ' its group\'s tag, and whatever is given here is dropped.',
+  };
+  def.required = def.required.filter((r) => r !== 'tags');
+}
+
+// The seven kinds an agent may author, each rooted at its $def.
 const ROOTS = {
+  'group-definition': 'GroupDefinition',
   'event-definition': 'EventDefinition',
   'projection-definition': 'ProjectionDefinition',
   'command-definition': 'CommandDefinition',
@@ -199,6 +233,11 @@ for (const [kind, rootName] of Object.entries(ROOTS)) {
   if (!root) throw new Error(`dcb-model.schema.json has no $def "${rootName}"`);
   out[kind] = typeTopLevelProperties(flattenTopLevelChoice(inline(root, [rootName]), kind));
 }
+// A group's projection is a tool's whole input too – add_group_projection
+// serves it, beside the group's name – so its properties are typed the
+// same way.
+out['group-definition'].properties.projections.items =
+  typeTopLevelProperties(out['group-definition'].properties.projections.items);
 
 // What this exists to guarantee: nothing referencing anything.
 const flat = JSON.stringify(out);

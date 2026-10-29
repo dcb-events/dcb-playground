@@ -2,7 +2,7 @@
 
 An in-browser modeling tool for designing and testing event-sourced systems
 built on Dynamic Consistency Boundaries (DCB, see https://dcb.events). Authors
-build _DCB Models_ — collections of custom-type, event, entity, projection and
+build _DCB Models_ — collections of custom-type, event, group, projection and
 command definitions — drive commands against a hypothetical event log, and see
 which consistency boundary each command derives.
 
@@ -18,7 +18,7 @@ and a model someone asked for by address: Import's URL field or a
 
 - `app/` — the application. Everything that runs.
 - `dcb-model.schema.json` — canonical JSON Schema for the interchange format
-  (`https://dcb.events/schemas/model/v10.json`). Source of truth for what a
+  (`https://dcb.events/schemas/model/v11.json`). Source of truth for what a
   DCB Model file contains; `app/webmcp-schemas.js` is generated from it.
 - `fixtures/` — test data only: models carrying scenarios authored in
   the playground, which no seed builder produces; `dsl.test.js` reads
@@ -117,9 +117,9 @@ was decided, why, and what was tried and reverted:
 - event or projection tags, projection reads, handlers per event —
   _Tags: events, projections, handlers_
 - the wire format's version — _Wire format versions_
-- entity lifecycles or their UI — _Entity lifecycles_
+- groups, the projections list's sections, moving in and out — _Groups_
 - the projection editor's layout, its Advanced switch, the new-projection
-  wizard — _The projection editor_
+  wizard, the Lifecycle tab — _The projection editor_
 - guards, rejection messages, derived projections — _Guarded emissions…_
 - creating or editing a definition from a command page, the definition
   modals — _Inline definitions from a command_
@@ -159,7 +159,7 @@ was decided, why, and what was tried and reverted:
   (`experimental()`, shared.js): gate an *offer* — an adder, a picker
   row, a tab, a completion — never the display of something stored. A
   model that uses a gated construct still loads, renders and evaluates
-  whole. WebMCP offers nothing experimental, flag or no flag: no entity
+  whole. WebMCP offers nothing experimental, flag or no flag: no experimental
   tools or schema members, and an agent's edit that would introduce a
   use is refused — a model already using one stays editable.
 - **Storage versioning**: `EVENT_LOG_KEY` in `model.js` (`dcb-playground:events:vN`)
@@ -244,7 +244,7 @@ was decided, why, and what was tried and reverted:
   construct needs a spelling in the printer and the parser, its parser
   marks and a case in `sourceSymbols`, or the dsl suite fails.
 - **Kind colours mean kinds; chrome is `--accent`.** `--command`,
-  `--event`, `--entity`/`--projection` and `--rule` colour only the thing
+  `--event`, `--projection` and `--rule` colour only the thing
   they name (chips, cards, lanes, marks). Buttons, focus rings, hover,
   selected tabs and pickers use `--accent` (dcb.events teal) — painting
   chrome command blue made every control read as "about a command".

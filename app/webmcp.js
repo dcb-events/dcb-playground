@@ -27,8 +27,12 @@
 //
 // **Nothing experimental is offered.** What the experimental flag
 // keeps off the pages is kept out of this API whether the flag is on
-// or not: no entity tools, no experimental members in a schema, and
-// an edit that would introduce a use is refused. The tools are
+// or not: no experimental members in a schema, and an edit that would
+// introduce a use is refused. Groups are not experimental: they are
+// definitions like any other kind here (a grouped projection named the
+// way it is read, `Course.capacity`), plus tools for the gestures the
+// page has for them – create one, add a projection to one, move a
+// projection in or out. The tools are
 // registered once, so following the flag would mean re-registering on
 // every toggle. A model that already uses those constructs still
 // reads whole and stays editable – only a *new* use is refused
@@ -144,8 +148,23 @@
     return { ...base, required: [...required] };
   };
 
-  // The kinds an agent may author – entities are experimental.
-  const KINDS = DEF_KINDS.filter((kind) => kind !== 'entity-definition');
+  // The kinds an agent may author – all of them.
+  const KINDS = DEF_KINDS;
+
+  // The model as it would be with one definition body in place. A
+  // grouped projection, `Course.capacity`, lands in its group, stored
+  // the way the group stores it.
+  const withDefinition = (model, kind, key, body) => {
+    const split = kind === 'projection-definition' ? splitQualifiedName(key) : null;
+    const group = split && model['group-definitions'][split.group];
+    if (group) {
+      const others = (group.projections || []).filter((inner) => !(inner && inner.name === split.local));
+      return withDefinition(model, 'group-definition', split.group,
+        { ...group, projections: [...others, storedGroupProjection(split.local, body)] });
+    }
+    const collection = DEF_COLLECTIONS[kind];
+    return { ...model, [collection]: { ...model[collection], [key]: body } };
+  };
 
   // Refuses an edit that would introduce an experimental construct,
   // naming each use – with its line, when the edit is a text.
@@ -191,7 +210,8 @@
   register({
     name: 'get_model',
     description: 'The DCB model currently open in the playground, in full, as stored JSON: its '
-      + 'custom types, events, projections and the commands that guard them. Every other tool '
+      + 'custom types, events, projections (grouped ones inside their groups) and the commands '
+      + 'that guard them. Every other tool '
       + 'speaks in this model\'s names. get_model_source says the same far shorter, as code – '
       + 'prefer it for reading, and for any edit beyond one definition.',
     inputSchema: { type: 'object', properties: {} },
@@ -206,7 +226,7 @@
   register({
     name: 'get_model_source',
     description: 'The open model as code – the playground\'s own model language, the text its '
-      + 'Code view edits: types, events, projections and commands, each command\'s and '
+      + 'Code view edits: types, events, groups, projections and commands, each command\'s and '
       + 'projection\'s scenarios inside its block. Usually far shorter than get_model. Edit it and '
       + 'send it back with apply_model_source; get_model_language explains the language.',
     inputSchema: { type: 'object', properties: {} },
@@ -290,8 +310,8 @@
   register({
     name: 'list_problems',
     description: 'Everything findably wrong with the open model, without judging it: '
-      + 'loose ends (events nothing records, entities nothing reads, commands that '
-      + 'record nothing), advisories (what a definition got wrong without being '
+      + 'loose ends (events nothing records, commands that record nothing or take '
+      + 'no input), advisories (what a definition got wrong without being '
       + 'refused – dangling references, boundary gaps, mistyped values) and '
       + 'scenarios the model no longer agrees with.',
     inputSchema: { type: 'object', properties: {} },
@@ -370,11 +390,7 @@
       const { name, id, ...body } = args;
       return idKeyed && args.name !== undefined ? { name: args.name, ...body } : body;
     };
-    // The model as it would be with this one body in place.
-    const withBody = (model, key, body) => {
-      const collection = DEF_COLLECTIONS[kind];
-      return { ...model, [collection]: { ...model[collection], [key]: body } };
-    };
+    const withBody = (model, key, body) => withDefinition(model, kind, key, body);
     const prefer = ' For creating a model or changing several definitions, write code instead '
       + '(get_model_language, apply_model_source); this tool suits one targeted edit.';
 
@@ -419,7 +435,9 @@
     name: 'remove_definition',
     description: 'Remove a definition of any kind from the open model. Whatever still '
       + 'references it is left dangling, and each dangling reference comes back as an '
-      + 'advisory in the result. For the id-keyed scenario kinds, `name` is the id.',
+      + 'advisory in the result. For the id-keyed scenario kinds, `name` is the id. A '
+      + 'grouped projection is removed by its qualified name, `Course.capacity`; removing a '
+      + 'group removes the projections it owns.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -427,7 +445,7 @@
         name: {
           type: 'string',
           description: 'The name of the definition to remove – or its id, for the '
-            + 'id-keyed scenario kinds.',
+            + 'id-keyed scenario kinds; `Course.capacity` for a grouped projection.',
         },
       },
       required: ['kind', 'name'],
@@ -489,7 +507,10 @@
     name: 'rename_definition',
     description: 'Rename a definition and rewrite every reference to it across the model '
       + 'in the same change – never rename by editing bodies one at a time. The id-keyed '
-      + 'scenario kinds have no name to rename, so they are not offered here.',
+      + 'scenario kinds have no name to rename, so they are not offered here. A grouped '
+      + 'projection is renamed within its group (previousName `Course.capacity`, newName '
+      + '`seats` or `Course.seats`); moving it out or into another group is '
+      + 'move_projection_out_of_group / move_projection_into_group.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -498,7 +519,8 @@
         newName: {
           type: 'string',
           description: 'The name to give it – PascalCase, and not already taken by '
-            + 'another definition of the same kind.',
+            + 'another definition of the same kind (a group and a projection share one '
+            + 'namespace). A grouped projection\'s new local name is lowerCamel.',
         },
       },
       required: ['kind', 'previousName', 'newName'],
@@ -518,7 +540,7 @@
   register({
     name: 'rename_member',
     description: 'Rename one member of a definition – a property, an enum member, a '
-      + 'composite type\'s field – and rewrite everything '
+      + 'composite type\'s field, a group\'s projection (by its local name) – and rewrite everything '
       + 'that referred to it by that name. The valid kind/memberKind pairs: '
       + memberCombos.map(([k, m]) => `${k} + ${m}`).join('; ') + '.',
     inputSchema: {
@@ -551,6 +573,137 @@
         summary: `renamed ${memberKind} "${previousName}" of ${humanize(kind)} `
           + `"${definitionName}" to "${newName}"`,
       };
+    },
+  });
+
+  // ---------- groups ----------
+  //
+  // The page's group gestures (model.js, "Groups"). A group is a name
+  // for projections that share one partition tag and owns them; it
+  // means nothing for consistency. Its definition is edited like any
+  // other through add/update/remove/rename (kind group-definition, or
+  // projection-definition with a qualified `Course.capacity`); these
+  // add what those cannot say in one call: a group started empty with
+  // its tag type made alongside, and the moves, which rename a
+  // projection and rewrite every read of it in the same change.
+
+  const GROUP_NOTE = ' A group names projections that share one partition tag (`Course`, tag '
+    + 'courseId: CourseId) and owns them: inside it a projection has a lowerCamel local name and no '
+    + 'tag of its own; outside it is `Course.capacity`, read as `Course(courseId).capacity`. A group '
+    + 'means nothing for consistency – a command reading course.capacity queries only that '
+    + 'projection\'s events.';
+
+  register({
+    name: 'create_group',
+    description: 'Create an empty group in the open model, ready for projections to be added '
+      + '(add_group_projection) or moved in (move_projection_into_group). A tag type that does not '
+      + 'exist yet is created alongside it, a string marked as a tag. Refused when the name is '
+      + 'taken by a group or a projection.' + GROUP_NOTE,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description: 'What the group is called – PascalCase, unique among groups and top-level projections.',
+        },
+        tag: {
+          type: 'object',
+          description: 'The one tag every projection of the group is read by: its name '
+            + '(lowerCamel, e.g. courseId) and its tag type (e.g. CourseId).',
+          properties: {
+            name: { type: 'string', description: 'The tag\'s name, lowerCamel.' },
+            tagType: { type: 'string', description: 'The tag type – an existing one, or a new PascalCase name.' },
+          },
+          required: ['name', 'tagType'],
+        },
+        icon: { type: 'string', description: 'Optional: a short glyph standing for the group, e.g. one emoji.' },
+      },
+      required: ['name', 'tag'],
+    },
+    mutates: true,
+    run: (model, { name, tag, icon }) => {
+      createGroup(model.id, name, tag, { icon });
+      return { summary: `created group "${String(name).trim()}"` };
+    },
+  });
+
+  // The input is a group's projection as the group stores it, beside
+  // the group's name.
+  const groupProjectionSchema = WEBMCP_DEFINITION_SCHEMAS['group-definition'].properties.projections.items;
+  register({
+    name: 'add_group_projection',
+    description: 'Add a projection to a group of the open model, under a local lowerCamel name; it is '
+      + 'read by the group\'s tag and declares none of its own, and is named `<Group>.<name>` from '
+      + 'outside. A derived one reads a sibling by its local name, {projection: "capacity"}, with '
+      + 'no tags. Refused when the group does not exist or already has a projection of that name; '
+      + 'anything semantically wrong comes back as an advisory in the result. '
+      + 'add_projection_definition with a qualified name does the same.' + GROUP_NOTE,
+    inputSchema: {
+      ...groupProjectionSchema,
+      properties: {
+        group: { type: 'string', description: 'The group to add it to.' },
+        ...groupProjectionSchema.properties,
+      },
+      required: ['group', ...new Set([...(groupProjectionSchema.required || []), 'name'])],
+    },
+    mutates: true,
+    run: (model, { group, name, ...body }) => {
+      refuseNewExperimental(model, withDefinition(model, 'projection-definition',
+        qualifiedProjectionName(group, name), body));
+      addGroupProjection(model.id, group, name, body);
+      return { summary: `added projection "${qualifiedProjectionName(group, name)}"` };
+    },
+  });
+
+  register({
+    name: 'move_projection_into_group',
+    description: 'Move a top-level projection into a group: it drops its tag, takes a local name '
+      + '(`CourseCapacity` into Course becomes `Course.capacity` by default) and every read of it – '
+      + 'commands, derived projections, projection scenarios – is rewritten in the same change, so '
+      + 'the model behaves exactly as before. Only a projection tagged by exactly one tag, of the '
+      + 'group\'s tag type, moves in. Answers the qualified name it has now.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projection: { type: 'string', description: 'The top-level projection to move.' },
+        group: { type: 'string', description: 'The group to move it into.' },
+        localName: {
+          type: 'string',
+          description: 'Optional: its lowerCamel name inside the group. Defaults to its name '
+            + 'without the group\'s, `CourseCapacity` → `capacity`.',
+        },
+      },
+      required: ['projection', 'group'],
+    },
+    mutates: true,
+    run: (model, { projection, group, localName }) => {
+      const moved = moveProjectionIntoGroup(model.id, projection, group, localName);
+      return { summary: `moved projection "${projection}" into group "${group}" as "${moved}"`, payload: moved };
+    },
+  });
+
+  register({
+    name: 'move_projection_out_of_group',
+    description: 'Move a grouped projection out of its group, to the top level: it regains the '
+      + 'group\'s tag as its own, takes a PascalCase name (`Course.capacity` becomes '
+      + '`CourseCapacity` by default) and every read of it is rewritten in the same change – a '
+      + 'group alias\'s member read becomes a read in place. Answers the name it has now.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projection: { type: 'string', description: 'The grouped projection, qualified: `Course.capacity`.' },
+        newName: {
+          type: 'string',
+          description: 'Optional: its PascalCase name at the top level. Defaults to the group\'s '
+            + 'name and its local name, `Course.capacity` → `CourseCapacity`.',
+        },
+      },
+      required: ['projection'],
+    },
+    mutates: true,
+    run: (model, { projection, newName }) => {
+      const moved = moveProjectionOutOfGroup(model.id, projection, newName);
+      return { summary: `moved projection "${projection}" out of its group as "${moved}"`, payload: moved };
     },
   });
 

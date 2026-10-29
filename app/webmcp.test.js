@@ -53,7 +53,7 @@ async function call(name, args) {
 (async () => {
   await check('every agreed tool is registered, each with a schema', () => {
     const kinds = [
-      'event_definition', 'projection_definition',
+      'group_definition', 'event_definition', 'projection_definition',
       'command_definition', 'custom_type_definition', 'scenario_definition',
       'projection_scenario_definition',
     ];
@@ -62,6 +62,7 @@ async function call(name, args) {
       'derive_boundary', 'evaluate_command', 'list_problems',
       'start_model', 'remove_definition', 'rename_definition', 'rename_member',
       'drive_command', 'get_sandbox', 'reset_sandbox',
+      'create_group', 'add_group_projection', 'move_projection_into_group', 'move_projection_out_of_group',
       ...kinds.map((k) => 'add_' + k), ...kinds.map((k) => 'update_' + k),
     ];
     eq([...registered.keys()].sort(), names.slice().sort(), 'tool names');
@@ -108,13 +109,16 @@ async function call(name, args) {
 
   await check('nothing experimental is offered in any tool\'s schema', () => {
     const offered = (name) => registered.get(name).inputSchema.properties;
-    for (const name of ['remove_definition', 'rename_definition', 'rename_member']) {
-      eq(offered(name).kind.enum.includes('entity-definition'), false, `${name} offers no entities`);
+    for (const name of ['remove_definition', 'rename_definition']) {
+      eq(offered(name).kind.enum.includes('group-definition'), true, `${name} offers groups – they are not experimental`);
     }
+    const group = offered('add_group_definition');
+    eq('script' in group.projections.items.properties, false, 'no scripted grouped projections');
+    eq('script' in offered('add_group_projection'), false, 'nor through add_group_projection');
     const command = offered('add_command_definition');
     eq('feature' in command, true, 'feature groups are not experimental');
     eq('icon' in command, true, 'a command\'s icon is not experimental');
-    eq(Object.keys(command.boundary.items.properties || {}).includes('entity'), false, 'a binding is a projection read');
+    eq(JSON.stringify(command.boundary).includes('"isOptional"'), false, 'no optional reads');
     eq('when' in command.publishes.items.properties, false, 'no guarded emissions');
     const projection = offered('add_projection_definition');
     eq('derived' in projection, true, 'derived projections are offered');
@@ -122,8 +126,10 @@ async function call(name, args) {
       'computing ones too');
     eq('script' in projection, false, 'no scripted projections');
     eq(JSON.stringify(projection).includes('"code"'), false, 'nor code handlers');
-    eq('arguments' in offered('add_command_definition').boundary.items.properties, false,
-      'nor the arguments a read passes a script');
+    const bindings = offered('add_command_definition').boundary.items.oneOf;
+    eq(bindings.map((b) => Object.keys(b.properties).sort()),
+      [['alias', 'group', 'tags'], ['alias', 'projection', 'tags']],
+      'a binding reads a group or a projection – with no optional read, nor the arguments a read passes a script');
     eq('icon' in offered('add_event_definition'), true, 'nor is an event\'s');
     eq(JSON.stringify(registered.get('add_projection_definition').inputSchema).includes('"currentValue"'), false,
       'no currentValue operand');
@@ -153,7 +159,7 @@ async function call(name, args) {
   // The rest runs against the first predefined model, opened the way
   // the page opens one – stored, not held.
   store.clear();
-  const id = loadPredefinedModel(sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-entities'));
+  const id = loadPredefinedModel(sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-simple'));
   sandbox.setActiveModelId(id);
   const model = () => projectState()[id];
 
@@ -167,7 +173,7 @@ async function call(name, args) {
   await check('derive_boundary reports reads and writes for a command', async () => {
     const { value, isError } = await call('derive_boundary', { commandName: 'DefineCourse' });
     eq(isError, false, 'not an error');
-    eq(value.items.map((i) => i.alias), ['course'], 'the one binding');
+    eq(value.items.map((i) => i.projection), ['CourseStatus'], 'the one read');
     eq(value.writes.length > 0, true, 'and what publishing writes');
   });
 
@@ -370,6 +376,140 @@ async function call(name, args) {
     eq('AgentProbeLogged' in model()['event-definitions'], false, 'gone');
   });
 
+  // Groups: not experimental, so an agent makes, fills and moves them
+  // through the same command functions the page's gestures call.
+  const commandsSay = () => JSON.stringify(model()['command-definitions']);
+  const subscribe = (events) => call('evaluate_command', {
+    commandName: 'SubscribeStudentToCourse',
+    arguments: { courseId: 'c1', studentId: 's1' },
+    givenEvents: events,
+  });
+  const defined = [
+    { type: 'CourseDefined', data: { courseId: 'c1', capacity: 0 } },
+    { type: 'StudentRegistered', data: { studentId: 's1' } },
+  ];
+
+  await check('create_group starts an empty group, its tag type made alongside', async () => {
+    const { isError, text } = await call('create_group', {
+      name: 'Probe', tag: { name: 'probeId', tagType: 'ProbeId' }, icon: '🧪',
+    });
+    eq(isError, false, text);
+    eq(model()['group-definitions'].Probe,
+      { icon: '🧪', tag: { name: 'probeId', tagType: 'ProbeId' }, projections: [] }, 'stored empty');
+    eq(model()['custom-type-definitions'].ProbeId, { schema: { type: 'string' }, isTag: true }, 'the tag type made');
+    eq(text.includes('Advisories introduced by this change'), true, 'an empty group is said to be one');
+    await call('remove_definition', { kind: 'group-definition', name: 'Probe' });
+    await call('remove_definition', { kind: 'custom-type-definition', name: 'ProbeId' });
+    eq('Probe' in model()['group-definitions'], false, 'and removed like any definition');
+  });
+
+  await check('create_group refuses a name a projection already reads by', async () => {
+    const { isError, text } = await call('create_group', {
+      name: 'CourseStatus', tag: { name: 'courseId', tagType: 'CourseId' },
+    });
+    eq(isError, true, 'refused');
+    eq(text.includes('already exists'), true, text);
+  });
+
+  await check('move_projection_into_group renames it and rewrites every read', async () => {
+    await call('create_group', { name: 'Course', tag: { name: 'courseId', tagType: 'CourseId' } });
+    const before = (await subscribe(defined)).value;
+    const { value, isError, text } = await call('move_projection_into_group', {
+      projection: 'CourseCapacity', group: 'Course',
+    });
+    eq(isError, false, text);
+    eq(text.split('\n')[0], 'Course.capacity', 'answers the name it has now');
+    eq('CourseCapacity' in model()['projection-definitions'], false, 'no longer top-level');
+    eq(model()['group-definitions'].Course.projections.map((p) => p.name), ['capacity'], 'owned by the group');
+    eq('tags' in model()['group-definitions'].Course.projections[0], false, 'without a tag of its own');
+    eq(commandsSay().includes('"CourseCapacity"'), false, 'no read left on the old name');
+    eq(commandsSay().includes('"group":"Course"') && commandsSay().includes('"property":"capacity"'), true,
+      'every read on the new one, through an alias of the group');
+    const after = (await subscribe(defined)).value;
+    eq([after.outcome, after.failedRule && after.failedRule.rejection],
+      [before.outcome, before.failedRule && before.failedRule.rejection], 'the model decides as before');
+    eq(before.failedRule.rejection, 'Course is full', '(a course of capacity 0 is full)');
+    const { text: source } = await call('get_model_source');
+    eq(source.includes('group Course (tag courseId: CourseId) {'), true, 'the code shows the group');
+    eq(source.includes('alias course = Course(courseId)') && source.includes('course.capacity'), true,
+      'and the read through it');
+  });
+
+  await check('move_projection_into_group refuses a projection the group\'s tag does not read', async () => {
+    const { isError, text } = await call('move_projection_into_group', {
+      projection: 'StudentSubscriptionCount', group: 'Course',
+    });
+    eq(isError, true, 'refused');
+    eq(text.includes('tagged by studentId: StudentId'), true, text);
+    eq('StudentSubscriptionCount' in model()['projection-definitions'], true, 'left where it was');
+  });
+
+  await check('a grouped projection is edited by its qualified name', async () => {
+    const body = { ...model()['group-definitions'].Course.projections[0] };
+    delete body.name;
+    const updated = await call('update_projection_definition', { name: 'Course.capacity', ...body, initialValue: 5 });
+    eq(updated.isError, false, updated.text);
+    eq(model()['group-definitions'].Course.projections[0].initialValue, 5, 'stored on its group');
+    eq((await subscribe([])).value.failedRule.rejection, 'Course is not active', 'read through the group');
+    const renamed = await call('rename_member', {
+      kind: 'group-definition', definitionName: 'Course', memberKind: 'projection',
+      previousName: 'capacity', newName: 'seats',
+    });
+    eq(renamed.isError, false, renamed.text);
+    eq(commandsSay().includes('"property":"seats"') && !commandsSay().includes('"property":"capacity"'), true,
+      'reads follow a renamed local name');
+    const back = await call('rename_definition', {
+      kind: 'projection-definition', previousName: 'Course.seats', newName: 'capacity',
+    });
+    eq(back.isError, false, back.text);
+    eq(model()['group-definitions'].Course.projections.map((p) => p.name), ['capacity'], 'renamed within its group');
+  });
+
+  await check('add_group_projection adds one under its local name, read by the group\'s tag', async () => {
+    const { isError, text } = await call('add_group_projection', {
+      group: 'Course', name: 'archived', valueType: 'boolean', isList: false, initialValue: false,
+      handlers: [{ event: 'CourseArchived', operation: 'set', value: true }],
+    });
+    eq(isError, false, text);
+    eq(model()['group-definitions'].Course.projections.map((p) => p.name), ['capacity', 'archived'], 'stored in the group');
+    const viaKind = await call('add_projection_definition', {
+      name: 'Course.defined', valueType: 'boolean', isList: false, initialValue: false,
+      handlers: [{ event: 'CourseDefined', operation: 'set', value: true }],
+    });
+    eq(viaKind.isError, false, viaKind.text);
+    eq(model()['group-definitions'].Course.projections.map((p) => p.name), ['capacity', 'archived', 'defined'],
+      'add_projection_definition with a qualified name lands there too');
+    const twice = await call('add_group_projection', {
+      group: 'Course', name: 'archived', valueType: 'boolean', initialValue: false, handlers: [],
+    });
+    eq(twice.isError, true, 'a local name is taken once');
+    const removed = await call('remove_definition', { kind: 'projection-definition', name: 'Course.defined' });
+    eq(removed.isError, false, removed.text);
+    eq(model()['group-definitions'].Course.projections.map((p) => p.name), ['capacity', 'archived'], 'removed from its group');
+  });
+
+  await check('a grouped projection that is scripted is refused', async () => {
+    const { isError, text } = await call('add_group_projection', {
+      group: 'Course', name: 'scripted', valueType: 'integer', isList: false,
+      script: { initialState: 0 }, handlers: [{ event: 'CourseDefined', code: 'state + 1' }],
+    });
+    eq(isError, true, 'refused');
+    eq(text.includes('Course.scripted uses scripted projections'), true, text);
+    eq(model()['group-definitions'].Course.projections.length, 2, 'not stored');
+  });
+
+  await check('move_projection_out_of_group gives it back its tag and its reads', async () => {
+    const { value, isError, text } = await call('move_projection_out_of_group', { projection: 'Course.capacity' });
+    eq(isError, false, text);
+    eq(text.split('\n')[0], 'CourseCapacity', 'the name it has now');
+    eq(model()['projection-definitions'].CourseCapacity.tags, [{ name: 'courseId', tagType: 'CourseId' }], 'tagged again');
+    eq(commandsSay().includes('"Course.capacity"'), false, 'no read left on the grouped name');
+    eq((await subscribe(defined)).value.failedRule.rejection, 'Course is full', 'decides as before');
+    const removed = await call('remove_definition', { kind: 'group-definition', name: 'Course' });
+    eq(removed.isError, false, removed.text);
+    eq('Course' in model()['group-definitions'], false, 'the group goes, with what it owned');
+  });
+
   await check('start_model opens a fresh, empty model', async () => {
     const { value, isError } = await call('start_model', { name: 'Agent Scratch Model' });
     eq(isError, false, 'not an error');
@@ -509,10 +649,18 @@ async function call(name, args) {
 
   await check('code adding an experimental construct is refused, naming its line', async () => {
     const before = modelCount();
-    const entity = LIBRARY + '\nentity Book (tag bookId: BookId) {}';
-    const started = await call('start_model', { name: 'Entities', source: entity });
+    const scripted = LIBRARY + [
+      '',
+      'group Book (tag bookId: BookId) {',
+      '  scripted projection adds: integer {',
+      '    initialState 0',
+      '    on BookAdded => ```state + 1```',
+      '  }',
+      '}',
+    ].join('\n');
+    const started = await call('start_model', { name: 'Scripted', source: scripted });
     eq(started.isError, true, 'refused when starting');
-    eq(started.text.includes('- line 10: Book uses entities'), true, started.text);
+    eq(started.text.includes('- line 11: Book.adds uses scripted projections'), true, started.text);
     eq(modelCount(), before, 'and nothing created');
     await call('start_model', { name: 'Guards', source: LIBRARY });
     const guarded = swap(LIBRARY, '  emit BookAdded { bookId }', '  emit BookAdded { bookId } when BookKnown(bookId) is false');
@@ -537,16 +685,16 @@ async function call(name, args) {
   });
 
   await check('a model already using experimental constructs stays editable', async () => {
-    const entitiesId = loadPredefinedModel(sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-entities'));
-    sandbox.setActiveModelId(entitiesId);
+    const scriptedId = loadPredefinedModel(sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'content-decisions-scripted'));
+    sandbox.setActiveModelId(scriptedId);
     const { text: source } = await call('get_model_source');
-    eq(source.includes('entity Course'), true, 'shown as stored');
-    const edited = swap(source, '"Course already exists"', '"Course was already defined"');
-    const applied = await call('apply_model_source', { source: edited });
+    eq(source.includes('scripted projection'), true, 'shown as stored');
+    const applied = await call('apply_model_source', { source: source + '\nevent ExtraHappened { note: string }\n' });
     eq(applied.isError, false, applied.text);
-    const command = projectState()[entitiesId]['command-definitions'].DefineCourse;
-    const updated = await call('update_command_definition', { name: 'DefineCourse', ...command });
-    eq(updated.isError, false, 'an entity binding it already had is kept: ' + updated.text);
+    const [name, body] = Object.entries(projectState()[scriptedId]['projection-definitions'])
+      .find(([, b]) => b.script);
+    const updated = await call('update_projection_definition', { name, ...body });
+    eq(updated.isError, false, 'a script it already had is kept: ' + updated.text);
   });
 
   await check('an agent edit is one undo step of its own', async () => {

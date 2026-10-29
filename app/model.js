@@ -34,11 +34,24 @@
 // binding, so a scripted projection reads exactly as legibly in a
 // boundary as a declared one.
 //
-// Command bodies carry an optional `feature`, naming the group a
-// command belongs to. Nothing in the model reads it – it rides along
-// untouched through validation, references and renames – and it is the
-// one field a DCB Model carries that the modelled system does not
-// read. See `CommandDefinition.feature` in dcb-model.schema.json.
+// **Groups** (11.0): a group owns projections that share its one
+// partition tag – `group Course (tag courseId: CourseId) { capacity … }`.
+// They are stored inside it, declare no tag of their own and have local
+// names; from outside they are named qualified, `Course.capacity`. A
+// group means nothing for consistency: reading `course.capacity` reads
+// that one projection. So below the write path nothing knows about
+// groups at all – `projectionsOf` is every projection by the name it is
+// read by, a grouped one flattened to an ordinary body (the group's tag
+// as its tag, a derived one's sibling reads spelled from outside), and
+// type resolution, DCB derivation, validation and the fold all read
+// that. Only the editing commands and the reference rewriting see the
+// nesting, because that is what is stored.
+//
+// Command bodies carry an optional `feature`, naming the set a command
+// belongs to. Nothing in the model reads it – it rides along untouched
+// through validation, references and renames – and it is the one field
+// a DCB Model carries that the modelled system does not read. See
+// `CommandDefinition.feature` in dcb-model.schema.json.
 // ============================================================
 
 // ============================================================
@@ -103,10 +116,13 @@
 // v23 moved a script's `arguments` onto the projection (10.0), where a
 // derived projection declares them too; a v22 script's arguments would
 // read as none.
-const EVENT_LOG_KEY = 'dcb-playground:events:v23';
+// v24 replaced entities by groups (11.0): `entity-definition` and its
+// bindings, lifecycles and `excluding` are gone, and a `group-definition`
+// owns the projections it names. A v23 log's entities have nowhere to go.
+const EVENT_LOG_KEY = 'dcb-playground:events:v24';
 
 const DEF_KINDS = [
-  'entity-definition',
+  'group-definition',
   'event-definition',
   'projection-definition',
   'command-definition',
@@ -115,7 +131,7 @@ const DEF_KINDS = [
   'projection-scenario-definition',
 ];
 const DEF_COLLECTIONS = {
-  'entity-definition': 'entity-definitions',
+  'group-definition': 'group-definitions',
   'event-definition': 'event-definitions',
   'projection-definition': 'projection-definitions',
   'command-definition': 'command-definitions',
@@ -124,7 +140,7 @@ const DEF_COLLECTIONS = {
   'projection-scenario-definition': 'projection-scenario-definitions',
 };
 const KIND_COLOR_CLASS = {
-  'entity-definition': 'entity',
+  'group-definition': 'projection',
   'event-definition': 'event',
   'projection-definition': 'projection',
   'command-definition': 'command',
@@ -134,7 +150,7 @@ const KIND_COLOR_CLASS = {
 };
 
 const KIND_SECTION_TITLE = {
-  'entity-definition': 'Entities',
+  'group-definition': 'Groups',
   'event-definition': 'Events',
   'projection-definition': 'Projections',
   'command-definition': 'Commands',
@@ -150,7 +166,7 @@ const KIND_SECTION_TITLE = {
 // to be called the same thing. Every other definition kind is keyed by
 // a name that *is* its identity, and renaming one is what moves every
 // reference to it. A projection scenario is the same shape for the same
-// reason, one level down: it belongs to an entity rather than a
+// reason, one level down: it belongs to a projection rather than a
 // command, but its name is still derived from what it found, not
 // chosen up front.
 const ID_KEYED_KINDS = ['scenario-definition', 'projection-scenario-definition'];
@@ -158,24 +174,6 @@ const ID_KEYED_KINDS = ['scenario-definition', 'projection-scenario-definition']
 function isIdKeyed(kind) { return ID_KEYED_KINDS.includes(kind); }
 
 const SIMPLE_TYPES = ['boolean', 'integer', 'string'];
-
-// A lifecycle is an ordinary property, folded like any other – what
-// makes it the lifecycle is that the entity *designates* it, by name,
-// in `lifecycle`. Nothing keys off the property's own name any more:
-// `exists` is only what the Entity view's "+ lifecycle → exists" types,
-// and an entity whose lifecycle is called `state` or `phase` reads
-// exactly the same.
-//
-// No entity gets one unasked. A new entity is bare – its identifier
-// and nothing else – and the existence wording ("course exists") is
-// licensed by a designation, so until an author adds a lifecycle that
-// wording appears nowhere. The two-state case is a plain `boolean`,
-// not an enum: no custom type and no vocabulary to learn, the thing
-// either exists or it does not. An enum is the other way in, and
-// promoting a boolean to one has to ask for names, so both are
-// gestures rather than inferences – see
-// `docs/research/2026-09-30-entity-lifecycle-as-boolean-existence.md`.
-const LIFECYCLE_PROPERTY = 'exists';
 
 const PASCAL_RE = /^\p{Lu}[\p{L}\p{M}\p{Nd}]+$/u;
 const CAMEL_RE = /^\p{Ll}[\p{L}\p{M}\p{Nd}]+$/u;
@@ -228,8 +226,8 @@ const OPERATIONS = ['set', 'increment', 'decrement', 'append', 'remove'];
 // an append, nothing compacts, and the revision stays where it was –
 // `projectState` folds the scratch log uncached instead – so every
 // cache of the real log survives it. It exists so a model can be built
-// by the very command functions an import uses – entity identifier
-// types, retries, the structural gate and all – without that model
+// by the very command functions an import uses – retries, the
+// structural gate and all – without that model
 // ever reaching the log, the undo history or another tab.
 let scratchLog = null;
 
@@ -667,6 +665,11 @@ function withoutNullEntries(body) {
     if (out === body) out = { ...body };
     out[field] = body[field].filter((entry) => entry !== null);
   }
+  // A group's projections are bodies of their own, with lists of their own.
+  if (Array.isArray(out.projections)) {
+    const inner = out.projections.map(withoutNullEntries);
+    if (inner.some((p, i) => p !== out.projections[i])) out = { ...out, projections: inner };
+  }
   return out;
 }
 
@@ -718,52 +721,159 @@ function apply(models, event) {
 }
 
 // ============================================================
-// Derived types.
+// Groups, and every projection by the name it is read by.
 //
-// An entity brings an identifier type into existence – `<Entity>Id`
-// unless `identifierType` overrides the name – as an ordinary
-// `custom-type-definition`, created alongside the entity and stored
-// like any other. A lifecycle is not a derived type: it is one of the
-// entity's own properties, named by `lifecycle`, and in the two-state
-// case its projection is typed `boolean` and declares no type at all.
+// A group is stored as what it is: a name, an optional icon, its one
+// partition tag `{name, tagType}` and the projections it owns, each a
+// projection body under a local, lowerCamel `name` and with no `tags`
+// of its own. Everything that reads a model rather than editing it
+// asks `projectionsOf` instead – the top-level projections by their own
+// names, then every grouped one under its qualified name
+// (`Course.capacity`) as the body it amounts to: tagged by the group's
+// tag, and, when derived, reading its siblings the way a reader outside
+// would (`capacity` → `Course.capacity` tagged by the group's tag passed
+// on). That one flattening is why a grouped projection folds, derives
+// its query, type-checks and is advised exactly like a top-level one,
+// with no second copy of any of it.
+//
+// The view is cached per pair of collections, so its bodies keep their
+// identity for as long as the model does – evaluate.js compiles a fold
+// once per body, and a new object per lookup would compile it per read.
 // ============================================================
 
-// `entityName`'s derived identifier type name – `identifierType` when
-// the entity gives one, otherwise `<name>Id`, tracking the entity's own
-// name for as long as nothing overrides it. Reads straight off `model`,
-// so renaming the entity moves this automatically: the name is
-// recomputed fresh every time, never stored on the entity itself.
-function idTypeOf(model, entityName) {
-  const entity = model['entity-definitions'][entityName];
-  return (entity && entity.identifierType) || (entityName + 'Id');
+// A group's partition tag, `{name, tagType}`, or null while it has none.
+function groupTagOf(group) {
+  const tag = group && group.tag;
+  return tag && typeof tag === 'object' && !Array.isArray(tag) ? tag : null;
 }
 
-// The one tag `entityName` is read by, `{name, tagType}` – its
-// identifier type, under the name the entity gives it (`identifierName`)
-// or the type's own, lowercased: `courseId: CourseId`. A projection
-// bound as one of its properties is tagged by exactly this.
-function entityTagParam(model, entityName) {
-  const entity = model['entity-definitions'][entityName];
-  const tagType = idTypeOf(model, entityName);
-  const name = (entity && entity.identifierName) || tagType.charAt(0).toLowerCase() + tagType.slice(1);
-  return { name, tagType };
+// The projections a group owns, as stored – entries that are not
+// objects skipped, the way every list is read.
+function groupProjections(group) {
+  return (group && Array.isArray(group.projections) ? group.projections : [])
+    .filter((inner) => inner && typeof inner === 'object');
 }
 
-// The entity that owns a value type as its derived identifier, or null.
-// Ownership is discovered by asking every entity what it currently
-// derives, not stored on the value type itself – which is what lets a
-// rename of the entity (while its identifier type is still tracking)
-// move the ownership along with the recomputed name, for free.
-function entityOfIdType(model, typeName) {
-  for (const entityName of Object.keys(model['entity-definitions'])) {
-    if (idTypeOf(model, entityName) === typeName) return entityName;
+function qualifiedProjectionName(groupName, localName) {
+  return `${groupName}.${localName}`;
+}
+
+// `Course.capacity` → `{group: 'Course', local: 'capacity'}`; null for a
+// name that is not qualified.
+function splitQualifiedName(name) {
+  if (typeof name !== 'string') return null;
+  const at = name.indexOf('.');
+  if (at <= 0 || at === name.length - 1) return null;
+  return { group: name.slice(0, at), local: name.slice(at + 1) };
+}
+
+// A lowercase name in a projection's place is a sibling's local name –
+// only ever written inside a group, by a derived projection.
+function isLocalProjectionName(name) {
+  return typeof name === 'string' && /^\p{Ll}/u.test(name);
+}
+
+// What a projection is called once it is in `groupName`: the group's
+// name dropped where it leads (`CourseCapacity` in Course → `capacity`),
+// the first letter lowered either way (`SubscriptionCount` →
+// `subscriptionCount`). A projection named after nothing but the group
+// keeps its whole name.
+function groupLocalName(groupName, projectionName) {
+  let rest = String(projectionName || '');
+  if (groupName && rest.startsWith(groupName) && /^\p{Lu}/u.test(rest.slice(groupName.length))) {
+    rest = rest.slice(groupName.length);
   }
-  return null;
+  return rest.charAt(0).toLowerCase() + rest.slice(1);
+}
+
+// The reverse, for a projection moved out: `capacity` of Course →
+// `CourseCapacity`.
+function ungroupedProjectionName(groupName, localName) {
+  const local = String(localName || '');
+  return groupName + local.charAt(0).toUpperCase() + local.slice(1);
+}
+
+// The stored entry behind a qualified name – `{groupName, group, inner,
+// index}` – or null.
+function groupProjectionEntry(model, name) {
+  const split = splitQualifiedName(name);
+  if (!split) return null;
+  const groups = (model && model['group-definitions']) || {};
+  if (!Object.prototype.hasOwnProperty.call(groups, split.group)) return null;
+  const group = groups[split.group];
+  const list = group && Array.isArray(group.projections) ? group.projections : [];
+  const index = list.findIndex((inner) => inner && inner.name === split.local);
+  if (index < 0) return null;
+  return { groupName: split.group, group, inner: list[index], index, local: split.local };
+}
+
+// A derived operand as a reader outside the group spells it: a sibling
+// named locally becomes its qualified read, tagged by this group's tag
+// passed on. Anything else is left as written.
+function siblingReadOutside(operand, groupName, tag) {
+  if (operandSource(operand) !== 'projection-read' || !isLocalProjectionName(operand.projection)) return operand;
+  const read = { ...operand, projection: qualifiedProjectionName(groupName, operand.projection) };
+  read.tags = tag ? { [tag.name]: { parameterName: tag.name } } : {};
+  return read;
+}
+
+// One grouped projection as the body it amounts to (see the section).
+function effectiveGroupProjection(groupName, group, inner) {
+  const { name, tags, ...rest } = inner;
+  const tag = groupTagOf(group);
+  const body = { ...rest, tags: tag ? [{ name: tag.name, tagType: tag.tagType }] : [] };
+  if (rest.derived && typeof rest.derived === 'object') {
+    body.derived = { ...rest.derived };
+    for (const side of ['leftHandSide', 'rightHandSide']) {
+      if (rest.derived[side] !== undefined) body.derived[side] = siblingReadOutside(rest.derived[side], groupName, tag);
+    }
+  }
+  return body;
+}
+
+const projectionViews = new WeakMap();
+
+// Every projection by the name it is read by – see the section. A
+// collection without a prototype, like the stored ones.
+function projectionsOf(model) {
+  const top = (model && model['projection-definitions']) || emptyCollection();
+  const groups = (model && model['group-definitions']) || emptyCollection();
+  let perTop = projectionViews.get(top);
+  if (!perTop) projectionViews.set(top, perTop = new WeakMap());
+  let view = perTop.get(groups);
+  if (view) return view;
+  view = emptyCollection();
+  for (const [name, body] of Object.entries(top)) view[name] = body;
+  for (const [groupName, group] of Object.entries(groups)) {
+    for (const inner of groupProjections(group)) {
+      if (typeof inner.name !== 'string' || !inner.name) continue;
+      view[qualifiedProjectionName(groupName, inner.name)] = effectiveGroupProjection(groupName, group, inner);
+    }
+  }
+  perTop.set(groups, view);
+  return view;
+}
+
+// The group a projection name belongs to, or null for a top-level one.
+function groupOfProjection(model, name) {
+  const entry = groupProjectionEntry(model, name);
+  return entry ? entry.groupName : null;
+}
+
+// The groups a projection could move into: those whose tag is of the
+// type of its one tag. A projection tagged by several, or by none,
+// stays where it is.
+function groupsAccepting(model, projectionName) {
+  const projection = (model['projection-definitions'] || {})[projectionName];
+  const tags = projectionTagParams(projection);
+  if (tags.length !== 1) return [];
+  return Object.entries(model['group-definitions'] || {})
+    .filter(([, group]) => { const tag = groupTagOf(group); return tag && tag.tagType === tags[0].tagType; })
+    .map(([name]) => name);
 }
 
 // Classifies a type name against a model: simple, a declared value
-// type (entity-owned or standalone – same shape either way), or
-// unresolved.
+// type, or unresolved.
 function classifyType(model, typeName) {
   if (!typeName) return { kind: 'unresolved' };
   if (SIMPLE_TYPES.includes(typeName)) return { kind: 'simple' };
@@ -773,21 +883,19 @@ function classifyType(model, typeName) {
       kind: 'value',
       composite: Array.isArray(valueType.properties),
       isTag: !!valueType.isTag,
-      ownerEntity: entityOfIdType(model, typeName),
     };
   }
   return { kind: 'unresolved' };
 }
 
 // The scalar, tag-marked value type a name resolves to, in the shape a
-// tag is rendered from – entity-owned or standalone alike – or null
-// for anything else (unresolved, not a value type, composite, or not
-// marked `isTag`).
+// tag is rendered from, or null for anything else (unresolved, not a
+// value type, composite, or not marked `isTag`).
 function identifierTypeOf(model, typeName) {
   const cls = classifyType(model, typeName);
   if (cls.kind !== 'value' || cls.composite || !cls.isTag) return null;
   const body = model['custom-type-definitions'][typeName];
-  return { name: typeName, composite: false, ownerEntity: cls.ownerEntity, tagSchema: (body && body.tagSchema) || '{type}:{value}' };
+  return { name: typeName, composite: false, tagSchema: (body && body.tagSchema) || '{type}:{value}' };
 }
 
 // Renders one identifier's value into its tag, through that
@@ -822,8 +930,7 @@ function compositeFieldsOf(model, typeName) {
 
 // Whether a type carries at least one tag – a tag-marked scalar, or a
 // composite with at least one tag-marked field. Used wherever something
-// must be able to narrow a query: a projection parameter, a tag filter,
-// an entity's own derived identifier.
+// must be able to narrow a query: a projection's tag, a group's.
 function isTagBearing(model, typeName) {
   return idLeavesOfType(model, typeName).length > 0;
 }
@@ -976,8 +1083,8 @@ function isStringEnumType(model, typeName) {
 }
 
 // A model with one definition overlaid – used so that a body being
-// validated can reference the very definition it belongs to (an
-// entity's own properties may reference its own derived `<Entity>Id`).
+// validated can reference the very definition it belongs to (a derived
+// projection may read itself, which its advisory then says).
 function withPending(model, kind, name, body) {
   const next = { ...model };
   const collName = DEF_COLLECTIONS[kind];
@@ -985,8 +1092,8 @@ function withPending(model, kind, name, body) {
   return next;
 }
 
-function defaultAlias(entityName) {
-  return entityName.charAt(0).toLowerCase() + entityName.slice(1);
+function defaultAlias(name) {
+  return name.charAt(0).toLowerCase() + name.slice(1);
 }
 
 function uniqueAlias(base, taken) {
@@ -1001,12 +1108,12 @@ function uniqueAlias(base, taken) {
 // Reference computation and rewriting.
 //
 // References are derived from the body shape (per the DCB Model
-// schema) – never stored alongside it. An entity's own derived
-// identifier is an ordinary custom-type-definition, referenced by the
-// entity through `identifierType` exactly like any property type
-// references one – which is what lets renaming or removing it go
-// through the same generic machinery as any other value type, with no
-// entity-specific case needed.
+// schema) – never stored alongside it. A group's projections live in
+// its body, so whatever they name – events, types, other projections –
+// the group references, and a rename reaches them through the same
+// generic machinery as any top-level projection. A qualified name
+// (`Course.capacity`) references the group; which of its projections it
+// means is a local name, moved by `renameMember` like any other member.
 // ============================================================
 
 function emptyRefs() {
@@ -1034,8 +1141,6 @@ function pushTypeRef(model, refs, typeName) {
 //     only when it classifies as a value type; rewritten on equality
 //     (the rename target being a custom type guarantees the class).
 //   - flavor 'name': a definition named outright.
-// A slot whose reference is derived rather than stored guards its own
-// `set` – see the entity identifier below.
 function forEachReferenceSlot(kind, name, body, slot) {
   const at = (holder, key, targetKind, flavor) => {
     if (!holder) return;
@@ -1044,6 +1149,23 @@ function forEachReferenceSlot(kind, name, body, slot) {
       get: () => holder[key],
       set: (v) => { holder[key] = v; },
     });
+  };
+  // A projection named in a read: a top-level one by its name, a
+  // grouped one by its group – the part before the dot, which is all a
+  // group rename moves. A sibling's local name references nothing.
+  const projectionAt = (holder, key) => {
+    if (!holder) return;
+    const value = holder[key];
+    if (splitQualifiedName(value)) {
+      slot('group-definition', {
+        flavor: 'name',
+        get: () => splitQualifiedName(holder[key]).group,
+        set: (v) => { holder[key] = qualifiedProjectionName(v, splitQualifiedName(holder[key]).local); },
+      });
+      return;
+    }
+    if (isLocalProjectionName(value)) return;
+    at(holder, key, 'projection-definition', 'name');
   };
   const typeSlots = (properties) => {
     for (const p of properties || []) {
@@ -1065,6 +1187,23 @@ function forEachReferenceSlot(kind, name, body, slot) {
   const givenSlots = (given) => {
     for (const step of given || []) at(step, 'event', 'event-definition', 'name');
   };
+  // One projection body – top-level, or one a group owns.
+  const projectionSlots_ = (projection) => {
+    if (!projection || typeof projection !== 'object') return;
+    at(projection, 'valueType', 'custom-type-definition', 'type');
+    tagLiteralSlots(projection.tags);
+    typeSlots(projection.arguments);
+    for (const handler of projection.handlers || []) at(handler, 'event', 'event-definition', 'name');
+    // A derived predicate names the projections it reads. `derived` is
+    // read raw rather than through `derivedOf`, so a body carrying both
+    // a script and a predicate still tracks the names it holds.
+    for (const operand of derivedOperands(projection.derived)) {
+      if (operand && typeof operand === 'object' && operand.projection !== undefined) {
+        projectionAt(operand, 'projection');
+        tagLiteralSlots(operand.tags);
+      }
+    }
+  };
 
   switch (kind) {
     case 'custom-type-definition':
@@ -1076,53 +1215,29 @@ function forEachReferenceSlot(kind, name, body, slot) {
     case 'event-definition':
       typeSlots(body.properties);
       break;
-    case 'entity-definition':
-      // A property is a binding `{name, projection}`: everything the
-      // fold needs lives on the projection it names, so the binding
-      // references exactly one thing.
-      for (const p of body.properties || []) at(p, 'projection', 'projection-definition', 'name');
-      // An entity references its own derived identifier by name –
-      // whatever it currently resolves to, tracking or overridden –
-      // which is what lets renaming or removing that value type go
-      // through the same generic machinery as any property type.
-      // Writing moves only an *explicit* `identifierType`: while it is
-      // absent (still tracking `<name>Id`), recomputing the default
-      // off the entity's own name is what `idTypeOf` already does.
-      slot('custom-type-definition', {
-        flavor: 'name',
-        get: () => body.identifierType || (name ? name + 'Id' : undefined),
-        set: (v) => { if (body.identifierType !== undefined) body.identifierType = v; },
-      });
+    case 'group-definition':
+      // Its tag's type, and everything its projections name.
+      at(groupTagOf(body), 'tagType', 'custom-type-definition', 'type');
+      for (const inner of groupProjections(body)) projectionSlots_(inner);
       break;
     case 'projection-definition':
-      at(body, 'valueType', 'custom-type-definition', 'type');
-      tagLiteralSlots(body.tags);
-      typeSlots(body.arguments);
-      for (const handler of body.handlers || []) at(handler, 'event', 'event-definition', 'name');
-      // A derived predicate names the projections it reads. `derived`
-      // is read raw rather than through `derivedOf`, so a body carrying
-      // both a script and a predicate still tracks the names it holds.
-      for (const operand of derivedOperands(body.derived)) {
-        if (operand && typeof operand === 'object' && operand.projection !== undefined) {
-          at(operand, 'projection', 'projection-definition', 'name');
-          tagLiteralSlots(operand.tags);
-        }
-      }
+      projectionSlots_(body);
       break;
     case 'command-definition':
       typeSlots(body.properties);
-      // Only `entity` and `projection` are references. An alias is
-      // local to its command and was the modeler's to choose.
+      // Only `group` and `projection` are references. An alias is local
+      // to its command and was the modeler's to choose.
       for (const binding of body.boundary || []) {
-        at(binding, 'entity', 'entity-definition', 'name');
-        at(binding, 'projection', 'projection-definition', 'name');
-        tagLiteralSlots(binding && binding.tags);
+        if (!binding) continue;
+        at(binding, 'group', 'group-definition', 'name');
+        projectionAt(binding, 'projection');
+        tagLiteralSlots(binding.tags);
       }
       // An inline read names its projection, and its literals their tag
       // types, wherever an operand sits.
       forEachCommandOperand(body, (operand) => {
         if (operandSource(operand) !== 'projection-read') return;
-        at(operand, 'projection', 'projection-definition', 'name');
+        projectionAt(operand, 'projection');
         tagLiteralSlots(operand.tags);
       });
       for (const emission of body.publishes || []) at(emission, 'name', 'event-definition', 'name');
@@ -1141,7 +1256,7 @@ function forEachReferenceSlot(kind, name, body, slot) {
       // Names the projection it is about, every event its Given is
       // written from, and the tag type of each tag it reads by. Its Then
       // is a bare value and its `arguments` are values too.
-      at(body, 'projection', 'projection-definition', 'name');
+      projectionAt(body, 'projection');
       givenSlots(body.given);
       tagLiteralSlots(body.tags);
       break;
@@ -1188,15 +1303,21 @@ function findReferencers(model, targetKind, targetName) {
 // ============================================================
 // Operands.
 //
-// Command operands:  {parameterName} | {alias, property?} | {enumMember} | literal
+// Command operands:  {parameterName} | {alias, property?, arguments?} | {enumMember} | literal
 //                    | {projection, tags?, arguments?} (a read in place)
 // Handler operands:  {eventProperty} | {currentValue} | {successor} | {enumMember} | literal
-// Derived operands:  {projection, tags?, arguments?} | {enumMember} | literal
+// Derived operands:  {projection, tags?, arguments?} | {parameterName} | {enumMember} | literal
 // Tag operands:      a command operand | {tagType, tagValue} | {each: operand}
 //
 // `{alias}` with no `property` reads a bound projection's value: a
-// projection holds exactly one value and has no name for it. On an
-// entity alias the property is required, since an entity has many.
+// projection holds exactly one value and has no name for it. On a group
+// alias the property is required – it is the local name of the one
+// projection of the group being read, `course.capacity` – and so are
+// the arguments that projection takes, `course.seatsOn(slot: s)`: they
+// belong to the projection, never to the group's read. A read in place
+// of a grouped projection names it qualified, `{projection:
+// 'Course.capacity', tags: {courseId: …}}`, spelled
+// `Course(courseId).capacity`.
 //
 // A projection declares its tags by name (8.0, `tags: [{name,
 // tagType}]`), and a read supplies one value per name – `tags:
@@ -1231,19 +1352,27 @@ function operandText(operand) {
       return operand.property
         ? `${operand.parameterName || '?'}.${operand.property}`
         : (operand.parameterName || '?');
-    case 'alias-property':
-      return operand.property
+    case 'alias-property': {
+      const read = operand.property
         ? `${operand.alias || '?'}.${operand.property}`
         : (operand.alias || '?');
+      const args = Object.values(operand.arguments || {});
+      return args.length ? `${read}(${args.map(operandText).join(', ')})` : read;
+    }
     case 'enum-member': return operand.enumMember || '?';
     case 'event-property': return `event.data.${operand.eventProperty || '?'}`;
     case 'current-value': return 'current';
     case 'successor': return `successor(${operandText(operand.successor)})`;
     // The values in the order they are held, which is the order the
-    // projection declares them in wherever a writer built the read.
+    // projection declares them in wherever a writer built the read. A
+    // grouped projection is read through its group – the tags on the
+    // group, the arguments on the projection: `Course(courseId).capacity`.
     case 'projection-read': {
-      const values = [...readTagOperands(operand), ...Object.values(operand.arguments || {})];
-      return `${operand.projection || '?'}(${values.map(operandText).join(', ')})`;
+      const tags = readTagOperands(operand).map(operandText);
+      const args = Object.values(operand.arguments || {}).map(operandText);
+      const split = splitQualifiedName(operand.projection);
+      if (split) return `${split.group}(${tags.join(', ')}).${split.local}${args.length ? `(${args.join(', ')})` : ''}`;
+      return `${operand.projection || '?'}(${[...tags, ...args].join(', ')})`;
     }
     case 'tag-literal': return `${operand.tagType || '?'}(${JSON.stringify(operand.tagValue)})`;
     case 'each': return `each ${operandText(operand.each)}`;
@@ -1426,7 +1555,7 @@ function derivedInputOf(model, operand, seen = [], owner = null) {
     return base ? { base, nullable: false } : null;
   }
   if (operandSource(operand) !== 'projection-read') return null;
-  const target = model['projection-definitions'][operand.projection];
+  const target = projectionsOf(model)[operand.projection];
   if (!target || target.isList) return null;
   const base = numericBaseOf(model, target.valueType);
   if (!base) return null;
@@ -1454,14 +1583,14 @@ function derivedResultBase(model, derived, owner = null) {
 // gates authoring them, never reading them: this is what lets a page
 // say "this model uses …" instead of hiding what is stored. The line
 // is drawn at what the examples on dcb.events need, see
-// docs/research/2026-10-05-explicit-tags-and-aliases.md.
+// docs/research/2026-10-05-explicit-tags-and-aliases.md. Groups are not
+// on it: a naming device with no consistency meaning has nothing to
+// hide (docs/research/2026-10-28-groups-replace-entities.md). A grouped
+// projection that is scripted is found under its qualified name.
 const EXPERIMENTAL_FEATURES = {
-  entities: 'entities',
-  lifecycles: 'lifecycles',
   scripted: 'scripted projections',
   guards: 'guarded emissions',
   optional: 'optional reads',
-  excluding: 'excluding',
   currentValue: 'currentValue',
 };
 
@@ -1479,11 +1608,7 @@ function experimentalFeatures(model) {
     if (value.currentValue === true) return true;
     return Object.values(value).some(usesCurrentValue);
   };
-  for (const [name, body] of Object.entries(model['entity-definitions'] || {})) {
-    note('entities', name);
-    if (body && body.lifecycle) note('lifecycles', name);
-  }
-  for (const [name, body] of Object.entries(model['projection-definitions'] || {})) {
+  for (const [name, body] of Object.entries(projectionsOf(model))) {
     if (scriptOf(body)) note('scripted', name);
     if (!scriptOf(body) && usesCurrentValue(body && body.handlers)) note('currentValue', name);
   }
@@ -1491,9 +1616,7 @@ function experimentalFeatures(model) {
     if (!body) continue;
     for (const binding of body.boundary || []) {
       if (!binding) continue;
-      if (binding.entity !== undefined) note('entities', name);
       if (binding.isOptional) note('optional', name);
-      if (binding.excluding !== undefined && binding.excluding !== null) note('excluding', name);
     }
     if ((body.publishes || []).some((emission) => emission && (emission.when || []).length)) {
       note('guards', name);
@@ -1554,7 +1677,7 @@ function projectionTagParams(projection) {
 // The tag types one projection's query is narrowed by – the leaves of
 // its declared tag types, a record's tag-marked fields included.
 function projectionTagTypes(model, projectionName) {
-  const projection = model['projection-definitions'][projectionName];
+  const projection = projectionsOf(model)[projectionName];
   return uniq(projectionTagParams(projection)
     .flatMap((tag) => idLeavesOfType(model, tag.tagType).map((leaf) => leaf.identifierType)));
 }
@@ -1570,91 +1693,17 @@ function readTagOperands(read) {
   return readTagEntries(read).map(([, operand]) => operand);
 }
 
-// The projections some entity property binds. Those are read through
-// the entity (`course.capacity`), so a rule about one goes there.
-function entityBoundProjections(model) {
-  const bound = new Set();
-  for (const entity of Object.values(model['entity-definitions'] || {})) {
-    for (const property of (entity && entity.properties) || []) {
-      if (property && property.projection) bound.add(property.projection);
-    }
-  }
-  return bound;
-}
-
-// An entity property is a binding `{name, projection}` pointing at an
-// ordinary projection definition. This resolves one to the projection
-// it names – `{ binding, projection }`, either half null when the name
-// does not resolve – so every reader walks the reference the same way.
-function entityPropertyTarget(model, entityName, propertyName) {
-  const entity = model['entity-definitions'][entityName];
-  const binding = entity && (entity.properties || []).find((p) => p && p.name === propertyName);
-  if (!binding) return { binding: null, projection: null };
+// The read a group alias's member stands for: `course.capacity`, with
+// `course` bound as `Course(courseId)`, is `Course(courseId).capacity` –
+// the qualified projection, the binding's tags, the operand's own
+// arguments. Validation, the derived query and the fold all go through
+// this, so a member read and a read in place cannot disagree.
+function groupMemberRead(binding, operand) {
   return {
-    binding,
-    projection: model['projection-definitions'][binding.projection] || null,
+    projection: qualifiedProjectionName(binding.group, operand.property),
+    tags: (binding && binding.tags && typeof binding.tags === 'object' && !Array.isArray(binding.tags)) ? binding.tags : {},
+    arguments: (operand.arguments && typeof operand.arguments === 'object') ? operand.arguments : {},
   };
-}
-
-// An entity's designated lifecycle, resolved – or `null`, which is an
-// ordinary answer and not a defect: an entity need not have one.
-//
-// `lifecycle` names one of the entity's *own* property bindings. That
-// makes it a local name, like a command's alias, which is why it is not
-// a reference slot (nothing outside the entity can be renamed into or
-// out of it) and why `renameMember` moves it rather than
-// `rewriteReferences`.
-//
-// The one thing this resolver exists to flatten is that a lifecycle has
-// two spellings. `states` is what the thing can be in – an enum's
-// members, or `[false, true]` for the boolean two-state case – as
-// strings either way, so everything downstream (the machine, the
-// constraint reader, the diagram) treats the two identically and no
-// caller has to ask which spelling it got. `isBoolean` is there for the
-// one thing that genuinely differs: how a condition names a state.
-//
-// `null` also where the designation dangles, or names a projection that
-// is scripted, derived, a list, or typed something with no states to be
-// in. Each of those is reported as an advisory in its own right; this
-// just declines to invent a machine for it.
-function lifecycleOf(model, entityName) {
-  const entity = model['entity-definitions'][entityName];
-  const property = entity && entity.lifecycle;
-  if (!property || typeof property !== 'string') return null;
-  const { binding, projection } = entityPropertyTarget(model, entityName, property);
-  if (!binding || !projection) return null;
-  if (scriptOf(projection) || derivedOf(projection) || projection.isList) return null;
-  const isBoolean = projection.valueType === 'boolean';
-  const members = isBoolean ? [false, true] : enumMembersFor(model, projection.valueType);
-  if (!members) return null;
-  return {
-    entity: entityName,
-    property,
-    binding,
-    projection,
-    projectionName: binding.projection,
-    valueType: projection.valueType,
-    isBoolean,
-    states: members.map(String),
-  };
-}
-
-// Why `lifecycleOf` declined, for the one page that has to say so.
-// Kept beside it so the two can never drift into disagreeing about
-// what counts as a lifecycle.
-function lifecycleRefusal(model, entityName) {
-  const entity = model['entity-definitions'][entityName];
-  const property = entity && entity.lifecycle;
-  if (!property || typeof property !== 'string') return 'none';
-  const { binding, projection } = entityPropertyTarget(model, entityName, property);
-  if (!binding || !projection) return 'dangling';
-  if (scriptOf(projection)) return 'scripted';
-  if (derivedOf(projection)) return 'derived';
-  if (projection.isList) return 'list';
-  if (projection.valueType !== 'boolean' && !enumMembersFor(model, projection.valueType)) {
-    return 'stateless';
-  }
-  return null;
 }
 
 // What a bare literal of this type looks like at runtime – the shape an
@@ -1670,35 +1719,6 @@ function literalKindOf(model, typeName) {
   if (declared === 'integer' || declared === 'number') return 'number';
   if (declared === 'boolean') return 'boolean';
   return 'string';
-}
-
-// Every projection taking arguments that an entity alias is read
-// through – resolved through the property bindings – which is what
-// decides the arguments its binding has to supply.
-function argumentPropertiesRead(model, body, binding) {
-  const entity = model['entity-definitions'][binding.entity];
-  if (!entity) return [];
-  const found = [];
-  forEachCommandOperand(body, (operand) => {
-    if (operandSource(operand) !== 'alias-property' || operand.alias !== binding.alias) return;
-    const { projection } = entityPropertyTarget(model, binding.entity, operand.property);
-    if (projection && projectionSlots(projection).length && !found.includes(projection)) found.push(projection);
-  });
-  return found;
-}
-
-// The arguments a binding owes, gathered from everything it reads. Two
-// projections asking for the same name ask for the same value – they
-// are read at one instant, through one binding. The instance is never
-// an argument: it is the tag the binding reads by.
-function argumentsExpected(model, body, binding) {
-  const out = [];
-  for (const projection of argumentPropertiesRead(model, body, binding)) {
-    for (const argument of projectionSlots(projection)) {
-      if (!out.some((a) => a.name === argument.name)) out.push(argument);
-    }
-  }
-  return out;
 }
 
 // The operations that make sense for a projection's type. A scalar
@@ -1747,11 +1767,18 @@ function offersSuccessor(model, valueType) {
 // Walks every operand inside a command body – and into every inline
 // projection read (8.0), whose tags and arguments are operands in the
 // same scope: `CourseStatus(course.id)` names `course` exactly as a
-// rule does. A walker sees the read first, then what is inside it.
+// rule does – and into a group member's arguments, `course.seatsOn(s)`,
+// likewise. A walker sees the read first, then what is inside it.
 function forEachCommandOperand(body, outerVisit) {
   const visit = (operand, meta) => {
     outerVisit(operand, meta);
     if (operandSource(operand) === 'each') { visit(operand.each, meta); return; }
+    if (operandSource(operand) === 'alias-property') {
+      for (const [key, argument] of Object.entries(operand.arguments || {})) {
+        visit(argument, { ...meta, where: `${meta.where} (${operandText(operand)} argument ${key})`, tag: false });
+      }
+      return;
+    }
     if (operandSource(operand) !== 'projection-read') return;
     for (const [key, tag] of readTagEntries(operand)) {
       visit(tag, { ...meta, where: `${meta.where} (${operand.projection} tag ${key})`, tag: true });
@@ -1760,26 +1787,15 @@ function forEachCommandOperand(body, outerVisit) {
       visit(argument, { ...meta, where: `${meta.where} (${operand.projection} argument ${key})`, tag: false });
     }
   };
+  // A group binding gives its tag and nothing else: what it reads, and
+  // with which arguments, is said where a member is read.
   for (const binding of body.boundary || []) {
     if (!binding) continue;
-    if (binding.projection) {
-      for (const [key, operand] of readTagEntries(binding)) {
-        visit(operand, { where: `binding "${binding.alias || '?'}" (tag ${key})`, tag: true });
-      }
-      for (const [key, operand] of Object.entries(binding.arguments || {})) {
-        visit(operand, { where: `binding "${binding.alias || '?'}" (argument ${key})` });
-      }
-      continue;
+    for (const [key, operand] of readTagEntries(binding)) {
+      visit(operand, { where: `binding "${binding.alias || '?'}" (tag ${key})`, tag: true });
     }
-    visit(binding.id, { where: `boundary binding "${binding.alias || '?'}"` });
-    if (binding.excluding !== undefined) {
-      visit(binding.excluding, { where: `boundary binding "${binding.alias || '?'}" (excluding)` });
-    }
-    // An entity binding carries arguments for the same reason a
-    // projection binding does: a scripted property it reads may ask for
-    // values only the command has.
     for (const [key, operand] of Object.entries(binding.arguments || {})) {
-      visit(operand, { where: `boundary binding "${binding.alias || '?'}" (argument ${key})` });
+      visit(operand, { where: `binding "${binding.alias || '?'}" (argument ${key})` });
     }
   }
   const visitCondition = (condition, where) => {
@@ -1814,11 +1830,13 @@ function forEachCommandOperand(body, outerVisit) {
 // DCB derivation.
 //
 // A command's boundary *is* its dynamic consistency boundary, and
-// holds every read. An entity binding contributes one query item: its
-// tag, restricted to the event types reachable through the properties
-// the conditions actually read. A projection read contributes one
-// item too: the tags it declares, with the values the read gives them –
-// none at all for an untagged one – and the event types it handles.
+// holds every read. A projection read contributes one query item: the
+// tags it declares, with the values the read gives them – none at all
+// for an untagged one – and the event types it handles. A group
+// binding contributes exactly what its members are read for: each
+// projection of the group a rule, a guard or an emission reads is that
+// read (`groupMemberRead`), and one nobody reads is no part of the
+// query – the group is a name, not a boundary.
 //
 // Items carry `tags` rather than one tag because a read may name
 // several. Tags within an item are ANDed; the items themselves are
@@ -1834,16 +1852,16 @@ function resolveOperandType(operand, { boundary, commandProperties, model }) {
     if (!binding) return null;
     if (binding.projection) {
       // A projection holds one value, so the alias alone names it.
-      const projection = model['projection-definitions'][binding.projection];
+      const projection = projectionsOf(model)[binding.projection];
       if (!projection || operand.property) return null;
       return { propertyType: projection.valueType, isList: !!projection.isList };
     }
-    const { projection } = entityPropertyTarget(model, binding.entity, operand.property);
+    if (binding.group === undefined || !operand.property) return null;
+    // A member is the group's projection of that name. A scripted one
+    // is no different here: `valueType` and `isList` describe the value
+    // a condition reads, whatever the code keeps to arrive at it.
+    const projection = projectionsOf(model)[qualifiedProjectionName(binding.group, operand.property)];
     if (!projection) return null;
-    // A property is a binding, so its type is the bound projection's.
-    // A scripted projection is no different here: `valueType` and
-    // `isList` describe the value a condition reads, whatever shape the
-    // code carries internally to arrive at it.
     return { propertyType: projection.valueType, isList: !!projection.isList };
   }
   if (source === 'tag-literal') {
@@ -1857,7 +1875,7 @@ function resolveOperandType(operand, { boundary, commandProperties, model }) {
   // An inline read holds its projection's value, the same as an alias
   // bound to it does.
   if (source === 'projection-read') {
-    const projection = model['projection-definitions'][operand.projection];
+    const projection = projectionsOf(model)[operand.projection];
     return projection ? { propertyType: projection.valueType, isList: !!projection.isList } : null;
   }
   if (source === 'parameter') {
@@ -1904,7 +1922,7 @@ function predicatesForType(resolved, model) {
     return ['equals', 'equalsAny', 'lessThan', 'lessThanOrEquals', 'greaterThan', 'greaterThanOrEquals',
       'startsWith', 'endsWith'];
   }
-  // Enum, id and composite types (custom or entity-derived): nothing
+  // Enum, id and composite types: nothing
   // but identity means anything without a declared ordering –
   // `equalsAny` is that same identity, taken against each entry of a
   // literal list, so it is admitted wherever `equals` is (and, like
@@ -1956,21 +1974,13 @@ function operandIsPlural(model, body, operand) {
   return !!source && isFannedOut(model, body, source);
 }
 
-// The value an entity binding is read by, its `each` unwrapped – what
-// coverage compares and what a chain's root is found through.
-function entityIdOperand(binding) {
-  const id = binding && binding.id;
-  return operandSource(id) === 'each' ? id.each : id;
-}
-
-// A read fans out where it says so: a projection read at the tag that
-// is `each …`, an entity read when its identifier is (`Course(each
-// student.subscribedCourseIds)`). The list it fans over may itself be
-// read off a plural alias – a list of lists, which flattens.
+// A read fans out where it says so: a projection read, or a group's,
+// at the tag that is `each …` (`Course(each student.subscribedCourseIds)`).
+// The list it fans over may itself be read off a plural alias – a list
+// of lists, which flattens.
 function isFannedOut(model, body, binding) {
   if (!binding) return false;
-  if (binding.projection) return !!readFanTag(binding);
-  return operandSource(binding.id) === 'each';
+  return !!readFanTag(binding);
 }
 
 // The list an operand is quantified over, as an identity string, or
@@ -1982,9 +1992,8 @@ function isFannedOut(model, body, binding) {
 function bindingFanRoot(model, body, binding, seen = []) {
   if (!binding || !isFannedOut(model, body, binding)) return null;
   if (seen.includes(binding.alias)) return null;
-  // What it fans over: the `each` of a projection read's tag, or of an
-  // entity's identifier.
-  const over = binding.projection ? readFanTag(binding).each : entityIdOperand(binding);
+  // What it fans over: the `each` of its tag.
+  const over = readFanTag(binding).each;
   if (operandSource(over) === 'parameter') {
     return `parameter:${over.parameterName}`;
   }
@@ -2146,7 +2155,7 @@ function tagOperandType(model, body, operand) {
 // of each declared tag type, with the value in the caller's terms
 // (`CourseId:courseId`). A tag the read leaves out shows as `?`.
 function readTagTexts(model, body, read) {
-  const projection = model['projection-definitions'][read && read.projection];
+  const projection = projectionsOf(model)[read && read.projection];
   const held = (read && read.tags && typeof read.tags === 'object') ? read.tags : {};
   return uniq(projectionTagParams(projection).flatMap((tag) => {
     const operand = held[tag.name];
@@ -2161,7 +2170,7 @@ function readTagTexts(model, body, read) {
 // tags (8.0): `[['CourseId']]`, or `[[]]` for an untagged one. Kept as
 // a list of sets because that is what every caller asks about.
 function projectionReadTagSets(model, projectionName) {
-  if (!model['projection-definitions'][projectionName]) return [];
+  if (!projectionsOf(model)[projectionName]) return [];
   return [[...projectionTagTypes(model, projectionName)].sort()];
 }
 
@@ -2175,7 +2184,7 @@ function projectionReadTagSets(model, projectionName) {
 // answers for itself.
 function readTagsMissing(model, projectionName, tagTypes = projectionTagTypes(model, projectionName)) {
   const out = [];
-  if (derivedOf(model['projection-definitions'][projectionName])) return out;
+  if (derivedOf(projectionsOf(model)[projectionName])) return out;
   for (const eventName of projectionHandledTypes(model, projectionName)) {
     const event = model['event-definitions'][eventName];
     if (!event) continue;
@@ -2186,32 +2195,12 @@ function readTagsMissing(model, projectionName, tagTypes = projectionTagTypes(mo
   return out;
 }
 
-// The tag(s) an entity binding contributes – one per leaf of the
-// entity's own derived identifier, scalar or composite alike.
-function entityBindingTags(model, entityName, idOperand, excludingOperand, fannedOut) {
-  if (operandSource(idOperand) === 'each') idOperand = idOperand.each;
-  const leaves = idLeavesOfType(model, idTypeOf(model, entityName));
-  if (!leaves.length) {
-    // An unknown entity mid-edit has no derived identifier to look up –
-    // fall back to its bare name so a body still being typed renders
-    // something rather than nothing.
-    return [`${entityName}:${plannedTagValue(idOperand, operandText(idOperand), fannedOut)}`];
-  }
-  return leaves.map((leaf) => {
-    const shownValue = operandText(operandForLeaf(idOperand, leaf));
-    const shownExcluding = excludingOperand !== undefined
-      ? operandText(operandForLeaf(excludingOperand, leaf)) : null;
-    const shown = fannedOut && shownExcluding !== null ? `${shownValue} except ${shownExcluding}` : shownValue;
-    return renderTag(identifierTypeOf(model, leaf.identifierType), plannedTagValue(idOperand, shown, fannedOut));
-  });
-}
-
 // The event types a projection's query covers: its handlers' events –
 // or, for a derived one, the union of its operands', walked
 // recursively. `seen` stops a cycle from recursing forever; the cycle
 // itself is the advisory's (and evaluation's) to report.
 function projectionHandledTypes(model, projectionName, seen = []) {
-  const projection = model['projection-definitions'][projectionName];
+  const projection = projectionsOf(model)[projectionName];
   if (!projection || seen.includes(projectionName)) return [];
   const derived = derivedOf(projection);
   if (!derived) {
@@ -2236,7 +2225,7 @@ function projectionHandledTypes(model, projectionName, seen = []) {
 // would miss the registration. `seen` stops a cycle, which the advisory
 // and evaluation report.
 function foldedReads(model, read, seen = []) {
-  const projection = model['projection-definitions'][read.projection];
+  const projection = projectionsOf(model)[read.projection];
   const derived = projection && derivedOf(projection);
   if (!derived) return [{ read, via: seen.length ? read.projection : null }];
   if (seen.includes(read.projection)) return [];
@@ -2291,7 +2280,7 @@ function deriveDcb(model, body) {
     if (!binding) continue;
 
     if (binding.projection) {
-      const projection = model['projection-definitions'][binding.projection];
+      const projection = projectionsOf(model)[binding.projection];
       if (!projection) continue;
       // The projection declares its tags and the read gives their
       // values, so the query is written from both – one tag per scalar
@@ -2301,73 +2290,7 @@ function deriveDcb(model, body) {
       items.push(...readItems(model, body, binding, { alias: binding.alias }));
       continue;
     }
-
-    const readProperties = new Set();
-    forEachCommandOperand(body, (operand) => {
-      if (operandSource(operand) === 'alias-property' && operand.alias === binding.alias
-          && operand.property) {
-        readProperties.add(operand.property);
-      }
-    });
-    // The boundary binding's own id operand is not a read of the entity.
-    const entity = model['entity-definitions'][binding.entity];
-    const types = new Set();
-    // A derived property is read the way a derived projection is
-    // (`foldedReads`): each projection it folds, under that one's own
-    // tags. Those read by the instance's identifier alone share the
-    // entity's item; any other – untagged, a tag literal, a second tag –
-    // is a query of its own. ANDing it with the instance's tag would
-    // leave out events the decision depends on.
-    const apart = [];
-    if (entity) {
-      for (const property of entity.properties || []) {
-        if (!property || !readProperties.has(property.name)) continue;
-        const projection = model['projection-definitions'][property.projection];
-        const [tag] = projectionTagParams(projection);
-        if (!derivedOf(projection) || !tag) {
-          for (const type of projectionHandledTypes(model, property.projection)) types.add(type);
-          continue;
-        }
-        for (const { read } of foldedReads(model, { projection: property.projection, tags: { [tag.name]: binding.id }, arguments: binding.arguments || {} })) {
-          const held = Object.values((read.tags && typeof read.tags === 'object') ? read.tags : {});
-          if (held.length === 1 && held[0] === binding.id) {
-            for (const type of projectionHandledTypes(model, read.projection)) types.add(type);
-          } else {
-            apart.push({ read, property: property.name });
-          }
-        }
-      }
-    }
-    const fannedOut = isFannedOut(model, body, binding);
-    const apartItems = [];
-    const seenApart = new Set();
-    for (const { read, property } of apart) {
-      const item = {
-        alias: binding.alias,
-        via: read.projection,
-        fannedOut: !!readFanTag(read),
-        tags: readTagTexts(model, body, read),
-        types: projectionHandledTypes(model, read.projection).sort(),
-        readProperties: [property],
-      };
-      const key = JSON.stringify([item.tags, item.types, item.fannedOut]);
-      if (seenApart.has(key)) continue;
-      seenApart.add(key);
-      apartItems.push(item);
-    }
-    // The instance's own item stays unless every property read went
-    // elsewhere: with no types it would match every event tagged by
-    // the instance, a read nothing here makes.
-    if (types.size || !apartItems.length) {
-      items.push({
-        alias: binding.alias,
-        tags: entityBindingTags(model, binding.entity, binding.id, binding.excluding, fannedOut),
-        fannedOut,
-        types: [...types].sort(),
-        readProperties: [...readProperties].sort(),
-      });
-    }
-    items.push(...apartItems);
+    if (binding.group !== undefined) items.push(...groupBindingItems(model, body, binding));
   }
 
   // Every inline read (8.0) is a query item too, once however often it
@@ -2394,6 +2317,41 @@ function deriveDcb(model, body) {
   }
 
   return { items, writes: uniq(writes) };
+}
+
+// What a group binding contributes: each member read, once per distinct
+// spelling (`course.capacity` written in two rules is one read), as the
+// read it stands for – and the items those reads share a tag set with
+// merged into one, `readProperties` naming the members behind it, so a
+// course read for its status and its capacity is one item of both
+// types, as it always was. What a derived member folds by other tags –
+// a limit kept for all courses – keeps an item of its own, under that
+// projection's tags (`via`); never ANDed with the instance's.
+function groupBindingItems(model, body, binding) {
+  const reads = new Map();
+  forEachCommandOperand(body, (operand) => {
+    if (operandSource(operand) !== 'alias-property' || operand.alias !== binding.alias || !operand.property) return;
+    const key = JSON.stringify(canonicalOperand({ property: operand.property, arguments: operand.arguments }));
+    if (!reads.has(key)) reads.set(key, operand);
+  });
+  const merged = new Map();
+  for (const operand of reads.values()) {
+    const read = groupMemberRead(binding, operand);
+    if (!projectionsOf(model)[read.projection]) continue;
+    for (const item of readItems(model, body, read, { alias: binding.alias, group: binding.group })) {
+      const key = JSON.stringify([item.tags, item.fannedOut]);
+      const into = merged.get(key);
+      if (!into) {
+        const { projection, ...rest } = item;
+        merged.set(key, { ...rest, types: [...item.types], readProperties: [operand.property] });
+        continue;
+      }
+      if (into.via !== item.via) delete into.via;
+      into.types = uniq([...into.types, ...item.types]).sort();
+      if (!into.readProperties.includes(operand.property)) into.readProperties.push(operand.property);
+    }
+  }
+  return [...merged.values()].map((item) => ({ ...item, readProperties: item.readProperties.sort() }));
 }
 
 // Every inline projection read in a command, once per distinct
@@ -2482,19 +2440,18 @@ function mapConditionOperands(body, replace) {
   }
 }
 
-// The operands one binding is read with – its identifier, exclusion,
-// tags and arguments.
+// The operands one binding is read with – its tags and arguments.
 function bindingOperands(binding) {
   if (!binding) return [];
-  return binding.projection
-    ? [...readTagOperands(binding), ...Object.values(binding.arguments || {})]
-    : [binding.id, binding.excluding, ...Object.values(binding.arguments || {})];
+  return [...readTagOperands(binding), ...Object.values(binding.arguments || {})];
 }
 
-// The aliases an operand names, looking into inline reads.
+// The aliases an operand names, looking into inline reads and into a
+// group member's arguments.
 function operandAliases(operand, out = []) {
   if (operandSource(operand) === 'alias-property') {
     if (!out.includes(operand.alias)) out.push(operand.alias);
+    for (const argument of Object.values(operand.arguments || {})) operandAliases(argument, out);
   } else if (operandSource(operand) === 'each') {
     operandAliases(operand.each, out);
   } else if (operandSource(operand) === 'projection-read') {
@@ -2504,8 +2461,8 @@ function operandAliases(operand, out = []) {
 }
 
 // The aliases a binding waits for – every binding its own operands
-// name, inline reads included. A graph, not a tree: `id` and
-// `excluding` may point somewhere different, and arguments may point at
+// name, inline reads included. A graph, not a tree: a tag and an
+// argument may point somewhere different, and arguments may point at
 // several bindings at once.
 function bindingDependsOn(body, binding) {
   if (!binding) return [];
@@ -2519,7 +2476,9 @@ function bindingDependsOn(body, binding) {
 // own tags wait for, and anything else waits for nothing.
 function operandDepth(operand, roundOf) {
   switch (operandSource(operand)) {
-    case 'alias-property': return roundOf.get(operand.alias) || 0;
+    case 'alias-property':
+      return Math.max(roundOf.get(operand.alias) || 0,
+        ...Object.values(operand.arguments || {}).map((o) => operandDepth(o, roundOf)));
     case 'each': return operandDepth(operand.each, roundOf);
     case 'projection-read': {
       const inner = [...readTagOperands(operand), ...Object.values(operand.arguments || {})];
@@ -2593,7 +2552,7 @@ function boundarySummary(model, body) {
     : `reads ${anyType ? 'any type' : count(types.length, 'type')}, `
       + `${tags.length ? count(tags.length, 'tag') : 'no tag'}`
       + (queries.length > 1 ? `, in ${queries.length} queries` : '');
-  return { items, queries, types, tags, anyType, writes: dcb.writes, coverage: coverageIssues(model, body), words };
+  return { items, queries, types, tags, anyType, writes: dcb.writes, words };
 }
 
 // The boundary as the store is asked it (_DCB queries, shown_), and the
@@ -2643,7 +2602,7 @@ function commandPlan(summary) {
 // values in place of the placeholders (`readItems`, which this is). A
 // fold that handles no event reads nothing, so it has no call.
 function projectionPlan(model, projectionName) {
-  const projection = model['projection-definitions'][projectionName];
+  const projection = projectionsOf(model)[projectionName];
   if (!projection) return { calls: [] };
   const ownParameters = (list) => Object.fromEntries((list || [])
     .filter((parameter) => parameter && parameter.name)
@@ -2660,103 +2619,6 @@ function projectionPlan(model, projectionName) {
   };
 }
 
-// Every entity-id property of every published event must resolve to a
-// binding in the boundary – a command may not write a tag it did not
-// consult. A value read from a projection binding is exempt when that
-// projection handles the event being published: its query then already
-// covers every event that could have issued the value, and a freshly
-// minted identifier has no history to consult.
-//
-// The exemption ignores the partition on purpose. A projection scoped
-// so narrowly that two partitions can mint the same identifier is a
-// modelling error of the same class as handling the wrong event, and
-// catching it is not this check's job.
-function mintsFromProjection(model, body, operand, eventName) {
-  let projectionName = null;
-  if (operandSource(operand) === 'projection-read') projectionName = operand.projection;
-  else if (operandSource(operand) === 'alias-property' && !operand.property) {
-    const binding = (body.boundary || []).find((b) => b && b.alias === operand.alias);
-    projectionName = binding && binding.projection;
-  }
-  const projection = projectionName && model['projection-definitions'][projectionName];
-  return !!projection && (projection.handlers || []).some((h) => h && h.event === eventName);
-}
-
-// Every entity tag an emission writes, with the operand that identifies
-// the instance and where that operand came from. One walk, because two
-// things are decided by it: what the coverage advisory says, and which
-// reads a tag keeps alive. They must not be allowed to disagree about
-// what a read is for.
-//
-// **Asserted against derived.** A tag whose value came straight off the
-// command payload is asserted by the caller – the caller says *which*
-// student, and this command's decision never depended on that student's
-// state. A tag whose value was *derived*, read off some instance this
-// command bound, is a different claim entirely: it says "this is the
-// course that student is in", which is only true of the state that was
-// read. The second wants covering; the first does not.
-function emittedTagRequirements(model, body) {
-  const out = [];
-  for (const emission of body.publishes || []) {
-    if (!emission) continue;
-    const event = model['event-definitions'][emission.name];
-    if (!event) continue;
-    for (const property of event.properties || []) {
-      const operand = (emission.parameters || {})[property.name];
-      // An optional property with no mapping publishes the explicit
-      // null and writes no tag – there is no instance to have
-      // consulted, so there is nothing for the boundary to cover.
-      if (operand === undefined && property.isOptional && !property.isList) continue;
-      if (mintsFromProjection(model, body, operand, emission.name)) continue;
-      const asserted = operand !== undefined && operandSource(operand) === 'parameter';
-      // Walked to the tag *leaves* the event lists, not the property's
-      // surface: a property typed `Item[]` writes one tag per element,
-      // and each names its own instance.
-      for (const leaf of eventTagLeaves(model, event).filter((l) => l.property === property.name)) {
-        // A leaf whose identifier type is standalone – a component with
-        // no entity of its own – names no entity instance, so there is
-        // nothing here to consult or to keep alive.
-        const ownerEntity = entityOfIdType(model, leaf.identifierType);
-        if (!ownerEntity) continue;
-        const required = leaf.field === null
-          ? operand
-          : (asserted ? { parameterName: operand.parameterName, property: leaf.field } : undefined);
-        out.push({
-          event: emission.name,
-          property: leaf.field === null ? property.name : `${property.name}.${leaf.field}`,
-          entity: ownerEntity,
-          operand: required === undefined ? operand : required,
-          required,
-          asserted,
-        });
-      }
-    }
-  }
-  return out;
-}
-
-// The tags this command writes about instances it never looked at.
-//
-// Advice, never a refusal, and deliberately narrow: writing an
-// uncovered tag is not unsound. The append condition is the union of
-// the bindings' queries, so a `Student:s1` tag on the event *this*
-// command writes is what makes every *other* command that read
-// `Student:s1` conflict with it – which holds whether or not this one
-// read it. What an uncovered tag gives up is only this command's own
-// protection against concurrent change to that instance, and where the
-// decision never depended on the instance's state there was nothing to
-// protect. So a tag the caller asserted passes in silence; a derived
-// one – a claim about state this command read – is what gets flagged.
-function coverageIssues(model, body) {
-  return emittedTagRequirements(model, body).filter((requirement) => {
-    if (requirement.asserted) return false;
-    if (requirement.required === undefined) return true;
-    return !(body.boundary || []).some((binding) => binding
-      && binding.entity === requirement.entity
-      && sameOperand(entityIdOperand(binding), requirement.required));
-  });
-}
-
 // ---------- what consults a read ----------
 //
 // A boundary binding is no longer authored. It comes into existence as
@@ -2769,19 +2631,18 @@ function coverageIssues(model, body) {
 // the invariant that every binding is consulted by something, which
 // reference counting gives exactly.
 //
-// The first five reasons are the five places an alias can be named.
-// Four are operands (`forEachCommandOperand` walks the same set); the
-// fifth is write coverage, which can demand a binding no operand
-// mentions – but only for a *derived* tag value, never for one the
-// caller asserted (see `emittedTagRequirements`).
+// The first four reasons are the four places an alias can be named, all
+// of them operands (`forEachCommandOperand` walks the same set). Write
+// coverage was a fifth while entities named the instance an emitted tag
+// wrote; a group names nothing of the kind, so it went with them.
 //
-// The sixth names no alias at all: a binding to a projection that
-// takes no tags is the read of every event that projection folds, so
-// it serialises the command against all of them – the way a command
-// with no conditions is made strictly serial, which the schema
-// promises. Nothing else need consult it for it to matter, so it is
-// never pruned as unreferenced.
-const REFERENCE_REASONS = ['rule', 'guard', 'emission', 'coverage', 'chain', 'serialisation'];
+// The last names no alias at all: a binding to a projection that takes
+// no tags is the read of every event that projection folds, so it
+// serialises the command against all of them – the way a command with
+// no conditions is made strictly serial, which the schema promises.
+// Nothing else need consult it for it to matter, so it is never pruned
+// as unreferenced.
+const REFERENCE_REASONS = ['rule', 'guard', 'emission', 'chain', 'serialisation'];
 
 function bindingReferences(model, body) {
   const found = new Map();
@@ -2815,13 +2676,11 @@ function bindingReferences(model, body) {
   }
   // A binding reached *through* another is the chain: `theirs` is why
   // `students` is read, and `students` is consulted by nothing else.
-  // `excluding` and `arguments` count for the same reason `id` does –
-  // they are operands resolved in the same scope, which is what
-  // `forEachCommandOperand` already treats them as.
+  // `arguments` count for the same reason tags do – they are operands
+  // resolved in the same scope, which is what `forEachCommandOperand`
+  // already treats them as.
   for (const binding of body.boundary || []) {
     if (!binding) continue;
-    noteOperand(binding.id, 'chain');
-    noteOperand(binding.excluding, 'chain');
     for (const operand of readTagOperands(binding)) noteOperand(operand, 'chain');
     for (const operand of Object.values(binding.arguments || {})) {
       noteOperand(operand, 'chain');
@@ -2829,24 +2688,8 @@ function bindingReferences(model, body) {
   }
   for (const binding of body.boundary || []) {
     if (!binding || binding.projection === undefined) continue;
-    const projection = (model['projection-definitions'] || {})[binding.projection];
+    const projection = projectionsOf(model)[binding.projection];
     if (projection && !projectionTagParams(projection).length) note(binding.alias, 'serialisation');
-  }
-  // Coverage names no alias – it names the instance an emitted tag
-  // writes, and is satisfied by whichever binding consults it. So the
-  // binding a coverage issue *would* complain about is the one the
-  // emission keeps alive.
-  // Only a *derived* tag keeps a read alive, which is the same line
-  // `coverageIssues` draws: a tag the caller asserted does not demand a
-  // read, so a read held up by nothing else is unreferenced and goes.
-  for (const requirement of emittedTagRequirements(model, body)) {
-    if (requirement.asserted || requirement.required === undefined) continue;
-    for (const binding of body.boundary || []) {
-      if (binding && binding.entity === requirement.entity
-        && sameOperand(entityIdOperand(binding), requirement.required)) {
-        note(binding.alias, 'coverage');
-      }
-    }
   }
   return found;
 }
@@ -2989,6 +2832,15 @@ function renameDcbModel(id, name) {
 
 // Definitions ------------------------------------------------------------
 
+// The stored definitions of one kind – refused for a kind this build
+// does not have (an entity, since 11.0) rather than failing on it.
+function collectionOfKind(model, kind) {
+  if (!Object.prototype.hasOwnProperty.call(DEF_COLLECTIONS, kind)) {
+    throw new DomainError(`"${kind}" is no kind of definition this playground has.`);
+  }
+  return model[DEF_COLLECTIONS[kind]];
+}
+
 function getCtxOrThrow(modelId) {
   const model = projectState()[modelId];
   if (!model) throw new DomainError('Model does not exist (it may have been deleted).');
@@ -3004,7 +2856,10 @@ function getCtxOrThrow(modelId) {
 // *error* outcome where it must) instead of being refused at the door.
 function validateReferences(model, kind, name, body) {
   const resolved = withPending(model, kind, name, body);
-  const refs = computeReferences(resolved, kind, name, body);
+  // What a group's projections name is checked on each of them, under
+  // its qualified name (`checkedDefinitions`); said on the group as well,
+  // every dangling handler would be reported twice.
+  const refs = kind === 'group-definition' ? emptyRefs() : computeReferences(resolved, kind, name, body);
   for (const targetKind of DEF_KINDS) {
     const coll = resolved[DEF_COLLECTIONS[targetKind]];
     for (const targetName of refs[targetKind]) {
@@ -3040,7 +2895,7 @@ function validateReferences(model, kind, name, body) {
   if (kind === 'command-definition') checkPropertyTypes(body.properties, 'Command');
 
   if (kind === 'custom-type-definition') validateCustomTypeBody(resolved, name, body);
-  if (kind === 'entity-definition') validateEntityBody(resolved, name, body);
+  if (kind === 'group-definition') validateGroupBody(resolved, name, body);
   if (kind === 'projection-definition') validateProjectionBody(resolved, name, body);
   if (kind === 'command-definition') validateCommandBody(resolved, body);
   if (kind === 'scenario-definition') validateScenarioBody(resolved, body);
@@ -3123,9 +2978,12 @@ function commandRejections(body) {
   return outcomes;
 }
 
+// A grouped projection is advised under its qualified name, as the body
+// it amounts to (`projectionsOf`); its local name's idiom is its group's
+// to advise, so the PascalCase check passes it by.
 function definitionAdvisories(model, kind, name, body) {
   const messages = [];
-  if (!isIdKeyed(kind) && !PASCAL_RE.test(name)) {
+  if (!isIdKeyed(kind) && !splitQualifiedName(name) && !PASCAL_RE.test(name)) {
     messages.push(`${humanize(kind)} name "${name}" is not PascalCase (e.g. "CourseDefined").`);
   }
   try {
@@ -3160,15 +3018,36 @@ function modelAdvisories(model) {
     return advisoriesCache.found;
   }
   const found = [];
-  for (const kind of ADVISORY_KINDS) {
-    for (const [name, body] of Object.entries(model[DEF_COLLECTIONS[kind]] || {})) {
-      for (const message of definitionAdvisories(model, kind, name, body)) {
-        found.push({ kind, name, message });
-      }
+  for (const { kind, name, body } of checkedDefinitions(model, ADVISORY_KINDS)) {
+    for (const message of definitionAdvisories(model, kind, name, body)) {
+      found.push({ kind, name, message });
     }
   }
   advisoriesCache = { revision: logRevisionNow(), model, found };
   return found;
+}
+
+// Every definition a check reads, as `{kind, name, body}`: each stored
+// one of `kinds`, and – right after its group – every grouped
+// projection, as a `projection-definition` under its qualified name and
+// in the body it amounts to. So a grouped projection is advised, and
+// blocks a run, exactly as a top-level one does.
+function checkedDefinitions(model, kinds) {
+  const out = [];
+  const view = projectionsOf(model);
+  for (const kind of kinds) {
+    for (const [name, body] of Object.entries(model[DEF_COLLECTIONS[kind]] || {})) {
+      out.push({ kind, name, body });
+      if (kind !== 'group-definition') continue;
+      for (const inner of groupProjections(body)) {
+        const qualified = qualifiedProjectionName(name, inner.name);
+        if (typeof inner.name === 'string' && view[qualified]) {
+          out.push({ kind: 'projection-definition', name: qualified, body: view[qualified] });
+        }
+      }
+    }
+  }
+  return out;
 }
 
 // What keeps a model from running anywhere but here, as `{kind, name,
@@ -3182,16 +3061,14 @@ function modelAdvisories(model) {
 // argument share a name – they would be one parameter.
 function executionBlockers(model, skipped = []) {
   const found = skipped.map(({ kind, name, reason }) => ({ kind, name, message: reason }));
-  for (const kind of DEF_KINDS) {
-    for (const [name, body] of Object.entries(model[DEF_COLLECTIONS[kind]] || {})) {
-      try {
-        validateReferences(model, kind, name, body);
-      } catch (error) {
-        found.push({ kind, name, message: error && error.message ? error.message : String(error) });
-      }
+  for (const { kind, name, body } of checkedDefinitions(model, DEF_KINDS)) {
+    try {
+      validateReferences(model, kind, name, body);
+    } catch (error) {
+      found.push({ kind, name, message: error && error.message ? error.message : String(error) });
     }
   }
-  for (const [name, body] of Object.entries(model['projection-definitions'] || {})) {
+  for (const [name, body] of Object.entries(projectionsOf(model))) {
     const tags = new Set(projectionTagParams(body).map((tag) => tag.name));
     for (const argument of body.arguments || []) {
       if (argument && tags.has(argument.name)) {
@@ -3252,13 +3129,19 @@ function typeArticle(word) {
 // place, which are the same read. `chained(operand, what)` lets a
 // binding add its own rule – a value from a binding below it.
 function readProblem(model, body, read, where, chained = () => null) {
-  const projection = model['projection-definitions'][read.projection];
+  const projection = projectionsOf(model)[read.projection];
   if (!projection) return `${where} reads "${read.projection}", which this model does not define.`;
   const label = `${where} reads ${read.projection}`;
+  return readTagsProblem(model, body, projectionTagParams(projection), read, label, chained)
+    || readArgumentsProblem(projection, read, label, chained);
+}
+
+// The tags half of `readProblem`, shared with a group binding, whose
+// one declared tag is its group's.
+function readTagsProblem(model, body, declared, read, label, chained = () => null) {
   if (read.tags !== undefined && (read.tags === null || typeof read.tags !== 'object' || Array.isArray(read.tags))) {
     return `${label} with tags that are not named – each value belongs to one of its tags.`;
   }
-  const declared = projectionTagParams(projection);
   const held = read.tags || {};
   for (const tag of declared) {
     if (!Object.prototype.hasOwnProperty.call(held, tag.name)) {
@@ -3283,6 +3166,15 @@ function readProblem(model, body, read, where, chained = () => null) {
     if (outside) return outside;
     const problem = tagOperandProblem(model, body, operand, tag);
     if (problem) return `${label}, which ${problem}`;
+  }
+  return null;
+}
+
+// The arguments half: the ones the projection takes, and no others.
+// A group member's are its own, `course.seatsOn(slot: s)`.
+function readArgumentsProblem(projection, read, label, chained = () => null) {
+  if (read.arguments !== undefined && (read.arguments === null || typeof read.arguments !== 'object' || Array.isArray(read.arguments))) {
+    return `${label} with arguments that are not named.`;
   }
   const slots = projectionSlots(projection);
   const supplied = Object.keys(read.arguments || {});
@@ -3312,7 +3204,7 @@ function readProblem(model, body, read, where, chained = () => null) {
 //   was just assigned. A script can tell the two apart (`tags`), so
 //   only a declared fold is held to it.
 function projectionTagProblem(model, projectionName) {
-  const projection = model['projection-definitions'][projectionName];
+  const projection = projectionsOf(model)[projectionName];
   const tagTypes = projectionTagTypes(model, projectionName);
   if (!projection || !tagTypes.length || derivedOf(projection)) return null;
   const label = `Projection "${projectionName}"`;
@@ -3339,8 +3231,8 @@ function projectionTagProblem(model, projectionName) {
 }
 
 // Handler validation. `target` is a projection body: `valueType`,
-// `isList`, `script` – an entity property is a binding to one, so
-// there is exactly one shape to validate.
+// `isList`, `script` – a grouped one included, so there is exactly one
+// shape to validate.
 function validateHandlers(model, label, target, handlers) {
   if (scriptOf(target)) return validateScriptedHandlers(model, label, handlers);
   const allowedOperations = operationsFor(model, target);
@@ -3571,8 +3463,8 @@ function validateInitialValue(model, label, body) {
   checkElement(value, `${label}'s initial value`);
 }
 
-// One projection – the one shape behind an entity property and a
-// standalone read alike: same handlers, same operations, same
+// One projection – the one shape behind a grouped projection and a
+// top-level one alike: same handlers, same operations, same
 // operands. It declares the tags it is read by (8.0), each named and
 // of a tag type; none at all is an untagged projection, which folds
 // the whole log – what a global numbering is.
@@ -3780,7 +3672,7 @@ function validateDerived(model, projectionName, body) {
     }
     if (source !== 'projection-read') continue;
 
-    const target = model['projection-definitions'][operand.projection];
+    const target = projectionsOf(model)[operand.projection];
     if (!target) {
       throw new DomainError(
         `${label} derives from "${operand.projection}", which this model does not define.`
@@ -3864,7 +3756,7 @@ function validateDerived(model, projectionName, body) {
   // alias property.
   const typeOfSide = (operand) => {
     if (operandSource(operand) === 'projection-read') {
-      const target = model['projection-definitions'][operand.projection];
+      const target = projectionsOf(model)[operand.projection];
       return target ? { type: target.valueType, isList: !!target.isList } : null;
     }
     if (operandSource(operand) === 'parameter') {
@@ -3942,7 +3834,7 @@ function validateDerived(model, projectionName, body) {
   }
 
   const visit = (name, trail) => {
-    const target = model['projection-definitions'][name];
+    const target = projectionsOf(model)[name];
     const inner = target && derivedOf(target);
     if (!inner) return;
     for (const operand of derivedOperands(inner)) {
@@ -3967,10 +3859,7 @@ function validateDerived(model, projectionName, body) {
 // A value type is scalar (an opaque JSON Schema) or composite (typed
 // fields) – never both and never neither. `isTag` is meaningful only
 // on the scalar form: a composite is never itself a tag, so it may not
-// combine with fields. An entity-owned value type carries one further
-// invariant, checked here rather than only at the point of change: it
-// must stay tag-bearing, since an entity that could not be tagged
-// could not be bound in a DCB query.
+// combine with fields.
 //
 // A composite's fields are singular, required and never composite
 // themselves. All three keep zipping honest: zipping correlates a
@@ -4038,102 +3927,69 @@ function validateCustomTypeBody(model, typeName, body) {
       }
     }
   }
-
-  const owner = entityOfIdType(model, typeName);
-  if (owner && !isTagBearing(model, typeName)) {
-    throw new DomainError(
-      `"${typeName}" is entity "${owner}"'s derived identifier – it must stay tag-bearing (a scalar ` +
-      'marked "represented as a tag", or a composite with at least one tag-marked field).'
-    );
-  }
 }
 
-// An entity's properties are bindings – `{name, projection}` – and an
-// instance reads each one by its identifier, the way a command reads
-// `CourseCapacity(courseId)`. So what binds is a projection tagged by
-// exactly that identifier; whether its events carry the tag is the
-// projection's own advisory.
-function validateEntityBody(model, entityName, body) {
-  if (body.identifierType !== undefined && !PASCAL_RE.test(body.identifierType)) {
+// A group: one partition tag, named and of a tag type, which its
+// projections inherit and so never declare; local names, lowerCamel and
+// each once; and a name no top-level projection has, since outside the
+// group both are read by that name. An empty group is legal – it is
+// where projections are moved into – and advised all the same. What a
+// grouped projection gets wrong is advised on it, under its qualified
+// name (`checkedDefinitions`).
+function validateGroupBody(model, groupName, body) {
+  const label = `Group "${groupName}"`;
+  if (Object.prototype.hasOwnProperty.call(model['projection-definitions'] || {}, groupName)) {
     throw new DomainError(
-      `Entity "${entityName}"'s identifierType "${body.identifierType}" must be PascalCase.`
+      `${label} has the name of a projection – a group and a top-level projection are both read by ` +
+      'their name, so one of them has to be renamed.'
     );
   }
-
-  const idType = body.identifierType || (entityName + 'Id');
+  const tag = groupTagOf(body);
+  if (!tag) {
+    throw new DomainError(`${label} declares no tag – its projections are all read by the one it declares.`);
+  }
+  if (!CAMEL_RE.test(tag.name || '')) {
+    throw new DomainError(`${label}'s tag is named "${tag.name}", which is not a camelCase name.`);
+  }
+  if (classifyType(model, tag.tagType).kind === 'unresolved') {
+    throw new DomainError(`${label}'s tag "${tag.name}" is typed "${tag.tagType}", which does not resolve in this model.`);
+  }
+  if (!isTagBearing(model, tag.tagType)) {
+    throw new DomainError(
+      `${label}'s tag "${tag.name}" is typed ${tag.tagType}, which is no tag type – nothing is tagged ` +
+      'by it, so no event would reach its projections.'
+    );
+  }
   const seen = new Set();
-  for (const property of body.properties || []) {
-    if (!property || !CAMEL_RE.test(property.name || '')) {
-      throw new DomainError(`Property name "${(property || {}).name}" must be camelCase.`);
-    }
-    if (seen.has(property.name)) throw new DomainError(`Entity declares property "${property.name}" twice.`);
-    seen.add(property.name);
-
-    const projection = model['projection-definitions'][property.projection];
-    if (!projection) {
+  for (const inner of groupProjections(body)) {
+    if (!CAMEL_RE.test(inner.name || '')) {
       throw new DomainError(
-        `Property "${property.name}" binds projection "${property.projection}", ` +
-        'which this model does not define.'
+        `${label} has a projection named "${inner.name}" – a grouped projection's name is local and ` +
+        `lowerCamel, read as ${groupName}.${groupLocalName(groupName, inner.name || 'name')}.`
       );
     }
-    // An instance reads each property by its own identifier, so what
-    // binds is a projection tagged by exactly that – one tag, of the
-    // entity's identifier type. Anything else would leave a tag the
-    // instance has no value for, or read it by the wrong key.
-    const tags = projectionTagParams(projection);
-    if (tags.length !== 1 || tags[0].tagType !== idType) {
+    if (seen.has(inner.name)) throw new DomainError(`${label} has two projections named "${inner.name}".`);
+    seen.add(inner.name);
+    if (inner.tags !== undefined && !(Array.isArray(inner.tags) && !inner.tags.length)) {
       throw new DomainError(
-        `Property "${property.name}" of ${entityName} binds "${property.projection}", which is ` +
-        (tags.length
-          ? `tagged by ${tags.map((tag) => `${tag.name}: ${tag.tagType}`).join(', ')}`
-          : 'untagged') +
-        ` – an instance reads its properties by its own identifier, so it binds a projection ` +
-        `tagged by one ${idType}.`
+        `${groupName}.${inner.name} declares tags of its own – a grouped projection is read by its ` +
+        `group's tag (${tag.name}: ${tag.tagType}) and by nothing else, so they are ignored. Drop them, ` +
+        'or move the projection out of the group.'
       );
     }
   }
-  if (body.identifierName !== undefined && !CAMEL_RE.test(body.identifierName)) {
-    throw new DomainError(
-      `Entity "${entityName}"'s identifierName "${body.identifierName}" must be camelCase.`
-    );
-  }
-
-  // The designation. An entity need not have one, and a lifecycle is an
-  // ordinary property in every other respect, so the only thing wrong
-  // here is a designation pointing at nothing – which is advisory, like
-  // every other dangling reference: the model loads and the properties
-  // still fold.
-  //
-  // Designating a property that *is* declared but whose states cannot be
-  // read – scripted, derived, a list, typed a bare string – is not a
-  // defect and is deliberately not advised. It is a legitimate model
-  // (`content-decisions-scripted` ships one) whose lifecycle simply
-  // cannot be drawn, so it is the Lifecycles page's business to say so
-  // and nobody else's. `lifecycleRefusal` is what it asks.
-  if (body.lifecycle !== undefined && body.lifecycle !== null) {
-    if (typeof body.lifecycle !== 'string' || !CAMEL_RE.test(body.lifecycle)) {
-      throw new DomainError(
-        `Entity "${entityName}" designates the lifecycle "${body.lifecycle}", which is not a ` +
-        'camelCase property name.'
-      );
-    }
-    if (!seen.has(body.lifecycle)) {
-      throw new DomainError(
-        `Entity "${entityName}" designates "${body.lifecycle}" as its lifecycle but declares no ` +
-        `property by that name. Nothing else breaks – the entity's own rules still read whatever ` +
-        'properties it has – but no lifecycle is drawn for it.'
-      );
-    }
+  if (!seen.size) {
+    throw new DomainError(`${label} has no projections yet – add one, or move one into it.`);
   }
 }
 
 function validateCommandBody(model, body) {
   const boundary = body.boundary || [];
   const aliases = new Set();
-  // Declaration order *is* the chain: a binding may take its identifier
-  // from an instance bound above it, never from one bound below. One
-  // left-to-right pass therefore both resolves the chain and makes a
-  // cycle impossible to write.
+  // Declaration order *is* the chain: a binding may take a tag from a
+  // read bound above it, never from one bound below. One left-to-right
+  // pass therefore both resolves the chain and makes a cycle impossible
+  // to write.
   const declaredAbove = [];
   for (const binding of boundary) {
     if (!CAMEL_RE.test(binding.alias || '')) {
@@ -4141,41 +3997,35 @@ function validateCommandBody(model, body) {
     }
     if (aliases.has(binding.alias)) throw new DomainError(`Boundary alias "${binding.alias}" is bound twice.`);
     aliases.add(binding.alias);
+    const chained = (operand, what) => {
+      for (const alias of operandAliases(operand)) {
+        if (alias === binding.alias) return `Boundary binding "${binding.alias}" takes ${what} from itself.`;
+        if (!declaredAbove.includes(alias)) {
+          return `Boundary binding "${binding.alias}" takes ${what} from "${operandText(operand)}", ` +
+            `but "${alias}" is not bound above it – a binding may only read what is declared earlier.`;
+        }
+      }
+      return null;
+    };
 
     // A projection binding is a read like any other, which is why it
-    // lives here: its arguments put it in the chain, and its query
-    // belongs in the append condition.
+    // lives here: its tags put it in the chain, and its query belongs in
+    // the append condition. A grouped projection may be bound too, by
+    // its qualified name – `Course(courseId).capacity`.
     if (binding.projection !== undefined) {
-      const projection = model['projection-definitions'][binding.projection];
+      const projection = projectionsOf(model)[binding.projection];
       if (!projection) {
         throw new DomainError(
           `Boundary binding "${binding.alias}" names unknown projection "${binding.projection}".`
         );
       }
-      // `id` and `excluding` both belong to an entity binding. A
-      // projection read gives its tags by name, `each` among them.
-      for (const field of ['id', 'excluding']) {
-        if (binding[field] !== undefined) {
-          throw new DomainError(
-            `Boundary binding "${binding.alias}" reads a projection but carries "${field}", ` +
-            'which only an entity binding has.'
-          );
-        }
+      if (binding.group !== undefined) {
+        throw new DomainError(`Boundary binding "${binding.alias}" names both a projection and a group.`);
       }
       // A read gives a value for each tag the projection declares – of
-      // the declared type, which is the tag's key – and, for a script,
-      // the arguments its code takes. What differs is what each does: a
-      // tag selects events, an argument reaches the code.
-      const chained = (operand, what) => {
-        for (const alias of operandAliases(operand)) {
-          if (alias === binding.alias) return `Boundary binding "${binding.alias}" takes ${what} from itself.`;
-          if (!declaredAbove.includes(alias)) {
-            return `Boundary binding "${binding.alias}" takes ${what} from "${operandText(operand)}", ` +
-              `but "${alias}" is not bound above it – a binding may only read what is declared earlier.`;
-          }
-        }
-        return null;
-      };
+      // the declared type, which is the tag's key – and the arguments it
+      // takes. What differs is what each does: a tag selects events, an
+      // argument reaches the code or the derivation.
       const problem = readProblem(model, body, binding, `Boundary binding "${binding.alias}"`, chained);
       if (problem) throw new DomainError(problem);
       if (binding.isOptional !== undefined) {
@@ -4188,54 +4038,35 @@ function validateCommandBody(model, body) {
       continue;
     }
 
-    if (!model['entity-definitions'][binding.entity]) {
-      throw new DomainError(`Boundary binding "${binding.alias}" names unknown entity "${binding.entity}".`);
-    }
-    if (binding.id === undefined || binding.id === null || operandIncomplete(binding.id)) {
-      throw new DomainError(`Boundary binding "${binding.alias}" has no identifier operand.`);
-    }
-    const idOperand = entityIdOperand(binding);
-    if (operandSource(idOperand) === 'alias-property') {
-      if (idOperand.alias === binding.alias) {
-        throw new DomainError(`Boundary binding "${binding.alias}" takes its identifier from itself.`);
+    // A group binding names one instance – or, `each`, many – by the
+    // group's one tag, and reads nothing yet: each member a rule reads is
+    // its own read (`groupMemberRead`), with its own arguments.
+    if (binding.group !== undefined) {
+      const group = model['group-definitions'][binding.group];
+      if (!group) {
+        throw new DomainError(`Boundary binding "${binding.alias}" names unknown group "${binding.group}".`);
       }
-      if (!declaredAbove.includes(idOperand.alias)) {
+      const tag = groupTagOf(group);
+      const problem = readTagsProblem(model, body, tag ? [tag] : [], binding,
+        `Boundary binding "${binding.alias}" reads ${binding.group}`, chained);
+      if (problem) throw new DomainError(problem);
+      if (binding.arguments !== undefined && Object.keys(binding.arguments || {}).length) {
         throw new DomainError(
-          `Boundary binding "${binding.alias}" takes its identifier from "${operandText(idOperand)}", ` +
-          `but "${idOperand.alias}" is not bound above it – a binding may only read instances declared earlier.`
+          `Boundary binding "${binding.alias}" gives ${binding.group} arguments – a group takes none; ` +
+          `the projection read takes its own, ${binding.alias}.member(…).`
         );
       }
+      if (binding.isOptional && isFannedOut(model, body, binding)) {
+        throw new DomainError(
+          `Boundary binding "${binding.alias}" is marked "may be absent", but it fans out over a ` +
+          `list – an empty list already binds nothing, so the flag means nothing there.`
+        );
+      }
+      declaredAbove.push(binding.alias);
+      continue;
     }
-    // Many instances are read where it says so, `each`, and only there.
-    const plural = operandIsPlural(model, body, idOperand);
-    if (isFannedOut(model, body, binding) && !plural && operandSource(idOperand) !== 'tag-literal') {
-      throw new DomainError(
-        `Boundary binding "${binding.alias}" reads each of ${operandText(idOperand)}, which is one value – ` +
-        `"each" fans out over a list; drop it.`
-      );
-    }
-    if (!isFannedOut(model, body, binding) && plural) {
-      throw new DomainError(
-        `Boundary binding "${binding.alias}" reads ${binding.entity} by ${operandText(idOperand)}, which ` +
-        `holds many – ${binding.entity}(each ${operandText(idOperand)}) reads one instance per element.`
-      );
-    }
-    if (binding.excluding !== undefined && !isFannedOut(model, body, binding)) {
-      throw new DomainError(
-        `Boundary binding "${binding.alias}" excludes ${operandText(binding.excluding)}, ` +
-        `but it binds a single instance – there is nothing to exclude it from.`
-      );
-    }
-    // The same "a field that means nothing here is a mistake" rule
-    // `excluding` follows: a fanned binding already binds nothing over
-    // an empty list, so the flag has no case left to cover.
-    if (binding.isOptional && isFannedOut(model, body, binding)) {
-      throw new DomainError(
-        `Boundary binding "${binding.alias}" is marked "may be absent", but it fans out over a ` +
-        `list – an empty list already binds nothing, so the flag means nothing there.`
-      );
-    }
-    declaredAbove.push(binding.alias);
+
+    throw new DomainError(`Boundary binding "${binding.alias}" reads neither a projection nor a group.`);
   }
 
   // An emission guard is a condition in every respect the checks below
@@ -4427,72 +4258,35 @@ function validateCommandBody(model, body) {
         return;
       }
       // A projection holds one value and has no name for it, so the
-      // alias alone names it. An entity holds many, so it cannot.
+      // alias alone names it. A group holds many, so it cannot – and the
+      // member it names is a read of its own, arguments and all.
       if (binding.projection) {
         if (operand.property) {
           failure = `${meta.where} reads "${operandText(operand)}", but "${operand.alias}" binds the `
             + `projection "${binding.projection}", which holds one value and no property "${operand.property}".`;
+        } else if (operand.arguments !== undefined) {
+          failure = `${meta.where} gives "${operand.alias}" arguments – its read already gave them.`;
         }
         return;
       }
+      if (binding.group === undefined) return;
       if (!operand.property) {
-        failure = `${meta.where} reads "${operand.alias}" with no property, but "${operand.alias}" binds `
-          + `${binding.entity}, which holds many – name the one it means.`;
+        failure = `${meta.where} reads "${operand.alias}" with no projection, but "${operand.alias}" binds `
+          + `${binding.group}, which holds many – name the one it means.`;
         return;
       }
-      const entity = model['entity-definitions'][binding.entity];
-      const known = entity && (entity.properties || []).some((p) => p.name === operand.property);
-      if (!known) {
-        failure = `${meta.where} reads "${operandText(operand)}", but ${binding.entity} has no property "${operand.property}".`;
+      const read = groupMemberRead(binding, operand);
+      const projection = projectionsOf(model)[read.projection];
+      if (!projection) {
+        failure = model['group-definitions'][binding.group]
+          ? `${meta.where} reads "${operandText(operand)}", but ${binding.group} has no projection "${operand.property}".`
+          : null;
+        return;
       }
+      failure = readArgumentsProblem(projection, read, `${meta.where} reads ${operandText(operand)}`);
     }
   });
   if (failure) throw new DomainError(failure);
-
-  // A property taking arguments is read with them, so the binding that
-  // reads one has to supply them. The converse
-  // is an error too, exactly as `excluding` on a singular binding is: a
-  // field that cannot apply here was written under a misunderstanding,
-  // and saying so is more use than quietly ignoring it.
-  for (const binding of boundary) {
-    if (binding.projection !== undefined) continue;
-    const entity = model['entity-definitions'][binding.entity];
-    if (!entity) continue;
-    const expected = argumentsExpected(model, body, binding);
-    const supplied = Object.keys(binding.arguments || {});
-    for (const argument of expected) {
-      if (!supplied.includes(argument.name)) {
-        throw new DomainError(
-          `Boundary binding "${binding.alias}" supplies no "${argument.name}", which a ` +
-          `${binding.entity} property it reads takes as an argument.`
-        );
-      }
-    }
-    for (const key of supplied) {
-      const argument = expected.find((a) => a.name === key);
-      if (!argument) {
-        throw new DomainError(
-          `Boundary binding "${binding.alias}" supplies "${key}", but nothing it reads asks for ` +
-          `it – no ${binding.entity} property it consults takes an argument by that name.`
-        );
-      }
-      const operand = binding.arguments[key];
-      const resolved = resolveOperandType(operand, {
-        boundary, commandProperties: body.properties || [], model,
-      });
-      if (resolved && (resolved.propertyType !== argument.propertyType || resolved.isList)) {
-        throw new DomainError(
-          `Boundary binding "${binding.alias}" supplies "${key}" as ` +
-          `${resolved.propertyType}${resolved.isList ? '[]' : ''}, but it is declared ` +
-          `${argument.propertyType}.`
-        );
-      }
-      if (operandSource(operand) !== 'alias-property') continue;
-      if (operand.alias === binding.alias) {
-        throw new DomainError(`Boundary binding "${binding.alias}" takes an argument from itself.`);
-      }
-    }
-  }
 
   // Enum members are checked against the alias property they sit
   // opposite, which is where a status comparison always appears. In an
@@ -4505,7 +4299,7 @@ function validateCommandBody(model, body) {
     for (const [maybeEnum, other] of sides) {
       if (operandSource(maybeEnum) !== 'enum-member') continue;
       if (operandSource(other) === 'projection-read') {
-        const read = model['projection-definitions'][other.projection];
+        const read = projectionsOf(model)[other.projection];
         const members = read && enumMembersFor(model, read.valueType);
         if (members && !members.includes(maybeEnum.enumMember)) {
           throw new DomainError(
@@ -4516,15 +4310,11 @@ function validateCommandBody(model, body) {
       }
       if (operandSource(other) !== 'alias-property') continue;
       const binding = boundary.find((b) => b.alias === other.alias);
-      if (!binding) continue;
-      // A projection binding has no entity and so no properties to
-      // check the member against – its value type is not examined here.
-      const entity = binding.entity && model['entity-definitions'][binding.entity];
-      if (!entity) continue;
-      // A property is a binding, so the type the member is checked
-      // against is the bound projection's – the same resolution the
-      // rename rewrite walks.
-      const { projection } = entityPropertyTarget(model, binding.entity, other.property);
+      // A projection binding's value type is not examined here; a group
+      // member is checked against its projection – the same resolution
+      // the rename rewrite walks.
+      if (!binding || binding.group === undefined || !other.property) continue;
+      const projection = projectionsOf(model)[qualifiedProjectionName(binding.group, other.property)];
       if (!projection) continue;
       const members = enumMembersFor(model, projection.valueType);
       if (members && !members.includes(maybeEnum.enumMember)) {
@@ -4588,23 +4378,20 @@ function validateCommandBody(model, body) {
       }
     }
   }
-  // Entity-binding arguments are deliberately exempt: they reach a
-  // script as ordinary values, and null is one. An identifier, an
-  // exclusion or a projection read's tag becomes a tag, and null has no
-  // tag – evaluation errors when it is unset, and this says so first.
+  // Arguments are deliberately exempt: they reach a script or a
+  // derivation as ordinary values, and null is one. A read's tag becomes
+  // a tag, and null has no tag – evaluation errors when it is unset, and
+  // this says so first.
   for (const binding of boundary) {
     const feeds = [];
     // An identifier already declared "may be absent" is the covered
     // case – the flag is the fix this advisory would otherwise ask for.
-    if (binding.id !== undefined && !binding.isOptional && readsOptionalParameter(binding.id)) {
-      feeds.push(['its identifier', binding.id, true]);
-    }
-    if (binding.excluding !== undefined && readsOptionalParameter(binding.excluding)) {
-      feeds.push(['its exclusion', binding.excluding, false]);
-    }
-    if (binding.projection !== undefined) {
+    // A group binding already declared "may be absent" is the covered
+    // case – the flag is the fix this advisory would otherwise ask for.
+    const flaggable = binding.group !== undefined && !isFannedOut(model, body, binding);
+    if (!(flaggable && binding.isOptional)) {
       for (const [name, operand] of readTagEntries(binding)) {
-        if (readsOptionalParameter(operand)) feeds.push([`its "${name}" tag`, operand, false]);
+        if (readsOptionalParameter(operand)) feeds.push([`its "${name}" tag`, operand, flaggable]);
       }
     }
     if (feeds.length) {
@@ -4641,28 +4428,29 @@ function validateCommandBody(model, body) {
     }
   }
 
-  // The derived cousin of the same hazard: an identifier read off
-  // another binding's projected property can be unset too – a
-  // projection that starts at null reads null until something sets it,
-  // and an unflagged binding then errors on exactly the first
-  // interesting case (nothing assigned yet). Statically knowable only
-  // from the initial value; a scripted projection keeps its own
-  // counsel and is left alone.
+  // The derived cousin of the same hazard: a group's tag read off
+  // another binding's value can be unset too – a projection that starts
+  // at null reads null until something sets it, and an unflagged binding
+  // then errors on exactly the first interesting case (nothing assigned
+  // yet). Statically knowable only from the initial value; a scripted
+  // projection keeps its own counsel and is left alone.
   for (const binding of boundary) {
-    if (binding.projection !== undefined || binding.isOptional) continue;
-    if (binding.id === undefined || operandSource(binding.id) !== 'alias-property') continue;
+    if (binding.group === undefined || binding.isOptional) continue;
     if (isFannedOut(model, body, binding)) continue;
-    const source = boundary.find((b) => b && b.alias === binding.id.alias);
+    const [entry] = readTagEntries(binding);
+    const tagged = entry && entry[1];
+    if (operandSource(tagged) !== 'alias-property') continue;
+    const source = boundary.find((b) => b && b.alias === tagged.alias);
     if (!source) continue;
     const projection = source.projection !== undefined
-      ? model['projection-definitions'][source.projection]
-      : (binding.id.property && source.entity && model['entity-definitions'][source.entity]
-        ? entityPropertyTarget(model, source.entity, binding.id.property).projection
+      ? projectionsOf(model)[source.projection]
+      : (source.group !== undefined && tagged.property
+        ? projectionsOf(model)[qualifiedProjectionName(source.group, tagged.property)]
         : null);
-    if (!projection || scriptOf(projection)) continue;
+    if (!projection || scriptOf(projection) || derivedOf(projection)) continue;
     if (projection.initialValue === null) {
       throw new DomainError(
-        `Boundary binding "${binding.alias}" takes its identifier from ${operandText(binding.id)}, ` +
+        `Boundary binding "${binding.alias}" takes its tag from ${operandText(tagged)}, ` +
         `which starts at null – evaluation errors until something sets it. ` +
         `Mark the binding "may be absent" to bind nothing instead, and conditions over it will ` +
         `hold vacuously.`
@@ -4672,26 +4460,6 @@ function validateCommandBody(model, body) {
 
   if (!body.publishes || body.publishes.length === 0) {
     throw new DomainError('A command must publish at least one event.');
-  }
-
-  const issues = coverageIssues(model, body);
-  if (issues.length > 0) {
-    const first = issues[0];
-    // Two different failures wear the same name. Either the emission
-    // gives the tag field no value at all – in which case there is no
-    // instance to talk about yet – or it gives one the boundary never
-    // consulted. Saying "writes the tag Course:null" for the first is
-    // an answer to a question nobody asked.
-    throw new DomainError(
-      first.operand === undefined
-        ? `"${first.event}.${first.property}" is a ${first.entity} tag, and this command gives ` +
-          `it no value. Say where it comes from.`
-        : `"${first.event}.${first.property}" writes the tag ` +
-          `${first.entity}:${operandText(first.operand)} from a value this command derived, ` +
-          `without reading that ${first.entity} – so nothing checked that the value ` +
-          `still holds. Reading it would put it in the boundary. (A tag taken straight from a ` +
-          `command property is asserted by the caller and needs no read.)`
-    );
   }
 }
 
@@ -4784,12 +4552,11 @@ function validateScenarioBody(model, body) {
   }
 }
 
-// One entity instance, exercised by replay rather than by a command:
-// `given` is the same shape a scenario's is, but there is no `when` to
-// call and no boundary to infer an instance from, so `forInstance`
-// names it outright. `then` is *derived*, exactly like a scenario's,
-// but partial – only the properties a modeler chose to check appear,
-// each frozen at the moment it was accepted.
+// One projection, exercised by replay rather than by a command: `given`
+// is the same shape a scenario's is, but there is no `when` to call and
+// no boundary to infer an instance from, so its tags name it outright.
+// `then` is *derived*, exactly like a scenario's, frozen at the moment
+// it was accepted. A grouped projection is named qualified.
 function validateProjectionScenarioBody(model, body) {
   if (body.name !== undefined && typeof body.name !== 'string') {
     throw new DomainError('A projection scenario name is text, or absent when the derived one will do.');
@@ -4805,7 +4572,7 @@ function validateProjectionScenarioBody(model, body) {
       `${where} ("${step.event}")`);
   });
 
-  const projection = model['projection-definitions'][body.projection];
+  const projection = projectionsOf(model)[body.projection];
   if (!projection) {
     throw new DomainError(
       `This scenario is about projection "${body.projection}", which this model does not define.`
@@ -4878,7 +4645,7 @@ function validateProjectionScenarioBody(model, body) {
 // renderer rather than merely mislead them. Everything semantic –
 // what the containers *say* – is an advisory now, never a refusal.
 const STORABLE_LIST_FIELDS = [
-  'properties', 'handlers', 'boundary', 'conditions', 'publishes', 'parameters', 'given',
+  'properties', 'handlers', 'boundary', 'conditions', 'publishes', 'parameters', 'given', 'projections',
 ];
 
 function assertStorableBody(kind, body) {
@@ -4910,49 +4677,70 @@ function assertStorableBody(kind, body) {
       throw new DomainError('A projection\'s "tags" must be a list of {name, tagType}.');
     }
   }
+  // A group's one tag is an object, and its projections are keyed by
+  // their local names – `Course.capacity` has to mean one of them – so a
+  // missing or repeated name is a key collision, refused like any other.
+  if (kind === 'group-definition') {
+    if (body.tag !== undefined && (body.tag === null || typeof body.tag !== 'object' || Array.isArray(body.tag))) {
+      throw new DomainError('A group\'s "tag" must be one {name, tagType}.');
+    }
+    const names = new Set();
+    for (const inner of body.projections || []) {
+      if (!inner) continue;
+      if (typeof inner.name !== 'string' || !inner.name.trim()) {
+        throw new DomainError('Every projection of a group has a name.');
+      }
+      if (names.has(inner.name)) throw new DomainError(`A group has two projections named "${inner.name}".`);
+      names.add(inner.name);
+      assertStorableBody('projection-definition', inner);
+    }
+  }
+}
+
+// A group and a top-level projection are both read by their names, so
+// they share one namespace: the one collision across two collections.
+function assertNoNameClash(model, kind, name) {
+  const other = kind === 'group-definition' ? 'projection-definition'
+    : kind === 'projection-definition' ? 'group-definition' : null;
+  if (other && Object.prototype.hasOwnProperty.call(model[DEF_COLLECTIONS[other]], name)) {
+    throw new DomainError(`A ${humanize(other).toLowerCase()} named "${name}" already exists – a group and a `
+      + 'projection are both read by their names, so they cannot share one.');
+  }
+}
+
+// A grouped projection as its group stores it: the body without a
+// `name` or `tags` of its own, under its local name.
+function storedGroupProjection(localName, body) {
+  const { name, tags, ...rest } = body || {};
+  return { name: localName, ...rest };
 }
 
 function addDefinition(kind, modelId, name, body) {
   const model = getCtxOrThrow(modelId);
   const trimmed = validateDefinitionKey(kind, name, `${humanize(kind)} name`);
+  // A grouped projection is added the way it is read: `Course.capacity`.
+  const split = kind === 'projection-definition' ? splitQualifiedName(trimmed) : null;
+  if (split) {
+    addGroupProjection(modelId, split.group, split.local, body);
+    return;
+  }
   assertStorableBody(kind, body);
-  const coll = model[DEF_COLLECTIONS[kind]];
+  const coll = collectionOfKind(model, kind);
   if (trimmed in coll) {
     throw new DomainError(`A ${humanize(kind)} named "${trimmed}" already exists in this model.`);
   }
-  if (kind === 'entity-definition') {
-    // An entity's derived identifier is an ordinary value type, created
-    // in the same append so the two never exist without each other –
-    // scalar, a plain string, and marked as a tag, which is the
-    // ordinary case. Naming it `<name>Id` unless `identifierType`
-    // overrides it, and colliding with an existing value type is
-    // refused exactly like any other name collision.
-    const idTypeName = body.identifierType || (trimmed + 'Id');
-    validateDefinitionKey('custom-type-definition', idTypeName, 'Value type name');
-    if (model['custom-type-definitions'][idTypeName] !== undefined) {
-      throw new DomainError(
-        `Entity "${trimmed}" would derive the type "${idTypeName}", but a value type by that name already exists.`
-      );
-    }
-    const idTypeBody = { schema: { type: 'string' }, isTag: true };
-    appendEvents([
-      { type: 'custom-type-definition-added', data: { 'dcb-model-id': modelId, name: idTypeName, body: idTypeBody } },
-      { type: 'entity-definition-added', data: { 'dcb-model-id': modelId, name: trimmed, body } },
-    ]);
-    return;
-  }
+  assertNoNameClash(model, kind, trimmed);
   appendEvents([{ type: `${kind}-added`, data: { 'dcb-model-id': modelId, name: trimmed, body } }]);
 }
 
-// An update may leave *other* definitions broken – a dropped property
-// a command still reads, a reshaped partition under a bound property,
-// an `identifierType` pointing at a type nothing created. All of it
-// used to be refused here; all of it is representable now, and the
-// resulting breakage surfaces as advisories on whichever definitions
-// it lands on. The rename functions below remain the way to move a
-// name *and* its references in one append.
+// An update may leave *other* definitions broken – a dropped projection
+// a command still reads, a reshaped tag under a read of it, a type
+// nothing created. All of it used to be refused here; all of it is
+// representable now, and the resulting breakage surfaces as advisories
+// on whichever definitions it lands on. The rename functions below
+// remain the way to move a name *and* its references in one append.
 function validateDefinitionUpdate(model, kind, name, body) {
-  const coll = model[DEF_COLLECTIONS[kind]];
+  const coll = collectionOfKind(model, kind);
   if (!(name in coll)) {
     throw new DomainError(`No ${humanize(kind)} named "${name}" exists in this model.`);
   }
@@ -4967,9 +4755,27 @@ function updateDefinition(kind, modelId, name, body) {
 // in a feature grows the log by one step and writes storage once.
 // Each change is validated against the model as it stood before the
 // gesture – sound because the callers touch a different definition
-// each, so no change needs to see another one applied.
+// each, so no change needs to see another one applied. A grouped
+// projection is updated by its qualified name, as it is read; the
+// change lands on its group, `tags` dropped – it has none of its own –
+// and several to one group are one update of it.
 function updateDefinitions(modelId, changes) {
   const model = getCtxOrThrow(modelId);
+  const groups = new Map();
+  const direct = [];
+  for (const change of changes) {
+    const entry = change.kind === 'projection-definition' ? groupProjectionEntry(model, change.name) : null;
+    if (!entry) { direct.push(change); continue; }
+    assertStorableBody('projection-definition', change.body);
+    if (!groups.has(entry.groupName)) groups.set(entry.groupName, deepClone(entry.group));
+    // A body read off `projectionsOf` spells its siblings from outside
+    // (`Course.capacity` by the group's tag passed on); stored, they are
+    // the bare siblings again, so an edit made on that view round-trips.
+    const stored = storedGroupProjection(entry.local, deepClone(change.body));
+    siblingReadsInside(stored.derived, entry.groupName, groupTagOf(entry.group));
+    groups.get(entry.groupName).projections[entry.index] = stored;
+  }
+  const all = [...direct, ...[...groups].map(([name, body]) => ({ kind: 'group-definition', name, body }))];
   // Reads follow the rules, and this is the one place that is true.
   // Pruning here rather than in every caller means one gesture is one
   // append: deleting the last rule about a read deletes the read in the
@@ -4977,13 +4783,13 @@ function updateDefinitions(modelId, changes) {
   // once. It is deliberately not in `addDefinition` – a body arriving
   // whole, from a file or an agent, keeps what it came with until
   // someone edits it, and `modelAdvisories` says so meanwhile.
-  for (const change of changes) {
+  for (const change of all) {
     if (change.kind === 'command-definition' && change.body) {
       pruneUnreferencedBindings(model, change.body);
     }
   }
-  for (const { kind, name, body } of changes) validateDefinitionUpdate(model, kind, name, body);
-  appendEvents(changes.map(({ kind, name, body }) => (
+  for (const { kind, name, body } of all) validateDefinitionUpdate(model, kind, name, body);
+  appendEvents(all.map(({ kind, name, body }) => (
     { type: `${kind}-updated`, data: { 'dcb-model-id': modelId, name, body } }
   )));
 }
@@ -4997,61 +4803,10 @@ function updateDefinitions(modelId, changes) {
 // eventually rewrite a comment or a string literal and corrupt someone
 // else's work. So the rename goes through and this says what to check.
 function scriptedHandlersOf(model, eventName) {
-  const out = [];
   const handles = (target) => (target.handlers || []).some((h) => h && h.event === eventName);
-  for (const [name, projection] of Object.entries(model['projection-definitions'])) {
-    if (!scriptOf(projection) || !handles(projection)) continue;
-    // Named the way a person would say it: through the property that
-    // binds it where one does, bare where none does.
-    const labels = [];
-    for (const [entityName, entity] of Object.entries(model['entity-definitions'])) {
-      for (const property of entity.properties || []) {
-        if (property && property.projection === name) labels.push(`${entityName}.${property.name}`);
-      }
-    }
-    out.push(...(labels.length ? labels : [name]));
-  }
-  return out;
-}
-
-// Renaming an entity while its derived identifier is still tracking
-// (`identifierType` absent) moves two names in one append: the entity
-// itself, and – since the value type is a real stored definition now –
-// its still-default-named `<name>Id` alongside it. Neither is pinned
-// explicit afterward, so both keep tracking indefinitely. This is kept
-// separate from the ordinary rename path below because it merges two
-// referencer sets (whoever names the entity, whoever names its id
-// type) into one append, and because an entity with an *explicit*
-// `identifierType` needs none of this – that case falls through to the
-// ordinary path, which renames only the entity.
-function renameEntityDefinition(model, modelId, previousName, trimmed) {
-  const entityBody = model['entity-definitions'][previousName];
-  const oldIdType = previousName + 'Id';
-  const newIdType = trimmed + 'Id';
-  if (model['custom-type-definitions'][newIdType] !== undefined) {
-    throw new DomainError(
-      `Entity "${trimmed}" would derive the type "${newIdType}", but a value type by that name already exists.`
-    );
-  }
-
-  const events = [
-    { type: 'entity-definition-renamed', data: { 'dcb-model-id': modelId, 'previous-name': previousName, name: trimmed } },
-    { type: 'custom-type-definition-renamed', data: { 'dcb-model-id': modelId, 'previous-name': oldIdType, name: newIdType } },
-  ];
-  const touched = new Map();
-  const addRewrite = (ref) => {
-    const key = `${ref.kind}:${ref.name}`;
-    if (touched.has(key)) return;
-    let body = rewriteReferences(ref.kind, ref.body, 'entity-definition', previousName, trimmed);
-    body = rewriteReferences(ref.kind, body, 'custom-type-definition', oldIdType, newIdType);
-    touched.set(key, { kind: ref.kind, name: ref.kind === 'entity-definition' && ref.name === previousName ? trimmed : ref.name, body });
-  };
-  for (const ref of findReferencers(model, 'entity-definition', previousName)) addRewrite(ref);
-  for (const ref of findReferencers(model, 'custom-type-definition', oldIdType)) addRewrite(ref);
-  for (const { kind: refKind, name, body } of touched.values()) {
-    events.push({ type: `${refKind}-updated`, data: { 'dcb-model-id': modelId, name, body } });
-  }
-  appendEvents(events);
+  return Object.entries(projectionsOf(model))
+    .filter(([, projection]) => projection && scriptOf(projection) && handles(projection))
+    .map(([name]) => name);
 }
 
 function renameDefinition(kind, modelId, previousName, newName) {
@@ -5062,8 +4817,21 @@ function renameDefinition(kind, modelId, previousName, newName) {
       'so renaming one is an ordinary update rather than a rename.'
     );
   }
+  // A grouped projection keeps its group: renaming `Course.capacity` is
+  // renaming the local name, given bare or qualified by the same group.
+  // Leaving the group is `moveProjectionOutOfGroup`.
+  const entry = kind === 'projection-definition' ? groupProjectionEntry(model, previousName) : null;
+  if (entry) {
+    const target = splitQualifiedName(String(newName || '').trim());
+    if (target && target.group !== entry.groupName) {
+      throw new DomainError(`Renaming keeps ${previousName} in ${entry.groupName} – moving it out or into another group is a move.`);
+    }
+    renameMember('group-definition', modelId, entry.groupName, 'projection', entry.local,
+      target ? target.local : newName);
+    return;
+  }
   const trimmed = validateName(newName, `New ${humanize(kind)} name`);
-  const coll = model[DEF_COLLECTIONS[kind]];
+  const coll = collectionOfKind(model, kind);
   if (!(previousName in coll)) {
     throw new DomainError(`No ${humanize(kind)} named "${previousName}" exists in this model.`);
   }
@@ -5071,11 +4839,7 @@ function renameDefinition(kind, modelId, previousName, newName) {
   if (trimmed in coll) {
     throw new DomainError(`A ${humanize(kind)} named "${trimmed}" already exists in this model.`);
   }
-
-  if (kind === 'entity-definition' && coll[previousName].identifierType === undefined) {
-    renameEntityDefinition(model, modelId, previousName, trimmed);
-    return;
-  }
+  assertNoNameClash(model, kind, trimmed);
 
   const referencers = findReferencers(model, kind, previousName);
   const events = [{
@@ -5083,20 +4847,12 @@ function renameDefinition(kind, modelId, previousName, newName) {
     data: { 'dcb-model-id': modelId, 'previous-name': previousName, name: trimmed },
   }];
   for (const ref of referencers) {
-    // A value type can reference itself – a composite field typed with
-    // one of its own siblings' names is not self-reference, but an
-    // entity's own self-referencing property is. That rewrite lands on
-    // the new name, since the rename event is applied first.
+    // A definition can reference itself – a derived projection reading
+    // itself, a group whose projections read their siblings qualified.
+    // That rewrite lands on the new name, since the rename event is
+    // applied first.
     const isSelf = ref.kind === kind && ref.name === previousName;
-    let rewritten = rewriteReferences(ref.kind, ref.body, kind, previousName, trimmed);
-    // Renaming a value type directly (not via the entity-rename path
-    // above): an entity that was tracking it – no explicit
-    // `identifierType` – has to pin the new name explicitly now, or it
-    // would silently keep recomputing a default that no longer exists.
-    if (kind === 'custom-type-definition' && ref.kind === 'entity-definition'
-        && ref.body.identifierType === undefined) {
-      rewritten = { ...rewritten, identifierType: trimmed };
-    }
+    const rewritten = rewriteReferences(ref.kind, ref.body, kind, previousName, trimmed);
     events.push({
       type: `${ref.kind}-updated`,
       data: { 'dcb-model-id': modelId, name: isSelf ? trimmed : ref.name, body: rewritten },
@@ -5106,10 +4862,278 @@ function renameDefinition(kind, modelId, previousName, newName) {
 }
 
 // ------------------------------------------------------------
+// Groups.
+//
+// Making one, filling it, and moving a projection in or out – each one
+// append, so one undo step. Moving is a refactoring: the projection
+// changes its name (`CourseCapacity` ⇄ `Course.capacity`), drops or
+// regains its tag, and every read of it is rewritten in the same
+// append – a command's alias or read in place, a derived operand, a
+// projection scenario – so a model reads the same before and after. A
+// group alias's member read, moved out, becomes the read in place it
+// stood for; a group binding left reading nothing goes with it.
+// ------------------------------------------------------------
+
+// A new, empty group – `tag` its partition tag, `{name, tagType}`. A
+// tag type that does not exist yet is created alongside it, a plain
+// string marked as a tag, so naming a new one is one gesture.
+function createGroup(modelId, name, tag, { icon } = {}) {
+  const model = getCtxOrThrow(modelId);
+  const trimmed = validateName(name, 'Group name');
+  if (trimmed in model['group-definitions']) {
+    throw new DomainError(`A group named "${trimmed}" already exists in this model.`);
+  }
+  assertNoNameClash(model, 'group-definition', trimmed);
+  const tagName = String((tag && tag.name) || '').trim();
+  const tagType = String((tag && tag.tagType) || '').trim();
+  if (!tagName || !tagType) throw new DomainError('A group needs a tag – a name and a tag type.');
+  const events = [];
+  if (!SIMPLE_TYPES.includes(tagType) && !(tagType in model['custom-type-definitions'])) {
+    validateDefinitionKey('custom-type-definition', tagType, 'Tag type name');
+    events.push({ type: 'custom-type-definition-added', data: {
+      'dcb-model-id': modelId, name: tagType, body: { schema: { type: 'string' }, isTag: true },
+    } });
+  }
+  const body = { ...(icon ? { icon } : {}), tag: { name: tagName, tagType }, projections: [] };
+  events.push({ type: 'group-definition-added', data: { 'dcb-model-id': modelId, name: trimmed, body } });
+  appendEvents(events);
+}
+
+// A projection made inside a group – `body` an ordinary projection
+// body, its `tags` dropped: it is read by the group's.
+function addGroupProjection(modelId, groupName, localName, body) {
+  const model = getCtxOrThrow(modelId);
+  const group = model['group-definitions'][groupName];
+  if (!group) throw new DomainError(`No group named "${groupName}" exists in this model.`);
+  const local = validateName(localName, 'Projection name');
+  if (groupProjections(group).some((inner) => inner.name === local)) {
+    throw new DomainError(`${groupName} already has a projection named "${local}".`);
+  }
+  assertStorableBody('projection-definition', body);
+  const next = deepClone(group);
+  next.projections = [...(Array.isArray(next.projections) ? next.projections : []), storedGroupProjection(local, body)];
+  assertStorableBody('group-definition', next);
+  appendEvents([{ type: 'group-definition-updated', data: { 'dcb-model-id': modelId, name: groupName, body: next } }]);
+}
+
+// A derived projection's reads of its own group's projections, written
+// the way the group writes them: `Course.capacity` tagged by nothing but
+// the group's tag passed on becomes the sibling `capacity`. Any other
+// read – another instance's, by a literal – stays qualified.
+function siblingReadsInside(derived, groupName, tag) {
+  if (!derived || typeof derived !== 'object' || !tag) return derived;
+  for (const side of ['leftHandSide', 'rightHandSide']) {
+    const operand = derived[side];
+    if (operandSource(operand) !== 'projection-read') continue;
+    const split = splitQualifiedName(operand.projection);
+    if (!split || split.group !== groupName) continue;
+    const held = readTagEntries(operand);
+    if (held.length !== 1 || held[0][0] !== tag.name || operandSource(held[0][1]) !== 'parameter'
+      || held[0][1].parameterName !== tag.name || held[0][1].property !== undefined) continue;
+    const sibling = { projection: split.local };
+    if (operand.arguments && Object.keys(operand.arguments).length) sibling.arguments = operand.arguments;
+    derived[side] = sibling;
+  }
+  return derived;
+}
+
+// A command's reads of a projection that just moved into a group, said
+// the way one would write them by hand: through an alias of the group.
+// `Course(courseId).exists` becomes `course.exists` beside `alias course
+// = Course(courseId)`, and an alias bound to the projection itself
+// (`alias exists = Course(courseId).exists`) folds into the group's, its
+// uses becoming `course.exists`. Writing `Course(courseId)` in front of
+// every member a rule reads is the repetition an alias exists to save.
+//
+// An alias of the group with the same tags is reused – moving several
+// projections in one after another gathers them under one – but only
+// one with the same optionality: merging an optional read into a
+// required one would change when the command refuses. A new alias is
+// named off the value it is read by (`aliasBaseFor`) and appended;
+// where it sits does not matter, the boundary is resolved in rounds.
+// An alias whose value is used by a field (`exists.x`) stays as it is:
+// no member read says that. `moved(name)` picks the qualified reads to
+// rewrite. Mutates `body`.
+function aliasGroupReads(body, moved) {
+  if (!body || !Array.isArray(body.boundary)) return;
+  const taken = new Set([
+    ...body.boundary.map((b) => b && b.alias),
+    ...(Array.isArray(body.properties) ? body.properties : []).map((p) => p && p.name),
+  ].filter(Boolean));
+  const sameTags = (a, b) => JSON.stringify(a || {}) === JSON.stringify(b || {});
+  const groupAlias = (group, tags, optional, at) => {
+    const found = body.boundary.find((b) => b && b.group === group && !!b.isOptional === optional && sameTags(b.tags, tags));
+    if (found) return found.alias;
+    const alias = uniqueAlias(aliasBaseFor(group, tags), [...taken]);
+    taken.add(alias);
+    const binding = { alias, group, tags, ...(optional ? { isOptional: true } : {}) };
+    if (at === undefined) body.boundary.push(binding);
+    else body.boundary.splice(at, 0, binding);
+    return alias;
+  };
+  const operands = (keep) => {
+    const out = [];
+    forEachCommandOperand(body, (operand) => { if (keep(operand)) out.push(operand); });
+    return out;
+  };
+
+  for (const binding of [...body.boundary]) {
+    if (!binding || binding.projection === undefined || !moved(binding.projection)) continue;
+    const split = splitQualifiedName(binding.projection);
+    if (!split) continue;
+    const uses = operands((o) => operandSource(o) === 'alias-property' && o.alias === binding.alias);
+    if (uses.some((o) => o.property !== undefined)) continue;
+    const at = body.boundary.indexOf(binding);
+    body.boundary.splice(at, 1);
+    taken.delete(binding.alias);
+    const alias = groupAlias(split.group, binding.tags || {}, !!binding.isOptional, at);
+    const args = binding.arguments && Object.keys(binding.arguments).length ? binding.arguments : null;
+    for (const use of uses) {
+      use.alias = alias;
+      use.property = split.local;
+      if (args) use.arguments = deepClone(args);
+    }
+  }
+
+  for (const read of operands((o) => operandSource(o) === 'projection-read' && moved(o.projection))) {
+    const split = splitQualifiedName(read.projection);
+    if (!split) continue;
+    const { tags, arguments: args } = read;
+    const alias = groupAlias(split.group, tags || {}, false);
+    for (const key of Object.keys(read)) delete read[key];
+    read.alias = alias;
+    read.property = split.local;
+    if (args && Object.keys(args).length) read.arguments = args;
+  }
+}
+
+// What a new alias of `group` is called, off the value it is read by:
+// `courseId` reads as `course`, `otherCourseId` as `otherCourse`, and a
+// fan-out over `subscribedCourseIds` as `subscribedCourses`. Anything
+// else is the group's name – `course`, or `courses` for a fan-out.
+function aliasBaseFor(group, tags) {
+  const operand = Object.values(tags || {})[0];
+  const fallback = defaultAlias(group);
+  const nameOf = (o) => {
+    if (operandSource(o) === 'parameter') return o.property || o.parameterName;
+    if (operandSource(o) === 'alias-property') return o.property || o.alias;
+    return null;
+  };
+  if (operandSource(operand) === 'each') {
+    const name = nameOf(operand.each);
+    return name && /.Ids$/.test(name) ? name.slice(0, -3) + 's' : fallback + 's';
+  }
+  const name = nameOf(operand);
+  return name && /.Id$/.test(name) ? name.slice(0, -2) : fallback;
+}
+
+// Moves a top-level projection into `groupName`. It has to be tagged by
+// exactly one tag, of the group's tag type: the group's tag is the one
+// it is read by from now on. `localName` defaults to `groupLocalName`.
+function moveProjectionIntoGroup(modelId, projectionName, groupName, localName) {
+  const model = getCtxOrThrow(modelId);
+  const projection = model['projection-definitions'][projectionName];
+  if (!projection) throw new DomainError(`No projection named "${projectionName}" exists in this model.`);
+  const group = model['group-definitions'][groupName];
+  if (!group) throw new DomainError(`No group named "${groupName}" exists in this model.`);
+  const tag = groupTagOf(group);
+  if (!tag) throw new DomainError(`${groupName} declares no tag, so nothing can be read through it yet.`);
+  const tags = projectionTagParams(projection);
+  if (tags.length !== 1 || tags[0].tagType !== tag.tagType) {
+    throw new DomainError(
+      `${projectionName} is ${tags.length ? `tagged by ${tags.map((t) => `${t.name}: ${t.tagType}`).join(', ')}` : 'untagged'}, `
+      + `and ${groupName}'s projections are read by one ${tag.tagType} – only a projection tagged by exactly that moves in.`
+    );
+  }
+  const local = validateName(localName === undefined ? groupLocalName(groupName, projectionName) : localName, 'Projection name');
+  if (groupProjections(group).some((inner) => inner.name === local)) {
+    throw new DomainError(`${groupName} already has a projection named "${local}".`);
+  }
+  const oldTag = tags[0].name;
+  const to = qualifiedProjectionName(groupName, local);
+
+  const rewrites = rewriteProjectionReads(model, projectionName, (read, kind) => {
+    read.projection = to;
+    if (read.tags && typeof read.tags === 'object' && oldTag !== tag.name) read.tags = renameKey(read.tags, oldTag, tag.name);
+    return true;
+  });
+  const own = rewrites.find((r) => r.kind === 'projection-definition' && r.name === projectionName);
+  const inner = storedGroupProjection(local, own ? own.body : deepClone(projection));
+  if (inner.derived) {
+    forEachOwnParameterRef(inner.derived, (ref) => { if (ref.parameterName === oldTag) ref.parameterName = tag.name; });
+  }
+  let groupRewrite = rewrites.find((r) => r.kind === 'group-definition' && r.name === groupName);
+  if (!groupRewrite) rewrites.push(groupRewrite = { kind: 'group-definition', name: groupName, body: deepClone(group) });
+  groupRewrite.body.projections = [...(groupRewrite.body.projections || []), inner];
+  for (const sibling of groupProjections(groupRewrite.body)) siblingReadsInside(sibling.derived, groupName, tag);
+  for (const r of rewrites) if (r.kind === 'command-definition') aliasGroupReads(r.body, (name) => name === to);
+
+  appendEvents([
+    { type: 'projection-definition-removed', data: { 'dcb-model-id': modelId, name: projectionName } },
+    ...rewrites.filter((r) => r !== own).map((r) => (
+      { type: `${r.kind}-updated`, data: { 'dcb-model-id': modelId, name: r.name, body: r.body } })),
+  ]);
+  return to;
+}
+
+// Moves a grouped projection out, to the top level, as `newName`
+// (`ungroupedProjectionName` by default): it regains the group's tag as
+// its own, a derived one's sibling reads are spelled from outside, and
+// every read of it moves – a group alias's member read becoming the
+// read in place it stood for.
+function moveProjectionOutOfGroup(modelId, qualifiedName, newName) {
+  const model = getCtxOrThrow(modelId);
+  const entry = groupProjectionEntry(model, qualifiedName);
+  if (!entry) throw new DomainError(`No grouped projection "${qualifiedName}" exists in this model.`);
+  const name = validateName(newName === undefined ? ungroupedProjectionName(entry.groupName, entry.local) : newName,
+    'Projection name');
+  if (name in model['projection-definitions']) {
+    throw new DomainError(`A projection named "${name}" already exists in this model.`);
+  }
+  assertNoNameClash(model, 'projection-definition', name);
+  const tag = groupTagOf(entry.group);
+  const { tags: effectiveTags, ...rest } = deepClone(projectionsOf(model)[qualifiedName]);
+  const body = { tags: effectiveTags, ...rest };
+
+  const moveArguments = (read) => {
+    if (read.arguments === undefined) return;
+    const args = read.arguments;
+    delete read.arguments;
+    if (args && Object.keys(args).length) read.arguments = args;
+  };
+  const rewrites = rewriteProjectionReads(model, qualifiedName, (read, kind, binding) => {
+    if (kind === 'member') {
+      delete read.alias;
+      delete read.property;
+      read.projection = name;
+      read.tags = deepClone((binding && binding.tags) || {});
+      moveArguments(read);
+      return true;
+    }
+    read.projection = name;
+    if (kind === 'sibling') {
+      read.tags = tag ? { [tag.name]: { parameterName: tag.name } } : {};
+      moveArguments(read);
+    }
+    return true;
+  });
+  for (const r of rewrites) if (r.kind === 'command-definition') pruneUnreferencedBindings(model, r.body);
+  let groupRewrite = rewrites.find((r) => r.kind === 'group-definition' && r.name === entry.groupName);
+  if (!groupRewrite) rewrites.push(groupRewrite = { kind: 'group-definition', name: entry.groupName, body: deepClone(entry.group) });
+  groupRewrite.body.projections = (groupRewrite.body.projections || []).filter((inner) => !(inner && inner.name === entry.local));
+
+  appendEvents([
+    { type: 'projection-definition-added', data: { 'dcb-model-id': modelId, name, body } },
+    ...rewrites.map((r) => ({ type: `${r.kind}-updated`, data: { 'dcb-model-id': modelId, name: r.name, body: r.body } })),
+  ]);
+  return name;
+}
+
+// ------------------------------------------------------------
 // Member renames.
 //
-// A definition's *members* – an entity's properties and statuses, an
-// event's properties, a command's payload, a composite's fields, a
+// A definition's *members* – a group's projections, an enum's members,
+// an event's properties, a command's payload, a composite's fields, a
 // projection's parameters – are referenced by name just as definitions
 // are, so renaming one has to rewrite those references in the same
 // append. Doing it as a plain update would leave every reader of the
@@ -5182,35 +5206,20 @@ function renameTagPaths(tags, rename) {
 }
 
 const MEMBER_REWRITES = {
-  // An entity property is read as `{alias, property}` by any command
-  // that binds this entity under that alias – and, when it is the
-  // designated lifecycle, by the entity's own `lifecycle`. That one is
-  // a local name rather than a reference, so it moves here rather than
-  // through `rewriteReferences`; `renameMember` folds this owner
-  // rewrite together with the property-list rename.
-  'entity-definition:property': (model, entityName, previous, next) => {
-    const out = rewriteCommands(model, (command) => {
-      const aliases = (command.boundary || [])
-        .filter((b) => b && b.entity === entityName).map((b) => b.alias);
-      let touched = false;
-      forEachCommandOperand(command, (operand) => {
-        if (operandSource(operand) === 'alias-property'
-            && aliases.includes(operand.alias) && operand.property === previous) {
-          operand.property = next;
-          touched = true;
-        }
-      });
-      return touched;
+  // A grouped projection is read by its qualified name everywhere outside
+  // its group – a command's alias or read in place, a derived operand, a
+  // projection scenario – as a member of a group alias, `course.capacity`,
+  // and by its siblings under its local name. All of them move;
+  // `renameMember` folds the group's own rewrite (its siblings' reads)
+  // together with the rename of the entry itself.
+  'group-definition:projection': (model, groupName, previous, next) => {
+    const to = qualifiedProjectionName(groupName, next);
+    return rewriteProjectionReads(model, qualifiedProjectionName(groupName, previous), (read, kind) => {
+      if (kind === 'member') read.property = next;
+      else if (kind === 'sibling') read.projection = next;
+      else read.projection = to;
+      return true;
     });
-    const entity = model['entity-definitions'][entityName];
-    if (entity && entity.lifecycle === previous) {
-      out.push({
-        kind: 'entity-definition',
-        name: entityName,
-        body: { ...deepClone(entity), lifecycle: next },
-      });
-    }
-    return out;
   },
 
   // An enum member is an `{enumMember}` operand. The type it belongs to
@@ -5221,54 +5230,50 @@ const MEMBER_REWRITES = {
 
     // Every projection typed with this enum refers to its members
     // through its initial value – scalar or an element of a list – and
-    // its handler values.
-    for (const [name, projection] of Object.entries(model['projection-definitions'])) {
-      if (projection.valueType !== typeName) continue;
-      const body = deepClone(projection);
+    // its handler values. A derived predicate compares a projection's
+    // value against a member the same way a condition does – resolved
+    // through the operand it sits opposite. Grouped projections alike.
+    const view = projectionsOf(model);
+    out.push(...rewriteProjections(model, (body, name, groupName) => {
       let touched = false;
-      const renamed = (value) => {
-        if (operandSource(value) === 'enum-member' && value.enumMember === previous) {
-          touched = true;
-          return { enumMember: next };
+      if (body.valueType === typeName) {
+        const renamed = (value) => {
+          if (operandSource(value) === 'enum-member' && value.enumMember === previous) {
+            touched = true;
+            return { enumMember: next };
+          }
+          return value;
+        };
+        body.initialValue = Array.isArray(body.initialValue)
+          ? body.initialValue.map(renamed)
+          : renamed(body.initialValue);
+        for (const handler of body.handlers || []) {
+          rewriteHandlerOperand(handler && handler.value, (operand) => {
+            if (operand.enumMember === previous) { operand.enumMember = next; touched = true; }
+          });
         }
-        return value;
-      };
-      body.initialValue = Array.isArray(body.initialValue)
-        ? body.initialValue.map(renamed)
-        : renamed(body.initialValue);
-      for (const handler of body.handlers || []) {
-        rewriteHandlerOperand(handler && handler.value, (operand) => {
-          if (operand.enumMember === previous) { operand.enumMember = next; touched = true; }
-        });
       }
-      if (touched) out.push({ kind: 'projection-definition', name, body });
-    }
-
-    // A derived predicate compares a projection's value against a
-    // member the same way a condition does – resolved through the
-    // operand it sits opposite.
-    for (const [name, projection] of Object.entries(model['projection-definitions'])) {
-      if (!derivedOf(projection)) continue;
-      const body = deepClone(projection);
-      let touched = false;
-      const sides = [
-        [body.derived.leftHandSide, body.derived.rightHandSide],
-        [body.derived.rightHandSide, body.derived.leftHandSide],
-      ];
-      for (const [maybeEnum, other] of sides) {
-        if (operandSource(maybeEnum) !== 'enum-member' || maybeEnum.enumMember !== previous) continue;
-        if (operandSource(other) !== 'projection-read') continue;
-        const target = model['projection-definitions'][other.projection];
-        if (!target || target.valueType !== typeName) continue;
-        maybeEnum.enumMember = next;
-        touched = true;
+      if (derivedOf(body)) {
+        const sides = [
+          [body.derived.leftHandSide, body.derived.rightHandSide],
+          [body.derived.rightHandSide, body.derived.leftHandSide],
+        ];
+        for (const [maybeEnum, other] of sides) {
+          if (operandSource(maybeEnum) !== 'enum-member' || maybeEnum.enumMember !== previous) continue;
+          if (operandSource(other) !== 'projection-read') continue;
+          const target = view[groupName && isLocalProjectionName(other.projection)
+            ? qualifiedProjectionName(groupName, other.projection) : other.projection];
+          if (!target || target.valueType !== typeName) continue;
+          maybeEnum.enumMember = next;
+          touched = true;
+        }
       }
-      if (touched) out.push({ kind: 'projection-definition', name, body });
-    }
+      return touched;
+    }));
 
-    // A command condition compares an entity's enum-typed property
-    // against a member by value – resolved through the boundary rather
-    // than assumed, since the bound entity is whichever the alias names.
+    // A command condition compares a read's enum-typed value against a
+    // member by value – resolved through the boundary rather than
+    // assumed, since what is read is whichever the alias names.
     // An emission guard is the same comparison in the same scope.
     out.push(...rewriteCommands(model, (command) => {
       let touched = false;
@@ -5311,11 +5316,9 @@ const MEMBER_REWRITES = {
     const out = [];
     const handlesIt = (handlers) => (handlers || []).some((h) => h && h.event === eventName);
 
-    // Handlers live only on projections now – an entity property is a
-    // binding with nothing inside it for this rename to reach.
-    for (const [name, projection] of Object.entries(model['projection-definitions'])) {
-      if (!handlesIt(projection.handlers)) continue;
-      const body = deepClone(projection);
+    // Handlers live only on projections, grouped ones included.
+    out.push(...rewriteProjections(model, (body) => {
+      if (!handlesIt(body.handlers)) return false;
       let touched = false;
       for (const handler of body.handlers || []) {
         if (!handler || handler.event !== eventName) continue;
@@ -5323,8 +5326,8 @@ const MEMBER_REWRITES = {
           if (operand.eventProperty === previous) { operand.eventProperty = next; touched = true; }
         });
       }
-      if (touched) out.push({ kind: 'projection-definition', name, body });
-    }
+      return touched;
+    }));
 
     // An emission binds by *key*, so this is a key rename rather than
     // an operand rewrite.
@@ -5355,7 +5358,7 @@ const MEMBER_REWRITES = {
     }));
 
     // The event's own tags name the property by path – a local name,
-    // so it moves on the owner, the way an entity's `lifecycle` does.
+    // so it moves on the owner.
     const event = model['event-definitions'][eventName];
     const retagged = renameTagPaths(event && event.tags, (property, field) =>
       (property === previous ? [next, field] : null));
@@ -5462,36 +5465,82 @@ function forEachOwnParameterRef(derived, visit) {
   }
 }
 
-// Every read of `projectionName`, wherever one is stored, as
-// `{kind, name, body, read}` over a deep copy – the commands' bindings
-// and inline reads, the derived operands, the projection scenarios –
-// and the projections deriving from anything (`owners`), so a caller
-// can also rewrite a derived projection's own references. `mutate`
-// returns whether it changed the read; the changed bodies come back
-// once each, as rewrites.
+// Every read of `projectionName`, wherever one is stored, over a deep
+// copy, handed to `mutate(read, kind, binding)`: a command's binding
+// and read in place (`'command'`), a group alias's member read – the
+// operand `{alias, property, arguments}`, its binding beside it, since
+// the tags live there (`'member'`) – a derived operand (`'derived'`),
+// or, inside the projection's own group, a sibling's read by local name
+// (`'sibling'`), and a projection scenario (`'scenario'`). The
+// projection's own body goes to `mutateOwner(body, groupName)`, so a
+// caller can also rewrite a derived projection's references to itself.
+// `mutate` returns whether it changed the read; the changed definitions
+// come back once each, as rewrites – a grouped projection as its group.
 function rewriteProjectionReads(model, projectionName, mutate, mutateOwner = () => false) {
-  const changes = (read, kind) => !!read && read.projection === projectionName && mutate(read, kind);
+  const changes = (read, kind, binding) => !!read && mutate(read, kind, binding);
   const out = rewriteCommands(model, (command) => {
     let touched = false;
-    for (const binding of command.boundary || []) if (binding && changes(binding, 'command')) touched = true;
+    const groupAliases = new Map();
+    for (const binding of command.boundary || []) {
+      if (!binding) continue;
+      if (binding.projection === projectionName && changes(binding, 'command')) touched = true;
+      if (binding.group !== undefined && binding.alias) groupAliases.set(binding.alias, binding);
+    }
     forEachCommandOperand(command, (operand) => {
-      if (operandSource(operand) === 'projection-read' && changes(operand, 'command')) touched = true;
+      if (operandSource(operand) === 'projection-read' && operand.projection === projectionName
+        && changes(operand, 'command')) touched = true;
+      if (operandSource(operand) !== 'alias-property' || !operand.property) return;
+      const binding = groupAliases.get(operand.alias);
+      if (binding && qualifiedProjectionName(binding.group, operand.property) === projectionName
+        && changes(operand, 'member', binding)) touched = true;
     });
     return touched;
   });
-  for (const [name, projection] of Object.entries(model['projection-definitions'])) {
-    if (!projection || !projection.derived) continue;
-    const body = deepClone(projection);
+  out.push(...rewriteProjections(model, (body, name, groupName) => {
     let touched = false;
-    for (const operand of derivedOperands(body.derived)) {
-      if (operandSource(operand) === 'projection-read' && changes(operand, 'derived')) touched = true;
+    if (body.derived && typeof body.derived === 'object') {
+      for (const operand of derivedOperands(body.derived)) {
+        if (operandSource(operand) !== 'projection-read') continue;
+        if (operand.projection === projectionName) {
+          if (changes(operand, 'derived')) touched = true;
+        } else if (groupName && isLocalProjectionName(operand.projection)
+          && qualifiedProjectionName(groupName, operand.projection) === projectionName) {
+          if (changes(operand, 'sibling')) touched = true;
+        }
+      }
     }
-    if (name === projectionName && mutateOwner(body)) touched = true;
-    if (touched) out.push({ kind: 'projection-definition', name, body });
-  }
+    if (name === projectionName && mutateOwner(body, groupName)) touched = true;
+    return touched;
+  }));
   for (const [key, scenario] of Object.entries(model['projection-scenario-definitions'] || {})) {
     const body = deepClone(scenario);
-    if (changes(body, 'scenario')) out.push({ kind: 'projection-scenario-definition', name: key, body });
+    if (body.projection === projectionName && changes(body, 'scenario')) {
+      out.push({ kind: 'projection-scenario-definition', name: key, body });
+    }
+  }
+  return out;
+}
+
+// Applies `mutate(body, name, groupName)` to a deep copy of every
+// projection – a top-level one under its name, a grouped one, as its
+// group stores it, under its qualified name – and returns the
+// definitions it changed: a top-level projection as itself, a group
+// once however many of its projections changed.
+function rewriteProjections(model, mutate) {
+  const out = [];
+  for (const [name, projection] of Object.entries(model['projection-definitions'])) {
+    if (!projection) continue;
+    const body = deepClone(projection);
+    if (mutate(body, name, null)) out.push({ kind: 'projection-definition', name, body });
+  }
+  for (const [groupName, group] of Object.entries(model['group-definitions'] || {})) {
+    if (!group) continue;
+    const body = deepClone(group);
+    let touched = false;
+    for (const inner of groupProjections(body)) {
+      if (mutate(inner, qualifiedProjectionName(groupName, inner.name), groupName)) touched = true;
+    }
+    if (touched) out.push({ kind: 'group-definition', name: groupName, body });
   }
   return out;
 }
@@ -5568,6 +5617,7 @@ function rewriteCommands(model, mutate) {
 // dotted path – flat for most kinds, but an enum's members sit at
 // `schema.enum`, one level into the custom type's JSON Schema.
 const MEMBER_SHAPE = {
+  projection: { list: 'projections', named: true, label: 'Projection' },
   property: { list: 'properties', named: true, label: 'Property' },
   member: { list: 'schema.enum', named: false, label: 'Member' },
   field: { list: 'properties', named: true, label: 'Field' },
@@ -5575,11 +5625,18 @@ const MEMBER_SHAPE = {
   argument: { list: 'arguments', named: true, label: 'Argument' },
 };
 
+// A grouped projection's parameters are renamed by its qualified name,
+// like any projection's; what lands is its group, the entry renamed in
+// place. Its tag is its group's, and is not its own to rename.
 function renameMember(kind, modelId, definitionName, memberKind, previousName, newName) {
   const model = getCtxOrThrow(modelId);
-  const body = (model[DEF_COLLECTIONS[kind]] || {})[definitionName];
+  const entry = kind === 'projection-definition' ? groupProjectionEntry(model, definitionName) : null;
+  const body = entry ? entry.inner : (model[DEF_COLLECTIONS[kind]] || {})[definitionName];
   if (!body) {
     throw new DomainError(`No ${humanize(kind)} named "${definitionName}" exists in this model.`);
+  }
+  if (entry && memberKind === 'tag') {
+    throw new DomainError(`${definitionName} is read by its group's tag – it has none of its own to rename.`);
   }
   const shape = MEMBER_SHAPE[memberKind];
   const rewrite = MEMBER_REWRITES[`${kind}:${memberKind}`];
@@ -5609,7 +5666,8 @@ function renameMember(kind, modelId, definitionName, memberKind, previousName, n
     );
   }
   // A projection's tags and arguments are one list to a read.
-  if (kind === 'projection-definition' && projectionParameters(body).some((p) => p.name === trimmed)) {
+  if (kind === 'projection-definition'
+    && projectionParameters(projectionsOf(model)[definitionName]).some((p) => p.name === trimmed)) {
     throw new DomainError(`Projection "${definitionName}" already has a parameter named "${trimmed}".`);
   }
 
@@ -5617,20 +5675,23 @@ function renameMember(kind, modelId, definitionName, memberKind, previousName, n
   // here, uniformly, so each rewrite has one job. When a rewrite also
   // lands on the owning definition, its body is the one the list
   // rename is applied to.
+  const ownerKind = entry ? 'group-definition' : kind;
+  const ownerName = entry ? entry.groupName : definitionName;
   const rewrites = rewrite(model, definitionName, previousName, trimmed);
-  const ownerRewrite = rewrites.find((r) => r.kind === kind && r.name === definitionName);
-  const ownerBody = deepClone(ownerRewrite ? ownerRewrite.body : body);
-  setAtDottedPath(ownerBody, shape.list, (getAtDottedPath(ownerBody, shape.list) || []).map((m) => {
+  const ownerRewrite = rewrites.find((r) => r.kind === ownerKind && r.name === ownerName);
+  const ownerBody = deepClone(ownerRewrite ? ownerRewrite.body : (entry ? entry.group : body));
+  const listOwner = entry ? ownerBody.projections[entry.index] : ownerBody;
+  setAtDottedPath(listOwner, shape.list, (getAtDottedPath(listOwner, shape.list) || []).map((m) => {
     if (!shape.named) return m === previousName ? trimmed : m;
     return m && m.name === previousName ? { ...m, name: trimmed } : m;
   }));
 
   const events = [{
-    type: `${kind}-updated`,
-    data: { 'dcb-model-id': modelId, name: definitionName, body: ownerBody },
+    type: `${ownerKind}-updated`,
+    data: { 'dcb-model-id': modelId, name: ownerName, body: ownerBody },
   }];
   for (const r of rewrites) {
-    if (r.kind === kind && r.name === definitionName) continue;
+    if (r.kind === ownerKind && r.name === ownerName) continue;
     events.push({
       type: `${r.kind}-updated`,
       data: { 'dcb-model-id': modelId, name: r.name, body: r.body },
@@ -5649,6 +5710,9 @@ function renameMember(kind, modelId, definitionName, memberKind, previousName, n
 // value that is no tag type is not refused; the advisory says so.
 function setProjectionParameterIsTag(modelId, projectionName, parameterName, isTag) {
   const model = getCtxOrThrow(modelId);
+  if (groupProjectionEntry(model, projectionName)) {
+    throw new DomainError(`${projectionName} is read by its group's tag alone – a parameter of it can only be an argument.`);
+  }
   const projection = model['projection-definitions'][projectionName];
   if (!projection) {
     throw new DomainError(`No projection named "${projectionName}" exists in this model.`);
@@ -5705,7 +5769,16 @@ function setProjectionParameterIsTag(modelId, projectionName, parameterName, isT
 
 function removeDefinition(kind, modelId, name) {
   const model = getCtxOrThrow(modelId);
-  const coll = model[DEF_COLLECTIONS[kind]];
+  // A grouped projection goes from its group – removed by the name it is
+  // read by, like any projection.
+  const entry = kind === 'projection-definition' ? groupProjectionEntry(model, name) : null;
+  if (entry) {
+    const group = deepClone(entry.group);
+    group.projections = group.projections.filter((inner) => !(inner && inner.name === entry.local));
+    appendEvents([{ type: 'group-definition-updated', data: { 'dcb-model-id': modelId, name: entry.groupName, body: group } }]);
+    return;
+  }
+  const coll = collectionOfKind(model, kind);
   if (!(name in coll)) {
     throw new DomainError(`No ${humanize(kind)} named "${name}" exists in this model.`);
   }
@@ -5713,20 +5786,8 @@ function removeDefinition(kind, modelId, name) {
   // says so – the rule scenarios always lived by ("a test exists to
   // report what a change broke, not to prevent it") now applied to
   // every kind: the dangling reference surfaces as an advisory on the
-  // definition holding it, not as a refusal here.
-  if (kind === 'entity-definition') {
-    // The entity's own derived custom type is removed alongside it –
-    // auto-created together, they go together. Anything else still
-    // naming either is left broken, reported the same way this system
-    // already reports every other broken reference: a scenario left
-    // saying what it used to check, a definition carrying an advisory.
-    const idType = idTypeOf(model, name);
-    appendEvents([
-      { type: 'entity-definition-removed', data: { 'dcb-model-id': modelId, name } },
-      { type: 'custom-type-definition-removed', data: { 'dcb-model-id': modelId, name: idType } },
-    ]);
-    return;
-  }
+  // definition holding it, not as a refusal here. A group takes the
+  // projections it owns with it.
   appendEvents([{ type: `${kind}-removed`, data: { 'dcb-model-id': modelId, name } }]);
 }
 
@@ -5767,7 +5828,7 @@ function reorderDefinitions(kind, modelId, order) {
 // projection this is.
 const DEFAULT_FLAGS = ['isOptional', 'isList', 'negate', 'isTag'];
 const DATA_FIELDS = ['schema', 'initialState', 'initialValue'];
-const OPERAND_FIELDS = ['leftHandSide', 'rightHandSide', 'id', 'excluding', 'value', 'successor'];
+const OPERAND_FIELDS = ['leftHandSide', 'rightHandSide', 'value', 'successor'];
 const OPERAND_MAPS = ['parameters', 'arguments', 'tags'];
 const KEEPS_EMPTY = ['rightHandSide', 'tagFilter', 'derived', 'script'];
 
@@ -5975,6 +6036,15 @@ function replaceDefinitions(modelId, next) {
   // The two scenario kinds are written only when asked for – a caller
   // that says nothing about them leaves them as they are.
   const kinds = [...ADVISORY_KINDS, ...ID_KEYED_KINDS.filter((kind) => next.collections[kind] !== undefined)];
+  // A group and a top-level projection are read by their names alike –
+  // the one collision across two collections (`assertNoNameClash`).
+  const groupNames = Object.keys(next.collections['group-definition'] || {}).map((key) => String(key).trim());
+  const clash = Object.keys(next.collections['projection-definition'] || {})
+    .find((key) => groupNames.includes(String(key).trim()));
+  if (clash !== undefined) {
+    throw new DomainError(`A group and a projection are both named "${String(clash).trim()}" – they are read by their `
+      + 'names alike, so they cannot share one.');
+  }
   for (const kind of kinds) {
     const current = model[DEF_COLLECTIONS[kind]];
     const wanted = {};
@@ -6063,7 +6133,7 @@ function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
 // nesting to do but make the file claim to contain a model rather than
 // be one. Flattening also stops `projectionScenarioDefinitions` reading as
 // a second-class kind: it is listed apart from the six only because it
-// hangs off an entity rather than being one of them.
+// hangs off a projection rather than being one of them.
 //
 // Two markers say what a document is, and they are not
 // interchangeable. `dcbModelVersion` is the one an importer
@@ -6176,18 +6246,23 @@ function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
 // find a derived side it cannot read and a script with no arguments.
 // A 9.x document reads here whole, its scripts' arguments lifted on
 // import (`liftScriptArguments`).
-// 10.1 lets names be written in any alphabet (`ÅpenSak`, `gjenåpnet`):
-// the name rules test Unicode letters where they tested ASCII, casing
-// unchanged. A 10.0 reader skips such a definition, says so, and
-// misreads nothing else, so a minor.
-const MODEL_VERSION = '10.1';
-const MODEL_SCHEMA_URL = 'https://dcb.events/schemas/model/v10.json';
-const READABLE_MAJORS = [8, 9, 10];
+// 11.0 replaced entities by groups: `entityDefinitions` – with its
+// property bindings, `lifecycle` and a binding's `excluding` – is gone,
+// and `groupDefinitions` holds groups that own their projections, read
+// by a group binding (`{alias, group, tags}`) member by member
+// (`{alias, property, arguments}`) or in place by a qualified name
+// (`Course.capacity`). A removed field and a new member of the operand
+// vocabulary both ways, so a major. An 8.x to 10.x document is read
+// still, its entities lifted into groups where that says the same thing
+// and restated as plain reads where it does not (`groupsFromEntities`).
+const MODEL_VERSION = '11.0';
+const MODEL_SCHEMA_URL = 'https://dcb.events/schemas/model/v11.json';
+const READABLE_MAJORS = [8, 9, 10, 11];
 
 const SCHEMA_FIELD = {
   'custom-type-definition': 'customTypeDefinitions',
   'event-definition': 'eventDefinitions',
-  'entity-definition': 'entityDefinitions',
+  'group-definition': 'groupDefinitions',
   'projection-definition': 'projectionDefinitions',
   'command-definition': 'commandDefinitions',
   'scenario-definition': 'scenarioDefinitions',
@@ -6199,7 +6274,7 @@ const SCHEMA_FIELD = {
 // because they are authored against whatever set of projections someone
 // wanted to check at once rather than being one of these.
 const SCHEMA_KINDS = [
-  'custom-type-definition', 'event-definition', 'entity-definition',
+  'custom-type-definition', 'event-definition', 'group-definition',
   'projection-definition', 'command-definition', 'scenario-definition',
 ];
 
@@ -6353,71 +6428,26 @@ function envelopeHasScript(envelope) {
 // The code that would run, per scripted projection, as the gate shows
 // it: a confirmation that only says *that* there is code asks for
 // trust it gives the reader no way to check. Scripts live only on
-// projections – an entity property is a binding and carries none of
-// its own. Handlers are listed as they stand, `code` or not, so the
+// projections – top-level ones and the ones a group owns, named
+// qualified. Handlers are listed as they stand, `code` or not, so the
 // list is what `evCompileHandler` would compile.
 function envelopeScripts(envelope) {
   if (!envelope || typeof envelope !== 'object') return [];
-  return (envelope.projectionDefinitions || [])
-    .filter((p) => p && !!p.script)
-    .map((p) => ({
-      projection: String(p.name),
-      handlers: (Array.isArray(p.handlers) ? p.handlers : [])
+  const asList = (value) => (Array.isArray(value) ? value : []);
+  const projections = [
+    ...asList(envelope.projectionDefinitions).map((p) => [p && p.name, p]),
+    ...asList(envelope.groupDefinitions).flatMap((group) => asList(group && group.projections)
+      .map((p) => [`${group && group.name}.${p && p.name}`, p])),
+  ];
+  return projections
+    .filter(([, p]) => p && !!p.script)
+    .map(([name, p]) => ({
+      projection: String(name),
+      handlers: asList(p.handlers)
         .map((handler) => ({ event: String(handler && handler.event), code: String((handler && handler.code) ?? '') })),
     }));
 }
 
-// An entity, stripped down to what can exist before the projections
-// its properties bind are added: the bindings are dropped wholesale
-// and put back by `updateDefinition` once every projection exists. An
-// entity with no properties is legal – one consulted purely by tag –
-// so the bare form is always addable.
-function bareEntityBody(body) {
-  return { ...body, properties: [] };
-}
-
-// Adds a mixed batch of custom types and bare entities, retrying
-// whatever fails until a full pass makes no progress. The two kinds
-// collide over an entity's derived identifier type – a standalone
-// value type and the auto-created one contending for a name – so
-// neither can be finished first in general; nothing downstream of this
-// (events, full entities, projections, commands, scenarios) has that
-// problem, so it is the only phase that needs retrying rather than a
-// single ordered pass. Whatever a stalled pass leaves is returned as
-// skips, one per item with its own refusal, never thrown.
-function addManyWithRetry(modelId, items) {
-  const skipped = [];
-  let remaining = items;
-  while (remaining.length) {
-    const next = [];
-    let progressed = false;
-    for (const item of remaining) {
-      try {
-        addDefinition(item.kind, modelId, item.name, item.body);
-        progressed = true;
-      } catch (error) {
-        next.push({ item, error });
-      }
-    }
-    if (!progressed) {
-      for (const { item, error } of next) {
-        skipped.push({ kind: item.kind, name: item.name, reason: error.message });
-      }
-      break;
-    }
-    remaining = next.map(({ item }) => item);
-  }
-  return skipped;
-}
-
-// The synthesizer: rebuilds a shared model into a brand-new one by
-// replaying it through the same commands manual editing uses, so an
-// untrusted export can never land in a state those commands would have
-// refused. The commands refuse little now – structure, collisions –
-// and what one does refuse is *skipped* rather than aborting the
-// import: the rest of the model loads, and the skips come back to the
-// caller to report. Semantic defects in what did load are the
-// advisories' to surface, the same as for any other edit.
 // The wire format's two markers, checked. Only `dcbModelVersion` is
 // read: `$schema` has to be *present*, because a document without one
 // was not written by anything that knows this format and its shape is
@@ -6484,8 +6514,11 @@ function envelopeVersionWarning(envelope) {
 }
 
 // The five kinds a model must declare, even if empty. `scenarioDefinitions`
-// is the sixth and is optional, the same way the schema has it.
+// is the sixth and is optional, the same way the schema has it. A
+// document from before 11.0 declares `entityDefinitions` where a newer
+// one declares `groupDefinitions`.
 const REQUIRED_SCHEMA_KINDS = SCHEMA_KINDS.filter((kind) => kind !== 'scenario-definition');
+const LEGACY_ENTITY_FIELD = 'entityDefinitions';
 
 // A 9.x scripted projection kept its arguments in its script; 10.0
 // keeps them on the projection, for every kind. The one shape that
@@ -6500,13 +6533,181 @@ function liftScriptArguments(body) {
   body.script = rest;
 }
 
+// An 8.x to 10.x document's entities, read as 11.0 says them. Pure: the
+// collections in, `{customTypes, groups, projections, commands,
+// projectionScenarios, notes}` out, nothing stored.
+//
+// An entity becomes a group when that says the same thing: every
+// projection it binds is tagged by exactly its identifier and bound by
+// no other entity, and no projection carries its name. The bindings'
+// names become the local names, the projections move inside, and every
+// read of one – a command's read in place or alias, a derived operand,
+// a projection scenario – is rewritten to read it through the group,
+// its tag renamed to the group's where the two differed. An entity
+// binding becomes a group binding, `{alias, group, tags}`, and the
+// arguments it gave go to the member reads whose projections take them.
+// Any other entity is restated as plain reads, the way the shipped
+// models were in 8.0: each property read becomes the read in place of
+// the projection it bound, by the identifier the entity was read by,
+// and the binding goes. Either way a lifecycle designation goes
+// without a trace – it decided nothing – and so does `excluding`,
+// which nothing can say any more; `notes` says each time it dropped one,
+// and what became of every entity. An identifier type the document
+// never listed is created, a plain string marked as a tag.
+function groupsFromEntities({ customTypes = {}, entities = {}, projections = {}, commands = {}, projectionScenarios = {} }) {
+  const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
+  const out = deepClone({ customTypes, projections, commands, projectionScenarios });
+  const groups = {};
+  const notes = [];
+  const bound = new Map();
+  for (const entity of Object.values(entities)) {
+    for (const p of (entity && entity.properties) || []) {
+      if (p && p.projection) bound.set(p.projection, (bound.get(p.projection) || 0) + 1);
+    }
+  }
+
+  const shapes = {};
+  for (const [name, entity] of Object.entries(entities)) {
+    const idType = (entity && entity.identifierType) || `${name}Id`;
+    const tag = { name: (entity && entity.identifierName) || defaultAlias(idType), tagType: idType };
+    if (!own(out.customTypes, idType)) out.customTypes[idType] = { schema: { type: 'string' }, isTag: true };
+    const members = new Map();
+    let why = own(projections, name) ? `a projection is named ${name} too` : null;
+    for (const p of (entity && entity.properties) || []) {
+      if (why) break;
+      const projection = p && own(projections, p.projection) ? projections[p.projection] : null;
+      const tags = projectionTagParams(projection);
+      if (!p || typeof p.name !== 'string' || !/^\p{Ll}[\p{L}\p{M}\p{Nd}]*$/u.test(p.name)) why = `a property is not named in lowerCamel`;
+      else if (members.has(p.name)) why = `it binds "${p.name}" twice`;
+      else if (!projection) why = `"${p.name}" binds ${p.projection}, which the document does not define`;
+      else if (tags.length !== 1 || tags[0].tagType !== idType) why = `${p.projection} is not tagged by exactly one ${idType}`;
+      else if (bound.get(p.projection) > 1) why = `${p.projection} is bound more than once`;
+      else members.set(p.name, p.projection);
+    }
+    const propertyOf = new Map(((entity && entity.properties) || []).filter(Boolean).map((p) => [p.name, p.projection]));
+    shapes[name] = { tag, idType, members, propertyOf, clean: !why };
+    notes.push(why
+      ? { kind: 'command-definition', name, note: `Entity ${name} was restated as plain reads – ${why}.` }
+      : { kind: 'group-definition', name, note: `Entity ${name} became the group ${name}.` });
+  }
+
+  // The projections a clean entity bound, moved into its group.
+  const moved = new Map();
+  for (const [name, entity] of Object.entries(entities)) {
+    const shape = shapes[name];
+    if (!shape.clean) continue;
+    groups[name] = { ...(entity && entity.icon ? { icon: entity.icon } : {}), tag: shape.tag, projections: [] };
+    for (const [local, projectionName] of shape.members) {
+      const oldTag = projectionTagParams(projections[projectionName])[0].name;
+      moved.set(projectionName, { group: name, local, oldTag, tag: shape.tag });
+      const inner = storedGroupProjection(local, out.projections[projectionName]);
+      if (inner.derived) {
+        forEachOwnParameterRef(inner.derived, (ref) => { if (ref.parameterName === oldTag) ref.parameterName = shape.tag.name; });
+      }
+      groups[name].projections.push(inner);
+      delete out.projections[projectionName];
+    }
+  }
+  const movedRead = (read) => {
+    const m = read && moved.get(read.projection);
+    if (!m) return;
+    read.projection = qualifiedProjectionName(m.group, m.local);
+    if (read.tags && typeof read.tags === 'object' && !Array.isArray(read.tags) && m.oldTag !== m.tag.name) {
+      read.tags = renameKey(read.tags, m.oldTag, m.tag.name);
+    }
+  };
+  const bodies = [...Object.values(out.projections), ...Object.values(groups).flatMap((g) => g.projections)];
+  for (const body of bodies) {
+    for (const operand of derivedOperands(body && body.derived)) {
+      if (operandSource(operand) === 'projection-read') movedRead(operand);
+    }
+  }
+  for (const [name, group] of Object.entries(groups)) {
+    for (const inner of group.projections) siblingReadsInside(inner.derived, name, group.tag);
+  }
+  for (const scenario of Object.values(out.projectionScenarios)) if (scenario) movedRead(scenario);
+
+  for (const [commandName, command] of Object.entries(out.commands)) {
+    if (!command || !Array.isArray(command.boundary)) continue;
+    const entityAliases = new Map(command.boundary
+      .filter((b) => b && b.entity !== undefined && own(shapes, b.entity)).map((b) => [b.alias, b]));
+    const convert = (operand) => {
+      if (Array.isArray(operand)) return operand.map(convert);
+      if (!operand || typeof operand !== 'object') return operand;
+      if (operandSource(operand) === 'alias-property' && entityAliases.has(operand.alias)) {
+        const binding = entityAliases.get(operand.alias);
+        const shape = shapes[binding.entity];
+        const projectionName = shape.propertyOf.get(operand.property);
+        const projection = projectionName && own(projections, projectionName) ? projections[projectionName] : null;
+        if (!projection) return { ...operand };
+        let args = null;
+        for (const slot of projectionSlots(projection)) {
+          if (binding.arguments && own(binding.arguments, slot.name)) {
+            (args = args || {})[slot.name] = convert(binding.arguments[slot.name]);
+          }
+        }
+        if (shape.clean) return { alias: operand.alias, property: operand.property, ...(args ? { arguments: args } : {}) };
+        const tags = {};
+        for (const tag of projectionTagParams(projection)) {
+          if (tag.tagType === shape.idType) tags[tag.name] = convert(binding.id);
+        }
+        return { projection: projectionName, tags, ...(args ? { arguments: args } : {}) };
+      }
+      const copy = {};
+      for (const [key, value] of Object.entries(operand)) copy[key] = convert(value);
+      return copy;
+    };
+    const convertRead = (binding) => {
+      const copy = { ...binding };
+      if (binding.tags && typeof binding.tags === 'object') copy.tags = convert(binding.tags);
+      if (binding.arguments && typeof binding.arguments === 'object') copy.arguments = convert(binding.arguments);
+      return copy;
+    };
+    command.boundary = command.boundary.map((binding) => {
+      if (!binding || binding.entity === undefined) return binding ? convertRead(binding) : binding;
+      if (binding.excluding !== undefined) {
+        notes.push({ kind: 'command-definition', name: commandName, note: `"${binding.alias}" excluded `
+          + `${operandText(binding.excluding)}, which nothing can say any more – it reads every instance now.` });
+      }
+      const shape = own(shapes, binding.entity) ? shapes[binding.entity] : null;
+      if (!shape || !shape.clean) return null;
+      return {
+        alias: binding.alias,
+        group: binding.entity,
+        tags: { [shape.tag.name]: convert(binding.id) },
+        ...(binding.isOptional ? { isOptional: true } : {}),
+      };
+    }).filter((binding) => binding !== null);
+    if (Array.isArray(command.conditions)) command.conditions = convert(command.conditions);
+    if (Array.isArray(command.publishes)) command.publishes = convert(command.publishes);
+    for (const binding of command.boundary) if (binding && binding.projection !== undefined) movedRead(binding);
+    forEachCommandOperand(command, (operand) => { if (operandSource(operand) === 'projection-read') movedRead(operand); });
+    // Before 11.0 nothing was grouped, so every qualified read here is
+    // one this conversion moved.
+    aliasGroupReads(command, (name) => !!splitQualifiedName(name));
+  }
+  return { ...out, groups, notes };
+}
+
+// The synthesizer: rebuilds a shared model into a brand-new one by
+// replaying it through the same commands manual editing uses, so an
+// untrusted export can never land in a state those commands would have
+// refused. The commands refuse little now – structure, collisions –
+// and what one does refuse is *skipped* rather than aborting the
+// import: the rest of the model loads, and the skips come back to the
+// caller to report, beside what a document from before 11.0 had
+// `converted` (`groupsFromEntities`). Semantic defects in what did load
+// are the advisories' to surface, the same as for any other edit.
 function importModelFromEnvelope(envelope) {
-  assertEnvelopeVersion(envelope);
+  const version = assertEnvelopeVersion(envelope);
+  const legacy = version.major < 11;
   // There is no wrapper object to look for any more – the definition
   // arrays sit directly on the envelope – so what identifies a model is
   // that the kinds one must declare are actually there and are lists.
-  for (const kind of REQUIRED_SCHEMA_KINDS) {
-    if (!Array.isArray(envelope[SCHEMA_FIELD[kind]])) {
+  const required = REQUIRED_SCHEMA_KINDS.map((kind) => (legacy && kind === 'group-definition'
+    ? LEGACY_ENTITY_FIELD : SCHEMA_FIELD[kind]));
+  for (const field of required) {
+    if (!Array.isArray(envelope[field])) {
       throw new DomainError('That does not look like a shared DCB model.');
     }
   }
@@ -6516,23 +6717,33 @@ function importModelFromEnvelope(envelope) {
   if (typeof envelope.name !== 'string' || !envelope.name) {
     throw new DomainError('That model has no name.');
   }
-  const customTypes = schemaArrayToDefinitions('custom-type-definition', envelope.customTypeDefinitions);
+  let customTypes = schemaArrayToDefinitions('custom-type-definition', envelope.customTypeDefinitions);
   const events = schemaArrayToDefinitions('event-definition', envelope.eventDefinitions);
-  const entities = schemaArrayToDefinitions('entity-definition', envelope.entityDefinitions);
-  const projections = schemaArrayToDefinitions('projection-definition', envelope.projectionDefinitions);
+  let groups = schemaArrayToDefinitions('group-definition', legacy ? [] : envelope.groupDefinitions);
+  let projections = schemaArrayToDefinitions('projection-definition', envelope.projectionDefinitions);
   for (const body of Object.values(projections)) liftScriptArguments(body);
-  const commands = schemaArrayToDefinitions('command-definition', envelope.commandDefinitions);
+  let commands = schemaArrayToDefinitions('command-definition', envelope.commandDefinitions);
   const scenarios = schemaArrayToDefinitions('scenario-definition', envelope.scenarioDefinitions);
-  const propertyScenarios = schemaArrayToDefinitions(
+  let propertyScenarios = schemaArrayToDefinitions(
     'projection-scenario-definition', envelope.projectionScenarioDefinitions
   );
+  let converted = [];
+  if (legacy) {
+    const lifted = groupsFromEntities({
+      customTypes,
+      entities: schemaArrayToDefinitions('group-definition', envelope[LEGACY_ENTITY_FIELD]),
+      projections,
+      commands,
+      projectionScenarios: propertyScenarios,
+    });
+    ({ customTypes, groups, projections, commands } = lifted);
+    propertyScenarios = lifted.projectionScenarios;
+    converted = lifted.notes;
+  }
 
   const modelId = createDcbModel(envelope.name);
 
   const skipped = [];
-  const skippedNames = (kind) => new Set(
-    skipped.filter((s) => s.kind === kind).map((s) => s.name)
-  );
   const attempt = (kind, name, write) => {
     try {
       write();
@@ -6541,44 +6752,22 @@ function importModelFromEnvelope(envelope) {
     }
   };
 
-  // Created automatically by `addDefinition('entity-definition', ...)`
-  // – never added again here as a standalone value type, only enriched
-  // once its exported body is known to carry more than the bare default.
-  const derivedIdTypeNames = new Set(
-    Object.entries(entities).map(([name, body]) => body.identifierType || (name + 'Id'))
-  );
-
-  skipped.push(...addManyWithRetry(modelId, [
-    ...Object.entries(customTypes)
-      .filter(([name]) => !derivedIdTypeNames.has(name))
-      .map(([name, body]) => ({ kind: 'custom-type-definition', name, body })),
-    ...Object.entries(entities)
-      .map(([name, body]) => ({ kind: 'entity-definition', name, body: bareEntityBody(body) })),
-  ]));
-
+  // In the order the document lists them: nothing is checked against
+  // anything else on the way in, so no kind has to wait for another –
+  // a reference that never resolves is an advisory afterwards. A group
+  // and a projection sharing a name are the one collision across kinds;
+  // the projection that comes second is skipped.
+  for (const [name, body] of Object.entries(customTypes)) {
+    attempt('custom-type-definition', name, () => addDefinition('custom-type-definition', modelId, name, body));
+  }
   for (const [name, body] of Object.entries(events)) {
     attempt('event-definition', name, () => addDefinition('event-definition', modelId, name, body));
   }
-  for (const [name, body] of Object.entries(customTypes)) {
-    if (derivedIdTypeNames.has(name)) {
-      attempt('custom-type-definition', name,
-        () => updateDefinition('custom-type-definition', modelId, name, body));
-    }
+  for (const [name, body] of Object.entries(groups)) {
+    attempt('group-definition', name, () => addDefinition('group-definition', modelId, name, body));
   }
-  // Projections before the full entities: a property binding names a
-  // projection, so every projection exists before the bindings render
-  // against it. Ordering is a courtesy now, not a requirement – a
-  // binding to a projection that never loads is an advisory.
   for (const [name, body] of Object.entries(projections)) {
     attempt('projection-definition', name, () => addDefinition('projection-definition', modelId, name, body));
-  }
-  // An entity whose bare form was skipped has nothing to enrich – the
-  // one skip already tells the story, so no second entry for the
-  // enrichment failing too.
-  const skippedEntities = skippedNames('entity-definition');
-  for (const [name, body] of Object.entries(entities)) {
-    if (skippedEntities.has(name)) continue;
-    attempt('entity-definition', name, () => updateDefinition('entity-definition', modelId, name, body));
   }
   for (const [name, body] of Object.entries(commands)) {
     attempt('command-definition', name, () => addDefinition('command-definition', modelId, name, body));
@@ -6594,19 +6783,7 @@ function importModelFromEnvelope(envelope) {
     attempt('projection-scenario-definition', id,
       () => addDefinition('projection-scenario-definition', modelId, id || generateId(), body));
   }
-
-  // Custom types land out of exported order: a standalone one is added
-  // in the first pool pass now that nothing checks its references,
-  // while an entity-derived one appears only when its entity does.
-  // Every other kind imports in envelope order already; this puts the
-  // one kind that cannot back into it, so a round trip diffs clean.
-  const currentTypes = Object.keys(projectState()[modelId]['custom-type-definitions']);
-  const exportedOrder = Object.keys(customTypes).filter((name) => currentTypes.includes(name));
-  const desired = [...exportedOrder, ...currentTypes.filter((name) => !exportedOrder.includes(name))];
-  if (desired.join('\n') !== currentTypes.join('\n')) {
-    reorderDefinitions('custom-type-definition', modelId, desired);
-  }
-  return { modelId, skipped };
+  return { modelId, skipped, converted };
 }
 
 // An envelope read as a model to compare against, never stored: the
@@ -6634,51 +6811,53 @@ function modelWithoutLast(modelId, count) {
 // ============================================================
 // Predefined models.
 //
-// Two models, each built in layers, because that is the order the
-// design was arrived at: a course-subscription model as the plain
-// thing, then generated identifiers, then schedules; and a product
-// pricing model as the plain thing, then a grace period on repricing.
-// Each layer is applied through the ordinary commands, so loading one
-// exercises exactly the write path an author would hit typing it in –
-// and ships advisory-clean, which the tests hold it to.
+// The suites' fixtures and what `print-model.js` prints; the examples
+// themselves live on dcb.events. Most are built in layers, because that
+// is the order the design was arrived at: a course-subscription model
+// as the plain thing, then generated identifiers, then tenancy; a
+// content model in several spellings of one decision. Each layer is
+// applied through the ordinary commands, so loading one exercises
+// exactly the write path an author would hit typing it in – and ships
+// advisory-clean, which the tests hold it to.
 //
-// Every layer keeps references resolvable at each step – entities
-// first without handlers (nothing to reference yet), then the events,
-// then the entities again with their handlers, then the commands.
+// They are stated without groups, as the examples on dcb.events are:
+// every rule reads the projection it is about in place, by the tag it
+// is kept per (`seedRead`). The course and content models were designed
+// with entities, and were restated this way in 8.0; since 11.0 they are
+// built so directly.
 // ============================================================
 
-// A lifecycle enum is an ordinary scalar custom type whose schema
-// carries `enum`, declared once and referenced from an ordinary
-// property – the same shape any other enum property has. Only a
-// lifecycle with three or more states needs one at all; two states are
-// a `boolean` projection and no type.
+// An enum is an ordinary scalar custom type whose schema carries
+// `enum`. Only a state with three or more values needs one; two are a
+// `boolean` projection and no type.
 const seedEnumType = (name, members) => ({ schema: { type: 'string', enum: members } });
+// An identifier: a plain string, marked as a tag.
+const seedTagType = () => ({ schema: { type: 'string' }, isTag: true });
 const seedProp = (name, type) => ({ name, propertyType: type, isOptional: false, isList: false });
 const seedListProp = (name, type) => ({ name, propertyType: type, isOptional: false, isList: true });
 const seedHandler = (event, operation, value) => ({ event, operation, value });
 const seedParam = (name) => ({ parameterName: name });
 // `{alias}` with no property reads a bound projection's single value.
 const seedOf = (alias, property) => (property === undefined ? { alias } : { alias, property });
-const seedBind = (alias, entity, idParam) => ({ alias, entity, id: seedParam(idParam) });
 const seedReadProjection = (alias, projection, tags = {}) =>
   ({ alias, projection, tags });
-// The one tag a projection about one of `entityName`'s instances is
-// tagged by – its identifier, named after it: `courseId: CourseId`.
-const seedEntityTag = (entityName) => ({
-  name: entityName.charAt(0).toLowerCase() + entityName.slice(1) + 'Id',
-  tagType: entityName + 'Id',
+// A read in place, `CourseStatus(courseId)`: the projection and a value
+// for each tag it declares, by name.
+const seedRead = (projection, tags, args) => ({ projection, tags, ...(args ? { arguments: args } : {}) });
+// The one tag a projection about one thing is tagged by – its
+// identifier, named after it: `courseId: CourseId`.
+const seedThingTag = (thing) => ({
+  name: thing.charAt(0).toLowerCase() + thing.slice(1) + 'Id',
+  tagType: thing + 'Id',
 });
-// The projection behind one entity property: tagged by the entity's
-// identifier, which is what an instance reads it by.
-const seedPropertyProjection = (entityName, valueType, initialValue, handlers, extra = {}) => ({
-  tags: [seedEntityTag(entityName)], valueType, isList: false, initialValue, handlers, ...extra,
+// A projection about one thing, tagged by its identifier.
+const seedThingProjection = (thing, valueType, initialValue, handlers, extra = {}) => ({
+  tags: [seedThingTag(thing)], valueType, isList: false, initialValue, handlers, ...extra,
 });
 // An event's tags, written out: every tag-typed value its properties
 // hold. A seed states them like any author would – nothing is implied
 // on the way in – and this only saves restating each list by hand.
 const seedTags = (modelId, properties) => tagPathsOf(getCtxOrThrow(modelId), properties);
-// The binding itself – everything else lives on the projection.
-const seedBindProp = (name, projection) => ({ name, projection });
 
 // A scenario a seed ships with. The id is written out rather than
 // generated so that regenerating an example produces the same file –
@@ -6699,26 +6878,19 @@ function seedBase(modelId) {
   const prop = seedProp;
   const handler = seedHandler;
   const param = seedParam;
-  const of = seedOf;
-  const bind = seedBind;
-  const bindProp = seedBindProp;
+  const course = (projection) => seedRead(projection, { courseId: param('courseId') });
+  const student = (projection) => seedRead(projection, { studentId: param('studentId') });
 
-  // 1. One lifecycle enum – Course's, because a course has three states
-  //    to be in. A student has two, so it needs no enum and gets none:
-  //    its lifecycle is a plain boolean, which is the whole of what
-  //    "does it exist" ever needed. The two spellings side by side in
-  //    the first model anyone opens is deliberate – it is where the
-  //    promotion from one to the other is taught.
-  //
-  //    Then the entities, bare: a property is a binding to a projection,
-  //    and no projection exists yet. Student first, since Course's
-  //    subscriber list is typed StudentId.
+  // 1. One enum – the course's, because a course has three states to
+  //    be in. A student has two, so it needs no enum and gets none: it
+  //    either exists or it does not, a plain boolean. Then the two
+  //    identifiers – Student first, since a course's subscriber list is
+  //    typed StudentId.
   addDefinition('custom-type-definition', modelId, 'CourseStatus', seedEnumType('CourseStatus', ['NonExistent', 'Existent', 'Archived']));
+  addDefinition('custom-type-definition', modelId, 'StudentId', seedTagType());
+  addDefinition('custom-type-definition', modelId, 'CourseId', seedTagType());
 
-  addDefinition('entity-definition', modelId, 'Student', { icon: '🧑‍🎓', properties: [] });
-  addDefinition('entity-definition', modelId, 'Course', { icon: '📚', properties: [] });
-
-  // 2. Events. Their entity-id properties are what carry the tags.
+  // 2. Events. Their identifier properties are what carry the tags.
   const event = (name, properties) =>
     addDefinition('event-definition', modelId, name, { properties, tags: seedTags(modelId, properties) });
 
@@ -6729,72 +6901,47 @@ function seedBase(modelId) {
   event('StudentSubscribedToCourse', [prop('courseId', 'CourseId'), prop('studentId', 'StudentId')]);
   event('StudentUnsubscribedFromCourse', [prop('courseId', 'CourseId'), prop('studentId', 'StudentId')]);
 
-  // 3. The projections themselves – ordinary definitions, each tagged
-  //    by the identifier of what it is about, which is what lets an
-  //    entity bind one as a property: an instance reads it by its own
-  //    identifier. Nothing else about them says "entity property": that
-  //    is entirely the binding's doing.
+  // 3. The projections – each tagged by the identifier of what it is
+  //    about, which is what a rule reads it by. A course's subscription
+  //    count and a student's are two folds, each kept per its own tag.
   const projection = (name, body) =>
     addDefinition('projection-definition', modelId, name, body);
 
-  projection('StudentExists', seedPropertyProjection('Student', 'boolean',
+  projection('StudentExists', seedThingProjection('Student', 'boolean',
     false,
     [handler('StudentRegistered', 'set', true)]));
-  projection('StudentSubscriptionCount', seedPropertyProjection('Student', 'integer', 0, [
+  projection('StudentSubscriptionCount', seedThingProjection('Student', 'integer', 0, [
     handler('StudentSubscribedToCourse', 'increment', 1),
     handler('StudentUnsubscribedFromCourse', 'decrement', 1),
   ]));
 
-  projection('CourseStatus', seedPropertyProjection('Course', 'CourseStatus',
+  projection('CourseStatus', seedThingProjection('Course', 'CourseStatus',
     { enumMember: 'NonExistent' }, [
       handler('CourseDefined', 'set', { enumMember: 'Existent' }),
       handler('CourseArchived', 'set', { enumMember: 'Archived' }),
     ]));
-  projection('CourseCapacity', seedPropertyProjection('Course', 'integer', 0, [
+  projection('CourseCapacity', seedThingProjection('Course', 'integer', 0, [
     handler('CourseDefined', 'set', { eventProperty: 'capacity' }),
     handler('CourseCapacityChanged', 'set', { eventProperty: 'newCapacity' }),
   ]));
-  projection('CourseSubscriptionCount', seedPropertyProjection('Course', 'integer', 0, [
+  projection('CourseSubscriptionCount', seedThingProjection('Course', 'integer', 0, [
     handler('StudentSubscribedToCourse', 'increment', 1),
     handler('StudentUnsubscribedFromCourse', 'decrement', 1),
   ]));
-  projection('CourseSubscribedStudentIds', seedPropertyProjection('Course', 'StudentId', [], [
+  projection('CourseSubscribedStudentIds', seedThingProjection('Course', 'StudentId', [], [
     handler('StudentSubscribedToCourse', 'append', { eventProperty: 'studentId' }),
     handler('StudentUnsubscribedFromCourse', 'remove', { eventProperty: 'studentId' }),
   ], { isList: true }));
 
-  // 4. The entities again, now binding them. A binding names the
-  //    projection and nothing else – there is no second place where a
-  //    type or an initial value could disagree with the first.
-  seedPatch('entity-definition', modelId, 'Student', (student) => {
-    student.properties = [
-      bindProp(LIFECYCLE_PROPERTY, 'StudentExists'),
-      bindProp('subscriptionCount', 'StudentSubscriptionCount'),
-    ];
-    student.lifecycle = LIFECYCLE_PROPERTY;
-  });
-  seedPatch('entity-definition', modelId, 'Course', (course) => {
-    course.properties = [
-      // Still called `status`, and that is the point: nothing privileges
-      // the name any more, so a model is free to use the word it wants.
-      // What makes this the lifecycle is the designation below.
-      bindProp('status', 'CourseStatus'),
-      bindProp('capacity', 'CourseCapacity'),
-      bindProp('subscriptionCount', 'CourseSubscriptionCount'),
-      bindProp('subscribedStudentIds', 'CourseSubscribedStudentIds'),
-    ];
-    course.lifecycle = 'status';
-  });
-
-  // 5. Commands. The boundary is the DCB.
+  // 4. Commands. Every rule reads what it is about in place; those reads
+  //    are the DCB.
   const command = (name, body) => addDefinition('command-definition', modelId, name, body);
 
   command('DefineCourse', {
-    feature: 'Course management',
     properties: [prop('courseId', 'CourseId'), prop('capacity', 'integer')],
-    boundary: [bind('course', 'Course', 'courseId')],
+    boundary: [],
     conditions: [
-      { leftHandSide: of('course', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' },
+      { leftHandSide: course('CourseStatus'), predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' },
         rejection: 'Course already exists' },
     ],
     publishes: [{
@@ -6804,13 +6951,12 @@ function seedBase(modelId) {
   });
 
   command('ChangeCourseCapacity', {
-    feature: 'Course management',
     properties: [prop('courseId', 'CourseId'), prop('newCapacity', 'integer')],
-    boundary: [bind('course', 'Course', 'courseId')],
+    boundary: [],
     conditions: [
-      { leftHandSide: of('course', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'Existent' },
+      { leftHandSide: course('CourseStatus'), predicate: 'equals', rightHandSide: { enumMember: 'Existent' },
         rejection: 'Course is not active' },
-      { leftHandSide: of('course', 'subscriptionCount'), predicate: 'lessThanOrEquals', rightHandSide: param('newCapacity'),
+      { leftHandSide: course('CourseSubscriptionCount'), predicate: 'lessThanOrEquals', rightHandSide: param('newCapacity'),
         rejection: 'Course has more subscriptions than that' },
     ],
     publishes: [{
@@ -6820,41 +6966,38 @@ function seedBase(modelId) {
   });
 
   command('ArchiveCourse', {
-    feature: 'Course management',
     properties: [prop('courseId', 'CourseId')],
-    boundary: [bind('course', 'Course', 'courseId')],
+    boundary: [],
     conditions: [
-      { leftHandSide: of('course', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'Existent' },
+      { leftHandSide: course('CourseStatus'), predicate: 'equals', rightHandSide: { enumMember: 'Existent' },
         rejection: 'Course is not active' },
     ],
     publishes: [{ name: 'CourseArchived', parameters: { courseId: param('courseId') } }],
   });
 
   command('RegisterStudent', {
-    feature: 'Student registration',
     properties: [prop('studentId', 'StudentId')],
-    boundary: [bind('student', 'Student', 'studentId')],
+    boundary: [],
     conditions: [
-      { leftHandSide: of('student', LIFECYCLE_PROPERTY), predicate: 'isFalse',
+      { leftHandSide: student('StudentExists'), predicate: 'isFalse',
         rejection: 'Student is already registered' },
     ],
     publishes: [{ name: 'StudentRegistered', parameters: { studentId: param('studentId') } }],
   });
 
   command('SubscribeStudentToCourse', {
-    feature: 'Enrolment',
     properties: [prop('courseId', 'CourseId'), prop('studentId', 'StudentId')],
-    boundary: [bind('course', 'Course', 'courseId'), bind('student', 'Student', 'studentId')],
+    boundary: [],
     conditions: [
-      { leftHandSide: of('course', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'Existent' },
+      { leftHandSide: course('CourseStatus'), predicate: 'equals', rightHandSide: { enumMember: 'Existent' },
         rejection: 'Course is not active' },
-      { leftHandSide: of('student', LIFECYCLE_PROPERTY), predicate: 'isTrue',
+      { leftHandSide: student('StudentExists'), predicate: 'isTrue',
         rejection: 'Student is not registered' },
-      { leftHandSide: of('course', 'subscriptionCount'), predicate: 'lessThan', rightHandSide: of('course', 'capacity'),
+      { leftHandSide: course('CourseSubscriptionCount'), predicate: 'lessThan', rightHandSide: course('CourseCapacity'),
         rejection: 'Course is full' },
-      { leftHandSide: of('course', 'subscribedStudentIds'), predicate: 'contains', rightHandSide: param('studentId'), negate: true,
+      { leftHandSide: course('CourseSubscribedStudentIds'), predicate: 'contains', rightHandSide: param('studentId'), negate: true,
         rejection: 'Student is already subscribed' },
-      { leftHandSide: of('student', 'subscriptionCount'), predicate: 'lessThan', rightHandSide: 10,
+      { leftHandSide: student('StudentSubscriptionCount'), predicate: 'lessThan', rightHandSide: 10,
         rejection: 'Student is subscribed to too many courses' },
     ],
     publishes: [{
@@ -6864,19 +7007,18 @@ function seedBase(modelId) {
   });
 
   command('UnsubscribeStudentFromCourse', {
-    feature: 'Enrolment',
     properties: [prop('courseId', 'CourseId'), prop('studentId', 'StudentId')],
     // The course only. Which student is asserted by the caller, and
     // whether they are in this course is answered off the course – the
     // student's own state decides nothing here, so reading it would
     // widen the boundary and buy nothing. The event still carries the
-    // `Student` tag, which is what makes a concurrent command that
+    // student's tag, which is what makes a concurrent command that
     // *did* read this student conflict with it.
-    boundary: [bind('course', 'Course', 'courseId')],
+    boundary: [],
     conditions: [
-      { leftHandSide: of('course', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'Existent' },
+      { leftHandSide: course('CourseStatus'), predicate: 'equals', rightHandSide: { enumMember: 'Existent' },
         rejection: 'Course is not active' },
-      { leftHandSide: of('course', 'subscribedStudentIds'), predicate: 'contains', rightHandSide: param('studentId'),
+      { leftHandSide: course('CourseSubscribedStudentIds'), predicate: 'contains', rightHandSide: param('studentId'),
         rejection: 'Student is not subscribed' },
     ],
     publishes: [{
@@ -6915,7 +7057,6 @@ function seedAddSequence(modelId) {
   });
 
   updateDefinition('command-definition', modelId, 'DefineCourse', {
-    feature: 'Course management',
     properties: [seedProp('capacity', 'integer')],
     boundary: [seedReadProjection('courseNumbering', 'CourseNumbering')],
     conditions: [],
@@ -6930,18 +7071,18 @@ function seedAddSequence(modelId) {
 
 }
 
-// Two scenarios over the numbering itself – the thing no entity owns
-// and no command page shows in isolation. A numbering is exactly the
-// case worth asserting directly: its whole contract is "the next value
-// to issue", at every point in its life, and that is a claim about the
-// fold rather than about any decision made from it.
+// Two scenarios over the numbering itself – the thing no command page
+// shows in isolation. A numbering is exactly the case worth asserting
+// directly: its whole contract is "the next value to issue", at every
+// point in its life, and that is a claim about the fold rather than
+// about any decision made from it.
 //
 // A layer of its own rather than part of `seedAddSequence`, because a
 // Given is written against the events as they are *now*: the tenancy
-// and schedule layers both add properties to `CourseDefined`, and a
-// scenario written before them is broken by them. That is the
-// mechanism reporting honestly, and the models that go on to grow the
-// event should not ship already saying so.
+// layer adds properties to `CourseDefined`, and a scenario written
+// before it is broken by it. That is the mechanism reporting honestly,
+// and the models that go on to grow the event should not ship already
+// saying so.
 //
 // The Then is stated here rather than derived, because a seed runs
 // against `model.js` alone and the evaluator is not loaded. A test
@@ -6964,7 +7105,7 @@ function seedSequenceScenarios(modelId) {
   });
 }
 
-// Layer 3a: tenancy, and with it a numbering *tagged* by something.
+// Layer 3: tenancy, and with it a numbering *tagged* by something.
 //
 // This is the case the old design could not express. It called
 // numbering "global by nature" and gave a sequence no tag at all –
@@ -6979,12 +7120,8 @@ function seedSequenceScenarios(modelId) {
 // have two tenants both writing `Course:c1`, and tags are flat, so
 // those two courses would be one instance. It is also how real systems
 // work: invoice numbers restart, invoice ids never do.
-//
-// A side effect worth naming: because `CourseNumber` is not an
-// identifier type, the minted value is not a tag, so write coverage
-// has nothing to exempt here.
 function seedAddTenancy(modelId) {
-  addDefinition('entity-definition', modelId, 'Tenant', { icon: '🏢', properties: [] });
+  addDefinition('custom-type-definition', modelId, 'TenantId', seedTagType());
   addDefinition('custom-type-definition', modelId, 'CourseNumber', {
     schema: { type: 'string', pattern: '^[0-9]+$' },
   });
@@ -6999,18 +7136,14 @@ function seedAddTenancy(modelId) {
   });
 
   addDefinition('projection-definition', modelId, 'TenantExists',
-    seedPropertyProjection('Tenant', 'boolean', false,
+    seedThingProjection('Tenant', 'boolean', false,
       [seedHandler('TenantRegistered', 'set', true)]));
-  seedPatch('entity-definition', modelId, 'Tenant', (tenant) => {
-    tenant.properties = [seedBindProp(LIFECYCLE_PROPERTY, 'TenantExists')];
-    tenant.lifecycle = LIFECYCLE_PROPERTY;
-  });
 
   // Tagged by the tenant, so one tag: `Tenant:<id> AND type
   // CourseDefined`. Untagged, this would be a global numbering – that
   // is the whole difference.
   addDefinition('projection-definition', modelId, 'TenantCourseNumbering', {
-    tags: [seedEntityTag('Tenant')],
+    tags: [seedThingTag('Tenant')],
     valueType: 'CourseNumber',
     isList: false,
     initialValue: '1',
@@ -7019,124 +7152,31 @@ function seedAddTenancy(modelId) {
     ],
   });
 
+  const tenantExists = seedRead('TenantExists', { tenantId: seedParam('tenantId') });
   addDefinition('command-definition', modelId, 'RegisterTenant', {
-    feature: 'Tenancy',
     properties: [seedProp('tenantId', 'TenantId')],
-    boundary: [seedBind('tenant', 'Tenant', 'tenantId')],
+    boundary: [],
     conditions: [
-      { leftHandSide: seedOf('tenant', LIFECYCLE_PROPERTY), predicate: 'isFalse',
+      { leftHandSide: tenantExists, predicate: 'isFalse',
         rejection: 'Tenant is already registered' },
     ],
     publishes: [{ name: 'TenantRegistered', parameters: { tenantId: seedParam('tenantId') } }],
   });
 
-  // Three reads, all in round 1: none of them names another, so they
-  // come back together. This is why rounds are counted by the depth of
-  // the dependency graph and not by the length of the boundary.
+  // Two reads and a rule, all in one query: none of them names another,
+  // so they come back together. This is why queries are counted by the
+  // depth of the dependency graph and not by the number of reads.
   seedPatch('command-definition', modelId, 'DefineCourse', (define) => {
     define.properties.unshift(seedProp('tenantId', 'TenantId'));
-    define.boundary.unshift(seedBind('tenant', 'Tenant', 'tenantId'));
     define.boundary.push(seedReadProjection('tenantCourseNumbering', 'TenantCourseNumbering',
       { tenantId: seedParam('tenantId') }));
     define.conditions.push({
-      leftHandSide: seedOf('tenant', LIFECYCLE_PROPERTY),
+      leftHandSide: tenantExists,
       predicate: 'isTrue',
       rejection: 'Tenant is not registered',
     });
     define.publishes[0].parameters.tenantId = seedParam('tenantId');
     define.publishes[0].parameters.courseNumber = seedOf('tenantCourseNumbering');
-  });
-}
-
-// Layer 3: schedules, and the rule that a student is never in two
-// courses at once. A slot is an hour of wall-clock time and a course is
-// scheduled by naming the slots it occupies, so a slot value *is* a
-// discretised timestamp and the granularity is stated by the pattern.
-//
-// Slots are values, never tags. Occupancy is not stored per student –
-// it is read from each course's current schedule at check time, which
-// is exactly what lets a course be rescheduled underneath its
-// subscribers without invalidating anything.
-function seedAddSchedules(modelId) {
-  addDefinition('custom-type-definition', modelId, 'TimeSlot', {
-    schema: { type: 'string', pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}$' },
-  });
-
-  seedPatch('event-definition', modelId, 'CourseDefined', (event) => {
-    event.properties.push(seedListProp('slots', 'TimeSlot'));
-  });
-  addDefinition('event-definition', modelId, 'CourseRescheduled', {
-    properties: [seedProp('courseId', 'CourseId'), seedListProp('slots', 'TimeSlot')],
-    tags: ['courseId'],
-  });
-
-  addDefinition('projection-definition', modelId, 'CourseSlots',
-    seedPropertyProjection('Course', 'TimeSlot', [], [
-      seedHandler('CourseDefined', 'set', { eventProperty: 'slots' }),
-      seedHandler('CourseRescheduled', 'set', { eventProperty: 'slots' }),
-    ], { isList: true }));
-  // Names the courses whose *current* schedules the overlap check
-  // reads. Nothing about time is stored here.
-  addDefinition('projection-definition', modelId, 'StudentSubscribedCourseIds',
-    seedPropertyProjection('Student', 'CourseId', [], [
-      seedHandler('StudentSubscribedToCourse', 'append', { eventProperty: 'courseId' }),
-      seedHandler('StudentUnsubscribedFromCourse', 'remove', { eventProperty: 'courseId' }),
-    ], { isList: true }));
-
-  seedPatch('entity-definition', modelId, 'Course', (course) => {
-    course.properties.push(seedBindProp('slots', 'CourseSlots'));
-  });
-  seedPatch('entity-definition', modelId, 'Student', (student) => {
-    student.properties.push(seedBindProp('subscribedCourseIds', 'StudentSubscribedCourseIds'));
-  });
-
-  seedPatch('command-definition', modelId, 'DefineCourse', (define) => {
-    define.properties.push(seedListProp('slots', 'TimeSlot'));
-    define.publishes[0].parameters.slots = seedParam('slots');
-  });
-
-  // Rescheduling is allowed while students are subscribed, so it has to
-  // prove that nobody it moves ends up double-booked: bind the
-  // subscribers, then every *other* course any of them is in, and
-  // require none of those schedules to touch the new slots. `theirs`
-  // would otherwise include this very course – every subscriber is in
-  // it – and a course almost always overlaps its own old schedule.
-  addDefinition('command-definition', modelId, 'RescheduleCourse', {
-    feature: 'Course management',
-    properties: [seedProp('courseId', 'CourseId'), seedListProp('slots', 'TimeSlot')],
-    boundary: [
-      seedBind('course', 'Course', 'courseId'),
-      { alias: 'students', entity: 'Student', id: { each: seedOf('course', 'subscribedStudentIds') } },
-      { alias: 'theirs', entity: 'Course', id: { each: seedOf('students', 'subscribedCourseIds') },
-        excluding: seedParam('courseId') },
-    ],
-    conditions: [
-      { leftHandSide: seedOf('course', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'Existent' },
-        rejection: 'Course is not active' },
-      { leftHandSide: seedOf('theirs', 'slots'), predicate: 'containsAny',
-        rightHandSide: seedParam('slots'), negate: true,
-        rejection: 'Slots clash with a subscriber\'s other course' },
-    ],
-    publishes: [{
-      name: 'CourseRescheduled',
-      parameters: { courseId: seedParam('courseId'), slots: seedParam('slots') },
-    }],
-  });
-
-  // `others` is the second link of the chain: the student names its
-  // courses, and those courses' current schedules answer whether this
-  // one clashes. The condition holds for every course bound.
-  seedPatch('command-definition', modelId, 'SubscribeStudentToCourse', (subscribe) => {
-    subscribe.boundary.push({
-      alias: 'others', entity: 'Course', id: { each: seedOf('student', 'subscribedCourseIds') },
-    });
-    subscribe.conditions.push({
-      leftHandSide: seedOf('others', 'slots'),
-      predicate: 'containsAny',
-      rightHandSide: seedOf('course', 'slots'),
-      negate: true,
-      rejection: 'Course clashes with the student\'s schedule',
-    });
   });
 }
 
@@ -7153,33 +7193,29 @@ function seedAddSchedules(modelId) {
 //     `ProductId`, a property typed `Item[]` carries one Product tag
 //     per element, and `ProductsOrdered` ends up tagged with every
 //     product in the cart.
-//   - `product` binds each of `items.productId`, a list, so it fans
-//     out to one instance per line.
+//   - the product reads take `each items.productId`, a list, so each
+//     is made once per line.
 //   - the price condition reads `items.price` alongside the fanned
-//     `product`. Both are rooted at `items`, so they are read at the
+//     price read. Both are rooted at `items`, so they are read at the
 //     same index: each product is checked against the price submitted
 //     *for that product*, not against any price in the cart.
 //
-// `order` is bound singularly beside it, so the same boundary holds one
+// The order is read singularly beside it, so the same command reads one
 // instance and many, and the derived DCB shows both shapes at once.
 function seedProductPricing(modelId) {
   const prop = seedProp;
   const handler = seedHandler;
   const param = seedParam;
-  const of = seedOf;
+  const product = (projection) => seedRead(projection,
+    { productId: { each: { parameterName: 'items', property: 'productId' } } });
 
   // 1. Value types. Money is scalar; Item is composite, and its
-  //    productId field is what turns a list of them into tags. The
-  //    lifecycle enums are scalar too – just with `enum` instead of a
-  //    numeric schema.
+  //    productId field is what turns a list of them into tags.
   addDefinition('custom-type-definition', modelId, 'Money', {
     schema: { type: 'number', minimum: 0 },
   });
-
-  // 2. Entities, bare – Item cannot be declared until ProductId
-  //    exists, and ProductId comes from Product.
-  addDefinition('entity-definition', modelId, 'Product', { icon: '📦', properties: [] });
-  addDefinition('entity-definition', modelId, 'Order', { icon: '🧾', properties: [] });
+  addDefinition('custom-type-definition', modelId, 'ProductId', seedTagType());
+  addDefinition('custom-type-definition', modelId, 'OrderId', seedTagType());
 
   addDefinition('custom-type-definition', modelId, 'Item', {
     properties: [
@@ -7188,7 +7224,7 @@ function seedProductPricing(modelId) {
     ],
   });
 
-  // 3. Events.
+  // 2. Events.
   const event = (name, properties) =>
     addDefinition('event-definition', modelId, name, { properties, tags: seedTags(modelId, properties) });
 
@@ -7197,45 +7233,33 @@ function seedProductPricing(modelId) {
   // One event, many tags: Order:<orderId> plus one Product per item.
   event('ProductsOrdered', [prop('orderId', 'OrderId'), seedListProp('items', 'Item')]);
 
-  // 4. The projections, then the bindings. Neither product projection
-  //    handles ProductsOrdered: a value-style handler would need to
-  //    pick *this* product's line out of the event, which the model
-  //    cannot yet express.
+  // 3. The projections. Neither product projection handles
+  //    ProductsOrdered: a value-style handler would need to pick *this*
+  //    product's line out of the event, which the model cannot yet
+  //    express.
   addDefinition('projection-definition', modelId, 'ProductExists',
-    seedPropertyProjection('Product', 'boolean', false,
+    seedThingProjection('Product', 'boolean', false,
       [handler('ProductDefined', 'set', true)]));
   // Starts at null – no value yet. A price of 0 on a product that does
   // not exist would be a lie the model then has to defend, and null is
   // a different answer from both 0 and "".
   addDefinition('projection-definition', modelId, 'ProductCurrentPrice',
-    seedPropertyProjection('Product', 'Money', null, [
+    seedThingProjection('Product', 'Money', null, [
       handler('ProductDefined', 'set', { eventProperty: 'price' }),
       handler('ProductPriceChanged', 'set', { eventProperty: 'newPrice' }),
     ]));
   addDefinition('projection-definition', modelId, 'OrderExists',
-    seedPropertyProjection('Order', 'boolean', false,
+    seedThingProjection('Order', 'boolean', false,
       [handler('ProductsOrdered', 'set', true)]));
 
-  seedPatch('entity-definition', modelId, 'Product', (product) => {
-    product.properties = [
-      seedBindProp(LIFECYCLE_PROPERTY, 'ProductExists'),
-      seedBindProp('currentPrice', 'ProductCurrentPrice'),
-    ];
-    product.lifecycle = LIFECYCLE_PROPERTY;
-  });
-  seedPatch('entity-definition', modelId, 'Order', (order) => {
-    order.properties = [seedBindProp(LIFECYCLE_PROPERTY, 'OrderExists')];
-    order.lifecycle = LIFECYCLE_PROPERTY;
-  });
-
-  // 5. Commands defining and repricing a single product, so the
+  // 4. Commands defining and repricing a single product, so the
   //    example can be exercised before anything is ordered.
+  const one = (projection) => seedRead(projection, { productId: param('productId') });
   addDefinition('command-definition', modelId, 'DefineProduct', {
-    feature: 'Catalogue',
     properties: [prop('productId', 'ProductId'), prop('price', 'Money')],
-    boundary: [seedBind('product', 'Product', 'productId')],
+    boundary: [],
     conditions: [{
-      leftHandSide: of('product', LIFECYCLE_PROPERTY),
+      leftHandSide: one('ProductExists'),
       predicate: 'isFalse',
       rejection: 'Product already exists',
     }],
@@ -7245,23 +7269,22 @@ function seedProductPricing(modelId) {
     }],
   });
   addDefinition('command-definition', modelId, 'ChangeProductPrice', {
-    feature: 'Catalogue',
     properties: [prop('productId', 'ProductId'), prop('newPrice', 'Money')],
-    boundary: [seedBind('product', 'Product', 'productId')],
+    boundary: [],
     conditions: [
       {
-        leftHandSide: of('product', LIFECYCLE_PROPERTY),
+        leftHandSide: one('ProductExists'),
         predicate: 'isTrue',
         rejection: 'Product does not exist',
       },
       // Repricing to the price already in force is a no-op, and saying
-      // so does more than tidy the log: reading `currentPrice` pulls
+      // so does more than tidy the log: reading the current price pulls
       // ProductPriceChanged into this command's query, where the state
       // check alone would have covered only ProductDefined. Without it
       // two concurrent repricings both see an untouched product and
       // both succeed.
       {
-        leftHandSide: of('product', 'currentPrice'),
+        leftHandSide: one('ProductCurrentPrice'),
         predicate: 'equals',
         rightHandSide: param('newPrice'),
         negate: true,
@@ -7274,31 +7297,26 @@ function seedProductPricing(modelId) {
     }],
   });
 
-  // 6. The command the example exists for.
+  // 5. The command the example exists for.
   addDefinition('command-definition', modelId, 'OrderProducts', {
-    feature: 'Checkout',
     properties: [prop('orderId', 'OrderId'), seedListProp('items', 'Item')],
-    boundary: [
-      seedBind('order', 'Order', 'orderId'),
-      // Each element of a list, so this binds one Product per line.
-      { alias: 'product', entity: 'Product', id: { each: { parameterName: 'items', property: 'productId' } } },
-    ],
+    boundary: [],
     conditions: [
       // Singular: the order must not already have been placed.
       {
-        leftHandSide: of('order', LIFECYCLE_PROPERTY),
+        leftHandSide: seedRead('OrderExists', { orderId: param('orderId') }),
         predicate: 'isFalse',
         rejection: 'Order was already placed',
       },
-      // Universal over the fanned alias: every product must exist.
+      // Universal over the fanned read: every product must exist.
       {
-        leftHandSide: of('product', LIFECYCLE_PROPERTY),
+        leftHandSide: product('ProductExists'),
         predicate: 'isTrue',
         rejection: 'Product does not exist',
       },
-      // Zipped: product[i] against items[i].price.
+      // Zipped: price[i] against items[i].price.
       {
-        leftHandSide: of('product', 'currentPrice'),
+        leftHandSide: product('ProductCurrentPrice'),
         predicate: 'equals',
         rightHandSide: { parameterName: 'items', property: 'price' },
         rejection: 'Price has changed',
@@ -7306,79 +7324,8 @@ function seedProductPricing(modelId) {
     ],
     publishes: [{
       name: 'ProductsOrdered',
-      // `items` is emitted whole. Coverage reads through it to
-      // items.productId, which is exactly what `product` bound.
       parameters: { orderId: param('orderId'), items: param('items') },
     }],
-  });
-}
-
-// ============================================================
-// Without entities (8.0).
-//
-// The course and content models were designed with entities, and the
-// layers above still build them that way – which is the honest record
-// of how they came about, and what the one entity example keeps. Every
-// other shipped model is then stated without them, by this last layer:
-// a property an entity read stood for becomes the projection it binds,
-// read in place by the identifier the entity was read by – a fan-out
-// staying one – and the entities and their lifecycles (experimental)
-// go, the icons and feature groups with them. One append, through the
-// ordinary command, like every layer.
-// ============================================================
-
-function seedWithoutEntities(modelId) {
-  const model = getCtxOrThrow(modelId);
-  const entities = model['entity-definitions'];
-  const commands = {};
-  for (const [name, stored] of Object.entries(model['command-definitions'])) {
-    const body = deepClone(stored);
-    const byAlias = new Map((body.boundary || []).filter((b) => b && b.entity).map((b) => [b.alias, b]));
-    const convert = (operand) => {
-      if (Array.isArray(operand)) return operand.map(convert);
-      if (!operand || typeof operand !== 'object') return operand;
-      if (operandSource(operand) === 'alias-property' && byAlias.has(operand.alias)) {
-        const binding = byAlias.get(operand.alias);
-        const property = (entities[binding.entity].properties || []).find((p) => p.name === operand.property);
-        const [tag] = projectionTagParams(model['projection-definitions'][property.projection]);
-        const read = { projection: property.projection, tags: { [tag.name]: convert(binding.id) } };
-        if (binding.arguments && Object.keys(binding.arguments).length) read.arguments = convert(binding.arguments);
-        return read;
-      }
-      const out = {};
-      for (const [key, value] of Object.entries(operand)) out[key] = convert(value);
-      return out;
-    };
-    const rule = (condition) => {
-      const out = { ...condition, leftHandSide: convert(condition.leftHandSide) };
-      if (condition.rightHandSide !== undefined) out.rightHandSide = convert(condition.rightHandSide);
-      return out;
-    };
-    body.conditions = (body.conditions || []).map(rule);
-    body.publishes = (body.publishes || []).map((emission) => {
-      const out = { ...emission };
-      if (emission.parameters) out.parameters = convert(emission.parameters);
-      if (emission.when) out.when = emission.when.map(rule);
-      return out;
-    });
-    body.boundary = (body.boundary || []).filter((b) => !b.entity).map(convert);
-    delete body.icon;
-    delete body.feature;
-    commands[name] = body;
-  }
-  const events = {};
-  for (const [name, body] of Object.entries(model['event-definitions'])) {
-    events[name] = { ...body };
-    delete events[name].icon;
-  }
-  replaceDefinitions(modelId, {
-    collections: {
-      'custom-type-definition': model['custom-type-definitions'],
-      'event-definition': events,
-      'entity-definition': {},
-      'projection-definition': model['projection-definitions'],
-      'command-definition': commands,
-    },
   });
 }
 
@@ -7401,6 +7348,11 @@ function seedWithoutEntities(modelId) {
 // verdict.
 // ============================================================
 
+// A document's projection read in place, by the document a command
+// names in `parameter`.
+const seedDocument = (projection, parameter = 'docId') =>
+  seedRead(projection, { documentId: seedParam(parameter) });
+
 // The baseline: the status projection is scripted. It keeps both texts
 // as private state and exposes only the status, and every command
 // decides against that one exposed value. Publishing "restores"
@@ -7410,14 +7362,13 @@ function seedWithoutEntities(modelId) {
 function seedContentDecisionsScripted(modelId) {
   const prop = seedProp;
   const param = seedParam;
-  const of = seedOf;
-  const bind = seedBind;
+  const status = (parameter) => seedDocument('DocumentStatus', parameter);
 
-  // 1. The lifecycle enum, then the entity, bare – declaring Document
-  //    mints DocumentId, which the state type and events reference.
+  // 1. The status enum, then the identifier, which the state type and
+  //    events reference.
   addDefinition('custom-type-definition', modelId, 'DocumentStatus', seedEnumType('DocumentStatus',
     ['NonExistent', 'Draft', 'Published', 'PendingChanges', 'Archived']));
-  addDefinition('entity-definition', modelId, 'Document', { icon: '📄', properties: [] });
+  addDefinition('custom-type-definition', modelId, 'DocumentId', seedTagType());
 
   // The script's private state, written down as a composite type.
   // Nothing references it – the script's initialState is untyped by
@@ -7444,7 +7395,7 @@ function seedContentDecisionsScripted(modelId) {
   //    out of the boundary: conditions read `status` and nothing else,
   //    typed exactly as a declared projection would be.
   addDefinition('projection-definition', modelId, 'DocumentStatus', {
-    tags: [seedEntityTag('Document')],
+    tags: [seedThingTag('Document')],
     valueType: 'DocumentStatus',
     isList: false,
     script: {
@@ -7463,14 +7414,6 @@ function seedContentDecisionsScripted(modelId) {
         code: '{"currentText":state.currentText,"publishedText":state.publishedText,"status":"Archived"}' },
     ],
   });
-  seedPatch('entity-definition', modelId, 'Document', (document) => {
-    document.properties = [seedBindProp('status', 'DocumentStatus')];
-    // Designated even though the fold is a script: what a document is in
-    // *is* this property, and saying so is right whether or not a
-    // machine can be drawn from it. The Lifecycles page reports why it
-    // cannot rather than pretending the entity has no lifecycle.
-    document.lifecycle = 'status';
-  });
 
   // 4. Commands – every rule is a status check, and the two that allow
   //    more than one status use `equalsAny` rather than spelling the
@@ -7478,27 +7421,23 @@ function seedContentDecisionsScripted(modelId) {
   const command = (name, body) => addDefinition('command-definition', modelId, name, body);
 
   command('AddDocument', {
-    feature: 'Document Authoring',
-    icon: '⭐',
     properties: [prop('id', 'DocumentId')],
-    boundary: [bind('document', 'Document', 'id')],
+    boundary: [],
     conditions: [
-      { leftHandSide: of('document', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' },
+      { leftHandSide: status('id'), predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' },
         rejection: 'Document already exists' },
     ],
     publishes: [{ name: 'DocumentAdded', parameters: { id: param('id') } }],
   });
 
   command('UpdateText', {
-    feature: 'Document Authoring',
-    icon: '✏️',
     properties: [prop('docId', 'DocumentId'), prop('text', 'string')],
-    boundary: [bind('document', 'Document', 'docId')],
+    boundary: [],
     conditions: [
-      { leftHandSide: of('document', 'status'), predicate: 'equals',
+      { leftHandSide: status(), predicate: 'equals',
         rightHandSide: { enumMember: 'NonExistent' }, negate: true,
         rejection: 'Document does not exist' },
-      { leftHandSide: of('document', 'status'), predicate: 'equals',
+      { leftHandSide: status(), predicate: 'equals',
         rightHandSide: { enumMember: 'Archived' }, negate: true,
         rejection: 'Document is archived' },
     ],
@@ -7509,12 +7448,10 @@ function seedContentDecisionsScripted(modelId) {
   });
 
   command('PublishDocument', {
-    feature: 'Document Authoring',
-    icon: '💾',
     properties: [prop('docId', 'DocumentId')],
-    boundary: [bind('document', 'Document', 'docId')],
+    boundary: [],
     conditions: [
-      { leftHandSide: of('document', 'status'), predicate: 'equalsAny',
+      { leftHandSide: status(), predicate: 'equalsAny',
         rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'PendingChanges' }],
         rejection: 'Document cannot be published' },
     ],
@@ -7522,12 +7459,10 @@ function seedContentDecisionsScripted(modelId) {
   });
 
   command('ArchiveDocument', {
-    feature: 'Document Authoring',
-    icon: '🗑️',
     properties: [prop('docId', 'DocumentId')],
-    boundary: [bind('document', 'Document', 'docId')],
+    boundary: [],
     conditions: [
-      { leftHandSide: of('document', 'status'), predicate: 'equalsAny',
+      { leftHandSide: status(), predicate: 'equalsAny',
         rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }, { enumMember: 'PendingChanges' }],
         rejection: 'Document cannot be archived' },
     ],
@@ -7541,7 +7476,7 @@ function seedContentDecisionsScripted(modelId) {
 // publish guard compares them: `not(currentText == publishedText)`.
 // The stored status shrinks to a four-state lifecycle in which
 // Published means *has been published*; pending-ness is never stored,
-// only visible where the two bound texts differ. Initial values do
+// only visible where the two read texts differ. Initial values do
 // real work here: `currentText` becomes "" on add while
 // `publishedText` stays null, which is exactly what makes a fresh
 // Draft publishable without ever comparing against null explicitly.
@@ -7549,12 +7484,11 @@ function seedDocumentAuthoring(modelId) {
   const prop = seedProp;
   const handler = seedHandler;
   const param = seedParam;
-  const of = seedOf;
-  const bind = seedBind;
+  const lifecycle = (parameter) => seedDocument('DocumentLifecycle', parameter);
 
   addDefinition('custom-type-definition', modelId, 'DocumentLifecycle', seedEnumType('DocumentLifecycle',
     ['NonExistent', 'Draft', 'Published', 'Archived']));
-  addDefinition('entity-definition', modelId, 'Document', { icon: '📄', properties: [] });
+  addDefinition('custom-type-definition', modelId, 'DocumentId', seedTagType());
 
   const event = (name, properties) =>
     addDefinition('event-definition', modelId, name, { properties, tags: seedTags(modelId, properties) });
@@ -7570,56 +7504,43 @@ function seedDocumentAuthoring(modelId) {
   const projection = (name, body) =>
     addDefinition('projection-definition', modelId, name, body);
 
-  projection('DocumentLifecycle', seedPropertyProjection('Document', 'DocumentLifecycle',
+  projection('DocumentLifecycle', seedThingProjection('Document', 'DocumentLifecycle',
     { enumMember: 'NonExistent' }, [
       handler('DocumentAdded', 'set', { enumMember: 'Draft' }),
       handler('DocumentPublished', 'set', { enumMember: 'Published' }),
       handler('DocumentArchived', 'set', { enumMember: 'Archived' }),
     ]));
-  projection('DocumentCurrentText', seedPropertyProjection('Document', 'string', null, [
+  projection('DocumentCurrentText', seedThingProjection('Document', 'string', null, [
     handler('DocumentAdded', 'set', ''),
     handler('TextUpdated', 'set', { eventProperty: 'text' }),
   ]));
-  projection('DocumentPublishedText', seedPropertyProjection('Document', 'string', null, [
+  projection('DocumentPublishedText', seedThingProjection('Document', 'string', null, [
     handler('DocumentPublished', 'set', { eventProperty: 'text' }),
   ]));
-
-  seedPatch('entity-definition', modelId, 'Document', (document) => {
-    document.properties = [
-      seedBindProp('status', 'DocumentLifecycle'),
-      seedBindProp('currentText', 'DocumentCurrentText'),
-      seedBindProp('publishedText', 'DocumentPublishedText'),
-    ];
-    document.lifecycle = 'status';
-  });
 
   const command = (name, body) => addDefinition('command-definition', modelId, name, body);
 
   command('AddDocument', {
-    feature: 'Document Authoring',
-    icon: '⭐',
     properties: [prop('id', 'DocumentId')],
-    boundary: [bind('document', 'Document', 'id')],
+    boundary: [],
     conditions: [
-      { leftHandSide: of('document', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' },
+      { leftHandSide: lifecycle('id'), predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' },
         rejection: 'Document already exists' },
     ],
     publishes: [{ name: 'DocumentAdded', parameters: { id: param('id') } }],
   });
 
   command('UpdateText', {
-    feature: 'Document Authoring',
-    icon: '✏️',
     properties: [prop('docId', 'DocumentId'), prop('text', 'string')],
-    boundary: [bind('document', 'Document', 'docId')],
+    boundary: [],
     conditions: [
-      { leftHandSide: of('document', 'status'), predicate: 'equalsAny',
+      { leftHandSide: lifecycle(), predicate: 'equalsAny',
         rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }],
         rejection: 'Document is not editable' },
       // Recording an unchanged text is a no-op, and saying so pulls
       // TextUpdated into this command's query – the same move
       // ChangeProductPrice documents in the pricing example.
-      { leftHandSide: of('document', 'currentText'), predicate: 'equals',
+      { leftHandSide: seedDocument('DocumentCurrentText'), predicate: 'equals',
         rightHandSide: param('text'), negate: true,
         rejection: 'Text is unchanged' },
     ],
@@ -7630,12 +7551,10 @@ function seedDocumentAuthoring(modelId) {
   });
 
   command('PublishDocument', {
-    feature: 'Document Authoring',
-    icon: '💾',
     properties: [prop('docId', 'DocumentId')],
-    boundary: [bind('document', 'Document', 'docId')],
+    boundary: [],
     conditions: [
-      { leftHandSide: of('document', 'status'), predicate: 'equalsAny',
+      { leftHandSide: lifecycle(), predicate: 'equalsAny',
         rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }],
         rejection: 'Document cannot be published' },
       // The content-based decision, in the boundary: publishing is
@@ -7643,23 +7562,21 @@ function seedDocumentAuthoring(modelId) {
       // null) differs, a republish does not, and re-typing the
       // published text makes the two equal again, so the revert needs
       // no event and no stored status to hold.
-      { leftHandSide: of('document', 'currentText'), predicate: 'equals',
-        rightHandSide: of('document', 'publishedText'), negate: true,
+      { leftHandSide: seedDocument('DocumentCurrentText'), predicate: 'equals',
+        rightHandSide: seedDocument('DocumentPublishedText'), negate: true,
         rejection: 'No changes to publish' },
     ],
     publishes: [{
       name: 'DocumentPublished',
-      parameters: { docId: param('docId'), text: of('document', 'currentText') },
+      parameters: { docId: param('docId'), text: seedDocument('DocumentCurrentText') },
     }],
   });
 
   command('ArchiveDocument', {
-    feature: 'Document Authoring',
-    icon: '🗑️',
     properties: [prop('docId', 'DocumentId')],
-    boundary: [bind('document', 'Document', 'docId')],
+    boundary: [],
     conditions: [
-      { leftHandSide: of('document', 'status'), predicate: 'equalsAny',
+      { leftHandSide: lifecycle(), predicate: 'equalsAny',
         rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }],
         rejection: 'Document cannot be archived' },
     ],
@@ -7676,22 +7593,20 @@ function seedDocumentAuthoring(modelId) {
 // against the proven value.
 function seedVerifiedPublish(modelId) {
   updateDefinition('command-definition', modelId, 'PublishDocument', {
-    feature: 'Document Authoring',
-    icon: '💾',
     properties: [seedProp('docId', 'DocumentId'), seedProp('text', 'string')],
-    boundary: [seedBind('document', 'Document', 'docId')],
+    boundary: [],
     conditions: [
-      { leftHandSide: seedOf('document', 'status'), predicate: 'equalsAny',
+      { leftHandSide: seedDocument('DocumentLifecycle'), predicate: 'equalsAny',
         rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }],
         rejection: 'Document cannot be published' },
       // The proof: what the caller believes it is publishing must be
       // the current text – a stale echo is rejected, which is the
       // optimistic check made a domain rule.
-      { leftHandSide: seedOf('document', 'currentText'), predicate: 'equals',
+      { leftHandSide: seedDocument('DocumentCurrentText'), predicate: 'equals',
         rightHandSide: seedParam('text'),
         rejection: 'Text is not the current one' },
       { leftHandSide: seedParam('text'), predicate: 'equals',
-        rightHandSide: seedOf('document', 'publishedText'), negate: true,
+        rightHandSide: seedDocument('DocumentPublishedText'), negate: true,
         rejection: 'No changes to publish' },
     ],
     publishes: [{
@@ -7703,17 +7618,16 @@ function seedVerifiedPublish(modelId) {
 
 // Layer: the comparison declared once. `DocumentHasPendingChanges` is
 // a *derived* projection – no handlers, one predicate over the two
-// text projections – bound as an entity property and read by the
-// publish guard, so the logic lives in exactly one declaration and a
-// real application's read side could interpret the same data. Its
-// query is its operands' union, so binding it guards the append
-// exactly as reading both texts would.
+// text projections – read by the publish guard, so the logic lives in
+// exactly one declaration and a real application's read side could
+// interpret the same data. Its query is its operands' union, so reading
+// it guards the append exactly as reading both texts would.
 function seedDerivedPending(modelId) {
   // Tagged by the document like the two it compares, and passing that
   // tag on to each of them by name.
   const own = { documentId: { parameterName: 'documentId' } };
   addDefinition('projection-definition', modelId, 'DocumentHasPendingChanges', {
-    tags: [seedEntityTag('Document')],
+    tags: [seedThingTag('Document')],
     valueType: 'boolean',
     isList: false,
     derived: {
@@ -7724,14 +7638,10 @@ function seedDerivedPending(modelId) {
     },
   });
 
-  seedPatch('entity-definition', modelId, 'Document', (document) => {
-    document.properties.push(seedBindProp('hasPendingChanges', 'DocumentHasPendingChanges'));
-  });
-
   seedPatch('command-definition', modelId, 'PublishDocument', (publish) => {
     publish.conditions = [
       publish.conditions[0],
-      { leftHandSide: seedOf('document', 'hasPendingChanges'), predicate: 'isTrue',
+      { leftHandSide: seedDocument('DocumentHasPendingChanges'), predicate: 'isTrue',
         rejection: 'No changes to publish' },
     ];
   });
@@ -7964,12 +7874,11 @@ function seedGuardedAuthoring(modelId) {
   const prop = seedProp;
   const handler = seedHandler;
   const param = seedParam;
-  const of = seedOf;
-  const bind = seedBind;
+  const status = (parameter) => seedDocument('DocumentStatus', parameter);
 
   addDefinition('custom-type-definition', modelId, 'DocumentStatus', seedEnumType('DocumentStatus',
     ['NonExistent', 'Draft', 'Published', 'PendingChanges', 'Archived']));
-  addDefinition('entity-definition', modelId, 'Document', { icon: '📄', properties: [] });
+  addDefinition('custom-type-definition', modelId, 'DocumentId', seedTagType());
 
   const event = (name, properties) =>
     addDefinition('event-definition', modelId, name, { properties, tags: seedTags(modelId, properties) });
@@ -7985,7 +7894,7 @@ function seedGuardedAuthoring(modelId) {
 
   // The five states, every transition a plain `set` – the split events
   // carry the distinction the scripted baseline computed.
-  projection('DocumentStatus', seedPropertyProjection('Document', 'DocumentStatus',
+  projection('DocumentStatus', seedThingProjection('Document', 'DocumentStatus',
     { enumMember: 'NonExistent' }, [
       handler('DocumentAdded', 'set', { enumMember: 'Draft' }),
       handler('TextChanged', 'set', { enumMember: 'PendingChanges' }),
@@ -7993,48 +7902,35 @@ function seedGuardedAuthoring(modelId) {
       handler('DocumentPublished', 'set', { enumMember: 'Published' }),
       handler('DocumentArchived', 'set', { enumMember: 'Archived' }),
     ]));
-  projection('DocumentCurrentText', seedPropertyProjection('Document', 'string', null, [
+  projection('DocumentCurrentText', seedThingProjection('Document', 'string', null, [
     handler('DocumentAdded', 'set', ''),
     handler('TextChanged', 'set', { eventProperty: 'text' }),
     handler('TextRevertedToPublished', 'set', { eventProperty: 'text' }),
   ]));
-  projection('DocumentPublishedText', seedPropertyProjection('Document', 'string', null, [
+  projection('DocumentPublishedText', seedThingProjection('Document', 'string', null, [
     handler('DocumentPublished', 'set', { eventProperty: 'text' }),
   ]));
-
-  seedPatch('entity-definition', modelId, 'Document', (document) => {
-    document.properties = [
-      seedBindProp('status', 'DocumentStatus'),
-      seedBindProp('currentText', 'DocumentCurrentText'),
-      seedBindProp('publishedText', 'DocumentPublishedText'),
-    ];
-    document.lifecycle = 'status';
-  });
 
   const command = (name, body) => addDefinition('command-definition', modelId, name, body);
 
   command('AddDocument', {
-    feature: 'Document Authoring',
-    icon: '⭐',
     properties: [prop('id', 'DocumentId')],
-    boundary: [bind('document', 'Document', 'id')],
+    boundary: [],
     conditions: [
-      { leftHandSide: of('document', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' },
+      { leftHandSide: status('id'), predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' },
         rejection: 'Document already exists' },
     ],
     publishes: [{ name: 'DocumentAdded', parameters: { id: param('id') } }],
   });
 
   command('UpdateText', {
-    feature: 'Document Authoring',
-    icon: '✏️',
     properties: [prop('docId', 'DocumentId'), prop('text', 'string')],
-    boundary: [bind('document', 'Document', 'docId')],
+    boundary: [],
     conditions: [
-      { leftHandSide: of('document', 'status'), predicate: 'equalsAny',
+      { leftHandSide: status(), predicate: 'equalsAny',
         rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }, { enumMember: 'PendingChanges' }],
         rejection: 'Document is not editable' },
-      { leftHandSide: of('document', 'currentText'), predicate: 'equals',
+      { leftHandSide: seedDocument('DocumentCurrentText'), predicate: 'equals',
         rightHandSide: param('text'), negate: true,
         rejection: 'Text is unchanged' },
     ],
@@ -8046,43 +7942,39 @@ function seedGuardedAuthoring(modelId) {
       {
         name: 'TextChanged',
         when: [{ leftHandSide: param('text'), predicate: 'equals',
-          rightHandSide: of('document', 'publishedText'), negate: true }],
+          rightHandSide: seedDocument('DocumentPublishedText'), negate: true }],
         parameters: { docId: param('docId'), text: param('text') },
       },
       {
         name: 'TextRevertedToPublished',
         when: [{ leftHandSide: param('text'), predicate: 'equals',
-          rightHandSide: of('document', 'publishedText') }],
+          rightHandSide: seedDocument('DocumentPublishedText') }],
         parameters: { docId: param('docId'), text: param('text') },
       },
     ],
   });
 
   command('PublishDocument', {
-    feature: 'Document Authoring',
-    icon: '💾',
     properties: [prop('docId', 'DocumentId')],
-    boundary: [bind('document', 'Document', 'docId')],
+    boundary: [],
     conditions: [
       // The stored status is trustworthy again, so the five-state
       // guard the scripted baseline used works verbatim.
-      { leftHandSide: of('document', 'status'), predicate: 'equalsAny',
+      { leftHandSide: status(), predicate: 'equalsAny',
         rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'PendingChanges' }],
         rejection: 'Document cannot be published' },
     ],
     publishes: [{
       name: 'DocumentPublished',
-      parameters: { docId: param('docId'), text: of('document', 'currentText') },
+      parameters: { docId: param('docId'), text: seedDocument('DocumentCurrentText') },
     }],
   });
 
   command('ArchiveDocument', {
-    feature: 'Document Authoring',
-    icon: '🗑️',
     properties: [prop('docId', 'DocumentId')],
-    boundary: [bind('document', 'Document', 'docId')],
+    boundary: [],
     conditions: [
-      { leftHandSide: of('document', 'status'), predicate: 'equalsAny',
+      { leftHandSide: status(), predicate: 'equalsAny',
         rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }, { enumMember: 'PendingChanges' }],
         rejection: 'Document cannot be archived' },
     ],
@@ -8091,26 +7983,23 @@ function seedGuardedAuthoring(modelId) {
 }
 
 // `experimental` marks the entries that use what the experimental flag
-// keeps off the pages (entities, guards, derived projections…); the
-// model list shows those only with the flag on. A test holds the mark
-// to the built model's own `experimentalFeatures`.
+// keeps off the pages (scripts, guards…); the model list shows those
+// only with the flag on. A test holds the mark to the built model's own
+// `experimentalFeatures`.
 const PREDEFINED_MODELS = [
   {
     name: 'Course Example (simple)',
     slug: 'course-simple',
     description: 'Courses and students, capacity and subscriptions. '
       + 'Identifiers are supplied by the caller and checked with a state condition.',
-    build: (modelId) => { seedBase(modelId); seedWithoutEntities(modelId); },
+    build: (modelId) => { seedBase(modelId); },
   },
   {
     name: 'Course Example (with sequence)',
     slug: 'course-sequence',
     description: 'Adds a projection issuing c1, c2, c3… DefineCourse loses its identifier '
       + 'parameter and its conditions – reading the numbering guards it instead.',
-    build: (modelId) => {
-      seedBase(modelId); seedAddSequence(modelId); seedSequenceScenarios(modelId);
-      seedWithoutEntities(modelId);
-    },
+    build: (modelId) => { seedBase(modelId); seedAddSequence(modelId); seedSequenceScenarios(modelId); },
   },
   {
     name: 'Course Example (with sequence and tenant)',
@@ -8118,20 +8007,7 @@ const PREDEFINED_MODELS = [
     description: 'The numbering restarts per tenant – the case a tagless sequence could not '
       + 'express. Identity stays globally minted; what restarts is the number, so no two '
       + 'tenants ever write the same Course tag.',
-    build: (modelId) => {
-      seedBase(modelId); seedAddSequence(modelId); seedAddTenancy(modelId);
-      seedWithoutEntities(modelId);
-    },
-  },
-  {
-    name: 'Course Example (with schedules)',
-    slug: 'course-schedules',
-    experimental: true,
-    description: 'Adds hourly slots and the rule that a student is never in two courses at '
-      + 'once, checked against live schedules so courses can be rescheduled under subscribers. '
-      + 'Stated with entities – rescheduling excludes the course itself from its subscribers\' '
-      + 'other courses, which only an entity read can say.',
-    build: (modelId) => { seedBase(modelId); seedAddSequence(modelId); seedAddSchedules(modelId); },
+    build: (modelId) => { seedBase(modelId); seedAddSequence(modelId); seedAddTenancy(modelId); },
   },
   {
     name: 'Dynamic Product Price (simple)',
@@ -8139,7 +8015,7 @@ const PREDEFINED_MODELS = [
     description: 'A cart ordered in one append. Each line names a product and the price shown '
       + 'to the customer; the boundary fans out over the lines and checks each price against '
       + 'the product it belongs to.',
-    build: (modelId) => { seedProductPricing(modelId); seedWithoutEntities(modelId); },
+    build: (modelId) => { seedProductPricing(modelId); },
   },
   {
     name: 'Content based decisions (scripted projection)',
@@ -8149,7 +8025,7 @@ const PREDEFINED_MODELS = [
       + 'its current text equals the last published one – a comparison no declared handler can '
       + 'express, so the status projection is scripted, keeps both texts as hidden state and '
       + 'exposes only the status.',
-    build: (modelId) => { seedContentDecisionsScripted(modelId); seedWithoutEntities(modelId); },
+    build: (modelId) => { seedContentDecisionsScripted(modelId); },
   },
   {
     name: 'Content based decisions (boundary comparison)',
@@ -8157,7 +8033,7 @@ const PREDEFINED_MODELS = [
     description: 'The comparison moved into the boundary: two plain text projections, '
       + 'DocumentPublished carrying the text it publishes, and a publish guard comparing them. '
       + 'Nothing is scripted; pending-ness is never stored, only visible where the texts differ.',
-    build: (modelId) => { seedDocumentAuthoring(modelId); seedWithoutEntities(modelId); },
+    build: (modelId) => { seedDocumentAuthoring(modelId); },
   },
   {
     name: 'Content based decisions (client-verified)',
@@ -8165,7 +8041,7 @@ const PREDEFINED_MODELS = [
     description: 'Publishing takes the text the caller saw and verifies it against the current '
       + 'one – the optimistic check OrderProducts applies to prices, made a domain rule. A stale '
       + 'echo is rejected; the published event carries the proven text.',
-    build: (modelId) => { seedDocumentAuthoring(modelId); seedVerifiedPublish(modelId); seedWithoutEntities(modelId); },
+    build: (modelId) => { seedDocumentAuthoring(modelId); seedVerifiedPublish(modelId); },
   },
   {
     name: 'Content based decisions (guarded emissions)',
@@ -8174,7 +8050,7 @@ const PREDEFINED_MODELS = [
     description: 'The decision made at write time and recorded: UpdateText emits TextChanged or '
       + 'TextRevertedToPublished under complementary guards, so the log says a revert happened '
       + 'and the five-state status folds from plain handlers again.',
-    build: (modelId) => { seedGuardedAuthoring(modelId); seedWithoutEntities(modelId); },
+    build: (modelId) => { seedGuardedAuthoring(modelId); },
   },
   {
     name: 'Content based decisions (derived projection)',
@@ -8182,7 +8058,7 @@ const PREDEFINED_MODELS = [
     description: 'The comparison declared once: hasPendingChanges is a derived projection – no '
       + 'handlers, one predicate over the two text projections – read by the publish guard, so '
       + 'a frontend could interpret the same declaration.',
-    build: (modelId) => { seedDocumentAuthoring(modelId); seedDerivedPending(modelId); seedWithoutEntities(modelId); },
+    build: (modelId) => { seedDocumentAuthoring(modelId); seedDerivedPending(modelId); },
   },
   {
     name: 'Developer hours (derived computation)',
@@ -8192,14 +8068,6 @@ const PREDEFINED_MODELS = [
       + 'projection – the weekly budget less that week\'s allocations – so allocating reads '
       + 'one value, and its boundary is still both queries.',
     build: (modelId) => { seedDeveloperHours(modelId); },
-  },
-  {
-    name: 'Course Example (with entities)',
-    slug: 'course-entities',
-    experimental: true,
-    description: 'The simple course example stated with entities and lifecycles – the '
-      + 'experimental way of grouping projections under the thing they are about.',
-    build: (modelId) => { seedBase(modelId); },
   },
 ];
 

@@ -1,6 +1,6 @@
 {
-  "$schema": "https://dcb.events/schemas/model/v10.json",
-  "dcbModelVersion": "10.0",
+  "$schema": "https://dcb.events/schemas/model/v11.json",
+  "dcbModelVersion": "11.0",
   "name": "Content based decisions (guarded emissions)",
   "customTypeDefinitions": [
     {
@@ -114,7 +114,7 @@
       ]
     }
   ],
-  "entityDefinitions": [],
+  "groupDefinitions": [],
   "projectionDefinitions": [
     {
       "name": "DocumentStatus",
