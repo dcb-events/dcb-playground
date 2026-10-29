@@ -353,6 +353,11 @@ and prune what no longer holds.
   below): a moved field and a new operand member. The one 9.x shape
   that moved is lifted on import (`liftScriptArguments`), so this build
   reads 8.x to 10.x; the stored shape moved, so `EVENT_LOG_KEY` did.
+  10.1 accepts names in any alphabet (dcb-events.github.io#92): every
+  name rule tests Unicode letters (`\p{Lu}`, `\p{Ll}`, `\p{L}`, marks,
+  digits) where it tested ASCII, casing unchanged – so a script without
+  case (CJK) still cannot write a PascalCase name. A minor: a 10.0
+  reader skips such a definition with a reason and misreads nothing.
   **6.1 is the contrast worth knowing**: entity `lifecycle` is additive
   in shape *and* a minor, because a 6.0 reader that ignores it loses a
   derived diagram and misreads nothing — where 4.0's equally additive

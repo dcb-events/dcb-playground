@@ -177,8 +177,8 @@ const SIMPLE_TYPES = ['boolean', 'integer', 'string'];
 // `docs/research/2026-09-30-entity-lifecycle-as-boolean-existence.md`.
 const LIFECYCLE_PROPERTY = 'exists';
 
-const PASCAL_RE = /^[A-Z][A-Za-z0-9]+$/;
-const CAMEL_RE = /^[a-z][A-Za-z0-9]+$/;
+const PASCAL_RE = /^\p{Lu}[\p{L}\p{M}\p{Nd}]+$/u;
+const CAMEL_RE = /^\p{Ll}[\p{L}\p{M}\p{Nd}]+$/u;
 
 const UNARY_PREDICATES = ['isEmpty', 'isNotEmpty', 'isTrue', 'isFalse'];
 const BINARY_PREDICATES = [
@@ -6176,7 +6176,11 @@ function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
 // find a derived side it cannot read and a script with no arguments.
 // A 9.x document reads here whole, its scripts' arguments lifted on
 // import (`liftScriptArguments`).
-const MODEL_VERSION = '10.0';
+// 10.1 lets names be written in any alphabet (`ÅpenSak`, `gjenåpnet`):
+// the name rules test Unicode letters where they tested ASCII, casing
+// unchanged. A 10.0 reader skips such a definition, says so, and
+// misreads nothing else, so a minor.
+const MODEL_VERSION = '10.1';
 const MODEL_SCHEMA_URL = 'https://dcb.events/schemas/model/v10.json';
 const READABLE_MAJORS = [8, 9, 10];
 
