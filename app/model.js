@@ -175,8 +175,8 @@ function isIdKeyed(kind) { return ID_KEYED_KINDS.includes(kind); }
 
 const SIMPLE_TYPES = ['boolean', 'integer', 'string'];
 
-const PASCAL_RE = /^[A-Z][A-Za-z0-9]+$/;
-const CAMEL_RE = /^[a-z][A-Za-z0-9]+$/;
+const PASCAL_RE = /^\p{Lu}[\p{L}\p{M}\p{Nd}]+$/u;
+const CAMEL_RE = /^\p{Ll}[\p{L}\p{M}\p{Nd}]+$/u;
 
 const UNARY_PREDICATES = ['isEmpty', 'isNotEmpty', 'isTrue', 'isFalse'];
 const BINARY_PREDICATES = [
@@ -770,7 +770,7 @@ function splitQualifiedName(name) {
 // A lowercase name in a projection's place is a sibling's local name –
 // only ever written inside a group, by a derived projection.
 function isLocalProjectionName(name) {
-  return typeof name === 'string' && /^[a-z]/.test(name);
+  return typeof name === 'string' && /^\p{Ll}/u.test(name);
 }
 
 // What a projection is called once it is in `groupName`: the group's
@@ -780,7 +780,7 @@ function isLocalProjectionName(name) {
 // keeps its whole name.
 function groupLocalName(groupName, projectionName) {
   let rest = String(projectionName || '');
-  if (groupName && rest.startsWith(groupName) && /^[A-Z]/.test(rest.slice(groupName.length))) {
+  if (groupName && rest.startsWith(groupName) && /^\p{Lu}/u.test(rest.slice(groupName.length))) {
     rest = rest.slice(groupName.length);
   }
   return rest.charAt(0).toLowerCase() + rest.slice(1);
@@ -6577,7 +6577,7 @@ function groupsFromEntities({ customTypes = {}, entities = {}, projections = {},
       if (why) break;
       const projection = p && own(projections, p.projection) ? projections[p.projection] : null;
       const tags = projectionTagParams(projection);
-      if (!p || typeof p.name !== 'string' || !/^[a-z][A-Za-z0-9]*$/.test(p.name)) why = `a property is not named in lowerCamel`;
+      if (!p || typeof p.name !== 'string' || !/^\p{Ll}[\p{L}\p{M}\p{Nd}]*$/u.test(p.name)) why = `a property is not named in lowerCamel`;
       else if (members.has(p.name)) why = `it binds "${p.name}" twice`;
       else if (!projection) why = `"${p.name}" binds ${p.projection}, which the document does not define`;
       else if (tags.length !== 1 || tags[0].tagType !== idType) why = `${p.projection} is not tagged by exactly one ${idType}`;
