@@ -180,6 +180,28 @@ function build(index) {
     eq(draft.value, capacity[0], 'and the first row picked');
   });
 
+  check('an id field is offered to a string projection, and painting the editor keeps a stored field', () => {
+    const { id, model } = build(sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-simple'));
+    sandbox.setActiveModelId(id);
+    sandbox.applyModelSource(id, sandbox.modelToSource(model())
+      + '\nprojection CourseId (tag courseId: CourseId): string = null {\n  on CourseDefined => set event.data.courseId\n}\n'
+      + '\nprojection CapacityText (tag courseId: CourseId): string = null {\n  on CourseDefined => set event.data.capacity\n}\n');
+    const event = model()['event-definitions'].CourseDefined;
+    const offered = (projection) => sandbox.handlerValueChoices(model(), model()['projection-definitions'][projection], event, 'set')
+      .map(([value]) => value);
+    eq(offered('CourseId').includes('{"eventProperty":"courseId"}'), true, 'a value type over string is a string');
+    eq(offered('CapacityText').includes('{"eventProperty":"capacity"}'), false, 'an integer is not');
+    for (const name of ['CourseId', 'CapacityText']) {
+      sandbox.state.view = 'projections';
+      sandbox.state.projDraft = { name, body: projectionDraftFrom(model()['projection-definitions'][name]) };
+      sandbox.state.projTab = 'definition';
+      sandbox.renderProjections(model(), sandbox.document.createElement('div'));
+      eq(cleanProjectionBody(sandbox.state.projDraft.body).handlers, model()['projection-definitions'][name].handlers,
+        `${name}: painting it changed nothing`);
+    }
+    sandbox.state.projDraft = null;
+  });
+
   check('a "+ New…" door is never taken while a value is on offer', () => {
     const draft = { value: '' };
     const out = operandPicker([], draft, 'value', { onNew: () => {} });

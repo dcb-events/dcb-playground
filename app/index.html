@@ -10802,6 +10802,19 @@ function partitionTypeOptions(model) {
     .map((t) => [t, readable(t)]);
 }
 
+// Whether an event field of `fieldType` may fill a value of `valueType`:
+// the same type, or a scalar value type over the built-in one – a
+// `CourseId` is a string, so it fills a string. Not the other way: a
+// plain string is not known to be a `CourseId`.
+function fieldFitsValueType(model, fieldType, valueType) {
+  if (fieldType === valueType) return true;
+  if (!SIMPLE_TYPES.includes(valueType)) return false;
+  const cls = classifyType(model, fieldType);
+  if (cls.kind !== 'value' || cls.composite) return false;
+  const body = model['custom-type-definitions'][fieldType];
+  return !!(body && body.schema && body.schema.type === valueType);
+}
+
 // A value the event carried, as a token option (see `pick`): short
 // under its `event` heading, `event.data.capacity` once picked – the
 // same path `operandWords` renders and a scripted handler writes.
@@ -10831,7 +10844,7 @@ function successorChoice(p) {
 // stored one still runs and still reads as `currentValue`.
 function handlerValueChoices(model, draft, event, operation) {
   const properties = (event ? (event.properties || []) : [])
-    .filter((p) => p.propertyType === draft.valueType);
+    .filter((p) => fieldFitsValueType(model, p.propertyType, draft.valueType));
   // Only to `set` a numbering. Offered for any type with a next value
   // it put "the one after …" beside every text field and every
   // operation, and before that – offered unconditionally – "the one
@@ -11717,6 +11730,15 @@ function projectionFields(model, draft, { entityName, onNewType, onChecks } = {}
     const operations = operationsFor(model, draft);
     if (!operations.includes(handler.operation)) handler.operation = operations[0];
     const values = handlerValueChoices(model, draft, event, handler.operation);
+    // A stored field of the event is kept on offer even where its type
+    // is not offered: the model holds it, and the row below would
+    // otherwise reset it as it paints – and the autosave store that.
+    const stored = draftOperand(handler, 'value');
+    if (event && operandSource(stored) === 'event-property'
+        && (event.properties || []).some((p) => p.name === stored.eventProperty)
+        && !values.some(([v]) => v === handler.value)) {
+      values.push(eventFieldChoice({ name: stored.eventProperty }));
+    }
     const enumMembers = enumMembersFor(model, draft.valueType);
     // A value the row can no longer offer – a successor once the verb
     // is no longer `set`, a stored `currentValue` – would leave the
