@@ -6958,7 +6958,7 @@ function inlineReadsOf(condition) {
 // thing the code view cannot print back as code.
 function aliasNameProblem(slice, name) {
   if (!name) return 'Give the alias a name.';
-  if (!/^[a-z][A-Za-z0-9]*$/.test(name)) return 'An alias starts with a letter.';
+  if (!/^\p{Ll}[\p{L}\p{M}\p{Nd}]*$/u.test(name)) return 'An alias starts with a letter.';
   if (SOURCE_RESERVED_NAMES.includes(name)) return `"${name}" is a word of the language.`;
   if ((slice.body.boundary || []).some((b) => b && b.alias === name)) {
     return `"${name}" is already bound in this command.`;
@@ -11014,7 +11014,7 @@ function blankProjectionDraft(model, entityName) {
 // (a tag type the name starts with), holds an integer starting at 0,
 // and moves on the events about subscribing.
 
-const nameWords = (name) => String(name || '').match(/[A-Z][a-z0-9]*|[a-z0-9]+/g) || [];
+const nameWords = (name) => String(name || '').match(/\p{Lu}[\p{Ll}\p{M}\p{Nd}]*|[\p{Ll}\p{M}\p{Nd}]+/gu) || [];
 const lowerFirst = (s) => s.charAt(0).toLowerCase() + s.slice(1);
 
 // The words a tag type is named by in a projection's name: `CourseId`
@@ -11032,7 +11032,7 @@ function partitionGuess(model, name) {
     let found = null;
     for (const type of types) {
       for (const stem of tagTypeStems(type)) {
-        const fits = text.startsWith(stem) && (text.length === stem.length || /[A-Z]/.test(text[stem.length]));
+        const fits = text.startsWith(stem) && (text.length === stem.length || /\p{Lu}/u.test(text[stem.length]));
         if (fits && (!found || stem.length > found.stem.length)) found = { type, stem };
       }
     }
