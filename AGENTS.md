@@ -136,6 +136,7 @@ was decided, why, and what was tried and reverted:
   shown_
 - how evaluation gets its events, the read port — _The read port_
 - JSON Schemas of arguments and payloads — _Value schemas_
+- the Metro map view, the command map, `metroLayout` — _The metro map_
 - comparing two models, the Compare view — _Comparing models_
 - undo, redo, the per-model history — _History and undo_
 - what dcb-runtime or another tool calls, the store port, the

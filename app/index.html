@@ -1730,6 +1730,59 @@
   body.f-dark .em-card.event .title { color: var(--event-text); }
   .em-card.event .line { font-family: var(--mono); font-size: 11px; }
 
+  /* ---------- metro map ----------
+     Tracks and stations are one SVG; labels and command plates are HTML
+     laid over it from the same geometry. Line colours are the map's
+     own – one per command, telling the lines apart – and only the
+     stations wear a kind colour. */
+  :root {
+    --metro-0: #c8102e; --metro-1: #6a3fb5; --metro-2: #b07d00; --metro-3: #1f8fc4;
+    --metro-4: #5f7f10; --metro-5: #8b5a3c; --metro-6: #c2417f; --metro-7: #4d5d6b;
+  }
+  body.f-dark {
+    --metro-0: #ff5a6e; --metro-1: #a98bff; --metro-2: #f0b82e; --metro-3: #5cc3f0;
+    --metro-4: #a6c94a; --metro-5: #c9906b; --metro-6: #f07bb5; --metro-7: #9aa8b4;
+  }
+  .mc-0 { --line: var(--metro-0); } .mc-1 { --line: var(--metro-1); } .mc-2 { --line: var(--metro-2); }
+  .mc-3 { --line: var(--metro-3); } .mc-4 { --line: var(--metro-4); } .mc-5 { --line: var(--metro-5); }
+  .mc-6 { --line: var(--metro-6); } .mc-7 { --line: var(--metro-7); }
+  .metro-frame { position: relative; }
+  .metro-zoom {
+    position: absolute; top: 4px; right: 4px; z-index: 2; display: flex; gap: 4px; align-items: center;
+    padding: 3px; border-radius: 6px; background: var(--surface); border: 1px solid var(--border);
+  }
+  .metro-zoom-level { min-width: 40px; text-align: center; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .metro-scroll { overflow: auto; max-height: 75vh; padding-bottom: 6px; }
+  .metro-stage { position: relative; }
+  .metro-band { position: absolute; left: 0; top: 0; transform-origin: 0 0; cursor: default; }
+  .metro-wires, .metro-wires svg { position: absolute; inset: 0; }
+  .metro-line .track { fill: none; stroke: var(--line); stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
+  .metro-line .hit { fill: none; stroke: transparent; stroke-width: 16; cursor: pointer; }
+  .metro-station { cursor: pointer; }
+  .metro-station .mark { fill: var(--surface); stroke: var(--event); stroke-width: 2.5; }
+  .metro-station.projection .mark { stroke: var(--entity); }
+  .metro-station.command .mark { stroke: var(--command); }
+  .metro-label.command { line-height: 0; }
+  .metro-station.emit .mark { fill: var(--event); }
+  .metro-station .stop { fill: var(--border-strong); }
+  .metro-station .stop.on { fill: var(--line); }
+  .metro-label {
+    position: absolute; white-space: nowrap;
+    font-size: 11px; line-height: 14px; font-weight: 600; cursor: pointer;
+  }
+  .metro-plate {
+    display: inline-block; padding: 1px 7px; border-radius: 4px;
+    font-size: 11px; font-weight: 600; line-height: 16px; color: #fff; background: var(--line);
+  }
+  .metro-band.has-sel .metro-line:not(.on) { opacity: .15; }
+  .metro-band.has-sel .metro-station:not(.on), .metro-band.has-sel .metro-label:not(.on) { opacity: .25; }
+  .metro-panel { border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+  .metro-panel-h { margin-bottom: 8px; }
+  .metro-panel dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 0; font-size: 13px; }
+  .metro-panel dt { color: var(--muted); font-weight: 600; }
+  .metro-panel dd { margin: 0; display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; min-width: 0; }
+  .metro-note { margin: 10px 0 0; font-size: 13px; color: var(--muted); }
+
   /* ---------- lifecycles ----------
      States as bubbles on an open band, one band per entity; the wires
      are an SVG laid under the nodes, drawn from the same computed
@@ -2513,6 +2566,7 @@ const RAIL_ICONS = {
   eventmodel: railIconSvg('<rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M9 3v18"></path>'
     + '<path d="M15 3v18"></path>'),
   lifecycles: railIconSvg('<path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"></path><path d="M21 3v5h-5"></path>'),
+  metro: railIconSvg('<path d="M3 7h6l6 10h6"></path><path d="M3 17h6l6-10h6"></path><circle cx="12" cy="12" r="2.5"></circle>'),
   sandbox: railIconSvg('<circle cx="12" cy="12" r="9"></circle><path d="M10 8.5v7l5.5-3.5z"></path>'),
   compare: railIconSvg('<path d="M7 4 3 8l4 4"></path><path d="M3 8h14"></path><path d="m17 20 4-4-4-4"></path>'
     + '<path d="M21 16H7"></path>'),
@@ -5604,6 +5658,11 @@ function renderRail() {
       title: 'Each entity’s status as a state machine',
       onclick: (e) => { e.preventDefault(); closeForms(); state.view = 'lifecycles'; render(); },
     }, railIcon('lifecycles'), 'Lifecycles'));
+    rail.appendChild(h('a', {
+      href: '#', class: 'place' + (state.view === 'metro' ? ' on' : ''),
+      title: 'The model as a transit map: a line per command, through the projections it reads to the events it appends',
+      onclick: (e) => { e.preventDefault(); closeForms(); state.view = 'metro'; render(); },
+    }, railIcon('metro'), 'Metro map'));
   }
 
   // The sandbox belongs to no definition, so it hangs off nothing in
@@ -6144,7 +6203,7 @@ function paintBehind(model) {
     state.slice = names[0] || null;
     state.tab = 'definition';
   }
-  if (['coupling', 'rulemap', 'eventmodel', 'lifecycles'].includes(state.view)
+  if (['coupling', 'rulemap', 'eventmodel', 'lifecycles', 'metro'].includes(state.view)
       && (!experimental() || !names.length)) {
     state.view = 'slice';
   }
@@ -6178,7 +6237,7 @@ function paintBehind(model) {
     return renderCode(model, main);
   }
   main.className = 'slice'
-    + (['overview', 'coupling', 'rulemap', 'eventmodel', 'lifecycles', 'compare'].includes(state.view) ? ' wide' : '')
+    + (['overview', 'coupling', 'rulemap', 'eventmodel', 'lifecycles', 'metro', 'compare'].includes(state.view) ? ' wide' : '')
     + (state.view === 'sandbox' ? ' sandbox' : '');
   paintView(model, main);
 }
@@ -6201,6 +6260,7 @@ function paintView(model, main) {
   if (state.view === 'rulemap') return renderRuleMap(model, main);
   if (state.view === 'eventmodel') return renderEventModel(model, main);
   if (state.view === 'lifecycles') return renderLifecycles(model, main);
+  if (state.view === 'metro') return renderMetro(model, main);
 
   if (!state.slice) {
     // With nothing to keep track of, a command has no identifier to be
@@ -13461,6 +13521,213 @@ function renderEventModel(model, main) {
     }
   }
   main.appendChild(h('div', { class: 'em-scroll' }, band));
+}
+
+// ---------- metro map ----------
+//
+// The command map `metroCommandMap` derives (shared.js), laid out by
+// `metroLayout`: a line per command, from the command itself through
+// the projections it reads to the events it appends. The tracks and
+// stations are one SVG of numbers and indices; every name on the map
+// is an HTML node laid over it, the way the event model's cards sit
+// over its wires.
+//
+// A click on the map selects, never navigates: tracing one command
+// after another is the point, and a page change would end it. A
+// command's station or line traces the command; a projection or event
+// station lights every line through it. The panel under the map holds
+// the links.
+function metroPlate(text, li) {
+  return h('span', { class: 'metro-plate mc-' + (li % 8) }, text);
+}
+const metroRow = (label, items) => [h('dt', {}, label),
+  h('dd', {}, items && items.length ? items : h('span', { class: 'muted' }, '—'))];
+function metroPanelBox(head, rows, ...rest) {
+  return h('div', { class: 'metro-panel' }, h('div', { class: 'metro-panel-h' }, head), h('dl', {}, rows), rest);
+}
+
+// What a selection lights up – lines, stations and the stops of lines
+// at stations, as sets of indices, and the events a traced command
+// appends – with its panel; null when it names nothing on the map (any
+// more). `sel` is `{ command }` or `{ station }`, a station by its key.
+function metroSelection(model, map, sel) {
+  if (!sel) return null;
+  const lineOf = (command) => map.lines.findIndex((l) => l.command === command);
+  const folders = (event) => Object.keys(model['projection-definitions'])
+    .filter((p) => projectionHandledTypes(model, p).includes(event));
+  const commandRefs = (commands) => commands.map((c) => commandRef(model, c));
+  let si = sel.station === undefined ? -1 : map.stations.findIndex((s) => s.kind + ':' + s.name === sel.station);
+  const command = sel.command !== undefined ? sel.command : si >= 0 && map.stations[si].kind === 'command' ? map.stations[si].name : null;
+
+  if (command !== null) {
+    const li = lineOf(command);
+    if (li < 0) return null;
+    const { stations } = map.lines[li];
+    const c = map.commands.find((x) => x.command === command);
+    const sharing = map.commands.filter((o) => o.command !== command && o.reads.some((r) => c.reads.includes(r))).map((o) => o.command);
+    return {
+      command,
+      lines: new Set([li]), stations: new Set(stations), stops: new Set(stations.map((s) => li + ':' + s)),
+      emits: new Set(stations.filter((s) => map.stations[s].kind === 'event')),
+      panel: metroPanelBox(commandRef(model, command), [
+        metroRow('Reads', c.reads.map((p) => projectionRef(model, p))),
+        metroRow('Appends', c.emits.map((e) => eventRef(model, e))),
+        metroRow('Shares reads with', commandRefs(sharing)),
+      ]),
+    };
+  }
+  if (si < 0) return null;
+  const { name, kind, lines } = map.stations[si];
+  const through = lines.map((li) => map.lines[li].command);
+  const lit = { lines: new Set(lines), stations: new Set([si]), stops: new Set(lines.map((li) => li + ':' + si)), emits: new Set() };
+  if (kind === 'projection') {
+    return {
+      ...lit,
+      panel: metroPanelBox(projectionRef(model, name), [
+        metroRow('Read by', commandRefs(through)),
+        metroRow('Folds', projectionHandledTypes(model, name).map((e) => eventRef(model, e))),
+      ], lines.length > 1
+        ? h('p', { class: 'metro-note' }, `Shared by ${lines.length} decisions: a change to it changes all of them.`)
+        : null),
+    };
+  }
+  const fed = folders(name);
+  return {
+    ...lit,
+    panel: metroPanelBox(eventRef(model, name), [
+      metroRow('Appended by', commandRefs(through)),
+      metroRow('Folded by', fed.map((p) => projectionRef(model, p))),
+      metroRow('Feeds back into', commandRefs(map.commands.filter((c) => c.reads.some((r) => fed.includes(r))).map((c) => c.command))),
+    ]),
+  };
+}
+
+// A map can be far larger than the page: it opens fitted, whole
+// (never enlarged), and zooms from there – the buttons, or ⌘/Ctrl and
+// the wheel (a trackpad's pinch), about the point under the pointer.
+// Zooming restyles the map in place rather than repainting the page;
+// the level is kept in `state.metroZoom` (null: fitted).
+const METRO_ZOOM = { MIN: 0.2, MAX: 2, STEP: 1.25 };
+function metroZoomable(band, layout) {
+  const stage = h('div', { class: 'metro-stage' }, band);
+  const scroll = h('div', { class: 'metro-scroll' }, stage);
+  const level = h('span', { class: 'metro-zoom-level' });
+  const clamp = (z) => Math.min(METRO_ZOOM.MAX, Math.max(METRO_ZOOM.MIN, z));
+  // Fitted is the whole map in view: its width in the page, its height
+  // in the 75vh the scroll box is held to.
+  const fitted = () => {
+    const wide = scroll.clientWidth, tall = window.innerHeight * 0.75;
+    return wide ? clamp(Math.min(1, (wide - 2) / layout.width, tall ? (tall - 8) / layout.height : 1)) : 1;
+  };
+  let zoom = 1;
+  const set = (z, about) => {
+    const before = zoom;
+    zoom = clamp(z);
+    band.style.transform = `scale(${zoom})`;
+    stage.style.width = `${Math.ceil(layout.width * zoom)}px`;
+    stage.style.height = `${Math.ceil(layout.height * zoom)}px`;
+    level.textContent = Math.round(zoom * 100) + '%';
+    if (about) {
+      scroll.scrollLeft = (scroll.scrollLeft + about.x) * (zoom / before) - about.x;
+      scroll.scrollTop = (scroll.scrollTop + about.y) * (zoom / before) - about.y;
+    }
+  };
+  const button = (label, title, onclick) => h('button', { type: 'button', class: 'btn tiny', title, onclick }, label);
+  const bar = h('div', { class: 'metro-zoom' },
+    button('−', 'Zoom out', () => { set(zoom / METRO_ZOOM.STEP); state.metroZoom = zoom; }),
+    level,
+    button('+', 'Zoom in', () => { set(zoom * METRO_ZOOM.STEP); state.metroZoom = zoom; }),
+    button('Fit', 'Show the whole map', () => { state.metroZoom = null; set(fitted()); }));
+  scroll.addEventListener('wheel', (e) => {
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    const box = scroll.getBoundingClientRect();
+    set(zoom * Math.exp(-e.deltaY / 300), { x: e.clientX - box.left, y: e.clientY - box.top });
+    state.metroZoom = zoom;
+  }, { passive: false });
+  // The width to fit is known once the map is on the page.
+  requestAnimationFrame(() => set(state.metroZoom || fitted()));
+  set(state.metroZoom || 1);
+  return h('div', { class: 'metro-frame' }, bar, scroll);
+}
+
+function renderMetro(model, main) {
+  main.appendChild(h('header', {},
+    h('div', { class: 'name' }, 'Metro map'),
+    h('div', { class: 'muted small' },
+      'A line per command, from the command through the projections its decision reads to the events it '
+      + 'appends. A projection several lines pass through is a shared read: change it and every one of '
+      + 'those decisions changes. An event two lines end at is appended by both. Click a command to '
+      + 'trace its line, or a station to see every line through it.')));
+
+  const map = metroCommandMap(model);
+  if (!map.lines.length) {
+    main.appendChild(h('div', { class: 'empty' }, 'No commands yet.'));
+    return;
+  }
+  const label = (s) => (s.kind === 'command' ? iconPrefix(commandIcon(model, s.name)) + readable(s.name) : readable(s.name));
+  const layout = metroLayout({
+    lines: map.lines.map((line) => ({ stations: line.stations })),
+    stations: map.stations.map((s) => ({ label: label(s), lines: s.lines, plate: s.kind === 'command' })),
+  });
+  const sel = metroSelection(model, map, state.metroSel);
+  const on = (set, key) => (sel && set.has(key) ? ' on' : '');
+
+  let markup = `<svg viewBox="0 0 ${layout.width} ${layout.height}" width="${layout.width}" height="${layout.height}">`;
+  for (const line of layout.lines) {
+    if (!line.paths.length) continue;
+    const d = line.paths.map((points) => 'M' + points.map(([x, y]) => `${x.toFixed(1)} ${y.toFixed(1)}`).join(' L')).join(' ');
+    markup += `<g class="metro-line mc-${line.line % 8}${on(sel && sel.lines, line.line)}" data-m="l${line.line}">`
+      + `<path class="track" d="${d}"></path><path class="hit" d="${d}"></path></g>`;
+  }
+  for (const station of layout.stations) {
+    const si = station.station;
+    const { kind } = map.stations[si];
+    const { x, y, r } = station;
+    markup += `<g class="metro-station ${kind}${on(sel && sel.stations, si)}${sel && sel.emits.has(si) ? ' emit' : ''}" data-m="s${si}">`
+      + (kind === 'command'
+        ? `<rect class="mark" x="${x - r}" y="${y - r}" width="${2 * r}" height="${2 * r}" rx="3"></rect>`
+        : `<circle class="mark" cx="${x}" cy="${y}" r="${r}"></circle>`);
+    if (station.stops.length > 1) {
+      for (const [li, sx, sy] of station.stops) {
+        markup += `<circle class="stop mc-${li % 8}${on(sel && sel.stops, li + ':' + si)}" cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="2.5"></circle>`;
+      }
+    }
+    markup += '</g>';
+  }
+  markup += '</svg>';
+
+  const band = h('div', {
+    class: 'metro-band' + (sel ? ' has-sel' : ''),
+    style: `width:${layout.width}px; height:${layout.height}px`,
+    onclick: (e) => {
+      const hit = e.target.closest('[data-m]');
+      const id = hit ? hit.getAttribute('data-m') : null;
+      if (!id) state.metroSel = null;
+      else if (id[0] === 'l') state.metroSel = { command: map.lines[Number(id.slice(1))].command };
+      else {
+        const s = map.stations[Number(id.slice(1))];
+        state.metroSel = { station: s.kind + ':' + s.name };
+      }
+      render();
+    },
+  }, h('div', { class: 'metro-wires' }, svg(markup)));
+
+  for (const station of layout.stations) {
+    const si = station.station;
+    const s = map.stations[si];
+    const box = station.label;
+    band.appendChild(h('div', {
+      class: `metro-label ${s.kind}` + on(sel && sel.stations, si),
+      'data-m': 's' + si, title: s.name,
+      style: `left:${box.x}px; top:${box.y}px; width:${box.w}px; text-align:${box.align}`,
+    }, s.kind === 'command'
+      ? metroPlate(box.lines[0], s.lines[0])
+      : box.lines.map((text) => h('div', {}, text))));
+  }
+  main.appendChild(metroZoomable(band, layout));
+  main.appendChild(sel ? sel.panel : h('div', { class: 'metro-panel muted small' },
+    'Click a command to trace its line, or a projection or an event to see every line through it.'));
 }
 
 // ---------- lifecycles ----------
