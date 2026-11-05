@@ -40,7 +40,7 @@ and prune what no longer holds.
   scripted projections, guarded
   emissions, optional reads, `excluding`, `currentValue`, and the
   Coupling /
-  Rule map / Event model / Lifecycles views. A model that uses any of
+  Rule map / Event model / Lifecycles / Metro map views. A model that uses any of
   it still loads, renders and evaluates whole; `experimentalFeatures`
   (model.js) names what it uses and `experimentalNotice` says so on
   every page. Gate an *offer* (an adder, a picker row, a tab), never
@@ -1354,6 +1354,60 @@ Artboards: `design/dcb-queries/` (2026-10).
 - **Held by a test.** Every scenario's arguments, and every event the
   evaluator publishes for it, validate against these schemas
   (evaluate.test.js, with a validator for the keywords in use).
+
+## The metro map
+
+- **A line per command.** A metro map is good at one thing – which
+  routes share stations – and the command map says the most with it:
+  a line runs from the command through the projections its decision
+  reads to the events it appends, so an interchange is a read
+  decisions share, and the few hubs most decisions pass through end
+  up in the middle. The command is its line's first station, its name
+  the plate beside it: as a plate hung off the line's first read it
+  landed on tracks and on other stations, and only a station is placed
+  by the layout next to what it reads. Derived by `metroCommandMap`
+  (shared.js).
+  **Three other maps were built and removed** (2026-10-30): a line
+  per tag type through the events carrying it (a boundary as the stops
+  it rides, conflicts where one command appends at a stop another
+  rides through), per projection through the events it folds, and per
+  lifecycle through its states – tabs of one view. Next to the command
+  map they read as diagrams of something else: the tag map needs the
+  reader to think in queries first, and the other two had few
+  interchanges to show.
+- **A metro map's layout, computed, no library.** The maps were first
+  laid out by hand in a mockup; the view lays out any model. No
+  browser library does metro layout: LOOM/octi is C++ under GPL with no
+  browser build, MetroSets is research code. `metroLayout` follows the
+  octilinear-grid method (Bast, Brosi, Storandt), kept small: a
+  deterministic force layout (hubs pulled to the middle, gravity
+  holding n stations to a disc of about √n tracks), stations snapped to
+  grid nodes two apart, each track a cheapest eight-direction path on
+  the grid with bends and reuse costed, lines sharing a track drawn as
+  parallel offsets that change places inside the station. Labels take
+  the cheapest of eight places round their station on a
+  coarse raster of what is drawn.
+  **A left-to-right sweep came first and was dropped** (2026-10-30):
+  every line a row, stations in columns. It drew cleanly on the
+  shipped models but put every line's start on the left – nothing like
+  a metro map – and its label pass, which re-sampled every track per
+  label per pass, hung on a 66-command model. The raster is why the
+  current pass is one sweep: a hundred stations lay out in a few
+  hundred milliseconds (a test holds it to that).
+  Gravity once ignored the station count; a model of fifteen separate
+  tag lines then drifted into a 5000px map, empty where the window was.
+- **The map opens whole and zooms.** A large model's map is thousands
+  of pixels across; scrolled at full size it reads as blank, the map
+  beyond the window. It opens fitted – width and the 75vh it is held
+  to, never enlarged – and zooms with −/+/Fit or ⌘/Ctrl and the wheel
+  (a pinch), about the pointer, restyling in place without a repaint
+  (`metroZoomable`). The level stays in `state` until a reload.
+- **A click selects, never navigates.** Tracing one command after
+  another is the point; a command's station or line traces it, a
+  projection or event lights every line through it, and the panel
+  under the map holds the links. There is no list of commands to pick
+  from beside it – a Trace row was tried and dropped: the map is the
+  picker, and the row only repeated it.
 
 ## Comparing models
 

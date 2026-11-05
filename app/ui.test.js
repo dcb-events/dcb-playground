@@ -689,7 +689,7 @@ function build(index) {
     // affordances render only with it on, everything else either way.
     for (const flag of ['off', 'on']) {
       store.set('dcb-playground:experimental', flag);
-      for (const view of ['overview', 'slice', 'entity', 'types', 'projections', 'events', 'eventmodel', 'map']) {
+      for (const view of ['overview', 'slice', 'entity', 'types', 'projections', 'events', 'eventmodel', 'metro', 'map']) {
         sandbox.state.view = view;
         sandbox.state.entity = 'Course';
         sandbox.state.slice = 'SubscribeStudentToCourse';
@@ -4897,6 +4897,102 @@ function build(index) {
     sandbox.switchToModel(empty);
     sandbox.render();
     eq(sandbox.state.view, 'slice', 'nothing to give an overview of');
+  });
+}
+
+// ---------------------------------------------------------------
+// The metro map: a line per command, from the command through the
+// projections it reads to the events it appends – and a layout that
+// keeps every track horizontal, vertical or at 45°.
+// ---------------------------------------------------------------
+{
+  const slug = (name) => sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === name);
+
+  check('a line per command: its command, its reads, its appends', () => {
+    const map = sandbox.metroCommandMap(build(slug('course-simple')).model());
+    const status = map.stations.find((s) => s.name === 'CourseStatus');
+    eq(status.lines.length, 5, 'CourseStatus is read by five of six commands');
+    const subscribe = map.lines.find((l) => l.command === 'SubscribeStudentToCourse');
+    eq(map.stations[subscribe.stations[0]], { name: 'SubscribeStudentToCourse', kind: 'command', lines: [4] },
+      'the line starts at its command, a station of its own');
+    eq(map.stations[subscribe.stations[subscribe.stations.length - 1]].name, 'StudentSubscribedToCourse', 'the terminus');
+    const withEntities = build(ENTITIES).model();
+    eq(sandbox.metroReadProjections(withEntities, withEntities['command-definitions'].ArchiveCourse), ['CourseStatus'],
+      'a read through an entity property is a read of its projection');
+  });
+
+  const octilinear = (name, layout) => {
+    for (const { line, paths } of layout.lines) {
+      for (const points of paths) {
+        for (let i = 1; i < points.length; i += 1) {
+          const dx = Math.abs(points[i][0] - points[i - 1][0]);
+          const dy = Math.abs(points[i][1] - points[i - 1][1]);
+          eq(dx < 1e-6 || dy < 1e-6 || Math.abs(dx - dy) < 1e-6, true, `${name}: line ${line} runs flat, upright or at 45° (${dx}, ${dy})`);
+        }
+      }
+    }
+    for (let i = 0; i < layout.stations.length; i += 1) {
+      for (let j = i + 1; j < layout.stations.length; j += 1) {
+        const a = layout.stations[i];
+        const b = layout.stations[j];
+        eq(Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y)) >= 2 * 64 - 1e-6, true,
+          `${name}: stations ${i} and ${j} two grid nodes (METRO.GRID, 64px) apart`);
+      }
+    }
+  };
+
+  check('the layout is octilinear, the same every time, and lays no station on another', () => {
+    for (const [index, { slug: name }] of sandbox.PREDEFINED_MODELS.entries()) {
+      const map = sandbox.metroCommandMap(build(index).model());
+      const input = { lines: map.lines, stations: map.stations.map((s) => ({ label: s.name, lines: s.lines, plate: s.kind === 'command' })) };
+      const layout = sandbox.metroLayout(input);
+      eq(JSON.stringify(sandbox.metroLayout(input)), JSON.stringify(layout), `${name}: the same every time`);
+      octilinear(name, layout);
+      for (const station of layout.stations) {
+        eq(station.stops.length, input.stations[station.station].lines.filter((li) => map.lines[li].stations.length > 1).length,
+          `${name}: a stop for each line through station ${station.station}`);
+      }
+    }
+  });
+
+  check('a model of a hundred stations lays out in good time', () => {
+    // The shape of a large model's command map: sixty lines, each through
+    // a few of a hundred and twenty stations, a handful of them hubs.
+    const stations = Array.from({ length: 120 }, (_, i) => ({ label: 'Station number ' + i, lines: [] }));
+    const lines = Array.from({ length: 60 }, (_, li) => {
+      const visits = [...new Set([li % 7, 7 + ((li * 13) % 50), 57 + ((li * 7) % 40), 97 + (li % 23)])].sort((a, b) => a - b);
+      visits.forEach((si) => stations[si].lines.push(li));
+      return { stations: visits };
+    });
+    const started = Date.now();
+    const layout = sandbox.metroLayout({ lines, stations });
+    eq(Date.now() - started < 4000, true, `took ${Date.now() - started}ms`);
+    octilinear('synthetic', layout);
+  });
+
+  check('the page paints, and a click traces a command or what meets at a station', () => {
+    const { id, model: m } = build(slug('course-tenant'));
+    sandbox.setActiveModelId(id);
+    const paint = (sel) => {
+      sandbox.state.metroSel = sel;
+      const main = sandbox.document.createElement('div');
+      sandbox.renderMetro(m(), main);
+      return textOf(main);
+    };
+    const idle = paint(null);
+    eq(idle.includes('Fit'), true, 'the map zooms');
+    eq(idle.includes('Trace'), false, 'no list of commands to pick from: the map is the picker');
+    eq(paint({ command: 'DefineCourse' }).includes('Shares reads with'), true, 'a traced command');
+    eq(paint({ station: 'command:DefineCourse' }).includes('Shares reads with'), true, 'a command station traces its line');
+    eq(paint({ station: 'projection:CourseStatus' }).includes('Shared by'), true, 'a shared read');
+    eq(paint({ station: 'event:CourseDefined' }).includes('Feeds back into'), true, 'a terminus');
+    eq(paint({ command: 'Gone' }).includes('Click a command'), true, 'a stale selection reads as none');
+    for (const [index] of sandbox.PREDEFINED_MODELS.entries()) {
+      const { model: each } = build(index);
+      sandbox.state.metroSel = null;
+      sandbox.renderMetro(each(), sandbox.document.createElement('div'));
+    }
+    sandbox.state.metroSel = null;
   });
 }
 

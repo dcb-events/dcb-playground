@@ -1583,6 +1583,448 @@ function eventModel(model) {
   return { lanes, columns };
 }
 
+// ---------- metro map ----------
+//
+// The model drawn as a transit map – what shares a station is what the
+// map is for. A line per command, from the command itself through the
+// projections its decision reads to the events it appends: a projection
+// several lines pass through is a read decisions share, so changing it
+// changes all of them, and the busiest ones end up in the middle the
+// way a city's main interchanges do.
+
+// The projections a command's decision reads – named by a binding or
+// in place, or through an entity's properties – in the order its
+// query items list them. A derived projection is itself the read.
+function metroReadProjections(model, body) {
+  const out = [];
+  const projections = model['projection-definitions'];
+  for (const item of deriveDcb(model, body).items) {
+    if (item.projection) { out.push(item.projection); continue; }
+    const binding = (body.boundary || []).find((b) => b && b.alias === item.alias);
+    const entity = binding && model['entity-definitions'][binding.entity];
+    for (const property of item.readProperties || []) {
+      const bound = entity && (entity.properties || []).find((p) => p && p.name === property);
+      if (bound) out.push(bound.projection);
+    }
+  }
+  return uniq(out).filter((name) => projections[name]);
+}
+
+// The command map: a line per command, starting at the command itself,
+// stopping at each projection its decision reads and ending at each
+// event it appends. Interchanges are projections two decisions share –
+// change one and every line through it decides differently – and
+// events two commands append. The command is a station of its own, not
+// a plate on its line, so the layout places it beside what it reads.
+function metroCommandMap(model) {
+  const events = model['event-definitions'];
+  const commands = Object.entries(model['command-definitions']).map(([name, body]) => ({
+    command: name,
+    reads: metroReadProjections(model, body),
+    emits: uniq((body.publishes || []).map((e) => e && e.name).filter((n) => n && events[n])),
+  }));
+  const read = new Set(commands.flatMap((c) => c.reads));
+  const appended = new Set(commands.flatMap((c) => c.emits));
+  const stations = [
+    ...commands.map((c) => ({ name: c.command, kind: 'command', lines: [] })),
+    ...Object.keys(model['projection-definitions']).filter((n) => read.has(n)).map((name) => ({ name, kind: 'projection', lines: [] })),
+    ...Object.keys(events).filter((n) => appended.has(n)).map((name) => ({ name, kind: 'event', lines: [] })),
+  ];
+  const at = (kind, name) => stations.findIndex((s) => s.kind === kind && s.name === name);
+  const lines = commands.map((c) => ({
+    command: c.command,
+    stations: [at('command', c.command), ...c.reads.map((n) => at('projection', n)), ...c.emits.map((n) => at('event', n))],
+  }));
+  lines.forEach((line, li) => line.stations.forEach((si) => stations[si].lines.push(li)));
+  return { lines, stations, commands };
+}
+
+// The layout: a metro map's – stations spread out in two dimensions,
+// the busiest in the middle, and every track horizontal, vertical or at
+// 45°. The steps are the ones schematic maps are made by (after Bast,
+// Brosi and Storandt's octilinear grid graphs), kept small:
+//
+// - Placement: a force layout over the stations, tracks pulling, all
+//   stations pushing apart, gravity holding them to a disc.
+//   It starts from a circle in station order and draws no random
+//   numbers, so a model always gets the same map.
+// - Snapping: each station takes a free node of a square grid, at
+//   least two nodes from any other, the busiest first.
+// - Routing: each track between two stations is a cheapest path on the
+//   grid in eight directions – a bend costs, a sharp one more, and a
+//   node or edge another track already uses costs most – so tracks run
+//   straight, turn at 45° and keep out of each other's way. A track
+//   several lines share is routed once.
+// - Drawing: the lines sharing a track run side by side, offset in line
+//   order, and change places inside the station they meet at, which
+//   is drawn big enough to cover it.
+// - Labels: each tried at eight places round its station, the one
+//   covering the fewest drawn cells, no station and no label taken –
+//   cells of a coarse raster, so a model of a hundred stations places
+//   its labels in one pass.
+//
+// Pure geometry, no DOM. `map` – `{ lines: [{ stations: [si] }],
+// stations: [{ label, lines: [li], plate? }] }`, a plate being a label
+// set as a line's name plate. Returns `{ stations, lines, width,
+// height }`: each station's centre, radius, the point each line stops
+// at (`stops`, `[[li, x, y]]`) and its label box; each line's `paths`,
+// one octilinear polyline per track.
+const METRO = { GRID: 64, TRACK: 7, CHAR: 6.2, LINE_H: 14, PLATE_H: 18, PAD: 20, CELL: 8 };
+
+// A label in at most two lines, broken at the word boundary nearest
+// its middle – `StudentSubscribed` / `ToCourse`.
+function metroLabelLines(text) {
+  if (text.length <= 14) return [text];
+  const cuts = [];
+  for (let i = 1; i < text.length; i++) {
+    if (/[A-Z]/.test(text[i]) && /[a-z0-9]/.test(text[i - 1])) cuts.push(i);
+    else if (/[\s_-]/.test(text[i - 1])) cuts.push(i);
+  }
+  if (!cuts.length) return [text];
+  const cut = cuts.reduce((best, i) => (Math.abs(i - text.length / 2) < Math.abs(best - text.length / 2) ? i : best));
+  return [text.slice(0, cut).trim(), text.slice(cut).trim()];
+}
+
+// The tracks: one per pair of stations some line runs between, with
+// the lines running it, in line order.
+function metroTracks(lines) {
+  const tracks = new Map();
+  lines.forEach((line, li) => {
+    for (let i = 1; i < line.stations.length; i++) {
+      const a = Math.min(line.stations[i - 1], line.stations[i]);
+      const b = Math.max(line.stations[i - 1], line.stations[i]);
+      if (a === b) continue;
+      const key = a + ',' + b;
+      if (!tracks.has(key)) tracks.set(key, { a, b, lines: [] });
+      if (!tracks.get(key).lines.includes(li)) tracks.get(key).lines.push(li);
+    }
+  });
+  return [...tracks.values()];
+}
+
+// Force-directed placement, in units of the ideal track length.
+function metroPlace(count, tracks) {
+  const x = new Float64Array(count), y = new Float64Array(count);
+  const radius = Math.max(1, Math.sqrt(count));
+  for (let i = 0; i < count; i++) {
+    x[i] = radius * Math.cos((2 * Math.PI * i) / count);
+    y[i] = radius * Math.sin((2 * Math.PI * i) / count);
+  }
+  const rounds = 300;
+  for (let round = 0; round < rounds; round++) {
+    const heat = 0.5 * radius * (1 - round / rounds) + 0.01;
+    const dx = new Float64Array(count), dy = new Float64Array(count);
+    for (let i = 0; i < count; i++) {
+      for (let j = i + 1; j < count; j++) {
+        let ex = x[i] - x[j], ey = y[i] - y[j];
+        let d2 = ex * ex + ey * ey;
+        if (d2 < 1e-6) { ex = 0.01 * (i - j); ey = 0.01; d2 = ex * ex + ey * ey; }
+        const push = 1 / d2;
+        dx[i] += ex * push; dy[i] += ey * push; dx[j] -= ex * push; dy[j] -= ey * push;
+      }
+      // Gravity strong enough to hold n stations in a disc of radius
+      // about √n tracks, separate lines included: weaker, and a model
+      // of many small lines drifts apart into a map mostly empty.
+      dx[i] -= x[i]; dy[i] -= y[i];
+    }
+    for (const { a, b } of tracks) {
+      const ex = x[a] - x[b], ey = y[a] - y[b];
+      const d = Math.sqrt(ex * ex + ey * ey) || 1e-3;
+      dx[a] -= ex * d; dy[a] -= ey * d; dx[b] += ex * d; dy[b] += ey * d;
+    }
+    for (let i = 0; i < count; i++) {
+      const d = Math.sqrt(dx[i] * dx[i] + dy[i] * dy[i]) || 1;
+      const step = Math.min(d, heat);
+      x[i] += (dx[i] / d) * step; y[i] += (dy[i] / d) * step;
+    }
+  }
+  return { x, y };
+}
+
+const METRO_DIRS = [[1, 0], [1, -1], [0, -1], [-1, -1], [-1, 0], [-1, 1], [0, 1], [1, 1]];
+const METRO_BEND = [0, 0.6, 2.5, 8, Infinity];
+
+function metroLayout(map) {
+  const M = METRO;
+  const { lines, stations } = map;
+  const count = stations.length;
+  const tracks = metroTracks(lines);
+  const degree = new Array(count).fill(0);
+  for (const { a, b, lines: on } of tracks) { degree[a] += on.length; degree[b] += on.length; }
+
+  // Snap to grid nodes two apart, the busiest station first, each to
+  // the free node nearest where the forces left it.
+  const placed = metroPlace(count, tracks);
+  const cell = new Array(count);
+  const taken = new Map();
+  const near = (gx, gy) => {
+    for (let ox = -1; ox <= 1; ox++) for (let oy = -1; oy <= 1; oy++) if (taken.has((gx + ox) + ',' + (gy + oy))) return true;
+    return false;
+  };
+  const order = [...Array(count).keys()].sort((p, q) => degree[q] - degree[p] || p - q);
+  for (const si of order) {
+    const wx = placed.x[si] * 2, wy = placed.y[si] * 2;
+    let best = null;
+    for (let ring = 0; !best; ring++) {
+      for (let ox = -ring; ox <= ring; ox++) for (let oy = -ring; oy <= ring; oy++) {
+        if (Math.max(Math.abs(ox), Math.abs(oy)) !== ring) continue;
+        const gx = Math.round(wx) + ox, gy = Math.round(wy) + oy;
+        if (near(gx, gy)) continue;
+        const d = (gx - wx) ** 2 + (gy - wy) ** 2;
+        if (!best || d < best.d) best = { gx, gy, d };
+      }
+    }
+    cell[si] = [best.gx, best.gy];
+    taken.set(best.gx + ',' + best.gy, si);
+  }
+
+  // Route each track on the grid, the busiest and shortest first.
+  const gxs = cell.map((c) => c[0]), gys = cell.map((c) => c[1]);
+  const minGX = Math.min(...gxs, 0) - 2, minGY = Math.min(...gys, 0) - 2;
+  const W = Math.max(...gxs, 0) + 3 - minGX, H = Math.max(...gys, 0) + 3 - minGY;
+  const nodeOf = (gx, gy) => (gy - minGY) * W + (gx - minGX);
+  const stationAt = new Int32Array(W * H).fill(-1);
+  cell.forEach(([gx, gy], si) => { stationAt[nodeOf(gx, gy)] = si; });
+  const nodeUsed = new Uint8Array(W * H);
+  const edgeUsed = new Set();
+  const edgeKey = (p, q) => (p < q ? p + '-' + q : q + '-' + p);
+  const route = (a, b) => {
+    const start = nodeOf(...cell[a]), goal = nodeOf(...cell[b]);
+    const [tx, ty] = cell[b];
+    const states = W * H * 9;
+    const cost = new Float64Array(states).fill(Infinity);
+    const from = new Int32Array(states).fill(-1);
+    const heap = [];
+    const push = (state, f) => {
+      heap.push([f, state]);
+      for (let i = heap.length - 1; i > 0;) {
+        const up = (i - 1) >> 1;
+        if (heap[up][0] <= heap[i][0]) break;
+        [heap[up], heap[i]] = [heap[i], heap[up]]; i = up;
+      }
+    };
+    const pop = () => {
+      const top = heap[0], last = heap.pop();
+      if (heap.length) {
+        heap[0] = last;
+        for (let i = 0; ;) {
+          const l = 2 * i + 1, r = l + 1;
+          let m = i;
+          if (l < heap.length && heap[l][0] < heap[m][0]) m = l;
+          if (r < heap.length && heap[r][0] < heap[m][0]) m = r;
+          if (m === i) break;
+          [heap[m], heap[i]] = [heap[i], heap[m]]; i = m;
+        }
+      }
+      return top;
+    };
+    const guess = (node) => {
+      const gx = (node % W) + minGX, gy = Math.floor(node / W) + minGY;
+      const ex = Math.abs(gx - tx), ey = Math.abs(gy - ty);
+      return Math.max(ex, ey) + (Math.SQRT2 - 1) * Math.min(ex, ey);
+    };
+    cost[start * 9 + 8] = 0;
+    push(start * 9 + 8, guess(start));
+    let end = -1;
+    while (heap.length) {
+      const [, state] = pop();
+      const node = Math.floor(state / 9), dir = state % 9;
+      if (node === goal) { end = state; break; }
+      const here = cost[state];
+      const gx = (node % W) + minGX, gy = Math.floor(node / W) + minGY;
+      for (let d = 0; d < 8; d++) {
+        const nx = gx + METRO_DIRS[d][0], ny = gy + METRO_DIRS[d][1];
+        if (nx < minGX || ny < minGY || nx >= minGX + W || ny >= minGY + H) continue;
+        const next = nodeOf(nx, ny);
+        if (stationAt[next] >= 0 && next !== goal) continue;
+        const turn = dir === 8 ? 0 : METRO_BEND[Math.min(Math.abs(d - dir), 8 - Math.abs(d - dir))];
+        if (turn === Infinity) continue;
+        let step = (d % 2 ? Math.SQRT2 : 1) + turn;
+        if (nodeUsed[next] && next !== goal) step += 3;
+        if (edgeUsed.has(edgeKey(node, next))) step += 12;
+        if (d % 2 && edgeUsed.has(edgeKey(nodeOf(nx, gy), nodeOf(gx, ny)))) step += 12;
+        const state2 = next * 9 + d;
+        if (here + step < cost[state2]) {
+          cost[state2] = here + step;
+          from[state2] = state;
+          push(state2, here + step + guess(next));
+        }
+      }
+    }
+    const path = [];
+    for (let s = end; s >= 0; s = from[s]) path.unshift(Math.floor(s / 9));
+    for (let i = 1; i < path.length; i++) {
+      const p = path[i - 1], q = path[i];
+      edgeUsed.add(edgeKey(p, q));
+      if (i < path.length - 1) nodeUsed[q] = 1;
+    }
+    return path.map((node) => [((node % W) + minGX) * M.GRID, (Math.floor(node / W) + minGY) * M.GRID]);
+  };
+  const routed = tracks.slice()
+    .sort((p, q) => q.lines.length - p.lines.length
+      || Math.hypot(cell[p.a][0] - cell[p.b][0], cell[p.a][1] - cell[p.b][1]) - Math.hypot(cell[q.a][0] - cell[q.b][0], cell[q.a][1] - cell[q.b][1])
+      || p.a - q.a || p.b - q.b)
+    .map((track) => ({ ...track, points: metroStraighten(route(track.a, track.b)) }));
+
+  // Lines side by side along each track: offsets perpendicular to it,
+  // joined at each bend where the offset segments meet.
+  const width = new Array(count).fill(1);
+  for (const { a, b, lines: on } of routed) { width[a] = Math.max(width[a], on.length); width[b] = Math.max(width[b], on.length); }
+  const paths = lines.map(() => []);
+  const stops = stations.map(() => new Map());
+  for (const track of routed) {
+    track.lines.forEach((li, i) => {
+      const offset = (i - (track.lines.length - 1) / 2) * M.TRACK;
+      const points = metroOffset(track.points, offset);
+      paths[li].push(points);
+      if (!stops[track.a].has(li)) stops[track.a].set(li, points[0]);
+      if (!stops[track.b].has(li)) stops[track.b].set(li, points[points.length - 1]);
+    });
+  }
+
+  const centre = (si) => [cell[si][0] * M.GRID, cell[si][1] * M.GRID];
+  const radius = (si) => Math.max(stations[si].lines.length > 1 ? 8 : 6, ((width[si] - 1) * M.TRACK) / 2 + 6);
+
+  // Labels and plates on a raster of what is drawn: tracks and stations
+  // first, then each label in turn, the busiest station's first.
+  const xsAll = [...cell.map((c) => c[0] * M.GRID)], ysAll = [...cell.map((c) => c[1] * M.GRID)];
+  const ox = Math.min(...xsAll, 0) - 320, oy = Math.min(...ysAll, 0) - 120;
+  const cols = Math.ceil((Math.max(...xsAll, 0) + 320 - ox) / M.CELL), rows = Math.ceil((Math.max(...ysAll, 0) + 120 - oy) / M.CELL);
+  const raster = new Uint8Array(cols * rows);
+  const mark = (x, y, value) => {
+    const c = Math.floor((x - ox) / M.CELL), r = Math.floor((y - oy) / M.CELL);
+    if (c >= 0 && r >= 0 && c < cols && r < rows) raster[r * cols + c] = Math.max(raster[r * cols + c], value);
+  };
+  for (const { points } of routed) {
+    for (let i = 1; i < points.length; i++) {
+      const [x1, y1] = points[i - 1], [x2, y2] = points[i];
+      const steps = Math.ceil(Math.hypot(x2 - x1, y2 - y1) / (M.CELL / 2));
+      for (let k = 0; k <= steps; k++) {
+        const px = x1 + ((x2 - x1) * k) / steps, py = y1 + ((y2 - y1) * k) / steps;
+        for (let w = -M.TRACK; w <= M.TRACK; w += M.CELL / 2) { mark(px + w, py, 1); mark(px, py + w, 1); }
+      }
+    }
+  }
+  stations.forEach((_, si) => {
+    const [cx, cy] = centre(si), r = radius(si);
+    for (let px = cx - r; px <= cx + r; px += M.CELL / 2) for (let py = cy - r; py <= cy + r; py += M.CELL / 2) mark(px, py, 1);
+  });
+  const covered = (box) => {
+    let n = 0;
+    const c0 = Math.floor((box.x - ox) / M.CELL), c1 = Math.floor((box.x + box.w - ox) / M.CELL);
+    const r0 = Math.floor((box.y - oy) / M.CELL), r1 = Math.floor((box.y + box.h - oy) / M.CELL);
+    for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
+      if (c < 0 || r < 0 || c >= cols || r >= rows) { n += 1; continue; }
+      n += raster[r * cols + c] === 2 ? 40 : raster[r * cols + c];
+    }
+    return n;
+  };
+  const claim = (box) => {
+    for (let px = box.x; px <= box.x + box.w; px += M.CELL / 2) for (let py = box.y; py <= box.y + box.h; py += M.CELL / 2) mark(px, py, 2);
+  };
+  // Eight places round a point, the sides first: a metro map reads its
+  // names beside the stations, then above and below.
+  const around = (cx, cy, r, w, h) => [
+    { x: cx + r + 4, y: cy - h / 2, align: 'left', pref: 0 },
+    { x: cx - r - 4 - w, y: cy - h / 2, align: 'right', pref: 0 },
+    { x: cx - w / 2, y: cy + r + 3, align: 'center', pref: 0.5 },
+    { x: cx - w / 2, y: cy - r - 3 - h, align: 'center', pref: 0.5 },
+    { x: cx + r, y: cy + r, align: 'left', pref: 1 },
+    { x: cx + r, y: cy - r - h, align: 'left', pref: 1 },
+    { x: cx - r - w, y: cy + r, align: 'right', pref: 1 },
+    { x: cx - r - w, y: cy - r - h, align: 'right', pref: 1 },
+  ];
+  // Covering a station costs as much as covering a label: a name over
+  // a station hides the stop it is about. Checked against the circles
+  // themselves – a raster cell is coarser than the gap a label keeps
+  // from its own station.
+  const onStation = (box) => stations.reduce((n, _, si) => {
+    const [cx, cy] = centre(si), r = radius(si) + 2;
+    const nx = Math.max(box.x, Math.min(cx, box.x + box.w)), ny = Math.max(box.y, Math.min(cy, box.y + box.h));
+    return n + ((nx - cx) ** 2 + (ny - cy) ** 2 < r * r ? 1 : 0);
+  }, 0);
+  // A second ring further out is the fallback; a plate names the station
+  // it touches, so it reaches that ring only past a station or a label.
+  const place = (cx, cy, r, w, h, far = 2) => {
+    const options = [...around(cx, cy, r, w, h), ...around(cx, cy, r + M.GRID / 3, w, h).map((o) => ({ ...o, pref: o.pref + far }))];
+    const best = options
+      .map((o) => ({ ...o, w, h, cost: covered({ x: o.x, y: o.y, w, h }) + 40 * onStation({ x: o.x, y: o.y, w, h }) + o.pref }))
+      .reduce((p, q) => (q.cost < p.cost ? q : p));
+    claim(best);
+    return best;
+  };
+  const labels = new Array(count);
+  // A station whose label is a plate (`plate: true`) – a command on its
+  // own line – is set in one line, plate-sized.
+  for (const si of order) {
+    const plate = !!stations[si].plate;
+    const text = plate ? [stations[si].label] : metroLabelLines(stations[si].label);
+    const w = plate ? stations[si].label.length * 7 + 16 : Math.max(...text.map((t) => t.length)) * M.CHAR;
+    const h = plate ? M.PLATE_H : text.length * M.LINE_H;
+    const [cx, cy] = centre(si);
+    const box = place(cx, cy, radius(si), w, h, plate ? 30 : 2);
+    labels[si] = { lines: text, align: box.align, x: box.x, y: box.y, w, h };
+  }
+  // Everything from a margin.
+  const boxes = labels;
+  const left = Math.min(...boxes.map((b) => b.x), ...xsAll) - M.PAD;
+  const top = Math.min(...boxes.map((b) => b.y), ...ysAll) - M.PAD;
+  const right = Math.max(...boxes.map((b) => b.x + b.w), ...xsAll) + M.PAD;
+  const bottom = Math.max(...boxes.map((b) => b.y + b.h), ...ysAll) + M.PAD;
+  const at = ([x, y]) => [x - left, y - top];
+  const shift = (b) => ({ ...b, x: b.x - left, y: b.y - top });
+  return {
+    stations: stations.map((_, si) => {
+      const [x, y] = at(centre(si));
+      return {
+        station: si, x, y, r: radius(si),
+        stops: [...stops[si]].map(([li, p]) => [li, ...at(p)]),
+        label: shift(labels[si]),
+      };
+    }),
+    lines: lines.map((_, li) => ({ line: li, paths: paths[li].map((points) => points.map(at)) })),
+    width: Math.ceil(right - left), height: Math.ceil(bottom - top),
+  };
+}
+
+// A grid path as its corners only.
+function metroStraighten(points) {
+  const out = [];
+  for (const p of points) {
+    if (out.length >= 2) {
+      const [a, b] = out.slice(-2);
+      const same = Math.sign(b[0] - a[0]) === Math.sign(p[0] - b[0]) && Math.sign(b[1] - a[1]) === Math.sign(p[1] - b[1]);
+      if (same) { out[out.length - 1] = p; continue; }
+    }
+    out.push(p);
+  }
+  return out;
+}
+
+// A polyline moved `offset` to its left, each corner where the two
+// moved segments meet – which keeps an octilinear line octilinear.
+function metroOffset(points, offset) {
+  if (!offset || points.length < 2) return points.map((p) => p.slice());
+  const normal = (p, q) => {
+    const dx = q[0] - p[0], dy = q[1] - p[1], len = Math.hypot(dx, dy) || 1;
+    return [-dy / len, dx / len];
+  };
+  const out = [];
+  for (let i = 0; i < points.length; i++) {
+    const n1 = i > 0 ? normal(points[i - 1], points[i]) : null;
+    const n2 = i < points.length - 1 ? normal(points[i], points[i + 1]) : null;
+    let nx, ny;
+    if (!n1) [nx, ny] = n2;
+    else if (!n2) [nx, ny] = n1;
+    else {
+      const dot = n1[0] * n2[0] + n1[1] * n2[1];
+      nx = (n1[0] + n2[0]) / (1 + dot); ny = (n1[1] + n2[1]) / (1 + dot);
+    }
+    out.push([points[i][0] + nx * offset, points[i][1] + ny * offset]);
+  }
+  return out;
+}
+
 // ---------- promoting a lifecycle ----------
 //
 // Whether a boolean property is a *one-way door*: every handler sets it
