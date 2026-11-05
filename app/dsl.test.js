@@ -1781,4 +1781,155 @@ check('every keyword outside the experimental ones is shown to an agent', () => 
   });
 }
 
+// The skill's checker runs the generated copy of the core, so the
+// pre-commit hook's staleness check is what ties this to the sources.
+{
+  const fs = require('fs');
+  const os = require('os');
+  const { spawnSync } = require('child_process');
+  const CLI = path.join(APP, '..', 'skills', 'dcb-notation', 'scripts', 'dcb.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dcb-skill-'));
+  const run = (verb, file) => spawnSync(process.execPath, [CLI, verb, file], { encoding: 'utf8' });
+  const write = (name, text) => { const file = path.join(dir, name); fs.writeFileSync(file, text); return file; };
+  const MODEL = `model "Usernames"
+tag type Username = string
+event UsernameClaimed { tag username: Username }
+projection UsernameTaken (tag username: Username): boolean = false {
+  on UsernameClaimed => set true
+}
+command ClaimUsername(username: Username) {
+  require UsernameTaken(username) is false
+    else reject "Username is taken"
+  emit UsernameClaimed { username }
+  scenarios {
+    scenario "free" {
+      when ClaimUsername { username: "a" }
+      then UsernameClaimed { username: "a" }
+    }
+    scenario "taken" {
+      given UsernameClaimed { username: "a" }
+      when ClaimUsername { username: "a" }
+      then rejected "Username is taken"
+    }
+  }
+}
+`;
+
+  check('the skill\'s check passes a covered model and says what ran', () => {
+    const { status, stdout } = run('check', write('ok.dcb', MODEL));
+    eq(status, 0, 'exit');
+    eq(stdout.includes('2 scenario(s) hold'), true, 'the count');
+    eq(stdout.includes('UsernameClaimed [Username:{username}]'), true, 'the boundary');
+  });
+
+  check('the skill\'s check fails what the playground only advises on', () => {
+    const fails = (name, text, expected) => {
+      const { status, stderr } = run('check', write(name, text));
+      eq(status, 1, name);
+      eq(stderr.includes(expected), true, `${name}: ${stderr}`);
+    };
+    fails('wrong.dcb', swap(MODEL, 'then rejected "Username is taken"', 'then UsernameClaimed { username: "a" }'), 'scenario: Does not hold');
+    fails('uncovered.dcb', swap(MODEL, 'then rejected "Username is taken"', 'then nothing'), 'no scenario shows "Username is taken"');
+    fails('untagged.dcb', swap(MODEL, 'event UsernameClaimed { tag username', 'event UsernameClaimed { username'), 'not one of this event\'s tags');
+    fails('syntax.dcb', swap(MODEL, 'event UsernameClaimed {', 'event {'), 'Expected an event name');
+  });
+
+  check('the skill\'s --cover narrows coverage and nothing else', () => {
+    const text = MODEL + `command ReleaseUsername(username: Username) {
+  require UsernameTaken(username) is true
+    else reject "Username is free"
+  emit UsernameClaimed { username }
+}
+`;
+    const file = write('two.dcb', text);
+    eq(run('check', file).status, 1, 'strict without it');
+    const covered = spawnSync(process.execPath, [CLI, 'check', file, '--cover', 'ClaimUsername'], { encoding: 'utf8' });
+    eq(covered.status, 0, covered.stderr);
+    eq(covered.stdout.includes('command ReleaseUsername: no scenario shows it succeed'), true, 'the gap is listed');
+    const uncovered = spawnSync(process.execPath, [CLI, 'check', file, '--cover', 'ReleaseUsername'], { encoding: 'utf8' });
+    eq(uncovered.status, 1, 'a named command still has to be covered');
+    const unknown = spawnSync(process.execPath, [CLI, 'check', file, '--cover', 'Nope'], { encoding: 'utf8' });
+    eq(unknown.stderr.includes('"Nope"'), true, 'a mistyped name is a problem');
+    const wrong = write('wrong-cover.dcb', swap(text, 'then rejected "Username is taken"', 'then nothing'));
+    const failing = spawnSync(process.execPath, [CLI, 'check', wrong, '--cover', 'ReleaseUsername'], { encoding: 'utf8' });
+    eq(failing.stderr.includes('scenario: Does not hold'), true, 'a failing scenario fails outside it too');
+  });
+
+  check('the skill\'s check always refuses what is experimental', () => {
+    const text = swap(MODEL, 'emit UsernameClaimed { username }', 'emit UsernameClaimed { username }\n    when UsernameTaken(username) is false');
+    const { status, stderr } = run('check', write('guarded.dcb', text));
+    eq(status, 1, 'exit');
+    eq(stderr.includes('not supported here'), true, stderr);
+  });
+
+  check('the skill\'s check notes implementation words without failing', () => {
+    const text = swap(swap(MODEL, 'projection UsernameTaken', 'projection UsernameStreamTaken'), 'require UsernameTaken', 'require UsernameStreamTaken');
+    const { status, stdout } = run('check', write('stream.dcb', text));
+    eq(status, 0, 'a note, not a problem');
+    eq(stdout.includes('projection UsernameStreamTaken: "Stream"'), true, stdout);
+    eq(run('check', write('upstream.dcb', swap(swap(MODEL, 'projection UsernameTaken', 'projection UpstreamTaken'), 'require UsernameTaken', 'require UpstreamTaken'))).stdout.includes('Worth a look'), false, 'inside a word is no word');
+  });
+
+  check('the skill\'s conflicts names who invalidates whom, through what', () => {
+    const text = MODEL + `event UsernameNoted { tag username: Username, note: string }
+event AuditLogged { note: string }
+command NoteUsername(username: Username) {
+  emit UsernameNoted { username, note: "n" }
+}
+`;
+    const { status, stdout } = run('conflicts', write('conflicts.dcb', text));
+    eq(status, 0, 'exit');
+    eq(stdout.includes('ClaimUsername:\n  itself via UsernameClaimed [Username]'), true, stdout);
+    eq(stdout.includes('NoteUsername: nothing can invalidate it'), true, 'an event no read selects');
+    eq(stdout.includes('via UsernameNoted'), false, 'an event no boundary selects');
+  });
+
+  check('the skill\'s replay compares stored events with the model and folds them', () => {
+    const typed = `model "Stored"
+tag type CourseId = string
+type Seats = integer { minimum: 1, maximum: 5 }
+event SeatsTaken { tag courseId: CourseId, seats: Seats, note?: string }
+projection Taken (tag courseId: CourseId): integer = 0 {
+  on SeatsTaken => increment event.data.seats
+}
+`;
+    const model = write('stored.dcb', typed);
+    const lines = (...events) => write('export.ndjson', events.map((e) => JSON.stringify(e)).join('\n') + '\n');
+    const replay = (file, ...more) => spawnSync(process.execPath, [CLI, 'replay', model, file, ...more], { encoding: 'utf8' });
+    const clean = lines(
+      { type: 'row', payload: { type: 'tag:x:seats-taken', data: JSON.stringify({ courseId: 'c1', seats: 2 }) } },
+      { type: 'SeatsTaken', data: { courseId: 'c1', seats: 3, note: null } },
+    );
+    const ok = replay(clean, '--read', 'Taken=c1');
+    eq(ok.status, 0, ok.stdout);
+    eq(ok.stdout.includes('2 event(s) of 1 model type(s)'), true, ok.stdout);
+    eq(ok.stdout.includes('Taken=c1: 5'), true, ok.stdout);
+    const off = replay(lines(
+      { type: 'seats-taken', data: { courseId: 'c1', seats: 9, extra: 1 } },
+      { type: 'seats-taken', data: { courseId: 'c1' } },
+      { type: 'other-thing', data: {} },
+      { nonsense: true },
+    ));
+    eq(off.status, 1, 'a disagreement fails');
+    for (const expected of ['SeatsTaken.seats: above 5 (1)', 'SeatsTaken.extra: not in the model (1)', 'SeatsTaken.seats: required, but missing (1)', 'other-thing (1)', '1 line(s) unreadable']) {
+      eq(off.stdout.includes(expected), true, `${expected}: ${off.stdout}`);
+    }
+    const mapped = replay(lines({ type: 'old-name', data: { courseId: 'c1', seats: 1 } }), '--map', 'old-name=SeatsTaken');
+    eq(mapped.status, 0, mapped.stdout);
+  });
+
+  check('the skill\'s JSON is stable, round trips and keeps a sandbox', () => {
+    const notation = write('m.dcb', MODEL);
+    const json = run('json', notation).stdout;
+    eq(json, run('json', notation).stdout, 'the same model, the same document');
+    const document = JSON.parse(json);
+    document.sandbox = { steps: [{ command: 'ClaimUsername', args: { username: 'a' } }] };
+    const file = write('m.dcb.json', JSON.stringify(document));
+    eq(JSON.parse(run('json', file).stdout).sandbox, document.sandbox, 'json keeps it');
+    const printed = run('print', file);
+    eq(printed.stderr.includes('1 sandbox step(s) not printed'), true, 'print says it leaves it');
+    eq(printed.stdout, run('print', notation).stdout, 'the same notation back');
+  });
+}
+
 finish();
