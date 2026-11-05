@@ -66,10 +66,24 @@ node app/dsl.test.js
   model interchange format (`https://dcb.events/schemas/model/v10.json`).
 - [`fixtures/`](fixtures/) — models with authored scenarios, read by the
   tests only.
+- [`skills/dcb-notation/`](skills/dcb-notation/) — a skill for authoring
+  models in the notation, with a checker that needs only Node.
 - [`docs/research/`](docs/research/) — dated notes behind design decisions.
 - [`design/`](design/) — artboards from UI explorations; not used by the app.
 - [`AGENTS.md`](AGENTS.md) — architecture, conventions and pitfalls in
   depth, written for coding agents and contributors alike.
+
+## Authoring models from an agent
+
+[`skills/dcb-notation/`](skills/dcb-notation/) is a skill that writes and
+changes models in the notation, and converts existing Event Sourcing apps to
+them. Its checker runs this playground's own code and needs only Node.
+
+```
+npx skills add dcb-events/dcb-playground@dcb-notation
+```
+
+Or copy the folder into your agent's skills directory.
 
 ## Dependencies
 

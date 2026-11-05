@@ -23,6 +23,9 @@ and a model someone asked for by address: Import's URL field or a
 - `fixtures/` — test data only: models carrying scenarios authored in
   the playground, which no seed builder produces; `dsl.test.js` reads
   them. Hand-edited, never served.
+- `skills/dcb-notation/` — an installable skill for authoring models in the
+  notation. `SKILL.md` and `scripts/dcb.js` are hand-written, the rest is
+  generated, so it works when copied out of this repository.
 - `docs/design-notes.md` — the design rationale by area; see _Before
   changing an area_ below.
 - `docs/research/` — dated primary-source research notes backing design
@@ -82,7 +85,7 @@ fixture text with `swap(text, from, to)`, which throws when `from` is
 gone — a bare `.replace()` that misses leaves the test checking nothing.
 
 `.githooks/pre-commit` runs the four suites, checks that
-`app/webmcp-schemas.js` is current (the vendored Monaco is regenerated
+`app/webmcp-schemas.js` and the skill's generated files are current (the vendored Monaco is regenerated
 only on a version bump, so it is not checked) and refuses a bare
 `.replace()` in a suite. CI runs the same hook. Enable it once
 per clone: `git config core.hooksPath .githooks`.
@@ -99,6 +102,7 @@ Generated files — regenerate, never hand-edit:
 
 ```
 node app/generate-webmcp-schemas.js   # rewrites app/webmcp-schemas.js after a dcb-model.schema.json change
+node app/generate-skill.js            # rewrites the skill's language.md and playground-core.js after a model.js, evaluate.js or dsl.js change
 node app/generate-vendor-monaco.js    # re-fetches app/vendor/monaco/ — only on a version bump (needs network)
 ```
 

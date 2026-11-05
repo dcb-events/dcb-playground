@@ -22,16 +22,22 @@ for t in evaluate ui webmcp dsl; do
 done
 rm -rf "$dir"
 
-# 2. The generated file is current: regenerating must change nothing.
+# 2. The generated files are current: regenerating must change nothing.
 # Hashed with node, which the hook needs anyway: shasum is missing on
 # some Linux installs, sha1sum on macOS.
-generated() { node -e "process.stdout.write(require('crypto').createHash('sha1').update(require('fs').readFileSync('app/webmcp-schemas.js')).digest('hex'))"; }
-before=$(generated)
-node app/generate-webmcp-schemas.js >/dev/null
-if [ "$before" != "$(generated)" ]; then
-  echo "pre-commit: the generator changed app/webmcp-schemas.js — review and stage it." >&2
-  failed=1
-fi
+generated() { node -e "process.stdout.write(require('crypto').createHash('sha1').update(require('fs').readFileSync('$1')).digest('hex'))"; }
+for pair in \
+  app/generate-webmcp-schemas.js:app/webmcp-schemas.js \
+  app/generate-skill.js:skills/dcb-notation/references/language.md \
+  app/generate-skill.js:skills/dcb-notation/scripts/playground-core.js; do
+  file=${pair#*:}
+  before=$(generated "$file")
+  node "${pair%%:*}" >/dev/null
+  if [ "$before" != "$(generated "$file")" ]; then
+    echo "pre-commit: the generator changed $file — review and stage it." >&2
+    failed=1
+  fi
+done
 
 # 3. A fixture text is edited with swap() (test-harness.js), which
 #    throws when its target is gone; a bare .replace() passes silently.
