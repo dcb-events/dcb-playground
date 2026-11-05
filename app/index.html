@@ -3172,7 +3172,10 @@ const HELP_FAQ = [
   { question: 'Can an AI agent work on my model?', answer: [
     'Yes, in browsers that support WebMCP (currently behind a flag or extension): an in-browser '
       + 'agent can read the open model, run commands in the sandbox and edit definitions. Every '
-      + 'call shows up as a notification, and every edit can be undone like your own.'] },
+      + 'call shows up as a notification, and every edit can be undone like your own. Outside the '
+      + 'browser, the experimental ',
+    { text: 'dcb-notation skill ↗', href: 'https://github.com/dcb-events/dcb-playground/tree/main/skills/dcb-notation' },
+    ' lets a coding agent write and check models as text files.'] },
   { question: "Something doesn't work – what now?", answer: [
     'Please ', { text: 'report it on GitHub ↗', href: ISSUES_URL }, '. It helps to include a link '
       + 'to the model (Import & export → Copy link) and what you expected to happen.'] },

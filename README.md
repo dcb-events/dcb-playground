@@ -77,7 +77,7 @@ node app/dsl.test.js
 
 [`skills/dcb-notation/`](skills/dcb-notation/) is a skill that writes and
 changes models in the notation, and converts existing Event Sourcing apps to
-them. Its checker runs this playground's own code and needs only Node.
+them or redesigns them to be simpler. Its checker runs this playground's own code and needs only Node.
 
 ```
 npx skills add dcb-events/dcb-playground@dcb-notation

@@ -5285,6 +5285,7 @@ check('the FAQ answers in text, links in a new tab and shortcuts as kbd', () => 
   eq(findAll(modal, (n) => n.tag === 'h4').length, sandbox.HELP_FAQ.length, 'a heading per question');
   const links = findAll(modal, (n) => n.tag === 'a' && n.attributes.target === '_blank');
   eq(links.some((a) => a.attributes.href === sandbox.ISSUES_URL && textOf(a) === 'report it on GitHub ↗'), true, 'a link in an answer');
+  eq(links.some((a) => a.attributes.href.endsWith('/skills/dcb-notation') && textOf(a) === 'dcb-notation skill ↗'), true, 'the skill');
   eq(findAll(modal, (n) => n.tag === 'kbd').length, 2, 'the share and undo shortcuts');
   sandbox.state.helpPage = 'start';
 });

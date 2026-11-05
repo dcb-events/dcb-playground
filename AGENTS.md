@@ -240,6 +240,9 @@ was decided, why, and what was tried and reverted:
   _major_, judged from the reader's side; a field an old reader can
   ignore without misreading anything is a minor. The importer reads
   only `READABLE_MAJORS` and always writes the current `MODEL_VERSION`.
+  A major reaches `main` together with the website's pin bump: the skill
+  installs from `main`, so its language would otherwise differ from the
+  one dcb.events documents.
 - **Anything walking a command's conditions must walk each emission's
   `when` too**: guard reads count toward the derived DCB like condition
   reads (both flow through `forEachCommandOperand`; see `allConditions`
