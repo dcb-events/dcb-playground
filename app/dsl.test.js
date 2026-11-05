@@ -1862,6 +1862,62 @@ command ClaimUsername(username: Username) {
     eq(stderr.includes('not supported here'), true, stderr);
   });
 
+  check('the skill\'s check notes implementation words without failing', () => {
+    const text = swap(swap(MODEL, 'projection UsernameTaken', 'projection UsernameStreamTaken'), 'require UsernameTaken', 'require UsernameStreamTaken');
+    const { status, stdout } = run('check', write('stream.dcb', text));
+    eq(status, 0, 'a note, not a problem');
+    eq(stdout.includes('projection UsernameStreamTaken: "Stream"'), true, stdout);
+    eq(run('check', write('upstream.dcb', swap(swap(MODEL, 'projection UsernameTaken', 'projection UpstreamTaken'), 'require UsernameTaken', 'require UpstreamTaken'))).stdout.includes('Worth a look'), false, 'inside a word is no word');
+  });
+
+  check('the skill\'s conflicts names who invalidates whom, through what', () => {
+    const text = MODEL + `event UsernameNoted { tag username: Username, note: string }
+event AuditLogged { note: string }
+command NoteUsername(username: Username) {
+  emit UsernameNoted { username, note: "n" }
+}
+`;
+    const { status, stdout } = run('conflicts', write('conflicts.dcb', text));
+    eq(status, 0, 'exit');
+    eq(stdout.includes('ClaimUsername:\n  itself via UsernameClaimed [Username]'), true, stdout);
+    eq(stdout.includes('NoteUsername: nothing can invalidate it'), true, 'an event no read selects');
+    eq(stdout.includes('via UsernameNoted'), false, 'an event no boundary selects');
+  });
+
+  check('the skill\'s replay compares stored events with the model and folds them', () => {
+    const typed = `model "Stored"
+tag type CourseId = string
+type Seats = integer { minimum: 1, maximum: 5 }
+event SeatsTaken { tag courseId: CourseId, seats: Seats, note?: string }
+projection Taken (tag courseId: CourseId): integer = 0 {
+  on SeatsTaken => increment event.data.seats
+}
+`;
+    const model = write('stored.dcb', typed);
+    const lines = (...events) => write('export.ndjson', events.map((e) => JSON.stringify(e)).join('\n') + '\n');
+    const replay = (file, ...more) => spawnSync(process.execPath, [CLI, 'replay', model, file, ...more], { encoding: 'utf8' });
+    const clean = lines(
+      { type: 'row', payload: { type: 'tag:x:seats-taken', data: JSON.stringify({ courseId: 'c1', seats: 2 }) } },
+      { type: 'SeatsTaken', data: { courseId: 'c1', seats: 3, note: null } },
+    );
+    const ok = replay(clean, '--read', 'Taken=c1');
+    eq(ok.status, 0, ok.stdout);
+    eq(ok.stdout.includes('2 event(s) of 1 model type(s)'), true, ok.stdout);
+    eq(ok.stdout.includes('Taken=c1: 5'), true, ok.stdout);
+    const off = replay(lines(
+      { type: 'seats-taken', data: { courseId: 'c1', seats: 9, extra: 1 } },
+      { type: 'seats-taken', data: { courseId: 'c1' } },
+      { type: 'other-thing', data: {} },
+      { nonsense: true },
+    ));
+    eq(off.status, 1, 'a disagreement fails');
+    for (const expected of ['SeatsTaken.seats: above 5 (1)', 'SeatsTaken.extra: not in the model (1)', 'SeatsTaken.seats: required, but missing (1)', 'other-thing (1)', '1 line(s) unreadable']) {
+      eq(off.stdout.includes(expected), true, `${expected}: ${off.stdout}`);
+    }
+    const mapped = replay(lines({ type: 'old-name', data: { courseId: 'c1', seats: 1 } }), '--map', 'old-name=SeatsTaken');
+    eq(mapped.status, 0, mapped.stdout);
+  });
+
   check('the skill\'s JSON is stable, round trips and keeps a sandbox', () => {
     const notation = write('m.dcb', MODEL);
     const json = run('json', notation).stdout;

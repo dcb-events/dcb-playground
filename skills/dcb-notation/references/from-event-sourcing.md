@@ -11,6 +11,7 @@ List from the code, each with where it was found:
 - every stored event type, with its fields, its stream, and any tags or metadata it is written with
 - every command handler, and the aggregate or decider it runs against
 - every place a decision is enforced outside the aggregate: unique database indexes, reservation tables, sagas and process managers, checks against read models
+- every rule that reads another aggregate's state, with the identifier it reads by
 
 Done when every event type and handler in the code appears in the list.
 
@@ -28,6 +29,16 @@ Then look for what is missing, since no guard marks it: a handler that checks no
 
 Done when every guard has exactly one classification.
 
+## History
+
+If an export of the stored events exists, it is the best evidence available. It holds customer data, so report counts and leave values out.
+
+- **Schema:** run `node scripts/dcb.js replay <model> <export>` once a model exists. It lists fields the model and the history disagree on, such as a field old events lack because the code gives it a default.
+- **Backfills:** for each field you would add, walk the history and count the events whose value can be derived and those it cannot.
+- **Usage:** count what follows each lifecycle step and how often each variant occurs. These counts settle questions and support the suggested redesigns.
+
+Done when every proposed field has its count, and every question the history can answer quotes one.
+
 ## Mapping
 
 - **Events**: names and fields unchanged.
@@ -35,8 +46,10 @@ Done when every guard has exactly one classification.
 - **Existing tags**: keep them. `@tagSchema` carries a prefix and a value, and `{type}` in it renders the type's name, so a stored `concert=c1` on a `ConcertId` is `@tagSchema("concert={value}")`.
 - **A stream key**: the natural tag, when the event holds it as a field.
 - **An identifier with no stored tag**: stays a plain `string`, since `check` requires a tag type to be tagged. Tagging it is a proposal, listed under migration cost.
+- **An identifier a command reads by and also stores**: the Inventory's cross-aggregate rules are these. A read needs the tag type and a plain `string` field cannot take it, so tagging the event is the clean answer. Each is a question in the first round. Without a yes, the command takes two parameters with the same value, `course: CourseId` to read and `courseId: string` to emit, and the report lists them.
 - **Field types**: the closest match to the code, `integer` only where the code guarantees whole numbers. Any narrowing is listed under migration cost.
 - **Aggregate state**: one projection per fact a rule reads. Fields no rule reads stay out.
+- **Names**: say what the fact means in the domain, `CourseTemplateKnown` for an id that stays taken after removal. The model has events, tags and projections, so the old implementation's aggregates, streams and sagas appear only in the report.
 
 The notation requires a tag to be a property of its event. So a tag or stream key that lives only in metadata, or a tag format `@tagSchema` cannot carry, cannot be modelled faithfully. Each is a question, offered with its choices, such as adding the property.
 
@@ -45,6 +58,14 @@ An event may hold other identifiers but not its stream key: keep the event, and 
 ## Asking
 
 Finish the analysis first, then ask everything in one round before writing the model: the questions above, each tag to add, each field to add, each classification left open.
+
+Write each question so someone who has not read the code can answer it:
+
+- **The situation**, with concrete values from this app: "a customer holds 2 seats while staff book 1".
+- **What each choice does** in that example. For a field or tag to add, show the value it holds in each case.
+- **Your recommendation**, with its reason.
+
+Trace a claim about why a change is needed through the code or the history before you make it.
 
 If nobody can answer, change nothing. Model what stays faithful, leave the rest out, and mark **unresolved** each rule that depends on it and each question about a rule, including the missing ones. A question no rule hangs on stays open without counting. A conversion with anything unresolved is incomplete, whatever `check` says, and the hand-over says so first.
 

@@ -3022,7 +3022,7 @@ function validateReferences(model, kind, name, body) {
     const seen = new Set();
     for (const p of properties || []) {
       if (!CAMEL_RE.test(p.name || '')) {
-        throw new DomainError(`${label} property name "${p.name}" must be camelCase.`);
+        throw new DomainError(`${label} property name "${p.name}" must be camelCase, at least two characters.`);
       }
       if (seen.has(p.name)) throw new DomainError(`${label} declares "${p.name}" twice.`);
       seen.add(p.name);
@@ -3673,7 +3673,7 @@ function validateProjectionTags(model, projectionName, body) {
   const seen = new Set();
   for (const tag of projectionTagParams(body)) {
     if (!CAMEL_RE.test(tag.name || '')) {
-      throw new DomainError(`${label} has a tag named "${tag.name}", which is not a camelCase name.`);
+      throw new DomainError(`${label} has a tag named "${tag.name}", which is not a camelCase name of at least two characters.`);
     }
     if (seen.has(tag.name)) throw new DomainError(`${label} declares the tag "${tag.name}" twice.`);
     seen.add(tag.name);
@@ -3690,7 +3690,7 @@ function validateProjectionTags(model, projectionName, body) {
   const arguments_ = new Set();
   for (const argument of projectionSlots(body)) {
     if (!CAMEL_RE.test(argument.name || '')) {
-      throw new DomainError(`${label} has an argument named "${argument.name}", which is not a camelCase name.`);
+      throw new DomainError(`${label} has an argument named "${argument.name}", which is not a camelCase name of at least two characters.`);
     }
     if (seen.has(argument.name)) {
       throw new DomainError(`${label} names both a tag and an argument "${argument.name}".`);
@@ -4007,7 +4007,7 @@ function validateCustomTypeBody(model, typeName, body) {
     const seen = new Set();
     for (const field of fields) {
       if (!CAMEL_RE.test(field.name || '')) {
-        throw new DomainError(`Field name "${field.name}" on "${typeName}" must be camelCase.`);
+        throw new DomainError(`Field name "${field.name}" on "${typeName}" must be camelCase, at least two characters.`);
       }
       if (seen.has(field.name)) {
         throw new DomainError(`Composite type "${typeName}" declares field "${field.name}" twice.`);
@@ -4066,7 +4066,7 @@ function validateEntityBody(model, entityName, body) {
   const seen = new Set();
   for (const property of body.properties || []) {
     if (!property || !CAMEL_RE.test(property.name || '')) {
-      throw new DomainError(`Property name "${(property || {}).name}" must be camelCase.`);
+      throw new DomainError(`Property name "${(property || {}).name}" must be camelCase, at least two characters.`);
     }
     if (seen.has(property.name)) throw new DomainError(`Entity declares property "${property.name}" twice.`);
     seen.add(property.name);
@@ -4096,7 +4096,7 @@ function validateEntityBody(model, entityName, body) {
   }
   if (body.identifierName !== undefined && !CAMEL_RE.test(body.identifierName)) {
     throw new DomainError(
-      `Entity "${entityName}"'s identifierName "${body.identifierName}" must be camelCase.`
+      `Entity "${entityName}"'s identifierName "${body.identifierName}" must be camelCase, at least two characters.`
     );
   }
 
@@ -4139,7 +4139,7 @@ function validateCommandBody(model, body) {
   const declaredAbove = [];
   for (const binding of boundary) {
     if (!CAMEL_RE.test(binding.alias || '')) {
-      throw new DomainError(`Boundary alias "${binding.alias}" must be camelCase.`);
+      throw new DomainError(`Boundary alias "${binding.alias}" must be camelCase, at least two characters.`);
     }
     if (aliases.has(binding.alias)) throw new DomainError(`Boundary alias "${binding.alias}" is bound twice.`);
     aliases.add(binding.alias);
@@ -14642,7 +14642,7 @@ The text get_model_source returns, apply_model_source applies and start_model ta
 - A text is the whole model: a model "Name" line, then types, events, projections and commands. A definition left out of an applied text is removed – apply_model_source refuses that unless told allowRemovals: true – so to change a model, edit what get_model_source returned and send all of it back.
 - A text with any error is refused whole, with each error's line and column; fix them and send it again. What does not stop it (an event nothing emits, a read of a projection nobody declared) comes back as advisories with the result; fix those as well.
 - DCB in brief: events are tagged by identifier values; a projection folds the events that carry its tags into one value; a command reads projections, checks its rules and emits events. Its consistency boundary is exactly what it reads – derived, never declared (derive_boundary shows it).
-- Definitions, enum members and records are PascalCase; properties, parameters, tags and aliases are camelCase.
+- Definitions, enum members and records are PascalCase; properties, parameters, tags and aliases are camelCase. A name has at least two characters.
 - // and /* */ are comments. They are not stored.
 - @tagSchema("{type}={value}") on the line before a tag type changes how its values render as tags; "{type}:{value}" is the default.
 - @icon("📦") on the line before an event or a command gives it the mark the pages show it with – one emoji or short glyph.
@@ -14957,6 +14957,15 @@ command UnsubscribeStudentFromCourse(courseId: CourseId, studentId: StudentId) {
 // by dsl.test.js.
 const SOURCE_REFERENCE_EXAMPLE_SLUG = 'course-simple';
 
+const SOURCE_REFERENCE_GOTCHAS = `## Gotchas
+
+- Value types are nominal. An emitted value and a read's tag take their declared type exactly: a CourseId does not fill a string property, a string parameter does not read a CourseId tag, and an integer does not fill a Seats property. Literals fit any matching base type. A read gives the type its projection declares, so declare the type the read's value goes on to fill.
+- An event property of a tag type must be one of the event's tags. So a command that reads by an identifier and stores it on an event needs that event tagged by it.
+- A handler has no condition: it runs for every event of its type that carries the projection's tags. When the change depends on the case, the event holds the amount for each case, with 0 where nothing changes.
+- A read needs a value for each tag, so an optional parameter cannot read one. Write one command with the read and one without.
+- "tag x?: T" is allowed: an event whose x is null carries no such tag, and a projection tagged by T does not see it.
+`;
+
 const SOURCE_REFERENCE_UNOFFERED = 'Not offered to agents: entities, lifecycles, scripted projections, '
   + 'guarded emissions (emit … when …), optional reads (alias x? = …), excluding '
   + 'and currentValue. A text or '
@@ -14966,6 +14975,7 @@ function sourceLanguageReference() {
   return [
     SOURCE_REFERENCE_GUIDE,
     '## Forms\n\n' + SOURCE_REFERENCE_FORMS,
+    SOURCE_REFERENCE_GOTCHAS,
     '## Tour – a complete model using every construct\n\n~~~\n' + SOURCE_REFERENCE_TOUR + '~~~',
     '## Example – a shipped model, as get_model_source prints it\n\n~~~\n' + SOURCE_REFERENCE_EXAMPLE + '~~~',
     SOURCE_REFERENCE_UNOFFERED,

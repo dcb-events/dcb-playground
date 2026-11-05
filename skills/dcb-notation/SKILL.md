@@ -1,6 +1,6 @@
 ---
 name: dcb-notation
-description: Author DCB models in the DCB notation (`.dcb`), the text form of the DCB model JSON schema (`.dcb.json`). Use when writing or changing a model's events, projections, commands or scenarios, turning business rules into Dynamic Consistency Boundaries, converting a model between notation and JSON, or converting an existing Event Sourcing app to a DCB model.
+description: Author DCB models in the DCB notation (`.dcb`), the text form of the DCB model JSON schema (`.dcb.json`). Use when writing or changing a model's events, projections, commands or scenarios, turning business rules into Dynamic Consistency Boundaries, converting a model between notation and JSON, converting an existing Event Sourcing app to a DCB model, or redesigning a model to simplify it.
 ---
 
 # DCB notation
@@ -12,6 +12,8 @@ The notation is the authored form. The JSON document is its output: every constr
 | Command | Does |
 |---|---|
 | `node scripts/dcb.js check <file> [--cover A,B]` | Lists every problem on stderr (exit 1), then each command's derived boundary on stdout |
+| `node scripts/dcb.js conflicts <file>` | For each command, which commands invalidate its decision, through which event and tags |
+| `node scripts/dcb.js replay <file> <export> [--map Old=New,…] [--read Projection=value,…]` | Compares stored events (NDJSON) with the model: unknown types, missing or undeclared fields, values outside their type (exit 1). `--read` folds a projection over them; repeatable |
 | `node scripts/dcb.js print <file>` | The model as canonical notation |
 | `node scripts/dcb.js json <file>` | The model as its JSON document; its `$schema` names the schema |
 | `node scripts/dcb.js link <file>` | A link opening the model in the hosted playground |
@@ -21,6 +23,7 @@ The notation is the authored form. The JSON document is its output: every constr
 ## Before the steps
 
 - **Converting an Event Sourcing app?** Read [references/from-event-sourcing.md](references/from-event-sourcing.md) now. It replaces steps 2 and 7.
+- **Simplifying a model or an app, with its events free to change?** Read [references/redesign.md](references/redesign.md) now. It replaces steps 2 and 7.
 - **Changing an existing model?** `print` it and edit the whole text. If `check` reports it uses experimental constructs, stop and name them to the user: this skill does not support such a model, though `print` and `json` still work on it. The notation has no spelling for a document's `sandbox` session, so `print` warns and that session stays behind in the original. Generated JSON also has new scenario ids and the current minor version. Say both at hand-over.
 
 ## Steps
@@ -30,7 +33,7 @@ The notation is the authored form. The JSON document is its output: every constr
 3. **Write the model** to `<name>.dcb`, following _Modelling_.
 4. **Write the scenarios from the brief**, inside each command: one that succeeds and one per rejection message, each stating its `then`. Conditions sharing a message get one per condition, and a projection whose handlers changed gets its own scenario. A scenario is a prediction, so write it before running anything; `check` prints what the model does, and that output is evidence to judge, not text to paste.
 5. **Run `check` until it exits 0.** When a scenario fails, decide from the brief which side is wrong and fix that one. In an existing model, pass `--cover` with the commands whose rules or events you changed, so scenarios are owed for those only; the gaps it lists elsewhere go in the hand-over. Adding a required property to an event means adding it to every scenario that holds that event, which does not make those commands changed ones.
-6. **Audit the boundary.** Scenarios run one command at a time, so they cannot catch a wrong boundary. For each rule, name the concurrent event that would break it, and find its type and tag in that command's boundary; a rule over arguments alone, or one that no event can undo, has no such event. For each boundary line, name the rule it serves; each read contributes its own line, so duplicate and overlapping lines are normal. In an existing model, audit the commands that read a changed projection. Done when every rule and every line is accounted for. A gap is a missing read or a missing tag on an event; an orphan line is a read to remove or a projection to split.
+6. **Audit the boundary.** Scenarios run one command at a time, so they cannot catch a wrong boundary. `conflicts` lists who can invalidate whom; check each pair against the rules. For each rule, name the concurrent event that would break it, and find its type and tag in that command's boundary; a rule over arguments alone, or one that no event can undo, has no such event. For each boundary line, name the rule it serves; each read contributes its own line, so duplicate and overlapping lines are normal. In an existing model, audit the commands that read a changed projection. Done when every rule and every line is accounted for. A gap is a missing read or a missing tag on an event; an orphan line is a read to remove or a projection to split.
 7. **Hand over** the `.dcb` file, the JSON or link if wanted, the assumptions from step 2, what the audit made you fix, and any surprising boundary (every booking conflicting because of a gapless number).
 
 ## Modelling

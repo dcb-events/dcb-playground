@@ -24,8 +24,9 @@ and a model someone asked for by address: Import's URL field or a
   the playground, which no seed builder produces; `dsl.test.js` reads
   them. Hand-edited, never served.
 - `skills/dcb-notation/` — an installable skill for authoring models in the
-  notation. `SKILL.md` and `scripts/dcb.js` are hand-written, the rest is
-  generated, so it works when copied out of this repository.
+  notation. `references/language.md` and `scripts/playground-core.js` are
+  generated, so it works when copied out of this repository; the rest is
+  hand-written.
 - `docs/design-notes.md` — the design rationale by area; see _Before
   changing an area_ below.
 - `docs/research/` — dated primary-source research notes backing design
