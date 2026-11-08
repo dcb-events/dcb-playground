@@ -626,13 +626,19 @@ function sliceOf(model, commandName) {
     reads: body.boundary || [],
     // The rules and emissions written at the top, as the pages edit
     // them (`commandLists`) – a rule flat, its message beside its
-    // condition – and the branches apart (11.0), shown as they are and
-    // edited in the code view. `allEmits` is every emission any run
-    // may reach, the branches' too – what the command records.
+    // condition – and the branches and loops apart (11.0), shown as
+    // they are and edited in the code view. `allEmits` is every
+    // emission any run may reach, the branches' and loops' too – what
+    // the command records; `loopEmits` the names a loop emits.
     rules: commandLists(body).conditions,
-    branches: commandSteps(body).filter((step) => stepKind(step) === 'branch'),
+    branches: commandSteps(body).filter((step) => ['branch', 'loop'].includes(stepKind(step))),
     emits: topLevelSteps(body, 'emit').map(emitted),
     allEmits: commandEmissions(body).map(emitted),
+    loopEmits: uniq(commandLoops(body).flatMap((loop) => {
+      const names = [];
+      forEachStep(loopSteps(loop), (step) => { if (stepKind(step) === 'emit' && step.name) names.push(step.name); });
+      return names;
+    })),
     projections: projectionsRead(body),
     // Grouped by the query to the store each read actually happens in,
     // which is the depth of the boundary's dependency graph and not
@@ -2088,6 +2094,12 @@ function requirementVerb(verb) {
   const [first, ...rest] = verb.split(' ');
   const base = /(ss|sh|ch|x)es$/.test(first) ? first.slice(0, -2) : first.replace(/s$/, '');
   return ['must', base, ...rest].join(' ');
+}
+
+// A loop's head (11.0) in words: `for each shareId in Share active as
+// owner(customerId, *)`.
+function loopWords(loop) {
+  return `for each ${loopNames(loop).join(', ')} in ${operandWords(loop.in)}`;
 }
 
 // A condition as one plain sentence – the same words `conditionParts`

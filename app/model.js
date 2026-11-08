@@ -4986,7 +4986,7 @@ function validateCommandBody(model, body) {
   forEachStep(commandSteps(body), (step, at) => {
     if (stepProblem) return;
     const kind = stepKind(step);
-    if (!kind) stepProblem = `Step ${at.path.join('.')} is neither a rule, an emission, a branch nor a reject.`;
+    if (!kind) stepProblem = `Step ${at.path.join('.')} is neither a rule, an emission, a branch, a loop nor a reject.`;
     else if (kind === 'reject' && at.depth === 0) {
       stepProblem = `"reject ${JSON.stringify(step.reject)}" stands outside any branch, so the command is always refused.`;
     } else if (kind === 'reject' && rejectionProblem(step.reject)) {

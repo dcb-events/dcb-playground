@@ -6882,10 +6882,11 @@ function codeViewButton(title) {
 // ---------- branches ----------
 //
 // A command's branches (11.0) – `if … => … else if … => … else => …` –
-// are shown as they run and edited in the code view: the visual
-// editors write the rules and emissions at the top, and never flatten
-// or drop a branch they do not show (`patch`). Each arm is a line per
-// step, its condition and its message read the way a rule's are.
+// and its loops – `for each x in … => …` – are shown as they run and
+// edited in the code view: the visual editors write the rules and
+// emissions at the top, and never flatten or drop a branch or a loop
+// they do not show (`patch`). Each arm is a line per step, its
+// condition and its message read the way a rule's are.
 function branchCard(model, slice, step, n) {
   const stepLines = (steps, depth) => steps.flatMap((inner) => {
     const pad = { style: `padding-left:${depth * 1.2}em` };
@@ -6899,10 +6900,17 @@ function branchCard(model, slice, step, n) {
         return [h('div', { class: 'sentence', ...pad }, h('span', { class: 'verb' }, 'emit '), eventRef(model, inner.name))];
       case 'branch':
         return armLines(inner, depth);
+      case 'loop':
+        return loopLines(inner, depth);
       default:
         return [];
     }
   });
+  const loopLines = (loop, depth) => [
+    h('div', { class: 'sentence', style: `padding-left:${depth * 1.2}em` }, h('span', { class: 'verb' }, loopWords(loop))),
+    ...(loopSteps(loop).length ? stepLines(loopSteps(loop), depth + 1)
+      : [h('div', { class: 'muted tiny', style: `padding-left:${(depth + 1) * 1.2}em` }, 'nothing')]),
+  ];
   const armLines = (branch, depth) => stepArms(branch).flatMap((arm, i) => [
     h('div', { class: 'sentence', style: `padding-left:${depth * 1.2}em` },
       h('span', { class: 'verb' }, arm.condition === undefined ? 'else' : i ? 'else if ' : 'if '),
@@ -6910,6 +6918,14 @@ function branchCard(model, slice, step, n) {
     ...(arm.steps.length ? stepLines(arm.steps, depth + 1)
       : [h('div', { class: 'muted tiny', style: `padding-left:${(depth + 1) * 1.2}em` }, 'nothing')]),
   ]);
+  if (stepKind(step) === 'loop') {
+    return h('div', { class: 'card rule branch-card', 'data-src': 'branch:' + n },
+      h('div', { class: 'row' },
+        h('span', { class: 'muted tiny' }, 'For each – once per element, in order'),
+        h('span', { class: 'grow' }),
+        codeViewButton('A for each is edited in the code view')),
+      ...loopLines(step, 0));
+  }
   return h('div', { class: 'card rule branch-card', 'data-src': 'branch:' + n },
     h('div', { class: 'row' },
       h('span', { class: 'muted tiny' }, 'Branch – the first arm that holds runs'),
@@ -7696,15 +7712,21 @@ function stepEmits(model, slice) {
   // What the branches record (11.0) is edited in the code view, but it
   // is still what this command appends – said here, by name, rather than
   // a "–" that reads as "records nothing".
+  // So is what a loop records, once per element (11.0).
   const inBranches = uniq(slice.allEmits.map(({ emission }) => emission && emission.name).filter(Boolean)
-    .filter((name) => !slice.emits.some((e) => e.emission.name === name)));
-  if (inBranches.length) {
+    .filter((name) => !slice.emits.some((e) => e.emission.name === name) && !slice.loopEmits.includes(name)));
+  const inLoops = slice.loopEmits.filter((name) => !slice.emits.some((e) => e.emission.name === name));
+  for (const [names, label, why] of [
+    [inBranches, 'in branches:', 'What a branch emits is edited in the code view'],
+    [inLoops, 'for each element:', 'What a for each emits is edited in the code view'],
+  ]) {
+    if (!names.length) continue;
     cards.push(h('div', { class: 'card event' },
       h('div', { class: 'row wraps' },
-        h('span', { class: 'muted tiny' }, 'in branches:'),
-        ...inBranches.map((name) => eventRef(model, name)),
+        h('span', { class: 'muted tiny' }, label),
+        ...names.map((name) => eventRef(model, name)),
         h('span', { class: 'grow' }),
-        codeViewButton('What a branch emits is edited in the code view'))));
+        codeViewButton(why))));
   }
   if (!cards.length) cards.push(h('div', { class: 'empty' }, '–'));
 
@@ -12211,14 +12233,20 @@ function renderRuleMap(model, main) {
       const slice = sliceOf(model, name);
       const rules = [
         ...slice.rules.map((condition) => ruleSentence(model, slice.body, condition)),
-        // A branch, one line per arm: what it tests, then what it does.
-        ...slice.branches.flatMap((branch) => stepArms(branch).map((arm, i) => {
-          const does = arm.steps.map((inner) => (stepKind(inner) === 'emit' ? 'emit ' + readable(inner.name)
+        // A branch, one line per arm: what it tests, then what it does –
+        // inside a loop (11.0), after what the loop runs over.
+        ...slice.branches.flatMap((branch) => {
+          const does = (inner) => (stepKind(inner) === 'emit' ? 'emit ' + readable(inner.name)
             : stepKind(inner) === 'reject' ? `reject \u201c${inner.reject}\u201d`
-              : stepKind(inner) === 'rule' ? 'require ' + ruleSentence(model, slice.body, inner.condition) : 'branch'))
-            .join(', ') || 'nothing';
-          return `${arm.condition === undefined ? 'else' : (i ? 'else if ' : 'if ') + ruleSentence(model, slice.body, arm.condition)} → ${does}`;
-        })),
+              : stepKind(inner) === 'rule' ? 'require ' + ruleSentence(model, slice.body, inner.condition)
+                : stepKind(inner) === 'loop' ? 'for each' : 'branch');
+          const arms = (step, lead) => stepArms(step).map((arm, i) => `${lead}${arm.condition === undefined ? 'else'
+            : (i ? 'else if ' : 'if ') + ruleSentence(model, slice.body, arm.condition)} → ${arm.steps.map(does).join(', ') || 'nothing'}`);
+          if (stepKind(branch) !== 'loop') return arms(branch, '');
+          const lead = loopWords(branch) + ' → ';
+          const lines = loopSteps(branch).flatMap((inner) => (stepKind(inner) === 'branch' ? arms(inner, lead) : [lead + does(inner)]));
+          return lines.length ? lines : [lead + 'nothing'];
+        }),
       ];
       main.appendChild(h('div', { class: 'card command rulemap-row' },
         h('div', { class: 'rulemap-cmd' }, commandRef(model, name)),

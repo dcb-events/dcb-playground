@@ -2604,6 +2604,59 @@ check('importing an older model with entities says what became of them', () => {
 }
 
 // ---------------------------------------------------------------
+// A command with a for each (11.0): every page shows it and what it
+// emits, read-only, and an edit on the page never drops it.
+// ---------------------------------------------------------------
+{
+  const { id, model } = build('course-simple');
+  sandbox.setActiveModelId(id);
+  const loop = {
+    forEach: ['courseId'], in: { parameterName: 'courseIds' },
+    steps: [{ branches: [{
+      condition: { leftHandSide: { projection: 'CourseStatus', tags: { courseId: { parameterName: 'courseId' } } }, predicate: 'equals', rightHandSide: { enumMember: 'Existent' } },
+      steps: [{ name: 'CourseArchived', parameters: { courseId: { parameterName: 'courseId' } } }],
+    }] }],
+  };
+  sandbox.addDefinition('command-definition', id, 'ArchiveCourses', {
+    properties: [{ name: 'courseIds', propertyType: 'CourseId', isOptional: false, isList: true }],
+    boundary: [],
+    steps: [{ condition: { leftHandSide: { parameterName: 'courseIds' }, predicate: 'isNotEmpty' }, rejection: 'No course' }, loop],
+  });
+
+  check('a for each shows on the command page, the rule map and the overview, read-only', () => {
+    const current = model();
+    eq(sandbox.modelAdvisories(current).filter((a) => a.name === 'ArchiveCourses'), [], 'advisory-clean');
+    sandbox.state.slice = 'ArchiveCourses';
+    const slice = sandbox.sliceOf(current, 'ArchiveCourses');
+    eq([slice.rules.length, slice.branches.length, slice.emits.length, slice.allEmits.length], [1, 1, 0, 1],
+      'one rule and the loop on top, its emission inside');
+    const decision = textOf(sandbox.stepDecision(current, slice));
+    eq(/For each – once per element/.test(decision) && decision.includes('for each courseId in'), true, decision);
+    eq(decision.includes('Edit in code') && decision.includes('emit'), true, 'what it does, and the way to edit it');
+    const append = textOf(sandbox.stepEmits(current, slice));
+    eq(append.includes('for each element') && append.includes('Course archived'), true,
+      'the append step names what the loop records: ' + append);
+    const paint = (fn) => { const main = sandbox.document.createElement('div'); fn(current, main); return textOf(main); };
+    const map = paint(sandbox.renderRuleMap);
+    eq(/for each courseId in .* → if .* → emit Course archived/.test(map), true, 'the rule map says the loop and its arm: ' + map);
+    paint(sandbox.renderCoupling);
+    eq(sandbox.problems(current).some((p) => p.what === 'Archive courses' && /records nothing/.test(p.why)), false,
+      'an emission inside a loop is still recorded');
+  });
+
+  check('editing the rules on the page keeps the loop where it was', () => {
+    sandbox.state.slice = 'ArchiveCourses';
+    sandbox.patch('command-definition', 'ArchiveCourses', (b) => { b.conditions = []; });
+    eq(model()['command-definitions'].ArchiveCourses.steps, [loop], 'removing every rule leaves the loop, unchanged');
+    sandbox.patch('command-definition', 'ArchiveCourses', (b) => { b.publishes.push({ name: 'CourseArchived', parameters: { courseId: { tagType: 'CourseId', tagValue: 'c9' } } }); });
+    const steps = model()['command-definitions'].ArchiveCourses.steps;
+    eq([steps[0], sandbox.stepKind(steps[1])], [loop, 'emit'], 'an emission added goes last, the loop kept');
+  });
+
+  sandbox.clearActiveModelId();
+}
+
+// ---------------------------------------------------------------
 // Undo batching: however many appends one gesture makes – nested
 // `run` calls included – the gesture is one undo step.
 // ---------------------------------------------------------------
