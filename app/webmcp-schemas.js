@@ -1020,7 +1020,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                     "description": "Where a handler's value comes from. Resolved while projecting a\nsingle event, so the only things in scope are that event's\nproperties and literals.\nA projection holding a record (11.0) is set from an event field of\nits type, or from a `RecordValue`.\n",
                     "oneOf": [
                       {
-                        "description": "A property of the event being handled.",
+                        "description": "A property of the event being handled – or, `property` (11.0), one\nfield of a record-typed one, `event.data.signUp.emailAddress`: one hop,\nas a handler's condition and a tag path read it. Held to the type it\nfills as the property itself is.\n",
                         "type": "object",
                         "additionalProperties": false,
                         "properties": {
@@ -1032,6 +1032,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                             "examples": [
                               "someProperty"
                             ]
+                          },
+                          "property": {
+                            "type": "string",
+                            "minLength": 2,
+                            "maxLength": 100,
+                            "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                            "examples": [
+                              "someProperty"
+                            ],
+                            "description": "A field of the property's record type."
                           }
                         },
                         "required": [
@@ -1087,7 +1097,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                             "additionalProperties": {
                               "oneOf": [
                                 {
-                                  "description": "A property of the event being handled.",
+                                  "description": "A property of the event being handled – or, `property` (11.0), one\nfield of a record-typed one, `event.data.signUp.emailAddress`: one hop,\nas a handler's condition and a tag path read it. Held to the type it\nfills as the property itself is.\n",
                                   "type": "object",
                                   "additionalProperties": false,
                                   "properties": {
@@ -1099,6 +1109,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                       "examples": [
                                         "someProperty"
                                       ]
+                                    },
+                                    "property": {
+                                      "type": "string",
+                                      "minLength": 2,
+                                      "maxLength": 100,
+                                      "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                      "examples": [
+                                        "someProperty"
+                                      ],
+                                      "description": "A field of the property's record type."
                                     }
                                   },
                                   "required": [
@@ -1337,7 +1357,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                 "description": "Where a handler's value comes from. Resolved while projecting a\nsingle event, so the only things in scope are that event's\nproperties and literals.\nA projection holding a record (11.0) is set from an event field of\nits type, or from a `RecordValue`.\n",
                                 "oneOf": [
                                   {
-                                    "description": "A property of the event being handled.",
+                                    "description": "A property of the event being handled – or, `property` (11.0), one\nfield of a record-typed one, `event.data.signUp.emailAddress`: one hop,\nas a handler's condition and a tag path read it. Held to the type it\nfills as the property itself is.\n",
                                     "type": "object",
                                     "additionalProperties": false,
                                     "properties": {
@@ -1349,6 +1369,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                         "examples": [
                                           "someProperty"
                                         ]
+                                      },
+                                      "property": {
+                                        "type": "string",
+                                        "minLength": 2,
+                                        "maxLength": 100,
+                                        "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                        "examples": [
+                                          "someProperty"
+                                        ],
+                                        "description": "A field of the property's record type."
                                       }
                                     },
                                     "required": [
@@ -1404,7 +1434,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                         "additionalProperties": {
                                           "oneOf": [
                                             {
-                                              "description": "A property of the event being handled.",
+                                              "description": "A property of the event being handled – or, `property` (11.0), one\nfield of a record-typed one, `event.data.signUp.emailAddress`: one hop,\nas a handler's condition and a tag path read it. Held to the type it\nfills as the property itself is.\n",
                                               "type": "object",
                                               "additionalProperties": false,
                                               "properties": {
@@ -1416,6 +1446,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                                   "examples": [
                                                     "someProperty"
                                                   ]
+                                                },
+                                                "property": {
+                                                  "type": "string",
+                                                  "minLength": 2,
+                                                  "maxLength": 100,
+                                                  "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                                  "examples": [
+                                                    "someProperty"
+                                                  ],
+                                                  "description": "A field of the property's record type."
                                                 }
                                               },
                                               "required": [
@@ -1486,7 +1526,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                               "description": "Where a handler's value comes from. Resolved while projecting a\nsingle event, so the only things in scope are that event's\nproperties and literals.\nA projection holding a record (11.0) is set from an event field of\nits type, or from a `RecordValue`.\n",
                               "oneOf": [
                                 {
-                                  "description": "A property of the event being handled.",
+                                  "description": "A property of the event being handled – or, `property` (11.0), one\nfield of a record-typed one, `event.data.signUp.emailAddress`: one hop,\nas a handler's condition and a tag path read it. Held to the type it\nfills as the property itself is.\n",
                                   "type": "object",
                                   "additionalProperties": false,
                                   "properties": {
@@ -1498,6 +1538,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                       "examples": [
                                         "someProperty"
                                       ]
+                                    },
+                                    "property": {
+                                      "type": "string",
+                                      "minLength": 2,
+                                      "maxLength": 100,
+                                      "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                      "examples": [
+                                        "someProperty"
+                                      ],
+                                      "description": "A field of the property's record type."
                                     }
                                   },
                                   "required": [
@@ -1553,7 +1603,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                       "additionalProperties": {
                                         "oneOf": [
                                           {
-                                            "description": "A property of the event being handled.",
+                                            "description": "A property of the event being handled – or, `property` (11.0), one\nfield of a record-typed one, `event.data.signUp.emailAddress`: one hop,\nas a handler's condition and a tag path read it. Held to the type it\nfills as the property itself is.\n",
                                             "type": "object",
                                             "additionalProperties": false,
                                             "properties": {
@@ -1565,6 +1615,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                                 "examples": [
                                                   "someProperty"
                                                 ]
+                                              },
+                                              "property": {
+                                                "type": "string",
+                                                "minLength": 2,
+                                                "maxLength": 100,
+                                                "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                                "examples": [
+                                                  "someProperty"
+                                                ],
+                                                "description": "A field of the property's record type."
                                               }
                                             },
                                             "required": [
@@ -2767,7 +2827,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
               "description": "Where a handler's value comes from. Resolved while projecting a\nsingle event, so the only things in scope are that event's\nproperties and literals.\nA projection holding a record (11.0) is set from an event field of\nits type, or from a `RecordValue`.\n",
               "oneOf": [
                 {
-                  "description": "A property of the event being handled.",
+                  "description": "A property of the event being handled – or, `property` (11.0), one\nfield of a record-typed one, `event.data.signUp.emailAddress`: one hop,\nas a handler's condition and a tag path read it. Held to the type it\nfills as the property itself is.\n",
                   "type": "object",
                   "additionalProperties": false,
                   "properties": {
@@ -2779,6 +2839,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                       "examples": [
                         "someProperty"
                       ]
+                    },
+                    "property": {
+                      "type": "string",
+                      "minLength": 2,
+                      "maxLength": 100,
+                      "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                      "examples": [
+                        "someProperty"
+                      ],
+                      "description": "A field of the property's record type."
                     }
                   },
                   "required": [
@@ -2834,7 +2904,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                       "additionalProperties": {
                         "oneOf": [
                           {
-                            "description": "A property of the event being handled.",
+                            "description": "A property of the event being handled – or, `property` (11.0), one\nfield of a record-typed one, `event.data.signUp.emailAddress`: one hop,\nas a handler's condition and a tag path read it. Held to the type it\nfills as the property itself is.\n",
                             "type": "object",
                             "additionalProperties": false,
                             "properties": {
@@ -2846,6 +2916,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                 "examples": [
                                   "someProperty"
                                 ]
+                              },
+                              "property": {
+                                "type": "string",
+                                "minLength": 2,
+                                "maxLength": 100,
+                                "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                "examples": [
+                                  "someProperty"
+                                ],
+                                "description": "A field of the property's record type."
                               }
                             },
                             "required": [
@@ -3084,7 +3164,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                           "description": "Where a handler's value comes from. Resolved while projecting a\nsingle event, so the only things in scope are that event's\nproperties and literals.\nA projection holding a record (11.0) is set from an event field of\nits type, or from a `RecordValue`.\n",
                           "oneOf": [
                             {
-                              "description": "A property of the event being handled.",
+                              "description": "A property of the event being handled – or, `property` (11.0), one\nfield of a record-typed one, `event.data.signUp.emailAddress`: one hop,\nas a handler's condition and a tag path read it. Held to the type it\nfills as the property itself is.\n",
                               "type": "object",
                               "additionalProperties": false,
                               "properties": {
@@ -3096,6 +3176,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                   "examples": [
                                     "someProperty"
                                   ]
+                                },
+                                "property": {
+                                  "type": "string",
+                                  "minLength": 2,
+                                  "maxLength": 100,
+                                  "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                  "examples": [
+                                    "someProperty"
+                                  ],
+                                  "description": "A field of the property's record type."
                                 }
                               },
                               "required": [
@@ -3151,7 +3241,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                   "additionalProperties": {
                                     "oneOf": [
                                       {
-                                        "description": "A property of the event being handled.",
+                                        "description": "A property of the event being handled – or, `property` (11.0), one\nfield of a record-typed one, `event.data.signUp.emailAddress`: one hop,\nas a handler's condition and a tag path read it. Held to the type it\nfills as the property itself is.\n",
                                         "type": "object",
                                         "additionalProperties": false,
                                         "properties": {
@@ -3163,6 +3253,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                             "examples": [
                                               "someProperty"
                                             ]
+                                          },
+                                          "property": {
+                                            "type": "string",
+                                            "minLength": 2,
+                                            "maxLength": 100,
+                                            "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                            "examples": [
+                                              "someProperty"
+                                            ],
+                                            "description": "A field of the property's record type."
                                           }
                                         },
                                         "required": [
@@ -3233,7 +3333,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                         "description": "Where a handler's value comes from. Resolved while projecting a\nsingle event, so the only things in scope are that event's\nproperties and literals.\nA projection holding a record (11.0) is set from an event field of\nits type, or from a `RecordValue`.\n",
                         "oneOf": [
                           {
-                            "description": "A property of the event being handled.",
+                            "description": "A property of the event being handled – or, `property` (11.0), one\nfield of a record-typed one, `event.data.signUp.emailAddress`: one hop,\nas a handler's condition and a tag path read it. Held to the type it\nfills as the property itself is.\n",
                             "type": "object",
                             "additionalProperties": false,
                             "properties": {
@@ -3245,6 +3345,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                 "examples": [
                                   "someProperty"
                                 ]
+                              },
+                              "property": {
+                                "type": "string",
+                                "minLength": 2,
+                                "maxLength": 100,
+                                "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                "examples": [
+                                  "someProperty"
+                                ],
+                                "description": "A field of the property's record type."
                               }
                             },
                             "required": [
@@ -3300,7 +3410,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                 "additionalProperties": {
                                   "oneOf": [
                                     {
-                                      "description": "A property of the event being handled.",
+                                      "description": "A property of the event being handled – or, `property` (11.0), one\nfield of a record-typed one, `event.data.signUp.emailAddress`: one hop,\nas a handler's condition and a tag path read it. Held to the type it\nfills as the property itself is.\n",
                                       "type": "object",
                                       "additionalProperties": false,
                                       "properties": {
@@ -3312,6 +3422,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                           "examples": [
                                             "someProperty"
                                           ]
+                                        },
+                                        "property": {
+                                          "type": "string",
+                                          "minLength": 2,
+                                          "maxLength": 100,
+                                          "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                          "examples": [
+                                            "someProperty"
+                                          ],
+                                          "description": "A field of the property's record type."
                                         }
                                       },
                                       "required": [

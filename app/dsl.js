@@ -1120,6 +1120,15 @@ function parseModelSourceText(text, options) {
       const property = ident('an event property');
       const operand = { eventProperty: property.v };
       mark(operand, 'eventProperty', property);
+      // One field of a record-typed property (11.0), as a condition and
+      // a tag path read it: `event.data.signUp.emailAddress`.
+      if (is('.') && peek(1).t === 'ident') {
+        next();
+        const field = next();
+        operand.property = field.v;
+        mark(operand, 'property', field);
+        if (is('.')) fail('A handler reads one field of a record-typed property – event.data.<property>.<field>, one hop.');
+      }
       return operand;
     }
     if (is('currentValue')) {
@@ -3051,6 +3060,10 @@ function sourceHandlerOperand(operand) {
     if (keys.length === 1 && operand.eventProperty !== undefined) {
       return `event.data.${sourceRef(operand.eventProperty, 'event property')}`;
     }
+    // One field of a record-typed property (11.0).
+    if (keys.length === 2 && operand.eventProperty !== undefined && operand.property !== undefined) {
+      return `event.data.${sourceRef(operand.eventProperty, 'event property')}.${sourceRef(operand.property, 'field')}`;
+    }
     if (keys.length === 1 && operand.successor !== undefined) return `successor(${sourceHandlerOperand(operand.successor)})`;
     // A record set whole (11.0).
     if (keys.length === 1 && operand.record !== undefined) {
@@ -4495,8 +4508,14 @@ function sourceSymbols(parsed) {
 
   // ---------- projections, top-level and grouped ----------
   const handlerValue = (value, typeName, event) => {
-    if (has(value, 'eventProperty')) add(sourceSymbol('eventProperty', event, value.eventProperty), slotsOf(value).eventProperty);
-    else if (has(value, 'successor')) handlerValue(value.successor, typeName, event);
+    if (has(value, 'eventProperty')) {
+      add(sourceSymbol('eventProperty', event, value.eventProperty), slotsOf(value).eventProperty);
+      // A record's field (11.0), one hop in.
+      if (value.property !== undefined) {
+        const property = list((own(events, event) || {}).properties).find((p) => p.name === value.eventProperty);
+        if (property && recordFields(property.propertyType)) add(sourceSymbol('field', property.propertyType, value.property), slotsOf(value).property);
+      }
+    } else if (has(value, 'successor')) handlerValue(value.successor, typeName, event);
     else if (has(value, 'record') && value.record && typeof value.record === 'object') {
       // A record set whole (11.0): its keys are the record's fields.
       const fields = recordFields(typeName) || [];

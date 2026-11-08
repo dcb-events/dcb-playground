@@ -4661,6 +4661,26 @@ function validateHandlers(model, label, target, handlers) {
     return operand;
   };
 
+  // An event field a handler takes (11.0): a property the event
+  // carries, or one field of a record-typed one, one hop in –
+  // `event.data.signUp.emailAddress`, as a condition and a tag path
+  // read it.
+  const eventFieldProblem = (operand, event, arm) => {
+    const property = (event.properties || []).find((p) => p && p.name === operand.eventProperty);
+    if (!property) {
+      throw new DomainError(`Handler on ${label} reads "${operand.eventProperty}", which "${arm.event}" does not carry.`);
+    }
+    if (operand.property === undefined) return;
+    const fields = !property.isList && compositeFieldsOf(model, property.propertyType);
+    if (!fields) {
+      throw new DomainError(`Handler on ${label} reads "${operandText(operand)}", but "${operand.eventProperty}" of "${arm.event}" is `
+        + `${typeArticle(property.propertyType)} ${property.propertyType}${property.isList ? '[]' : ''}, which has no fields.`);
+    }
+    if (!fields.some((f) => f && f.name === operand.property)) {
+      throw new DomainError(`Handler on ${label} reads "${operandText(operand)}", but ${property.propertyType} has no field "${operand.property}".`);
+    }
+  };
+
   // One operation – an unconditional handler's, or one arm's.
   const checkArm = (arm, event, where) => {
     if (!allowedOperations.includes(arm.operation)) {
@@ -4679,14 +4699,7 @@ function validateHandlers(model, label, target, handlers) {
       throw new DomainError(`${where} says what it does but not what value it takes.`);
     }
     const leaf = checkOperand(arm.value, where);
-    if (operandSource(leaf) === 'event-property') {
-      const known = (event.properties || []).some((p) => p.name === leaf.eventProperty);
-      if (!known) {
-        throw new DomainError(
-          `Handler on ${label} reads "${leaf.eventProperty}", which "${arm.event}" does not carry.`
-        );
-      }
-    }
+    if (operandSource(leaf) === 'event-property') eventFieldProblem(leaf, event, arm);
     if (members && operandSource(leaf) === 'enum-member'
         && !members.includes(leaf.enumMember)) {
       throw new DomainError(
@@ -4767,9 +4780,7 @@ function validateHandlers(model, label, target, handlers) {
         const field = given[key];
         const source = operandSource(field);
         if (source === 'event-property') {
-          if (field.property !== undefined || !(event.properties || []).some((p) => p.name === field.eventProperty)) {
-            throw new DomainError(`Handler on ${label} reads "${operandText(field)}", which "${arm.event}" does not carry.`);
-          }
+          eventFieldProblem(field, event, arm);
         } else if (source !== 'static' && source !== 'enum-member') {
           throw new DomainError(`${where} sets "${key}" to ${operandText(field)} – a record's field takes an event field or a literal.`);
         } else assertRecognisedOperand(field, where);
@@ -4781,9 +4792,13 @@ function validateHandlers(model, label, target, handlers) {
     if (!recordFields || value === null) return;
     if (operandSource(value) === 'event-property') {
       const property = (event.properties || []).find((p) => p.name === value.eventProperty);
-      if (!property || (property.propertyType === target.valueType && !property.isList)) return;
-      throw new DomainError(`${where} sets it to "${value.eventProperty}", ${typeArticle(property.propertyType)} `
-        + `${property.propertyType}${property.isList ? '[]' : ''} – ${wholly}`);
+      if (!property) return;
+      const type = handlerFieldType(model, arm.event, value);
+      const field = value.property === undefined ? property
+        : (compositeFieldsOf(model, property.propertyType) || []).find((f) => f && f.name === value.property);
+      if (!type || !field || (type === target.valueType && !field.isList)) return;
+      throw new DomainError(`${where} sets it to "${operandText(value).replace(/^event\.data\./, '')}", ${typeArticle(type)} `
+        + `${type}${field.isList ? '[]' : ''} – ${wholly}`);
     }
     throw new DomainError(`${where} sets it to ${operandText(value)} – ${wholly}`);
   };
@@ -7116,17 +7131,24 @@ const MEMBER_REWRITES = {
   'custom-type-definition:field': (model, typeName, previous, next) => [
     // A branched handler's condition reaches a record's field one hop
     // into the event, `event.data.address.city` (11.0).
+    // So does what a handler takes from the event (11.0), `set
+    // event.data.signUp.emailAddress`, a record's field among them.
     ...rewriteProjections(model, (body) => {
       let touched = false;
       for (const handler of body.handlers || []) {
-        for (const leaf of handlerConditionLeaves(handler)) {
-          const left = leaf.leftHandSide;
-          if (operandSource(left) !== 'event-property' || left.property !== previous) continue;
-          const event = handler && model['event-definitions'][handler.event];
-          const property = event && (event.properties || []).find((p) => p && p.name === left.eventProperty);
-          if (!property || property.propertyType !== typeName) continue;
-          left.property = next;
+        const event = handler && model['event-definitions'][handler.event];
+        const rename = (operand) => {
+          if (operandSource(operand) !== 'event-property' || operand.property !== previous) return;
+          const property = event && (event.properties || []).find((p) => p && p.name === operand.eventProperty);
+          if (!property || property.propertyType !== typeName) return;
+          operand.property = next;
           touched = true;
+        };
+        for (const leaf of handlerConditionLeaves(handler)) rename(leaf.leftHandSide);
+        for (const arm of handlerArms(handler)) {
+          const value = operandSource(arm.value) === 'successor' ? arm.value.successor : arm.value;
+          if (operandSource(value) === 'record') Object.values(value.record || {}).forEach(rename);
+          else rename(value);
         }
       }
       return touched;
@@ -10154,7 +10176,14 @@ function evEventsTagged(model, events, tags) {
 // condition gets a different operand set.
 function evCompileHandlerOperand(operand) {
   switch (operandSource(operand)) {
+    // A record's field (11.0) is one hop further: null when the record is.
     case 'event-property':
+      if (operand.property !== undefined) {
+        return (state, event) => {
+          const held = evNormalize(evOwn(event.data, operand.eventProperty));
+          return held === null || held === undefined ? null : evOwn(held, operand.property);
+        };
+      }
       return (state, event) => evOwn(event.data, operand.eventProperty);
     case 'successor': {
       const inner = evCompileHandlerOperand(operand.successor);
@@ -13099,6 +13128,15 @@ function parseModelSourceText(text, options) {
       const property = ident('an event property');
       const operand = { eventProperty: property.v };
       mark(operand, 'eventProperty', property);
+      // One field of a record-typed property (11.0), as a condition and
+      // a tag path read it: `event.data.signUp.emailAddress`.
+      if (is('.') && peek(1).t === 'ident') {
+        next();
+        const field = next();
+        operand.property = field.v;
+        mark(operand, 'property', field);
+        if (is('.')) fail('A handler reads one field of a record-typed property – event.data.<property>.<field>, one hop.');
+      }
       return operand;
     }
     if (is('currentValue')) {
@@ -15030,6 +15068,10 @@ function sourceHandlerOperand(operand) {
     if (keys.length === 1 && operand.eventProperty !== undefined) {
       return `event.data.${sourceRef(operand.eventProperty, 'event property')}`;
     }
+    // One field of a record-typed property (11.0).
+    if (keys.length === 2 && operand.eventProperty !== undefined && operand.property !== undefined) {
+      return `event.data.${sourceRef(operand.eventProperty, 'event property')}.${sourceRef(operand.property, 'field')}`;
+    }
     if (keys.length === 1 && operand.successor !== undefined) return `successor(${sourceHandlerOperand(operand.successor)})`;
     // A record set whole (11.0).
     if (keys.length === 1 && operand.record !== undefined) {
@@ -16474,8 +16516,14 @@ function sourceSymbols(parsed) {
 
   // ---------- projections, top-level and grouped ----------
   const handlerValue = (value, typeName, event) => {
-    if (has(value, 'eventProperty')) add(sourceSymbol('eventProperty', event, value.eventProperty), slotsOf(value).eventProperty);
-    else if (has(value, 'successor')) handlerValue(value.successor, typeName, event);
+    if (has(value, 'eventProperty')) {
+      add(sourceSymbol('eventProperty', event, value.eventProperty), slotsOf(value).eventProperty);
+      // A record's field (11.0), one hop in.
+      if (value.property !== undefined) {
+        const property = list((own(events, event) || {}).properties).find((p) => p.name === value.eventProperty);
+        if (property && recordFields(property.propertyType)) add(sourceSymbol('field', property.propertyType, value.property), slotsOf(value).property);
+      }
+    } else if (has(value, 'successor')) handlerValue(value.successor, typeName, event);
     else if (has(value, 'record') && value.record && typeof value.record === 'object') {
       // A record set whole (11.0): its keys are the record's fields.
       const fields = recordFields(typeName) || [];

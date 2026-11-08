@@ -4659,6 +4659,26 @@ function validateHandlers(model, label, target, handlers) {
     return operand;
   };
 
+  // An event field a handler takes (11.0): a property the event
+  // carries, or one field of a record-typed one, one hop in –
+  // `event.data.signUp.emailAddress`, as a condition and a tag path
+  // read it.
+  const eventFieldProblem = (operand, event, arm) => {
+    const property = (event.properties || []).find((p) => p && p.name === operand.eventProperty);
+    if (!property) {
+      throw new DomainError(`Handler on ${label} reads "${operand.eventProperty}", which "${arm.event}" does not carry.`);
+    }
+    if (operand.property === undefined) return;
+    const fields = !property.isList && compositeFieldsOf(model, property.propertyType);
+    if (!fields) {
+      throw new DomainError(`Handler on ${label} reads "${operandText(operand)}", but "${operand.eventProperty}" of "${arm.event}" is `
+        + `${typeArticle(property.propertyType)} ${property.propertyType}${property.isList ? '[]' : ''}, which has no fields.`);
+    }
+    if (!fields.some((f) => f && f.name === operand.property)) {
+      throw new DomainError(`Handler on ${label} reads "${operandText(operand)}", but ${property.propertyType} has no field "${operand.property}".`);
+    }
+  };
+
   // One operation – an unconditional handler's, or one arm's.
   const checkArm = (arm, event, where) => {
     if (!allowedOperations.includes(arm.operation)) {
@@ -4677,14 +4697,7 @@ function validateHandlers(model, label, target, handlers) {
       throw new DomainError(`${where} says what it does but not what value it takes.`);
     }
     const leaf = checkOperand(arm.value, where);
-    if (operandSource(leaf) === 'event-property') {
-      const known = (event.properties || []).some((p) => p.name === leaf.eventProperty);
-      if (!known) {
-        throw new DomainError(
-          `Handler on ${label} reads "${leaf.eventProperty}", which "${arm.event}" does not carry.`
-        );
-      }
-    }
+    if (operandSource(leaf) === 'event-property') eventFieldProblem(leaf, event, arm);
     if (members && operandSource(leaf) === 'enum-member'
         && !members.includes(leaf.enumMember)) {
       throw new DomainError(
@@ -4765,9 +4778,7 @@ function validateHandlers(model, label, target, handlers) {
         const field = given[key];
         const source = operandSource(field);
         if (source === 'event-property') {
-          if (field.property !== undefined || !(event.properties || []).some((p) => p.name === field.eventProperty)) {
-            throw new DomainError(`Handler on ${label} reads "${operandText(field)}", which "${arm.event}" does not carry.`);
-          }
+          eventFieldProblem(field, event, arm);
         } else if (source !== 'static' && source !== 'enum-member') {
           throw new DomainError(`${where} sets "${key}" to ${operandText(field)} – a record's field takes an event field or a literal.`);
         } else assertRecognisedOperand(field, where);
@@ -4779,9 +4790,13 @@ function validateHandlers(model, label, target, handlers) {
     if (!recordFields || value === null) return;
     if (operandSource(value) === 'event-property') {
       const property = (event.properties || []).find((p) => p.name === value.eventProperty);
-      if (!property || (property.propertyType === target.valueType && !property.isList)) return;
-      throw new DomainError(`${where} sets it to "${value.eventProperty}", ${typeArticle(property.propertyType)} `
-        + `${property.propertyType}${property.isList ? '[]' : ''} – ${wholly}`);
+      if (!property) return;
+      const type = handlerFieldType(model, arm.event, value);
+      const field = value.property === undefined ? property
+        : (compositeFieldsOf(model, property.propertyType) || []).find((f) => f && f.name === value.property);
+      if (!type || !field || (type === target.valueType && !field.isList)) return;
+      throw new DomainError(`${where} sets it to "${operandText(value).replace(/^event\.data\./, '')}", ${typeArticle(type)} `
+        + `${type}${field.isList ? '[]' : ''} – ${wholly}`);
     }
     throw new DomainError(`${where} sets it to ${operandText(value)} – ${wholly}`);
   };
@@ -7114,17 +7129,24 @@ const MEMBER_REWRITES = {
   'custom-type-definition:field': (model, typeName, previous, next) => [
     // A branched handler's condition reaches a record's field one hop
     // into the event, `event.data.address.city` (11.0).
+    // So does what a handler takes from the event (11.0), `set
+    // event.data.signUp.emailAddress`, a record's field among them.
     ...rewriteProjections(model, (body) => {
       let touched = false;
       for (const handler of body.handlers || []) {
-        for (const leaf of handlerConditionLeaves(handler)) {
-          const left = leaf.leftHandSide;
-          if (operandSource(left) !== 'event-property' || left.property !== previous) continue;
-          const event = handler && model['event-definitions'][handler.event];
-          const property = event && (event.properties || []).find((p) => p && p.name === left.eventProperty);
-          if (!property || property.propertyType !== typeName) continue;
-          left.property = next;
+        const event = handler && model['event-definitions'][handler.event];
+        const rename = (operand) => {
+          if (operandSource(operand) !== 'event-property' || operand.property !== previous) return;
+          const property = event && (event.properties || []).find((p) => p && p.name === operand.eventProperty);
+          if (!property || property.propertyType !== typeName) return;
+          operand.property = next;
           touched = true;
+        };
+        for (const leaf of handlerConditionLeaves(handler)) rename(leaf.leftHandSide);
+        for (const arm of handlerArms(handler)) {
+          const value = operandSource(arm.value) === 'successor' ? arm.value.successor : arm.value;
+          if (operandSource(value) === 'record') Object.values(value.record || {}).forEach(rename);
+          else rename(value);
         }
       }
       return touched;

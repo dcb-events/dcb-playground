@@ -1931,7 +1931,7 @@ function operandWords(operand) {
     // writes, so the stored spelling stays – humanizing inside
     // a dotted path reads as a typo. It is also what tells a value the
     // event carried apart from a constant at a glance.
-    case 'event-property': return `event.data.${operand.eventProperty}`;
+    case 'event-property': return operandText(operand);
     // An operand *kind*, not prose: the schema names it and nothing an
     // author typed is being unwound here, so it reads as the token it is
     // rather than as a description of itself.

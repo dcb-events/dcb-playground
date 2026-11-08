@@ -403,7 +403,14 @@ function evEventsTagged(model, events, tags) {
 // condition gets a different operand set.
 function evCompileHandlerOperand(operand) {
   switch (operandSource(operand)) {
+    // A record's field (11.0) is one hop further: null when the record is.
     case 'event-property':
+      if (operand.property !== undefined) {
+        return (state, event) => {
+          const held = evNormalize(evOwn(event.data, operand.eventProperty));
+          return held === null || held === undefined ? null : evOwn(held, operand.property);
+        };
+      }
       return (state, event) => evOwn(event.data, operand.eventProperty);
     case 'successor': {
       const inner = evCompileHandlerOperand(operand.successor);

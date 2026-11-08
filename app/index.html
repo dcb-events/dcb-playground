@@ -9824,7 +9824,13 @@ function unhandledEventChoices(eventNames, handlers, current) {
 // editor shows it and leaves it to the code view, so a save never
 // flattens or drops it.
 function handlerInCode(handler) {
-  return isConditionalHandler(handler) || (!!handler && operandSource(handler.value) === 'record');
+  if (!handler) return false;
+  if (isConditionalHandler(handler)) return true;
+  const value = operandSource(handler.value) === 'successor' ? handler.value.successor : handler.value;
+  // A record set whole, and a record's field one hop into the event
+  // (11.0, `event.data.signUp.emailAddress`): the row's picker offers
+  // the event's own fields only.
+  return operandSource(value) === 'record' || (operandSource(value) === 'event-property' && value.property !== undefined);
 }
 
 function projectionDraftFrom(body) {
@@ -10680,7 +10686,8 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
           h('span', { class: 'verb tok' }, arm.operation || '?'), ' ',
           operandWords(arm.value)))),
       codeViewButton(isConditionalHandler(handler) ? 'A handler\'s branches are edited in the code view'
-        : 'A record set whole is edited in the code view'),
+        : operandSource(handler.value) === 'record' ? 'A record set whole is edited in the code view'
+          : 'A record\'s field taken from the event is edited in the code view'),
       h('button', {
         class: 'btn tiny danger', title: 'Remove this handler',
         onclick: () => { draft.handlers.splice(i, 1); render(); },

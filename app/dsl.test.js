@@ -3871,4 +3871,102 @@ command SetSeats(courseId: CourseId, seats: NumberOfSeats) {
   });
 }
 
+// ---------------------------------------------------------------
+// The language additions the 11.0 acceptance asked for: a handler
+// setting from a record's field (G2), `list(P(x, *))` (G1) and
+// `count(xs)` as a value (G3).
+// ---------------------------------------------------------------
+{
+  const runAll = (text) => {
+    const { model } = buildText(text);
+    return Object.values(model()['scenario-definitions']).map((body) => {
+      const run = sandbox.runScenario(model(), body);
+      return run.status === 'broken' ? run.reason : run.status;
+    });
+  };
+  const advised = (text) => advisedOtherwise(buildText(text).model()).map((a) => `${a.name}: ${a.message}`);
+
+  const NESTED = `model "Emails"
+
+// Types
+tag type CustomerId = string
+tag type EmailAddress = string
+record SignUp { emailAddress: EmailAddress, name: string }
+
+// Events
+event SignedUp { tag customerId: CustomerId, signUp: SignUp tag emailAddress }
+event EmailChanged { tag customerId: CustomerId, tag email: EmailAddress }
+
+// Projections
+projection CustomerEmail (tag customerId: CustomerId): EmailAddress = null {
+  on SignedUp => set event.data.signUp.emailAddress
+  on EmailChanged => set event.data.email
+}
+
+projection EmailsUsed (tag customerId: CustomerId): EmailAddress[] = [] {
+  on SignedUp => append event.data.signUp.emailAddress
+  on EmailChanged => append event.data.email
+}
+
+// Commands
+command SignUpCustomer(customerId: CustomerId, signUp: SignUp) {
+  emit SignedUp { customerId, signUp }
+}
+
+command ChangeEmail(customerId: CustomerId, email: EmailAddress) {
+  require CustomerEmail(customerId) != email
+    else reject "Same address"
+  require EmailsUsed(customerId) not contains email
+    else reject "Used before"
+
+  emit EmailChanged { customerId, email }
+
+  scenarios {
+    scenario "same" {
+      given SignedUp { customerId: "c1", signUp: { emailAddress: "a@x.test" } }
+      when ChangeEmail { customerId: "c1", email: "a@x.test" }
+      then rejected "Same address"
+    }
+
+    scenario "used before" {
+      given SignedUp { customerId: "c1", signUp: { emailAddress: "a@x.test" } }
+      and EmailChanged { customerId: "c1", email: "b@x.test" }
+      when ChangeEmail { customerId: "c1", email: "a@x.test" }
+      then rejected "Used before"
+    }
+
+    scenario "new" {
+      given SignedUp { customerId: "c1", signUp: { emailAddress: "a@x.test" } }
+      when ChangeEmail { customerId: "c1", email: "b@x.test" }
+      then EmailChanged { customerId: "c1", email: "b@x.test" }
+    }
+  }
+}
+`;
+
+  check('G2: a handler sets and appends from a record\'s field', () => {
+    eq(runAll(NESTED), ['current', 'current', 'current'], 'all hold');
+    const { model } = buildText(NESTED);
+    eq(advisedOtherwise(model()), [], 'advisory-clean');
+    eq(model()['projection-definitions'].CustomerEmail.handlers[0].value, { eventProperty: 'signUp', property: 'emailAddress' }, 'stored as a field');
+    eq(modelToSource(model()), NESTED, 'printed as written');
+    assertSameModel(model(), parseModelSource(NESTED), 'round trip');
+    const renamed = renameAt(NESTED, 'emailAddress: EmailAddress, name', 0, 'email');
+    eq(renamed.text.includes('set event.data.signUp.email\n'), true, 'a rename of the field follows it');
+    const { id, model: again } = buildText(NESTED);
+    sandbox.renameMember('custom-type-definition', id, 'SignUp', 'field', 'emailAddress', 'email');
+    eq(again()['projection-definitions'].EmailsUsed.handlers[0].value, { eventProperty: 'signUp', property: 'email' }, 'and so does the editor\'s rename');
+  });
+
+  check('G2: a record\'s field is held to the projection\'s type, and one hop only', () => {
+    eq(advised(swap(NESTED, 'on SignedUp => set event.data.signUp.emailAddress', 'on SignedUp => set event.data.signUp.name')),
+      ['CustomerEmail: The handler for "SignedUp" on projection "CustomerEmail" sets it to "event.data.signUp.name", a string – but it holds '
+        + 'an EmailAddress. Nothing converts one into the other: tag the event by an EmailAddress, or hold a string.'], 'strict');
+    eq(advised(swap(NESTED, 'on SignedUp => set event.data.signUp.emailAddress', 'on SignedUp => set event.data.signUp.nope'))
+      .some((m) => /SignUp has no field "nope"/.test(m)), true, 'an unknown field');
+    eq(parseModelSource(swap(NESTED, 'on SignedUp => set event.data.signUp.emailAddress', 'on SignedUp => set event.data.signUp.emailAddress.x'))
+      .diagnostics.map((d) => d.message)[0], 'A handler reads one field of a record-typed property – event.data.<property>.<field>, one hop.', 'one hop');
+  });
+}
+
 finish();
