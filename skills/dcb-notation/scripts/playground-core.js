@@ -4895,7 +4895,8 @@ function handlerAdvisories(label, body) {
   return out;
 }
 
-// The initial value, checked against the declared type. `null` is
+// The initial value, checked against the declared type and its
+// constraints (`minimum`, `pattern`, …, 11.0). `null` is
 // legal for any type – it is the state before anything has happened,
 // and distinct from the empty string. A list-typed projection starts
 // at a list, empty or not, of typed elements; `null` never appears
@@ -4938,6 +4939,9 @@ function validateInitialValue(model, label, body) {
     }
     const problem = timeValueProblem(model, body.valueType, element);
     if (problem) throw new DomainError(`${where}: ${problem}`);
+    // Its type's own constraints, as a scenario's values are held to.
+    const refused = payloadValueProblems(model, [{ name: 'value', propertyType: body.valueType, isList: false }], { value: element })[0];
+    if (refused) throw new DomainError(`${where} is ${JSON.stringify(element)}, which ${refused.problem}.`);
   };
 
   const value = body.initialValue;

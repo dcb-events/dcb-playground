@@ -3838,6 +3838,37 @@ command SignUpCustomer(customerId: CustomerId, signUp: SignUp, meta: Meta) {
     eq(runAll(swap(SIGNUPS, 'then SignedUp { customerId: "c1", signUp: { emailAddress: "a@x.test" } }',
       'then SignedUp { customerId: "c1", signUp: { emailAddress: "a@x.test" }, meta: { b: 2, a: 1 } }')), ['current'], 'whole, in any key order');
   });
+
+  // D6: a projection's initial value is held to its type's constraints,
+  // as a scenario's values are.
+  check('D6: an initial value outside its type\'s constraints is advised', () => {
+    const text = `model "Seats"
+
+tag type CourseId = string
+type NumberOfSeats = integer { minimum: 1 }
+type Code = string { pattern: "^[A-Z]+$" }
+
+event SeatsSet { tag courseId: CourseId, seats: NumberOfSeats }
+
+projection Seats (tag courseId: CourseId): NumberOfSeats = 1 {
+  on SeatsSet => set event.data.seats
+}
+
+projection Codes (tag courseId: CourseId): Code[] = ["AB"] {
+  on SeatsSet => append "CD"
+}
+
+command SetSeats(courseId: CourseId, seats: NumberOfSeats) {
+  emit SeatsSet { courseId, seats }
+}
+`;
+    const advised = (t) => advisedOtherwise(buildText(t).model()).map((a) => `${a.name}: ${a.message}`);
+    eq(advised(text), [], 'clean');
+    eq(advised(swap(text, 'NumberOfSeats = 1 {', 'NumberOfSeats = 0 {')),
+      ['Seats: Projection "Seats"\'s initial value is 0, which is below 1.'], 'a minimum');
+    eq(advised(swap(text, 'Code[] = ["AB"]', 'Code[] = ["AB", "x"]')),
+      ['Codes: Projection "Codes"\'s initial element 2 is "x", which does not match ^[A-Z]+$.'], 'a list\'s element');
+  });
 }
 
 finish();
