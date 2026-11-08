@@ -358,4 +358,4 @@ command UnsubscribeStudentFromCourse(courseId: CourseId, studentId: StudentId) {
 }
 ~~~
 
-Not offered to agents: scripted projections, arguments on a group's projection read through an alias (x.p(a: …)). A text or definition that adds one is refused. A model that already uses them shows them in get_model_source; keep those parts as they are.
+Not in the definition tools' schemas: the arguments a read passes, such as a group's projection read through an alias (x.p(a: …)). A model that already uses them shows them in get_model_source; keep those parts as they are. Gone since 11.0, and refused wherever they are written: scripted projections, currentValue, guarded emissions (emit … when …) and optional reads (alias x? = …).

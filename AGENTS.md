@@ -7,8 +7,8 @@ command definitions — drive commands against a hypothetical event log, and see
 which consistency boundary each command derives.
 
 No build step, no framework, and one vendored dependency: Monaco, pinned and
-checked in under `app/vendor/monaco/`, lazy-loaded only when a scripted
-handler's editor is on screen. The app runs from any static server —
+checked in under `app/vendor/monaco/`, lazy-loaded only when the code view's
+editor is on screen. The app runs from any static server —
 `npx serve app` locally; it never fetches anything at runtime — except the
 help's demo video, from youtube-nocookie.com, once someone presses play,
 and a model someone asked for by address: Import's URL field or a
@@ -52,9 +52,7 @@ documentation; read it before editing the file:
   as the difference (`replaceDefinitions`, model.js — one append). Also the
   Monaco grammar, as data. No DOM. The Code view in index.html is its UI.
 - `shared.js` — DOM helpers (`h(...)`), the experimental flag, the links
-  into the documentation, the scripted-
-  handler editor (Monaco behind a synthesized per-handler TypeScript preamble
-  — the synthesis is pure and tested, the widget is not), and the _slice_
+  into the documentation, the lazy Monaco loader, and the _slice_
   view (everything one command touches, derived from the definitions — the
   idea the page is built around). `shared.css` is its stylesheet.
 - `index.html` — the entire UI, one page. Renders from the projected state and
@@ -136,8 +134,7 @@ was decided, why, and what was tried and reverted:
   view's language_, and the `dsl.js` header
 - the Visual · Split · Code switch, the split, what follows the code —
   _The surface switch_
-- what a script can reach, a CSP, sandboxing scripts — _Scripts and the
-  origin_
+- a CSP, what the page lets in — _Scripts and the origin_
 - how a DCB query is drawn, the sandbox's Store column — _DCB queries,
   shown_
 - how evaluation gets its events, the read port — _The read port_
@@ -173,24 +170,21 @@ was decided, why, and what was tried and reverted:
   must be bumped whenever a stored definition changes shape. The log is the
   whole state; there are no migrations — a fresh key is the honest move. Keep
   the changelog comment above the constant current.
-- **Scripted projections are unsandboxed**, run on the main thread, and run
-  unprompted — everywhere a declared projection would, repaints included.
-  What stands between an untrusted model and that is the import gate (every
-  external load pauses on `envelopeHasScript`; cancelling loads nothing), and
-  the way back into a page a hanging script would otherwise brick on every
-  reload is `?safe` on the URL — or, unasked, a reload after a load that
-  never finished (`boot`, index.html): `setScriptsDisabled` (evaluate.js)
-  compiles every script handler to a thrower, so the model loads and the
-  script can be fixed. Keep both intact — together they are why unprompted
-  is safe. The gate shows the code it asks about (`envelopeScripts`,
-  model.js). A Worker sandbox was weighed and shelved; see _Scripts and the
-  origin_.
+- **Nothing a model holds is code** (11.0 removed scripted projections):
+  no import gate, no safe mode, no sandbox. Keep it that way — a
+  construct that ran authored code would need all three back. What 11.0
+  removed (scripts, `currentValue`, guarded emissions, optional reads)
+  is refused on the write path and on import (`removedConstructIn`,
+  `refuseRemovedConstructs`, model.js): a script or `currentValue`
+  refuses the whole document, a guard or an optional read leaves its
+  command out with a note. See _Scripts and the origin_.
 - **Two failure kinds** in evaluation, never conflated: a command whose
   conditions do not hold is _rejected_ (an ordinary outcome); a scenario that
-  cannot run at all (missing event, missing argument, throwing script) is an
-  _error_.
+  cannot run at all (missing event, missing argument, a value of the wrong
+  shape) is an _error_.
 - **The write path refuses only structure** — a missing key, a name
-  collision, a body whose containers are not lists (`assertStorableBody`).
+  collision, a body whose containers are not lists, a construct 11.0
+  removed (`assertStorableBody`).
   Everything semantic (dangling references, write coverage, name idiom,
   mistyped values) is an _advisory_: computed per revision by
   `modelAdvisories` (model.js), folded into the Problems panel, shown as a

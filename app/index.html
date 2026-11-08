@@ -285,24 +285,6 @@
      everything else on the page. */
   .card.command { border-left: 3px solid var(--command); }
   .card.projection { border-left: 3px solid var(--projection); }
-  /* Code. Set apart from everything around it on purpose: this is the
-     one part of a model the tooling neither checks nor understands, and
-     it should not look like the parts it does. */
-  .script {
-    margin: 4px 0 10px 14px; padding: 8px 10px;
-    border-left: 2px dashed var(--border-strong); display: grid; gap: 6px;
-  }
-  .script-handler { display: grid; gap: 3px; }
-  .script-handler .tiny { display: flex; align-items: center; gap: 6px; }
-  .script textarea, .script-handler textarea {
-    width: 100%; box-sizing: border-box; resize: vertical;
-    border: 1px solid var(--border); border-radius: 5px;
-    background: var(--bg); color: var(--text);
-    font-family: var(--mono); font-size: 11px; line-height: 1.5; padding: 7px 9px;
-  }
-  .script textarea:focus, .script-handler textarea:focus {
-    outline: none; border-color: var(--accent);
-  }
   /* Queries. The header carries the cost – how many times this command
      goes to the log – and the note under a card carries the reason it
      could not go earlier. Neither is authored: both are read off the
@@ -919,14 +901,6 @@
   .setting { margin-top: 18px; }
   .setting > h4 { margin-bottom: 3px; }
   .setting .why { font-size: 11.5px; color: var(--muted); margin-bottom: 8px; }
-  .gate-script { border: 1px solid var(--border); border-radius: 7px; margin-bottom: 6px; }
-  .gate-script > summary { cursor: pointer; padding: 6px 10px; font-family: var(--mono); font-size: 12px; }
-  .gate-script > div { padding: 0 10px 8px; }
-  .gate-script pre {
-    margin: 2px 0 0; padding: 6px 8px; max-height: 14em; overflow: auto;
-    font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap;
-    background: var(--bg); border-radius: 5px;
-  }
   .opt {
     display: flex; gap: 10px; align-items: flex-start; width: 100%; text-align: left;
     font: inherit; color: inherit; cursor: pointer;
@@ -2081,7 +2055,6 @@ const state = {
   newModel: false,          // within the models dialog: naming form for a brand-new model
   loadingUrl: false,        // within the models dialog: form open, asking for a URL to load
   loadingJson: false,       // within the models dialog: form open, asking for pasted JSON
-  pendingImport: null,      // a decoded share envelope waiting on the scripted-code confirm
   settings: false,          // the settings modal
   help: false,              // the help modal – see `helpModal`
   helpPage: 'start',        // within the help modal: the page its sidebar has open
@@ -2126,17 +2099,6 @@ const state = {
   historyOpen: {},          // History steps whose further changes are listed, by step
 };
 
-// A decoded share envelope, on its way in – from the URL fragment on
-// page load, or from any of the models dialog's ways to load one.
-// Scripted content is the one thing worth pausing for: everything else
-// an untrusted import might get wrong either fails the structural gate
-// (skipped, and said so) or loads and surfaces as advisories – the
-// same regime every other edit lives under.
-function beginImport(envelope) {
-  if (envelopeHasScript(envelope)) { state.pendingImport = envelope; render(); return; }
-  finishImport(envelope);
-}
-
 // ---------- the model link in the address bar ----------
 //
 // A model link – opened, or written by ⌘S or Export – stays in the
@@ -2165,16 +2127,8 @@ function openModelAddress(address) {
   else location.replace(hash);
 }
 
-// A link's import turned down at the script gate: nothing landed, so
-// the address bar no longer stands for anything.
-function cancelImport() {
-  if (state.pendingImport && linkedEnvelopes.has(state.pendingImport)) dropAddressLink();
-  state.pendingImport = null;
-}
-
 // Envelopes that came in through a link rather than the models dialog
-// – what `markLinkedCopy` (shared.js) is told about once they land,
-// across the script gate if there is one.
+// – what `markLinkedCopy` (shared.js) is told about once they land.
 const linkedEnvelopes = new WeakSet();
 
 // What opening a different stored model means, wherever it happens –
@@ -2192,6 +2146,12 @@ function switchToModel(id) {
   state.view = 'overview';
 }
 
+// A decoded share envelope, on its way in – from the URL fragment on
+// page load, or from any of the models dialog's ways to load one.
+// Nothing an untrusted import says can run: what it gets wrong either
+// fails the structural gate (skipped, and said so), refuses the whole
+// document (an unreadable major, a construct 11.0 removed), or loads
+// and surfaces as advisories – the regime every other edit lives under.
 function finishImport(envelope) {
   run(() => {
     const { modelId, skipped, converted } = importModelFromEnvelope(envelope);
@@ -2302,7 +2262,7 @@ function modelsModal() {
         })
       : state.loadingJson
         ? jsonLoadForm(
-            (envelope) => { state.loadingJson = false; beginImport(envelope); },
+            (envelope) => { state.loadingJson = false; finishImport(envelope); },
             () => { state.loadingJson = false; render(); })
         : h('div', { class: 'adder' },
             h('button', { class: 'btn', onclick: () => { state.newModel = true; render(); } },
@@ -2379,7 +2339,7 @@ const UI_SETTINGS = [
       + 'shows it either way; this decides whether the pages offer to author them.',
     options: [
       ['off', 'Off', 'Types, events, projections, commands and the consistency boundary'],
-      ['on', 'On', 'Also scripted projections and the overview pages'],
+      ['on', 'On', 'Also the overview pages'],
     ],
     get: () => (experimental() ? 'on' : 'off'),
     set: (value) => setExperimental(value === 'on'),
@@ -2635,11 +2595,10 @@ function openImportExport() {
   refreshExportLink();
 }
 
-// Whatever is in front of the page: a dialog, the import gate, quick
-// open. The same conditions `renderModals` paints by, after it has
+// Whatever is in front of the page: a dialog, or quick open. The same conditions `renderModals` paints by, after it has
 // settled them.
 function dialogOpen() {
-  return !!(state.pendingImport || state.problems || state.settings || state.importExport || state.help
+  return !!(state.problems || state.settings || state.importExport || state.help
     || (state.defFrames.length && activeModel()) || state.models || !activeModelId() || state.palette);
 }
 
@@ -2662,14 +2621,11 @@ function renderModals() {
   host.innerHTML = '';
   // One host, one overlay: every panel here is "the page, with
   // something in front of it", and two of them at once would be a
-  // stack with no way back down it. The import gate wins over
-  // everything – it is not a panel someone opened, it is standing
-  // between them and whatever they were about to do. The models dialog
+  // stack with no way back down it. The models dialog
   // comes last: when someone asked for it, and always while nothing is
   // loaded – then it is the page, and closing it has nothing to go
   // back to.
   settleDefinitionModals();
-  if (state.pendingImport) { host.appendChild(renderImportGate()); return; }
   if (state.problems) { host.appendChild(problemsPanel()); return; }
   if (state.settings) { renderSettingsModal(host); return; }
   if (state.importExport) { host.appendChild(renderImportExportModal()); return; }
@@ -2764,7 +2720,7 @@ function overlayAround(modal, close, { thin = false } = {}) {
 // A function, not a constant: the lists it reads are declared further
 // down the script.
 const frameKeys = () => [
-  ...FORM_KEYS.filter((key) => key !== 'pendingImport'), ...DRAFT_KEYS,
+  ...FORM_KEYS, ...DRAFT_KEYS,
   'sel', 'adder', 'lit', 'queryPop', 'hintPop', 'projTab',
 ];
 
@@ -2843,7 +2799,7 @@ function anchorDefinitionModal() {
 function settleDefinitionModals() {
   if (!state.defFrames.length) return;
   if (state.defFrames[0].page !== definitionModalPage()) { state.defFrames = []; return; }
-  if (state.pendingImport || state.problems || state.settings || state.importExport
+  if (state.problems || state.settings || state.importExport
     || state.help || state.models || state.palette) {
     closeAllDefinitionModals();
   }
@@ -3339,45 +3295,6 @@ function helpModal() {
   return overlayAround(modal, close);
 }
 
-// The one confirmation an import can force: the model it would build
-// runs authored code the moment anything touches it. Everything else an
-// untrusted import might get wrong is caught by the validating commands
-// `finishImport` replays it through, so there is nothing else to ask.
-function renderImportGate() {
-  const envelope = state.pendingImport;
-  const close = () => { cancelImport(); render(); };
-  const modal = h('div', { class: 'modal', tabindex: '-1', role: 'dialog', 'aria-modal': 'true' },
-    h('header', {},
-      h('h2', {}, 'Import shared model'),
-      h('span', { class: 'grow' }),
-      h('button', { class: 'btn ghost', onclick: close, title: 'Close', 'aria-label': 'Close' }, '×')),
-    h('div', { class: 'setting' },
-      h('h4', {}, envelope.name || 'Untitled model'),
-      h('div', { class: 'why' },
-        'This model includes custom code that will run in your browser as soon as it is '
-        + 'imported – its projections and scenarios evaluate automatically. Only import it if '
-        + 'you trust where this came from.'),
-      h('div', { class: 'why' },
-        'Should it hang the page, open the playground with "?safe" at the end of its address '
-        + '– scripts stay off there, so the model can be fixed or deleted.'),
-      ...envelopeScripts(envelope).map(({ projection, handlers }) =>
-        h('details', { class: 'gate-script' },
-          h('summary', {}, projection, h('span', { class: 'muted' },
-            ` · ${handlers.length} handler${handlers.length === 1 ? '' : 's'}`)),
-          ...handlers.map(({ event, code }) => h('div', {},
-            h('div', { class: 'muted small' }, 'on ' + event),
-            h('pre', {}, code)))))),
-    h('footer', {},
-      h('span', { class: 'grow' }),
-      h('button', { class: 'btn ghost', onclick: close }, 'Cancel'),
-      h('button', {
-        class: 'btn primary',
-        onclick: () => { state.pendingImport = null; finishImport(envelope); },
-      }, 'Import anyway')));
-  setTimeout(() => modal.focus(), 0);
-  return overlayAround(modal, close);
-}
-
 // Both directions a model crosses this browser's boundary, in one
 // dialog: pulling one in, from a URL or pasted JSON, and sending this
 // one out the same two ways. Reached from the bar's import/export
@@ -3413,7 +3330,7 @@ function renderImportExportModal() {
       let envelope;
       try { envelope = JSON.parse(jsonValue); } catch { return toast('That is not valid JSON.', true); }
       state.importExport = false;
-      beginImport(envelope);
+      finishImport(envelope);
     }
   };
 
@@ -3576,8 +3493,6 @@ function renderImportExportModal() {
 // against another. Deriving the suffix keeps the two keys impossible to
 // bump apart.
 const UNDO_KEY = 'dcb-playground:undo:' + EVENT_LOG_KEY.split(':').pop();
-// Set while a load is rendering for the first time – see `boot`.
-const BOOT_KEY = 'dcb-playground:booting';
 // Where the history was kept while it was shared; nothing reads it.
 localStorage.removeItem(UNDO_KEY);
 
@@ -5048,11 +4963,10 @@ const patchSlice = (mutate) => patch('command-definition', state.slice, mutate);
 // One form for renaming any definition kind: PascalCases the input,
 // clears its own state flag, routes through `renameDefinition` (which
 // rewrites every reference in the same append) and repoints whatever
-// view state was keyed by the old name via `after`. `warn` runs first
-// for the kinds that owe one – an event read by scripted handlers.
-// `spell` and `value` are for the one name that is not PascalCase: a
-// grouped projection's local name, `toCamel`.
-function renameDefinitionForm(model, kind, name, { stateKey, warn, after, spell = toPascal, value } = {}) {
+// view state was keyed by the old name via `after`. `spell` and `value`
+// are for the one name that is not PascalCase: a grouped projection's
+// local name, `toCamel`.
+function renameDefinitionForm(model, kind, name, { stateKey, after, spell = toPascal, value } = {}) {
   return inlineForm({
     question: 'Rename – every reference is rewritten with it', submitLabel: 'Rename',
     value: value === undefined ? readable(name) : value,
@@ -5061,7 +4975,6 @@ function renameDefinitionForm(model, kind, name, { stateKey, warn, after, spell 
       state[stateKey] = null;
       if (next && next !== name && !name.endsWith('.' + next)) {
         run(() => {
-          if (warn) warn(next);
           renameDefinition(kind, model.id, name, next);
           if (after) after(next);
         });
@@ -5401,7 +5314,6 @@ const FORM_KEYS = [
   'renamingCommand', 'editMember', 'editRule', 'editBinding',
   'scenarioDraft', 'sandboxDraft',
   'projectionScenarioDraft',
-  'pendingImport',
   'aliasing',
 ];
 
@@ -5894,7 +5806,7 @@ function prefillChangeAdder(model, slice) {
   const names = groupProjections(group).map((inner) => qualifiedProjectionName(binding.group, inner.name));
   const target = names.find((name) => {
     const projection = projectionsOf(model)[name];
-    return projection && !scriptOf(projection) && !derivedOf(projection) && !projection.isList;
+    return projection && !derivedOf(projection) && !projection.isList;
   });
   if (!target) return;
   const projection = projectionsOf(model)[target];
@@ -5982,7 +5894,6 @@ function render() {
   paintPage();
   restoreMainFocusRank(focusRank);
   restoreDefinitionModalFocus(modalRank);
-  sweepScriptEditors();
   if (!state.land) return;
   const selector = state.land;
   state.land = null;
@@ -7121,7 +7032,7 @@ function ruleEditor(model, slice, index) {
   // grouped one – that value is read through its group, and offering
   // it here as well would be the same fact reachable as two different
   // reads. Its tags need no value in scope, since a new input can bring
-  // one; what a script takes besides does.
+  // one; the arguments it takes besides do.
   const scopeAbove = operandChoicesAbove(model, slice);
   const groupRows = Object.keys(model['group-definitions']).sort()
     .filter((n) => groupProjections(model['group-definitions'][n]).length
@@ -7775,19 +7686,6 @@ function stepEmits(model, slice) {
   return step('emits', 'Append', ...body);
 }
 
-// Renaming an event or one of its fields rewrites every declared
-// operand naming it. It cannot rewrite code: nothing here parses a
-// script, and a textual pass over an unparsed language would sooner or
-// later rewrite a comment or a string literal. So the rename goes
-// through and this says which scripts to go and read.
-function warnScripted(model, eventName) {
-  const scripted = scriptedHandlersOf(model, eventName);
-  if (!scripted.length) return;
-  toast(`Renamed. ${scripted.join(', ')} handle${scripted.length === 1 ? 's' : ''} `
-    + `${readable(eventName)} in code, which was not rewritten – check ${
-      scripted.length === 1 ? 'it' : 'them'}.`);
-}
-
 // A key in `publishes[].parameters` that no longer names a property on
 // the event it targets is not a reference to anything – the field it
 // once read is gone. The only way there is one is a leftover from
@@ -7973,10 +7871,6 @@ function stepChanges(model, slice) {
       // reads it by that the event carries, in this command's terms
       // (`changeArguments`).
       const { reads, unreached } = changeArguments(model, emission, projectionName);
-      // A scripted handler has no operation/value for this form to
-      // pre-fill – it is edited where its code is, in the projection's
-      // own editor.
-      const scripted = effect.handler.code !== undefined;
       return qrow('div', { cls: 'row', key: 'chg:' + emission.name + ':' + key },
         h('span', { class: 'sentence' },
           ref(p.subject),
@@ -7989,7 +7883,7 @@ function stepChanges(model, slice) {
           ]),
           reads.length ? ' ' : null,
           h('span', { class: 'verb tok' }, p.verb), ' ',
-          scripted ? null : opRef(effect.handler.value, emission.name, p.object),
+          opRef(effect.handler.value, emission.name, p.object),
           // A read the event cannot reach is said, never hidden – it is
           // an advisory on the read, and this is where it shows.
           unreached.length ? h('span', { class: 'muted tiny' },
@@ -7997,7 +7891,7 @@ function stepChanges(model, slice) {
             + `${readable(emission.name)} is tagged by none`) : null),
         h('span', { class: 'grow' }),
         reveal(
-          scripted ? null : h('button', {
+          h('button', {
             class: 'btn tiny',
             onclick: () => {
               closeForms();
@@ -8080,16 +7974,15 @@ function operationControl(operations, draft) {
 function changeAdder(model, eventName, emission) {
   const event = model['event-definitions'][eventName];
 
-  // A scripted or derived projection is not offered here: this form
-  // writes an operation and an operand, and neither takes one – code
-  // is edited where the code is, and nothing moves a derived value.
+  // A derived projection is not offered here: this form writes an
+  // operation and an operand, and nothing moves a derived value.
   // Nor one whose every read this event cannot reach: a projection read
   // tagged by a copy id is not moved by an event that carries no copy
   // id (`changeArguments`). One nothing reads yet is offered – its
   // reads are still to come.
   const settable = (name) => {
     const projection = projectionsOf(model)[name];
-    if (!projection || scriptOf(projection) || derivedOf(projection)) return false;
+    if (!projection || derivedOf(projection)) return false;
     if (!emission) return true;
     const { reads, unreached } = changeArguments(model, emission, name);
     return reads.length > 0 || !unreached.length;
@@ -8433,7 +8326,7 @@ function groupTagChip(model, groupName) {
 // tags, then its arguments, each a name and a type with a `tag` toggle,
 // the way an event's fields are. Ticked, a parameter is a tag – what
 // each value is kept per, narrowing the query; unticked, an argument,
-// which a script or a derived predicate uses and which narrows nothing.
+// which a derived projection uses and which narrows nothing.
 // The toggle is offered only for a tag type, and is ticked as one is
 // picked; a declared projection's handlers cannot see an argument, so
 // there every parameter is a tag and only tag types are offered. A
@@ -8445,7 +8338,7 @@ function groupTagChip(model, groupName) {
 // happens on the spot; adding, retyping or removing one is part of the
 // draft, and the reads it leaves without a value say so as advisories.
 function projectionParametersEditor(model, draft, savedName, info, { fixedTag } = {}) {
-  const declared = !draft.derived && !draft.script;
+  const declared = !draft.derived;
   const tagTypes = partitionTypeOptions(model);
   const types = declared ? tagTypes : typeOptions(model);
   const undecided = !fixedTag && (draft.tags === null || draft.tags === undefined);
@@ -8573,7 +8466,7 @@ function projectionLedgerRow(model, entry, { owner, cols }) {
     owner ? null : h('span', { class: 'lpart' }, ...partitionCells(model, projection)),
     h('span', { class: 'lcell ty', title: typeLabel(body) },
       readable(typeLabel(body)),
-      scriptLabel(body) ? ' · ' + scriptLabel(body) : null),
+      kindLabel(body) ? ' · ' + kindLabel(body) : null),
     h('span', { class: 'lstart' }, initialValueChip(body)));
 
   return h('div', {}, row, open ? projectionDetail(model, entry, { owner }) : null);
@@ -9532,15 +9425,14 @@ function fieldTypeOptions(model) {
 // every keystroke.
 
 // What a projection may hold: any simple type – booleans included –
-// and any scalar value type, enums among them. A composite joins the
-// list only when the projection is scripted: the declared operations
-// act on a single value and there is none in a record of fields, but
-// code has no such limit.
-function projectionTypeOptions(model, { scripted } = {}) {
+// and any scalar value type, enums among them. Never a composite: the
+// operations act on a single value and there is none in a record of
+// fields.
+function projectionTypeOptions(model) {
   return typeRows(model, allTypeNames(model)
     .filter((t) => {
       const cls = classifyType(model, t);
-      return cls.kind === 'value' ? (scripted || !cls.composite) : cls.kind === 'simple';
+      return cls.kind === 'value' ? !cls.composite : cls.kind === 'simple';
     }));
 }
 
@@ -9566,7 +9458,6 @@ function initialValueChip(body) {
   // A derived projection has no start of its own – what it derives is
   // the whole story, so the chip says it.
   if (body.derived) return h('code', {}, derivedText(body.derived));
-  if (body.script) return h('code', {}, JSON.stringify(body.script.initialState));
   const value = body.initialValue;
   if (value === null || value === undefined) {
     return h('span', { class: 'chip unset', title: 'No value yet – not the empty string' }, 'null');
@@ -9649,7 +9540,7 @@ function fieldFitsValueType(model, fieldType, valueType) {
 
 // A value the event carried, as a token option (see `pick`): short
 // under its `event` heading, `event.data.capacity` once picked – the
-// same path `operandWords` renders and a scripted handler writes.
+// same path `operandWords` renders.
 function eventFieldChoice(p) {
   return [JSON.stringify({ eventProperty: p.name }), p.name, null,
     { group: 'event', before: 'event.data.' }];
@@ -9720,16 +9611,8 @@ function unhandledEventChoices(eventNames, handlers, current) {
 
 function projectionDraftFrom(body) {
   const draft = deepClone(body);
-  // A script's arguments, stored where 9.x kept them, are edited where
-  // they belong – saving the draft moves them.
-  if (draft.script && draft.script.arguments !== undefined) {
-    if (draft.arguments === undefined && Array.isArray(draft.script.arguments)) draft.arguments = draft.script.arguments;
-    delete draft.script.arguments;
-  }
   draft.handlers = (draft.handlers || []).map((handler) =>
-    (handler.code !== undefined
-      ? handler
-      : draftFromOperand({ event: handler.event, operation: handler.operation }, 'value', handler.value)));
+    draftFromOperand({ event: handler.event, operation: handler.operation }, 'value', handler.value));
   return draft;
 }
 
@@ -9747,7 +9630,7 @@ function cleanProjectionBody(draft) {
   const args = (draft.arguments || []).filter((a) => a && a.name && a.propertyType)
     .map((a) => ({ name: toCamel(a.name), propertyType: a.propertyType }));
   const parameters = args.length ? { tags, arguments: args } : { tags };
-  if (draft.derived && !draft.script) {
+  if (draft.derived) {
     // An operand passes its projection the tags and arguments it
     // declares – each one of this projection's own parameters, or a
     // literal.
@@ -9784,17 +9667,6 @@ function cleanProjectionBody(draft) {
       valueType: computes ? draft.valueType : 'boolean',
       isList: false,
       derived,
-    };
-  }
-  if (draft.script) {
-    const script = { initialState: draft.script.initialState };
-    if (draft.script.exposes) script.exposes = draft.script.exposes;
-    return {
-      ...parameters,
-      valueType: draft.valueType,
-      isList: !!draft.isList,
-      script,
-      handlers: handlers.map((handler) => ({ event: handler.event, code: handler.code || 'state' })),
     };
   }
   return {
@@ -9933,7 +9805,7 @@ function eventsReaching(model, tags) {
 // off a count; `CourseArchived` sets the status to `Archived`. A guess
 // it cannot make is left out rather than made badly.
 function handlerGuesses(model, name, draft) {
-  if (draft.derived || draft.script) return [];
+  if (draft.derived) return [];
   const partitionWords = new Set((draft.tags || []).flatMap((t) => tagTypeStems(t.tagType || '').flatMap(nameWords)));
   const vocabulary = new Set(['Count', 'Total', 'Exists', 'Is', 'Status', 'State', 'Ids', 'Id', 'Numbering', 'Next', 'For']);
   const stems = nameWords(name)
@@ -9989,8 +9861,7 @@ function sampleValue(model, typeName) {
 // value the fold makes of it as its Then. One event, not one of each:
 // a subscribe and an unsubscribe fold to where they started, which
 // checks nothing. Null when it handles
-// nothing, or something here has no sample (a record, a script that
-// throws).
+// nothing, or something here has no sample (a record).
 function projectionCheckGuess(model, name) {
   const projection = projectionsOf(model)[name];
   const types = projection ? projectionHandledTypes(model, name) : [];
@@ -10131,29 +10002,25 @@ function derivedSideEditor(model, draft, side, { allowLiteral } = {}) {
 }
 
 // What produces a projection's value: its handlers fold events
-// (`declared`), a predicate or computation over other projections
-// (`derived`), or code (`scripted`).
+// (`declared`), or a predicate or computation over other projections
+// (`derived`).
 function projectionKindOf(draft) {
-  return draft.derived ? 'derived' : draft.script ? 'scripted' : 'declared';
+  return draft.derived ? 'derived' : 'declared';
 }
 
 const PROJECTION_KIND_TOASTS = {
   declared: 'Declared – its handlers fold the events it reads.',
   derived: 'Now derived – worked out from other projections. The handlers are gone.',
-  scripted: 'Now scripted – the declared operations are gone, the events they named are kept.',
 };
 
-// Turns a draft into another kind, in place – the Advanced switches and
+// Turns a draft into another kind, in place – the Advanced switch and
 // the wizard's first step alike. What the kind it leaves needed goes:
-// a derived projection has no handlers and no initial value; a script
-// keeps the events its handlers named, as code. Returns why it cannot,
-// or null: a record is a value only code can advance, so leaving a
-// script that holds one asks for the re-typing first.
+// a derived projection has no handlers and no initial value. Returns
+// why it cannot, or null – it always can, now that there are two.
 function setProjectionKind(model, draft, kind) {
   const from = projectionKindOf(draft);
   if (from === kind) return null;
   if (kind === 'derived') {
-    delete draft.script;
     delete draft.initialValue;
     draft.handlers = [];
     draft.valueType = 'boolean';
@@ -10165,25 +10032,8 @@ function setProjectionKind(model, draft, kind) {
     };
     return null;
   }
-  if (kind === 'scripted') {
-    delete draft.derived;
-    const initialState = draft.initialValue === undefined ? null : draft.initialValue;
-    draft.script = { initialState };
-    delete draft.initialValue;
-    draft.handlers = (draft.handlers || []).map((handler) => ({ event: handler.event, code: 'state' }));
-    return null;
-  }
-  if (from === 'scripted') {
-    const cls = classifyType(model, draft.valueType);
-    if (cls.kind === 'value' && cls.composite) {
-      return `It holds ${readable(draft.valueType)}, a record – only code can advance one. Pick a single-value type first.`;
-    }
-    delete draft.script;
-    draft.handlers = (draft.handlers || []).map((handler) => ({ event: handler.event, operation: 'set', value: '' }));
-  } else {
-    delete draft.derived;
-    draft.handlers = [];
-  }
+  delete draft.derived;
+  draft.handlers = [];
   draft.initialValue = defaultInitialValue(model, draft);
   return null;
 }
@@ -10349,15 +10199,13 @@ function projectionWizardBar(model, draft, { current, check, groupName }) {
     }, 'Show all steps'));
 }
 
-// The wizard's first step: what produces the value, as three answers
-// rather than the Advanced switches. Code is experimental, offered with
-// the flag on.
+// The wizard's first step: what produces the value, as two answers
+// rather than the Advanced switch.
 function projectionKindSection(model, draft) {
   const kind = projectionKindOf(draft);
   const kinds = [
     ['declared', 'From events', 'its handlers fold the events it reads'],
     ['derived', 'From other projections', 'one comparison or computation'],
-    ...(experimental() || kind === 'scripted' ? [['scripted', 'From code', 'a script – experimental']] : []),
   ];
   return projectionSection('gets its value', null, null,
     h('div', { class: 'pkinds' }, kinds.map(([key, title, words]) => h('button', {
@@ -10411,7 +10259,7 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
     // is built from it, and a value of the old type is not a value
     // of the new one.
     for (const handler of draft.handlers || []) { handler.value = ''; handler.valueText = ''; }
-    if (!draft.script) draft.initialValue = defaultInitialValue(model, draft);
+    draft.initialValue = defaultInitialValue(model, draft);
   };
   const advanced = projectionAdvanced();
   const savedName = state.projDraft && state.projDraft.body === draft ? state.projDraft.name : null;
@@ -10437,7 +10285,7 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
   // ---- value: type, cardinality, initial ----
 
   const typePicker = pick([
-    ...projectionTypeOptions(model, { scripted: !!draft.script }),
+    ...projectionTypeOptions(model),
     ...(onNewType ? [[NEW_DEFINITION, NEW_TYPE_LABEL]] : []),
   ], draft.valueType, (v) => {
     if (v === NEW_DEFINITION) {
@@ -10454,32 +10302,15 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
       // A list and a single value do not start from the same shape,
       // and the operations that advance them differ, so both are
       // reset rather than left describing the arity it just left.
-      if (!draft.script) {
-        draft.initialValue = defaultInitialValue(model, draft);
-        const allowed = operationsFor(model, draft);
-        for (const handler of draft.handlers || []) {
-          if (!allowed.includes(handler.operation)) handler.operation = 'set';
-        }
+      draft.initialValue = defaultInitialValue(model, draft);
+      const allowed = operationsFor(model, draft);
+      for (const handler of draft.handlers || []) {
+        if (!allowed.includes(handler.operation)) handler.operation = 'set';
       }
       render();
     });
 
-  // A scripted state is any JSON – nothing outside the code reads it
-  // whole, so it is not typed.
-  const scriptInitial = () => h('input', {
-    type: 'text', class: 'mono',
-    value: JSON.stringify(draft.script.initialState),
-    onblur: (e) => {
-      let parsed;
-      try { parsed = JSON.parse(e.target.value); }
-      catch { return toast('That initial state is not valid JSON.', true); }
-      draft.script.initialState = parsed;
-      render();
-    },
-    onkeydown: (e) => { if (e.key === 'Enter') e.target.blur(); },
-  });
-
-  const initial = draft.derived || draft.script ? null : initialValueControl(model, draft);
+  const initial = draft.derived ? null : initialValueControl(model, draft);
   // What it holds before any event – what the section is about, and
   // so what it is called. A derived projection has no initial state:
   // the section says what it holds, and that it starts from its
@@ -10500,7 +10331,7 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
       : h('div', { class: 'pfields' },
           fieldLabel('type', typePicker),
           fieldLabel('cardinality', cardinalityPicker),
-          fieldLabel('starts at', draft.script ? scriptInitial() : initial.control)),
+          fieldLabel('starts at', initial.control)),
     initial ? initial.below : null,
     enumType && !draft.derived
       ? h('div', { class: 'use' }, h('span', { class: 'pk' }, 'members '), ...enumMemberChips(model, enumType))
@@ -10517,7 +10348,7 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
   // with tags, or skipped as untagged.
   const tagsHint = hint('proj-tags', 'Partition', [
     'What a read gives. A tag is what each value is kept per: it narrows the query.',
-    'An argument is a value the read passes in – a script or a derived projection uses it; it narrows nothing.',
+    'An argument is a value the read passes in – a derived projection uses it; it narrows nothing.',
     'Untagged: one value for the whole log – a numbering is one.',
   ]);
   const tagsSection = projectionParametersEditor(model, draft, savedName, tagsHint, {
@@ -10595,38 +10426,19 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
       }, '×'));
   });
 
-  const scriptedHandlerRows = !draft.script ? [] : (draft.handlers || []).map((handler, i) => h('div', { class: 'script-handler' },
-    h('div', { class: 'phandler' },
-      h('span', { class: 'pk' }, 'on'),
-      eventPick(pick(eventChoicesFor(handler), handler.event,
-        (v) => { handler.event = v; render(); }, 'event')),
-      h('button', {
-        class: 'btn tiny danger', title: 'Remove this handler',
-        onclick: () => { draft.handlers.splice(i, 1); render(); },
-      }, '×')),
-    scriptCodeEditor(scriptEditorKey(draft, i), {
-      code: handler.code || '',
-      preamble: scriptHandlerPreamble(model, draft, handler),
-      onCode: (code) => { handler.code = code; },
-    })));
-
   const handlersSection = draft.derived ? null : projectionSection('handlers',
     hint('proj-handlers', 'Handlers', [
       'Events that move the value – one handler per event type.',
       'Without any, it keeps its initial value forever.',
-      ...(draft.script ? ['Scripted: each handler is a body over state, event, args and tags '
-        + '(the values it is read by, by name), returning the next state. Nothing here runs or checks it.'] : []),
     ]),
     null,
-    (draft.handlers || []).length ? (draft.script ? scriptedHandlerRows : declaredHandlerRows) : null,
+    (draft.handlers || []).length ? declaredHandlerRows : null,
     // Under the handlers, where the next one goes – not up in the
     // heading, where with a few rows it read as belonging to none.
     h('div', { class: 'adder' }, h('button', {
       class: 'btn ghost tiny',
       onclick: () => {
-        (draft.handlers = draft.handlers || []).push(draft.script
-          ? { event: '', code: 'state' }
-          : { event: '', operation: 'set', value: '' });
+        (draft.handlers = draft.handlers || []).push({ event: '', operation: 'set', value: '' });
         render();
       },
     }, '+ handler')));
@@ -10694,29 +10506,9 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
     },
   }), ' ' + label);
   const derivedToggle = kindToggle('derived', 'derived projection');
-  // Scripted is experimental: offered with the flag on, and shown
-  // regardless on a projection that already is one – so it can be
-  // turned back into a declared one.
-  const scriptToggle = !experimental() && !draft.script ? null : kindToggle('scripted', 'scripted projection');
 
-  const scriptFields = draft.script ? [
-    h('div', { class: 'pfields' },
-      fieldLabel('exposes', h('input', {
-        type: 'text', class: 'mono', value: draft.script.exposes || '',
-        placeholder: 'the state itself',
-        title: 'Which field of the state a rule reads, when the state is a record',
-        onblur: (e) => {
-          const text = toCamel(e.target.value);
-          if (text) draft.script.exposes = text; else delete draft.script.exposes;
-          render();
-        },
-      }))),
-  ] : [];
-
-  const advancedSection = advanced || draft.script || draft.derived
-    ? projectionSection('advanced', null, null,
-        h('div', { class: 'adder' }, scriptToggle, derivedToggle),
-        ...scriptFields)
+  const advancedSection = advanced || draft.derived
+    ? projectionSection('advanced', null, null, h('div', { class: 'adder' }, derivedToggle))
     : null;
 
   const editor = h('div', { class: 'pmain' },
@@ -10725,7 +10517,7 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
       h('button', {
         type: 'button', class: 'pswitch' + (advanced ? ' on' : ''),
         'aria-pressed': advanced ? 'true' : 'false',
-        title: 'Show scripted and derived projections, and where it is used',
+        title: 'Show derived projections, and where it is used',
         onclick: () => setProjectionAdvanced(!advanced),
       }, h('span', { class: 'track' }, h('span', { class: 'knob' })), 'Advanced')),
     ...wizardSections([
@@ -11392,8 +11184,7 @@ function renderHistory(model, main) {
 // compare with is kept per tab and per model (`COMPARE_KEY`), so a
 // reload comes back to it; one that no longer resolves – a deleted
 // model, an undo step gone – is dropped without a word and the picker
-// opens instead. A file's scripts are printed, never compiled: nothing
-// here evaluates, which is why no file waits at the import gate.
+// opens instead.
 // ============================================================
 
 const COMPARE_KEY = 'dcb-playground:compare:' + EVENT_LOG_KEY.split(':').pop();
@@ -11886,7 +11677,6 @@ function eventCard(model, name) {
   if (state.renamingEvent === name) {
     card.appendChild(renameDefinitionForm(model, 'event-definition', name, {
       stateKey: 'renamingEvent',
-      warn: () => warnScripted(model, name),
       after: (next) => { if (state.openEvent === name) state.openEvent = next; },
     }));
     return card;
@@ -12709,10 +12499,7 @@ function eventFieldsEditor(model, name, event) {
         member: p, where,
         editType: (typeName) => openDefinitionModal(model, { kind: 'custom-type', name: typeName }),
         onReplace: (next) => patch('event-definition', name, (b) => { b.properties[i] = next; }),
-        onRename: (newName) => {
-          warnScripted(model, name);
-          return renameMember('event-definition', model.id, name, 'property', p.name, newName);
-        },
+        onRename: (newName) => renameMember('event-definition', model.id, name, 'property', p.name, newName),
       });
     }
     const enumType = isStringEnumType(model, p.propertyType) ? p.propertyType : null;
@@ -12808,12 +12595,8 @@ function stepConsistency(model, slice) {
 // ---------- running them ----------
 //
 // Every scenario runs on every repaint, the way the whole model is
-// already reprojected on every repaint – scripted reads included.
-// What keeps a script that loops forever from hanging the page on
-// every reload is not a gate here but safe mode: `?safe` on the URL,
-// or a reload after a load that never finished (`boot`), compiles
-// script handlers to throwers (see `setScriptsDisabled` in
-// evaluate.js), so the model loads and the script can be fixed.
+// already reprojected on every repaint. Nothing a model holds is code,
+// so nothing here can hang the page.
 // The placement switch itself sits with the other interface switches
 // near the top of this file. Everything below is what it chooses
 // between.
@@ -13710,8 +13493,8 @@ function editProjectionScenario(model, key, body) {
   render();
 }
 
-// A fresh scenario's arguments: one blank per argument its script
-// takes, and none at all for a declared projection.
+// A fresh scenario's arguments: one blank per argument its projection
+// takes.
 function blankScenarioArguments(model, projectionName) {
   const args = {};
   for (const slot of projectionSlots(projectionsOf(model)[projectionName])) args[slot.name] = '';
@@ -14093,10 +13876,8 @@ function sessionRun(model, commandName, args) {
   render();
 }
 
-// One instance, projected over what is visible. A scripted property
-// folds the same way a declared one does: the binding's one
-// identifier-typed argument is the instance itself, which is all this
-// card has to give it.
+// One instance, projected over what is visible: the group's one tag is
+// the instance itself, which is all this card has to give it.
 function sessionInstanceState(model, tag, log = session.visible()) {
   const [groupName, id] = [tag.slice(0, tag.indexOf(':')), tag.slice(tag.indexOf(':') + 1)];
   const group = model['group-definitions'][groupName];
@@ -14522,24 +14303,7 @@ function projectionWatchCard(model, watch) {
   if (held.error) {
     return head(h('div', { class: 'sc-line' }, h('span', { class: 'k' }, '  – ' + held.error)));
   }
-
-  // A script that `exposes` one field keeps the rest of its record as
-  // bookkeeping a condition never sees – hidden from the *boundary*,
-  // not from the person watching the script work. So under the value a
-  // reader gets, the watch also shows the whole record it came from.
-  const script = scriptOf(projection);
-  const inside = script && script.exposes !== undefined
-    ? foldWatch(model, watch, foldProjectionState)
-    : null;
-  return head(
-    h('div', { class: 'sc-line' }, h('span', { class: 'val' }, initialValueWords(held.value))),
-    inside ? h('div', { class: 'sc-line' },
-      h('span', { class: 'k' }, '  keeping '),
-      h('span', { class: 'k' }, inside.error
-        ? '– ' + inside.error
-        : (inside.value !== null && typeof inside.value === 'object' && !Array.isArray(inside.value)
-          ? payloadText(inside.value)
-          : JSON.stringify(inside.value)))) : null);
+  return head(h('div', { class: 'sc-line' }, h('span', { class: 'val' }, initialValueWords(held.value))));
 }
 
 // The store calls a watch's fold makes at the position looked at: one
@@ -14554,9 +14318,9 @@ function watchQuery(model, watch) {
     reads.length > 1 ? `call ${i + 1} of ${reads.length}` : '1 call')));
 }
 
-function foldWatch(model, watch, fold, log = session.visible()) {
+function foldWatch(model, watch, log = session.visible()) {
   try {
-    return { value: (fold || foldProjection)(model, log, watch.projection, watchRead(watch)) };
+    return { value: foldProjection(model, log, watch.projection, watchRead(watch)) };
   } catch (error) {
     return { error: evaluationFailure(error) };
   }
@@ -14626,7 +14390,7 @@ function watchValueAt(model, watch, log) {
   let value;
   if (watch.kind === 'projection') {
     if (!projectionsOf(model)[watch.projection]) return null;
-    const held = foldWatch(model, watch, null, log);
+    const held = foldWatch(model, watch, log);
     if (held.error) return { key: '\0' + held.error, words: '–', num: null };
     value = held.value;
   } else {
@@ -15086,8 +14850,8 @@ function renderSandbox(model, main) {
 // page). A text with edits is never replaced – it is marked stale
 // instead, since applying it now would put back what changed.
 //
-// Monaco is the editor when it loads (the same lazily loaded copy the
-// scripted handlers use, see shared.js), with the grammar from dsl.js,
+// Monaco is the editor when it loads (lazily, see shared.js), with the
+// grammar from dsl.js,
 // errors and advisories as markers, an outline, a hover showing each
 // command's derived boundary, and dsl.js's language service behind
 // completion, go to definition, references and rename; a plain
@@ -15964,7 +15728,7 @@ function createCodeEditor() {
     minimap: { enabled: false },
     fontSize: 12.5,
     lineHeight: 19,
-    fontFamily: scriptEditorFont(),
+    fontFamily: monacoFont(),
     tabSize: 2,
     scrollBeyondLastLine: false,
     wordBasedSuggestions: 'off',
@@ -15986,8 +15750,8 @@ function createCodeEditor() {
 }
 
 function codeEditorElement() {
-  if (scriptEditorPhase !== 'ready') {
-    ensureScriptEditorLoaded();
+  if (monacoPhase !== 'ready') {
+    ensureMonacoLoaded();
     return h('textarea', {
       class: 'code-text mono', spellcheck: 'false', value: codeView.text,
       oninput: (e) => onCodeInput(e.target.value),
@@ -16257,7 +16021,6 @@ window.addEventListener('keydown', (e) => {
   if (state.queryPop) { state.queryPop = null; return render(); }
   if (state.hintPop) { state.hintPop = null; return render(); }
   if (state.moreOpen) { state.moreOpen = false; return render(); }
-  if (state.pendingImport) { cancelImport(); return render(); }
   if (state.importExport) { state.importExport = false; return render(); }
   if (state.help) { state.help = false; return render(); }
   if (state.problems) { state.problems = false; return render(); }
@@ -16359,7 +16122,7 @@ window.addEventListener('keydown', (e) => {
   if (e.defaultPrevented || e.key !== '?' || e.metaKey || e.ctrlKey || e.altKey) return;
   const inField = e.target instanceof Element
     && e.target.closest('input, textarea, select, [contenteditable]');
-  if (inField || state.palette || state.pendingImport) return;
+  if (inField || state.palette) return;
   e.preventDefault();
   openHelp();
 });
@@ -16411,36 +16174,6 @@ document.getElementById('rail').addEventListener('click', (e) => {
 // on the pages explaining the notation, whose reader came for the text –
 // and `&experimental` to show experimental features for this session.
 async function boot() {
-  // Safe mode – the way back into a model whose script hangs the page
-  // on load, now that scripts run unprompted like everything else.
-  // Typing `?safe` into the address is the gesture (the import gate
-  // names it), and every script handler then compiles to a thrower
-  // instead of running (see evaluate.js). A reload after a load that
-  // never painted takes it unasked: the flag below is set before the
-  // first render and cleared once that render has returned, so finding
-  // it still set means the last load hung. That lasts one load – a
-  // plain reload runs scripts again, so a reload that merely
-  // interrupted a slow page costs nothing more. A tab closed instead
-  // of reloaded loses the flag with its sessionStorage; the gate's
-  // mention of `?safe` is for that case.
-  let lastLoadHung = false;
-  try {
-    lastLoadHung = sessionStorage.getItem(BOOT_KEY) !== null;
-    sessionStorage.setItem(BOOT_KEY, '1');
-  } catch { /* no sessionStorage: no detection, ?safe still works */ }
-  // Not requestAnimationFrame: a tab opened in the background paints
-  // nothing until shown, and would read as hung. Boot runs the first
-  // render synchronously below, so this timer fires only after it.
-  setTimeout(() => {
-    try { sessionStorage.removeItem(BOOT_KEY); } catch { /* as above */ }
-  }, 0);
-  if (new URLSearchParams(location.search).has('safe')) {
-    setScriptsDisabled(true);
-    toast('Safe mode – scripts are off. Remove "?safe" from the address to run them.', true);
-  } else if (lastLoadHung) {
-    setScriptsDisabled(true);
-    toast('The last load did not finish, so scripts are off for this one. Reload to run them again.', true);
-  }
   const link = readModelLink(location.hash);
   // Entering without a model link starts at the models dialog, over
   // whatever was open last – see `modelsModal`.
@@ -16474,8 +16207,7 @@ async function openModelLink(link) {
     return;
   }
   // Opened before and unchanged since: back to that copy rather than a
-  // second one beside it (`modelMatchingEnvelope`). The script gate is
-  // not asked again for code it already let in. Unchanged, it is still
+  // second one beside it (`modelMatchingEnvelope`). Unchanged, it is still
   // a linked copy waiting on its first change – even one opened before
   // copies were marked at all.
   const existing = modelMatchingEnvelope(envelope);
@@ -16489,7 +16221,7 @@ async function openModelLink(link) {
     return;
   }
   linkedEnvelopes.add(envelope);
-  beginImport(envelope);
+  finishImport(envelope);
 }
 
 window.addEventListener('DOMContentLoaded', boot);

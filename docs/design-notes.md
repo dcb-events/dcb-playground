@@ -33,12 +33,14 @@ and prune what no longer holds.
   (`experimental()`, shared.js; it replaced the simple/advanced mode).
   What DCB is made of — types, events, projections, commands, the
   derived boundary — is always on screen; what the examples on
-  dcb.events do not need is behind the flag: scripted projections,
-  and the Coupling /
-  Rule map / Event model / Metro map views. Groups are not on the list: a naming
+  dcb.events do not need is behind the flag: the Coupling / Rule map /
+  Event model / Metro map views. Groups are not on the list: a naming
   device with no consistency meaning has nothing to hide. Entities,
-  lifecycles and `excluding` were on it until 11.0 removed them. A model that uses any of
-  it still loads, renders and evaluates whole; `experimentalFeatures`
+  lifecycles and `excluding` were on it until 11.0 removed them, and so
+  were scripted projections, guarded emissions, optional reads and
+  `currentValue` (issues #104 and #111) — since then no construct of the
+  language is, and the flag stays as the way to stage the next one. A
+  model that uses a staged construct still loads, renders and evaluates whole; `experimentalFeatures`
   (model.js) names what it uses and `experimentalNotice` says so on
   every page. Gate an *offer* (an adder, a picker row, a tab), never
   the display of something stored. The code view does the same: with
@@ -53,15 +55,9 @@ and prune what no longer holds.
   projections left the flag when they learned to compute — they are
   data, analysable, and they cover the case that most often sent an
   author to a script (a value worked out from two others, e.g. a weekly
-  budget less that week's allocations). Scripts took their place: the
-  escape hatch stays for what neither the operations nor a derivation
-  can say, and stays readable and editable on a model that has one —
-  but it is no longer offered, to authors without the flag or to
-  agents at all. `content-decisions-scripted` ships on as the
-  experimental baseline of the 2026-09-19 comparison; its script-free
-  variants (`-derived`, `-guarded`) already ship beside it, and it is
-  not rewritten — its five-state status needs a case expression, which
-  no real model has asked for yet.
+  budget less that week's allocations). Scripts took their place behind
+  the flag until 11.0 removed them, and `content-decisions-scripted`,
+  the baseline of the 2026-09-19 comparison, went with them.
 - **WebMCP offers nothing experimental, flag or no flag.** No
   experimental member in a tool schema (cut by
   `generate-webmcp-schemas.js`), nothing experimental in the language
@@ -270,8 +266,7 @@ and prune what no longer holds.
   (`projectionsOf` gives it its effective body, `tags: [group.tag]`).
   A derived operand gives its target's
   tags by name, each one of the owner's own (`{parameterName}`) or a
-  literal. Scripts see `tags.<name>` and `args.<name>`, and have no
-  `tagFilter`. Evaluation takes a *read* —
+  literal. Evaluation takes a *read* —
   `foldProjection(model, events, name, { tags: { courseId: 'c1' }, args })`.
   Renaming a projection's tag is a member rename
   (`MEMBER_REWRITES['projection-definition:tag']`) that moves every read
@@ -286,7 +281,7 @@ and prune what no longer holds.
   a read gives besides its tags — after them, positionally, in the
   text — and it narrows nothing: the store returns the same events
   either way. Until 10.0 only a script had them (`script.arguments`);
-  now any projection does, and a derived one is what they are for
+  then any projection did, and a derived one is what they are for
   (below). A declared projection's handlers see only the event, so an
   argument there is an advisory, never a refusal. **Tag-ness is
   declared, not read off the type**: the editor shows one `parameters`
@@ -309,8 +304,7 @@ and prune what no longer holds.
   listed property carries it, so an event listing one identifier type
   in two properties reaches both reads by that type and a handler fires
   for both. A declarative handler cannot tell them apart; the fix is to
-  list only one, split the event (one fact each) or script the
-  projection, and an advisory on the projection points at the ambiguity
+  list only one or split the event (one fact each), and an advisory on the projection points at the ambiguity
   (`projectionTagProblem`). The editors offer only unhandled events.
   The opposite case is zero carriers: a handled event listing no tag of
   a type the projection is tagged by never reaches it. That is an
@@ -344,8 +338,8 @@ and prune what no longer holds.
   10.0 moved `arguments` from a script onto the projection and let a
   derived operand be one of its owner's parameters (`{parameterName}`,
   below): a moved field and a new operand member. The one 9.x shape
-  that moved is lifted on import (`liftScriptArguments`), so this build
-  reads 8.x to 10.x; the stored shape moved, so `EVENT_LOG_KEY` did.
+  that moved was lifted on import, until 11.0 refused scripts; this
+  build reads 8.x to 10.x; the stored shape moved, so `EVENT_LOG_KEY` did.
   10.1 accepts names in any alphabet (dcb-events.github.io#92): every
   name rule tests Unicode letters (`\p{Lu}`, `\p{Ll}`, `\p{L}`, marks,
   digits) where it tested ASCII, casing unchanged – so a script without
@@ -355,7 +349,15 @@ and prune what no longer holds.
   `groupDefinitions`, which own their projections. This build reads
   8.x to 11.x: an entity is converted on import
   (`groupsFromEntities`, see _Groups_), and the import's toast says
-  what became of each.
+  what became of each. 11.0 also removed scripted projections,
+  `currentValue`, guarded emissions and optional reads; a document
+  saying one is read only as far as it reads correctly
+  (`refuseRemovedConstructs`): a script or `currentValue` refuses it
+  whole, naming the projection — its value decides rules and has no
+  other spelling to read — and a command with a guard or an optional
+  read is left out, the toast saying why, as one with `excluding` is.
+  The write path refuses the same constructs (`assertStorableBody`),
+  so a JSON body or an agent's edit cannot bring one back.
   **6.1 is the contrast worth knowing**: entity `lifecycle` was additive
   in shape *and* a minor, because a 6.0 reader that ignores it loses a
   derived diagram and misreads nothing — where 4.0's equally additive
@@ -431,7 +433,7 @@ and prune what no longer holds.
   `add_group_projection` (`addGroupProjection`, its schema the group's
   inner projection shape) and `move_projection_into_group` /
   `move_projection_out_of_group`. A scripted grouped projection is
-  cut from the schemas and refused like any experimental use.
+  refused like any other since 11.0.
 - **A grouped read shows the group, then the member**: `Course (course
   id) · capacity` with the group's mark, wherever a read is shown
   (`projectionReadRef`, `operandWords`); a group alias reads as
@@ -477,18 +479,16 @@ on Projections, inside a group's section, and in the definition modals.
   says the same, and `null` still never hides behind an empty box.
 - **The Advanced switch** (`projectionAdvanced`, remembered per
   browser) holds what most projections never need: making it derived
-  (`derived projection`) or scripted (`scripted projection`, behind the
-  experimental flag too), and the `read by` / `bound as` facts. It hides
-  offers, never what is stored — a scripted or derived projection shows
-  its section with the switch off, the way the experimental flag
-  works.
+  (`derived projection`), and the `read by` / `bound as` facts. It
+  hides offers, never what is stored — a derived projection shows its
+  section with the switch off, the way the experimental flag works.
 
 - **A new projection is a name, then a wizard**
   (`PROJECTION_WIZARD_STEPS`), the command wizard's treatment: the name
   is stored at once, and its editor is revealed one section at a time –
-  what produces its value (three answers, `From events` / `From other
-  projections` / `From code`, the last behind the experimental flag;
-  the Advanced switches once the wizard is over), its partition, its
+  what produces its value (two answers, `From events` / `From other
+  projections` – a third, `From code`, went with scripts in 11.0; the
+  Advanced switch once the wizard is over), its partition, its
   initial state (not for a derived projection), what moves it, and a
   proposed first check. Partition comes before the initial state
   because it decides which events can reach it; kind comes first
@@ -529,8 +529,7 @@ on Projections, inside a group's section, and in the definition modals.
   and `projectionMovements`, index.html; `lifecycleOf`, shared.js),
   beside Definition and Checks: how its value moves. Nothing is stored
   or designated; it is worked out from the draft, so an edit shows the
-  moment the tab is switched. Derived and scripted projections have
-  none. A single-valued enum or boolean is a machine
+  moment the tab is switched. A derived projection has none. A single-valued enum or boolean is a machine
   (`lifecycleMachine`); anything else – a number, a string, a list – is
   its movements (`lifecycleMovements`): where it starts, each handler
   with the commands appending its event and their rules over the value,
@@ -605,10 +604,8 @@ on Projections, inside a group's section, and in the definition modals.
   no initial value, one declared predicate over other projections
   (`derived`), always a single boolean. Its query is its operands'
   union (`projectionHandledTypes` / `projectionReadTags`); a cycle is
-  an advisory and an evaluation _error_; a body carrying both `script`
-  and `derived` reads as scripted (`derivedOf` is null then) and the
-  advisory says so. Derived is data, not code: it never trips the
-  script import gate. The exploration that produced both blocks, and
+  an advisory and an evaluation _error_. Derived is data, not code. The
+  exploration that produced both blocks, and
   the case for keeping or dropping them, lives in
   `docs/research/2026-09-19-content-decisions-variant-comparison.md`.
 - **Derived computations (9.0)**: a derived projection may compute
@@ -621,8 +618,8 @@ on Projections, inside a group's section, and in the definition modals.
   watch and an editor needs no expression tree. **No `divide`**: an
   integer stays an integer and there is no division by zero to define.
   **No internal/external split**: a derived projection keeps no state,
-  so the "private bookkeeping, public value" shape a script gets from
-  `exposes` is composition here — the operands are the bookkeeping.
+  so the "private bookkeeping, public value" shape a script once got
+  from `exposes` is composition here — the operands are the bookkeeping.
   **Null in, null out** (`evApplyOperator`): an unknown side is not
   zero, and a rule ordering against the null is an evaluation error as
   any null ordering is; the advisory says so ahead of time when a side
@@ -630,9 +627,9 @@ on Projections, inside a group's section, and in the definition modals.
   null, or a computation over one), which is why `developer-hours`
   starts the weekly budget at 0. Picking an operator in the editor
   sets the type from the operands; a comparison is always `boolean`.
-  No case/conditional expression: it is the one thing that would turn
-  `content-decisions-scripted` into data, and no real model has needed
-  it yet.
+  No case/conditional expression: it was the one thing that would have
+  turned the retired `content-decisions-scripted` into data, and no
+  real model has needed it yet.
 - **Derived projections compare and compute with their parameters
   (10.0)**: a side may be one of the owner's own parameters, by name
   (`{parameterName}`; `Free(courseId) >= seats` in the text), and so
@@ -683,7 +680,7 @@ on Projections, inside a group's section, and in the definition modals.
   typed; the stored spelling rides beside it in a `.tech` span.
   The one exception is a value an event carried: it reads as the path
   `event.data.capacity` (stored name, monospace) in pickers and
-  sentences alike, because it is a path — the one a scripted handler
+  sentences alike, because it is a path — the one the code view
   writes — and a humanized name inside a dotted path reads as a typo.
   In the open list it is short under an `event` heading; once picked it
   is whole (`pick`'s token options, `.ctx` spans).
@@ -715,7 +712,7 @@ on Projections, inside a group's section, and in the definition modals.
   Explanations live in `hint(...)` — one `ⓘ` per section, never one per
   row, in both modes, linking dcb.events only where a page exists.
   Inline field hints are deleted; *derived facts* stay on the page,
-  terse (`untagged`, `scripted fold`, `appended by: —`), because
+  terse (`untagged`, `derived`, `appended by: —`), because
   hiding a fact about the model behind a popover is the opposite of what
   the register is for. A group carries a mark only if one was
   authored — there is no hashed fallback, and `iconPrefix` is what
@@ -822,7 +819,7 @@ they already had.
   Advanced`), so a keyword never hides under a picker that cannot
   show it.
 - **Other dialogs win.** Help, Problems, Settings, Import & export,
-  the models dialog, quick open and the import gate close the
+  the models dialog and quick open close the
   definition modal (its edits are stored already) and give the page
   its forms back, rather than stacking over it. A modal whose page
   went away underneath it is dropped.
@@ -1100,7 +1097,7 @@ Watched, Decision, Store. Only the panel scrolls.
   rename all read that, never the bare word, which is what keeps
   `Existent` apart from `NonExistent` and the projection CourseStatus
   apart from the enum. Rename refuses rather than guesses (a name a
-  script or json body may hide, a member whose enum cannot be told) and
+  json body may hide, a member whose enum cannot be told) and
   proves itself by re-reading the result. *Introduce alias*, a
   refactor offered on a read in place (`sourceIntroduceAlias`), proves
   itself the same way: an inline read and an alias derive the same
@@ -1129,14 +1126,15 @@ Watched, Decision, Store. Only the panel scrolls.
   don't add syntax that lists them, that is a derived fact authored
   twice. Fold arms stay **keywords, not expressions** (`set`,
   `increment`, …): the vocabulary is closed because it is analysed,
-  arithmetic between values is a derived projection's, a script is the
-  door for the rest, and the reasoning is in the `dsl.js` header — read
-  it before adding `=> state + 1`.
+  arithmetic between values is a derived projection's, and the
+  reasoning is in the `dsl.js` header — read it before adding
+  `=> state + 1`.
 - **A projection's kind is said in front** (9.0): `derived projection
-  X (…): T { <expression> }` and `scripted projection X (…): T {
-  initialState … }`, after `untagged` when both apply. The inner
-  `derived …` line and `script` line are gone; the old spellings are
-  errors naming the new one. In front, the header knows what the
+  X (…): T { <expression> }`, after `untagged` when both apply. The
+  inner `derived …` line is gone; the old spelling is an error naming
+  the new one. `scripted projection` was the other kind until 11.0; it
+  is an error now that says scripts are gone, and so are a ```code```
+  handler, `currentValue`, `emit … when …` and `alias x? = …`. In front, the header knows what the
   block may hold before reading it, and a derived projection, whose body
   is one expression and its scenarios, prints with a block like
   every other one. The operators are `+`, `-`, `*` and the calls
@@ -1146,60 +1144,32 @@ Watched, Decision, Store. Only the panel scrolls.
 
 ## Scripts and the origin
 
-- **What a script can reach.** A scripted handler is compiled with
-  `new Function` and runs on the main thread, in the page's own
-  origin (`evCompileHandler`, evaluate.js). It can read and rewrite
-  all of localStorage, call the registered WebMCP tools, call
-  `window.DCB_PLAYGROUND_HOST.theme`, and fetch anywhere. On
-  dcb.events the playground is served at `/playground/` of the
-  website's origin, so its storage, and its quota, are the website's
-  too. What stands between an imported model and that is the import
-  gate and `?safe` (AGENTS.md); there is no sandbox.
+- **Nothing a model holds runs** (11.0). Until then a scripted
+  handler was compiled with `new Function` and ran on the main thread,
+  in the page's own origin – able to read and rewrite all of
+  localStorage, call the registered WebMCP tools and the host's theme
+  hook, and fetch anywhere; on dcb.events that origin, its storage and
+  its quota are the website's. What stood between an imported model and
+  that was an import gate listing the code (`envelopeScripts`) and
+  `?safe`, a mode that compiled every script to a thrower, taken
+  unasked after a load that never finished. A Worker sandbox was
+  weighed and shelved (2026-10): evaluation would have become
+  asynchronous across some seventeen render paths. 11.0 removed scripts
+  instead (issue #111), and the gate, safe mode and the shelved sandbox
+  went with them. A construct that ran authored code would need all of
+  that back – the reason not to add one lightly.
 - **No Content-Security-Policy, for now.** One was weighed and
-  dropped (2026-10). Scripts need `'unsafe-eval'`, so a CSP does not
-  stop one from running. The one restriction worth having,
-  `connect-src 'self'` (no sending data elsewhere), would break
-  "From a URL" and `#url=` links, which fetch whatever URL the reader
-  types or the link names. The page
-  also needs `style-src 'unsafe-inline'` (inline `style` attributes,
+  dropped (2026-10), when scripts needed `'unsafe-eval'` anyway. The
+  one restriction still worth having, `connect-src 'self'` (no sending
+  data elsewhere), would break "From a URL" and `#url=` links, which
+  fetch whatever URL the reader types or the link names. The page also
+  needs `style-src 'unsafe-inline'` (inline `style` attributes,
   Monaco's runtime `<style>`). And the host's theme hook is an inline
   `<script>` whose content depends on the site's configuration
   (`hooks/playground.py` in the website), so it cannot be hashed; it
   would only run because a `<meta>` CSP does not reach back to
   content before it. What would be left — `object-src`, `base-uri`,
   `form-action` — guards nothing this page does.
-- **The real fix is a sandbox, not a policy.** Compile and run
-  handlers in a Worker, or in an iframe sandboxed without
-  `allow-same-origin`, posting plain JSON in and out: a handler's
-  inputs (state, a frozen event, arguments, tags) and its output are
-  JSON already. The cost is that evaluation becomes asynchronous,
-  and every render path that evaluates — the scenario runners, the
-  sandbox's decision card, the watches — calls it synchronously
-  today. That is a change of the evaluation seam, not a patch.
-- **Not now (2026-10).** Weighed and shelved. A Worker is
-  feasible: `evaluate.js` is pure, and a data:-URL worker's opaque
-  origin would shut out storage, WebMCP and the host hook, and could
-  be terminated on a hang (it would still have `fetch`). But handlers
-  cannot be sent over one at a time — a fold calls them in sequence —
-  so a whole evaluation moves, and with it some seventeen synchronous
-  render paths and the code view's apply. If reopened, the shape
-  settled on was one evaluation API that answers at once for a
-  declared-only model and through the worker for a scripted one, with
-  render drawing from a cache ("running…" until the answer, then an
-  ordinary repaint; stale answers dropped in that one place), and a
-  switch to force the worker everywhere so its path stays exercised.
-  Against that cost the exposure is small: authoring a script is
-  experimental, and no external script loads without the gate.
-  Reopen when scripts leave the experimental flag, or on a real
-  report of a hang or of abuse.
-- **What stands in for it.** The gate lists every scripted
-  projection with its handlers' code (`envelopeScripts`, model.js),
-  so the reader consents to something they can read, and names
-  `?safe`. And a load that never finished turns safe mode on for the
-  next one by itself (`boot`, index.html): a flag in sessionStorage
-  is set before the first render and cleared after it, and found still
-  set means the last load hung. One load only, so a reload that merely
-  interrupted a slow page costs a reload.
 
 ## DCB queries, shown
 
@@ -1318,7 +1288,8 @@ Artboards: `design/dcb-queries/` (2026-10).
   dry runs showing in a profile.
 - **Synchronous, deliberately.** An asynchronous port would make the
   whole fold asynchronous, and every render path that evaluates with
-  it (see _Scripts and the origin_). A WebAssembly host import is a
+  it – the same cost that shelved a Worker sandbox for scripts (see
+  _Scripts and the origin_). A WebAssembly host import is a
   blocking call anyway; a host over an asynchronous client blocks.
 - **A log passes every type; the port asks for the handled ones.**
   Over a log, filtering by type would be a pass for nothing – the fold
@@ -1439,9 +1410,6 @@ Artboards: `design/dcb-queries/` (2026-10).
   (converted entities, retries, custom-type order); `inScratchLog` runs
   the real import against an array instead – no append listener, no
   compaction, no revision bump, so no cache of the real log moves.
-- **No import gate for a file.** The gate exists because scripts run
-  unprompted; Compare prints a script and derives boundaries from
-  declared tags, and compiles nothing.
 - **Read-only, and the open model is the one you go to.** "Open" leads
   to the definition's page in the open model, only when it has it; the
   other side is often not in the log, so it is read on this page only.
@@ -1573,9 +1541,8 @@ Artboards: `design/dcb-queries/` (2026-10).
   the real consumers – the OpenAPI builder, the slice view, the
   runtime's adapter, the sandbox – call, documented in the file
   headers. A resolved-model format comes only when a generator misses
-  something the functions do not give. A model with scripted handlers
-  is refused by any generator (`envelopeHasScript`): translating
-  JavaScript is not on offer.
+  something the functions do not give. Since 11.0 no model holds
+  JavaScript to translate: a scripted one does not import.
 - **The phases.** Each leaves both repositories green, and the
   runtime's conformance test guards the first three as they happen.
   1. `modelFromEnvelope` (the import inside `inScratchLog`) and

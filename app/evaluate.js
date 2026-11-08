@@ -27,27 +27,14 @@
 // `projectFromStore`, one attempt each (_Through a store_, below).
 //
 // **Closures, not generated code.** Every handler compiles to a small
-// JavaScript function `(state, event, args) => state`, one per handler
-// per projection, built by walking the declarative operand tree and
-// closing over it. A scripted handler compiles to a function of the
-// *same signature* through `new Function`, so the fold engine never
-// branches on whether a projection is scripted – the difference is
-// gone by the time anything folds. What this deliberately avoids is
-// emitting source: a generated fold would be a third copy of semantics
-// that `deriveDcb` and validation already hold, and the only copy of
-// the three you could not read, grep or breakpoint.
-//
-// **Scripts run on the main thread, unsandboxed – and unprompted.**
-// The contract is the one the schema states: each body is an
-// expression over `state`, `event`, `args` and `tags` returning the next
-// state. A scripted projection folds wherever and whenever a declared
-// one would, repaints included. What stands between an untrusted
-// model and that is the import gate (nothing external loads without a
-// confirmation – index.html), and what stands between a hanging
-// script and a page that hangs again on every reload is safe mode:
-// `setScriptsDisabled(true)` – flipped by the interface for a `?safe`
-// URL, or after a load that hung – compiles every script handler to a
-// thrower instead, so the model still loads and the script can be reached and fixed.
+// JavaScript function `(state, event) => state`, one per handler per
+// projection, built by walking the declarative operand tree and
+// closing over it. What this deliberately avoids is emitting source: a
+// generated fold would be a third copy of semantics that `deriveDcb`
+// and validation already hold, and the only copy of the three you
+// could not read, grep or breakpoint. No authored code runs here at
+// all: 11.0 removed scripted projections, and with them every reason
+// to sandbox, gate or switch off a fold.
 //
 // **Groups are invisible here.** A grouped projection is folded by its
 // qualified name, `Course.capacity`, as the body `projectionsOf`
@@ -61,8 +48,8 @@
 // **Failure has two kinds and they are not the same.** A command whose
 // conditions do not hold is *rejected* – an ordinary, expected outcome
 // this returns. A scenario that cannot be run at all – an event that no
-// longer exists, an argument the command never got, a script that threw
-// – is *broken*, and comes back as an `EvaluationError`. Real bugs in
+// longer exists, an argument the command never got, a value of the
+// wrong shape – is *broken*, and comes back as an `EvaluationError`. Real bugs in
 // this file are neither: they propagate as ordinary exceptions, so a
 // mistake here can never be mistaken for a modelling mistake.
 // ============================================================
@@ -85,7 +72,7 @@ function fail(message) {
   throw new EvaluationError(message);
 }
 
-// What a thrown thing says. A script may throw anything at all –
+// What a thrown thing says. A store port may throw anything at all –
 // `throw null` included – and reading `.message` off that must not be
 // the second, unexplained failure.
 function evErrorText(error) {
@@ -302,10 +289,8 @@ function evEventsTagged(model, events, tags) {
 // ============================================================
 // Compiling a fold.
 //
-// A projection – grouped or top-level – becomes three things: the state it starts from, a step function per event type, and
-// the reading a condition sees. Declared and scripted projections
-// produce the same three, which is the point: below this line nothing
-// knows the difference.
+// A projection – grouped or top-level – becomes two things: the state
+// it starts from, and a step function per event type.
 // ============================================================
 
 // A handler operand, as a function of the state and the event it is
@@ -326,73 +311,8 @@ function evCompileHandlerOperand(operand) {
   }
 }
 
-// Safe mode. Flipped by the interface for a `?safe` URL or after a
-// load that hung (and by tests directly): every script handler compiles to a thrower, so a model
-// whose script hangs the tab on load can still be opened, edited and
-// repaired. Declared handlers are untouched – this is a way back in,
-// not a mode the app runs in.
-let evScriptsDisabled = false;
-function setScriptsDisabled(disabled) {
-  evScriptsDisabled = !!disabled;
-  evCompiled = new WeakMap();
-}
-
-// What a script is handed of an event: a deep-frozen copy, made once
-// per event. The log is shared by every fold, read and repaint, so an
-// event a script changed in place would change what every later fold
-// sees; a copy keeps the log as it was, and freezing makes the attempt
-// an error the author sees instead of a silent no-op.
-const evFrozenEvents = new WeakMap();
-
-function evFrozenEvent(event) {
-  let frozen = evFrozenEvents.get(event);
-  if (!frozen) evFrozenEvents.set(event, frozen = evDeepFreeze(deepClone(event)));
-  return frozen;
-}
-
-function evDeepFreeze(value) {
-  if (value !== null && typeof value === 'object') {
-    for (const key of Object.keys(value)) evDeepFreeze(value[key]);
-    Object.freeze(value);
-  }
-  return value;
-}
-
-// One handler, as `(state, event, args, tags) => nextState`. `args` are
-// the read's argument values, `tags` the values it is tagged by, keyed
-// by the names the projection declares (`tags.courseId`) – a script
-// sees what it is read by, but cannot change it.
-//
-// Code runs only on a projection that declares a `script`: that is
-// what the import gate (`envelopeHasScript`) asks about, so it is the
-// one thing that may decide whether authored JavaScript runs. A `code`
-// left on an ordinary handler is inert here – the validator reports it.
-function evCompileHandler(handler, label, scripted) {
-  if (scripted && handler.code !== undefined) {
-    if (evScriptsDisabled) {
-      return () => fail(
-        `The script for "${handler.event}" on ${label} did not run: scripts are off in safe mode. ` +
-        'Remove "?safe" from the address to run them.'
-      );
-    }
-    // The contract the schema states, and the only place in this file
-    // where authored JavaScript runs. In strict mode, so that writing to
-    // the frozen event it is handed throws rather than doing nothing.
-    let body;
-    try {
-      body = new Function('state', 'event', 'args', 'tags', `'use strict'; return (${handler.code}\n);`);
-    } catch (error) {
-      fail(`The script for "${handler.event}" on ${label} does not parse: ${evErrorText(error)}`);
-    }
-    return (state, event, args, tags) => {
-      try {
-        return body(state, evFrozenEvent(event), args, tags);
-      } catch (error) {
-        return fail(`The script for "${handler.event}" on ${label} threw: ${evErrorText(error)}`);
-      }
-    };
-  }
-
+// One handler, as `(state, event) => nextState`.
+function evCompileHandler(handler, label) {
   const valueOf = evCompileHandlerOperand(handler.value);
   const where = `The handler for "${handler.event}" on ${label}`;
 
@@ -432,9 +352,8 @@ function evCompileHandler(handler, label, scripted) {
 
 // A projection, grouped or not, compiled once and folded many times –
 // once per model and target, so a fan-out reading the same projection
-// two hundred times compiles it (scripts included) once. Safe mode
-// changes what a script compiles to, so switching it starts afresh.
-let evCompiled = new WeakMap();
+// two hundred times compiles it once.
+const evCompiled = new WeakMap();
 
 function evCompileTarget(model, target, label) {
   let perModel = evCompiled.get(model);
@@ -446,43 +365,28 @@ function evCompileTarget(model, target, label) {
 }
 
 function evCompileTargetAfresh(model, target, label) {
-  const script = scriptOf(target);
   const steps = new Map();
   for (const handler of target.handlers || []) {
     if (!handler || !handler.event) continue;
-    steps.set(handler.event, evCompileHandler(handler, label, !!script));
+    steps.set(handler.event, evCompileHandler(handler, label));
   }
 
-  const initial = script
-    ? deepClone(script.initialState ?? null)
-    : (target.initialValue === undefined
-      ? evNormalize(defaultInitialValue(model, target))
-      : evNormalize(target.initialValue));
-
-  // What a condition reads. A script may keep bookkeeping the boundary
-  // never sees; `exposes` names the one field that reaches it.
-  const expose = script && script.exposes !== undefined
-    ? (state) => (state === null || state === undefined ? state : state[script.exposes])
-    : (state) => state;
-
-  const run = (events, args, tags) => {
-    // A script may change its state in place; the initial one is shared
-    // by every fold of this compiled target, so each starts from a copy.
-    let state = script ? deepClone(initial) : initial;
-    for (const event of events) {
-      const step = steps.get(event.type);
-      if (step) state = step(state, event, args || {}, tags || {});
-    }
-    return state;
-  };
+  const initial = target.initialValue === undefined
+    ? evNormalize(defaultInitialValue(model, target))
+    : evNormalize(target.initialValue);
 
   return {
     types: [...steps.keys()],
-    fold: (events, args, tags) => evNormalize(expose(run(events, args, tags))),
-    // The same fold read before `exposes` trims it: the whole state,
-    // bookkeeping included. Hidden from conditions – a statement about
-    // the boundary, not about the person watching the script work.
-    foldState: (events, args, tags) => evNormalize(run(events, args, tags)),
+    // Every step returns a new value, so the initial one is shared by
+    // every fold of this compiled target untouched.
+    fold: (events) => {
+      let state = initial;
+      for (const event of events) {
+        const step = steps.get(event.type);
+        if (step) state = step(state, event);
+      }
+      return evNormalize(state);
+    },
   };
 }
 
@@ -496,10 +400,6 @@ function evCompileTargetAfresh(model, target, label) {
 // projection and the read together say which events it folds. Reading
 // a group member is the same read, its one tag the group's: nothing
 // left for two paths to disagree about.
-//
-// `foldProjectionState` is not a second fold but a second reading of
-// the same one: the state before `exposes` trims it to the exposed
-// field. Without `exposes` the two answers coincide.
 //
 // It replays from the start of the log every time. That is the same
 // choice the playground already makes for its own state, and it stays
@@ -543,21 +443,10 @@ function projectionQueryTags(model, projectionName, read) {
     .map((leaf) => renderTag(identifierTypeOf(model, leaf.type), String(leaf.value))))];
 }
 
-// What a script sees of the tags it is read by: one value per declared
-// tag, by name – `tags.courseId`.
-function evScriptTags(model, projectionName, read) {
-  const out = {};
-  const held = (read && read.tags) || {};
-  for (const tag of projectionTagParams(evOwn(projectionsOf(model), projectionName))) {
-    out[tag.name] = evNormalize(evOwn(held, tag.name));
-  }
-  return out;
-}
-
 // Events reach a fold carrying an explicit key for every optional
 // property their definition declares – null when unset. One spelling
 // of "no value" downstream: a Given step may omit the key, an emission
-// writes the null out, and a handler or script reads the same thing
+// writes the null out, and a handler reads the same thing
 // either way. Optional lists are exempt (they evaluate as plain
 // lists; the advisories point the combination out).
 function evWithExplicitOptionals(model, event) {
@@ -576,19 +465,8 @@ function foldProjection(model, events, projectionName, read, seen = []) {
   if (projection && derivedOf(projection)) {
     return evDeriveProjection(model, events, projectionName, read, seen);
   }
-  const { compiled, selected, args, tags } = evProjectionFold(model, events, projectionName, read);
-  return compiled.fold(selected, args, tags);
-}
-
-function foldProjectionState(model, events, projectionName, read) {
-  const projection = evOwn(projectionsOf(model), projectionName);
-  if (projection && derivedOf(projection)) {
-    // A derived projection keeps no bookkeeping: its whole state is
-    // the one value its predicate or computation yields.
-    return evDeriveProjection(model, events, projectionName, read);
-  }
-  const { compiled, selected, args, tags } = evProjectionFold(model, events, projectionName, read);
-  return compiled.foldState(selected, args, tags);
+  const { compiled, selected } = evProjectionFold(model, events, projectionName, read);
+  return compiled.fold(selected);
 }
 
 // A derived projection is not folded but computed: each operand that
@@ -664,12 +542,7 @@ function evProjectionFold(model, events, projectionName, read) {
   const compiled = evCompileTarget(model, projection, `projection "${projectionName}"`);
   const selected = evSelectEvents(model, events, compiled.types, queryTags)
     .map((event) => evWithExplicitOptionals(model, event));
-  return {
-    compiled,
-    selected,
-    args: (read && read.args) || {},
-    tags: evScriptTags(model, projectionName, read),
-  };
+  return { compiled, selected };
 }
 
 // ============================================================

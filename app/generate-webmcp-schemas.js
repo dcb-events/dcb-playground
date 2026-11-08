@@ -19,12 +19,12 @@
 //     one, its tags are operands in turn, and inlining that at every
 //     operand more than doubled a command's schema.
 //
-// The experimental members are cut before anything is inlined, since
-// WebMCP does not offer them (see webmcp.js): no schema so much as
-// mentions a script – its code handlers and the arguments its
-// readers pass included, a group member's among them. Groups themselves are not experimental and
-// stay. The canonical schema keeps everything – a model using them
-// still imports.
+// The members WebMCP does not offer are cut before anything is
+// inlined (see webmcp.js): the arguments a read passes, a group
+// member's among them. They were cut when only a script took
+// arguments, and no tool schema has offered them since. Groups are not
+// experimental and stay. The canonical schema keeps everything – a
+// model using them still imports.
 //
 // Run with `node app/generate-webmcp-schemas.js` after changing
 // dcb-model.schema.json. Nothing here runs in the browser; it is a
@@ -37,13 +37,11 @@ const APP = __dirname;
 const schema = JSON.parse(fs.readFileSync(path.join(APP, '..', 'dcb-model.schema.json'), 'utf8'));
 const defs = schema.$defs;
 
-// What the experimental flag keeps off the pages, as schema members:
-// properties of a $def, and branches of a $def's choice. A name that
-// is not there stops the build – the schema moved, and so must this.
+// What the tool schemas leave out, as schema members: properties of a
+// $def, and branches of a $def's choice – what the experimental flag
+// keeps off the pages goes here too. A name that is not there stops
+// the build – the schema moved, and so must this.
 const EXPERIMENTAL_PROPERTIES = {
-  ProjectionDefinition: ['script'],
-  GroupProjectionDefinition: ['script'],
-  PropertyHandler: ['code'],
   ProjectionBinding: ['arguments'],
   ProjectionReadValue: ['arguments'],
   ProjectionScenarioDefinition: ['arguments'],

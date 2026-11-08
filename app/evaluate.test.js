@@ -113,13 +113,13 @@ const TENANT = PREDEFINED_INDEX('course-tenant');
 const PRICING = PREDEFINED_INDEX('pricing-simple');
 
 const {
-  evaluateCommand, foldProjection, foldProjectionState, tagsOfEvent,
-  deriveThen, runScenario, setScriptsDisabled,
+  evaluateCommand, foldProjection, tagsOfEvent,
+  deriveThen, runScenario,
   deriveProjectionScenarioThen, runProjectionScenario,
   addDefinition, updateDefinition, removeDefinition, renameDefinition, renameMember, reorderDefinitions,
   createDcbModel,
   generateId, scenarioName, deepClone, evSuccessor,
-  definitionsToSchema, buildShareEnvelope, importModelFromEnvelope, envelopeHasScript, envelopeScripts,
+  definitionsToSchema, buildShareEnvelope, importModelFromEnvelope,
   envelopeVersionWarning, modelMatchingEnvelope, commandRejections,
 } = sandbox;
 
@@ -141,12 +141,11 @@ function openBlank(name) {
   return { id, model: () => sandbox.projectState()[id] };
 }
 
-// A fresh model with a scripted projection in a group – for
-// scripted-content tests (script round-tripping, `envelopeHasScript`,
-// safe mode) that need a fixture no PREDEFINED_MODELS example carries.
-// `Tick` reads the script through its boundary, as `counter.total`.
-function openScripted() {
-  const { id, model } = openBlank('Scripted');
+// A fresh model with a counter in a group, read through a group alias
+// – a fixture no PREDEFINED_MODELS example carries. `Tick` reads it
+// through its boundary, as `counter.total`.
+function openCounter() {
+  const { id, model } = openBlank('Counter');
   sandbox.createGroup(id, 'Counter', { name: 'counterId', tagType: 'CounterId' });
   addTaggedEvent(id, 'Ticked', {
     properties: [{ name: 'counterId', propertyType: 'CounterId', isOptional: false, isList: false }],
@@ -154,8 +153,8 @@ function openScripted() {
   addDefinition('projection-definition', id, 'Counter.total', {
     valueType: 'integer',
     isList: false,
-    script: { initialState: 0 },
-    handlers: [{ event: 'Ticked', code: '(state || 0) + 1' }],
+    initialValue: 0,
+    handlers: [{ event: 'Ticked', operation: 'increment', value: 1 }],
   });
   addDefinition('command-definition', id, 'Tick', {
     properties: [{ name: 'counterId', propertyType: 'CounterId', isOptional: false, isList: false }],
@@ -1142,15 +1141,15 @@ function openSchedules() {
     tags: [{ name: 'regionCode', tagType: 'RegionCode' }],
     valueType: 'integer',
     isList: false,
-    script: { initialState: 0 },
-    handlers: [{ event: 'RegionOpened', code: '(state || 0) + 1' }],
+    initialValue: 0,
+    handlers: [{ event: 'RegionOpened', operation: 'increment', value: 1 }],
   });
   addDefinition('projection-definition', id, 'OpenRegionTotal', {
     tags: [],
     valueType: 'integer',
     isList: false,
-    script: { initialState: 0 },
-    handlers: [{ event: 'RegionOpened', code: '(state || 0) + 1' }],
+    initialValue: 0,
+    handlers: [{ event: 'RegionOpened', operation: 'increment', value: 1 }],
   });
 
   check('a read\'s tag resolves through a non-default tagSchema', () => {
@@ -1192,17 +1191,17 @@ function openSchedules() {
 }
 
 {
-  // A scripted projection inside a group goes out and comes back inside
-  // it, and still folds through the group's tag.
-  const original = openScripted().model();
+  // A projection inside a group goes out and comes back inside it, and
+  // still folds through the group's tag.
+  const original = openCounter().model();
   const { modelId: importedId } = importModelFromEnvelope(buildShareEnvelope(original, []));
   const imported = sandbox.projectState()[importedId];
 
-  check('a model with a scripted grouped projection round-trips', () => {
+  check('a model with a grouped projection round-trips', () => {
     eq(definitionsToSchema(imported), definitionsToSchema(original), 'the reconstructed model');
   });
 
-  check('the imported scripted grouped projection still folds', () => {
+  check('the imported grouped projection still folds', () => {
     const log = [];
     drive(imported, log, 'Tick', { counterId: 'x1' });
     eq(foldMember(imported, log, 'Counter', 'total', 'x1'), 1, 'one tick folded');
@@ -1231,67 +1230,6 @@ function openSchedules() {
     eq(modelMatchingEnvelope(edited), null, 'a renamed envelope');
     const withSteps = { ...JSON.parse(JSON.stringify(envelopes[PRICING])), sandbox: { steps: [{ command: 'DefineProduct', args: {} }] } };
     eq(modelMatchingEnvelope(withSteps), null, 'an envelope with sandbox steps');
-  });
-}
-
-{
-  const plain = build(PRICING);
-  const scripted = openScripted().model(); // a scripted grouped projection
-
-  check('envelopeHasScript is false for a model with no scripts', () => {
-    eq(envelopeHasScript(buildShareEnvelope(plain, [])), false, 'plain model');
-  });
-  check('envelopeHasScript is true for a scripted grouped projection', () => {
-    eq(envelopeHasScript(buildShareEnvelope(scripted, [])), true, 'scripted model');
-    eq(envelopeScripts(buildShareEnvelope(scripted, [])).map((s) => s.projection), ['Counter.total'],
-      'named qualified');
-  });
-
-  // And a top-level scripted projection, with a small ad-hoc model.
-  const { id, model } = openBlank();
-  addDefinition('custom-type-definition', id, 'RegionCode', { schema: { type: 'string' }, isTag: true });
-  addTaggedEvent(id, 'RegionOpened', {
-    properties: [{ name: 'regionCode', propertyType: 'RegionCode', isOptional: false, isList: false }],
-  });
-  addDefinition('projection-definition', id, 'OpenRegionCount', {
-    valueType: 'integer',
-    isList: false,
-    script: { initialState: 0 },
-    handlers: [{ event: 'RegionOpened', code: '(state || 0) + 1' }],
-  });
-  check('envelopeHasScript is true for a scripted (standalone) projection', () => {
-    eq(envelopeHasScript(buildShareEnvelope(model(), [])), true, 'scripted projection');
-  });
-  check('envelopeScripts lists the code the gate asks about, and nothing else', () => {
-    eq(envelopeScripts(buildShareEnvelope(model(), [])),
-      [{ projection: 'OpenRegionCount', handlers: [{ event: 'RegionOpened', code: '(state || 0) + 1' }] }],
-      'the one scripted projection, with its handler');
-    eq(envelopeScripts(buildShareEnvelope(plain, [])), [], 'nothing for a plain model');
-  });
-}
-
-{
-  // The gate asks about `script`, so `script` alone decides whether
-  // code runs. A `code` slipped onto a declared handler – by a crafted
-  // link, an agent's edit or a JSON body in the code view – is inert:
-  // the gate rightly lets the envelope through, the declared operation
-  // is what folds, and the validator says the code is there.
-  const envelope = JSON.parse(JSON.stringify(buildShareEnvelope(build(SEQUENCE), [])));
-  const numbering = envelope.projectionDefinitions.find((p) => p.name === 'CourseNumbering');
-  numbering.handlers[0].code = '(globalThis.__declaredCodeRan = true, "x9")';
-
-  check('code on a declared handler does not pass for a script', () => {
-    eq(envelopeHasScript(envelope), false, 'no script, so no question at import');
-    const id = importModelFromEnvelope(envelope).modelId;
-    const model = sandbox.projectState()[id];
-    eq(model['projection-definitions'].CourseNumbering.handlers[0].code !== undefined, true, 'stored as authored');
-    const log = [];
-    drive(model, log, 'DefineCourse', { capacity: 10 });
-    eq(foldProjection(model, log, 'CourseNumbering', {}), 'c2', 'the declared successor folds');
-    eq(sandbox.__declaredCodeRan, undefined, 'the code never ran');
-    eq(sandbox.modelAdvisories(model).some(
-      (a) => a.name === 'CourseNumbering' && /also carries code/.test(a.message)
-    ), true, 'and it is advised');
   });
 }
 
@@ -1513,8 +1451,9 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   // 9.0 added computing derived projections and changed nothing an 8.x
-  // document says; 10.0 moved a script's arguments, which an import
-  // lifts; 11.0 replaced entities, which an import lifts into groups.
+  // document says; 10.0 moved a script's arguments, which 11.0 refuses
+  // along with the script; 11.0 replaced entities, which an import lifts
+  // into groups.
   // So 8.x to 10.x read whole – and with nothing to warn about.
   check('an 8.x, 9.x and 10.x import still read', () => {
     for (const major of [8, 9, 10]) {
@@ -1620,8 +1559,8 @@ check('an import missing the definition arrays is refused, not silently accepted
       return model;
     });
 
-  check('a scripted grouped projection is scoped by the instance', () => {
-    const { model } = openScripted();
+  check('a grouped projection is scoped by the instance', () => {
+    const { model } = openCounter();
     const log = [
       { type: 'Ticked', data: { counterId: 'x1' } },
       { type: 'Ticked', data: { counterId: 'x2' } },
@@ -1631,106 +1570,6 @@ check('an import missing the definition arrays is refused, not silently accepted
     eq(foldMember(model(), log, 'Counter', 'total', 'x2'), 1, 'x2 counted its own');
   });
 
-  check('a scripted projection may hold a record, and a condition reads it whole', () => {
-    const { id, model } = openScripted();
-    addDefinition('custom-type-definition', id, 'CounterStats', {
-      properties: [
-        { name: 'count', propertyType: 'integer' },
-        { name: 'odd', propertyType: 'boolean' },
-      ],
-    });
-    addDefinition('projection-definition', id, 'Counter.stats', {
-      valueType: 'CounterStats', isList: false,
-      script: { initialState: null },
-      handlers: [{
-        event: 'Ticked',
-        code: '{ count: ((state && state.count) || 0) + 1, odd: !(state && state.odd) }',
-      }],
-    });
-    addDefinition('command-definition', id, 'TickAtStats', {
-      properties: [
-        { name: 'counterId', propertyType: 'CounterId', isOptional: false, isList: false },
-        { name: 'expected', propertyType: 'CounterStats', isOptional: false, isList: false },
-      ],
-      boundary: [{ alias: 'counter', group: 'Counter', tags: { counterId: { parameterName: 'counterId' } } }],
-      conditions: [{
-        leftHandSide: { alias: 'counter', property: 'stats' },
-        predicate: 'equals',
-        rightHandSide: { parameterName: 'expected' },
-      }],
-      publishes: [{ name: 'Ticked', parameters: { counterId: { parameterName: 'counterId' } } }],
-    });
-
-    const log = [
-      { type: 'Ticked', data: { counterId: 'x1' } },
-      { type: 'Ticked', data: { counterId: 'x2' } },
-      { type: 'Ticked', data: { counterId: 'x1' } },
-    ];
-    eq(foldMember(model(), log, 'Counter', 'stats', 'x1'),
-      { count: 2, odd: false }, 'the record, whole');
-    const held = evaluateCommand(model(), log, 'TickAtStats',
-      { counterId: 'x1', expected: { count: 2, odd: false } });
-    eq(held.outcome, 'published', 'equality on a record is deep');
-    const refused = evaluateCommand(model(), log, 'TickAtStats',
-      { counterId: 'x1', expected: { count: 2, odd: true } });
-    eq(refused.outcome, 'rejected', 'and one differing field refuses');
-  });
-
-  check('`exposes` trims a reader to one field; the state fold keeps the record', () => {
-    const { id, model } = openScripted();
-    addDefinition('projection-definition', id, 'CounterAudit', {
-      tags: [{ name: 'counterId', tagType: 'CounterId' }],
-      valueType: 'integer', isList: false,
-      script: {
-        initialState: { total: 0, last: null },
-        exposes: 'total',
-      },
-      handlers: [{
-        event: 'Ticked',
-        code: '{ total: state.total + 1, last: event.data.counterId }',
-      }],
-    });
-
-    const log = [
-      { type: 'Ticked', data: { counterId: 'x1' } },
-      { type: 'Ticked', data: { counterId: 'x2' } },
-      { type: 'Ticked', data: { counterId: 'x1' } },
-    ];
-    eq(foldProjection(model(), log, 'CounterAudit', { tags: { counterId: 'x1' } }),
-      2, 'a reader sees the exposed field');
-    eq(foldProjectionState(model(), log, 'CounterAudit', { tags: { counterId: 'x1' } }),
-      { total: 2, last: 'x1' }, 'the state fold keeps the bookkeeping');
-    eq(foldProjectionState(model(), [], 'CounterAudit', { tags: { counterId: 'x1' } }),
-      { total: 0, last: null }, 'before anything happens, it is the initial state');
-    eq(foldProjectionState(model(), log, 'Counter.total', { tags: { counterId: 'x1' } }),
-      foldProjection(model(), log, 'Counter.total', { tags: { counterId: 'x1' } }),
-      'without `exposes` the two readings coincide');
-  });
-
-  advises('GlobalTicks', /states a tag filter/,
-    'a script with a tag filter of its own saves, with an advisory', () => {
-      const { id, model } = openScripted();
-      addDefinition('projection-definition', id, 'GlobalTicks', {
-        valueType: 'integer', isList: false,
-        script: { initialState: 0, tagFilter: [] },
-        handlers: [{ event: 'Ticked', code: '(state || 0) + 1' }],
-      });
-      return model;
-    });
-
-  check('a script sees the tags it is read by, and the arguments it is given', () => {
-    const { id, model } = openScripted();
-    addDefinition('projection-definition', id, 'TicksSeen', {
-      tags: [{ name: 'counterId', tagType: 'CounterId' }],
-      arguments: [{ name: 'prefix', propertyType: 'string' }],
-      valueType: 'string', isList: false,
-      script: { initialState: '' },
-      handlers: [{ event: 'Ticked', code: 'args.prefix + tags.counterId' }],
-    });
-    const log = [{ type: 'Ticked', data: { counterId: 'x1' } }];
-    eq(foldProjection(model(), log, 'TicksSeen', { tags: { counterId: 'x1' }, args: { prefix: '#' } }),
-      '#x1', 'tags.counterId – by its name – and args.prefix');
-  });
 }
 
 // ---------------------------------------------------------------
@@ -1974,31 +1813,8 @@ check('an import missing the definition arrays is refused, not silently accepted
     stored({ projection: 'CourseNumbering', arguments: { tenantId: 't1' } });
   });
 
-  check('safe mode compiles a script to a thrower and leaves declared folds alone', () => {
-    // The model as a plain object: `build(SEQUENCE)` below resets the store,
-    // but the fold only ever reads the object it is handed.
-    const scripted = openScripted().model();
-    const log = [{ type: 'Ticked', data: { counterId: 'x1' } }];
-    eq(foldMember(scripted, log, 'Counter', 'total', 'x1'), 1, 'runs when scripts are on');
-    setScriptsDisabled(true);
-    try {
-      let failure = null;
-      try {
-        foldMember(scripted, log, 'Counter', 'total', 'x1');
-      } catch (error) {
-        failure = error;
-      }
-      eq((failure || {}).name, 'EvaluationError', 'an evaluation error, not a crash');
-      eq(/safe mode/.test((failure || {}).message), true, 'which says why');
-      eq(foldProjection(build(SEQUENCE), [], 'CourseNumbering', {}), 'c1', 'a declared fold is untouched');
-    } finally {
-      setScriptsDisabled(false);
-    }
-    eq(foldMember(scripted, log, 'Counter', 'total', 'x1'), 1, 'and back on afterwards');
-  });
-
-  check('a scenario over a scripted projection is read by its tags', () => {
-    const { id, model } = openScripted();
+  check('a scenario over a grouped projection is read by its tags', () => {
+    const { id, model } = openCounter();
     const given = [
       { event: 'Ticked', data: { counterId: 'x1' } },
       { event: 'Ticked', data: { counterId: 'x2' } },
@@ -2510,7 +2326,7 @@ check('every predefined model ships advisory-clean', () => {
 
   check('an event naming two instances of one type is flagged as ambiguous', () => {
     const { id, model } = openAssignment();
-    const ambiguous = () => sandbox.modelAdvisories(model()).some((a) => /Tag it by one, split the event/.test(a.message));
+    const ambiguous = () => sandbox.modelAdvisories(model()).some((a) => /Tag it by one, or split the event/.test(a.message));
     eq(ambiguous(), false, 'the split-event shape is not ambiguous');
     // The unsplit shape: one event carrying both the new holder and
     // the one replaced – a handler on it fires for both partitions.
@@ -2525,7 +2341,7 @@ check('every predefined model ships advisory-clean', () => {
     body.handlers.push({ event: 'Reassigned', operation: 'append', value: { eventProperty: 'courseId' } });
     updateDefinition('projection-definition', id, 'Instructor.instructedCourses', body);
     const found = sandbox.modelAdvisories(model()).map((a) => a.message).join('; ');
-    eq(/Tag it by one, split the event/.test(found), true, 'the advisory names the fixes: ' + found);
+    eq(/Tag it by one, or split the event/.test(found), true, 'the advisory names the fixes: ' + found);
   });
 
   check('a binding off a null-starting projection is advised ahead of time', () => {
@@ -2613,10 +2429,6 @@ check('every predefined model ships advisory-clean', () => {
     eq(derived.leftHandSide.projection, 'DocumentDraftText', 'the operand moved with the rename');
   });
 
-  check('derived is data, not code – the import gate stays closed', () => {
-    const model = build(DERIVED);
-    eq(envelopeHasScript(buildShareEnvelope(model, [])), false, 'nothing to confirm');
-  });
 }
 
 // ---------------------------------------------------------------
@@ -2938,22 +2750,6 @@ check('every predefined model ships advisory-clean', () => {
     eq(model()['projection-definitions'].NotSubscribed.arguments, undefined, 'no empty list left behind');
   });
 
-  check('a 9.x script\'s arguments are lifted onto its projection on import', () => {
-    const { model } = seatsModel('Lifted');
-    const envelope = buildShareEnvelope(model(), []);
-    envelope.dcbModelVersion = '9.0';
-    delete envelope.groupDefinitions;
-    envelope.entityDefinitions = [];
-    envelope.projectionDefinitions.push({
-      name: 'Prefixed', tags: [], valueType: 'string', isList: false,
-      script: { initialState: '', arguments: [{ name: 'prefix', propertyType: 'string' }] },
-      handlers: [],
-    });
-    const { modelId } = importModelFromEnvelope(envelope);
-    const body = sandbox.projectState()[modelId]['projection-definitions'].Prefixed;
-    eq([body.arguments, body.script.arguments], [[{ name: 'prefix', propertyType: 'string' }], undefined], 'lifted');
-  });
-
   check('the shipped model is advisory-clean and its scenarios hold', () => {
     const model = build(HOURS);
     eq(sandbox.modelAdvisories(model), [], 'no advisories');
@@ -3189,7 +2985,7 @@ check('every predefined model ships advisory-clean', () => {
 // ---------------------------------------------------------------
 {
   check('a null entry among an event\'s or a command\'s properties is skipped', () => {
-    const { id, model } = openScripted();
+    const { id, model } = openCounter();
     const event = model()['event-definitions'].Ticked;
     updateDefinition('event-definition', id, 'Ticked', { ...event, properties: [null, ...event.properties] });
     const command = model()['command-definitions'].Tick;
@@ -3203,45 +2999,8 @@ check('every predefined model ships advisory-clean', () => {
     }).status, 'drifted', 'and a scenario runs');
   });
 
-  check('a script with no initial state starts from null', () => {
-    const { id, model } = openScripted();
-    addDefinition('projection-definition', id, 'Unstarted', {
-      valueType: 'integer', isList: false, script: {},
-      handlers: [{ event: 'Ticked', code: '(state || 0) + 1' }],
-    });
-    eq(foldProjection(model(), [], 'Unstarted', {}), null, 'nothing folded');
-  });
-
-  check('a script cannot change the events it folds', () => {
-    // The log is shared – by every fold, every read, every repaint – so
-    // an event a script changed would change what the next fold sees.
-    const { id, model } = openScripted();
-    addDefinition('projection-definition', id, 'Tamperer', {
-      valueType: 'integer', isList: false, script: { initialState: 0 },
-      handlers: [{ event: 'Ticked', code: '(event.data.counterId = "forged", state + 1)' }],
-    });
-    const log = [{ type: 'Ticked', data: { counterId: 'x1' } }];
-    let message = '';
-    try { foldProjection(model(), log, 'Tamperer', {}); } catch (error) { message = error.message; }
-    eq(/threw/.test(message), true, message || 'refused');
-    eq(log[0].data.counterId, 'x1', 'the log as it was');
-    eq(foldProjection(model(), log, 'Counter.total', { tags: { counterId: 'x1' } }), 1, 'and other folds read it so');
-  });
-
-  check('a script that throws something other than an Error is an evaluation error', () => {
-    const { id, model } = openScripted();
-    addDefinition('projection-definition', id, 'Thrower', {
-      valueType: 'integer', isList: false, script: { initialState: 0 },
-      handlers: [{ event: 'Ticked', code: '(() => { throw null; })()' }],
-    });
-    let caught;
-    try { foldProjection(model(), [{ type: 'Ticked', data: { counterId: 'x1' } }], 'Thrower', {}); } catch (error) { caught = error; }
-    eq(caught && caught.constructor.name, 'EvaluationError', 'an EvaluationError');
-    eq(/threw: null/.test(caught.message), true, caught.message);
-  });
-
   check('anything unforeseen in a scenario run is that scenario\'s error, not the page\'s', () => {
-    const { model } = openScripted();
+    const { model } = openCounter();
     const broken = deepClone(model());
     // A shape the write path would never let through, standing in for
     // whatever a defect the point fixes do not foresee looks like.
@@ -3263,7 +3022,7 @@ check('every predefined model ships advisory-clean', () => {
 // ---------------------------------------------------------------
 {
   check('a required argument named like a prototype key is still required', () => {
-    const { id, model } = openScripted();
+    const { id, model } = openCounter();
     addTaggedEvent(id, 'Built', {
       properties: [{ name: 'constructor', propertyType: 'string', isOptional: false, isList: false }],
     });
@@ -3280,7 +3039,7 @@ check('every predefined model ships advisory-clean', () => {
   });
 
   check('a command or a Given event named like a prototype key is not in the model', () => {
-    const { model } = openScripted();
+    const { model } = openCounter();
     let message = '';
     try { evaluateCommand(model(), [], 'hasOwnProperty', {}); } catch (error) { message = error.message; }
     eq(message, 'This model has no command "hasOwnProperty".', 'no such command');
@@ -3292,7 +3051,7 @@ check('every predefined model ships advisory-clean', () => {
   });
 
   check('an event without a field reads nothing there, whatever the field is called', () => {
-    const { id, model } = openScripted();
+    const { id, model } = openCounter();
     addDefinition('projection-definition', id, 'LastMaker', {
       valueType: 'string', isList: false, initialValue: null,
       handlers: [{ event: 'Ticked', operation: 'set', value: { eventProperty: 'constructor' } }],
@@ -3475,8 +3234,8 @@ check('every predefined model ships advisory-clean', () => {
   });
 }
 
-// The shipped models and the fixtures, whose scenarios cover scripted,
-// guarded and derived reads.
+// The shipped models and the fixtures, whose scenarios cover plain,
+// fanned-out and derived reads.
 function modelsWithScenarios() {
   return [
     ...sandbox.PREDEFINED_MODELS.map((shipped, index) => ({ name: shipped.slug, model: build(index) })),
@@ -3525,7 +3284,7 @@ function modelsWithScenarios() {
         compared++;
       }
     }
-    eq(compared > 50, true, `${compared} scenarios compared`);
+    eq(compared > 40, true, `${compared} scenarios compared`);
   });
 
   check('a chained boundary reads by what the read it waits for answered', () => {
@@ -3618,7 +3377,7 @@ function modelsWithScenarios() {
         compared++;
       }
     }
-    eq(compared > 50, true, `${compared} scenarios compared`);
+    eq(compared > 40, true, `${compared} scenarios compared`);
   });
 
   check('every command scenario asks the store as its plan says: head when chained, never a call too many', () => {
@@ -3644,7 +3403,7 @@ function modelsWithScenarios() {
         compared++;
       }
     }
-    eq(compared > 50, true, `${compared} scenarios compared`);
+    eq(compared > 40, true, `${compared} scenarios compared`);
   });
 
   check('a query item names at least one type, or leaves types out to match any type', () => {
@@ -3954,7 +3713,7 @@ function modelsWithScenarios() {
         checked++;
       }
     }
-    eq(checked > 50, true, `${checked} scenarios checked`);
+    eq(checked > 40, true, `${checked} scenarios checked`);
   });
 
   check('a command\'s schema is closed, and an optional argument may be left out or null', () => {
@@ -4334,6 +4093,39 @@ function modelsWithScenarios() {
   };
   const current = () => deepClone(buildShareEnvelope(build(SIMPLE), []));
   const grouped = () => deepClone(buildShareEnvelope(build(GROUPED), []));
+
+  check('a scripted projection refuses the whole document, top-level or grouped, 10.x or 11.0', () => {
+    const top = current();
+    const count = top.projectionDefinitions.find((p) => p.name === 'CourseSubscriptionCount');
+    count.script = { initialState: 0 };
+    count.handlers = count.handlers.map((h) => ({ event: h.event, code: 'state + 1' }));
+    eq(refusal(top), 'Projection "CourseSubscriptionCount" is scripted – 11.0 has no scripted projections, '
+      + 'so this model cannot be imported.', 'named, with the definition');
+    eq(Object.keys(sandbox.projectState()).length, 0, 'nothing loaded');
+
+    const inGroup = grouped();
+    const capacity = inGroup.groupDefinitions.find((g) => g.name === 'Course').projections.find((p) => p.name === 'capacity');
+    capacity.script = { initialState: 0 };
+    eq(/^Projection "Course\.capacity" is scripted/.test(refusal(inGroup)), true, 'a grouped one, named qualified');
+
+    const legacy = legacyEnvelope();
+    legacy.projectionDefinitions.find((p) => p.name === 'StudentExists').script = { initialState: false };
+    eq(/^Projection "StudentExists" is scripted/.test(refusal(legacy)), true, 'and in a 10.x document');
+
+    const codeOnly = current();
+    codeOnly.projectionDefinitions.find((p) => p.name === 'CourseCapacity').handlers[0].code = 'state';
+    eq(/^Projection "CourseCapacity" is scripted/.test(refusal(codeOnly)), true, 'code on a handler is a script too');
+  });
+
+  check('the write path refuses a script', () => {
+    const { id, model } = open_(SIMPLE);
+    const capacity = deepClone(model()['projection-definitions'].CourseCapacity);
+    let refused = null;
+    try {
+      updateDefinition('projection-definition', id, 'CourseCapacity', { ...capacity, script: { initialState: 0 } });
+    } catch (error) { refused = error.message; }
+    eq(refused, 'Projection "CourseCapacity" is scripted – 11.0 has no scripted projections.', 'named');
+  });
 
   check('currentValue refuses the whole document', () => {
     const envelope = current();

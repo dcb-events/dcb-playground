@@ -10,8 +10,8 @@
 //
 // **Validation is split in two.** The write path refuses only what
 // could not be stored as a definition at all – a missing key, a name
-// collision, a body whose containers are not the lists they claim
-// (`assertStorableBody`). Everything semantic – dangling references,
+// collision, a body whose containers are not the lists they claim, a
+// construct 11.0 removed (`assertStorableBody`). Everything semantic – dangling references,
 // write coverage, enum membership, name idiom – is an *advisory*:
 // computed from the stored state by `modelAdvisories`, surfaced by the
 // interface and the agent tools, never thrown at a writer. A defective
@@ -21,20 +21,12 @@
 // Loaded as a classic script (not a module) so the playground opens
 // straight from the filesystem without a server.
 //
-// One thing here is not in the declarative language proper and is
-// worth finding before reading anything else.
-//
-// **Scripted projections**: a property or a projection may replace its
-// declarative handlers with code, one body per event type. This is the
-// escape hatch for state whose accumulation cannot be declared –
-// windows, running comparisons, anything needing a value the previous
-// events implied rather than carried. It costs real validation: the
-// code is stored and displayed but nothing here parses or runs it, so
-// a scripted handler is checked for the events it claims and nothing
-// more. What it deliberately does *not* cost is the derived DCB: the
-// query still comes from the handler keys and the tags from the
-// binding, so a scripted projection reads exactly as legibly in a
-// boundary as a declared one.
+// **Everything is declared** (11.0): a projection is folded by its
+// handlers' operations or derived from other projections, and nothing
+// a model holds is code. Scripted projections, `currentValue`, guarded
+// emissions and optional reads were removed; `removedConstructIn` is
+// where a body that still says one is caught, on the write path and on
+// import.
 //
 // **Groups** (11.0): a group owns projections that share its one
 // partition tag – `group Course (tag courseId: CourseId) { capacity … }`.
@@ -1196,9 +1188,7 @@ function forEachReferenceSlot(kind, name, body, slot) {
     tagLiteralSlots(projection.tags);
     typeSlots(projection.arguments);
     for (const handler of projection.handlers || []) at(handler, 'event', 'event-definition', 'name');
-    // A derived predicate names the projections it reads. `derived` is
-    // read raw rather than through `derivedOf`, so a body carrying both
-    // a script and a predicate still tracks the names it holds.
+    // A derived predicate names the projections it reads.
     for (const operand of derivedOperands(projection.derived)) {
       if (operand && typeof operand === 'object' && operand.projection !== undefined) {
         projectionAt(operand, 'projection');
@@ -1507,18 +1497,10 @@ function projectionScenarioName(body) {
   return `ends up ${JSON.stringify(body.then)}`;
 }
 
-// The script a projection is advanced by, or null when its handlers
-// are declared the ordinary way.
-function scriptOf(target) {
-  return target && target.script ? target.script : null;
-}
-
 // The predicate a projection is *derived* by, or null when it is
-// folded (declared or scripted) the ordinary way. A body defective
-// enough to carry both a script and a derived predicate reads as
-// scripted – deterministic, and the advisory says both are there.
+// folded the ordinary way.
 function derivedOf(target) {
-  return target && target.derived && !target.script ? target.derived : null;
+  return target && target.derived ? target.derived : null;
 }
 
 // Whether a derived value computes a number (`operator`, 9.0) rather
@@ -1542,8 +1524,7 @@ function numericBaseOf(model, typeName) {
 // What one side of a computation is, as `{base, nullable}` – or null
 // when it is no single number. A literal is what it is; a read is what
 // its projection holds, and may be null while that projection starts
-// at null (declared) or computes from something that may (derived). A
-// script's value is opaque, and taken at its word. A parameter is what
+// at null (declared) or computes from something that may (derived). A parameter is what
 // `owner` – the derived projection it belongs to – declares it as; a
 // reader's null is the reader's to be warned about.
 function derivedInputOf(model, operand, seen = [], owner = null) {
@@ -1565,7 +1546,7 @@ function derivedInputOf(model, operand, seen = [], owner = null) {
     const sides = derivedOperands(inner).map((o) => derivedInputOf(model, o, [...seen, operand.projection], target));
     return { base, nullable: sides.some((side) => side && side.nullable) };
   }
-  return { base, nullable: !scriptOf(target) && (target.initialValue === null || target.initialValue === undefined) };
+  return { base, nullable: target.initialValue === null || target.initialValue === undefined };
 }
 
 // The type a computation yields from its two sides: an integer from two
@@ -1585,26 +1566,16 @@ function derivedResultBase(model, derived, owner = null) {
 // is drawn at what the examples on dcb.events need, see
 // docs/research/2026-10-05-explicit-tags-and-aliases.md. Groups are not
 // on it: a naming device with no consistency meaning has nothing to
-// hide (docs/research/2026-10-28-groups-replace-entities.md). A grouped
-// projection that is scripted is found under its qualified name.
-const EXPERIMENTAL_FEATURES = {
-  scripted: 'scripted projections',
-};
+// hide (docs/research/2026-10-28-groups-replace-entities.md). Since
+// 11.0 removed scripts, guards, optional reads and `currentValue`, no
+// construct of the language is on it: the flag gates views only, and
+// stays as the way to stage what comes next.
+const EXPERIMENTAL_FEATURES = {};
 
+// A construct staged behind the flag is looked for here, each use
+// once, in the order EXPERIMENTAL_FEATURES lists them. None is.
 function experimentalFeatures(model) {
-  const found = [];
-  const seen = new Set();
-  const note = (feature, where) => {
-    const key = feature + '\u0000' + where;
-    if (seen.has(key)) return;
-    seen.add(key);
-    found.push({ feature, where });
-  };
-  for (const [name, body] of Object.entries(projectionsOf(model))) {
-    if (scriptOf(body)) note('scripted', name);
-  }
-  const order = Object.keys(EXPERIMENTAL_FEATURES);
-  return found.sort((a, b) => order.indexOf(a.feature) - order.indexOf(b.feature));
+  return [];
 }
 
 // What `after` uses that `before` did not, by feature and definition –
@@ -1625,10 +1596,9 @@ function derivedOperands(derived) {
 
 // What a reader of this projection supplies besides tags: its
 // arguments, `{name, propertyType}` – the values after the tags in
-// `X(courseId, 14)` (10.0; a script's own until then). A script reads
-// them as `args`, a derived projection compares or computes with them
-// or passes them on; a declared projection's handlers cannot see them,
-// which the advisories say.
+// `X(courseId, 14)` (10.0). A derived projection compares or computes
+// with them or passes them on; a declared projection's handlers cannot
+// see them, which the advisories say.
 function projectionSlots(projection) {
   return (projection && Array.isArray(projection.arguments) ? projection.arguments : [])
     .filter((argument) => argument && typeof argument === 'object');
@@ -1832,9 +1802,7 @@ function resolveOperandType(operand, { boundary, commandProperties, model }) {
       return { propertyType: projection.valueType, isList: !!projection.isList };
     }
     if (binding.group === undefined || !operand.property) return null;
-    // A member is the group's projection of that name. A scripted one
-    // is no different here: `valueType` and `isList` describe the value
-    // a condition reads, whatever the code keeps to arrive at it.
+    // A member is the group's projection of that name.
     const projection = projectionsOf(model)[qualifiedProjectionName(binding.group, operand.property)];
     if (!projection) return null;
     return { propertyType: projection.valueType, isList: !!projection.isList };
@@ -2260,8 +2228,8 @@ function deriveDcb(model, body) {
       // The projection declares its tags and the read gives their
       // values, so the query is written from both – one tag per scalar
       // tag value, one per component for a record – whatever kind of
-      // projection it reads: declared, scripted or derived, none of them
-      // can hide what it reads.
+      // projection it reads: declared or derived, neither can hide what
+      // it reads.
       items.push(...readItems(model, body, binding, { alias: binding.alias }));
       continue;
     }
@@ -2956,7 +2924,7 @@ function definitionAdvisories(model, kind, name, body) {
     messages.push(error && error.message ? error.message : String(error));
   }
   // A read nothing consults. The app cannot author one – a read exists
-  // because a rule, guard, emission, emitted tag or another read wanted
+  // because a rule, emission, emitted tag or another read wanted
   // it – so this only ever comes from outside: a hand-written file, or
   // an agent writing a whole body. It still bounds the append, so it is
   // never dropped behind anyone's back; it is reported here and pruned
@@ -3165,8 +3133,7 @@ function readArgumentsProblem(projection, read, label, chained = () => null) {
 //   naming both the new holder and the one replaced), so it reaches
 //   both instances and a declarative handler fires for both: the
 //   instructor being replaced would "gain" the course their successor
-//   was just assigned. A script can tell the two apart (`tags`), so
-//   only a declared fold is held to it.
+//   was just assigned.
 function projectionTagProblem(model, projectionName) {
   const projection = projectionsOf(model)[projectionName];
   const tagTypes = projectionTagTypes(model, projectionName);
@@ -3178,7 +3145,6 @@ function projectionTagProblem(model, projectionName) {
       `"${unreached.event}", which it handles, is tagged by no ${unreached.missing.join(' or ')} – ` +
       'so that handler never fires.';
   }
-  if (scriptOf(projection)) return null;
   for (const eventName of projectionHandledTypes(model, projectionName)) {
     const leaves = eventTagLeaves(model, model['event-definitions'][eventName]);
     for (const type of tagTypes) {
@@ -3186,8 +3152,8 @@ function projectionTagProblem(model, projectionName) {
       if (carriers.length > 1) {
         return `${label} is tagged by ${type}, and "${eventName}" is tagged by ` +
           `${type} in ${carriers.map((leaf) => `"${leaf.path}"`).join(' and ')}, so its handler ` +
-          'fires for both and cannot tell them apart. Tag it by one, split the event so each ' +
-          'records one fact, or script the projection.';
+          'fires for both and cannot tell them apart. Tag it by one, or split the event so each ' +
+          'records one fact.';
       }
     }
   }
@@ -3195,10 +3161,9 @@ function projectionTagProblem(model, projectionName) {
 }
 
 // Handler validation. `target` is a projection body: `valueType`,
-// `isList`, `script` – a grouped one included, so there is exactly one
-// shape to validate.
+// `isList` – a grouped one included, so there is exactly one shape to
+// validate.
 function validateHandlers(model, label, target, handlers) {
-  if (scriptOf(target)) return validateScriptedHandlers(model, label, handlers);
   const allowedOperations = operationsFor(model, target);
   const members = enumMembersFor(model, target.valueType);
   const handledEvents = new Set();
@@ -3232,15 +3197,6 @@ function validateHandlers(model, label, target, handlers) {
       throw new DomainError(`${label} handles "${handler.event}" twice.`);
     }
     handledEvents.add(handler.event);
-    // The mirror of the scripted check below. Code on a declared
-    // handler never runs (`evCompileHandler`); say so rather than let
-    // it sit in the model looking as if it did.
-    if (handler.code !== undefined) {
-      throw new DomainError(
-        `The handler for "${handler.event}" on ${label} declares an operation and also carries ` +
-        'code. Only a scripted projection runs code.'
-      );
-    }
     if (!allowedOperations.includes(handler.operation)) {
       throw new DomainError(
         `Operation "${handler.operation}" is not available for ${label} ` +
@@ -3276,94 +3232,6 @@ function validateHandlers(model, label, target, handlers) {
         `Handler on ${label} sets "${leaf.enumMember}", which is not a member of ${target.valueType}.`
       );
     }
-  }
-}
-
-// A scripted handler is a body of code, and nothing here parses it.
-// What can still be checked is what it *claims*: the event exists and
-// is claimed once. That is exactly the part the derived DCB reads, so
-// the boundary stays trustworthy while the accumulation does not.
-function validateScriptedHandlers(model, label, handlers) {
-  const handledEvents = new Set();
-  for (const handler of handlers || []) {
-    if (!handler || !handler.event) {
-      throw new DomainError(`A handler on ${label} has no event.`);
-    }
-    if (handledEvents.has(handler.event)) {
-      throw new DomainError(`${label} handles "${handler.event}" twice.`);
-    }
-    handledEvents.add(handler.event);
-    if (!model['event-definitions'][handler.event]) {
-      throw new DomainError(`${label} handles "${handler.event}", which this model does not define.`);
-    }
-    if (typeof handler.code !== 'string' || !handler.code.trim()) {
-      throw new DomainError(
-        `The handler for "${handler.event}" on ${label} is scripted but carries no code.`
-      );
-    }
-    if (handler.operation !== undefined || handler.value !== undefined) {
-      throw new DomainError(
-        `The handler for "${handler.event}" on ${label} is scripted and also declares an ` +
-        'operation. A handler is one or the other: the code is the operation.'
-      );
-    }
-  }
-}
-
-// What a script may state, wherever it appears. `initialState` is the
-// state before any event; `exposes` names the field of it a condition
-// reads, and is what keeps a composite accumulation from leaking into
-// the boundary – `propertyType`/`isList` still describe that exposed
-// value, so conditions type-check exactly as they always did.
-//
-// Its arguments are the projection's (`validateProjectionTags`).
-function validateScript(model, label, target) {
-  const script = scriptOf(target);
-  if (script.initialState === undefined) {
-    throw new DomainError(`${label} needs an initial state – it is the state before any event.`);
-  }
-  if (target.initialValue !== undefined) {
-    throw new DomainError(
-      `${label} declares both an initial value and a script. The script's "initialState" is the ` +
-      'one that starts it; two of them would disagree.'
-    );
-  }
-  if (script.exposes !== undefined) {
-    if (!CAMEL_RE.test(script.exposes)) {
-      throw new DomainError(`${label} exposes "${script.exposes}", which is not a camelCase field name.`);
-    }
-    const state = script.initialState;
-    if (!state || typeof state !== 'object' || Array.isArray(state)) {
-      throw new DomainError(
-        `${label} exposes the field "${script.exposes}", but its initial state is not a record – ` +
-        'a script that exposes one field of its state must keep that state in fields.'
-      );
-    }
-    if (!(script.exposes in state)) {
-      throw new DomainError(
-        `${label} exposes "${script.exposes}", which its initial state does not hold. ` +
-        `It starts with: ${Object.keys(state).join(', ') || 'nothing'}.`
-      );
-    }
-  }
-
-  // Arguments are the projection's own since 10.0. A 9.x body is
-  // lifted on import; one stored here is a misreading to point out.
-  if (script.arguments !== undefined) {
-    throw new DomainError(
-      `${label} states arguments inside its script. They belong to the projection – ` +
-      'beside its tags, where every kind of projection declares them.'
-    );
-  }
-
-  // A script is read by the tags its projection declares, like any
-  // projection (8.0) – they reach its code as `tags`. A filter of its
-  // own would be a second, disagreeing answer to "which events".
-  if (script.tagFilter !== undefined) {
-    throw new DomainError(
-      `${label} states a tag filter. A projection declares the tags it is read by, and a ` +
-      'script sees their values as `tags` – drop the filter.'
-    );
   }
 }
 
@@ -3440,20 +3308,6 @@ function validateProjectionBody(model, projectionName, body) {
       `Type "${body.valueType}" (projection "${projectionName}") does not resolve in this model.`
     );
   }
-  const script = scriptOf(body);
-  if (body.script && body.derived) {
-    throw new DomainError(
-      `Projection "${projectionName}" declares both a script and a derived predicate – one or ` +
-      'the other produces its value, not both. It reads as scripted until one goes.'
-    );
-  }
-
-  if (script) {
-    validateScript(model, `projection "${projectionName}"`, body);
-    validateHandlers(model, `projection "${projectionName}"`, body, body.handlers);
-    return;
-  }
-
   if (derivedOf(body)) {
     // A derived projection is nothing but its predicate or computation:
     // no initial value (before any event it derives from its operands'
@@ -3487,15 +3341,13 @@ function validateProjectionBody(model, projectionName, body) {
     return;
   }
 
-  // A record of fields is a value only code can advance: the declared
-  // operations act on a single value and have nothing to act on in
-  // one, so a composite is legal exactly where a script is what moves
-  // the projection.
+  // The declared operations act on a single value and have nothing to
+  // act on in a record of fields, so no projection holds one.
   if (valueCls.kind === 'value' && valueCls.composite) {
     throw new DomainError(
       `Projection "${projectionName}" holds "${body.valueType}", which is a composite. ` +
-      'The operations that advance a declared projection act on a single value and have ' +
-      'nothing to act on in a record of fields – script the projection to hold one.'
+      'The operations that advance a projection act on a single value and have ' +
+      'nothing to act on in a record of fields.'
     );
   }
 
@@ -3560,7 +3412,7 @@ function validateProjectionTags(model, projectionName, body) {
       );
     }
   }
-  if (arguments_.size && !scriptOf(body) && !derivedOf(body)) {
+  if (arguments_.size && !derivedOf(body)) {
     throw new DomainError(
       `${label} takes ${[...arguments_].map((n) => `"${n}"`).join(', ')} as ` +
       `${arguments_.size === 1 ? 'an argument' : 'arguments'}, but its handlers see only the event – ` +
@@ -4318,8 +4170,8 @@ function validateCommandBody(model, body) {
       }
     }
   }
-  // Arguments are deliberately exempt: they reach a script or a
-  // derivation as ordinary values, and null is one. A read's tag becomes
+  // Arguments are deliberately exempt: they reach a derivation as
+  // ordinary values, and null is one. A read's tag becomes
   // a tag, and null has no tag – evaluation errors when it is unset, and
   // this says so first.
   for (const binding of boundary) {
@@ -4338,8 +4190,7 @@ function validateCommandBody(model, body) {
   // another binding's value can be unset too – a projection that starts
   // at null reads null until something sets it, and the binding then
   // errors on exactly the first interesting case (nothing assigned
-  // yet). Statically knowable only from the initial value; a scripted
-  // projection keeps its own counsel and is left alone.
+  // yet). Statically knowable only from the initial value.
   for (const binding of boundary) {
     if (binding.group === undefined) continue;
     if (isFannedOut(model, body, binding)) continue;
@@ -4353,7 +4204,7 @@ function validateCommandBody(model, body) {
       : (source.group !== undefined && tagged.property
         ? projectionsOf(model)[qualifiedProjectionName(source.group, tagged.property)]
         : null);
-    if (!projection || scriptOf(projection) || derivedOf(projection)) continue;
+    if (!projection || derivedOf(projection)) continue;
     if (projection.initialValue === null) {
       throw new DomainError(
         `Boundary binding "${binding.alias}" takes its tag from ${operandText(tagged)}, ` +
@@ -4546,8 +4397,9 @@ function validateProjectionScenarioBody(model, body) {
 // body that is not an object, or whose container fields are not the
 // lists they claim to be, is not a defective definition but no
 // definition at all: storing it would crash the projection and the
-// renderer rather than merely mislead them. Everything semantic –
-// what the containers *say* – is an advisory now, never a refusal.
+// renderer rather than merely mislead them. So is a body saying what
+// 11.0 removed (`removedConstructIn`). Everything semantic – what the
+// containers *say* – is an advisory now, never a refusal.
 const STORABLE_LIST_FIELDS = [
   'properties', 'handlers', 'boundary', 'conditions', 'publishes', 'parameters', 'given', 'projections',
 ];
@@ -4557,9 +4409,11 @@ const STORABLE_LIST_FIELDS = [
 // after the definition's name – or null. A grouped projection is
 // found under its local name (`local`). Nothing below the write path
 // knows these constructs any more, so a body saying one is no
-// definition this build can mean: the write path refuses it and the
-// importer refuses, or leaves out, what says one (`removedConstructNote`).
+// definition this build can mean: the write path refuses it, and the
+// importer refuses, or leaves out, what says one
+// (`refuseRemovedConstructs`).
 const REMOVED_CONSTRUCTS = {
+  scripted: '11.0 has no scripted projections',
   currentValue: '11.0 has no currentValue',
   guard: '11.0 has no guarded emissions',
   optional: '11.0 has no optional reads',
@@ -4578,6 +4432,9 @@ function removedConstructIn(kind, body) {
     return null;
   }
   if (kind === 'projection-definition') {
+    if (body.script !== undefined || list(body.handlers).some((h) => h && h.code !== undefined)) {
+      return { construct: 'scripted', what: 'is scripted' };
+    }
     if (list(body.handlers).some((h) => h && mentions(h.value, 'currentValue'))) {
       return { construct: 'currentValue', what: 'sets a value from currentValue' };
     }
@@ -4748,21 +4605,6 @@ function updateDefinitions(modelId, changes) {
   appendEvents(all.map(({ kind, name, body }) => (
     { type: `${kind}-updated`, data: { 'dcb-model-id': modelId, name, body } }
   )));
-}
-
-// Everything scripted that handles this event, named the way a person
-// would say it: "Product.validPrices", "ValidPrices".
-//
-// Renaming an event or one of its properties rewrites every declared
-// operand that names it. It cannot rewrite code – the model does not
-// parse the body, and a textual pass over an unparsed language would
-// eventually rewrite a comment or a string literal and corrupt someone
-// else's work. So the rename goes through and this says what to check.
-function scriptedHandlersOf(model, eventName) {
-  const handles = (target) => (target.handlers || []).some((h) => h && h.event === eventName);
-  return Object.entries(projectionsOf(model))
-    .filter(([, projection]) => projection && scriptOf(projection) && handles(projection))
-    .map(([name]) => name);
 }
 
 function renameDefinition(kind, modelId, previousName, newName) {
@@ -5390,7 +5232,6 @@ const MEMBER_REWRITES = {
   // key in every read of it – an alias's, one in place, a derived
   // operand's, a projection scenario's – and, on a derived projection,
   // in its own operands wherever they pass the tag on (`{parameterName}`).
-  // What a script reads as `tags.<name>` is code, and stays as written.
   // A projection's parameter is read by name everywhere it is given –
   // a read's `tags` or `arguments`, a projection scenario's, a derived
   // operand's – and named by its own derived predicate
@@ -5770,16 +5611,15 @@ function reorderDefinitions(kind, modelId, order) {
 // there – so they are compared as written, key order aside; the one
 // thing dropped inside them is an empty `tags` or `arguments`, which
 // says "none" the same way its absence does. An event's `tags` are a
-// set of paths, so their order is not compared either. Data (`schema`, `initialState`,
-// `initialValue`) is compared as written too. `rightHandSide`, `derived`
-// and `script` keep their empties: `equalsAny []` holds for nothing,
-// and an empty `derived` or `script` still decides what kind of
-// projection this is.
+// set of paths, so their order is not compared either. Data (`schema`,
+// `initialValue`) is compared as written too. `rightHandSide` and
+// `derived` keep their empties: `equalsAny []` holds for nothing, and
+// an empty `derived` still decides what kind of projection this is.
 const DEFAULT_FLAGS = ['isOptional', 'isList', 'negate', 'isTag'];
-const DATA_FIELDS = ['schema', 'initialState', 'initialValue'];
+const DATA_FIELDS = ['schema', 'initialValue'];
 const OPERAND_FIELDS = ['leftHandSide', 'rightHandSide', 'value', 'successor'];
 const OPERAND_MAPS = ['parameters', 'arguments', 'tags'];
-const KEEPS_EMPTY = ['rightHandSide', 'tagFilter', 'derived', 'script'];
+const KEEPS_EMPTY = ['rightHandSide', 'derived'];
 
 // Keys are set as own properties: a key called `__proto__` is a key.
 function normalizedPut(out, key, value) {
@@ -6193,8 +6033,8 @@ function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
 // (`{parameterName}` as a side, or passed on as an operand's tag or
 // argument). A new operand member and a moved field: a 9.x reader would
 // find a derived side it cannot read and a script with no arguments.
-// A 9.x document reads here whole, its scripts' arguments lifted on
-// import (`liftScriptArguments`).
+// A 9.x document read here whole, its scripts' arguments lifted on
+// import, until 11.0 refused scripts altogether.
 // 11.0 replaced entities by groups: `entityDefinitions` – with its
 // property bindings, `lifecycle` and a binding's `excluding` – is gone,
 // and `groupDefinitions` holds groups that own their projections, read
@@ -6204,6 +6044,12 @@ function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
 // vocabulary both ways, so a major. An 8.x to 10.x document is read
 // still, its entities lifted into groups where that says the same thing
 // and restated as plain reads where it does not (`groupsFromEntities`).
+// 11.0 also removed what the language kept for what it could not say:
+// scripted projections, `currentValue`, guarded emissions and optional
+// reads – members gone from closed vocabularies, so within the major.
+// A document saying one is read as far as it can be read correctly
+// (`refuseRemovedConstructs`): a script or `currentValue` refuses it
+// whole, a guarded emission or an optional read leaves its command out.
 const MODEL_VERSION = '11.0';
 const MODEL_SCHEMA_URL = 'https://dcb.events/schemas/model/v11.json';
 const READABLE_MAJORS = [8, 9, 10, 11];
@@ -6366,37 +6212,6 @@ function modelMatchingEnvelope(envelope) {
   return Object.keys(models).find((id) => JSON.stringify(buildShareEnvelope(models[id])) === wanted) || null;
 }
 
-// Whether importing this envelope would run authored code the moment
-// anything touches it – a property or a projection carrying a `script`
-// both compile through the same unsandboxed path (see `evCompileHandler`
-// in evaluate.js). This is what gates the confirmation before import.
-function envelopeHasScript(envelope) {
-  return envelopeScripts(envelope).length > 0;
-}
-
-// The code that would run, per scripted projection, as the gate shows
-// it: a confirmation that only says *that* there is code asks for
-// trust it gives the reader no way to check. Scripts live only on
-// projections – top-level ones and the ones a group owns, named
-// qualified. Handlers are listed as they stand, `code` or not, so the
-// list is what `evCompileHandler` would compile.
-function envelopeScripts(envelope) {
-  if (!envelope || typeof envelope !== 'object') return [];
-  const asList = (value) => (Array.isArray(value) ? value : []);
-  const projections = [
-    ...asList(envelope.projectionDefinitions).map((p) => [p && p.name, p]),
-    ...asList(envelope.groupDefinitions).flatMap((group) => asList(group && group.projections)
-      .map((p) => [`${group && group.name}.${p && p.name}`, p])),
-  ];
-  return projections
-    .filter(([, p]) => p && !!p.script)
-    .map(([name, p]) => ({
-      projection: String(name),
-      handlers: asList(p.handlers)
-        .map((handler) => ({ event: String(handler && handler.event), code: String((handler && handler.code) ?? '') })),
-    }));
-}
-
 // The wire format's two markers, checked. Only `dcbModelVersion` is
 // read: `$schema` has to be *present*, because a document without one
 // was not written by anything that knows this format and its shape is
@@ -6468,19 +6283,6 @@ function envelopeVersionWarning(envelope) {
 // one declares `groupDefinitions`.
 const REQUIRED_SCHEMA_KINDS = SCHEMA_KINDS.filter((kind) => kind !== 'scenario-definition');
 const LEGACY_ENTITY_FIELD = 'entityDefinitions';
-
-// A 9.x scripted projection kept its arguments in its script; 10.0
-// keeps them on the projection, for every kind. The one shape that
-// moved, lifted as it is read – a body that already states both is
-// left to say so (`validateScript`).
-function liftScriptArguments(body) {
-  const script = body && body.script;
-  if (!script || typeof script !== 'object' || script.arguments === undefined) return;
-  if (body.arguments !== undefined) return;
-  const { arguments: lifted, ...rest } = script;
-  if (Array.isArray(lifted) && lifted.length) body.arguments = lifted;
-  body.script = rest;
-}
 
 // An 8.x to 10.x document's entities, read as 11.0 says them. Pure: the
 // collections in, `{customTypes, groups, projections, commands,
@@ -6645,7 +6447,8 @@ function groupsFromEntities({ customTypes = {}, entities = {}, projections = {},
 // What a document still says that 11.0 removed (`removedConstructIn`),
 // read before anything is stored. A projection that is scripted or sets
 // from `currentValue` refuses the whole document: its value decides
-// rules, and no other spelling of it is there to read. A command that
+// rules, and no other spelling of it is there to read – nor is a
+// script's code something an import can safely run, or translate. A command that
 // guards an emission or reads optionally is left out, and said – the
 // rest of it is readable, but publishing every time or requiring the
 // read would change what it decides, silently. `commands` loses the
@@ -6706,7 +6509,6 @@ function importModelFromEnvelope(envelope) {
   const events = schemaArrayToDefinitions('event-definition', envelope.eventDefinitions);
   let groups = schemaArrayToDefinitions('group-definition', legacy ? [] : envelope.groupDefinitions);
   let projections = schemaArrayToDefinitions('projection-definition', envelope.projectionDefinitions);
-  for (const body of Object.values(projections)) liftScriptArguments(body);
   let commands = schemaArrayToDefinitions('command-definition', envelope.commandDefinitions);
   const scenarios = schemaArrayToDefinitions('scenario-definition', envelope.scenarioDefinitions);
   let propertyScenarios = schemaArrayToDefinitions(
@@ -6773,14 +6575,13 @@ function importModelFromEnvelope(envelope) {
 
 // An envelope read as a model to compare against, never stored: the
 // import above, run against a scratch log (`inScratchLog`). The same
-// refusals and the same skipped list as an import; the model returned
-// is a fold of the scratch log and belongs to no one. Nothing in it is
-// compiled or run here, so a scripted envelope needs no gate – what
-// compares never evaluates.
+// refusals, the same skipped list and the same conversion notes as an
+// import – a command left out among them; the model returned is a fold
+// of the scratch log and belongs to no one.
 function modelFromEnvelope(envelope) {
   return inScratchLog((log) => {
-    const { modelId, skipped } = importModelFromEnvelope(envelope);
-    return { model: projectEvents(log)[modelId], skipped };
+    const { modelId, skipped, converted } = importModelFromEnvelope(envelope);
+    return { model: projectEvents(log)[modelId], skipped, converted };
   });
 }
 
@@ -7315,19 +7116,19 @@ function seedProductPricing(modelId) {
 }
 
 // ============================================================
-// Content based decisions – one domain, four spellings.
+// Content based decisions – one domain, three spellings.
 //
 // A document's Published/PendingChanges distinction depends on whether
 // its current text equals the last published one: a decision made from
 // *content*, not from a recorded status. The declared handler
 // vocabulary cannot compare two values, so this family exists to
-// compare the ways out: a scripted projection (the baseline below),
-// the comparison moved into command conditions over two plain text
-// projections (`seedDocumentAuthoring`), the client echoing the text
-// it saw for the command to verify (`seedVerifiedPublish`), and the
-// comparison declared once as a derived projection
-// (`seedDerivedPending`). A fifth, the decision made at write time
-// through guarded emissions, left with them in 11.0.
+// compare the ways out: the comparison moved into command conditions
+// over two plain text projections (`seedDocumentAuthoring`), the client
+// echoing the text it saw for the command to verify
+// (`seedVerifiedPublish`), and the comparison declared once as a
+// derived projection (`seedDerivedPending`). The baseline they were
+// measured against, a scripted projection, and a fourth spelling
+// through guarded emissions left with those constructs in 11.0.
 // docs/research/2026-09-19-content-based-decision-alternatives.md
 // holds the primary sources; the comparison note beside it holds the
 // verdict.
@@ -7337,123 +7138,6 @@ function seedProductPricing(modelId) {
 // names in `parameter`.
 const seedDocument = (projection, parameter = 'docId') =>
   seedRead(projection, { documentId: seedParam(parameter) });
-
-// The baseline: the status projection is scripted. It keeps both texts
-// as private state and exposes only the status, and every command
-// decides against that one exposed value. Publishing "restores"
-// silently: re-typing the published text flips the status back to
-// Published with no event saying so – and no event *carrying* the
-// published text either, which is what every alternative fixes first.
-function seedContentDecisionsScripted(modelId) {
-  const prop = seedProp;
-  const param = seedParam;
-  const status = (parameter) => seedDocument('DocumentStatus', parameter);
-
-  // 1. The status enum, then the identifier, which the state type and
-  //    events reference.
-  addDefinition('custom-type-definition', modelId, 'DocumentStatus', seedEnumType('DocumentStatus',
-    ['NonExistent', 'Draft', 'Published', 'PendingChanges', 'Archived']));
-  addDefinition('custom-type-definition', modelId, 'DocumentId', seedTagType());
-
-  // The script's private state, written down as a composite type.
-  // Nothing references it – the script's initialState is untyped by
-  // design – but the shape a reader would otherwise reverse-engineer
-  // out of four code strings is worth one declaration.
-  addDefinition('custom-type-definition', modelId, 'DocumentChangeState', {
-    properties: [
-      { name: 'publishedText', propertyType: 'string' },
-      { name: 'currentText', propertyType: 'string' },
-      { name: 'status', propertyType: 'DocumentStatus' },
-    ],
-  });
-
-  // 2. Events. The texts live here; no projection re-publishes them.
-  const event = (name, properties) =>
-    addDefinition('event-definition', modelId, name, { properties, tags: seedTags(modelId, properties) });
-
-  event('DocumentAdded', [prop('id', 'DocumentId')]);
-  event('TextUpdated', [prop('docId', 'DocumentId'), prop('text', 'string')]);
-  event('DocumentPublished', [prop('docId', 'DocumentId')]);
-  event('DocumentArchived', [prop('docId', 'DocumentId')]);
-
-  // 3. The scripted projection. `exposes` is what keeps the two texts
-  //    out of the boundary: conditions read `status` and nothing else,
-  //    typed exactly as a declared projection would be.
-  addDefinition('projection-definition', modelId, 'DocumentStatus', {
-    tags: [seedThingTag('Document')],
-    valueType: 'DocumentStatus',
-    isList: false,
-    script: {
-      initialState: { currentText: '', publishedText: '', status: 'NonExistent' },
-      exposes: 'status',
-    },
-    handlers: [
-      { event: 'DocumentAdded',
-        code: '{"currentText":"","publishedText":"","status":"Draft"}' },
-      { event: 'TextUpdated',
-        code: '{"currentText":event.data.text,"publishedText":state.publishedText,'
-          + '"status":event.data.text == state.publishedText ? "Published" : "PendingChanges"}' },
-      { event: 'DocumentPublished',
-        code: '{"currentText":state.currentText,"publishedText":state.currentText,"status":"Published"}' },
-      { event: 'DocumentArchived',
-        code: '{"currentText":state.currentText,"publishedText":state.publishedText,"status":"Archived"}' },
-    ],
-  });
-
-  // 4. Commands – every rule is a status check, and the two that allow
-  //    more than one status use `equalsAny` rather than spelling the
-  //    same read out once per member.
-  const command = (name, body) => addDefinition('command-definition', modelId, name, body);
-
-  command('AddDocument', {
-    properties: [prop('id', 'DocumentId')],
-    boundary: [],
-    conditions: [
-      { leftHandSide: status('id'), predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' },
-        rejection: 'Document already exists' },
-    ],
-    publishes: [{ name: 'DocumentAdded', parameters: { id: param('id') } }],
-  });
-
-  command('UpdateText', {
-    properties: [prop('docId', 'DocumentId'), prop('text', 'string')],
-    boundary: [],
-    conditions: [
-      { leftHandSide: status(), predicate: 'equals',
-        rightHandSide: { enumMember: 'NonExistent' }, negate: true,
-        rejection: 'Document does not exist' },
-      { leftHandSide: status(), predicate: 'equals',
-        rightHandSide: { enumMember: 'Archived' }, negate: true,
-        rejection: 'Document is archived' },
-    ],
-    publishes: [{
-      name: 'TextUpdated',
-      parameters: { docId: param('docId'), text: param('text') },
-    }],
-  });
-
-  command('PublishDocument', {
-    properties: [prop('docId', 'DocumentId')],
-    boundary: [],
-    conditions: [
-      { leftHandSide: status(), predicate: 'equalsAny',
-        rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'PendingChanges' }],
-        rejection: 'Document cannot be published' },
-    ],
-    publishes: [{ name: 'DocumentPublished', parameters: { docId: param('docId') } }],
-  });
-
-  command('ArchiveDocument', {
-    properties: [prop('docId', 'DocumentId')],
-    boundary: [],
-    conditions: [
-      { leftHandSide: status(), predicate: 'equalsAny',
-        rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }, { enumMember: 'PendingChanges' }],
-        rejection: 'Document cannot be archived' },
-    ],
-    publishes: [{ name: 'DocumentArchived', parameters: { docId: param('docId') } }],
-  });
-}
 
 // The comparison moved to decision time. Two plain `set` projections
 // hold the texts – `DocumentPublished` carries the text it publishes,
@@ -7480,8 +7164,7 @@ function seedDocumentAuthoring(modelId) {
 
   event('DocumentAdded', [prop('id', 'DocumentId')]);
   event('TextUpdated', [prop('docId', 'DocumentId'), prop('text', 'string')]);
-  // The enrichment the scripted baseline lacked: the published text is
-  // a fact of the publication, so the event carries it and a plain
+  // The published text is a fact of the publication, so the event carries it and a plain
   // handler can read it back.
   event('DocumentPublished', [prop('docId', 'DocumentId'), prop('text', 'string')]);
   event('DocumentArchived', [prop('docId', 'DocumentId')]);
@@ -7848,8 +7531,8 @@ function seedDeveloperHours(modelId) {
 }
 
 // `experimental` marks the entries that use what the experimental flag
-// keeps off the pages (scripts, guards…); the model list shows those
-// only with the flag on. A test holds the mark to the built model's own
+// keeps off the pages (none does, since 11.0); the model list shows
+// those only with the flag on. A test holds the mark to the built model's own
 // `experimentalFeatures`.
 const PREDEFINED_MODELS = [
   {
@@ -7883,21 +7566,11 @@ const PREDEFINED_MODELS = [
     build: (modelId) => { seedProductPricing(modelId); },
   },
   {
-    name: 'Content based decisions (scripted projection)',
-    slug: 'content-decisions-scripted',
-    experimental: true,
-    description: 'The baseline: a document is Published or PendingChanges depending on whether '
-      + 'its current text equals the last published one – a comparison no declared handler can '
-      + 'express, so the status projection is scripted, keeps both texts as hidden state and '
-      + 'exposes only the status.',
-    build: (modelId) => { seedContentDecisionsScripted(modelId); },
-  },
-  {
     name: 'Content based decisions (boundary comparison)',
     slug: 'content-decisions-boundary',
     description: 'The comparison moved into the boundary: two plain text projections, '
       + 'DocumentPublished carrying the text it publishes, and a publish guard comparing them. '
-      + 'Nothing is scripted; pending-ness is never stored, only visible where the texts differ.',
+      + 'Pending-ness is never stored, only visible where the texts differ.',
     build: (modelId) => { seedDocumentAuthoring(modelId); },
   },
   {
@@ -7965,27 +7638,14 @@ function loadPredefinedModel(index) {
 // `projectFromStore`, one attempt each (_Through a store_, below).
 //
 // **Closures, not generated code.** Every handler compiles to a small
-// JavaScript function `(state, event, args) => state`, one per handler
-// per projection, built by walking the declarative operand tree and
-// closing over it. A scripted handler compiles to a function of the
-// *same signature* through `new Function`, so the fold engine never
-// branches on whether a projection is scripted – the difference is
-// gone by the time anything folds. What this deliberately avoids is
-// emitting source: a generated fold would be a third copy of semantics
-// that `deriveDcb` and validation already hold, and the only copy of
-// the three you could not read, grep or breakpoint.
-//
-// **Scripts run on the main thread, unsandboxed – and unprompted.**
-// The contract is the one the schema states: each body is an
-// expression over `state`, `event`, `args` and `tags` returning the next
-// state. A scripted projection folds wherever and whenever a declared
-// one would, repaints included. What stands between an untrusted
-// model and that is the import gate (nothing external loads without a
-// confirmation – index.html), and what stands between a hanging
-// script and a page that hangs again on every reload is safe mode:
-// `setScriptsDisabled(true)` – flipped by the interface for a `?safe`
-// URL, or after a load that hung – compiles every script handler to a
-// thrower instead, so the model still loads and the script can be reached and fixed.
+// JavaScript function `(state, event) => state`, one per handler per
+// projection, built by walking the declarative operand tree and
+// closing over it. What this deliberately avoids is emitting source: a
+// generated fold would be a third copy of semantics that `deriveDcb`
+// and validation already hold, and the only copy of the three you
+// could not read, grep or breakpoint. No authored code runs here at
+// all: 11.0 removed scripted projections, and with them every reason
+// to sandbox, gate or switch off a fold.
 //
 // **Groups are invisible here.** A grouped projection is folded by its
 // qualified name, `Course.capacity`, as the body `projectionsOf`
@@ -7999,8 +7659,8 @@ function loadPredefinedModel(index) {
 // **Failure has two kinds and they are not the same.** A command whose
 // conditions do not hold is *rejected* – an ordinary, expected outcome
 // this returns. A scenario that cannot be run at all – an event that no
-// longer exists, an argument the command never got, a script that threw
-// – is *broken*, and comes back as an `EvaluationError`. Real bugs in
+// longer exists, an argument the command never got, a value of the
+// wrong shape – is *broken*, and comes back as an `EvaluationError`. Real bugs in
 // this file are neither: they propagate as ordinary exceptions, so a
 // mistake here can never be mistaken for a modelling mistake.
 // ============================================================
@@ -8023,7 +7683,7 @@ function fail(message) {
   throw new EvaluationError(message);
 }
 
-// What a thrown thing says. A script may throw anything at all –
+// What a thrown thing says. A store port may throw anything at all –
 // `throw null` included – and reading `.message` off that must not be
 // the second, unexplained failure.
 function evErrorText(error) {
@@ -8240,10 +7900,8 @@ function evEventsTagged(model, events, tags) {
 // ============================================================
 // Compiling a fold.
 //
-// A projection – grouped or top-level – becomes three things: the state it starts from, a step function per event type, and
-// the reading a condition sees. Declared and scripted projections
-// produce the same three, which is the point: below this line nothing
-// knows the difference.
+// A projection – grouped or top-level – becomes two things: the state
+// it starts from, and a step function per event type.
 // ============================================================
 
 // A handler operand, as a function of the state and the event it is
@@ -8264,73 +7922,8 @@ function evCompileHandlerOperand(operand) {
   }
 }
 
-// Safe mode. Flipped by the interface for a `?safe` URL or after a
-// load that hung (and by tests directly): every script handler compiles to a thrower, so a model
-// whose script hangs the tab on load can still be opened, edited and
-// repaired. Declared handlers are untouched – this is a way back in,
-// not a mode the app runs in.
-let evScriptsDisabled = false;
-function setScriptsDisabled(disabled) {
-  evScriptsDisabled = !!disabled;
-  evCompiled = new WeakMap();
-}
-
-// What a script is handed of an event: a deep-frozen copy, made once
-// per event. The log is shared by every fold, read and repaint, so an
-// event a script changed in place would change what every later fold
-// sees; a copy keeps the log as it was, and freezing makes the attempt
-// an error the author sees instead of a silent no-op.
-const evFrozenEvents = new WeakMap();
-
-function evFrozenEvent(event) {
-  let frozen = evFrozenEvents.get(event);
-  if (!frozen) evFrozenEvents.set(event, frozen = evDeepFreeze(deepClone(event)));
-  return frozen;
-}
-
-function evDeepFreeze(value) {
-  if (value !== null && typeof value === 'object') {
-    for (const key of Object.keys(value)) evDeepFreeze(value[key]);
-    Object.freeze(value);
-  }
-  return value;
-}
-
-// One handler, as `(state, event, args, tags) => nextState`. `args` are
-// the read's argument values, `tags` the values it is tagged by, keyed
-// by the names the projection declares (`tags.courseId`) – a script
-// sees what it is read by, but cannot change it.
-//
-// Code runs only on a projection that declares a `script`: that is
-// what the import gate (`envelopeHasScript`) asks about, so it is the
-// one thing that may decide whether authored JavaScript runs. A `code`
-// left on an ordinary handler is inert here – the validator reports it.
-function evCompileHandler(handler, label, scripted) {
-  if (scripted && handler.code !== undefined) {
-    if (evScriptsDisabled) {
-      return () => fail(
-        `The script for "${handler.event}" on ${label} did not run: scripts are off in safe mode. ` +
-        'Remove "?safe" from the address to run them.'
-      );
-    }
-    // The contract the schema states, and the only place in this file
-    // where authored JavaScript runs. In strict mode, so that writing to
-    // the frozen event it is handed throws rather than doing nothing.
-    let body;
-    try {
-      body = new Function('state', 'event', 'args', 'tags', `'use strict'; return (${handler.code}\n);`);
-    } catch (error) {
-      fail(`The script for "${handler.event}" on ${label} does not parse: ${evErrorText(error)}`);
-    }
-    return (state, event, args, tags) => {
-      try {
-        return body(state, evFrozenEvent(event), args, tags);
-      } catch (error) {
-        return fail(`The script for "${handler.event}" on ${label} threw: ${evErrorText(error)}`);
-      }
-    };
-  }
-
+// One handler, as `(state, event) => nextState`.
+function evCompileHandler(handler, label) {
   const valueOf = evCompileHandlerOperand(handler.value);
   const where = `The handler for "${handler.event}" on ${label}`;
 
@@ -8370,9 +7963,8 @@ function evCompileHandler(handler, label, scripted) {
 
 // A projection, grouped or not, compiled once and folded many times –
 // once per model and target, so a fan-out reading the same projection
-// two hundred times compiles it (scripts included) once. Safe mode
-// changes what a script compiles to, so switching it starts afresh.
-let evCompiled = new WeakMap();
+// two hundred times compiles it once.
+const evCompiled = new WeakMap();
 
 function evCompileTarget(model, target, label) {
   let perModel = evCompiled.get(model);
@@ -8384,43 +7976,28 @@ function evCompileTarget(model, target, label) {
 }
 
 function evCompileTargetAfresh(model, target, label) {
-  const script = scriptOf(target);
   const steps = new Map();
   for (const handler of target.handlers || []) {
     if (!handler || !handler.event) continue;
-    steps.set(handler.event, evCompileHandler(handler, label, !!script));
+    steps.set(handler.event, evCompileHandler(handler, label));
   }
 
-  const initial = script
-    ? deepClone(script.initialState ?? null)
-    : (target.initialValue === undefined
-      ? evNormalize(defaultInitialValue(model, target))
-      : evNormalize(target.initialValue));
-
-  // What a condition reads. A script may keep bookkeeping the boundary
-  // never sees; `exposes` names the one field that reaches it.
-  const expose = script && script.exposes !== undefined
-    ? (state) => (state === null || state === undefined ? state : state[script.exposes])
-    : (state) => state;
-
-  const run = (events, args, tags) => {
-    // A script may change its state in place; the initial one is shared
-    // by every fold of this compiled target, so each starts from a copy.
-    let state = script ? deepClone(initial) : initial;
-    for (const event of events) {
-      const step = steps.get(event.type);
-      if (step) state = step(state, event, args || {}, tags || {});
-    }
-    return state;
-  };
+  const initial = target.initialValue === undefined
+    ? evNormalize(defaultInitialValue(model, target))
+    : evNormalize(target.initialValue);
 
   return {
     types: [...steps.keys()],
-    fold: (events, args, tags) => evNormalize(expose(run(events, args, tags))),
-    // The same fold read before `exposes` trims it: the whole state,
-    // bookkeeping included. Hidden from conditions – a statement about
-    // the boundary, not about the person watching the script work.
-    foldState: (events, args, tags) => evNormalize(run(events, args, tags)),
+    // Every step returns a new value, so the initial one is shared by
+    // every fold of this compiled target untouched.
+    fold: (events) => {
+      let state = initial;
+      for (const event of events) {
+        const step = steps.get(event.type);
+        if (step) state = step(state, event);
+      }
+      return evNormalize(state);
+    },
   };
 }
 
@@ -8434,10 +8011,6 @@ function evCompileTargetAfresh(model, target, label) {
 // projection and the read together say which events it folds. Reading
 // a group member is the same read, its one tag the group's: nothing
 // left for two paths to disagree about.
-//
-// `foldProjectionState` is not a second fold but a second reading of
-// the same one: the state before `exposes` trims it to the exposed
-// field. Without `exposes` the two answers coincide.
 //
 // It replays from the start of the log every time. That is the same
 // choice the playground already makes for its own state, and it stays
@@ -8481,21 +8054,10 @@ function projectionQueryTags(model, projectionName, read) {
     .map((leaf) => renderTag(identifierTypeOf(model, leaf.type), String(leaf.value))))];
 }
 
-// What a script sees of the tags it is read by: one value per declared
-// tag, by name – `tags.courseId`.
-function evScriptTags(model, projectionName, read) {
-  const out = {};
-  const held = (read && read.tags) || {};
-  for (const tag of projectionTagParams(evOwn(projectionsOf(model), projectionName))) {
-    out[tag.name] = evNormalize(evOwn(held, tag.name));
-  }
-  return out;
-}
-
 // Events reach a fold carrying an explicit key for every optional
 // property their definition declares – null when unset. One spelling
 // of "no value" downstream: a Given step may omit the key, an emission
-// writes the null out, and a handler or script reads the same thing
+// writes the null out, and a handler reads the same thing
 // either way. Optional lists are exempt (they evaluate as plain
 // lists; the advisories point the combination out).
 function evWithExplicitOptionals(model, event) {
@@ -8514,19 +8076,8 @@ function foldProjection(model, events, projectionName, read, seen = []) {
   if (projection && derivedOf(projection)) {
     return evDeriveProjection(model, events, projectionName, read, seen);
   }
-  const { compiled, selected, args, tags } = evProjectionFold(model, events, projectionName, read);
-  return compiled.fold(selected, args, tags);
-}
-
-function foldProjectionState(model, events, projectionName, read) {
-  const projection = evOwn(projectionsOf(model), projectionName);
-  if (projection && derivedOf(projection)) {
-    // A derived projection keeps no bookkeeping: its whole state is
-    // the one value its predicate or computation yields.
-    return evDeriveProjection(model, events, projectionName, read);
-  }
-  const { compiled, selected, args, tags } = evProjectionFold(model, events, projectionName, read);
-  return compiled.foldState(selected, args, tags);
+  const { compiled, selected } = evProjectionFold(model, events, projectionName, read);
+  return compiled.fold(selected);
 }
 
 // A derived projection is not folded but computed: each operand that
@@ -8602,12 +8153,7 @@ function evProjectionFold(model, events, projectionName, read) {
   const compiled = evCompileTarget(model, projection, `projection "${projectionName}"`);
   const selected = evSelectEvents(model, events, compiled.types, queryTags)
     .map((event) => evWithExplicitOptionals(model, event));
-  return {
-    compiled,
-    selected,
-    args: (read && read.args) || {},
-    tags: evScriptTags(model, projectionName, read),
-  };
+  return { compiled, selected };
 }
 
 // ============================================================
@@ -9693,8 +9239,8 @@ if (typeof module !== 'undefined' && module.exports) {
 // never left off, which is what keeps a read apart from an enum member
 // by sight. A value has to be of the tag's declared type; a literal
 // says its type anyway, `CourseStatus(CourseId("c1"))`, so the text
-// shows which tag it fills. A scripted projection declares what it
-// takes besides after its tags, `scripted projection X (tag courseId:
+// shows which tag it fills. A projection declares what it takes
+// besides after its tags, `derived projection X (tag courseId:
 // CourseId, days: integer)`, and a read gives those after the tags
 // too. `each` before a value reads once per element of a list. A read may sit anywhere an
 // operand does – `require CourseStatus(courseId) == Existent`, an
@@ -9792,10 +9338,9 @@ if (typeof module !== 'undefined' && module.exports) {
 // research note is docs/research/2026-10-03-code-view-language.md.
 //
 // **A few spellings are the schema's own tokens**, matching the
-// interface's technical register: `successor(x)`,
-// `event.data.x` (the path a scripted handler writes), the predicate
-// words `contains` / `containsAny` / `startsWith` / `endsWith`, and the
-// script fields `initialState` / `exposes`. The rest are what a
+// interface's technical register: `successor(x)`, `event.data.x`, and
+// the predicate words `contains` / `containsAny` / `startsWith` /
+// `endsWith`. The rest are what a
 // developer would type: `==`, `<`, `in [..]` / `in xs`, `count(x)`,
 // `is empty`, `X[]` for a list, `name?:` for an optional property, and
 // `X(…)` for a read.
@@ -9814,19 +9359,16 @@ if (typeof module !== 'undefined' && module.exports) {
 // projection's (9.0): `derived projection Left (…): integer { Cap(x) -
 // Taken(x) }`, one operator – `+`, `-`, `*`, `min(a, b)`, `max(a, b)` –
 // over two projections or literals, outside any fold, so the fold arms
-// stay keywords. What neither says is what a script is for (experimental):
-// its arms are expressions over `state`, `event` and `args`, behind a
-// door that says analysis stops there. Expect the list to stay short:
+// stay keywords. What neither says goes unsaid: the scripted projection
+// that once said it, behind a door where analysis stopped, went in
+// 11.0 (`"scripted" is gone` is the error). Expect the list to stay short:
 // each new operation is a major (a reader fails on one it does not
 // know) and has to earn its place by being analysable – a
 // duplicate-free append is the candidate in sight.
 //
 // **What kind a projection is, it says in front**: `derived projection`
 // holds one expression in its block, a comparison or a computation, and
-// no initial value; `scripted projection` takes arguments after its
-// tags and holds `initialState`, `exposes` and code arms. The header
-// already knows what the block may hold, so an argument on anything but
-// a script is an error at the header, not after the block.
+// no initial value. The header already knows what the block may hold.
 //
 // **Operand names resolve per command.** A bare or dotted lowercase
 // name is an alias when some `alias` in the same command declares it
@@ -9903,8 +9445,8 @@ if (typeof module !== 'undefined' && module.exports) {
 // `sourceSymbols` walks the bodies and resolves each marked name to the
 // one thing it means – `member CourseStatus Existent`, never a word
 // that happens to match – so a rename (`sourceRename`) touches exactly
-// those tokens, and refuses rather than guess: over a script or json
-// body the name may also hide in, a member whose enum the text cannot
+// those tokens, and refuses rather than guess: over a json body the
+// name may also hide in, a member whose enum the text cannot
 // tell, or a result that would not read back the same. A read in place
 // can be named by an alias (`sourceIntroduceAlias`), proved the same
 // way: the command reads back as it was. Completion
@@ -10023,6 +9565,9 @@ function lexSource(text) {
       continue;
     }
     let token;
+    // A fenced block was a scripted handler's code until 11.0. It is
+    // still read as one token, so the parser can say where a handler
+    // tries to run code rather than stumble over the backticks.
     if (text.startsWith('```', i)) {
       const end = text.indexOf('```', i + 3);
       const value = text.slice(i + 3, end < 0 ? text.length : end);
@@ -10221,7 +9766,7 @@ function parseModelSourceText(text, options) {
   // ---------- values ----------
 
   // JSON, read off the token stream – the schema object of a `type`,
-  // a script's `initialState`, a definition's fallback body. Keys may
+  // a definition's fallback body. Keys may
   // be bare words as well as strings; the printer writes them bare.
   const jsonValue = () => {
     const token = peek();
@@ -10578,8 +10123,8 @@ function parseModelSourceText(text, options) {
   };
 
   // A projection's header, `(tag courseId: CourseId, days: integer)`:
-  // the tags it is read by, marked `tag`, then – only for a script – the
-  // values its code takes besides. Tags first, since a read gives them in
+  // the tags it is read by, marked `tag`, then its arguments – the
+  // values a read gives besides. Tags first, since a read gives them in
   // this order.
   const projectionParameterList = () => {
     expect('(');
@@ -10816,9 +10361,10 @@ function parseModelSourceText(text, options) {
       if (is('@')) fail('A projection in a group carries no annotations.');
       const untagged = is('untagged') ? next() : null;
       if (untagged) fail(`A group's projections are read by its tag, ${tagName.v} – an untagged projection stays outside it.`, untagged);
-      const kind = (is('derived') || is('scripted')) && is('projection', 1) ? next() : null;
+      if (is('scripted')) fail('"scripted" is gone – 11.0 runs no code: a projection is folded by its handlers\' operations, or derived.');
+      const kind = is('derived') && is('projection', 1) ? next() : null;
       if (!is('projection')) {
-        fail(`Expected projection, derived projection or scripted projection, found ${describeToken(peek())}.`);
+        fail(`Expected projection or derived projection, found ${describeToken(peek())}.`);
       }
       projectionDecl(at, [], null, kind, group);
     }
@@ -10841,10 +10387,9 @@ function parseModelSourceText(text, options) {
   // an error with both fixes – the partition is too easy to forget for
   // the text to assume one.
   //
-  // `derived` or `scripted` right before `projection` says what kind it
-  // is, so the header already knows what the block may hold: a script
-  // takes arguments after its tags, a derived projection holds one
-  // expression and no initial value.
+  // `derived` right before `projection` says what kind it is, so the
+  // header already knows what the block may hold: one expression and no
+  // initial value.
   //
   // In a group (`group`, the one being read), a projection is named in
   // lowerCamel, declares no tags – the group's is its – and is kept in
@@ -10856,7 +10401,6 @@ function parseModelSourceText(text, options) {
     const nameToken = group ? ident('the projection\'s name') : declName('a projection name');
     const qualified = group ? `${group.name}.${nameToken.v}` : nameToken.v;
     const derivedKind = !!kind && kind.v === 'derived';
-    const scriptedKind = !!kind && kind.v === 'scripted';
     if (group && is('json')) fail('A projection in a group is spelled out – the group as a whole may be json.');
     if (is('json')) {
       if (untagged) fail('A json body says its own tags – drop "untagged".', untagged);
@@ -10865,9 +10409,9 @@ function parseModelSourceText(text, options) {
     }
     annotate('projection-definition', {}, annotations);
     const body = {};
-    // What a read gives besides the tags is an argument (10.0): a script
-    // reads it, a derived projection compares or computes with it. A
-    // declared one's handlers cannot, which is the advisories' to say.
+    // What a read gives besides the tags is an argument (10.0): a derived
+    // projection compares or computes with it. A declared one's handlers
+    // cannot, which is the advisories' to say.
     const header = is('(') ? projectionParameterList() : { tags: [], args: [] };
     if (group && header.tags.length) {
       fail(`${qualified} is read by its group's tag, ${group.body.tag.name} – it declares none of its own. `
@@ -10905,12 +10449,6 @@ function parseModelSourceText(text, options) {
     }
     if (derivedKind || accept('{')) {
       const handlers = [];
-      let script = scriptedKind ? {} : null;
-      const scriptField = (key, value) => {
-        script = script || {};
-        if (script[key] !== undefined) fail(`${key} is given twice.`, last());
-        script[key] = value;
-      };
       const owner = { kind: 'projection-definition', name: qualified };
       let scenarios = null;
       const bare = [];
@@ -10920,52 +10458,33 @@ function parseModelSourceText(text, options) {
         if (derivedKind && !is('scenarios') && !is('scenario')) {
           fail(`A derived projection's block holds what it derives, then its scenarios – found ${describeToken(peek())}.`);
         }
-        if (!scriptedKind && (is('initialState') || is('exposes'))) {
-          fail(`Only a scripted projection has ${peek().v} – scripted projection ${nameToken.v}${group ? '' : ' (…)'}.`);
-        }
         if (accept('on')) {
           const eventToken = ident('an event name');
           const event = eventToken.v;
           expect('=>');
           if (peek().t === 'code') {
-            const handler = { event, code: next().v };
-            mark(handler, 'event', eventToken);
-            mark(handler, 'code', last());
-            handlers.push(handler);
-          } else {
-            const op = ident('an operation (set, increment, decrement, append, remove) or a ```code``` block');
-            if (!OPERATIONS.includes(op.v)) {
-              fail(`"${op.v}" is not an operation – set, increment, decrement, append or remove.`, op);
-            }
-            const handler = { event, operation: op.v };
-            mark(handler, 'event', eventToken);
-            if (startsHandlerOperand()) handler.value = handlerOperand();
-            handlers.push(handler);
+            fail('A handler runs no code in 11.0 – it is an operation: set, increment, decrement, append or remove.');
           }
-        } else if (is('script')) {
-          fail(`"script" goes in front now, as "scripted": scripted projection ${nameToken.v}${group ? '' : ' (…)'}.`);
-        } else if (accept('initialState')) {
-          mark(body, 'initialState', peek());
-          scriptField('initialState', jsonValue());
-        } else if (accept('exposes')) {
-          const exposed = ident('the exposed field');
-          mark(body, 'exposes', exposed);
-          scriptField('exposes', exposed.v);
+          const op = ident('an operation (set, increment, decrement, append, remove)');
+          if (!OPERATIONS.includes(op.v)) {
+            fail(`"${op.v}" is not an operation – set, increment, decrement, append or remove.`, op);
+          }
+          const handler = { event, operation: op.v };
+          mark(handler, 'event', eventToken);
+          if (startsHandlerOperand()) handler.value = handlerOperand();
+          handlers.push(handler);
         } else if (is('scenarios')) {
           scenarios = scenariosGroup(owner, scenarios);
         } else if (is('scenario')) {
           bare.push(scenarioDecl(peek(), owner));
         } else {
-          fail(`Expected "on"${scriptedKind ? ', initialState, exposes' : ''} or scenarios, found ${describeToken(peek())}.`);
+          fail(`Expected "on" or scenarios, found ${describeToken(peek())}.`);
         }
       }
       const endAt = at;
       expect('}');
       ungrouped(bare, endAt);
       if (!derivedKind) body.handlers = handlers;
-      if (script) body.script = script;
-    } else if (scriptedKind) {
-      body.script = {};
     }
     if (!group) return define('projection-definition', nameToken, body, start);
     if (group.body.projections.some((inner) => inner.name === nameToken.v)) {
@@ -11440,7 +10959,8 @@ function parseModelSourceText(text, options) {
     }
     if (is('type') || is('enum') || is('record')) return customType(start, annotations, isTag);
     const untagged = accept('untagged');
-    const kind = (is('derived') || is('scripted')) && (is('projection', 1) || is('untagged', 1)) ? next() : null;
+    if (is('scripted')) fail('"scripted" is gone – 11.0 runs no code: a projection is folded by its handlers\' operations, or derived.');
+    const kind = is('derived') && (is('projection', 1) || is('untagged', 1)) ? next() : null;
     if (kind && is('untagged')) fail(`"untagged" comes first: untagged ${kind.v} projection …`);
     const lead = kind || untagged;
     if (lead && !is('projection')) fail(`Expected projection after "${lead.v}", found ${describeToken(peek())}.`);
@@ -12090,9 +11610,9 @@ function printGroup(name, body, names, nest = null) {
 }
 
 // `projection Name (tag courseId: CourseId): T = v` – or `untagged
-// projection Name: T = v`, `derived projection Name (…): T { a - b }`,
-// `scripted projection Name (tag courseId: CourseId, days: integer): T
-// { … }`. The tags come first, then its arguments, which
+// projection Name: T = v`, or `derived projection Name (tag courseId:
+// CourseId, days: integer): T { a - b }`. The tags come first, then its
+// arguments, which
 // is the order a read gives them in. In a group (`inGroup`, the local
 // names of its projections) there are no tags to give and no
 // `untagged` to say: the group's tag is its.
@@ -12100,9 +11620,6 @@ function printProjection(name, body, names, inGroup = null) {
   const tags = body.tags === undefined ? [] : body.tags;
   if (!Array.isArray(tags)) unprintable('its tags are not a list');
   if (inGroup && tags.length) unprintable('it is in a group and declares tags of its own');
-  const script = body.script;
-  if (script !== undefined && (script === null || typeof script !== 'object' || Array.isArray(script))) unprintable('its script is not an object');
-  if (script && script.arguments !== undefined) unprintable('its script states arguments, which are the projection\'s');
   const args = body.arguments === undefined ? [] : body.arguments;
   if (!Array.isArray(args) || (body.arguments !== undefined && !args.length)) unprintable('its arguments are not a non-empty list');
   const parameters = [
@@ -12115,10 +11632,8 @@ function printProjection(name, body, names, inGroup = null) {
       return `${sourceRef(p.name, 'parameter')}: ${sourceRef(p.propertyType, 'type')}`;
     }),
   ];
-  // The kind is said once, in front; a body that is two kinds at once
-  // has no spelling.
-  if (body.derived !== undefined && script !== undefined) unprintable('it is both derived and scripted');
-  const kind = body.derived !== undefined ? 'derived ' : script !== undefined ? 'scripted ' : '';
+  // The kind is said once, in front.
+  const kind = body.derived !== undefined ? 'derived ' : '';
   let head = `${tags.length || inGroup ? '' : 'untagged '}${kind}projection ${sourceDeclName(name)}`
     + (parameters.length ? ` (${parameters.join(', ')})` : '')
     + `: ${sourceRef(body.valueType, 'value type')}${body.isList ? '[]' : ''}`;
@@ -12129,24 +11644,13 @@ function printProjection(name, body, names, inGroup = null) {
   }
   if (body.initialValue !== undefined) head += ` = ${sourceLiteral(body.initialValue)}`;
   const lines = [head];
-  if (body.handlers === undefined && script === undefined) return lines.join('\n');
+  if (body.handlers === undefined) return lines.join('\n');
   const items = [];
-  if (script !== undefined) {
-    if (script.tagFilter !== undefined) unprintable('its script states a tag filter – a projection declares its tags');
-    if (script.initialState !== undefined) items.push(`initialState ${sourceJson(script.initialState, '  ')}`);
-    if (script.exposes !== undefined) items.push(`exposes ${sourceRef(script.exposes, 'exposed field')}`);
-  }
   for (const handler of body.handlers || []) {
     const event = sourceRef(handler.event, 'event');
-    if (handler.code !== undefined) {
-      if (handler.operation !== undefined || handler.value !== undefined) unprintable('a handler has both code and an operation');
-      if (typeof handler.code !== 'string' || handler.code.includes('```')) unprintable('a handler\'s code cannot be fenced');
-      items.push(`on ${event} => \`\`\`${handler.code}\`\`\``);
-    } else {
-      if (!OPERATIONS.includes(handler.operation)) unprintable(`a handler's operation ${JSON.stringify(handler.operation)} is not one the code form knows`);
-      items.push(`on ${event} => ${handler.operation}`
-        + (handler.value !== undefined ? ' ' + sourceHandlerOperand(handler.value) : ''));
-    }
+    if (!OPERATIONS.includes(handler.operation)) unprintable(`a handler's operation ${JSON.stringify(handler.operation)} is not one the code form knows`);
+    items.push(`on ${event} => ${handler.operation}`
+      + (handler.value !== undefined ? ' ' + sourceHandlerOperand(handler.value) : ''));
   }
   const tail = lines.length - 1;
   lines[tail] += items.length ? ` {\n${items.map((i) => '  ' + i).join('\n')}\n}` : ' {}';
@@ -12822,8 +12326,8 @@ function sourceThenLines(draft, record, actual) {
 // scenario. A command's scenario has one outcome. A projection's is a
 // value read with tag values, so the read the line already names is
 // the one asked, and where it names none, each read the given events
-// can tag – their properties of each tag's type – is tried. A script
-// that takes arguments is not guessed at. Each outcome is its lines,
+// can tag – their properties of each tag's type – is tried. A
+// projection that takes arguments is not guessed at. Each outcome is its lines,
 // and for a projection its read and its value apart (`call`, `value`).
 function sourceOutcomesAt(model, text, line) {
   const lines = String(text).split('\n');
@@ -13068,9 +12572,9 @@ function sourceTextModel(parsed, fallback) {
 // Every name in a parsed text, resolved: `occurrences` (`{ symbol,
 // token, decl, shorthand }`), `ambiguous` (an enum member some other
 // enum also has, written where nothing says which type is meant) and
-// `opaque` (a script, a json body, a tag filter – text a name may hide
-// in without the grammar seeing it, which a rename has to refuse over
-// rather than silently miss).
+// `opaque` (a json body – text a name may hide in without the grammar
+// seeing it, which a rename has to refuse over rather than silently
+// miss).
 //
 // It walks the bodies, not the tokens: the parser marked which token
 // each part came from (`parsed.marks`), and the bodies say what that
@@ -13233,10 +12737,8 @@ function sourceSymbols(parsed) {
     }
     typeRef(slots.valueType);
     literal(body.initialValue, body.valueType);
-    if (slots.initialState && body.script) opaque.push({ token: slots.initialState, text: JSON.stringify(body.script.initialState) });
     for (const handler of list(body.handlers)) {
       add(sourceSymbol('event', handler.event), slotsOf(handler).event);
-      if (typeof handler.code === 'string') opaque.push({ token: slotsOf(handler).code, text: handler.code });
       if (handler.value !== undefined) handlerValue(handler.value, body.valueType, handler.event);
     }
     if (!body.derived || typeof body.derived !== 'object') return;
@@ -13502,18 +13004,13 @@ const SOURCE_RENAME_RULES = {
   command: [SOURCE_IDENT_RE, 'a name is letters, digits and _'],
 };
 const SOURCE_LOWER_NAME_RE = /^[\p{Ll}_][\p{L}\p{M}\p{Nd}_]*$/u;
-// What a script can name: an event's or a record's field
-// (`event.data.x`, `state.x`), a member as the string it is, and the
-// values it is read by (`tags.x`, `args.x`). A json body can name anything.
-const SOURCE_SCRIPT_VISIBLE = ['eventProperty', 'field', 'member', 'projectionParameter', 'projectionTag', 'groupTag', 'type'];
 const sourceArticle = (word) => (/^[aeiou]/.test(word) ? 'an' : 'a');
 const SOURCE_RESERVED_NAMES = ['true', 'false', 'null', 'enum', 'not', 'count', 'event', 'successor'];
 
 // Edits that rename the symbol at a position, everywhere it occurs and
 // nowhere else: `{ edits: [{ line, col, endLine, endCol, text }] }`, or
-// `{ error }` saying why not. Safe means three refusals: a name a
-// script, a json body or a tag filter may also hold (the grammar cannot
-// see in there); an enum member written somewhere its enum cannot be
+// `{ error }` saying why not. Safe means three refusals: a name a json
+// body may also hold (the grammar cannot see in there); an enum member written somewhere its enum cannot be
 // told; and a result that would not read back as the same model with
 // one name changed – checked by renaming, re-reading, and counting.
 //
@@ -13572,10 +13069,9 @@ function sourceRenameSymbol(text, parsed, symbol, newName) {
     }
     const fromName = sourceSymbolParts(from).name;
     const pattern = new RegExp(`(^|[^\\p{L}\\p{M}\\p{Nd}_])${fromName}($|[^\\p{L}\\p{M}\\p{Nd}_])`, 'u');
-    const visible = SOURCE_SCRIPT_VISIBLE.includes(sourceSymbolParts(from).kind);
-    const hidden = opaque.find((o) => (o.json || visible) && pattern.test(o.text));
+    const hidden = opaque.find((o) => pattern.test(o.text));
     if (hidden) {
-      return { error: `${fromName} also appears in the script or JSON at line ${hidden.token.line}, which a rename cannot follow into – change it there by hand.` };
+      return { error: `${fromName} also appears in the JSON at line ${hidden.token.line}, which a rename cannot follow into – change it there by hand.` };
     }
     const unclear = ambiguous.find((a) => a.candidates.includes(from));
     if (unclear) {
@@ -13754,7 +13250,6 @@ const SOURCE_DECLARATION_SNIPPETS = [
   ['projection', 'projection ${1:Name} (tag ${2:id}: ${3:Type}): ${4:integer} = ${5:0} {\n\t$0\n}'],
   ['untagged projection', 'untagged projection ${1:Name}: ${2:integer} = ${3:0} {\n\t$0\n}'],
   ['derived projection', 'derived projection ${1:Name} (tag ${2:id}: ${3:Type}): ${4:integer} {\n\t$0\n}'],
-  ['scripted projection', 'scripted projection ${1:Name} (tag ${2:id}: ${3:Type}): ${4:integer} {\n\tinitialState ${5:0}\n\t$0\n}'],
   ['enum', 'enum ${1:Name} { $0 }'],
   ['tag type', 'tag type ${1:Name} = string'],
   ['type', 'type ${1:Name} = ${2:string}'],
@@ -13766,7 +13261,6 @@ const SOURCE_DECLARATION_SNIPPETS = [
 const SOURCE_GROUP_PROJECTION_SNIPPETS = [
   ['projection', 'projection ${1:name}: ${2:integer} = ${3:0} {\n\t$0\n}'],
   ['derived projection', 'derived projection ${1:name}: ${2:integer} {\n\t$0\n}'],
-  ['scripted projection', 'scripted projection ${1:name}: ${2:integer} {\n\tinitialState ${3:0}\n\t$0\n}'],
 ];
 
 function sourceOffset(text, line, col) {
@@ -13794,8 +13288,9 @@ function sourceOffset(text, line, col) {
 // whole text's parse, with `model`'s definitions filling in for any
 // that fail to parse while being typed.
 // `experimental: false` leaves out what the experimental flag keeps off
-// the pages – scripted projections. A text using them still
-// reads. Groups are not among them: a name is nothing to hide.
+// the pages – no construct, since 11.0; the option stays for the next
+// one staged there. A text using one still reads. Groups are not among
+// them: a name is nothing to hide.
 // A group's projections complete as top-level ones do, by their
 // qualified names (`Course.capacity`), with the group's tag among a
 // derived one's parameters and its siblings among what it reads.
@@ -13812,9 +13307,9 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
   const atLineStart = !tokens.length || tokens[tokens.length - 1].endLine < line;
 
   // ---------- where the cursor is ----------
-  const DECL_WORDS = ['model', 'type', 'tag', 'enum', 'record', 'event', 'group', 'untagged', 'derived', 'scripted', 'projection', 'command', 'scenarios', 'scenario', '@'];
+  const DECL_WORDS = ['model', 'type', 'tag', 'enum', 'record', 'event', 'group', 'untagged', 'derived', 'projection', 'command', 'scenarios', 'scenario', '@'];
   // The words before a declaration's keyword, which say what it is.
-  const LEAD_WORDS = ['tag', 'untagged', 'derived', 'scripted'];
+  const LEAD_WORDS = ['tag', 'untagged', 'derived'];
   const unled = (s) => { let i = 0; while (LEAD_WORDS.includes(v(s[i]))) i += 1; return s.slice(i); };
   const v = (t) => (t ? t.v : undefined);
   const frames = [{ kind: 'top', level: 0, open: -1, stmt: 0 }];
@@ -13952,7 +13447,7 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
         const words = tokens.slice(i, j).map((t) => t.v);
         decl = {
           keyword: v(tokens[j]), name: v(tokens[j + 1]), start: i,
-          derived: words.includes('derived'), scripted: words.includes('scripted'),
+          derived: words.includes('derived'),
         };
         frame.stmt = i;
       }
@@ -13964,7 +13459,7 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
         const words = tokens.slice(i, j).map((t) => t.v);
         frame.inner = {
           keyword: 'projection', name: v(tokens[j + 1]), start: i,
-          derived: words.includes('derived'), scripted: words.includes('scripted'),
+          derived: words.includes('derived'),
         };
       }
     }
@@ -14356,14 +13851,13 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     const kw = decl.keyword;
     if (!s.length) {
       for (const [label, insert] of SOURCE_DECLARATION_SNIPPETS) {
-        if (experimental || label !== 'scripted projection') push(label, 'keyword', 'declaration', { insert, snippet: true, sort: 0 });
+        push(label, 'keyword', 'declaration', { insert, snippet: true, sort: 0 });
       }
       return done(false);
     }
     // What a lead word is followed by: `untagged derived projection`.
-    if (s.length === 1 && (prev === 'untagged' || prev === 'derived' || prev === 'scripted')) {
-      keywords([['projection', 'projection '], ...(prev === 'untagged' ? [['derived', 'derived '],
-        ...(experimental ? [['scripted', 'scripted ']] : [])] : [])]);
+    if (s.length === 1 && (prev === 'untagged' || prev === 'derived')) {
+      keywords([['projection', 'projection '], ...(prev === 'untagged' ? [['derived', 'derived ']] : [])]);
       return done(false);
     }
     if (prev === '@') {
@@ -14408,11 +13902,11 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
   if (k === 'group') {
     if (!s.length) {
       for (const [label, insert] of SOURCE_GROUP_PROJECTION_SNIPPETS) {
-        if (experimental || label !== 'scripted projection') push(label, 'keyword', 'projection', { insert, snippet: true, sort: 0 });
+        push(label, 'keyword', 'projection', { insert, snippet: true, sort: 0 });
       }
       return done(false);
     }
-    if (s.length === 1 && (prev === 'derived' || prev === 'scripted')) { keywords([['projection', 'projection ']]); return done(false); }
+    if (s.length === 1 && prev === 'derived') { keywords([['projection', 'projection ']]); return done(false); }
     const colon = s.findIndex((t) => t.v === ':');
     if (prev === ':') { typeItems(); return done(); }
     if (prev === '=' && colon >= 0) {
@@ -14453,7 +13947,6 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     }
     if (!s.length) {
       keywords([['on', 'on '], ['scenarios', SOURCE_GROUP_SNIPPET, true]]);
-      if (frame.decl && frame.decl.scripted) keywords([['initialState'], ['exposes']], 2);
       return done(false);
     }
     if (v(s[0]) === 'on') {
@@ -14699,22 +14192,13 @@ function sourceFoldingRanges(text) {
 // text that does not parse is marked too. The editor shows them at
 // info level while the flag is off: the text reads and applies whole
 // either way, as a model using them loads whole.
+// Since 11.0 no construct is staged there (`EXPERIMENTAL_FEATURES`,
+// model.js), so nothing is marked; one that is gets found here, each
+// mark saying "… is experimental – turn experimental features on in
+// Settings to author it on the pages.". A group never is: a name is
+// nothing to hide.
 function sourceExperimentalMarks(text) {
-  const tokens = lexSource(text).tokens;
-  const out = [];
-  const said = (token, what) => out.push({
-    line: token.line, col: token.col, endLine: token.endLine, endCol: token.endCol,
-    message: `${what} is experimental – turn experimental features on in Settings to author it on the pages.`,
-  });
-  tokens.forEach((token, i) => {
-    const v = token.v;
-    const next = tokens[i + 1];
-    if (token.t !== 'ident') return;
-    // A group is not marked: a name is nothing to hide. A scripted
-    // projection is, in a group as anywhere.
-    if (v === 'scripted' && next && (next.v === 'projection' || next.v === 'untagged')) said(token, 'A scripted projection');
-  });
-  return out;
+  return [];
 }
 
 // ============================================================
@@ -15080,10 +14564,10 @@ const SOURCE_REFERENCE_GOTCHAS = `## Gotchas
 - "tag x?: T" is allowed: an event whose x is null carries no such tag, and a projection tagged by T does not see it.
 `;
 
-const SOURCE_REFERENCE_UNOFFERED = 'Not offered to agents: scripted projections, '
-  + 'arguments on a group\'s projection '
-  + 'read through an alias (x.p(a: …)). A text or '
-  + 'definition that adds one is refused. A model that already uses them shows them in get_model_source; keep those parts as they are.';
+const SOURCE_REFERENCE_UNOFFERED = 'Not in the definition tools\' schemas: the arguments a read passes, '
+  + 'such as a group\'s projection read through an alias (x.p(a: …)). A model that already uses them shows them '
+  + 'in get_model_source; keep those parts as they are. Gone since 11.0, and refused wherever they are written: '
+  + 'scripted projections, currentValue, guarded emissions (emit … when …) and optional reads (alias x? = …).';
 
 function sourceLanguageReference() {
   return [
@@ -15102,8 +14586,8 @@ function sourceLanguageReference() {
 // ============================================================
 
 const SOURCE_KEYWORDS = [
-  'model', 'type', 'tag', 'enum', 'record', 'event', 'group', 'untagged', 'derived', 'scripted',
-  'projection', 'min', 'max', 'initialState', 'exposes', 'on', 'set', 'increment', 'decrement', 'append',
+  'model', 'type', 'tag', 'enum', 'record', 'event', 'group', 'untagged', 'derived',
+  'projection', 'min', 'max', 'on', 'set', 'increment', 'decrement', 'append',
   'remove', 'command', 'alias', 'each', 'require', 'emit', 'when', 'and', 'not', 'is',
   'empty', 'in', 'contains', 'containsAny', 'startsWith', 'endsWith', 'count', 'successor',
   'json', 'true', 'false', 'null', 'scenarios', 'scenario', 'given', 'then', 'nothing', 'rejected',
@@ -15123,7 +14607,6 @@ const SOURCE_MONARCH = {
   baseTypes: [...SOURCE_BASE_TYPES],
   tokenizer: {
     root: [
-      [/```/, { token: 'string.code', next: '@code', nextEmbedded: 'javascript' }],
       [/@[\p{L}_][\p{L}\p{M}\p{Nd}_]*/, 'annotation'],
       [/event(?=\.data\.)/, 'keyword'],
       [/\p{Lu}[\p{L}\p{M}\p{Nd}_]*/, 'type.identifier'],
@@ -15135,11 +14618,6 @@ const SOURCE_MONARCH = {
       [/[-+*]/, 'operator'],
       [/"([^"\\]|\\.)*$/, 'string.invalid'],
       [/"/, 'string', '@string'],
-    ],
-    code: [
-      [/```/, { token: 'string.code', next: '@pop', nextEmbedded: '@pop' }],
-      [/[^`]+/, ''],
-      [/`/, ''],
     ],
     string: [
       [/[^\\"]+/, 'string'],

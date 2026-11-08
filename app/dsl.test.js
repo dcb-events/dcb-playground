@@ -506,9 +506,6 @@ check('fan-out, numbering, membership and derived values have spellings', () => 
   eq(hours.includes('derived projection DeveloperRemainingHoursForWeek (tag developerId: DeveloperId, tag week: WeekNumber): integer {\n'
     + '  DeveloperAvailableHoursPerWeek(developerId) - DeveloperAllocatedHoursForWeek(developerId, week)\n'), true,
     'a derived computation, its scenarios after it');
-  const scripted = modelToSource(bySlug('content-decisions-scripted').model());
-  eq(scripted.includes('scripted projection DocumentStatus (tag documentId: DocumentId): DocumentStatus {\n  initialState '), true, 'script');
-  eq(scripted.includes('on DocumentAdded => ```{"currentText":"","publishedText":"","status":"Draft"}```'), true, 'code');
   const pricing = modelToSource(bySlug('pricing-simple').model());
   eq(pricing.includes('record Item { productId: ProductId, price: Money }'), true, 'record');
   eq(pricing.includes('event ProductsOrdered { tag orderId: OrderId, items: Item[] tag each productId }'), true,
@@ -664,14 +661,14 @@ check('what the grammar cannot say is written as JSON, says why, and still round
 check('a fallback\'s reason stays a comment, whatever the stored strings it quotes', () => {
   // A reason quotes stored strings. A line break in one used to end the
   // comment and print the rest as code, so a crafted predicate could
-  // smuggle in a scripted projection the import gate never saw, added
-  // the moment the untouched text was applied.
+  // smuggle in a projection nobody declared, added the moment the
+  // untouched text was applied.
   const { id, model } = buildText();
   const body = JSON.parse(JSON.stringify(model()['command-definitions'].ArchiveCourse));
   body.conditions.push({
     leftHandSide: 1, rejection: 'No', // no right-hand side: the reason quotes the predicate raw
-    predicate: 'x\nuntagged scripted projection Smuggled: integer {\n  initialState 0\n'
-      + '  on CourseDefined => ```(globalThis.__smuggled = true, state)```\n}\r\u2028//',
+    predicate: 'x\nuntagged projection Smuggled: integer = 0 {\n'
+      + '  on CourseDefined => increment 1\n}\r\u2028//',
   });
   updateDefinition('command-definition', id, 'ArchiveCourse', body);
   const text = modelToSource(model());
@@ -1226,6 +1223,15 @@ check('a group, read wrongly or in an old spelling, says what to write', () => {
 check('what 11.0 removed is an error where it is written, saying so', () => {
   const head = 'tag type CourseId = string\nevent E { tag courseId: CourseId }\n';
   const errors = (body) => parseModelSource(head + body).diagnostics.map((d) => d.message);
+  const at = (body) => parseModelSource(head + body).diagnostics.map((d) => [d.line, d.col]);
+  const scripted = 'scripted projection P (tag courseId: CourseId): integer {\n  initialState 0\n  on E => ```state + 1```\n}\n';
+  eq(errors(scripted), ['"scripted" is gone – 11.0 runs no code: a projection is folded by its handlers\' operations, or derived.'],
+    'a scripted projection');
+  eq(at(scripted), [[3, 1]], 'at the keyword');
+  eq(errors('group G (tag courseId: CourseId) {\n  scripted projection p: integer {}\n}\n'),
+    ['"scripted" is gone – 11.0 runs no code: a projection is folded by its handlers\' operations, or derived.'], 'in a group too');
+  eq(errors('projection P (tag courseId: CourseId): integer = 0 {\n  on E => ```state + 1```\n}\n'),
+    ['A handler runs no code in 11.0 – it is an operation: set, increment, decrement, append or remove.'], 'a code handler');
   eq(errors('projection P (tag courseId: CourseId): integer = 0 {\n  on E => set currentValue\n}\n'),
     ['"currentValue" is gone – a handler\'s value comes from the event (event.data.x), a literal or successor(…).'], 'currentValue');
   eq(errors('command C(courseId: CourseId) {\n  emit E { courseId }\n    when courseId == "c1"\n}\n'),
@@ -1401,16 +1407,15 @@ check('a projection says what it is tagged by, or that it is untagged', () => {
   // A declared projection's handlers cannot see an argument; that is
   // the advisories' to say, so the text still reads it.
   eq(errors('projection P (tag id: CourseId, days: integer): integer = 0 {}'), [], 'arguments parse on any projection');
-  eq(errors('projection P (tag id: CourseId): integer {\n  script\n}'),
-    ['"script" goes in front now, as "scripted": scripted projection P (…).'], 'the kind is said in front');
   eq(errors('projection P (tag id: CourseId): integer = 0 {\n  initialState 0\n}'),
-    ['Only a scripted projection has initialState – scripted projection P (…).'], 'a script\'s state, only on a script');
+    ['Expected "on" or scenarios, found "initialState".'], 'a script\'s state is no word of the block');
   eq(errors('command C(courseId: CourseId) {\n  require P tagged courseId == 1 else reject "No"\n}'),
     ['A read gives its values in parentheses, in the order P declares them: P(…).'], 'the draft spelling');
   eq(errors('group Course {}'), ['Say what Course\'s projections are read by – one tag: group Course (tag courseId: CourseId).'], 'a group too');
-  const scripted = parseModelSource('scripted projection P (tag id: CourseId, days: integer): integer {\n  initialState 0\n}\n');
-  eq(scripted.diagnostics, [], 'a script\'s arguments follow its tags');
-  eq(scripted.collections['projection-definition'].P.arguments, [{ name: 'days', propertyType: 'integer' }], 'and are stored as the projection\'s arguments');
+  const derived = parseModelSource('tag type CourseId = string\nprojection Q (tag id: CourseId): integer = 0 {}\n'
+    + 'derived projection P (tag id: CourseId, days: integer): integer {\n  Q(id) - days\n}\n');
+  eq(derived.diagnostics, [], 'arguments follow the tags');
+  eq(derived.collections['projection-definition'].P.arguments, [{ name: 'days', propertyType: 'integer' }], 'and are stored as the projection\'s arguments');
 });
 
 check('a derived projection compares, computes and passes on its own parameters by name', () => {
@@ -1471,8 +1476,8 @@ check('a derived projection says so in front, and holds one expression', () => {
     ['A derived projection has no initial value – before any event it is what its operands start at.'], 'no initial value');
   eq(errors('derived projection Left (tag courseId: CourseId): integer {\n  Cap(courseId) - 1\n  on E => set 1\n}\n'),
     ['A derived projection\'s block holds what it derives, then its scenarios – found "on".'], 'nothing else in its block');
-  eq(errors('scripted untagged projection Left: integer {\n  initialState 0\n}\n'),
-    ['"untagged" comes first: untagged scripted projection …'], 'untagged leads');
+  eq(errors('derived untagged projection Left: integer {\n  max(1, 2)\n}\n'),
+    ['"untagged" comes first: untagged derived projection …'], 'untagged leads');
   eq(parseModelSource('untagged derived projection Total: integer {\n  max(1, 2)\n}\n').diagnostics, [], 'untagged, then derived');
   const untagged = parseModelSource(head + 'derived projection Left: integer {\n  min(1, 2)\n}\n');
   eq(parseModelSource(sandbox.sourceApplyEdits(head + 'derived projection Left: integer {\n  min(1, 2)\n}\n',
@@ -1616,9 +1621,6 @@ check('the code view says what is experimental, and offers none of it with the f
   const grouped = modelToSource(buildText().model());
   eq(sandbox.sourceExperimentalMarks(grouped), [], 'a group is nothing experimental');
   eq(grouped.includes('@feature('), true, 'the model has feature groups');
-  const inner = 'tag type XId = string\ngroup X (tag xId: XId) {\n  scripted projection p: integer {\n    initialState 0\n  }\n}\n';
-  eq(sandbox.sourceExperimentalMarks(inner).map((m) => m.message.split(' is experimental')[0]), ['A scripted projection'],
-    'a scripted projection in a group still is');
   for (const slug of ['course-simple', 'pricing-simple', 'content-decisions-derived', 'developer-hours']) {
     eq(sandbox.sourceExperimentalMarks(modelToSource(build(PREDEFINED_MODELS.findIndex((m) => m.slug === slug)).model())), [],
       `${slug} uses nothing experimental`);
@@ -1632,15 +1634,11 @@ check('the code view says what is experimental, and offers none of it with the f
   };
   eq(at('|', { experimental: false }).includes('group'), true, 'a group is offered with the flag off');
   const groupBody = 'tag type XId = string\ngroup X (tag xId: XId) {\n  |\n}\n';
-  eq(at(groupBody, { experimental: false }), ['projection', 'derived projection'], 'and its projections, but not a scripted one');
-  eq(at(groupBody, { experimental: true }), ['projection', 'derived projection', 'scripted projection'], 'unless the flag is on');
+  eq(at(groupBody, { experimental: false }), ['projection', 'derived projection'], 'and its projections');
+  eq(at(groupBody, { experimental: true }), ['projection', 'derived projection'], 'the same with the flag on');
   eq(at('@|', { experimental: false }), ['icon', 'feature', 'tagSchema'], 'no annotation is experimental');
-  const scripted = modelToSource(bySlug('content-decisions-scripted').model());
-  eq(sandbox.sourceExperimentalMarks(scripted).map((m) => m.message.split(' is experimental')[0]), ['A scripted projection'],
-    'a scripted projection is marked once, where it says so');
   eq(at('|', { experimental: false }).includes('derived projection'), true, 'derived projections are offered');
-  eq(at('|', { experimental: false }).includes('scripted projection'), false, 'scripted ones are not');
-  eq(at('|', { experimental: true }).includes('scripted projection'), true, 'unless the flag is on');
+  eq(at('|', { experimental: true }).includes('scripted projection'), false, 'and nothing scripted, flag or not');
   const head = 'tag type CourseId = string\nprojection Cap (tag courseId: CourseId): integer = 0 {}\n';
   const derived = (body) => `${head}derived projection Left (tag courseId: CourseId): integer {\n  ${body}\n}\n`;
   eq(at(derived('|')), ['min', 'max', 'scenarios', 'Cap', 'courseId'], 'a derived block opens with what it derives from');
@@ -1650,11 +1648,11 @@ check('the code view says what is experimental, and offers none of it with the f
   const withSeats = (body) => `${head}derived projection Left (tag courseId: CourseId, seats: integer): integer {\n  ${body}\n}\n`;
   eq(at(withSeats('Cap(courseId) - |')), ['Cap', 'courseId', 'seats'], 'an argument is one of them');
   eq(at(`${head}projection S (tag courseId: CourseId): integer = 0 {\n  |\n}\n`), ['on', 'scenarios'],
-    'a script\'s state is offered only on a scripted projection');
+    'a projection\'s block holds handlers and scenarios');
 });
 
 check('every name in every shipped text resolves to a symbol', () => {
-  // JSON Schema keywords and a script's own state are not model names.
+  // JSON Schema keywords are not model names.
   const notNames = new Set([...sandbox.SOURCE_KEYWORDS, ...sandbox.SOURCE_BASE_TYPES, 'number', 'icon', 'feature', 'tagSchema',
     'data', 'pattern', 'minimum']);
   for (const [slug, text] of shippedTexts()) {
@@ -1662,16 +1660,15 @@ check('every name in every shipped text resolves to a symbol', () => {
     const { occurrences, ambiguous } = sandbox.sourceSymbols(parsed);
     const key = (t) => `${t.line}:${t.col}`;
     const resolved = new Set([...occurrences, ...ambiguous].map((o) => key(o.token)));
-    const scriptState = new Set(text.split('\n').map((l, i) => (/^\s*(initialState|exposes)\b/.test(l) ? i + 1 : 0)));
     const missed = sandbox.lexSource(text).tokens
-      .filter((t) => t.t === 'ident' && !notNames.has(t.v) && !resolved.has(key(t)) && !scriptState.has(t.line))
+      .filter((t) => t.t === 'ident' && !notNames.has(t.v) && !resolved.has(key(t)))
       .map((t) => `${t.v} at ${key(t)}`);
     eq(missed, [], `${slug}: names nothing resolves`);
     eq(ambiguous.length, 0, `${slug}: members whose enum cannot be told`);
   }
 });
 
-check('renaming any declared name and back changes nothing, or is refused over a script', () => {
+check('renaming any declared name and back changes nothing, or is refused over JSON', () => {
   for (const [slug, text] of shippedTexts()) {
     const parsed = parseModelSource(text);
     for (const declaration of sandbox.sourceSymbols(parsed).occurrences.filter((o) => o.decl)) {
@@ -1682,7 +1679,7 @@ check('renaming any declared name and back changes nothing, or is refused over a
       // the suite's time.
       const there = sandbox.sourceRenameSymbol(text, parsed, symbol, fresh);
       if (there.error) {
-        eq(/script or JSON/.test(there.error), true, `${slug} ${symbol}: ${there.error}`);
+        eq(/in the JSON/.test(there.error), true, `${slug} ${symbol}: ${there.error}`);
         continue;
       }
       const renamed = sandbox.sourceApplyEdits(text, there.edits);
@@ -1882,10 +1879,12 @@ check('a rename refuses what it cannot do exactly', () => {
   eq(renameAt(text, 'alias course = Course', 'alias '.length, 'Course').error,
     '"Course" cannot name an alias: an alias starts with a lowercase letter.', 'a name is not');
   eq(renameAt(text, '// Types', 3, 'X').error, 'There is nothing here to rename.', 'a comment');
-  const scripted = modelToSource(bySlug('content-decisions-scripted').model());
-  eq(/also appears in the script or JSON at line \d+/.test(renameAt(scripted, 'Draft, Published', 0, 'Concept').error), true,
-    'a member a script spells as a string');
-  eq(renameAt(scripted, 'command UpdateText', 'command '.length, 'EditText').error, undefined, 'a script cannot name a command');
+  const json = 'model "M"\nenum S { Draft, Done }\nevent E {}\nevent F {}\ncommand C json { "properties": [], "boundary": [], '
+    + '"conditions": [{ "leftHandSide": { "enumMember": "Draft" }, "predicate": "isTrue", "rejection": "No" }], '
+    + '"publishes": [{ "name": "E" }] }\n';
+  eq(/also appears in the JSON at line \d+/.test(renameAt(json, 'Draft, Done', 0, 'Concept').error), true,
+    'a member a json body spells as a string');
+  eq(renameAt(json, 'event F', 'event '.length, 'G').error, undefined, 'a name it does not hold renames');
   const shared = 'enum A { Open, Closed }\nenum B { Open, Shut }\nprojection P: Unknown = Open\n'
     + 'command C(a: A) {\n  require a == Open\n    else reject "Not open"\n}\n';
   eq(/Open at line 3 could be a member of A or B/.test(renameAt(shared, 'A { Open', 4, 'Opened').error), true,
@@ -2115,9 +2114,9 @@ check('the reference example is the shipped model as printed', () => {
 });
 
 check('every keyword outside the experimental ones is shown to an agent', () => {
-  // Scripted projections (and their state) and guards (`and` chains
-  // them) are not offered over WebMCP.
-  const experimental = ['scripted', 'initialState', 'exposes', 'and'];
+  // None is experimental since 11.0; one staged behind the flag would
+  // be listed here, as WebMCP does not offer it.
+  const experimental = [];
   const shown = new Set((sandbox.SOURCE_REFERENCE_TOUR + '\n' + sandbox.SOURCE_REFERENCE_FORMS).match(/[A-Za-z]+/g));
   eq(sandbox.SOURCE_KEYWORDS.filter((word) => !experimental.includes(word) && !shown.has(word)), [],
     'add each to the tour or the forms in dsl.js');
@@ -2290,6 +2289,17 @@ command ClaimUsername(username: Username) {
     const { status, stderr } = run('check', write('guarded.dcb', text));
     eq(status, 1, 'exit');
     eq(stderr.includes('"when" on an emission is gone'), true, stderr);
+    const json = JSON.parse(run('json', write('plain.dcb', MODEL)).stdout);
+    json.commandDefinitions[0].publishes[0].when = [{ leftHandSide: { parameterName: 'username' }, predicate: 'isNotEmpty' }];
+    const guarded = run('print', write('guarded.json', JSON.stringify(json)));
+    eq(guarded.stderr.includes('converted on import: ClaimUsername:') && guarded.stderr.includes('not imported'), true,
+      'a command left out is said, even where the model still prints: ' + guarded.stderr);
+    delete json.commandDefinitions[0].publishes[0].when;
+    json.projectionDefinitions[0].script = { initialState: false };
+    const scripted = run('check', write('scripted.json', JSON.stringify(json)));
+    eq([scripted.status, scripted.stderr.trim()],
+      [1, 'Projection "UsernameTaken" is scripted – 11.0 has no scripted projections, so this model cannot be imported.'],
+      'a script refuses the file');
   });
 
   check('the skill\'s check notes implementation words without failing', () => {

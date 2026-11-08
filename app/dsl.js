@@ -54,8 +54,8 @@
 // never left off, which is what keeps a read apart from an enum member
 // by sight. A value has to be of the tag's declared type; a literal
 // says its type anyway, `CourseStatus(CourseId("c1"))`, so the text
-// shows which tag it fills. A scripted projection declares what it
-// takes besides after its tags, `scripted projection X (tag courseId:
+// shows which tag it fills. A projection declares what it takes
+// besides after its tags, `derived projection X (tag courseId:
 // CourseId, days: integer)`, and a read gives those after the tags
 // too. `each` before a value reads once per element of a list. A read may sit anywhere an
 // operand does – `require CourseStatus(courseId) == Existent`, an
@@ -153,10 +153,9 @@
 // research note is docs/research/2026-10-03-code-view-language.md.
 //
 // **A few spellings are the schema's own tokens**, matching the
-// interface's technical register: `successor(x)`,
-// `event.data.x` (the path a scripted handler writes), the predicate
-// words `contains` / `containsAny` / `startsWith` / `endsWith`, and the
-// script fields `initialState` / `exposes`. The rest are what a
+// interface's technical register: `successor(x)`, `event.data.x`, and
+// the predicate words `contains` / `containsAny` / `startsWith` /
+// `endsWith`. The rest are what a
 // developer would type: `==`, `<`, `in [..]` / `in xs`, `count(x)`,
 // `is empty`, `X[]` for a list, `name?:` for an optional property, and
 // `X(…)` for a read.
@@ -175,19 +174,16 @@
 // projection's (9.0): `derived projection Left (…): integer { Cap(x) -
 // Taken(x) }`, one operator – `+`, `-`, `*`, `min(a, b)`, `max(a, b)` –
 // over two projections or literals, outside any fold, so the fold arms
-// stay keywords. What neither says is what a script is for (experimental):
-// its arms are expressions over `state`, `event` and `args`, behind a
-// door that says analysis stops there. Expect the list to stay short:
+// stay keywords. What neither says goes unsaid: the scripted projection
+// that once said it, behind a door where analysis stopped, went in
+// 11.0 (`"scripted" is gone` is the error). Expect the list to stay short:
 // each new operation is a major (a reader fails on one it does not
 // know) and has to earn its place by being analysable – a
 // duplicate-free append is the candidate in sight.
 //
 // **What kind a projection is, it says in front**: `derived projection`
 // holds one expression in its block, a comparison or a computation, and
-// no initial value; `scripted projection` takes arguments after its
-// tags and holds `initialState`, `exposes` and code arms. The header
-// already knows what the block may hold, so an argument on anything but
-// a script is an error at the header, not after the block.
+// no initial value. The header already knows what the block may hold.
 //
 // **Operand names resolve per command.** A bare or dotted lowercase
 // name is an alias when some `alias` in the same command declares it
@@ -264,8 +260,8 @@
 // `sourceSymbols` walks the bodies and resolves each marked name to the
 // one thing it means – `member CourseStatus Existent`, never a word
 // that happens to match – so a rename (`sourceRename`) touches exactly
-// those tokens, and refuses rather than guess: over a script or json
-// body the name may also hide in, a member whose enum the text cannot
+// those tokens, and refuses rather than guess: over a json body the
+// name may also hide in, a member whose enum the text cannot
 // tell, or a result that would not read back the same. A read in place
 // can be named by an alias (`sourceIntroduceAlias`), proved the same
 // way: the command reads back as it was. Completion
@@ -384,6 +380,9 @@ function lexSource(text) {
       continue;
     }
     let token;
+    // A fenced block was a scripted handler's code until 11.0. It is
+    // still read as one token, so the parser can say where a handler
+    // tries to run code rather than stumble over the backticks.
     if (text.startsWith('```', i)) {
       const end = text.indexOf('```', i + 3);
       const value = text.slice(i + 3, end < 0 ? text.length : end);
@@ -582,7 +581,7 @@ function parseModelSourceText(text, options) {
   // ---------- values ----------
 
   // JSON, read off the token stream – the schema object of a `type`,
-  // a script's `initialState`, a definition's fallback body. Keys may
+  // a definition's fallback body. Keys may
   // be bare words as well as strings; the printer writes them bare.
   const jsonValue = () => {
     const token = peek();
@@ -939,8 +938,8 @@ function parseModelSourceText(text, options) {
   };
 
   // A projection's header, `(tag courseId: CourseId, days: integer)`:
-  // the tags it is read by, marked `tag`, then – only for a script – the
-  // values its code takes besides. Tags first, since a read gives them in
+  // the tags it is read by, marked `tag`, then its arguments – the
+  // values a read gives besides. Tags first, since a read gives them in
   // this order.
   const projectionParameterList = () => {
     expect('(');
@@ -1177,9 +1176,10 @@ function parseModelSourceText(text, options) {
       if (is('@')) fail('A projection in a group carries no annotations.');
       const untagged = is('untagged') ? next() : null;
       if (untagged) fail(`A group's projections are read by its tag, ${tagName.v} – an untagged projection stays outside it.`, untagged);
-      const kind = (is('derived') || is('scripted')) && is('projection', 1) ? next() : null;
+      if (is('scripted')) fail('"scripted" is gone – 11.0 runs no code: a projection is folded by its handlers\' operations, or derived.');
+      const kind = is('derived') && is('projection', 1) ? next() : null;
       if (!is('projection')) {
-        fail(`Expected projection, derived projection or scripted projection, found ${describeToken(peek())}.`);
+        fail(`Expected projection or derived projection, found ${describeToken(peek())}.`);
       }
       projectionDecl(at, [], null, kind, group);
     }
@@ -1202,10 +1202,9 @@ function parseModelSourceText(text, options) {
   // an error with both fixes – the partition is too easy to forget for
   // the text to assume one.
   //
-  // `derived` or `scripted` right before `projection` says what kind it
-  // is, so the header already knows what the block may hold: a script
-  // takes arguments after its tags, a derived projection holds one
-  // expression and no initial value.
+  // `derived` right before `projection` says what kind it is, so the
+  // header already knows what the block may hold: one expression and no
+  // initial value.
   //
   // In a group (`group`, the one being read), a projection is named in
   // lowerCamel, declares no tags – the group's is its – and is kept in
@@ -1217,7 +1216,6 @@ function parseModelSourceText(text, options) {
     const nameToken = group ? ident('the projection\'s name') : declName('a projection name');
     const qualified = group ? `${group.name}.${nameToken.v}` : nameToken.v;
     const derivedKind = !!kind && kind.v === 'derived';
-    const scriptedKind = !!kind && kind.v === 'scripted';
     if (group && is('json')) fail('A projection in a group is spelled out – the group as a whole may be json.');
     if (is('json')) {
       if (untagged) fail('A json body says its own tags – drop "untagged".', untagged);
@@ -1226,9 +1224,9 @@ function parseModelSourceText(text, options) {
     }
     annotate('projection-definition', {}, annotations);
     const body = {};
-    // What a read gives besides the tags is an argument (10.0): a script
-    // reads it, a derived projection compares or computes with it. A
-    // declared one's handlers cannot, which is the advisories' to say.
+    // What a read gives besides the tags is an argument (10.0): a derived
+    // projection compares or computes with it. A declared one's handlers
+    // cannot, which is the advisories' to say.
     const header = is('(') ? projectionParameterList() : { tags: [], args: [] };
     if (group && header.tags.length) {
       fail(`${qualified} is read by its group's tag, ${group.body.tag.name} – it declares none of its own. `
@@ -1266,12 +1264,6 @@ function parseModelSourceText(text, options) {
     }
     if (derivedKind || accept('{')) {
       const handlers = [];
-      let script = scriptedKind ? {} : null;
-      const scriptField = (key, value) => {
-        script = script || {};
-        if (script[key] !== undefined) fail(`${key} is given twice.`, last());
-        script[key] = value;
-      };
       const owner = { kind: 'projection-definition', name: qualified };
       let scenarios = null;
       const bare = [];
@@ -1281,52 +1273,33 @@ function parseModelSourceText(text, options) {
         if (derivedKind && !is('scenarios') && !is('scenario')) {
           fail(`A derived projection's block holds what it derives, then its scenarios – found ${describeToken(peek())}.`);
         }
-        if (!scriptedKind && (is('initialState') || is('exposes'))) {
-          fail(`Only a scripted projection has ${peek().v} – scripted projection ${nameToken.v}${group ? '' : ' (…)'}.`);
-        }
         if (accept('on')) {
           const eventToken = ident('an event name');
           const event = eventToken.v;
           expect('=>');
           if (peek().t === 'code') {
-            const handler = { event, code: next().v };
-            mark(handler, 'event', eventToken);
-            mark(handler, 'code', last());
-            handlers.push(handler);
-          } else {
-            const op = ident('an operation (set, increment, decrement, append, remove) or a ```code``` block');
-            if (!OPERATIONS.includes(op.v)) {
-              fail(`"${op.v}" is not an operation – set, increment, decrement, append or remove.`, op);
-            }
-            const handler = { event, operation: op.v };
-            mark(handler, 'event', eventToken);
-            if (startsHandlerOperand()) handler.value = handlerOperand();
-            handlers.push(handler);
+            fail('A handler runs no code in 11.0 – it is an operation: set, increment, decrement, append or remove.');
           }
-        } else if (is('script')) {
-          fail(`"script" goes in front now, as "scripted": scripted projection ${nameToken.v}${group ? '' : ' (…)'}.`);
-        } else if (accept('initialState')) {
-          mark(body, 'initialState', peek());
-          scriptField('initialState', jsonValue());
-        } else if (accept('exposes')) {
-          const exposed = ident('the exposed field');
-          mark(body, 'exposes', exposed);
-          scriptField('exposes', exposed.v);
+          const op = ident('an operation (set, increment, decrement, append, remove)');
+          if (!OPERATIONS.includes(op.v)) {
+            fail(`"${op.v}" is not an operation – set, increment, decrement, append or remove.`, op);
+          }
+          const handler = { event, operation: op.v };
+          mark(handler, 'event', eventToken);
+          if (startsHandlerOperand()) handler.value = handlerOperand();
+          handlers.push(handler);
         } else if (is('scenarios')) {
           scenarios = scenariosGroup(owner, scenarios);
         } else if (is('scenario')) {
           bare.push(scenarioDecl(peek(), owner));
         } else {
-          fail(`Expected "on"${scriptedKind ? ', initialState, exposes' : ''} or scenarios, found ${describeToken(peek())}.`);
+          fail(`Expected "on" or scenarios, found ${describeToken(peek())}.`);
         }
       }
       const endAt = at;
       expect('}');
       ungrouped(bare, endAt);
       if (!derivedKind) body.handlers = handlers;
-      if (script) body.script = script;
-    } else if (scriptedKind) {
-      body.script = {};
     }
     if (!group) return define('projection-definition', nameToken, body, start);
     if (group.body.projections.some((inner) => inner.name === nameToken.v)) {
@@ -1801,7 +1774,8 @@ function parseModelSourceText(text, options) {
     }
     if (is('type') || is('enum') || is('record')) return customType(start, annotations, isTag);
     const untagged = accept('untagged');
-    const kind = (is('derived') || is('scripted')) && (is('projection', 1) || is('untagged', 1)) ? next() : null;
+    if (is('scripted')) fail('"scripted" is gone – 11.0 runs no code: a projection is folded by its handlers\' operations, or derived.');
+    const kind = is('derived') && (is('projection', 1) || is('untagged', 1)) ? next() : null;
     if (kind && is('untagged')) fail(`"untagged" comes first: untagged ${kind.v} projection …`);
     const lead = kind || untagged;
     if (lead && !is('projection')) fail(`Expected projection after "${lead.v}", found ${describeToken(peek())}.`);
@@ -2451,9 +2425,9 @@ function printGroup(name, body, names, nest = null) {
 }
 
 // `projection Name (tag courseId: CourseId): T = v` – or `untagged
-// projection Name: T = v`, `derived projection Name (…): T { a - b }`,
-// `scripted projection Name (tag courseId: CourseId, days: integer): T
-// { … }`. The tags come first, then its arguments, which
+// projection Name: T = v`, or `derived projection Name (tag courseId:
+// CourseId, days: integer): T { a - b }`. The tags come first, then its
+// arguments, which
 // is the order a read gives them in. In a group (`inGroup`, the local
 // names of its projections) there are no tags to give and no
 // `untagged` to say: the group's tag is its.
@@ -2461,9 +2435,6 @@ function printProjection(name, body, names, inGroup = null) {
   const tags = body.tags === undefined ? [] : body.tags;
   if (!Array.isArray(tags)) unprintable('its tags are not a list');
   if (inGroup && tags.length) unprintable('it is in a group and declares tags of its own');
-  const script = body.script;
-  if (script !== undefined && (script === null || typeof script !== 'object' || Array.isArray(script))) unprintable('its script is not an object');
-  if (script && script.arguments !== undefined) unprintable('its script states arguments, which are the projection\'s');
   const args = body.arguments === undefined ? [] : body.arguments;
   if (!Array.isArray(args) || (body.arguments !== undefined && !args.length)) unprintable('its arguments are not a non-empty list');
   const parameters = [
@@ -2476,10 +2447,8 @@ function printProjection(name, body, names, inGroup = null) {
       return `${sourceRef(p.name, 'parameter')}: ${sourceRef(p.propertyType, 'type')}`;
     }),
   ];
-  // The kind is said once, in front; a body that is two kinds at once
-  // has no spelling.
-  if (body.derived !== undefined && script !== undefined) unprintable('it is both derived and scripted');
-  const kind = body.derived !== undefined ? 'derived ' : script !== undefined ? 'scripted ' : '';
+  // The kind is said once, in front.
+  const kind = body.derived !== undefined ? 'derived ' : '';
   let head = `${tags.length || inGroup ? '' : 'untagged '}${kind}projection ${sourceDeclName(name)}`
     + (parameters.length ? ` (${parameters.join(', ')})` : '')
     + `: ${sourceRef(body.valueType, 'value type')}${body.isList ? '[]' : ''}`;
@@ -2490,24 +2459,13 @@ function printProjection(name, body, names, inGroup = null) {
   }
   if (body.initialValue !== undefined) head += ` = ${sourceLiteral(body.initialValue)}`;
   const lines = [head];
-  if (body.handlers === undefined && script === undefined) return lines.join('\n');
+  if (body.handlers === undefined) return lines.join('\n');
   const items = [];
-  if (script !== undefined) {
-    if (script.tagFilter !== undefined) unprintable('its script states a tag filter – a projection declares its tags');
-    if (script.initialState !== undefined) items.push(`initialState ${sourceJson(script.initialState, '  ')}`);
-    if (script.exposes !== undefined) items.push(`exposes ${sourceRef(script.exposes, 'exposed field')}`);
-  }
   for (const handler of body.handlers || []) {
     const event = sourceRef(handler.event, 'event');
-    if (handler.code !== undefined) {
-      if (handler.operation !== undefined || handler.value !== undefined) unprintable('a handler has both code and an operation');
-      if (typeof handler.code !== 'string' || handler.code.includes('```')) unprintable('a handler\'s code cannot be fenced');
-      items.push(`on ${event} => \`\`\`${handler.code}\`\`\``);
-    } else {
-      if (!OPERATIONS.includes(handler.operation)) unprintable(`a handler's operation ${JSON.stringify(handler.operation)} is not one the code form knows`);
-      items.push(`on ${event} => ${handler.operation}`
-        + (handler.value !== undefined ? ' ' + sourceHandlerOperand(handler.value) : ''));
-    }
+    if (!OPERATIONS.includes(handler.operation)) unprintable(`a handler's operation ${JSON.stringify(handler.operation)} is not one the code form knows`);
+    items.push(`on ${event} => ${handler.operation}`
+      + (handler.value !== undefined ? ' ' + sourceHandlerOperand(handler.value) : ''));
   }
   const tail = lines.length - 1;
   lines[tail] += items.length ? ` {\n${items.map((i) => '  ' + i).join('\n')}\n}` : ' {}';
@@ -3183,8 +3141,8 @@ function sourceThenLines(draft, record, actual) {
 // scenario. A command's scenario has one outcome. A projection's is a
 // value read with tag values, so the read the line already names is
 // the one asked, and where it names none, each read the given events
-// can tag – their properties of each tag's type – is tried. A script
-// that takes arguments is not guessed at. Each outcome is its lines,
+// can tag – their properties of each tag's type – is tried. A
+// projection that takes arguments is not guessed at. Each outcome is its lines,
 // and for a projection its read and its value apart (`call`, `value`).
 function sourceOutcomesAt(model, text, line) {
   const lines = String(text).split('\n');
@@ -3429,9 +3387,9 @@ function sourceTextModel(parsed, fallback) {
 // Every name in a parsed text, resolved: `occurrences` (`{ symbol,
 // token, decl, shorthand }`), `ambiguous` (an enum member some other
 // enum also has, written where nothing says which type is meant) and
-// `opaque` (a script, a json body, a tag filter – text a name may hide
-// in without the grammar seeing it, which a rename has to refuse over
-// rather than silently miss).
+// `opaque` (a json body – text a name may hide in without the grammar
+// seeing it, which a rename has to refuse over rather than silently
+// miss).
 //
 // It walks the bodies, not the tokens: the parser marked which token
 // each part came from (`parsed.marks`), and the bodies say what that
@@ -3594,10 +3552,8 @@ function sourceSymbols(parsed) {
     }
     typeRef(slots.valueType);
     literal(body.initialValue, body.valueType);
-    if (slots.initialState && body.script) opaque.push({ token: slots.initialState, text: JSON.stringify(body.script.initialState) });
     for (const handler of list(body.handlers)) {
       add(sourceSymbol('event', handler.event), slotsOf(handler).event);
-      if (typeof handler.code === 'string') opaque.push({ token: slotsOf(handler).code, text: handler.code });
       if (handler.value !== undefined) handlerValue(handler.value, body.valueType, handler.event);
     }
     if (!body.derived || typeof body.derived !== 'object') return;
@@ -3863,18 +3819,13 @@ const SOURCE_RENAME_RULES = {
   command: [SOURCE_IDENT_RE, 'a name is letters, digits and _'],
 };
 const SOURCE_LOWER_NAME_RE = /^[\p{Ll}_][\p{L}\p{M}\p{Nd}_]*$/u;
-// What a script can name: an event's or a record's field
-// (`event.data.x`, `state.x`), a member as the string it is, and the
-// values it is read by (`tags.x`, `args.x`). A json body can name anything.
-const SOURCE_SCRIPT_VISIBLE = ['eventProperty', 'field', 'member', 'projectionParameter', 'projectionTag', 'groupTag', 'type'];
 const sourceArticle = (word) => (/^[aeiou]/.test(word) ? 'an' : 'a');
 const SOURCE_RESERVED_NAMES = ['true', 'false', 'null', 'enum', 'not', 'count', 'event', 'successor'];
 
 // Edits that rename the symbol at a position, everywhere it occurs and
 // nowhere else: `{ edits: [{ line, col, endLine, endCol, text }] }`, or
-// `{ error }` saying why not. Safe means three refusals: a name a
-// script, a json body or a tag filter may also hold (the grammar cannot
-// see in there); an enum member written somewhere its enum cannot be
+// `{ error }` saying why not. Safe means three refusals: a name a json
+// body may also hold (the grammar cannot see in there); an enum member written somewhere its enum cannot be
 // told; and a result that would not read back as the same model with
 // one name changed – checked by renaming, re-reading, and counting.
 //
@@ -3933,10 +3884,9 @@ function sourceRenameSymbol(text, parsed, symbol, newName) {
     }
     const fromName = sourceSymbolParts(from).name;
     const pattern = new RegExp(`(^|[^\\p{L}\\p{M}\\p{Nd}_])${fromName}($|[^\\p{L}\\p{M}\\p{Nd}_])`, 'u');
-    const visible = SOURCE_SCRIPT_VISIBLE.includes(sourceSymbolParts(from).kind);
-    const hidden = opaque.find((o) => (o.json || visible) && pattern.test(o.text));
+    const hidden = opaque.find((o) => pattern.test(o.text));
     if (hidden) {
-      return { error: `${fromName} also appears in the script or JSON at line ${hidden.token.line}, which a rename cannot follow into – change it there by hand.` };
+      return { error: `${fromName} also appears in the JSON at line ${hidden.token.line}, which a rename cannot follow into – change it there by hand.` };
     }
     const unclear = ambiguous.find((a) => a.candidates.includes(from));
     if (unclear) {
@@ -4115,7 +4065,6 @@ const SOURCE_DECLARATION_SNIPPETS = [
   ['projection', 'projection ${1:Name} (tag ${2:id}: ${3:Type}): ${4:integer} = ${5:0} {\n\t$0\n}'],
   ['untagged projection', 'untagged projection ${1:Name}: ${2:integer} = ${3:0} {\n\t$0\n}'],
   ['derived projection', 'derived projection ${1:Name} (tag ${2:id}: ${3:Type}): ${4:integer} {\n\t$0\n}'],
-  ['scripted projection', 'scripted projection ${1:Name} (tag ${2:id}: ${3:Type}): ${4:integer} {\n\tinitialState ${5:0}\n\t$0\n}'],
   ['enum', 'enum ${1:Name} { $0 }'],
   ['tag type', 'tag type ${1:Name} = string'],
   ['type', 'type ${1:Name} = ${2:string}'],
@@ -4127,7 +4076,6 @@ const SOURCE_DECLARATION_SNIPPETS = [
 const SOURCE_GROUP_PROJECTION_SNIPPETS = [
   ['projection', 'projection ${1:name}: ${2:integer} = ${3:0} {\n\t$0\n}'],
   ['derived projection', 'derived projection ${1:name}: ${2:integer} {\n\t$0\n}'],
-  ['scripted projection', 'scripted projection ${1:name}: ${2:integer} {\n\tinitialState ${3:0}\n\t$0\n}'],
 ];
 
 function sourceOffset(text, line, col) {
@@ -4155,8 +4103,9 @@ function sourceOffset(text, line, col) {
 // whole text's parse, with `model`'s definitions filling in for any
 // that fail to parse while being typed.
 // `experimental: false` leaves out what the experimental flag keeps off
-// the pages – scripted projections. A text using them still
-// reads. Groups are not among them: a name is nothing to hide.
+// the pages – no construct, since 11.0; the option stays for the next
+// one staged there. A text using one still reads. Groups are not among
+// them: a name is nothing to hide.
 // A group's projections complete as top-level ones do, by their
 // qualified names (`Course.capacity`), with the group's tag among a
 // derived one's parameters and its siblings among what it reads.
@@ -4173,9 +4122,9 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
   const atLineStart = !tokens.length || tokens[tokens.length - 1].endLine < line;
 
   // ---------- where the cursor is ----------
-  const DECL_WORDS = ['model', 'type', 'tag', 'enum', 'record', 'event', 'group', 'untagged', 'derived', 'scripted', 'projection', 'command', 'scenarios', 'scenario', '@'];
+  const DECL_WORDS = ['model', 'type', 'tag', 'enum', 'record', 'event', 'group', 'untagged', 'derived', 'projection', 'command', 'scenarios', 'scenario', '@'];
   // The words before a declaration's keyword, which say what it is.
-  const LEAD_WORDS = ['tag', 'untagged', 'derived', 'scripted'];
+  const LEAD_WORDS = ['tag', 'untagged', 'derived'];
   const unled = (s) => { let i = 0; while (LEAD_WORDS.includes(v(s[i]))) i += 1; return s.slice(i); };
   const v = (t) => (t ? t.v : undefined);
   const frames = [{ kind: 'top', level: 0, open: -1, stmt: 0 }];
@@ -4313,7 +4262,7 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
         const words = tokens.slice(i, j).map((t) => t.v);
         decl = {
           keyword: v(tokens[j]), name: v(tokens[j + 1]), start: i,
-          derived: words.includes('derived'), scripted: words.includes('scripted'),
+          derived: words.includes('derived'),
         };
         frame.stmt = i;
       }
@@ -4325,7 +4274,7 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
         const words = tokens.slice(i, j).map((t) => t.v);
         frame.inner = {
           keyword: 'projection', name: v(tokens[j + 1]), start: i,
-          derived: words.includes('derived'), scripted: words.includes('scripted'),
+          derived: words.includes('derived'),
         };
       }
     }
@@ -4717,14 +4666,13 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     const kw = decl.keyword;
     if (!s.length) {
       for (const [label, insert] of SOURCE_DECLARATION_SNIPPETS) {
-        if (experimental || label !== 'scripted projection') push(label, 'keyword', 'declaration', { insert, snippet: true, sort: 0 });
+        push(label, 'keyword', 'declaration', { insert, snippet: true, sort: 0 });
       }
       return done(false);
     }
     // What a lead word is followed by: `untagged derived projection`.
-    if (s.length === 1 && (prev === 'untagged' || prev === 'derived' || prev === 'scripted')) {
-      keywords([['projection', 'projection '], ...(prev === 'untagged' ? [['derived', 'derived '],
-        ...(experimental ? [['scripted', 'scripted ']] : [])] : [])]);
+    if (s.length === 1 && (prev === 'untagged' || prev === 'derived')) {
+      keywords([['projection', 'projection '], ...(prev === 'untagged' ? [['derived', 'derived ']] : [])]);
       return done(false);
     }
     if (prev === '@') {
@@ -4769,11 +4717,11 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
   if (k === 'group') {
     if (!s.length) {
       for (const [label, insert] of SOURCE_GROUP_PROJECTION_SNIPPETS) {
-        if (experimental || label !== 'scripted projection') push(label, 'keyword', 'projection', { insert, snippet: true, sort: 0 });
+        push(label, 'keyword', 'projection', { insert, snippet: true, sort: 0 });
       }
       return done(false);
     }
-    if (s.length === 1 && (prev === 'derived' || prev === 'scripted')) { keywords([['projection', 'projection ']]); return done(false); }
+    if (s.length === 1 && prev === 'derived') { keywords([['projection', 'projection ']]); return done(false); }
     const colon = s.findIndex((t) => t.v === ':');
     if (prev === ':') { typeItems(); return done(); }
     if (prev === '=' && colon >= 0) {
@@ -4814,7 +4762,6 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     }
     if (!s.length) {
       keywords([['on', 'on '], ['scenarios', SOURCE_GROUP_SNIPPET, true]]);
-      if (frame.decl && frame.decl.scripted) keywords([['initialState'], ['exposes']], 2);
       return done(false);
     }
     if (v(s[0]) === 'on') {
@@ -5060,22 +5007,13 @@ function sourceFoldingRanges(text) {
 // text that does not parse is marked too. The editor shows them at
 // info level while the flag is off: the text reads and applies whole
 // either way, as a model using them loads whole.
+// Since 11.0 no construct is staged there (`EXPERIMENTAL_FEATURES`,
+// model.js), so nothing is marked; one that is gets found here, each
+// mark saying "… is experimental – turn experimental features on in
+// Settings to author it on the pages.". A group never is: a name is
+// nothing to hide.
 function sourceExperimentalMarks(text) {
-  const tokens = lexSource(text).tokens;
-  const out = [];
-  const said = (token, what) => out.push({
-    line: token.line, col: token.col, endLine: token.endLine, endCol: token.endCol,
-    message: `${what} is experimental – turn experimental features on in Settings to author it on the pages.`,
-  });
-  tokens.forEach((token, i) => {
-    const v = token.v;
-    const next = tokens[i + 1];
-    if (token.t !== 'ident') return;
-    // A group is not marked: a name is nothing to hide. A scripted
-    // projection is, in a group as anywhere.
-    if (v === 'scripted' && next && (next.v === 'projection' || next.v === 'untagged')) said(token, 'A scripted projection');
-  });
-  return out;
+  return [];
 }
 
 // ============================================================
@@ -5441,10 +5379,10 @@ const SOURCE_REFERENCE_GOTCHAS = `## Gotchas
 - "tag x?: T" is allowed: an event whose x is null carries no such tag, and a projection tagged by T does not see it.
 `;
 
-const SOURCE_REFERENCE_UNOFFERED = 'Not offered to agents: scripted projections, '
-  + 'arguments on a group\'s projection '
-  + 'read through an alias (x.p(a: …)). A text or '
-  + 'definition that adds one is refused. A model that already uses them shows them in get_model_source; keep those parts as they are.';
+const SOURCE_REFERENCE_UNOFFERED = 'Not in the definition tools\' schemas: the arguments a read passes, '
+  + 'such as a group\'s projection read through an alias (x.p(a: …)). A model that already uses them shows them '
+  + 'in get_model_source; keep those parts as they are. Gone since 11.0, and refused wherever they are written: '
+  + 'scripted projections, currentValue, guarded emissions (emit … when …) and optional reads (alias x? = …).';
 
 function sourceLanguageReference() {
   return [
@@ -5463,8 +5401,8 @@ function sourceLanguageReference() {
 // ============================================================
 
 const SOURCE_KEYWORDS = [
-  'model', 'type', 'tag', 'enum', 'record', 'event', 'group', 'untagged', 'derived', 'scripted',
-  'projection', 'min', 'max', 'initialState', 'exposes', 'on', 'set', 'increment', 'decrement', 'append',
+  'model', 'type', 'tag', 'enum', 'record', 'event', 'group', 'untagged', 'derived',
+  'projection', 'min', 'max', 'on', 'set', 'increment', 'decrement', 'append',
   'remove', 'command', 'alias', 'each', 'require', 'emit', 'when', 'and', 'not', 'is',
   'empty', 'in', 'contains', 'containsAny', 'startsWith', 'endsWith', 'count', 'successor',
   'json', 'true', 'false', 'null', 'scenarios', 'scenario', 'given', 'then', 'nothing', 'rejected',
@@ -5484,7 +5422,6 @@ const SOURCE_MONARCH = {
   baseTypes: [...SOURCE_BASE_TYPES],
   tokenizer: {
     root: [
-      [/```/, { token: 'string.code', next: '@code', nextEmbedded: 'javascript' }],
       [/@[\p{L}_][\p{L}\p{M}\p{Nd}_]*/, 'annotation'],
       [/event(?=\.data\.)/, 'keyword'],
       [/\p{Lu}[\p{L}\p{M}\p{Nd}_]*/, 'type.identifier'],
@@ -5496,11 +5433,6 @@ const SOURCE_MONARCH = {
       [/[-+*]/, 'operator'],
       [/"([^"\\]|\\.)*$/, 'string.invalid'],
       [/"/, 'string', '@string'],
-    ],
-    code: [
-      [/```/, { token: 'string.code', next: '@pop', nextEmbedded: '@pop' }],
-      [/[^`]+/, ''],
-      [/`/, ''],
     ],
     string: [
       [/[^\\"]+/, 'string'],

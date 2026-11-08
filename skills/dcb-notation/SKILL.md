@@ -24,7 +24,7 @@ The notation is the authored form. The JSON document is its output: every constr
 
 - **Converting an Event Sourcing app?** Read [references/from-event-sourcing.md](references/from-event-sourcing.md) now. It replaces steps 2 and 7.
 - **Simplifying a model or an app, with its events free to change?** Read [references/redesign.md](references/redesign.md) now. It replaces steps 2 and 7.
-- **Changing an existing model?** `print` it and edit the whole text. If `check` reports it uses experimental constructs, stop and name them to the user: this skill does not support such a model, though `print` and `json` still work on it. The notation has no spelling for a document's `sandbox` session, so `print` warns and that session stays behind in the original. Generated JSON also has new scenario ids and the current minor version. Say both at hand-over.
+- **Changing an existing model?** `print` it and edit the whole text. A JSON document that uses something the notation removed in 11.0 cannot be carried over whole: a scripted projection or `currentValue` refuses the file, and a command with a guarded emission or an optional read is left out, with a `converted on import` line saying so. Stop and name these to the user, since the notation has no spelling for them. The notation has no spelling for a document's `sandbox` session, so `print` warns and that session stays behind in the original. Generated JSON also has new scenario ids and the current minor version. Say both at hand-over.
 
 ## Steps
 

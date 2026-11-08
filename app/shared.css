@@ -499,16 +499,6 @@ input.inline:focus { border-bottom-color: var(--accent); }
 #toast.err::before { content: '⚠'; }
 body.f-dark #toast.err { background: #2d1414; color: #fecaca; border-color: #7f1d1d; }
 
-/* ---------- the scripted-handler editor ---------- */
-
-/* The Monaco host. The frame matches the textareas around it; the
-   height is set by the widget, tracking the code's own height. */
-.script-editor {
-  border: 1px solid var(--border); border-radius: 5px;
-  overflow: hidden; background: var(--bg);
-}
-.script-editor:focus-within { border-color: var(--accent); }
-
 /* ---------- chooser ---------- */
 
 .chooser { max-width: 860px; margin: 0 auto; padding: 34px 20px 60px; }

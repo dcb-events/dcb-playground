@@ -129,7 +129,7 @@ async function call(name, args) {
     const bindings = offered('add_command_definition').boundary.items.oneOf;
     eq(bindings.map((b) => Object.keys(b.properties).sort()),
       [['alias', 'group', 'tags'], ['alias', 'projection', 'tags']],
-      'a binding reads a group or a projection – with no optional read, nor the arguments a read passes a script');
+      'a binding reads a group or a projection – with no optional read, nor the arguments a read passes');
     eq('icon' in offered('add_event_definition'), true, 'nor is an event\'s');
   });
 
@@ -492,7 +492,7 @@ async function call(name, args) {
       script: { initialState: 0 }, handlers: [{ event: 'CourseDefined', code: 'state + 1' }],
     });
     eq(isError, true, 'refused');
-    eq(text.includes('Course.scripted uses scripted projections'), true, text);
+    eq(text.includes('Projection "Course.scripted" is scripted – 11.0 has no scripted projections.'), true, text);
     eq(model()['group-definitions'].Course.projections.length, 2, 'not stored');
   });
 
@@ -645,7 +645,7 @@ async function call(name, args) {
     eq(modelCount(), before, 'no empty model left behind');
   });
 
-  await check('code adding an experimental construct is refused, naming its line', async () => {
+  await check('code saying what 11.0 removed is refused, naming its line', async () => {
     const before = modelCount();
     const scripted = LIBRARY + [
       '',
@@ -658,7 +658,7 @@ async function call(name, args) {
     ].join('\n');
     const started = await call('start_model', { name: 'Scripted', source: scripted });
     eq(started.isError, true, 'refused when starting');
-    eq(started.text.includes('- line 11: Book.adds uses scripted projections'), true, started.text);
+    eq(started.text.includes('- line 11, column 3: "scripted" is gone'), true, started.text);
     eq(modelCount(), before, 'and nothing created');
     await call('start_model', { name: 'Guards', source: LIBRARY });
     const guarded = swap(LIBRARY, '  emit BookAdded { bookId }', '  emit BookAdded { bookId } when BookKnown(bookId) is false');
@@ -681,19 +681,6 @@ async function call(name, args) {
     eq(text.includes('Command "ProbeGuarded" guards its emission of "BookAdded" (when …) – 11.0 has no guarded emissions.'),
       true, text);
     eq('ProbeGuarded' in projectState()[sandbox.activeModelId()]['command-definitions'], false, 'not stored');
-  });
-
-  await check('a model already using experimental constructs stays editable', async () => {
-    const scriptedId = loadPredefinedModel(sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'content-decisions-scripted'));
-    sandbox.setActiveModelId(scriptedId);
-    const { text: source } = await call('get_model_source');
-    eq(source.includes('scripted projection'), true, 'shown as stored');
-    const applied = await call('apply_model_source', { source: source + '\nevent ExtraHappened { note: string }\n' });
-    eq(applied.isError, false, applied.text);
-    const [name, body] = Object.entries(projectState()[scriptedId]['projection-definitions'])
-      .find(([, b]) => b.script);
-    const updated = await call('update_projection_definition', { name, ...body });
-    eq(updated.isError, false, 'a script it already had is kept: ' + updated.text);
   });
 
   await check('an agent edit is one undo step of its own', async () => {

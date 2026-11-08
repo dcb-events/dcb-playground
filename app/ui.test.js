@@ -544,8 +544,8 @@ function build(which) {
   });
 
   check('the ledger says what kind of value it is', () => {
-    eq(sandbox.scriptLabel(model()['projection-definitions'].DocumentHasPendingChanges),
-      'derived', 'beside the type, like "scripted"');
+    eq(sandbox.kindLabel(model()['projection-definitions'].DocumentHasPendingChanges),
+      'derived', 'beside the type');
   });
 }
 
@@ -615,7 +615,7 @@ function build(which) {
     eq(initialValueWords(['a', 'b']), '"a", "b"', 'a list with things in it');
     eq(initialValueWords({ enumMember: 'Existent' }), 'Existent', 'an enum member');
     eq(initialValueWords({ count: 2, odd: false }), '{"count":2,"odd":false}',
-      'a record a scripted projection folded to, as the JSON it is');
+      'a record, as the JSON it is');
   });
 
   check('a row says what a projection is read by, as the tag it is', () => {
@@ -688,18 +688,15 @@ function build(which) {
 }
 
 // ---------------------------------------------------------------
-// A record is a value only code can advance: held by a declared
-// projection it is the advisory that used to be a refusal, held by a
-// scripted one it is legal.
+// A record is a value no operation can advance: held by a projection
+// it is the advisory that used to be a refusal, and never offered.
 // ---------------------------------------------------------------
 {
   const { id, model } = build('pricing-simple');
 
-  check('a scripted projection may hold a record', () => {
-    const declared = projectionTypeOptions(model()).map(([t]) => t);
-    eq(declared.includes('Item'), false, 'declared, the composite stays off the list');
-    const scripted = projectionTypeOptions(model(), { scripted: true }).map(([t]) => t);
-    eq(scripted.includes('Item'), true, 'scripted, it joins it');
+  check('a projection is never offered a record to hold', () => {
+    const offered = projectionTypeOptions(model()).map(([t]) => t);
+    eq(offered.includes('Item'), false, 'the composite stays off the list');
   });
 
   check('a declared projection holding a composite is advisory-flagged', () => {
@@ -711,16 +708,6 @@ function build(which) {
     ), true, 'stored, and reported');
   });
 
-  check('the same composite held by a scripted projection is legal', () => {
-    updateDefinition('projection-definition', id, 'ItemSnapshot', {
-      valueType: 'Item', isList: false,
-      script: { initialState: null, tagFilter: [], arguments: [] },
-      handlers: [],
-    });
-    eq(sandbox.modelAdvisories(model()).some(
-      (a) => a.name === 'ItemSnapshot' && /composite/.test(a.message)
-    ), false, 'nothing left to report');
-  });
 }
 
 // ---------------------------------------------------------------
@@ -803,9 +790,6 @@ function build(which) {
       }
       for (const projection of envelope.projectionDefinitions) {
         conforms(projection, 'ProjectionDefinition', `projection ${projection.name}`, report);
-        if (projection.script) {
-          conforms(projection.script, 'ProjectionScript', `${projection.name}'s script`, report);
-        }
         for (const handler of projection.handlers || []) {
           conforms(handler, 'PropertyHandler', `${projection.name} on ${handler.event}`, report);
         }
@@ -991,13 +975,12 @@ function build(which) {
     sandbox.state.groupOpen = {};
   });
 
-  check('the editor renders a grouped scripted projection, and round-trips it', () => {
+  check('the editor renders a grouped projection, and round-trips it', () => {
     sandbox.addDefinition('projection-definition', id, 'Course.touches', {
-      arguments: [{ name: 'since', propertyType: 'integer' }],
       valueType: 'integer',
       isList: false,
-      script: { initialState: 0 },
-      handlers: [{ event: 'CourseDefined', code: '(state || 0) + 1' }],
+      initialValue: 0,
+      handlers: [{ event: 'CourseDefined', operation: 'increment', value: 1 }],
     });
     sandbox.state.projDraft = {
       name: 'Course.touches',
@@ -3086,105 +3069,6 @@ check('importing an older model with entities says what became of them', () => {
 }
 
 // ---------------------------------------------------------------
-// What a scripted handler can see comes from the definitions alone –
-// the handled event's properties, the shape of the initial state, the
-// script's arguments – and is synthesized into the TypeScript preamble
-// the editor prefixes to the code. Pure model → text; the Monaco
-// widget around it is DOM and deliberately not reached here.
-// ---------------------------------------------------------------
-{
-  const { scriptHandlerPreamble } = sandbox;
-  const has = (text, part, why) =>
-    eq(text.includes(part), true, why + ' – expected the preamble to contain: ' + part);
-  const model = {
-    'custom-type-definitions': {
-      CourseId: { schema: { type: 'string' }, isTag: true },
-      StudentStatus: { schema: { type: 'string', enum: ['NonExistent', 'Existent'] } },
-      Money: { properties: [
-        { name: 'amount', propertyType: 'integer' },
-        { name: 'currency', propertyType: 'string' }] },
-    },
-    'event-definitions': {
-      CoursePriced: { properties: [
-        { name: 'courseId', propertyType: 'CourseId' },
-        { name: 'price', propertyType: 'Money' },
-        { name: 'seats', propertyType: 'integer', isList: true },
-        { name: 'note', propertyType: 'string', isOptional: true },
-        { name: 'status', propertyType: 'StudentStatus' },
-        { name: 'ghost', propertyType: 'NoSuchType' }] },
-    },
-  };
-  const body = {
-    valueType: 'integer',
-    arguments: [{ name: 'courseId', propertyType: 'CourseId' }, { name: '', propertyType: 'CourseId' }],
-    script: { initialState: { count: 0, open: true, ids: [], seats: { taken: 0 } } },
-  };
-
-  check('the preamble types exactly what the handler can see', () => {
-    const text = scriptHandlerPreamble(model, body, { event: 'CoursePriced' });
-    eq(text.split('\n')[0], 'export {};', 'each handler is its own file scope');
-    eq(text.split('\n').pop(), '__check(', 'and ends opening the checked expression the code is');
-    has(text, 'type CourseId = string & { readonly __type: "CourseId" };',
-      'identifier types are branded, so mixing two of them squiggles');
-    has(text, 'type StudentStatus = "NonExistent" | "Existent";',
-      'enums are literal unions');
-    has(text, 'type Money = { amount: number; currency: string };',
-      'a composite type carries its fields');
-    has(text, 'readonly type: "CoursePriced";', 'event.type is the name itself, and read-only');
-    has(text, 'readonly courseId: CourseId;', 'as is every field – the event is frozen at run time');
-    has(text, 'courseId: CourseId;', 'event data is typed from the definition');
-    has(text, 'seats: number[];', 'a list property is a list');
-    has(text, 'note: string | null;', 'an optional property may be the null it publishes');
-    has(text, 'ghost: any;', 'a dangling type reference stays permissive, never fatal');
-    has(text, 'count: number', 'state keys are typed from the initial state');
-    has(text, '/** starts at 0 */', 'and hint where they start');
-    has(text, 'ids: any[]', 'an empty initial list promises nothing about elements');
-    has(text, '[key: string]: any', 'state stays loose – scripts may grow keys');
-    has(text, 'declare const args: { courseId: CourseId };',
-      'arguments are typed, unnamed rows are not offered');
-  });
-
-  check('what a handler returns is held to what the projection holds', () => {
-    const returned = (over) => {
-      const text = scriptHandlerPreamble(model, over, { event: 'CoursePriced' });
-      return text.match(/__check\(nextState: ([\s\S]*?)\): void;/)[1];
-    };
-    eq(returned({ valueType: 'boolean', script: { initialState: false } }), 'boolean',
-      'a boolean projection wants a boolean back');
-    eq(returned({ valueType: 'boolean', script: { initialState: null } }), 'boolean | null',
-      'a null start is how nullable is spelled, so null stays returnable');
-    eq(returned({ valueType: 'CourseId', script: { initialState: null } }), 'string | null',
-      'brands widen in return position – code can compare ids, never mint one');
-    eq(returned({ valueType: 'StudentStatus', script: { initialState: null } }),
-      '"NonExistent" | "Existent" | null', 'an enum wants one of its members back');
-    eq(returned({ valueType: 'StudentStatus', isList: true, script: { initialState: [] } }),
-      '("NonExistent" | "Existent")[] | any[]', 'a list projection wants the list');
-    eq(returned({ valueType: 'NoSuchType', script: { initialState: null } }), 'any',
-      'an unresolved held type checks nothing rather than everything wrongly');
-    eq(returned({ valueType: 'integer', script: { initialState: 7, exposes: 'total' } }),
-      '{ total: number } & { [key: string]: any } | number',
-      'with exposes the value type constrains the exposed field of the record');
-  });
-
-  check('no event chosen (or a renamed-away one) leaves the data open', () => {
-    const text = scriptHandlerPreamble(model, body, { event: '' });
-    has(text, 'declare const event: { readonly type: string; readonly data: { readonly [key: string]: any } };',
-      'unknown event, unknowable data');
-  });
-
-  check('the predefined models synthesize cleanly', () => {
-    const { model: projected } = build(GROUPED);
-    const [eventName] = Object.keys(projected()['event-definitions']);
-    const text = scriptHandlerPreamble(projected(),
-      { valueType: 'integer', script: { initialState: null, arguments: [] } },
-      { event: eventName });
-    has(text, 'type: ' + JSON.stringify(eventName) + ';', 'a real event types by name');
-    has(text, 'declare const state: any;', 'a null initial state promises nothing');
-    has(text, '__check(nextState: number | null): void;', 'and stays returnable');
-  });
-}
-
-// ---------------------------------------------------------------
 // Saying "the course exists" – rendering only, never storage.
 // ---------------------------------------------------------------
 {
@@ -3455,7 +3339,7 @@ check('importing an older model with entities says what became of them', () => {
 // ---------------------------------------------------------------
 // The merged step. "To decide, it looks at" and "It is only allowed
 // if" are one step, and the reason is a rule about ownership: a read
-// is not something anyone declares. It arrives with the rule, guard,
+// is not something anyone declares. It arrives with the rule,
 // emission or chain that wanted it, and leaves with the last of them.
 // These hold the seam where that is true – the write path – and the
 // one gesture that now spans both halves.
@@ -4514,7 +4398,7 @@ check('importing an older model with entities says what became of them', () => {
   });
 
   check('the layout places no two cards on top of each other', () => {
-    for (const index of [0, 3, 8]) {
+    for (const index of [0, 3, 6]) {
       const { model: m } = build(index);
       const layout = sandbox.eventModelLayout(m(), sandbox.eventModel(m()));
       const cards = layout.cards;
@@ -4811,7 +4695,7 @@ check('the reference links only anchors the website defines', () => {
   const links = sandbox.helpReferenceLinks();
   eq(links[0], sandbox.NOTATION_GUIDE_URL, 'the guide');
   eq(links.every((link) => link.startsWith(sandbox.NOTATION_GUIDE_URL)), true, 'only the notation pages');
-  eq(links.length, 28, 'the anchors the website defines, and no new one before it does');
+  eq(links.length, 25, 'the anchors the website defines, and no new one before it does');
   // dcb.events reads the list by loading shared.js with nothing around
   // it – no window, no document – so loading it must need neither.
   const bare = require('vm').createContext({});
@@ -4830,9 +4714,6 @@ check('the reference links only anchors the website defines', () => {
     eq(sandbox.experimentalFeatures(model()), [], 'groups are not experimental, nor are feature groups');
     const derived = build('content-decisions-derived').model;
     eq(sandbox.experimentalFeatures(derived()), [], 'a derived projection is not experimental');
-    const scripted = build('content-decisions-scripted').model;
-    eq(sandbox.experimentalFeatures(scripted()).some((f) => f.feature === 'scripted' && f.where === 'DocumentStatus'),
-      true, 'a scripted projection, on itself');
   });
 
   check('a shipped model is marked experimental exactly when it uses something experimental', () => {
@@ -4895,13 +4776,12 @@ check('the reference links only anchors the website defines', () => {
     eq(sandbox.modelToSource(model).includes('↯'), false, 'a fallback is never written');
   });
 
-  check('the notice names the features when the flag is off, and only then', () => {
-    const { model } = build('content-decisions-scripted');
-    eq(sandbox.experimentalNotice(model()), null, 'flag on: nothing to say');
+  check('no language construct is experimental, so the notice has nothing to say', () => {
     store.set('dcb-playground:experimental', 'off');
-    const text = textOf(sandbox.experimentalNotice(model()));
-    eq(text.includes('scripted projections.'), true, 'the features, by name: ' + text);
-    eq(sandbox.experimentalNotice(build(GROUPED).model()), null, 'and a model with groups has none to name');
+    sandbox.PREDEFINED_MODELS.forEach((entry, index) => {
+      eq(sandbox.experimentalNotice(build(index).model()), null, entry.slug);
+    });
+    eq(sandbox.experimentalNotice(build(GROUPED).model()), null, 'nor a model with groups');
     store.set('dcb-playground:experimental', 'on');
   });
 
@@ -5283,41 +5163,32 @@ check('the reference links only anchors the website defines', () => {
     sandbox.closeForms();
   });
 
-  check('the Advanced switch keeps scripting and who reads it out of the way until asked', () => {
+  check('the Advanced switch keeps deriving and who reads it out of the way until asked', () => {
     store.set(ADVANCED, 'off');
+    const toggle = (root) => findAll(root, (n) => n.tag === 'label' && textOf(n).trim() === 'derived projection').length;
+    eq(toggle(editorOf('CourseCapacity')), 0, 'no deriving offered');
     const off = textOf(editorOf('CourseCapacity'));
-    eq(off.includes('scripted projection'), false, 'no scripting offered');
     eq(/read by/i.test(off), false, 'no readers');
     eq(/query/i.test(off), true, 'the query is always there');
     eq(off.includes('Course defined'), true, 'with the events it handles');
     store.set(ADVANCED, 'on');
-    const flag = store.get('dcb-playground:experimental');
-    store.delete('dcb-playground:experimental');
-    const plain = textOf(editorOf('CourseCapacity'));
-    eq(plain.includes('derived projection'), true, 'deriving is offered');
-    eq(plain.includes('scripted projection'), false, 'scripting is experimental');
-    store.set('dcb-playground:experimental', 'on');
+    eq(toggle(editorOf('CourseCapacity')), 1, 'deriving is offered');
     const on = textOf(editorOf('CourseCapacity'));
-    eq(on.includes('scripted projection'), true, 'scripting is offered with the flag on');
     eq(/read by/i.test(on), true, 'and who reads it is said');
-    if (flag === undefined) store.delete('dcb-playground:experimental'); else store.set('dcb-playground:experimental', flag);
     store.set(ADVANCED, 'off');
     sandbox.closeForms();
   });
 
-  check('a scripted projection shows its scripting with the switch off', () => {
+  check('a derived projection shows its kind with the switch off', () => {
     store.set(ADVANCED, 'off');
-    const { id: scriptedId, model: scripted } = build(
-      sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'content-decisions-scripted'));
-    sandbox.setActiveModelId(scriptedId);
-    store.set(ADVANCED, 'off');
-    const name = Object.keys(scripted()['projection-definitions'])
-      .find((n) => scripted()['projection-definitions'][n].script);
-    sandbox.state.projDraft = { name, body: projectionDraftFrom(scripted()['projection-definitions'][name]) };
+    const { id: derivedId, model: derived } = build(
+      sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'content-decisions-derived'));
+    sandbox.setActiveModelId(derivedId);
+    const name = 'DocumentHasPendingChanges';
+    sandbox.state.projDraft = { name, body: projectionDraftFrom(derived()['projection-definitions'][name]) };
     const root = sandbox.document.createElement('div');
-    for (const node of sandbox.projectionFields(scripted(), sandbox.state.projDraft.body)) root.appendChild(node);
-    eq(textOf(root).includes('scripted projection'), true, 'the switch hides offers, not what is stored');
-    eq(textOf(root).includes('initial state'), true, 'its state is any JSON');
+    for (const node of sandbox.projectionFields(derived(), sandbox.state.projDraft.body)) root.appendChild(node);
+    eq(textOf(root).includes('derived projection'), true, 'the switch hides offers, not what is stored');
     sandbox.setActiveModelId(id);
     sandbox.closeForms();
   });
@@ -5528,15 +5399,10 @@ check('the app is text: no file carries a raw control byte', () => {
     const moveRow = sandbox.moveRow;
     let moved = 0;
     sandbox.moveRow = () => { moved += 1; return true; };
-    for (const open of [
-      () => { sandbox.state.importExport = true; },
-      () => { sandbox.state.pendingImport = { envelope: {} }; },
-    ]) {
-      open();
-      key('ArrowDown');
-      sandbox.state.importExport = false; sandbox.state.pendingImport = null;
-    }
-    eq(moved, 0, 'behind Import & Export and the import gate');
+    sandbox.state.importExport = true;
+    key('ArrowDown');
+    sandbox.state.importExport = false;
+    eq(moved, 0, 'behind Import & Export');
     key('ArrowDown');
     eq(moved, 1, 'and with nothing open, they do');
     sandbox.moveRow = moveRow;
@@ -6179,7 +6045,7 @@ command MoveThing(thingId: ThingId, status: Status) {
 }
 `;
 
-  check('an enum or a boolean is a machine, anything else with handlers moves, derived and scripted have none', () => {
+  check('an enum or a boolean is a machine, anything else with handlers moves, a derived one has none', () => {
     const simple = build('course-simple').model();
     eq(lifecycleOf(simple, simple['projection-definitions'].CourseStatus),
       { kind: 'enum', states: ['NonExistent', 'Existent', 'Archived'] }, 'an enum one');
@@ -6190,8 +6056,6 @@ command MoveThing(thingId: ThingId, status: Status) {
       'and so does a list of states');
     const groups = build('course-groups').model();
     eq(!!lifecycleOf(groups, sandbox.projectionsOf(groups)['Course.status']), true, 'grouped ones too');
-    const scripted = build('content-decisions-scripted').model();
-    eq(lifecycleOf(scripted, scripted['projection-definitions'].DocumentStatus), null, 'not a scripted one');
     const derived = build('content-decisions-derived').model();
     eq(lifecycleOf(derived, derived['projection-definitions'].DocumentHasPendingChanges), null, 'not a derived one');
     eq(lifecycleMachine(simple, 'CourseCapacity'), null, 'no machine for what only moves');

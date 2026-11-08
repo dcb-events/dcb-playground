@@ -1,11 +1,11 @@
 // ============================================================
 // Rewrites app/vendor/monaco/ – the one vendored dependency.
 //
-// The scripted-projection editor is Monaco, pinned to the version
-// below and trimmed to what the playground actually uses: the editor
-// core, the TypeScript language support (which is what turns the
-// synthesized per-handler type preamble into completion and
-// squiggles), and the worker that runs it. Everything else in the
+// The code view's editor is Monaco, pinned to the version below and
+// trimmed to the editor core and the worker that runs it, plus the
+// TypeScript language support the scripted-handler editor used until
+// 11.0 removed scripts – nothing loads it any more, and it goes at the
+// next version bump, the one time this runs. Everything else in the
 // distribution – other languages, other workers, translations,
 // source maps – is deliberately not vendored.
 //

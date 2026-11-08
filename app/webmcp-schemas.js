@@ -5,7 +5,7 @@
 // inlined, ready to serve as a WebMCP tool's inputSchema.
 const WEBMCP_DEFINITION_SCHEMAS = {
   "group-definition": {
-    "description": "A name for projections that share one partition tag – `group Course\n(tag courseId: CourseId)` – and the owner of those projections.\n\n**A group means nothing for consistency.** It is not an aggregate: it\nis not loaded whole, it guards nothing and decides nothing. A command\nreading `course.capacity` reads that one projection – its query is\nthat projection's, by the group's tag – and a projection of the group\nnobody reads is no part of any query. Dissolving the fixed aggregate is\nthe point of DCB, and a group is deliberately not one.\n\n**It owns its projections.** They are declared inside it\n(`projections`), so a projection is in one group at most, and they\ndeclare no tags: every one of them is read by the group's `tag`, and by\nnothing else. Each is any kind of projection – declared, derived or\nscripted – under a local, lowerCamel name; outside the group it is\nnamed qualified, `Course.capacity`.\n\nAn empty group is legal – it is where projections are moved into – and\nan authoring tool says so.\n",
+    "description": "A name for projections that share one partition tag – `group Course\n(tag courseId: CourseId)` – and the owner of those projections.\n\n**A group means nothing for consistency.** It is not an aggregate: it\nis not loaded whole, it guards nothing and decides nothing. A command\nreading `course.capacity` reads that one projection – its query is\nthat projection's, by the group's tag – and a projection of the group\nnobody reads is no part of any query. Dissolving the fixed aggregate is\nthe point of DCB, and a group is deliberately not one.\n\n**It owns its projections.** They are declared inside it\n(`projections`), so a projection is in one group at most, and they\ndeclare no tags: every one of them is read by the group's `tag`, and by\nnothing else. Each is any kind of projection – declared or derived –\nunder a local, lowerCamel name; outside the group it is\nnamed qualified, `Course.capacity`.\n\nAn empty group is legal – it is where projections are moved into – and\nan authoring tool says so.\n",
     "type": "object",
     "additionalProperties": false,
     "properties": {
@@ -76,7 +76,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         "description": "The projections this group owns, in declaration order – each an\nordinary projection under a local name, without tags of its own.\n",
         "type": "array",
         "items": {
-          "description": "A projection a group owns: a `ProjectionDefinition` in every respect\nbut two. It has a local name, and it declares no `tags` – it is read by\nits group's tag, so its query is `tag = the group's AND type IN\n(handled events)`, and a script sees the group's tag in `tags`, a\nderived one passes it on as `{parameterName}`. A derived projection of\na group reads a sibling by its local name, `{projection: \"capacity\"}`,\nwith no tags – the group's is implied – and any other projection the\nway a reader outside would.\n",
+          "description": "A projection a group owns: a `ProjectionDefinition` in every respect\nbut two. It has a local name, and it declares no `tags` – it is read by\nits group's tag, so its query is `tag = the group's AND type IN\n(handled events)`, and a derived one passes the group's tag on as\n`{parameterName}`. A derived projection of\na group reads a sibling by its local name, `{projection: \"capacity\"}`,\nwith no tags – the group's is implied – and any other projection the\nway a reader outside would.\n",
           "type": "object",
           "additionalProperties": false,
           "properties": {
@@ -92,10 +92,10 @@ const WEBMCP_DEFINITION_SCHEMAS = {
               ]
             },
             "arguments": {
-              "description": "Values a reader gives besides its tags (10.0; a script's own until\nthen), one entry per name – given after the tags, in this order, in\nthe notation: `Overdue(courseId, 14)`. A read of this projection must\nsupply exactly these – required there and rejected\nanywhere else.\n\nAn argument is **not a tag** and can never narrow a query: the store\nreturns the same events either way. A script sees them as `args`; a\nderived projection compares or computes with them, or passes them on\nto the projections it reads. A declared projection's handlers see only\nthe event, so one taking arguments uses none of them – an advisory, not\nan error. A value of a tag type may be an argument: what makes a\nparameter a tag is being listed in `tags`, not its type.\n",
+              "description": "Values a reader gives besides its tags (10.0), one entry per name – given after the tags, in this order, in\nthe notation: `Overdue(courseId, 14)`. A read of this projection must\nsupply exactly these – required there and rejected\nanywhere else.\n\nAn argument is **not a tag** and can never narrow a query: the store\nreturns the same events either way. A derived projection compares or computes with them, or passes them on\nto the projections it reads. A declared projection's handlers see only\nthe event, so one taking arguments uses none of them – an advisory, not\nan error. A value of a tag type may be an argument: what makes a\nparameter a tag is being listed in `tags`, not its type.\n",
               "type": "array",
               "items": {
-                "description": "One value a projection asks its reader for, besides the tags it is\nread by. Any type – an argument reaches a script's code or a derived\nprojection's predicate, never the query.\n",
+                "description": "One value a projection asks its reader for, besides the tags it is\nread by. Any type – an argument reaches a derived projection's\npredicate or computation, never the query.\n",
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
@@ -139,7 +139,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
               "default": []
             },
             "valueType": {
-              "description": "The type of the value held.\n\nA composite value type is legal only on a *scripted*\nprojection (4.1): the operations that advance a declared one\nact on a single value, and a record of fields has none – but\ncode has no such limit, so a script may hold the record\noutright, and a condition against it gets identity predicates\nonly, as against any composite. A script that keeps a record\nas private bookkeeping instead names the one field a reader\nsees in `script.exposes`, which is of this type like anything\nelse.\n",
+              "description": "The type of the value held.\n\nNever a composite value type: the operations that advance a\nprojection act on a single value, and a record of fields has none.\n",
               "type": "string",
               "anyOf": [
                 {
@@ -174,7 +174,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                 "object",
                 "null"
               ],
-              "description": "The value before any event has been applied. Required on a\ndeclared projection and forbidden on a scripted one, whose\n`script.initialState` starts it instead.\n\nFor a numbering this is the first number issued, and the only\nplace a prefix is stated.\n",
+              "description": "The value before any event has been applied. Required on a\ndeclared projection.\n\nFor a numbering this is the first number issued, and the only\nplace a prefix is stated.\n",
               "oneOf": [
                 {
                   "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
@@ -239,7 +239,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
               ]
             },
             "derived": {
-              "description": "Present when this projection is not folded at all but\n*derived* (6.0): one declared predicate or computation over other\nprojections' values. It carries no handlers, no initial value and\nno script – its query is its operands' queries, each under its own\ntags. A predicate's outcome is one boolean, so `valueType` is\n`boolean`; a computation (9.0) yields one number, so `valueType` is\n`integer` or `number` (or a value type whose schema is one), and\n`isList` is false either way.\n",
+              "description": "Present when this projection is not folded at all but\n*derived* (6.0): one declared predicate or computation over other\nprojections' values. It carries no handlers and no initial value – its query is its operands' queries, each under its own\ntags. A predicate's outcome is one boolean, so `valueType` is\n`boolean`; a computation (9.0) yields one number, so `valueType` is\n`integer` or `number` (or a value type whose schema is one), and\n`isList` is false either way.\n",
               "type": "object",
               "additionalProperties": false,
               "properties": {
@@ -684,10 +684,10 @@ const WEBMCP_DEFINITION_SCHEMAS = {
               ]
             },
             "handlers": {
-              "description": "At most one handler per event type; the handled types are the\nprojection's query. Declared handlers carry an operation and\nan operand; a scripted projection's carry one `code` body\neach.\n\nOne per type is a real constraint, not a convenience: tag\nmatching is by value, whichever property carries it, so an\nevent holding one of this projection's tag types in *two*\nproperties (an assignment naming both the new holder and the\none replaced) reaches both instances and the handler fires\nfor both. A declarative handler cannot tell the two apart –\nsplit the event so each records one fact, or script the\nprojection; an advisory points at the ambiguity.\n\nAn empty list is legal and means nothing moves this yet – a\nprojection mid-authoring reads as its initial value, which is\na more useful thing to show than a refusal to store it.\n\nA *derived* projection has no handlers at all – nothing\nadvances it, and its query is its operands'.\n",
+              "description": "At most one handler per event type; the handled types are the\nprojection's query. Each carries an operation and an operand.\n\nOne per type is a real constraint, not a convenience: tag\nmatching is by value, whichever property carries it, so an\nevent holding one of this projection's tag types in *two*\nproperties (an assignment naming both the new holder and the\none replaced) reaches both instances and the handler fires\nfor both. A declarative handler cannot tell the two apart –\nsplit the event so each records one fact; an advisory points\nat the ambiguity.\n\nAn empty list is legal and means nothing moves this yet – a\nprojection mid-authoring reads as its initial value, which is\na more useful thing to show than a refusal to store it.\n\nA *derived* projection has no handlers at all – nothing\nadvances it, and its query is its operands'.\n",
               "type": "array",
               "items": {
-                "description": "How one event type advances one projection. Either declared –\n`operation` and `value`, with the vocabulary constrained by the\nprojection's type: `set` for any type, `increment`/`decrement`\nfor numbers (an `integer`, or a value type whose schema is one),\n`append`/`remove` for lists – or scripted, carrying\n`code` and neither of the other two.\n",
+                "description": "How one event type advances one projection: `operation` and\n`value`, with the vocabulary constrained by the projection's type:\n`set` for any type, `increment`/`decrement` for numbers (an\n`integer`, or a value type whose schema is one), `append`/`remove`\nfor lists.\n",
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
@@ -914,10 +914,10 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         "description": "What this projection is called – PascalCase, unique among\nprojections and among groups. Command reads, derived operands and\nprojection scenarios refer to it by this name. A grouped projection is named qualified, `<Group>.<localName>` (`Course.capacity`): that adds it to, or edits it in, its group."
       },
       "tags": {
-        "description": "The tags this projection is read by, in the order a read gives\nthem – each a name, which is how a read and a script refer to it,\nand a tag type, which is the key its value is rendered under.\nEmpty is an untagged projection, which folds the whole log;\nrequired, so that saying so is a decision rather than an\nomission (`untagged projection …` in the notation). Required for a top-level projection; a grouped one has none of its own – it is read by its group's tag, and whatever is given here is dropped.",
+        "description": "The tags this projection is read by, in the order a read gives\nthem – each a name, which is how a read refers to it,\nand a tag type, which is the key its value is rendered under.\nEmpty is an untagged projection, which folds the whole log;\nrequired, so that saying so is a decision rather than an\nomission (`untagged projection …` in the notation). Required for a top-level projection; a grouped one has none of its own – it is read by its group's tag, and whatever is given here is dropped.",
         "type": "array",
         "items": {
-          "description": "One tag a projection is read by: the name a read gives its value\nunder (and a script reads it by, `tags.courseId`), and the tag type\nthat is its key – scalar and `isTag: true`, or a composite with\ntag-marked fields (one tag per field).\n",
+          "description": "One tag a projection is read by: the name a read gives its value\nunder, and the tag type\nthat is its key – scalar and `isTag: true`, or a composite with\ntag-marked fields (one tag per field).\n",
           "type": "object",
           "additionalProperties": false,
           "properties": {
@@ -960,10 +960,10 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         }
       },
       "arguments": {
-        "description": "Values a reader gives besides its tags (10.0; a script's own until\nthen), one entry per name – given after the tags, in this order, in\nthe notation: `Overdue(courseId, 14)`. A read of this projection must\nsupply exactly these – required there and rejected\nanywhere else.\n\nAn argument is **not a tag** and can never narrow a query: the store\nreturns the same events either way. A script sees them as `args`; a\nderived projection compares or computes with them, or passes them on\nto the projections it reads. A declared projection's handlers see only\nthe event, so one taking arguments uses none of them – an advisory, not\nan error. A value of a tag type may be an argument: what makes a\nparameter a tag is being listed in `tags`, not its type.\n",
+        "description": "Values a reader gives besides its tags (10.0), one entry per name – given after the tags, in this order, in\nthe notation: `Overdue(courseId, 14)`. A read of this projection must\nsupply exactly these – required there and rejected\nanywhere else.\n\nAn argument is **not a tag** and can never narrow a query: the store\nreturns the same events either way. A derived projection compares or computes with them, or passes them on\nto the projections it reads. A declared projection's handlers see only\nthe event, so one taking arguments uses none of them – an advisory, not\nan error. A value of a tag type may be an argument: what makes a\nparameter a tag is being listed in `tags`, not its type.\n",
         "type": "array",
         "items": {
-          "description": "One value a projection asks its reader for, besides the tags it is\nread by. Any type – an argument reaches a script's code or a derived\nprojection's predicate, never the query.\n",
+          "description": "One value a projection asks its reader for, besides the tags it is\nread by. Any type – an argument reaches a derived projection's\npredicate or computation, never the query.\n",
           "type": "object",
           "additionalProperties": false,
           "properties": {
@@ -1007,7 +1007,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         "default": []
       },
       "valueType": {
-        "description": "The type of the value held.\n\nA composite value type is legal only on a *scripted*\nprojection (4.1): the operations that advance a declared one\nact on a single value, and a record of fields has none – but\ncode has no such limit, so a script may hold the record\noutright, and a condition against it gets identity predicates\nonly, as against any composite. A script that keeps a record\nas private bookkeeping instead names the one field a reader\nsees in `script.exposes`, which is of this type like anything\nelse.\n",
+        "description": "The type of the value held.\n\nNever a composite value type: the operations that advance a\nprojection act on a single value, and a record of fields has none.\n",
         "type": "string",
         "anyOf": [
           {
@@ -1042,7 +1042,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
           "object",
           "null"
         ],
-        "description": "The value before any event has been applied. Required on a\ndeclared projection and forbidden on a scripted one, whose\n`script.initialState` starts it instead.\n\nFor a numbering this is the first number issued, and the only\nplace a prefix is stated.\n",
+        "description": "The value before any event has been applied. Required on a\ndeclared projection.\n\nFor a numbering this is the first number issued, and the only\nplace a prefix is stated.\n",
         "oneOf": [
           {
             "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
@@ -1107,7 +1107,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         ]
       },
       "derived": {
-        "description": "Present when this projection is not folded at all but\n*derived* (6.0): one declared predicate or computation over other\nprojections' values. It carries no handlers, no initial value and\nno script – its query is its operands' queries, each under its own\ntags. A predicate's outcome is one boolean, so `valueType` is\n`boolean`; a computation (9.0) yields one number, so `valueType` is\n`integer` or `number` (or a value type whose schema is one), and\n`isList` is false either way.\n",
+        "description": "Present when this projection is not folded at all but\n*derived* (6.0): one declared predicate or computation over other\nprojections' values. It carries no handlers and no initial value – its query is its operands' queries, each under its own\ntags. A predicate's outcome is one boolean, so `valueType` is\n`boolean`; a computation (9.0) yields one number, so `valueType` is\n`integer` or `number` (or a value type whose schema is one), and\n`isList` is false either way.\n",
         "type": "object",
         "additionalProperties": false,
         "properties": {
@@ -1552,10 +1552,10 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         ]
       },
       "handlers": {
-        "description": "At most one handler per event type; the handled types are the\nprojection's query. Declared handlers carry an operation and\nan operand; a scripted projection's carry one `code` body\neach.\n\nOne per type is a real constraint, not a convenience: tag\nmatching is by value, whichever property carries it, so an\nevent holding one of this projection's tag types in *two*\nproperties (an assignment naming both the new holder and the\none replaced) reaches both instances and the handler fires\nfor both. A declarative handler cannot tell the two apart –\nsplit the event so each records one fact, or script the\nprojection; an advisory points at the ambiguity.\n\nAn empty list is legal and means nothing moves this yet – a\nprojection mid-authoring reads as its initial value, which is\na more useful thing to show than a refusal to store it.\n\nA *derived* projection has no handlers at all – nothing\nadvances it, and its query is its operands'.\n",
+        "description": "At most one handler per event type; the handled types are the\nprojection's query. Each carries an operation and an operand.\n\nOne per type is a real constraint, not a convenience: tag\nmatching is by value, whichever property carries it, so an\nevent holding one of this projection's tag types in *two*\nproperties (an assignment naming both the new holder and the\none replaced) reaches both instances and the handler fires\nfor both. A declarative handler cannot tell the two apart –\nsplit the event so each records one fact; an advisory points\nat the ambiguity.\n\nAn empty list is legal and means nothing moves this yet – a\nprojection mid-authoring reads as its initial value, which is\na more useful thing to show than a refusal to store it.\n\nA *derived* projection has no handlers at all – nothing\nadvances it, and its query is its operands'.\n",
         "type": "array",
         "items": {
-          "description": "How one event type advances one projection. Either declared –\n`operation` and `value`, with the vocabulary constrained by the\nprojection's type: `set` for any type, `increment`/`decrement`\nfor numbers (an `integer`, or a value type whose schema is one),\n`append`/`remove` for lists – or scripted, carrying\n`code` and neither of the other two.\n",
+          "description": "How one event type advances one projection: `operation` and\n`value`, with the vocabulary constrained by the projection's type:\n`set` for any type, `increment`/`decrement` for numbers (an\n`integer`, or a value type whose schema is one), `append`/`remove`\nfor lists.\n",
           "type": "object",
           "additionalProperties": false,
           "properties": {

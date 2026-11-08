@@ -66,8 +66,11 @@ function load(playground, file) {
   if (file.endsWith('.json')) {
     const envelope = JSON.parse(raw);
     sandboxSteps = (envelope.sandbox && envelope.sandbox.steps) || [];
-    const { modelId, skipped } = playground.importModelFromEnvelope(envelope);
+    const { modelId, skipped, converted } = playground.importModelFromEnvelope(envelope);
     for (const skip of skipped) problems.push(`skipped on import: ${JSON.stringify(skip)}`);
+    // What an older document said differently, or said that 11.0 cannot
+    // – a command left out among them – never silently.
+    for (const note of converted) problems.push(`converted on import: ${note.name}: ${note.note}`);
     model = playground.projectState()[modelId];
     text = playground.modelToSource(model);
   }
@@ -76,7 +79,8 @@ function load(playground, file) {
     if (d.severity === 'error') problems.push(`${file}:${d.line}:${d.col} ${d.message}`);
   }
   if (!parsed.name) problems.push(`${file}: no model "…" line`);
-  if (problems.some((p) => !p.startsWith('skipped')) || !parsed.name) return { model: null, text, parsed, problems, sandboxSteps };
+  const onImport = (p) => p.startsWith('skipped') || p.startsWith('converted');
+  if (problems.some((p) => !onImport(p)) || !parsed.name) return { model: null, text, parsed, problems, sandboxSteps };
   if (!model) {
     const id = playground.createDcbModel(parsed.name);
     // Scenarios are judged below, with their lines, not refused here.
@@ -315,6 +319,7 @@ function main() {
     console.error(loaded.problems.join('\n'));
     return 1;
   }
+  if (verb !== 'check' && loaded.problems.length) console.error(loaded.problems.join('\n'));
   if (verb === 'conflicts') {
     console.log(conflictLines(playground, model).join('\n'));
   } else if (replaying) {
