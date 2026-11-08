@@ -4718,9 +4718,16 @@ function validateHandlers(model, label, target, handlers) {
       const listFits = declaredList === null || isList === declaredList;
       if (type === declared && listFits) return null;
       const held = `${typeArticle(type)} ${type}${isList ? '[]' : ''}`;
+      // An identifier comes by a tag of its type; any other value by a
+      // field declared as it.
+      const declaredBody = model['custom-type-definitions'][declared];
+      const field = `"${operand.eventProperty}${operand.property !== undefined ? '.' + operand.property : ''}"`;
+      const remedy = declaredBody && declaredBody.isTag === true
+        ? `tag the event by ${typeArticle(declared)} ${declared}`
+        : `declare ${field} of ${arm.event || event.name} as ${typeArticle(declared)} ${declared}`;
       return `${where} sets ${holder} to "${operandText(operand)}", ${held} – but it holds `
         + `${typeArticle(declared)} ${declared}${declaredList ? '[]' : ''}. Nothing converts one into the other: `
-        + `tag the event by ${typeArticle(declared)} ${declared}, or hold ${typeArticle(type)} ${type}.`;
+        + `${remedy}, or hold ${typeArticle(type)} ${type}.`;
     };
     let problem = null;
     if (operandSource(unwrapped) === 'record') {

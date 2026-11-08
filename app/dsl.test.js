@@ -3316,6 +3316,9 @@ command Start(shareId: ShareId, owner: CustomerId, invitee: CustomerId, held: Ho
 
   check('an integer does not fill a Seats, a list takes its element type, a record field its declared type', () => {
     eq(advised(swap(STRICT, 'on ShareStarted => set 3', 'on ShareStarted => set event.data.seats')).length, 1, 'integer into Seats');
+    // D4: the advice for a value type is the field's type, not a tag.
+    eq(advised(swap(STRICT, 'on ShareStarted => set 3', 'on ShareStarted => set event.data.seats'))[0].endsWith(
+      'Nothing converts one into the other: declare "seats" of ShareStarted as a Seats, or hold an integer.'), true, 'a value type\'s advice');
     eq(advised(swap(STRICT, 'append event.data.owner', 'append event.data.shareId')).length, 1, 'a ShareId into CustomerId[]');
     eq(advised(swap(STRICT, 'on ShareStarted => set event.data.held', 'on ShareStarted => set { seats: event.data.seats, note: event.data.note }')).length,
       1, 'an integer into a Seats field');
