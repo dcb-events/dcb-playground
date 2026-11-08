@@ -276,6 +276,29 @@ and prune what no longer holds.
   Predicates used to go by the type's name alone, so wrapping an
   integer in a named type left it only `equals`. An identifier (a tag
   type) and an enum stay identity-only, whatever they are spelled in.
+- **A collection function is a value, and the pages show it**
+  (11.0, dcb-events.github.io#102). `count`, `sum`, `min`, `max`,
+  `average`, `any` and `all` over an open read stand wherever a value
+  does – a rule, a branch's condition, an emission's field, a derived
+  projection – as `{collect, read, where?}`. Walkers see its `read` as
+  an ordinary read in place (`forEachCommandOperand` descends into it,
+  then into its `where`), so the query, references, renames, the rule
+  map and the metro treat it as a read of that projection with no
+  case of their own; `operandRead` gives it to those that ask one
+  operand. The rule editor writes none of these, nor a record value's
+  field: a rule, an emission field or a derived side holding one is
+  shown as the code view writes it with *Edit in code*
+  (`operandBeyondEditors`, shared.js) and kept through every other
+  edit, as package 3's branches are. Visual editing waits for a case.
+  **Over nothing**: `count` and `sum` 0, `min` / `max` / `average`
+  null, `any` false, `all` true. **Without a `where`**, `any` asks
+  whether an instance is present and `all` holds – every present
+  instance is one; the readings that test the values' truthiness were
+  dropped as a second meaning of the same word. A null value holds no
+  number, and the numeric ones skip it rather than erroring.
+  **`where` reads no projection** – `value`, `value.field`, the names
+  in scope and literals (`collectionProblem`) – so a collection's
+  query is its read's, and one fold per instance answers it.
 
 ## Tags: events, projections, handlers
 
@@ -388,6 +411,46 @@ and prune what no longer holds.
   through `handlerArms` (model.js), so renames, enum members, the
   Lifecycle tab and the command page see every arm. `<` / `>` wait
   for a case.
+- **An open tag reads every present instance** (11.0, #102). `P(x,
+  *)` – `{open: true}` in the read's `tags` – leaves a tag of a
+  multi-tag projection open, and is read only as a collection
+  function's `read` (`openReadProblem`; elsewhere an advisory, a
+  positioned parse error and an evaluation error). Keyed state comes
+  from open tags rather than a `map<K, V>` type, because the same
+  projection still gives the narrow single-instance read: with a map,
+  "does r1 exist?" would conflict with every reservation of the
+  course. **Present** means at a value other than the projection's
+  initial one (`evOpenRead`), so setting the initial value deletes;
+  where "ever existed" matters the value never returns to it.
+  **The query is the bound tags'**: the handled types by the bound
+  tags alone (`readTagTexts` skips an open tag), the same on a store
+  as in the derivation, and the fold groups what comes back by the
+  open tags' values – an event without one belongs to no instance,
+  one carrying two values of the type (a transfer's sides) belongs to
+  each, and each instance's handler conditions see its own tag values.
+  **At least one tag stays bound**: with every tag open, all writers
+  would serialise, which an untagged projection says outright. A
+  group's one tag never opens – a group's projections have no other to
+  bind. An open tag is of a scalar tag type: a record tag type would
+  make an instance of several values, and waits for a case. A command
+  folds one open read once per spelling (`scope.inline`, keyed by
+  `readKey`), like any read in place. `for each` (package 6) will
+  iterate the same reads; `evOpenRead` is its source.
+- **A projection may hold a record, replaced whole** (11.0, #102).
+  Every handler sets it from an event field of its type, or from a
+  record of event fields and literals naming every field it requires
+  (`{record: {…}}`, `set { street: event.data.street, … }`), or to
+  null; anything else is advised with the two ways that work
+  (`recordValueProblem` in `validateHandlers`), and the text has no
+  `set x.field = …` – its error says why. Setting fields one at a time
+  is composite state: it merges independent facts into one value and
+  widens every reader's boundary, so it stays refused – several
+  projections, one per fact, say the same. A read takes one field,
+  `field` on the read or the alias (`P(x).city`, `address.city`,
+  `course.address.city`): the same read as the whole value
+  (`readKey` drops the field), only what is taken from it differs, and
+  null before the record is set. A list of records stays refused: no
+  operation keeps an element whole.
   The opposite case is zero carriers: a handled event listing no tag of
   a type the projection is tagged by never reaches it. That is an
   advisory on the *projection* too (`projectionTagProblem`, via
@@ -456,6 +519,17 @@ and prune what no longer holds.
   entry per `on E` block. A reader without it finds a handler with no
   operation, so it is part of the major; no older document has one,
   so nothing is converted (schema revision 11.0.4).
+  11.0 also reads by open tags and holds records (#102): `{open:
+  true}` as a read's tag value (`OpenTag`), `{collect, read, where?}`
+  as a command or derived operand (`CollectionValue`), its `where` a
+  condition over `{instanceValue: true, field?}` (`InstanceValue`),
+  parameters and literals, `field` on a read or an alias,
+  `{record: {…}}` as a handler's value (`RecordValue`), and a
+  `DerivedValue` of `leftHandSide` alone. All new members of closed
+  vocabularies, so part of the major; no older document says any of
+  it (schema revision 11.0.5). The tool schemas write a collection
+  function compactly, as they do a read in place – inlined, it tripled
+  them.
   **6.1 is the contrast worth knowing**: entity `lifecycle` was additive
   in shape *and* a minor, because a 6.0 reader that ignores it loses a
   derived diagram and misreads nothing — where 4.0's equally additive
@@ -756,6 +830,19 @@ on Projections, inside a group's section, and in the definition modals.
   a parameter is never assumed null, since a reader's null is the
   reader's advisory to raise. At least one side still reads a
   projection: a predicate over parameters alone reads nothing.
+- **A derived projection may hold one operand as it is** (11.0):
+  `{leftHandSide}` alone (`derivedHolds`), for a collection function's
+  result – `derived projection CourseSeatsReserved (tag courseId:
+  CourseId): integer { sum(ReservationSeats(courseId, *)) }` – or a
+  record value's field. It holds the type its operand yields
+  (`derivedOperandType`, `sameValueKind`: an integer may be held as
+  any number). A collection is a computation's side too, `10 -
+  sum(…)`: `count` and `sum` are never null, `min`, `max` and
+  `average` may be (`derivedInputOf`). This retires the running total
+  kept beside the per-instance value – a `CourseSeatsReserved`
+  counter that every cancellation had to subtract from again, which is
+  what put `numberOfSeatsReserved` onto the cancellation event and
+  needed a backfill of every old one.
 - **A derived read is its operands' queries, each under its own tags**
   (`foldedReads` / `readItems`, model.js). Until 9.0 a derived read was
   one query item: the derived projection's own tags ANDed with the
@@ -1269,6 +1356,23 @@ Watched, Decision, Store. Only the panel scrolls.
   `min(a, b)` / `max(a, b)`; a `-` straight after a value (`)`, `]`, a
   number) subtracts, anywhere else it starts a negative number
   (`endsValue`).
+- **Collection functions, open tags and record values** (11.0). `*`
+  is a read's value only inside the read a collection function
+  collects – anywhere else it is a positioned error naming where it
+  goes – so an open read is never a value of its own in the text
+  either. `count(…)` stays the count predicate over a list, and
+  `min(a, b)` / `max(a, b)` a computation: which one it is shows inside
+  the parentheses – a `*` in a read's values or a `where` makes it a
+  collection (`collectionAhead`); `sum`, `average`, `any` and `all`
+  always are. `any(…)` and `all(…)` are booleans like any other, so a
+  rule says `any(…) is true`: a bare value as a condition would be
+  the one place the text infers a predicate. Inside a `where`, `value`
+  is the instance's value – a name in scope called `value` cannot be
+  read there, and prints as JSON. `address.city` is a group member or
+  a record's field depending on what `address` binds, settled once the
+  bindings are (`aliasFields`), the way an alias and a payload
+  property are. A record set whole is `{ field: …, … }`; `set x.f =
+  …` is an error that says a record is replaced whole.
 
 ## Scripts and the origin
 
@@ -1463,6 +1567,9 @@ Artboards: `design/dcb-queries/` (2026-10).
   silent null. A command may leave an optional argument out or send
   null; an event payload always spells it out, as the evaluator
   publishes it.
+- **A record value is no new schema** (11.0). A projection holding
+  a record holds one value of its composite type, whose schema is the
+  composite's; nothing here describes projections.
 - **Not in WebMCP.** Its tool schemas are fixed when the tools
   register; a command's arguments depend on the command named in the
   call, so a tool cannot declare them.
