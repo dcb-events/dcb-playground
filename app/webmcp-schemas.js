@@ -295,7 +295,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                           "additionalProperties": {
                             "oneOf": [
                               {
-                                "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
+                                "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
                                 "type": "object",
                                 "additionalProperties": false,
                                 "properties": {
@@ -374,7 +374,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                       ]
                     },
                     {
-                      "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
+                      "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
                       "type": "object",
                       "additionalProperties": false,
                       "properties": {
@@ -507,7 +507,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                           "additionalProperties": {
                             "oneOf": [
                               {
-                                "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
+                                "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
                                 "type": "object",
                                 "additionalProperties": false,
                                 "properties": {
@@ -586,7 +586,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                       ]
                     },
                     {
-                      "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
+                      "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
                       "type": "object",
                       "additionalProperties": false,
                       "properties": {
@@ -684,10 +684,10 @@ const WEBMCP_DEFINITION_SCHEMAS = {
               ]
             },
             "handlers": {
-              "description": "At most one handler per event type; the handled types are the\nprojection's query. Each carries an operation and an operand.\n\nOne per type is a real constraint, not a convenience: tag\nmatching is by value, whichever property carries it, so an\nevent holding one of this projection's tag types in *two*\nproperties (an assignment naming both the new holder and the\none replaced) reaches both instances and the handler fires\nfor both. A declarative handler cannot tell the two apart –\nsplit the event so each records one fact; an advisory points\nat the ambiguity.\n\nAn empty list is legal and means nothing moves this yet – a\nprojection mid-authoring reads as its initial value, which is\na more useful thing to show than a refusal to store it.\n\nA *derived* projection has no handlers at all – nothing\nadvances it, and its query is its operands'.\n",
+              "description": "At most one handler per event type; the handled types are the\nprojection's query. Each carries an operation and an operand, or\n(11.0) branches that choose one by the event (`steps`).\n\nOne per type is a real constraint, not a convenience: tag\nmatching is by value, whichever property carries it, so an\nevent holding one of this projection's tag types in *two*\nproperties (a transfer's `from` and `to`, an assignment naming\nboth the new holder and the one replaced) reaches both instances\nand an unconditional handler fires for both. A branched handler\ntells them apart by comparing the carrying fields with the tag –\n`if event.data.from == accountId => decrement …`; without that, an\nadvisory points at the ambiguity.\n\nAn empty list is legal and means nothing moves this yet – a\nprojection mid-authoring reads as its initial value, which is\na more useful thing to show than a refusal to store it.\n\nA *derived* projection has no handlers at all – nothing\nadvances it, and its query is its operands'.\n",
               "type": "array",
               "items": {
-                "description": "How one event type advances one projection: `operation` and\n`value`, with the vocabulary constrained by the projection's type:\n`set` for any type, `increment`/`decrement` for numbers (an\n`integer`, or a value type whose schema is one), `append`/`remove`\nfor lists.\n",
+                "description": "How one event type advances one projection: `operation` and\n`value`, with the vocabulary constrained by the projection's type:\n`set` for any type, `increment`/`decrement` for numbers (an\n`integer`, or a value type whose schema is one), `append`/`remove`\nfor lists.\n\nOr (11.0) `steps` in their place: the handler branches on the event,\n`on E { if c => op  else if c => op  else => op }`. Each step is one\n`if` chain (`HandlerBranchStep`); separate steps all apply, in\nwritten order, so a self-transfer decrements and then increments.\n",
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
@@ -702,6 +702,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                     ]
                   },
                   "operation": {
+                    "description": "What a handler does to the value: the closed operation vocabulary.",
                     "enum": [
                       "set",
                       "increment",
@@ -772,11 +773,362 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                         ]
                       }
                     ]
+                  },
+                  "steps": {
+                    "description": "The handler's `if` chains, in the order they apply. Present\nin place of `operation` and `value`, never beside them.\n",
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "description": "One `if` chain of a branched handler: `if c => op  else if c => op\nelse => op`. The first arm whose condition holds applies its\noperation, or `otherwise` when none does, or nothing.\n",
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "branches": {
+                          "description": "The arms, in the order their conditions are tried.",
+                          "type": "array",
+                          "minItems": 1,
+                          "items": {
+                            "description": "One arm: a condition and the one operation it applies. One, because\na second would act on the same value – that is a second `if`.\n",
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "condition": {
+                                "description": "What a branch of a handler is applied under: a comparison\n(`HandlerComparison`), or comparisons joined – `all` (`and`), `any`\n(`or`). Resolved while folding one event, so the only things in scope\nare that event's fields, the projection's own tags and literals: never\nanother projection, never the projection's own value. It filters the\nfold and never the query – the projection reads the same events,\nbranched or not.\n",
+                                "oneOf": [
+                                  {
+                                    "description": "`event.data.from == accountId`: an event field, `equals` (with\n`negate`, `!=`), and one of the projection's own tags by name –\n`{parameterName}` – or a literal.\n",
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "leftHandSide": {
+                                        "description": "A field of the event being handled, as a handler's condition reads\nit: a property, or – `property` – one field of a record-typed one,\n`event.data.address.city`. One hop, as a parameter's field is.\n",
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "eventProperty": {
+                                            "type": "string",
+                                            "minLength": 2,
+                                            "maxLength": 100,
+                                            "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                            "examples": [
+                                              "someProperty"
+                                            ]
+                                          },
+                                          "property": {
+                                            "type": "string",
+                                            "minLength": 2,
+                                            "maxLength": 100,
+                                            "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                            "examples": [
+                                              "someProperty"
+                                            ],
+                                            "description": "A field of the property's record type."
+                                          }
+                                        },
+                                        "required": [
+                                          "eventProperty"
+                                        ]
+                                      },
+                                      "predicate": {
+                                        "enum": [
+                                          "equals"
+                                        ]
+                                      },
+                                      "rightHandSide": {
+                                        "oneOf": [
+                                          {
+                                            "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
+                                            "type": "object",
+                                            "additionalProperties": false,
+                                            "properties": {
+                                              "parameterName": {
+                                                "type": "string",
+                                                "minLength": 2,
+                                                "maxLength": 100,
+                                                "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                                "examples": [
+                                                  "someProperty"
+                                                ]
+                                              },
+                                              "property": {
+                                                "type": "string",
+                                                "minLength": 2,
+                                                "maxLength": 100,
+                                                "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                                "examples": [
+                                                  "someProperty"
+                                                ],
+                                                "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
+                                              }
+                                            },
+                                            "required": [
+                                              "parameterName"
+                                            ]
+                                          },
+                                          {
+                                            "description": "A member of an enum type – a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains – a plain string is by far the\ncommon case, but nothing here requires it.\n",
+                                            "type": "object",
+                                            "additionalProperties": false,
+                                            "properties": {
+                                              "enumMember": {
+                                                "type": [
+                                                  "string",
+                                                  "number",
+                                                  "boolean"
+                                                ]
+                                              }
+                                            },
+                                            "required": [
+                                              "enumMember"
+                                            ]
+                                          },
+                                          {
+                                            "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
+                                            "type": [
+                                              "string",
+                                              "number",
+                                              "boolean"
+                                            ]
+                                          }
+                                        ]
+                                      },
+                                      "negate": {
+                                        "description": "When true the comparison holds iff the values differ (`!=`).",
+                                        "type": "boolean",
+                                        "default": false
+                                      }
+                                    },
+                                    "required": [
+                                      "leftHandSide",
+                                      "predicate",
+                                      "rightHandSide"
+                                    ]
+                                  },
+                                  {
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "all": {
+                                        "type": "array",
+                                        "minItems": 2,
+                                        "items": {
+                                          "type": "object",
+                                          "description": "Recursive: a nested HandlerCondition, the same shape as the one this appears inside."
+                                        }
+                                      }
+                                    },
+                                    "required": [
+                                      "all"
+                                    ]
+                                  },
+                                  {
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "any": {
+                                        "type": "array",
+                                        "minItems": 2,
+                                        "items": {
+                                          "type": "object",
+                                          "description": "Recursive: a nested HandlerCondition, the same shape as the one this appears inside."
+                                        }
+                                      }
+                                    },
+                                    "required": [
+                                      "any"
+                                    ]
+                                  }
+                                ]
+                              },
+                              "operation": {
+                                "description": "What a handler does to the value: the closed operation vocabulary.",
+                                "enum": [
+                                  "set",
+                                  "increment",
+                                  "decrement",
+                                  "append",
+                                  "remove"
+                                ]
+                              },
+                              "value": {
+                                "description": "Where a handler's value comes from. Resolved while projecting a\nsingle event, so the only things in scope are that event's\nproperties and literals.\n",
+                                "oneOf": [
+                                  {
+                                    "description": "A property of the event being handled.",
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "eventProperty": {
+                                        "type": "string",
+                                        "minLength": 2,
+                                        "maxLength": 100,
+                                        "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                        "examples": [
+                                          "someProperty"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "eventProperty"
+                                    ]
+                                  },
+                                  {
+                                    "description": "The value that comes after another – `n + 1` on an integer; on a\nstring, the trailing run of digits incremented with the prefix\nand any zero-padding preserved (`\"c1\"` → `\"c2\"`, `\"c9\"` →\n`\"c10\"`, `\"c007\"` → `\"c008\"`).\n\nThis is where numbering lives. A projection that sets its value\nto `{successor: {eventProperty: courseId}}` holds *the next\nnumber to issue* at every point in its life: `initialValue`\nbefore any event, the successor of the last one issued after. The\nalternative – folding to the last id and applying successor at\nthe read – makes `initialValue` mean two different things\ndepending on whether anything has happened yet, and lets two\ncommands reading the same value disagree about it.\n\nEvery kind of declared projection may take one, a grouped one too.\n",
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "successor": {
+                                        "type": "object",
+                                        "description": "Recursive: a nested HandlerOperand, the same shape as the one this appears inside."
+                                      }
+                                    },
+                                    "required": [
+                                      "successor"
+                                    ]
+                                  },
+                                  {
+                                    "description": "A member of an enum type – a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains – a plain string is by far the\ncommon case, but nothing here requires it.\n",
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "enumMember": {
+                                        "type": [
+                                          "string",
+                                          "number",
+                                          "boolean"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "enumMember"
+                                    ]
+                                  },
+                                  {
+                                    "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
+                                    "type": [
+                                      "string",
+                                      "number",
+                                      "boolean"
+                                    ]
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "condition",
+                              "operation"
+                            ]
+                          }
+                        },
+                        "otherwise": {
+                          "description": "The `else` arm: what applies when no arm's condition holds.",
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "operation": {
+                              "description": "What a handler does to the value: the closed operation vocabulary.",
+                              "enum": [
+                                "set",
+                                "increment",
+                                "decrement",
+                                "append",
+                                "remove"
+                              ]
+                            },
+                            "value": {
+                              "description": "Where a handler's value comes from. Resolved while projecting a\nsingle event, so the only things in scope are that event's\nproperties and literals.\n",
+                              "oneOf": [
+                                {
+                                  "description": "A property of the event being handled.",
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "eventProperty": {
+                                      "type": "string",
+                                      "minLength": 2,
+                                      "maxLength": 100,
+                                      "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                      "examples": [
+                                        "someProperty"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "eventProperty"
+                                  ]
+                                },
+                                {
+                                  "description": "The value that comes after another – `n + 1` on an integer; on a\nstring, the trailing run of digits incremented with the prefix\nand any zero-padding preserved (`\"c1\"` → `\"c2\"`, `\"c9\"` →\n`\"c10\"`, `\"c007\"` → `\"c008\"`).\n\nThis is where numbering lives. A projection that sets its value\nto `{successor: {eventProperty: courseId}}` holds *the next\nnumber to issue* at every point in its life: `initialValue`\nbefore any event, the successor of the last one issued after. The\nalternative – folding to the last id and applying successor at\nthe read – makes `initialValue` mean two different things\ndepending on whether anything has happened yet, and lets two\ncommands reading the same value disagree about it.\n\nEvery kind of declared projection may take one, a grouped one too.\n",
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "successor": {
+                                      "type": "object",
+                                      "description": "Recursive: a nested HandlerOperand, the same shape as the one this appears inside."
+                                    }
+                                  },
+                                  "required": [
+                                    "successor"
+                                  ]
+                                },
+                                {
+                                  "description": "A member of an enum type – a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains – a plain string is by far the\ncommon case, but nothing here requires it.\n",
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "enumMember": {
+                                      "type": [
+                                        "string",
+                                        "number",
+                                        "boolean"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "enumMember"
+                                  ]
+                                },
+                                {
+                                  "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
+                                  "type": [
+                                    "string",
+                                    "number",
+                                    "boolean"
+                                  ]
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "operation"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "branches"
+                      ]
+                    }
                   }
                 },
                 "required": [
                   "event"
-                ]
+                ],
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "steps",
+                        "operation"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "steps",
+                        "value"
+                      ]
+                    }
+                  ]
+                }
               }
             }
           },
@@ -1163,7 +1515,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                     "additionalProperties": {
                       "oneOf": [
                         {
-                          "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
+                          "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
                           "type": "object",
                           "additionalProperties": false,
                           "properties": {
@@ -1242,7 +1594,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                 ]
               },
               {
-                "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
+                "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
@@ -1375,7 +1727,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                     "additionalProperties": {
                       "oneOf": [
                         {
-                          "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
+                          "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
                           "type": "object",
                           "additionalProperties": false,
                           "properties": {
@@ -1454,7 +1806,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                 ]
               },
               {
-                "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
+                "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
@@ -1552,10 +1904,10 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         ]
       },
       "handlers": {
-        "description": "At most one handler per event type; the handled types are the\nprojection's query. Each carries an operation and an operand.\n\nOne per type is a real constraint, not a convenience: tag\nmatching is by value, whichever property carries it, so an\nevent holding one of this projection's tag types in *two*\nproperties (an assignment naming both the new holder and the\none replaced) reaches both instances and the handler fires\nfor both. A declarative handler cannot tell the two apart –\nsplit the event so each records one fact; an advisory points\nat the ambiguity.\n\nAn empty list is legal and means nothing moves this yet – a\nprojection mid-authoring reads as its initial value, which is\na more useful thing to show than a refusal to store it.\n\nA *derived* projection has no handlers at all – nothing\nadvances it, and its query is its operands'.\n",
+        "description": "At most one handler per event type; the handled types are the\nprojection's query. Each carries an operation and an operand, or\n(11.0) branches that choose one by the event (`steps`).\n\nOne per type is a real constraint, not a convenience: tag\nmatching is by value, whichever property carries it, so an\nevent holding one of this projection's tag types in *two*\nproperties (a transfer's `from` and `to`, an assignment naming\nboth the new holder and the one replaced) reaches both instances\nand an unconditional handler fires for both. A branched handler\ntells them apart by comparing the carrying fields with the tag –\n`if event.data.from == accountId => decrement …`; without that, an\nadvisory points at the ambiguity.\n\nAn empty list is legal and means nothing moves this yet – a\nprojection mid-authoring reads as its initial value, which is\na more useful thing to show than a refusal to store it.\n\nA *derived* projection has no handlers at all – nothing\nadvances it, and its query is its operands'.\n",
         "type": "array",
         "items": {
-          "description": "How one event type advances one projection: `operation` and\n`value`, with the vocabulary constrained by the projection's type:\n`set` for any type, `increment`/`decrement` for numbers (an\n`integer`, or a value type whose schema is one), `append`/`remove`\nfor lists.\n",
+          "description": "How one event type advances one projection: `operation` and\n`value`, with the vocabulary constrained by the projection's type:\n`set` for any type, `increment`/`decrement` for numbers (an\n`integer`, or a value type whose schema is one), `append`/`remove`\nfor lists.\n\nOr (11.0) `steps` in their place: the handler branches on the event,\n`on E { if c => op  else if c => op  else => op }`. Each step is one\n`if` chain (`HandlerBranchStep`); separate steps all apply, in\nwritten order, so a self-transfer decrements and then increments.\n",
           "type": "object",
           "additionalProperties": false,
           "properties": {
@@ -1570,6 +1922,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
               ]
             },
             "operation": {
+              "description": "What a handler does to the value: the closed operation vocabulary.",
               "enum": [
                 "set",
                 "increment",
@@ -1640,11 +1993,362 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                   ]
                 }
               ]
+            },
+            "steps": {
+              "description": "The handler's `if` chains, in the order they apply. Present\nin place of `operation` and `value`, never beside them.\n",
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "description": "One `if` chain of a branched handler: `if c => op  else if c => op\nelse => op`. The first arm whose condition holds applies its\noperation, or `otherwise` when none does, or nothing.\n",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "branches": {
+                    "description": "The arms, in the order their conditions are tried.",
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "description": "One arm: a condition and the one operation it applies. One, because\na second would act on the same value – that is a second `if`.\n",
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "condition": {
+                          "description": "What a branch of a handler is applied under: a comparison\n(`HandlerComparison`), or comparisons joined – `all` (`and`), `any`\n(`or`). Resolved while folding one event, so the only things in scope\nare that event's fields, the projection's own tags and literals: never\nanother projection, never the projection's own value. It filters the\nfold and never the query – the projection reads the same events,\nbranched or not.\n",
+                          "oneOf": [
+                            {
+                              "description": "`event.data.from == accountId`: an event field, `equals` (with\n`negate`, `!=`), and one of the projection's own tags by name –\n`{parameterName}` – or a literal.\n",
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "leftHandSide": {
+                                  "description": "A field of the event being handled, as a handler's condition reads\nit: a property, or – `property` – one field of a record-typed one,\n`event.data.address.city`. One hop, as a parameter's field is.\n",
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "eventProperty": {
+                                      "type": "string",
+                                      "minLength": 2,
+                                      "maxLength": 100,
+                                      "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                      "examples": [
+                                        "someProperty"
+                                      ]
+                                    },
+                                    "property": {
+                                      "type": "string",
+                                      "minLength": 2,
+                                      "maxLength": 100,
+                                      "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                      "examples": [
+                                        "someProperty"
+                                      ],
+                                      "description": "A field of the property's record type."
+                                    }
+                                  },
+                                  "required": [
+                                    "eventProperty"
+                                  ]
+                                },
+                                "predicate": {
+                                  "enum": [
+                                    "equals"
+                                  ]
+                                },
+                                "rightHandSide": {
+                                  "oneOf": [
+                                    {
+                                      "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
+                                      "type": "object",
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "parameterName": {
+                                          "type": "string",
+                                          "minLength": 2,
+                                          "maxLength": 100,
+                                          "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                          "examples": [
+                                            "someProperty"
+                                          ]
+                                        },
+                                        "property": {
+                                          "type": "string",
+                                          "minLength": 2,
+                                          "maxLength": 100,
+                                          "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                          "examples": [
+                                            "someProperty"
+                                          ],
+                                          "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
+                                        }
+                                      },
+                                      "required": [
+                                        "parameterName"
+                                      ]
+                                    },
+                                    {
+                                      "description": "A member of an enum type – a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains – a plain string is by far the\ncommon case, but nothing here requires it.\n",
+                                      "type": "object",
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "enumMember": {
+                                          "type": [
+                                            "string",
+                                            "number",
+                                            "boolean"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "enumMember"
+                                      ]
+                                    },
+                                    {
+                                      "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
+                                      "type": [
+                                        "string",
+                                        "number",
+                                        "boolean"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "negate": {
+                                  "description": "When true the comparison holds iff the values differ (`!=`).",
+                                  "type": "boolean",
+                                  "default": false
+                                }
+                              },
+                              "required": [
+                                "leftHandSide",
+                                "predicate",
+                                "rightHandSide"
+                              ]
+                            },
+                            {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "all": {
+                                  "type": "array",
+                                  "minItems": 2,
+                                  "items": {
+                                    "type": "object",
+                                    "description": "Recursive: a nested HandlerCondition, the same shape as the one this appears inside."
+                                  }
+                                }
+                              },
+                              "required": [
+                                "all"
+                              ]
+                            },
+                            {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "any": {
+                                  "type": "array",
+                                  "minItems": 2,
+                                  "items": {
+                                    "type": "object",
+                                    "description": "Recursive: a nested HandlerCondition, the same shape as the one this appears inside."
+                                  }
+                                }
+                              },
+                              "required": [
+                                "any"
+                              ]
+                            }
+                          ]
+                        },
+                        "operation": {
+                          "description": "What a handler does to the value: the closed operation vocabulary.",
+                          "enum": [
+                            "set",
+                            "increment",
+                            "decrement",
+                            "append",
+                            "remove"
+                          ]
+                        },
+                        "value": {
+                          "description": "Where a handler's value comes from. Resolved while projecting a\nsingle event, so the only things in scope are that event's\nproperties and literals.\n",
+                          "oneOf": [
+                            {
+                              "description": "A property of the event being handled.",
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "eventProperty": {
+                                  "type": "string",
+                                  "minLength": 2,
+                                  "maxLength": 100,
+                                  "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                  "examples": [
+                                    "someProperty"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "eventProperty"
+                              ]
+                            },
+                            {
+                              "description": "The value that comes after another – `n + 1` on an integer; on a\nstring, the trailing run of digits incremented with the prefix\nand any zero-padding preserved (`\"c1\"` → `\"c2\"`, `\"c9\"` →\n`\"c10\"`, `\"c007\"` → `\"c008\"`).\n\nThis is where numbering lives. A projection that sets its value\nto `{successor: {eventProperty: courseId}}` holds *the next\nnumber to issue* at every point in its life: `initialValue`\nbefore any event, the successor of the last one issued after. The\nalternative – folding to the last id and applying successor at\nthe read – makes `initialValue` mean two different things\ndepending on whether anything has happened yet, and lets two\ncommands reading the same value disagree about it.\n\nEvery kind of declared projection may take one, a grouped one too.\n",
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "successor": {
+                                  "type": "object",
+                                  "description": "Recursive: a nested HandlerOperand, the same shape as the one this appears inside."
+                                }
+                              },
+                              "required": [
+                                "successor"
+                              ]
+                            },
+                            {
+                              "description": "A member of an enum type – a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains – a plain string is by far the\ncommon case, but nothing here requires it.\n",
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "enumMember": {
+                                  "type": [
+                                    "string",
+                                    "number",
+                                    "boolean"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "enumMember"
+                              ]
+                            },
+                            {
+                              "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
+                              "type": [
+                                "string",
+                                "number",
+                                "boolean"
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "condition",
+                        "operation"
+                      ]
+                    }
+                  },
+                  "otherwise": {
+                    "description": "The `else` arm: what applies when no arm's condition holds.",
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "operation": {
+                        "description": "What a handler does to the value: the closed operation vocabulary.",
+                        "enum": [
+                          "set",
+                          "increment",
+                          "decrement",
+                          "append",
+                          "remove"
+                        ]
+                      },
+                      "value": {
+                        "description": "Where a handler's value comes from. Resolved while projecting a\nsingle event, so the only things in scope are that event's\nproperties and literals.\n",
+                        "oneOf": [
+                          {
+                            "description": "A property of the event being handled.",
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "eventProperty": {
+                                "type": "string",
+                                "minLength": 2,
+                                "maxLength": 100,
+                                "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                "examples": [
+                                  "someProperty"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "eventProperty"
+                            ]
+                          },
+                          {
+                            "description": "The value that comes after another – `n + 1` on an integer; on a\nstring, the trailing run of digits incremented with the prefix\nand any zero-padding preserved (`\"c1\"` → `\"c2\"`, `\"c9\"` →\n`\"c10\"`, `\"c007\"` → `\"c008\"`).\n\nThis is where numbering lives. A projection that sets its value\nto `{successor: {eventProperty: courseId}}` holds *the next\nnumber to issue* at every point in its life: `initialValue`\nbefore any event, the successor of the last one issued after. The\nalternative – folding to the last id and applying successor at\nthe read – makes `initialValue` mean two different things\ndepending on whether anything has happened yet, and lets two\ncommands reading the same value disagree about it.\n\nEvery kind of declared projection may take one, a grouped one too.\n",
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "successor": {
+                                "type": "object",
+                                "description": "Recursive: a nested HandlerOperand, the same shape as the one this appears inside."
+                              }
+                            },
+                            "required": [
+                              "successor"
+                            ]
+                          },
+                          {
+                            "description": "A member of an enum type – a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains – a plain string is by far the\ncommon case, but nothing here requires it.\n",
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "enumMember": {
+                                "type": [
+                                  "string",
+                                  "number",
+                                  "boolean"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "enumMember"
+                            ]
+                          },
+                          {
+                            "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
+                            "type": [
+                              "string",
+                              "number",
+                              "boolean"
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "operation"
+                    ]
+                  }
+                },
+                "required": [
+                  "branches"
+                ]
+              }
             }
           },
           "required": [
             "event"
-          ]
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "steps",
+                  "operation"
+                ]
+              },
+              {
+                "required": [
+                  "steps",
+                  "value"
+                ]
+              }
+            ]
+          }
         }
       }
     },
@@ -1775,7 +2479,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                     "description": "The value one tag of a read is given: a value in the command's\nscope of the tag's declared type (a tag-marked value type directly,\nor a record with tag-marked fields – one tag per field), a\n`TagLiteral`, a projection read in place, or a `TagEach`, reading once\nper element of a list.\n",
                     "oneOf": [
                       {
-                        "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
+                        "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
                         "type": "object",
                         "additionalProperties": false,
                         "properties": {
@@ -1896,7 +2600,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                           "each": {
                             "oneOf": [
                               {
-                                "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
+                                "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
                                 "type": "object",
                                 "additionalProperties": false,
                                 "properties": {
@@ -2016,7 +2720,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                     "description": "The value one tag of a read is given: a value in the command's\nscope of the tag's declared type (a tag-marked value type directly,\nor a record with tag-marked fields – one tag per field), a\n`TagLiteral`, a projection read in place, or a `TagEach`, reading once\nper element of a list.\n",
                     "oneOf": [
                       {
-                        "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
+                        "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
                         "type": "object",
                         "additionalProperties": false,
                         "properties": {
@@ -2137,7 +2841,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                           "each": {
                             "oneOf": [
                               {
-                                "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
+                                "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
                                 "type": "object",
                                 "additionalProperties": false,
                                 "properties": {
@@ -2236,7 +2940,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                           "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\n",
                           "oneOf": [
                             {
-                              "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
+                              "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
                               "type": "object",
                               "additionalProperties": false,
                               "properties": {
@@ -2363,7 +3067,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                           "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\n",
                           "oneOf": [
                             {
-                              "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
+                              "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
                               "type": "object",
                               "additionalProperties": false,
                               "properties": {
@@ -2485,7 +3189,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                               "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\n",
                               "oneOf": [
                                 {
-                                  "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
+                                  "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
                                   "type": "object",
                                   "additionalProperties": false,
                                   "properties": {
@@ -2704,7 +3408,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                     "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\n",
                     "oneOf": [
                       {
-                        "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
+                        "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
                         "type": "object",
                         "additionalProperties": false,
                         "properties": {
@@ -2833,7 +3537,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                 "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\n",
                                 "oneOf": [
                                   {
-                                    "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
+                                    "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
                                     "type": "object",
                                     "additionalProperties": false,
                                     "properties": {
@@ -2960,7 +3664,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                 "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\n",
                                 "oneOf": [
                                   {
-                                    "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
+                                    "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
                                     "type": "object",
                                     "additionalProperties": false,
                                     "properties": {
@@ -3082,7 +3786,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                     "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\n",
                                     "oneOf": [
                                       {
-                                        "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
+                                        "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
                                         "type": "object",
                                         "additionalProperties": false,
                                         "properties": {

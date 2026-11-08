@@ -47,6 +47,14 @@
 // lists (`commandLists` / `withCommandLists`), which leave every
 // branch where it is.
 //
+// **A handler may branch** (11.0): `on E { if c => op  else => op }`,
+// stored as `{event, steps: [{branches: [{condition, operation,
+// value}], otherwise?: {operation, value}}]}` beside the unconditional
+// `{event, operation, value}`. Anything that reads a handler's
+// operations or operands goes through `handlerArms`, so it sees every
+// branch; a condition reads the event and the projection's own tags,
+// never a projection or the state.
+//
 // Command bodies carry an optional `feature`, naming the set a command
 // belongs to. Nothing in the model reads it – it rides along untouched
 // through validation, references and renames – and it is the one field
@@ -1357,7 +1365,7 @@ function operandText(operand) {
       return args.length ? `${read}(${args.map(operandText).join(', ')})` : read;
     }
     case 'enum-member': return operand.enumMember || '?';
-    case 'event-property': return `event.data.${operand.eventProperty || '?'}`;
+    case 'event-property': return `event.data.${operand.eventProperty || '?'}${operand.property !== undefined ? '.' + operand.property : ''}`;
     case 'successor': return `successor(${operandText(operand.successor)})`;
     // The values in the order they are held, which is the order the
     // projection declares them in wherever a writer built the read. A
@@ -1968,6 +1976,95 @@ function mapConditionLeaves(condition, map) {
     return { ...condition, [key]: condition[key].map((part) => mapConditionLeaves(part, map)) };
   }
   return condition ? map(condition) : condition;
+}
+
+// ---------- a handler's branches (11.0) ----------
+//
+// `on E => op` is `{event, operation, value}`. `on E { … }` is `{event,
+// steps}`: each step one `if` chain, `{branches: [{condition,
+// operation, value}], otherwise?: {operation, value}}` – the command's
+// branch step with one operation where a command's arm holds steps.
+// Separate steps all apply, in order (a self-transfer decrements, then
+// increments); a chain applies its first arm whose condition holds, or
+// `otherwise`, or nothing. One operation per arm: a second would act on
+// the same value, so it is a second `if`.
+//
+// A condition is a command's condition over a narrower vocabulary: a
+// leaf compares an event field – `{eventProperty}`, or `{eventProperty,
+// property}` for a field of a record – with `equals` (negated: `!=`)
+// against one of the projection's own tags, `{parameterName}`, or a
+// literal, and leaves join with `all` / `any`. It reads neither another
+// projection nor the projection's own state, so a fold stays
+// self-contained – and it never narrows the query: the events a
+// projection is read from are the same, branched or not.
+
+function isConditionalHandler(handler) {
+  return !!handler && typeof handler === 'object' && handler.steps !== undefined;
+}
+
+// A conditional handler's chains, as stored – those that are objects.
+function handlerChains(handler) {
+  if (!isConditionalHandler(handler) || !Array.isArray(handler.steps)) return [];
+  return handler.steps.filter((step) => step && typeof step === 'object' && !Array.isArray(step));
+}
+
+// Every operation a handler may apply, in written order, as arms:
+// `{event, operation, value, condition, chain, index, otherwise,
+// guard}` – `chain` the step's index (null for an unconditional
+// handler), `index` the arm's in its chain or 'otherwise', `guard` the
+// words it is applied under (`if …`, `else if …`, `else`, or '' for
+// none), `holder` the stored object carrying `operation` and `value`.
+function handlerArms(handler) {
+  if (!handler || typeof handler !== 'object') return [];
+  if (!isConditionalHandler(handler)) {
+    return [{ event: handler.event, operation: handler.operation, value: handler.value, condition: undefined,
+      chain: null, index: null, otherwise: false, guard: '', holder: handler }];
+  }
+  const out = [];
+  handlerChains(handler).forEach((step, chain) => {
+    (Array.isArray(step.branches) ? step.branches : []).forEach((arm, index) => {
+      if (!arm || typeof arm !== 'object') return;
+      out.push({ event: handler.event, operation: arm.operation, value: arm.value, condition: arm.condition,
+        chain, index, otherwise: false,
+        guard: `${index ? 'else if' : 'if'} ${conditionText(arm.condition)}`, holder: arm });
+    });
+    const other = step.otherwise;
+    if (other && typeof other === 'object' && !Array.isArray(other)) {
+      out.push({ event: handler.event, operation: other.operation, value: other.value, condition: undefined,
+        chain, index: 'otherwise', otherwise: true, guard: 'else', holder: other });
+    }
+  });
+  return out;
+}
+
+// Every condition a handler states, chain by chain.
+function handlerConditions(handler) {
+  return handlerArms(handler).map((arm) => arm.condition).filter((condition) => condition !== undefined);
+}
+
+// Every comparison a handler's conditions are made of.
+function handlerConditionLeaves(handler) {
+  const out = [];
+  for (const condition of handlerConditions(handler)) conditionLeaves(condition, out);
+  return out;
+}
+
+// Whether a projection's handlers branch anywhere – what the pages show
+// read-only and leave the code view to edit.
+function handlersBranch(handlers) {
+  return (Array.isArray(handlers) ? handlers : []).some(isConditionalHandler);
+}
+
+// The type of the event field a handler's condition reads – a
+// property's, or a record field's one hop in – or null.
+function handlerFieldType(model, eventName, operand) {
+  if (operandSource(operand) !== 'event-property') return null;
+  const event = model['event-definitions'][eventName];
+  const property = event && (event.properties || []).find((p) => p && p.name === operand.eventProperty);
+  if (!property) return null;
+  if (operand.property === undefined) return property.propertyType;
+  const field = (compositeFieldsOf(model, property.propertyType) || []).find((f) => f && f.name === operand.property);
+  return field ? field.propertyType : null;
 }
 
 // ---------- what a condition says about optional parameters ----------
@@ -3300,6 +3397,7 @@ function definitionAdvisories(model, kind, name, body) {
   // never dropped behind anyone's back; it is reported here and pruned
   // by the next edit to this command, which is what the message says.
   if (kind === 'event-definition') messages.push(...eventTagAdvisories(model, body));
+  if (kind === 'projection-definition') messages.push(...handlerAdvisories(`Projection "${name}"`, body));
   if (kind === 'command-definition') {
     messages.push(...rejectionAdvisories(body));
     const stranded = unreferencedBindings(model, body);
@@ -3515,19 +3613,42 @@ function projectionTagProblem(model, projectionName) {
       `"${unreached.event}", which it handles, is tagged by no ${unreached.missing.join(' or ')} – ` +
       'so that handler never fires.';
   }
+  const tags = projectionTagParams(projection);
   for (const eventName of projectionHandledTypes(model, projectionName)) {
     const leaves = eventTagLeaves(model, model['event-definitions'][eventName]);
+    const handler = (projection.handlers || []).find((h) => h && h.event === eventName);
     for (const type of tagTypes) {
       const carriers = leaves.filter((leaf) => leaf.identifierType === type);
-      if (carriers.length > 1) {
+      if (carriers.length > 1 && !handlerTellsCarriersApart(handler, carriers, tags.filter((tag) => tag.tagType === type))) {
+        const tag = (tags.find((t) => t.tagType === type) || {}).name || '…';
         return `${label} is tagged by ${type}, and "${eventName}" is tagged by ` +
           `${type} in ${carriers.map((leaf) => `"${leaf.path}"`).join(' and ')}, so its handler ` +
-          'fires for both and cannot tell them apart. Tag it by one, or split the event so each ' +
-          'records one fact.';
+          'fires for both and cannot tell them apart. Give its handler a condition on one of them ' +
+          `(if event.data.${carriers[0].path} == ${tag} => …), split the event so each records one fact, ` +
+          'or tag it by one.';
       }
     }
   }
   return null;
+}
+
+// Whether a branched handler (11.0) tells apart the fields that carry
+// one of the projection's tags: every chain it has compares one of them
+// with that tag somewhere in its conditions. Simple and safe – an
+// `else` after such an `if` counts, being in a chain that names one; a
+// chain that names none applies whichever instance is read.
+function handlerTellsCarriersApart(handler, carriers, tags) {
+  if (!isConditionalHandler(handler)) return false;
+  const paths = new Set(carriers.map((leaf) => leaf.path));
+  const names = new Set(tags.map((tag) => tag.name));
+  const chains = handlerChains(handler);
+  return chains.length > 0 && chains.every((step) => handlerConditionLeaves({ steps: [step] }).some((leaf) => {
+    const left = leaf.leftHandSide;
+    const right = leaf.rightHandSide;
+    return operandSource(left) === 'event-property'
+      && paths.has(left.property === undefined ? left.eventProperty : `${left.eventProperty}.${left.property}`)
+      && operandSource(right) === 'parameter' && names.has(right.parameterName);
+  }));
 }
 
 // Handler validation. `target` is a projection body: `valueType`,
@@ -3559,40 +3680,29 @@ function validateHandlers(model, label, target, handlers) {
     return operand;
   };
 
-  for (const handler of handlers || []) {
-    if (!handler || !handler.event) {
-      throw new DomainError(`A handler on ${label} has no event.`);
-    }
-    if (handledEvents.has(handler.event)) {
-      throw new DomainError(`${label} handles "${handler.event}" twice.`);
-    }
-    handledEvents.add(handler.event);
-    if (!allowedOperations.includes(handler.operation)) {
+  // One operation – an unconditional handler's, or one arm's.
+  const checkArm = (arm, event, where) => {
+    if (!allowedOperations.includes(arm.operation)) {
       throw new DomainError(
-        `Operation "${handler.operation}" is not available for ${label} ` +
+        `Operation "${arm.operation}" is not available for ${label} ` +
         `(allowed: ${allowedOperations.join(', ')}).`
       );
     }
-    const event = model['event-definitions'][handler.event];
-    if (!event) {
-      throw new DomainError(`${label} handles "${handler.event}", which this model does not define.`);
-    }
-    const where = `The handler for "${handler.event}" on ${label}`;
     // `undefined` is not a value an operand can have – JSON cannot even
     // carry it – but `operandSource` reads it as a static literal, so
     // without this a handler that says what it does without saying
     // what *from* slips through and renders as "undefined" everywhere
     // the effect is spoken. `null` stays legal: "no value yet" is a
     // value.
-    if (handler.value === undefined) {
+    if (arm.value === undefined) {
       throw new DomainError(`${where} says what it does but not what value it takes.`);
     }
-    const leaf = checkOperand(handler.value, where);
+    const leaf = checkOperand(arm.value, where);
     if (operandSource(leaf) === 'event-property') {
       const known = (event.properties || []).some((p) => p.name === leaf.eventProperty);
       if (!known) {
         throw new DomainError(
-          `Handler on ${label} reads "${leaf.eventProperty}", which "${handler.event}" does not carry.`
+          `Handler on ${label} reads "${leaf.eventProperty}", which "${arm.event}" does not carry.`
         );
       }
     }
@@ -3602,7 +3712,101 @@ function validateHandlers(model, label, target, handlers) {
         `Handler on ${label} sets "${leaf.enumMember}", which is not a member of ${target.valueType}.`
       );
     }
+  };
+
+  // A condition's comparison (11.0): an event field, `==` or `!=`, one
+  // of the projection's own tags or a literal. Nothing else is in scope
+  // while one event is folded – no other projection, not the state.
+  const tagNames = projectionTagParams(target).map((tag) => tag.name);
+  const checkLeaf = (leaf, eventName, event, where) => {
+    const sides = [leaf.leftHandSide, leaf.rightHandSide];
+    if (sides.some((side) => ['projection-read', 'alias-property'].includes(operandSource(side)))) {
+      throw new DomainError(`${where} has a condition that reads a projection – a condition reads the event and the projection's tags, nothing else.`);
+    }
+    if (leaf.predicate !== 'equals') {
+      throw new DomainError(`${where} has a condition "${conditionText(leaf)}" – a handler's condition compares with == or !=.`);
+    }
+    const left = leaf.leftHandSide;
+    if (operandSource(left) !== 'event-property') {
+      throw new DomainError(`${where} has a condition "${conditionText(leaf)}" – a handler's condition compares an event field (event.data.x) with a tag or a literal.`);
+    }
+    const property = (event.properties || []).find((p) => p && p.name === left.eventProperty);
+    if (!property) {
+      throw new DomainError(`${where} has a condition on "${left.eventProperty}", but "${eventName}" does not carry "${left.eventProperty}".`);
+    }
+    if (left.property !== undefined) {
+      const fields = compositeFieldsOf(model, property.propertyType);
+      if (!fields || property.isList || !fields.some((field) => field && field.name === left.property)) {
+        throw new DomainError(`${where} has a condition on "${left.eventProperty}.${left.property}", which "${eventName}" does not carry.`);
+      }
+    }
+    const right = leaf.rightHandSide;
+    const source = operandSource(right);
+    if (source === 'parameter') {
+      if (right.property !== undefined || !tagNames.includes(right.parameterName)) {
+        throw new DomainError(`${where} compares with "${right.parameterName}", which is no tag of ${label}` +
+          (tagNames.length ? ` (${tagNames.join(', ')}).` : ' – it has none.'));
+      }
+    } else if (source !== 'static' && source !== 'enum-member') {
+      throw new DomainError(`${where} has a condition "${conditionText(leaf)}" – a handler's condition compares an event field with a tag or a literal.`);
+    } else {
+      assertRecognisedOperand(right, where);
+    }
+  };
+  for (const handler of handlers || []) {
+    if (!handler || !handler.event) {
+      throw new DomainError(`A handler on ${label} has no event.`);
+    }
+    if (handledEvents.has(handler.event)) {
+      throw new DomainError(`${label} handles "${handler.event}" twice.`);
+    }
+    handledEvents.add(handler.event);
+    const event = model['event-definitions'][handler.event];
+    if (!event) {
+      throw new DomainError(`${label} handles "${handler.event}", which this model does not define.`);
+    }
+    const where = `The handler for "${handler.event}" on ${label}`;
+    if (!isConditionalHandler(handler)) {
+      checkArm(handler, event, where);
+      continue;
+    }
+    if (handler.operation !== undefined || handler.value !== undefined) {
+      throw new DomainError(`${where} states both branches and an operation – the operations go into the branches.`);
+    }
+    const chains = handlerChains(handler);
+    if (!chains.length) throw new DomainError(`${where} has no branches – it applies nothing.`);
+    for (const chain of chains) {
+      if (!Array.isArray(chain.branches) || !chain.branches.length) {
+        throw new DomainError(`${where} has an if chain with no "if" – each starts with one.`);
+      }
+    }
+    for (const arm of handlerArms(handler)) {
+      if (!arm.otherwise) {
+        if (!arm.condition || typeof arm.condition !== 'object') throw new DomainError(`${where} has a branch with no condition.`);
+        for (const leaf of conditionLeaves(arm.condition)) checkLeaf(leaf, handler.event, event, where);
+      }
+      checkArm(arm, event, where);
+    }
   }
+}
+
+// What a projection's branched handlers may do that a reader would not
+// expect (11.0): two separate `if`s that both `set` it on one event may
+// both match, and then the last one wins – an `else if` says which one
+// applies. Said whether or not their conditions could both hold:
+// telling would take more than a glance.
+function handlerAdvisories(label, body) {
+  const out = [];
+  for (const handler of (body && Array.isArray(body.handlers)) ? body.handlers : []) {
+    if (!isConditionalHandler(handler)) continue;
+    const setting = handlerChains(handler).filter((step) =>
+      handlerArms({ event: handler.event, steps: [step] }).some((arm) => arm.operation === 'set'));
+    if (setting.length > 1) {
+      out.push(`${label}: the handler for "${handler.event}" sets it in separate ifs that may both match – ` +
+        'the last one wins. Join them with else if to say which one applies.');
+    }
+  }
+  return out;
 }
 
 // The initial value, checked against the declared type. `null` is
@@ -4855,7 +5059,7 @@ function removedConstructIn(kind, body) {
     if (body.script !== undefined || list(body.handlers).some((h) => h && h.code !== undefined)) {
       return { construct: 'scripted', what: 'is scripted' };
     }
-    if (list(body.handlers).some((h) => h && mentions(h.value, 'currentValue'))) {
+    if (list(body.handlers).some((h) => h && handlerArms(h).some((arm) => mentions(arm.value, 'currentValue')))) {
       return { construct: 'currentValue', what: 'sets a value from currentValue' };
     }
   }
@@ -4928,6 +5132,26 @@ function assertStorableBody(kind, body, name = null) {
   if (kind === 'event-definition' && body.tags !== undefined) {
     if (!Array.isArray(body.tags) || body.tags.some((tag) => typeof tag !== 'string')) {
       throw new DomainError('An event\'s "tags" must be a list of property paths.');
+    }
+  }
+  // A branched handler's chains are objects, each arm an object and
+  // `otherwise` one (11.0) – whatever they say is the advisories' to
+  // judge.
+  if (kind === 'projection-definition') {
+    const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+    for (const handler of Array.isArray(body.handlers) ? body.handlers : []) {
+      if (!handler || handler.steps === undefined) continue;
+      if (!Array.isArray(handler.steps) || !handler.steps.every(object)) {
+        throw new DomainError('A handler\'s "steps" must be a list of {branches, otherwise}.');
+      }
+      for (const step of handler.steps) {
+        if (step.branches !== undefined && (!Array.isArray(step.branches) || !step.branches.every(object))) {
+          throw new DomainError('A handler\'s "branches" must be a list of {condition, operation, value}.');
+        }
+        if (step.otherwise !== undefined && !object(step.otherwise)) {
+          throw new DomainError('A handler\'s "otherwise" must be one {operation, value}.');
+        }
+      }
     }
   }
   // A projection's are its declared tags, `{name, tagType}` each.
@@ -5301,9 +5525,7 @@ function moveProjectionIntoGroup(modelId, projectionName, groupName, localName) 
   });
   const own = rewrites.find((r) => r.kind === 'projection-definition' && r.name === projectionName);
   const inner = storedGroupProjection(local, own ? own.body : deepClone(projection));
-  if (inner.derived) {
-    forEachOwnParameterRef(inner.derived, (ref) => { if (ref.parameterName === oldTag) ref.parameterName = tag.name; });
-  }
+  forEachOwnParameterRefOf(inner, (ref) => { if (ref.parameterName === oldTag) ref.parameterName = tag.name; });
   let groupRewrite = rewrites.find((r) => r.kind === 'group-definition' && r.name === groupName);
   if (!groupRewrite) rewrites.push(groupRewrite = { kind: 'group-definition', name: groupName, body: deepClone(group) });
   groupRewrite.body.projections = [...(groupRewrite.body.projections || []), inner];
@@ -5490,9 +5712,21 @@ const MEMBER_REWRITES = {
           ? body.initialValue.map(renamed)
           : renamed(body.initialValue);
         for (const handler of body.handlers || []) {
-          rewriteHandlerOperand(handler && handler.value, (operand) => {
-            if (operand.enumMember === previous) { operand.enumMember = next; touched = true; }
-          });
+          for (const arm of handlerArms(handler)) {
+            rewriteHandlerOperand(arm.value, (operand) => {
+              if (operand.enumMember === previous) { operand.enumMember = next; touched = true; }
+            });
+          }
+        }
+      }
+      // A branched handler's condition compares an event field of this
+      // enum with a member (11.0).
+      for (const handler of body.handlers || []) {
+        for (const leaf of handlerConditionLeaves(handler)) {
+          if (operandSource(leaf.rightHandSide) !== 'enum-member' || leaf.rightHandSide.enumMember !== previous) continue;
+          if (handlerFieldType(model, handler.event, leaf.leftHandSide) !== typeName) continue;
+          leaf.rightHandSide.enumMember = next;
+          touched = true;
         }
       }
       if (derivedOf(body)) {
@@ -5558,9 +5792,16 @@ const MEMBER_REWRITES = {
       let touched = false;
       for (const handler of body.handlers || []) {
         if (!handler || handler.event !== eventName) continue;
-        rewriteHandlerOperand(handler.value, (operand) => {
-          if (operand.eventProperty === previous) { operand.eventProperty = next; touched = true; }
-        });
+        for (const arm of handlerArms(handler)) {
+          rewriteHandlerOperand(arm.value, (operand) => {
+            if (operand.eventProperty === previous) { operand.eventProperty = next; touched = true; }
+          });
+        }
+        for (const leaf of handlerConditionLeaves(handler)) {
+          for (const side of [leaf.leftHandSide, leaf.rightHandSide]) {
+            if (operandSource(side) === 'event-property' && side.eventProperty === previous) { side.eventProperty = next; touched = true; }
+          }
+        }
       }
       return touched;
     }));
@@ -5628,6 +5869,23 @@ const MEMBER_REWRITES = {
   // A composite's field is reached only through a parameter typed with
   // that composite – `{parameterName: items, property: productId}`.
   'custom-type-definition:field': (model, typeName, previous, next) => [
+    // A branched handler's condition reaches a record's field one hop
+    // into the event, `event.data.address.city` (11.0).
+    ...rewriteProjections(model, (body) => {
+      let touched = false;
+      for (const handler of body.handlers || []) {
+        for (const leaf of handlerConditionLeaves(handler)) {
+          const left = leaf.leftHandSide;
+          if (operandSource(left) !== 'event-property' || left.property !== previous) continue;
+          const event = handler && model['event-definitions'][handler.event];
+          const property = event && (event.properties || []).find((p) => p && p.name === left.eventProperty);
+          if (!property || property.propertyType !== typeName) continue;
+          left.property = next;
+          touched = true;
+        }
+      }
+      return touched;
+    }),
     // An event lists a record's tag field by path, `items.productId`.
     ...Object.entries(model['event-definitions']).flatMap(([name, event]) => {
       const typed = new Set((event.properties || [])
@@ -5687,6 +5945,19 @@ const MEMBER_REWRITES = {
   'projection-definition:argument': (model, projectionName, previous, next) =>
     renameProjectionParameter(model, projectionName, 'arguments', previous, next),
 };
+
+// Every `{parameterName}` a projection names one of its own
+// parameters by: its derived predicate's, and its branched handlers'
+// conditions' (11.0), which compare with its tags.
+function forEachOwnParameterRefOf(body, visit) {
+  if (!body || typeof body !== 'object') return;
+  forEachOwnParameterRef(body.derived, visit);
+  for (const handler of Array.isArray(body.handlers) ? body.handlers : []) {
+    for (const leaf of handlerConditionLeaves(handler)) {
+      for (const side of [leaf.leftHandSide, leaf.rightHandSide]) if (operandSource(side) === 'parameter') visit(side);
+    }
+  }
+}
 
 // Every `{parameterName}` a derived predicate names one of its owner's
 // parameters by: a side, an operand's tag, an operand's argument.
@@ -5787,7 +6058,7 @@ function renameProjectionParameter(model, projectionName, map, previous, next) {
     return true;
   }, (body) => {
     let touched = false;
-    forEachOwnParameterRef(body.derived, (ref) => {
+    forEachOwnParameterRefOf(body, (ref) => {
       if (ref.parameterName === previous) { ref.parameterName = next; touched = true; }
     });
     return touched;
@@ -6799,7 +7070,7 @@ function groupsFromEntities({ customTypes = {}, entities = {}, projections = {},
       moved.set(projectionName, { group: name, local, oldTag, tag: shape.tag });
       const inner = storedGroupProjection(local, out.projections[projectionName]);
       if (inner.derived) {
-        forEachOwnParameterRef(inner.derived, (ref) => { if (ref.parameterName === oldTag) ref.parameterName = shape.tag.name; });
+        forEachOwnParameterRefOf(inner, (ref) => { if (ref.parameterName === oldTag) ref.parameterName = shape.tag.name; });
       }
       groups[name].projections.push(inner);
       delete out.projections[projectionName];

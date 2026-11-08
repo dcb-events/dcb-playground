@@ -164,6 +164,17 @@
 // comparison's, never a group's. The aliases sit at the top: a read is
 // made where a step first needs it, wherever it is declared.
 //
+// **A handler may branch the same way** (11.0): `on E { if c => op
+// else if c => op  else => op }`, each `if` a chain of its own, so
+// separate `if`s all apply and an `else` continues the chain above it
+// (`branchedHandler`). One operation per branch – a second would act on
+// the same value, so it is a second `if`, and a block is an error. A
+// comparison is `event.data.x` (or a record's `event.data.x.y`) `==` or
+// `!=` one of the projection's tags or a literal; a read of another
+// projection, or of `state`, is an error where it is written – the
+// condition picks what one event does, it never widens what a fold
+// reads, and it never narrows the query.
+//
 // **A few spellings are the schema's own tokens**, matching the
 // interface's technical register: `successor(x)`, `event.data.x`, and
 // the predicate words `contains` / `containsAny` / `startsWith` /
@@ -932,24 +943,126 @@ function parseModelSourceText(text, options) {
   // `and` binding tighter, brackets grouping. A run of one joiner is one
   // list, `{all: […]}` or `{any: […]}`; a bracketed group stays a group,
   // so what is printed is what was written.
-  const anyCondition = () => {
+  //
+  // `leaf` reads one comparison – a command's by default; a handler's
+  // condition joins its own comparisons the same way.
+  const commandComparison = () => condition(commandOperand);
+  const anyCondition = (leaf = commandComparison) => {
     enter();
-    const parts = [allCondition()];
-    while (accept('or')) parts.push(allCondition());
+    const parts = [allCondition(leaf)];
+    while (accept('or')) parts.push(allCondition(leaf));
     return leave(parts.length === 1 ? parts[0] : { any: parts });
   };
-  const allCondition = () => {
-    const parts = [conditionTerm()];
-    while (accept('and')) parts.push(conditionTerm());
+  const allCondition = (leaf) => {
+    const parts = [conditionTerm(leaf)];
+    while (accept('and')) parts.push(conditionTerm(leaf));
     return parts.length === 1 ? parts[0] : { all: parts };
   };
-  const conditionTerm = () => {
+  const conditionTerm = (leaf) => {
     if (is('not') && is('(', 1)) fail('"not" goes before one comparison – a bracketed group cannot be negated; say its opposite.');
-    if (!accept('(')) return condition(commandOperand);
-    const inner = anyCondition();
+    if (!accept('(')) return leaf();
+    const inner = anyCondition(leaf);
     expect(')', '")" closing the group');
     // A group of one comparison says nothing the comparison does not.
     return inner;
+  };
+
+  // ---------- a handler's branches (11.0) ----------
+  //
+  // `on E { if c => op  else if c => op  else => op }`: each `if`
+  // starts a chain of its own, so separate `if`s all apply and an
+  // `else` continues the chain before it. One operation per branch. A
+  // comparison is an event field – `event.data.x`, a record's field
+  // `event.data.x.y` – `==` or `!=` one of the projection's tags
+  // (`scope.tags`) or a literal; a read of a projection, or of the
+  // state, is an error where it is written.
+  const handlerOperation = (inBranch) => {
+    if (inBranch && is('{')) fail('One operation per branch – a second one is a second if, so a branch holds no block.');
+    if (peek().t === 'code') {
+      fail('A handler runs no code in 11.0 – it is an operation: set, increment, decrement, append or remove.');
+    }
+    const op = ident('an operation (set, increment, decrement, append, remove)');
+    if (!OPERATIONS.includes(op.v)) {
+      fail(`"${op.v}" is not an operation – set, increment, decrement, append or remove.`, op);
+    }
+    const out = { operation: op.v };
+    if (startsHandlerOperand()) out.value = handlerOperand();
+    if (inBranch && peek().t === 'ident' && OPERATIONS.includes(peek().v)) {
+      fail('One operation per branch – a second one is a second if.');
+    }
+    return out;
+  };
+  const handlerConditionSide = (scope, left) => {
+    const token = peek();
+    if (is('event') && is('.', 1)) {
+      if (!left) fail('A handler\'s condition compares an event field with one of the projection\'s tags or a literal – not with another field.');
+      next(); expect('.'); expect('data', '"data" – an event value is read as event.data.<property>'); expect('.');
+      const property = ident('an event property');
+      const operand = { eventProperty: property.v };
+      mark(operand, 'eventProperty', property);
+      if (accept('.')) {
+        const field = ident('a field of the record');
+        operand.property = field.v;
+        mark(operand, 'property', field);
+      }
+      return operand;
+    }
+    if (token.t === 'ident' && /^\p{Lu}/u.test(token.v) && (is('(', 1) || is('.', 1))) {
+      fail('A handler\'s condition reads the event and the projection\'s tags – never another projection.', token);
+    }
+    if (token.t === 'ident' && !SOURCE_MEMBER_RE.test(token.v) && !['true', 'false', 'null'].includes(token.v)) {
+      if (!scope.tags.includes(token.v)) {
+        if (token.v === 'state') fail('A handler\'s condition never reads the projection\'s own state – only the event and its tags.', token);
+        if (is('(', 1)) fail('A handler\'s condition reads the event and the projection\'s tags – never another projection.', token);
+        fail(`"${token.v}" is no tag of ${scope.name} – a condition compares with `
+          + `${scope.tags.length ? scope.tags.join(', ') + ' or ' : ''}a literal.`, token);
+      }
+      if (left) fail(`A handler's condition starts with the event field it tests: if event.data.… == ${token.v}.`, token);
+      next();
+      const operand = { parameterName: token.v };
+      mark(operand, 'parameter', token);
+      return operand;
+    }
+    if (left) fail(`A handler's condition starts with the event field it tests (event.data.…), found ${describeToken(token)}.`);
+    return literalValue();
+  };
+  const handlerComparison = (scope) => () => {
+    if (is('not')) fail('A handler\'s condition says != for "not equal" – "not" is a command\'s.');
+    const leftHandSide = handlerConditionSide(scope, true);
+    const op = peek();
+    if (op.t !== 'punct' || (op.v !== '==' && op.v !== '!=')) {
+      fail(`A handler's condition compares with == or != – found ${describeToken(op)}.`, op);
+    }
+    next();
+    const rightHandSide = handlerConditionSide(scope, false);
+    return finish({ leftHandSide, predicate: 'equals', rightHandSide }, op.v === '!=');
+  };
+  const branchedHandler = (eventToken, scope) => {
+    const handler = { event: eventToken.v, steps: [] };
+    mark(handler, 'event', eventToken);
+    expect('{');
+    enter();
+    while (!is('}')) {
+      guardBlock('}', true);
+      if (is('else')) fail('"else" follows an if – this one has none before it.');
+      if (!is('if')) fail(`Expected if or "}" in the branches of ${eventToken.v}, found ${describeToken(peek())}.`);
+      next();
+      const step = { branches: [] };
+      for (;;) {
+        const condition = anyCondition(handlerComparison(scope));
+        expect('=>', '"=>" and the operation the branch applies');
+        step.branches.push({ condition, ...handlerOperation(true) });
+        if (!is('else')) break;
+        next();
+        if (accept('if')) continue;
+        expect('=>', '"=>" and the operation the else branch applies – or "else if"');
+        step.otherwise = handlerOperation(true);
+        break;
+      }
+      handler.steps.push(step);
+    }
+    expect('}');
+    return leave(handler);
   };
 
   // ---------- declarations ----------
@@ -1311,18 +1424,15 @@ function parseModelSourceText(text, options) {
         }
         if (accept('on')) {
           const eventToken = ident('an event name');
-          const event = eventToken.v;
-          expect('=>');
-          if (peek().t === 'code') {
-            fail('A handler runs no code in 11.0 – it is an operation: set, increment, decrement, append or remove.');
+          if (is('{')) {
+            const tags = group ? [group.body.tag && group.body.tag.name].filter(Boolean) : header.tags.map((tag) => tag.name);
+            handlers.push(branchedHandler(eventToken, { name: qualified, tags }));
+            continue;
           }
-          const op = ident('an operation (set, increment, decrement, append, remove)');
-          if (!OPERATIONS.includes(op.v)) {
-            fail(`"${op.v}" is not an operation – set, increment, decrement, append or remove.`, op);
-          }
-          const handler = { event, operation: op.v };
+          expect('=>', '"=>" and an operation, or "{" and its branches');
+          const handler = { event: eventToken.v };
           mark(handler, 'event', eventToken);
-          if (startsHandlerOperand()) handler.value = handlerOperand();
+          Object.assign(handler, handlerOperation(false));
           handlers.push(handler);
         } else if (is('scenarios')) {
           scenarios = scenariosGroup(owner, scenarios);
@@ -2403,6 +2513,61 @@ function sourceHandlerOperand(operand) {
   return sourceLiteral(operand);
 }
 
+// A branched handler's chains (11.0), one line per arm: `if c =>
+// op`, `else if c => op`, `else => op`. Only what the parser reads back
+// prints: `==` / `!=` between an event field and one of `tagNames` or a
+// literal, one operation per arm.
+function sourceHandlerSteps(handler, tagNames, operation) {
+  if (Object.keys(handler).some((k) => !['event', 'steps'].includes(k))) unprintable('a branched handler carries fields a handler does not have');
+  if (!Array.isArray(handler.steps) || !handler.steps.length) unprintable('a branched handler has no branches');
+  const side = (value) => {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      if (value.eventProperty !== undefined) {
+        if (Object.keys(value).some((k) => !['eventProperty', 'property'].includes(k))) unprintable('a condition\'s event field carries more than a path');
+        return `event.data.${sourceRef(value.eventProperty, 'event property')}`
+          + (value.property !== undefined ? `.${sourceRef(value.property, 'field')}` : '');
+      }
+      if (value.parameterName !== undefined) {
+        if (Object.keys(value).length !== 1 || !tagNames.includes(value.parameterName)) unprintable(`a condition compares with "${value.parameterName}", which is no tag of it`);
+        return sourceRef(value.parameterName, 'tag');
+      }
+    }
+    return sourceLiteral(value);
+  };
+  const condition = (c) => {
+    for (const leaf of conditionLeaves(c)) {
+      if (leaf.predicate !== 'equals' || Object.keys(leaf).some((k) => !['leftHandSide', 'predicate', 'rightHandSide', 'negate'].includes(k))) {
+        unprintable('a handler\'s condition is more than == or !=');
+      }
+      if (!leaf.leftHandSide || leaf.leftHandSide.eventProperty === undefined) unprintable('a handler\'s condition does not start with an event field');
+      if (leaf.rightHandSide && typeof leaf.rightHandSide === 'object' && leaf.rightHandSide.eventProperty !== undefined) {
+        unprintable('a handler\'s condition compares two event fields');
+      }
+    }
+    return sourceAnyCondition(c, side);
+  };
+  const arm = (holder) => {
+    if (!holder || typeof holder !== 'object' || Object.keys(holder).some((k) => !['condition', 'operation', 'value'].includes(k))) {
+      unprintable('a handler branch carries fields a branch does not have');
+    }
+    return operation(holder);
+  };
+  const lines = [];
+  for (const step of handler.steps) {
+    if (!step || typeof step !== 'object' || Object.keys(step).some((k) => !['branches', 'otherwise'].includes(k))) unprintable('a handler chain carries fields a chain does not have');
+    if (!Array.isArray(step.branches) || !step.branches.length) unprintable('a handler chain has no if');
+    step.branches.forEach((branch, index) => {
+      if (!branch || branch.condition === undefined) unprintable('a handler branch has no condition');
+      lines.push(`${index ? 'else if' : 'if'} ${condition(branch.condition)} => ${arm(branch)}`);
+    });
+    if (step.otherwise !== undefined) {
+      if (step.otherwise && step.otherwise.condition !== undefined) unprintable('a handler\'s else has a condition');
+      lines.push(`else => ${arm(step.otherwise)}`);
+    }
+  }
+  return lines;
+}
+
 // A derived operand: another projection's read – its values each one
 // of this projection's own parameters by name, or a literal – one of
 // its own parameters by name, or a literal. In a group (`siblings`, the
@@ -2506,7 +2671,7 @@ function printGroup(name, body, names, nest = null) {
     if (typeof local !== 'string' || !SOURCE_LOCAL_RE.test(local)) {
       unprintable(`its projection ${JSON.stringify(local)} is not named in lowerCamel`);
     }
-    const text = printProjection(local, rest, names, { siblings });
+    const text = printProjection(local, rest, names, { siblings, tag });
     return nest ? sourceNest(text, nest(local)) : text;
   });
   const block = items.length ? `${head} {\n${items.map(sourceIndent).join('\n\n')}\n}` : `${head} {}`;
@@ -2550,14 +2715,21 @@ function printProjection(name, body, names, inGroup = null) {
   const lines = [head];
   if (body.handlers === undefined) return lines.join('\n');
   const items = [];
+  const tagNames = inGroup ? (inGroup.tag ? [inGroup.tag.name] : []) : tags.map((tag) => tag && tag.name);
+  const operation = (holder) => {
+    if (!OPERATIONS.includes(holder.operation)) unprintable(`a handler's operation ${JSON.stringify(holder.operation)} is not one the code form knows`);
+    return holder.operation + (holder.value !== undefined ? ' ' + sourceHandlerOperand(holder.value) : '');
+  };
   for (const handler of body.handlers || []) {
     const event = sourceRef(handler.event, 'event');
-    if (!OPERATIONS.includes(handler.operation)) unprintable(`a handler's operation ${JSON.stringify(handler.operation)} is not one the code form knows`);
-    items.push(`on ${event} => ${handler.operation}`
-      + (handler.value !== undefined ? ' ' + sourceHandlerOperand(handler.value) : ''));
+    if (!isConditionalHandler(handler)) {
+      items.push(`on ${event} => ${operation(handler)}`);
+      continue;
+    }
+    items.push(`on ${event} {\n${sourceHandlerSteps(handler, tagNames, operation).map((line) => '  ' + line).join('\n')}\n}`);
   }
   const tail = lines.length - 1;
-  lines[tail] += items.length ? ` {\n${items.map((i) => '  ' + i).join('\n')}\n}` : ' {}';
+  lines[tail] += items.length ? ` {\n${items.map((i) => i.split('\n').map((line) => '  ' + line).join('\n')).join('\n')}\n}` : ' {}';
   return lines.join('\n');
 }
 
@@ -3707,7 +3879,31 @@ function sourceSymbols(parsed) {
     literal(body.initialValue, body.valueType);
     for (const handler of list(body.handlers)) {
       add(sourceSymbol('event', handler.event), slotsOf(handler).event);
-      if (handler.value !== undefined) handlerValue(handler.value, body.valueType, handler.event);
+      for (const arm of handlerArms(handler)) {
+        if (arm.value !== undefined) handlerValue(arm.value, body.valueType, handler.event);
+      }
+      // A branched handler's comparisons (11.0): the event field – a
+      // record's field one hop in – and the tag or literal opposite it.
+      const eventBody = own(events, handler.event);
+      for (const leaf of handlerConditionLeaves(handler)) {
+        const left = leaf.leftHandSide;
+        let fieldType = null;
+        if (has(left, 'eventProperty')) {
+          add(sourceSymbol('eventProperty', handler.event, left.eventProperty), slotsOf(left).eventProperty);
+          const property = eventBody && list(eventBody.properties).find((p) => p.name === left.eventProperty);
+          fieldType = property ? property.propertyType : null;
+          if (left.property !== undefined && fieldType) {
+            add(sourceSymbol('field', fieldType, left.property), slotsOf(left).property);
+            const field = (recordFields(fieldType) || []).find((f) => f.name === left.property);
+            fieldType = field ? field.propertyType : null;
+          }
+        }
+        const right = leaf.rightHandSide;
+        if (has(right, 'parameterName')) {
+          add(groupTag && right.parameterName === groupTag.name ? sourceSymbol('groupTag', group, right.parameterName)
+            : sourceSymbol('projectionTag', name, right.parameterName), slotsOf(right).parameter);
+        } else literal(right, fieldType);
+      }
     }
     if (!body.derived || typeof body.derived !== 'object') return;
     const readType = (projectionName) => {
@@ -4360,6 +4556,8 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
       if (opener === '{' && v(s[0]) === 'scenarios') return own('scenarios', { block: { kind: 'projection', name: frame.projection } });
       if (opener === '{' && v(s[0]) === 'scenario') return own('scenario', { block: { kind: 'projection', name: frame.projection } });
       if (opener === '(' && prev === 'successor') return own('successor', { event: v(s[1]) });
+      // A handler's branches (11.0): `on E { if … => op … }`.
+      if (opener === '{' && v(s[0]) === 'on' && s.length === 2) return own('handlerBranches', { event: v(s[1]) });
       // A derived projection's expression: `min(…)`, `count(…)`, a read.
       if (opener === '(' && base.decl.derived) {
         if (SOURCE_OPERATOR_CALLS.includes(prev)) return own('derivedOperands');
@@ -4891,6 +5089,23 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     }
     return done(false);
   }
+  // A handler's branches (11.0): `if` or `else` to start a line, an
+  // event field to test, a tag to test it against, an operation after
+  // the arrow and its value after that.
+  if (k === 'handlerBranches') {
+    const ownName = frame.projection || (frame.decl && frame.decl.name);
+    const body = (frame.decl && projectionHeader(frame.decl.start)) || def('projection-definition', ownName) || {};
+    const eventData = () => push('event.data', 'keyword', 'a value the event carried', { insert: 'event.data.', retrigger: true, sort: 0 });
+    if (!s.length) { keywords([['if', 'if '], ['else', 'else ']]); return done(false); }
+    if (prev === '=>') {
+      for (const op of operationsFor(known, body)) push(op, 'keyword', 'operation', { sort: 0, insert: `${op} ` });
+      return done();
+    }
+    if (OPERATIONS.includes(prev)) { eventData(); valueItems(body.valueType, 0); return done(); }
+    if (['if', 'and', 'or', '('].includes(prev)) { eventData(); return done(); }
+    if (prev === '==' || prev === '!=') { ownParameterItems(ownName); return done(false); }
+    return done(false);
+  }
   if (k === 'projection' || k === 'successor') {
     const ownName = frame.projection || (frame.decl && frame.decl.name);
     const body = (frame.decl && projectionHeader(frame.decl.start)) || def('projection-definition', ownName) || {};
@@ -5241,6 +5456,17 @@ Separate ifs all run; an else chain runs its first arm that holds. Any rejection
 the command with no events; the emits reached form one append, and none is then nothing.
 A read is made when a step reached first needs it, never before.
 
+A projection's handler is on E => <operation>, or branches on the event:
+  on E {
+    if event.data.from == accountId => decrement event.data.amount
+    if event.data.to == accountId => increment event.data.amount
+  }
+  on E { if event.data.seats == 0 => set "released"  else if … => …  else => set "booked" }
+One operation per branch. Separate ifs all apply, in order; an else chain applies its first match.
+A condition compares event.data.<property> (or .<property>.<field> of a record) with == or !=
+against one of the projection's own tags or a literal, joined with and / or. It never reads
+another projection or the state, and never narrows the query.
+
 Operands: a parameter (courseId) or its record field (items.price), an alias or its field,
 a read P(…), a group's projection G(…).p, a literal ("text", 3, true, null, [..]),
 an enum member (Archived), a tag literal naming its type (CourseId("c1")).
@@ -5279,6 +5505,7 @@ event BookAdded { tag bookId: BookId, isbn: Isbn, title: string, subtitle?: stri
 event CopiesDonated { donor: string, copies: Copy[] tag each bookId }
 event BookLent { tag bookId: BookId, tag memberId: MemberId, tag loanId: LoanId }
 event BookReturned { tag bookId: BookId, tag memberId: MemberId }
+event BookPassedOn { tag bookId: BookId, tag fromMemberId: MemberId, tag toMemberId: MemberId }
 event BookDamaged { tag bookId: BookId, damage: string }
 event BookWithdrawn { tag bookId: BookId }
 event MemberJoined { tag memberId: MemberId, name: string }
@@ -5310,6 +5537,18 @@ projection BookBorrowers (tag bookId: BookId): MemberId[] = [] {
 projection MemberHasBook (tag memberId: MemberId, tag bookId: BookId): boolean = false {
   on BookLent => set true
   on BookReturned => set false
+  // "on Event { … }" branches: "if <condition> => <operation>", then
+  // "else if" and "else", one operation each; a chain applies its first
+  // branch that holds. A condition compares event.data.<property> (or a
+  // record's field, event.data.<property>.<field>) with == or != against
+  // one of the projection's tags or a literal, joined with and / or – it
+  // never reads another projection or the state. It filters the fold,
+  // not the query: BookPassedOn names two members, so the projection
+  // reads it for both and the condition tells them apart.
+  on BookPassedOn {
+    if event.data.fromMemberId == memberId => set false
+    else if event.data.toMemberId == memberId => set true
+  }
 
   // A projection's scenarios assert its value after the given events.
   // A tag value given as a literal names its type: MemberId("m1").
@@ -5339,9 +5578,15 @@ group Member (tag memberId: MemberId) {
     on MemberJoined => set true
   }
 
+  // Separate ifs all apply, in order: passing a book on to oneself
+  // decrements, then increments.
   projection loanCount: integer = 0 {
     on BookLent => increment 1
     on BookReturned => decrement 1
+    on BookPassedOn {
+      if event.data.fromMemberId == memberId => decrement 1
+      if event.data.toMemberId == memberId => increment 1
+    }
   }
 
   // A derived projection handles no events: its block holds one
@@ -5451,6 +5696,15 @@ command ReturnBook(bookId: BookId, memberId: MemberId, damage?: string) {
   else if MemberHasBook(memberId, bookId) is true => emit BookReturned { bookId, memberId }
   else if BookStatus(bookId) == Withdrawn or (BookStatus(bookId) == Unknown and damage is empty) => reject "Book is not in the catalogue"
   else => reject "Book is not with this member"
+}
+
+command PassOnBook(bookId: BookId, fromMemberId: MemberId, toMemberId: MemberId) {
+  require MemberHasBook(fromMemberId, bookId) is true
+    else reject "Book is not with this member"
+  require Member(toMemberId).exists is true
+    else reject "Not a member"
+
+  emit BookPassedOn { bookId, fromMemberId, toMemberId }
 }
 
 command WithdrawBook(bookId: BookId) {
@@ -5570,7 +5824,7 @@ const SOURCE_REFERENCE_GOTCHAS = `## Gotchas
 
 - Value types are nominal. An emitted value and a read's tag take their declared type exactly: a CourseId does not fill a string property, a string parameter does not read a CourseId tag, and an integer does not fill a Seats property. Literals fit any matching base type. A read gives the type its projection declares, so declare the type the read's value goes on to fill.
 - An event property of a tag type must be one of the event's tags. So a command that reads by an identifier and stores it on an event needs that event tagged by it.
-- A handler has no condition: it runs for every event of its type that carries the projection's tags. When the change depends on the case, the event holds the amount for each case, with 0 where nothing changes.
+- A handler runs for every event of its type that carries the projection's tags; its conditions only choose what it does with one. An event naming two values of a projection's tag type (from and to, owner and invitee) reaches both instances, so its handler says which side it is on: on MoneyTransferred { if event.data.from == accountId => decrement event.data.amount  if event.data.to == accountId => increment event.data.amount }. A condition reads only the event and the projection's tags – what depends on another projection's value is the command's to decide, onto the event.
 - A read needs a value for each tag, and is made only when a step reached needs it. So read by an optional parameter, or emit it into a required property, inside if x is not empty => … or after require x is not empty – not in a command of its own.
 - Cases that end differently are arms of one command, not one command each: if … => emit A { … }  else if … => emit B { … }  else => reject "…". Each arm that emits and each message owes a scenario.
 - "tag x?: T" is allowed: an event whose x is null carries no such tag, and a projection tagged by T does not see it.

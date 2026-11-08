@@ -43,6 +43,17 @@ Separate ifs all run; an else chain runs its first arm that holds. Any rejection
 the command with no events; the emits reached form one append, and none is then nothing.
 A read is made when a step reached first needs it, never before.
 
+A projection's handler is on E => <operation>, or branches on the event:
+  on E {
+    if event.data.from == accountId => decrement event.data.amount
+    if event.data.to == accountId => increment event.data.amount
+  }
+  on E { if event.data.seats == 0 => set "released"  else if … => …  else => set "booked" }
+One operation per branch. Separate ifs all apply, in order; an else chain applies its first match.
+A condition compares event.data.<property> (or .<property>.<field> of a record) with == or !=
+against one of the projection's own tags or a literal, joined with and / or. It never reads
+another projection or the state, and never narrows the query.
+
 Operands: a parameter (courseId) or its record field (items.price), an alias or its field,
 a read P(…), a group's projection G(…).p, a literal ("text", 3, true, null, [..]),
 an enum member (Archived), a tag literal naming its type (CourseId("c1")).
@@ -62,7 +73,7 @@ Leave it as it is, or rewrite it in the language.
 
 - Value types are nominal. An emitted value and a read's tag take their declared type exactly: a CourseId does not fill a string property, a string parameter does not read a CourseId tag, and an integer does not fill a Seats property. Literals fit any matching base type. A read gives the type its projection declares, so declare the type the read's value goes on to fill.
 - An event property of a tag type must be one of the event's tags. So a command that reads by an identifier and stores it on an event needs that event tagged by it.
-- A handler has no condition: it runs for every event of its type that carries the projection's tags. When the change depends on the case, the event holds the amount for each case, with 0 where nothing changes.
+- A handler runs for every event of its type that carries the projection's tags; its conditions only choose what it does with one. An event naming two values of a projection's tag type (from and to, owner and invitee) reaches both instances, so its handler says which side it is on: on MoneyTransferred { if event.data.from == accountId => decrement event.data.amount  if event.data.to == accountId => increment event.data.amount }. A condition reads only the event and the projection's tags – what depends on another projection's value is the command's to decide, onto the event.
 - A read needs a value for each tag, and is made only when a step reached needs it. So read by an optional parameter, or emit it into a required property, inside if x is not empty => … or after require x is not empty – not in a command of its own.
 - Cases that end differently are arms of one command, not one command each: if … => emit A { … }  else if … => emit B { … }  else => reject "…". Each arm that emits and each message owes a scenario.
 - "tag x?: T" is allowed: an event whose x is null carries no such tag, and a projection tagged by T does not see it.
@@ -94,6 +105,7 @@ event BookAdded { tag bookId: BookId, isbn: Isbn, title: string, subtitle?: stri
 event CopiesDonated { donor: string, copies: Copy[] tag each bookId }
 event BookLent { tag bookId: BookId, tag memberId: MemberId, tag loanId: LoanId }
 event BookReturned { tag bookId: BookId, tag memberId: MemberId }
+event BookPassedOn { tag bookId: BookId, tag fromMemberId: MemberId, tag toMemberId: MemberId }
 event BookDamaged { tag bookId: BookId, damage: string }
 event BookWithdrawn { tag bookId: BookId }
 event MemberJoined { tag memberId: MemberId, name: string }
@@ -125,6 +137,18 @@ projection BookBorrowers (tag bookId: BookId): MemberId[] = [] {
 projection MemberHasBook (tag memberId: MemberId, tag bookId: BookId): boolean = false {
   on BookLent => set true
   on BookReturned => set false
+  // "on Event { … }" branches: "if <condition> => <operation>", then
+  // "else if" and "else", one operation each; a chain applies its first
+  // branch that holds. A condition compares event.data.<property> (or a
+  // record's field, event.data.<property>.<field>) with == or != against
+  // one of the projection's tags or a literal, joined with and / or – it
+  // never reads another projection or the state. It filters the fold,
+  // not the query: BookPassedOn names two members, so the projection
+  // reads it for both and the condition tells them apart.
+  on BookPassedOn {
+    if event.data.fromMemberId == memberId => set false
+    else if event.data.toMemberId == memberId => set true
+  }
 
   // A projection's scenarios assert its value after the given events.
   // A tag value given as a literal names its type: MemberId("m1").
@@ -154,9 +178,15 @@ group Member (tag memberId: MemberId) {
     on MemberJoined => set true
   }
 
+  // Separate ifs all apply, in order: passing a book on to oneself
+  // decrements, then increments.
   projection loanCount: integer = 0 {
     on BookLent => increment 1
     on BookReturned => decrement 1
+    on BookPassedOn {
+      if event.data.fromMemberId == memberId => decrement 1
+      if event.data.toMemberId == memberId => increment 1
+    }
   }
 
   // A derived projection handles no events: its block holds one
@@ -266,6 +296,15 @@ command ReturnBook(bookId: BookId, memberId: MemberId, damage?: string) {
   else if MemberHasBook(memberId, bookId) is true => emit BookReturned { bookId, memberId }
   else if BookStatus(bookId) == Withdrawn or (BookStatus(bookId) == Unknown and damage is empty) => reject "Book is not in the catalogue"
   else => reject "Book is not with this member"
+}
+
+command PassOnBook(bookId: BookId, fromMemberId: MemberId, toMemberId: MemberId) {
+  require MemberHasBook(fromMemberId, bookId) is true
+    else reject "Book is not with this member"
+  require Member(toMemberId).exists is true
+    else reject "Not a member"
+
+  emit BookPassedOn { bookId, fromMemberId, toMemberId }
 }
 
 command WithdrawBook(bookId: BookId) {

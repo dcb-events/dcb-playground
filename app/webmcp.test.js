@@ -464,6 +464,25 @@ async function call(name, args) {
     eq(model()['group-definitions'].Course.projections.map((p) => p.name), ['capacity'], 'renamed within its group');
   });
 
+  await check('a branched handler is offered, and lands as written', async () => {
+    const schema = registered.get('update_projection_definition').inputSchema;
+    eq(Object.keys(schema.properties.handlers.items.properties).includes('steps'), true, 'steps beside operation');
+    const body = { ...model()['group-definitions'].Course.projections.find((p) => p.name === 'capacity') };
+    delete body.name;
+    const branched = { event: 'CourseDefined', steps: [{
+      branches: [{ condition: { leftHandSide: { eventProperty: 'capacity' }, predicate: 'equals', rightHandSide: 0 },
+        operation: 'set', value: 1 }],
+      otherwise: { operation: 'set', value: { eventProperty: 'capacity' } },
+    }] };
+    const updated = await call('update_projection_definition', {
+      name: 'Course.capacity', ...body, handlers: [branched, ...body.handlers.filter((h) => h.event !== 'CourseDefined')],
+    });
+    eq(updated.isError, false, updated.text);
+    eq(model()['group-definitions'].Course.projections.find((p) => p.name === 'capacity').handlers[0], branched, 'stored as sent');
+    const restored = await call('update_projection_definition', { name: 'Course.capacity', ...body });
+    eq(restored.isError, false, restored.text);
+  });
+
   await check('add_group_projection adds one under its local name, read by the group\'s tag', async () => {
     const { isError, text } = await call('add_group_projection', {
       group: 'Course', name: 'archived', valueType: 'boolean', isList: false, initialValue: false,

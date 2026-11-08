@@ -2346,7 +2346,7 @@ check('every predefined model ships advisory-clean', () => {
 
   check('an event naming two instances of one type is flagged as ambiguous', () => {
     const { id, model } = openAssignment();
-    const ambiguous = () => sandbox.modelAdvisories(model()).some((a) => /Tag it by one, or split the event/.test(a.message));
+    const ambiguous = () => sandbox.modelAdvisories(model()).some((a) => /Give its handler a condition on one of them .*split the event.*or tag it by one/.test(a.message));
     eq(ambiguous(), false, 'the split-event shape is not ambiguous');
     // The unsplit shape: one event carrying both the new holder and
     // the one replaced – a handler on it fires for both partitions.
@@ -2361,7 +2361,7 @@ check('every predefined model ships advisory-clean', () => {
     body.handlers.push({ event: 'Reassigned', operation: 'append', value: { eventProperty: 'courseId' } });
     updateDefinition('projection-definition', id, 'Instructor.instructedCourses', body);
     const found = sandbox.modelAdvisories(model()).map((a) => a.message).join('; ');
-    eq(/Tag it by one, or split the event/.test(found), true, 'the advisory names the fixes: ' + found);
+    eq(/Give its handler a condition on one of them .*split the event.*or tag it by one/.test(found), true, 'the advisory names the fixes: ' + found);
   });
 
   check('a binding off a null-starting projection is advised ahead of time', () => {
@@ -4311,6 +4311,171 @@ function modelsWithScenarios() {
     eq(run.reads, {}, 'and the alias was never read');
     const ported = evaluateCommand(model(), () => [], 'Probe', {});
     eq(ported.query, [], 'so its append condition covers nothing');
+  });
+}
+
+// ---------------------------------------------------------------
+// Conditional handlers (11.0): `on E { if … => op  else … }`. Separate
+// ifs all apply in order, an else chain its first match; a condition
+// reads the event and the projection's own tags, and filters the fold,
+// never the query.
+// ---------------------------------------------------------------
+{
+  const one = (name, propertyType) => ({ name, propertyType, isOptional: false, isList: false });
+  const eventField = (eventProperty, property) => (property === undefined ? { eventProperty } : { eventProperty, property });
+  const is = (left, right, negate) => ({ leftHandSide: left, predicate: 'equals', rightHandSide: right, ...(negate ? { negate: true } : {}) });
+  const tag = (name) => ({ parameterName: name });
+  const arm = (condition, operation, value) => ({ condition, operation, value });
+  const balanceHandler = {
+    event: 'MoneyTransferred',
+    steps: [
+      { branches: [arm(is(eventField('from'), tag('accountId')), 'decrement', eventField('amount'))] },
+      { branches: [arm(is(eventField('to'), tag('accountId')), 'increment', eventField('amount'))] },
+    ],
+  };
+  const openBank = () => {
+    const { id, model } = openBlank('Bank');
+    addDefinition('custom-type-definition', id, 'AccountId', { schema: { type: 'string' }, isTag: true });
+    addDefinition('custom-type-definition', id, 'Address', { properties: [one('city', 'string')] });
+    addDefinition('custom-type-definition', id, 'State', { schema: { type: 'string', enum: ['released', 'booked'] } });
+    addTaggedEvent(id, 'MoneyTransferred', { properties: [one('from', 'AccountId'), one('to', 'AccountId'), one('amount', 'integer')] });
+    addTaggedEvent(id, 'AccountMoved', { properties: [one('accountId', 'AccountId'), one('address', 'Address')] });
+    addTaggedEvent(id, 'SeatsMarked', { properties: [one('accountId', 'AccountId'), one('seats', 'integer')] });
+    addDefinition('projection-definition', id, 'Balance', {
+      tags: [{ name: 'accountId', tagType: 'AccountId' }], valueType: 'integer', isList: false, initialValue: 0,
+      handlers: [balanceHandler],
+    });
+    addDefinition('command-definition', id, 'Withdraw', {
+      properties: [one('accountId', 'AccountId'), one('amount', 'integer')],
+      boundary: [],
+      steps: [
+        { condition: is({ projection: 'Balance', tags: { accountId: tag('accountId') } }, 0, true), rejection: 'Empty' },
+        { name: 'MoneyTransferred', parameters: { from: tag('accountId'), to: tag('accountId'), amount: tag('amount') } },
+      ],
+    });
+    return { id, model };
+  };
+  const transfer = (from, to, amount) => ({ type: 'MoneyTransferred', data: { from, to, amount } });
+  const balance = (model, log, accountId) => foldProjection(model, log, 'Balance', { tags: { accountId } });
+
+  check('separate ifs all apply: a transfer moves both balances, a self-transfer nets 0', () => {
+    const { model } = openBank();
+    const log = [transfer('a1', 'a2', 30), transfer('a2', 'a1', 5)];
+    eq([balance(model(), log, 'a1'), balance(model(), log, 'a2')], [-25, 25], 'each side by its own branch');
+    eq(balance(model(), [transfer('a1', 'a1', 40)], 'a1'), 0, 'decremented, then incremented');
+    eq(sandbox.modelAdvisories(model()), [], 'the double tag is cleared by the conditions');
+  });
+
+  check('an else chain applies its first match only', () => {
+    const { id, model } = openBank();
+    addDefinition('projection-definition', id, 'Reservation', {
+      tags: [{ name: 'accountId', tagType: 'AccountId' }], valueType: 'State', isList: false, initialValue: null,
+      handlers: [{ event: 'SeatsMarked', steps: [{
+        branches: [
+          arm(is(eventField('seats'), 0), 'set', { enumMember: 'released' }),
+          arm(is(eventField('seats'), 0), 'set', { enumMember: 'booked' }),
+        ],
+        otherwise: { operation: 'set', value: { enumMember: 'booked' } },
+      }] }],
+    });
+    const fold = (seats) => foldProjection(model(), [{ type: 'SeatsMarked', data: { accountId: 'a1', seats } }],
+      'Reservation', { tags: { accountId: 'a1' } });
+    eq([fold(0), fold(3)], ['released', 'booked'], 'the literal decides; the second arm never runs after the first');
+  });
+
+  check('a condition reads a nested field, and joins with or', () => {
+    const { id, model } = openBank();
+    addDefinition('projection-definition', id, 'Moves', {
+      tags: [{ name: 'accountId', tagType: 'AccountId' }], valueType: 'integer', isList: false, initialValue: 0,
+      handlers: [{ event: 'AccountMoved', steps: [{ branches: [arm(
+        { any: [is(eventField('address', 'city'), 'Berlin'), is(eventField('address', 'city'), 'Hamburg')] },
+        'increment', 1)] }] }],
+    });
+    const moved = (city) => ({ type: 'AccountMoved', data: { accountId: 'a1', address: { city } } });
+    eq(foldProjection(model(), [moved('Berlin'), moved('Paris'), moved('Hamburg')], 'Moves', { tags: { accountId: 'a1' } }), 2,
+      'Berlin and Hamburg, not Paris');
+    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+  });
+
+  check('a condition filters the fold, never the query', () => {
+    const { id, model } = openBank();
+    const conditional = sandbox.deriveDcb(model(), model()['command-definitions'].Withdraw).items;
+    updateDefinition('projection-definition', id, 'Balance', {
+      ...model()['projection-definitions'].Balance,
+      handlers: [{ event: 'MoneyTransferred', operation: 'increment', value: eventField('amount') }],
+    });
+    const plain = sandbox.deriveDcb(model(), model()['command-definitions'].Withdraw).items;
+    eq(conditional, plain, 'the same items, conditions or not');
+    eq(conditional.map((item) => [item.types, item.tags.length]), [[['MoneyTransferred'], 1]],
+      'one item: the event type, by the one tag – every transfer naming the account, either side');
+  });
+
+  check('the two-carriers refusal fires without conditions and names the condition first', () => {
+    const { id, model } = openBank();
+    updateDefinition('projection-definition', id, 'Balance', {
+      ...model()['projection-definitions'].Balance,
+      handlers: [{ event: 'MoneyTransferred', operation: 'increment', value: eventField('amount') }],
+    });
+    const found = sandbox.modelAdvisories(model()).map((a) => a.message).join('; ');
+    eq(/cannot tell them apart\. Give its handler a condition on one of them \(if event\.data\.from == accountId/.test(found), true, found);
+  });
+
+  check('a branch without a carrying field keeps the refusal', () => {
+    const { id, model } = openBank();
+    const unguarded = deepClone(balanceHandler);
+    unguarded.steps.push({ branches: [arm(is(eventField('amount'), 0), 'set', 0)] });
+    updateDefinition('projection-definition', id, 'Balance', { ...model()['projection-definitions'].Balance, handlers: [unguarded] });
+    const found = sandbox.modelAdvisories(model()).map((a) => a.message).join('; ');
+    eq(/cannot tell them apart/.test(found), true, 'one chain tests no carrying field: ' + found);
+  });
+
+  check('a condition reads only the event and the projection\'s own tags', () => {
+    const { id, model } = openBank();
+    const advised = (condition) => {
+      updateDefinition('projection-definition', id, 'Balance', {
+        ...model()['projection-definitions'].Balance,
+        handlers: [{ event: 'MoneyTransferred', steps: [{ branches: [arm({ all: [is(eventField('from'), tag('accountId')), condition] }, 'increment', 1)] }] }],
+      });
+      return sandbox.modelAdvisories(model()).map((a) => a.message).join('; ');
+    };
+    eq(/"nope", which is no tag of projection "Balance"/.test(advised(is(eventField('from'), tag('nope')))), true, 'an unknown name');
+    eq(/"MoneyTransferred" does not carry "wrong"/.test(advised(is(eventField('wrong'), tag('accountId')))), true, 'an unknown field');
+    eq(/compares with == or !=/.test(advised({ leftHandSide: eventField('amount'), predicate: 'greaterThan', rightHandSide: 1 })), true,
+      'an ordering');
+    eq(/reads the event and the projection's tags/.test(advised(is({ projection: 'Balance', tags: {} }, 1))), true, 'a read');
+  });
+
+  check('renaming an event field, a record field, a tag or a member rewrites the conditions', () => {
+    const { id, model } = openBank();
+    addDefinition('projection-definition', id, 'Moves', {
+      tags: [{ name: 'accountId', tagType: 'AccountId' }], valueType: 'integer', isList: false, initialValue: 0,
+      handlers: [{ event: 'AccountMoved', steps: [{ branches: [arm(is(eventField('address', 'city'), 'Berlin'), 'increment', 1)] }] }],
+    });
+    renameMember('event-definition', id, 'MoneyTransferred', 'property', 'from', 'source');
+    renameMember('projection-definition', id, 'Balance', 'tag', 'accountId', 'account');
+    renameMember('custom-type-definition', id, 'Address', 'field', 'city', 'town');
+    const steps = model()['projection-definitions'].Balance.handlers[0].steps;
+    eq(steps[0].branches[0].condition, is(eventField('source'), tag('account')), 'the field and the tag');
+    eq(steps[1].branches[0].condition.rightHandSide, tag('account'), 'every chain');
+    eq(model()['projection-definitions'].Moves.handlers[0].steps[0].branches[0].condition.leftHandSide,
+      eventField('address', 'town'), 'the record field');
+    eq(sandbox.modelAdvisories(model()), [], 'still advisory-clean');
+    eq(foldProjection(model(), [{ type: 'MoneyTransferred', data: { source: 'a1', to: 'a2', amount: 7 } }], 'Balance',
+      { tags: { account: 'a1' } }), -7, 'and still folds');
+  });
+
+  check('two independent ifs that both set may both match – advised', () => {
+    const { id, model } = openBank();
+    addDefinition('projection-definition', id, 'LastSide', {
+      tags: [{ name: 'accountId', tagType: 'AccountId' }], valueType: 'string', isList: false, initialValue: null,
+      handlers: [{ event: 'MoneyTransferred', steps: [
+        { branches: [arm(is(eventField('from'), tag('accountId')), 'set', 'from')] },
+        { branches: [arm(is(eventField('to'), tag('accountId')), 'set', 'to')] },
+      ] }],
+    });
+    const found = sandbox.modelAdvisories(model()).map((a) => a.message).join('; ');
+    eq(/may both match .*the last one wins/.test(found), true, found);
+    eq(foldProjection(model(), [transfer('a1', 'a1', 1)], 'LastSide', { tags: { accountId: 'a1' } }), 'to', 'and it does');
   });
 }
 

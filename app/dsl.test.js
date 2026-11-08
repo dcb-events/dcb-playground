@@ -2600,4 +2600,121 @@ command RenameShare(shareId?: ShareId, note: string) {
   });
 }
 
+// ---------------------------------------------------------------
+// Conditional handlers (11.0): `on E { if … => op  else … }`.
+// ---------------------------------------------------------------
+{
+  const BANK = `model "Bank"
+
+// Types
+tag type AccountId = string
+enum State { Released, Booked }
+record Address { city: string }
+
+// Events
+event MoneyTransferred { tag from: AccountId, tag to: AccountId, amount: integer }
+event SeatsMarked { tag accountId: AccountId, seats: integer }
+event AccountMoved { tag accountId: AccountId, address: Address }
+
+// Projections
+projection Balance (tag accountId: AccountId): integer = 0 {
+  on MoneyTransferred {
+    if event.data.from == accountId => decrement event.data.amount
+    if event.data.to == accountId => increment event.data.amount
+  }
+}
+
+projection Reservation (tag accountId: AccountId): State = null {
+  on SeatsMarked {
+    if event.data.seats == 0 => set Released
+    else if event.data.seats != 1 and (event.data.seats == 2 or event.data.seats == 3) => set Booked
+    else => set Booked
+  }
+}
+
+projection Moves (tag accountId: AccountId): integer = 0 {
+  on AccountMoved {
+    if event.data.address.city == "Berlin" => increment 1
+  }
+  on SeatsMarked => set 0
+}
+`;
+
+  check('a conditional handler prints as written and parses back equal', () => {
+    const { model } = buildText(BANK);
+    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+    const text = modelToSource(model());
+    eq(text.slice(text.indexOf('// Projections')), BANK.slice(BANK.indexOf('// Projections')), 'printed as written');
+    const parsed = parseModelSource(text);
+    eq(parsed.diagnostics, [], 'it reads');
+    assertSameModel(model(), parsed, 'handler branches');
+    const balance = model()['projection-definitions'].Balance.handlers[0];
+    eq(balance.steps.length, 2, 'two separate ifs: two chains');
+    eq(balance.steps[0].branches[0].condition,
+      { leftHandSide: { eventProperty: 'from' }, predicate: 'equals', rightHandSide: { parameterName: 'accountId' } }, 'the stored leaf');
+    const reservation = model()['projection-definitions'].Reservation.handlers[0].steps[0];
+    eq([reservation.branches.length, reservation.otherwise], [2, { operation: 'set', value: { enumMember: 'Booked' } }], 'one chain with an else');
+    eq(model()['projection-definitions'].Moves.handlers[0].steps[0].branches[0].condition.leftHandSide,
+      { eventProperty: 'address', property: 'city' }, 'a record field one hop in');
+    const log = [{ type: 'MoneyTransferred', data: { from: 'a1', to: 'a1', amount: 9 } }];
+    eq(sandbox.foldProjection(model(), log, 'Balance', { tags: { accountId: 'a1' } }), 0, 'a self-transfer nets 0');
+  });
+
+  const errorOf = (from, to) => {
+    const { diagnostics } = parseModelSource(swap(BANK, from, to));
+    return diagnostics.map((d) => `${d.line}:${d.col} ${d.message}`);
+  };
+  const lineOf = (needle) => BANK.split('\n').findIndex((line) => line.includes(needle)) + 1;
+
+  check('a condition that reads a projection or the state is a positioned error', () => {
+    eq(errorOf('if event.data.from == accountId =>', 'if event.data.from == Balance(accountId) =>'),
+      [`${lineOf('event.data.from ==')}:27 A handler's condition reads the event and the projection's tags – never another projection.`],
+      'a read');
+    eq(errorOf('if event.data.to == accountId =>', 'if state == accountId =>'),
+      [`${lineOf('event.data.to ==')}:8 A handler's condition never reads the projection's own state – only the event and its tags.`],
+      'the state');
+    eq(errorOf('if event.data.to == accountId =>', 'if event.data.to == nope =>'),
+      [`${lineOf('event.data.to ==')}:25 "nope" is no tag of Balance – a condition compares with accountId or a literal.`],
+      'an unknown name');
+    eq(errorOf('if event.data.to == accountId =>', 'if event.data.to < accountId =>')[0].endsWith(
+      'A handler\'s condition compares with == or != – found "<".'), true, 'an ordering');
+  });
+
+  check('one operation per branch, as a positioned error', () => {
+    eq(errorOf('=> decrement event.data.amount', '=> decrement event.data.amount increment 1'),
+      [`${lineOf('decrement event.data.amount')}:68 One operation per branch – a second one is a second if.`], 'two ops');
+    eq(errorOf('=> decrement event.data.amount', '=> { decrement event.data.amount }')[0].endsWith(
+      'One operation per branch – a second one is a second if, so a branch holds no block.'), true, 'a block');
+    eq(errorOf('    if event.data.to == accountId', '    else if event.data.to == accountId'), [],
+      'an else if after an if continues its chain');
+    eq(errorOf('  on MoneyTransferred {\n    if', '  on MoneyTransferred {\n    else =>  increment 1\n    if')[0].endsWith(
+      '"else" follows an if – this one has none before it.'), true, 'a leading else');
+  });
+
+  check('completion offers if, an event field, a tag and an operation inside a handler\'s branches', () => {
+    const head = BANK.slice(0, BANK.indexOf('projection Reservation'));
+    const labels = (text) => {
+      const lines = text.split('\n');
+      const result = sandbox.sourceCompletions(text, lines.length, lines[lines.length - 1].length + 1, {});
+      return (result.items || result).map((item) => item.label);
+    };
+    const open = head + 'projection X (tag accountId: AccountId): integer = 0 {\n  on MoneyTransferred {\n    ';
+    eq(labels(open).includes('if'), true, 'if to start a branch');
+    eq(labels(open + 'if ').includes('event.data'), true, 'the event to test');
+    eq(labels(open + 'if event.data.from == ').includes('accountId'), true, 'a tag to test it against');
+    eq(labels(open + 'if event.data.from == accountId => ').includes('increment'), true, 'an operation after the arrow');
+  });
+
+  check('the code view names what a condition reads', () => {
+    const parsed = parseModelSource(BANK);
+    const symbols = sandbox.sourceSymbols(parsed).occurrences.filter((o) => !o.decl);
+    const at = (symbol) => symbols.filter((o) => o.symbol === symbol).map((o) => `${o.token.line}:${o.token.col}`);
+    eq(at('eventProperty MoneyTransferred from'), [`${lineOf('event.data.from ==')}:19`], 'the event field');
+    eq(at('projectionTag Balance accountId'), [`${lineOf("event.data.from ==")}:27`, `${lineOf("event.data.to ==")}:25`],
+      'the tag it compares with');
+    eq(at('member State Released'), [`${lineOf("set Released")}:37`], 'a member set in a branch');
+    eq(at('field Address city'), [`${lineOf("address.city")}:27`], 'a record field');
+  });
+}
+
 finish();

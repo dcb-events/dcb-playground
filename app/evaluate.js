@@ -312,10 +312,77 @@ function evCompileHandlerOperand(operand) {
   }
 }
 
-// One handler, as `(state, event) => nextState`.
+// One handler, as `(state, event, tags) => nextState` – `tags` the
+// values the read gave the projection's tags, by name, which is all a
+// branched handler's condition reads besides the event.
 function evCompileHandler(handler, label) {
+  if (isConditionalHandler(handler)) return evCompileBranchedHandler(handler, label);
+  return evCompileOperation(handler, handler.event, label);
+}
+
+// A branched handler (11.0): its chains in written order, each applying
+// its first arm whose condition holds, or `otherwise`, or nothing – so
+// separate `if`s all apply, one after the other, and a self-transfer
+// decrements and then increments.
+function evCompileBranchedHandler(handler, label) {
+  const chains = handlerChains(handler).map((step) => ({
+    arms: (Array.isArray(step.branches) ? step.branches : []).filter((arm) => arm && typeof arm === 'object')
+      .map((arm) => ({ holds: evCompileHandlerCondition(arm.condition), apply: evCompileOperation(arm, handler.event, label) })),
+    otherwise: step.otherwise && typeof step.otherwise === 'object'
+      ? evCompileOperation(step.otherwise, handler.event, label) : null,
+  }));
+  return (state, event, tags) => {
+    let next = state;
+    for (const chain of chains) {
+      const arm = chain.arms.find((candidate) => candidate.holds(event, tags));
+      if (arm) next = arm.apply(next, event);
+      else if (chain.otherwise) next = chain.otherwise(next, event);
+    }
+    return next;
+  };
+}
+
+// A handler's condition, as `(event, tags) => boolean`: an event field
+// – a record's field one hop in – compared with a tag's value or a
+// literal, joined by and / or. Nothing else is in scope.
+function evCompileHandlerCondition(condition) {
+  if (isCompoundCondition(condition)) {
+    const parts = conditionMembers(condition).map(evCompileHandlerCondition);
+    return Array.isArray(condition.all)
+      ? (event, tags) => parts.every((part) => part(event, tags))
+      : (event, tags) => parts.some((part) => part(event, tags));
+  }
+  if (!condition || typeof condition !== 'object') return () => false;
+  const side = (operand) => {
+    switch (operandSource(operand)) {
+      case 'event-property':
+        return operand.property === undefined
+          ? (event) => evOwn(event.data, operand.eventProperty)
+          : (event) => evOwn(evOwn(event.data, operand.eventProperty), operand.property);
+      case 'parameter':
+        return (event, tags) => {
+          const value = evOwn(tags, operand.parameterName);
+          if (value === undefined) fail(`A handler's condition compares with "${operand.parameterName}", which the read gave no value.`);
+          return value;
+        };
+      case 'enum-member':
+        return () => operand.enumMember;
+      case 'static':
+        return () => evNormalize(operand);
+      default:
+        return () => fail(`A handler's condition "${conditionText(condition)}" reads something only the event and the projection's tags can give.`);
+    }
+  };
+  const left = side(condition.leftHandSide);
+  const right = side(condition.rightHandSide);
+  return (event, tags) => evApplyPredicate(condition, left(event, tags), right(event, tags));
+}
+
+// One operation – a handler's, or one arm's – as `(state, event) =>
+// nextState`.
+function evCompileOperation(handler, eventName, label) {
   const valueOf = evCompileHandlerOperand(handler.value);
-  const where = `The handler for "${handler.event}" on ${label}`;
+  const where = `The handler for "${eventName}" on ${label}`;
 
   switch (handler.operation) {
     case 'set':
@@ -380,11 +447,11 @@ function evCompileTargetAfresh(model, target, label) {
     types: [...steps.keys()],
     // Every step returns a new value, so the initial one is shared by
     // every fold of this compiled target untouched.
-    fold: (events) => {
+    fold: (events, tags = {}) => {
       let state = initial;
       for (const event of events) {
         const step = steps.get(event.type);
-        if (step) state = step(state, event);
+        if (step) state = step(state, event, tags);
       }
       return evNormalize(state);
     },
@@ -467,7 +534,7 @@ function foldProjection(model, events, projectionName, read, seen = []) {
     return evDeriveProjection(model, events, projectionName, read, seen);
   }
   const { compiled, selected } = evProjectionFold(model, events, projectionName, read);
-  return compiled.fold(selected);
+  return compiled.fold(selected, (read && read.tags) || {});
 }
 
 // A derived projection is not folded but computed: each operand that
