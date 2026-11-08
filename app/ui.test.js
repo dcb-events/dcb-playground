@@ -550,34 +550,11 @@ function build(which) {
 }
 
 // ---------------------------------------------------------------
-// The new editors, exercised as far as "it ran": the guard rows and
-// their open rule editor on the guarded variant, the derived detail
-// and its open editor on the derived one. A stub cannot say what they
+// The new editors, exercised as far as "it ran": the derived detail
+// and its open editor on the derived variant. A stub cannot say what they
 // looked like; it can say every branch painted.
 // ---------------------------------------------------------------
 {
-  check('the guard rows and their editor render without throwing', () => {
-    const { id, model } = build('content-decisions-guarded');
-    sandbox.setActiveModelId(id);
-    store.set('dcb-playground:experimental', 'on');
-    sandbox.state.view = 'slice';
-    sandbox.state.slice = 'UpdateText';
-    sandbox.render();
-
-    // A guard being edited, seeded the way the Edit button seeds it.
-    const guarded = model()['command-definitions'].UpdateText.publishes[0].when[0];
-    sandbox.state.editGuard = { at: 0, index: 0 };
-    sandbox.state.ruleDraft = null;
-    sandbox.render();
-    eq(!!guarded, true, 'and the guard is still there afterwards');
-
-    // A fresh guard row on the second emission.
-    sandbox.closeForms();
-    sandbox.state.editGuard = { at: 1, index: null };
-    sandbox.render();
-    sandbox.closeForms();
-  });
-
   check('the derived detail and its editor render without throwing', () => {
     const { id, model } = build('content-decisions-derived');
     sandbox.setActiveModelId(id);
@@ -4723,15 +4700,14 @@ check('importing an older model with entities says what became of them', () => {
     eq(m()['command-definitions'].ArchiveCourse.publishes[0].name, 'CourseCapacityChanged', 'the change it missed survives');
   });
 
-  check('the page paints, guarded emissions and all', () => {
-    const { id, model: m } = build('content-decisions-guarded');
+  check('the page paints, rule counts and all', () => {
+    const { id, model: m } = build('content-decisions-boundary');
     sandbox.setActiveModelId(id);
     const main = sandbox.document.createElement('div');
     sandbox.renderEventModel(m(), main);
     const text = textOf(main);
     eq(text.includes('Events tagged'), true, 'a tag lane');
-    eq(text.includes('guarded'), true, 'an emission with a when');
-    eq(text.includes('2 rules · 2 guards'), true, 'UpdateText counts both');
+    eq(text.includes('2 rules'), true, 'UpdateText counts its rules');
   });
 }
 
@@ -4852,9 +4828,6 @@ check('the reference links only anchors the website defines', () => {
   check('experimentalFeatures names what a model uses', () => {
     const { model } = build(GROUPED);
     eq(sandbox.experimentalFeatures(model()), [], 'groups are not experimental, nor are feature groups');
-    const guarded = build('content-decisions-guarded').model;
-    eq(sandbox.experimentalFeatures(guarded()).some((f) => f.feature === 'guards' && f.where === 'UpdateText'),
-      true, 'a guarded emission, on its command');
     const derived = build('content-decisions-derived').model;
     eq(sandbox.experimentalFeatures(derived()), [], 'a derived projection is not experimental');
     const scripted = build('content-decisions-scripted').model;
@@ -6195,11 +6168,10 @@ command CloseBoth(a: ThingId, b: ThingId) {
 }
 
 command ReopenThing(thingId: ThingId) {
-  require ThingStatus(thingId) != Fresh
-    else reject "Never opened"
+  require ThingStatus(thingId) == Closed
+    else reject "Not closed"
 
   emit Reopened { thingId }
-    when ThingStatus(thingId) == Closed
 }
 
 command MoveThing(thingId: ThingId, status: Status) {
@@ -6308,11 +6280,11 @@ command MoveThing(thingId: ThingId, status: Status) {
   });
 
   check('several states a rule allows are several sources', () => {
-    const machine = lifecycleMachine(build('content-decisions-guarded').model(), 'DocumentStatus');
-    eq(arrows(machine).filter((a) => /TextChanged|DocumentPublished/.test(a)), [
-      'Draft|Published|PendingChanges -TextChanged-> PendingChanges',
-      'Draft|PendingChanges -DocumentPublished-> Published',
-    ], 'in and not in alike');
+    const machine = lifecycleMachine(build('content-decisions-boundary').model(), 'DocumentLifecycle');
+    eq(arrows(machine).filter((a) => /DocumentPublished|DocumentArchived/.test(a)), [
+      'Draft|Published -DocumentPublished-> Published',
+      'Draft|Published -DocumentArchived-> Archived',
+    ], 'each state the rule names, a source');
   });
 
   check('what cannot be read is said, not drawn', () => {
@@ -6322,7 +6294,7 @@ command MoveThing(thingId: ThingId, status: Status) {
       'Fresh -Closed-> Closed (conventional)',
       'Closed -Reopened-> Open',
       'Fresh -Forgotten-> Lost (conventional)',
-    ], 'an emission guard narrows its own emission; the rest is drawn from the start');
+    ], 'a rule narrows where its command moves from; the rest is drawn from the start');
     eq(machine.transitions.find((t) => t.event === 'Opened').unguarded, ['OpenThing'], 'nothing guards opening');
     eq(machine.transitions.find((t) => t.event === 'Forgotten').unpublished, true, 'nobody records Forgotten');
     eq(machine.opaque, ['Moved'], 'a state taken from event data has no arrow');

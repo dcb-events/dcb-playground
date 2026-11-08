@@ -484,7 +484,7 @@ check('a command reads as reads, rules and emissions', () => {
   eq(text.includes(expected), true, 'SubscribeStudentToCourse as printed:\n' + text);
 });
 
-check('fan-out, numbering, membership, guards and derived values have spellings', () => {
+check('fan-out, numbering, membership and derived values have spellings', () => {
   const grouped = modelToSource(buildText(GROUPS_MORE).model());
   eq(grouped.includes('alias others = Course(each student.subscribedCourseIds)'), true, 'a group fanned out');
   eq(grouped.includes('group Course (tag courseId: CourseId) {'), true, 'a group\'s tag');
@@ -497,9 +497,8 @@ check('fan-out, numbering, membership, guards and derived values have spellings'
   const tenant = modelToSource(bySlug('course-tenant').model());
   eq(tenant.includes('alias tenantCourseNumbering = TenantCourseNumbering(tenantId)'), true, 'a tagged read');
   eq(tenant.includes('projection TenantCourseNumbering (tag tenantId: TenantId): CourseNumber = "1" {'), true, 'its tag');
-  const guarded = modelToSource(bySlug('content-decisions-guarded').model());
-  eq(guarded.includes('require DocumentStatus(docId) in [Draft, Published, PendingChanges]'), true, 'equalsAny');
-  eq(guarded.includes('emit TextChanged { docId, text }\n    when text != DocumentPublishedText(docId)'), true, 'when');
+  const boundary = modelToSource(bySlug('content-decisions-boundary').model());
+  eq(boundary.includes('require DocumentLifecycle(docId) in [Draft, Published]'), true, 'equalsAny');
   const derived = modelToSource(bySlug('content-decisions-derived').model());
   eq(derived.includes('derived projection DocumentHasPendingChanges (tag documentId: DocumentId): boolean {\n'
     + '  DocumentCurrentText(documentId) != DocumentPublishedText(documentId)\n}'), true, 'derived, passing its tag on');
@@ -873,8 +872,8 @@ check('a scenario reads as given, when and then, nested in its command', () => {
   const sequence = modelToSource(importFixture('course-sequence').model());
   eq(sequence.includes('scenario "issues c1 before anything has happened" {\n      then CourseNumbering() == "c1"\n    }'), true,
     'an untagged projection, read');
-  const guarded = modelToSource(importFixture('content-decisions-guarded').model());
-  eq(guarded.includes('then DocumentStatus(DocumentId("d1")) == NonExistent'), true, 'a tag literal');
+  const boundary = modelToSource(importFixture('content-decisions-boundary').model());
+  eq(boundary.includes('then DocumentLifecycle(DocumentId("d1")) == NonExistent'), true, 'a tag literal');
 });
 
 // A text with its edits made, last first – what a fix with `edits` does.
@@ -1229,6 +1228,9 @@ check('what 11.0 removed is an error where it is written, saying so', () => {
   const errors = (body) => parseModelSource(head + body).diagnostics.map((d) => d.message);
   eq(errors('projection P (tag courseId: CourseId): integer = 0 {\n  on E => set currentValue\n}\n'),
     ['"currentValue" is gone – a handler\'s value comes from the event (event.data.x), a literal or successor(…).'], 'currentValue');
+  eq(errors('command C(courseId: CourseId) {\n  emit E { courseId }\n    when courseId == "c1"\n}\n'),
+    ['"when" on an emission is gone – 11.0 has no guarded emissions: an emission is published whenever its command is.'],
+    'a guarded emission');
 });
 
 check('an edit inside a group is one update of the group', () => {
@@ -1615,9 +1617,6 @@ check('the code view says what is experimental, and offers none of it with the f
   const inner = 'tag type XId = string\ngroup X (tag xId: XId) {\n  scripted projection p: integer {\n    initialState 0\n  }\n}\n';
   eq(sandbox.sourceExperimentalMarks(inner).map((m) => m.message.split(' is experimental')[0]), ['A scripted projection'],
     'a scripted projection in a group still is');
-  const guarded = modelToSource(build(PREDEFINED_MODELS.findIndex((m) => m.slug === 'content-decisions-guarded')).model());
-  eq(sandbox.sourceExperimentalMarks(guarded).filter((m) => /guarded emission/.test(m.message)).length, 2,
-    'each guard, and no scenario\'s when');
   for (const slug of ['course-simple', 'pricing-simple', 'content-decisions-derived', 'developer-hours']) {
     eq(sandbox.sourceExperimentalMarks(modelToSource(build(PREDEFINED_MODELS.findIndex((m) => m.slug === slug)).model())), [],
       `${slug} uses nothing experimental`);
@@ -1754,7 +1753,9 @@ const ALIAS_TEXT = [
   '    else reject "No such course"',
   '  require OwnedCourses(CourseOwner(courseId)) < 3',
   '    else reject "Its owner has too many"',
-  '  emit CourseDefined { courseId, ownerId: CourseOwner(courseId), capacity } when CourseStatus(courseId) == Existent',
+  '  require CourseStatus(courseId) != NonExistent',
+  '    else reject "Never defined"',
+  '  emit CourseDefined { courseId, ownerId: CourseOwner(courseId), capacity }',
   '}',
   '',
 ].join('\n');
@@ -1779,7 +1780,7 @@ check('a read in place becomes an alias, every equal read in the command with it
     '  alias courseStatus = CourseStatus(courseId)',
     '  require courseStatus == Existent',
   ].join('\n')), true, 'declared at the top, used in the rule');
-  eq(out.text.includes('when courseStatus == Existent'), true, 'and in the guard');
+  eq(out.text.includes('require courseStatus != NonExistent'), true, 'and in the other rule');
   const parsed = parseModelSource(out.text);
   eq(parsed.diagnostics, [], 'it reads');
   const body = parsed.collections['command-definition'].Change;
@@ -1941,7 +1942,6 @@ check('completion knows a command\'s reads and payload', () => {
   eq(value.some((i) => i.label === 'each'), true, 'or each of a list');
   eq(rule('emit CourseCapacityChanged { courseId, |}').labels, ['newCapacity'], 'an event\'s remaining properties');
   eq(rule('emit CourseCapacityChanged { |}').items.map((i) => i.insert), ['courseId', 'newCapacity'], 'as shorthands');
-  eq(rule('emit CourseArchived { courseId } when |').labels.slice(0, 3), ['course', 'courseId', 'newCapacity'], 'a guard');
   const start = rule('|');
   eq([start.labels, start.slot], [['alias', 'require', 'emit', 'scenarios'], false], 'a statement, not on a space');
 });
@@ -2283,11 +2283,11 @@ command ClaimUsername(username: Username) {
     eq(failing.stderr.includes('scenario: Does not hold'), true, 'a failing scenario fails outside it too');
   });
 
-  check('the skill\'s check always refuses what is experimental', () => {
+  check('the skill\'s check refuses what 11.0 removed', () => {
     const text = swap(MODEL, 'emit UsernameClaimed { username }', 'emit UsernameClaimed { username }\n    when UsernameTaken(username) is false');
     const { status, stderr } = run('check', write('guarded.dcb', text));
     eq(status, 1, 'exit');
-    eq(stderr.includes('not supported here'), true, stderr);
+    eq(stderr.includes('"when" on an emission is gone'), true, stderr);
   });
 
   check('the skill\'s check notes implementation words without failing', () => {

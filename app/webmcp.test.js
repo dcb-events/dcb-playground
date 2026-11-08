@@ -664,10 +664,10 @@ async function call(name, args) {
     const guarded = swap(LIBRARY, '  emit BookAdded { bookId }', '  emit BookAdded { bookId } when BookKnown(bookId) is false');
     const applied = await call('apply_model_source', { source: guarded });
     eq(applied.isError, true, 'refused when applying');
-    eq(applied.text.includes('- line 5: AddBook uses guarded emissions'), true, applied.text);
+    eq(/- line 8, column 29: "when" on an emission is gone/.test(applied.text), true, applied.text);
   });
 
-  await check('a definition adding an experimental construct is refused', async () => {
+  await check('a definition saying what 11.0 removed is refused', async () => {
     const { isError, text } = await call('add_command_definition', {
       name: 'ProbeGuarded',
       properties: [{ name: 'bookId', propertyType: 'BookId', isOptional: false, isList: false }],
@@ -678,7 +678,8 @@ async function call(name, args) {
       }],
     });
     eq(isError, true, 'refused');
-    eq(text.includes('ProbeGuarded uses guarded emissions'), true, text);
+    eq(text.includes('Command "ProbeGuarded" guards its emission of "BookAdded" (when …) – 11.0 has no guarded emissions.'),
+      true, text);
     eq('ProbeGuarded' in projectState()[sandbox.activeModelId()]['command-definitions'], false, 'not stored');
   });
 

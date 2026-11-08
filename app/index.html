@@ -231,7 +231,7 @@
      .reveal until the row is clicked. */
   .qrow > .reveal { display: none; align-items: center; gap: 8px; }
   .qrow.open > .reveal { display: inline-flex; }
-  /* A rule's or guard's controls can be long ("Add alias: Developer
+  /* A rule's controls can be long ("Add alias: Developer
      seniority level"), so its row wraps: the controls drop to a line of
      their own rather than squeezing the sentence a word per line. */
   .qrow.wraps { flex-wrap: wrap; }
@@ -2379,8 +2379,7 @@ const UI_SETTINGS = [
       + 'shows it either way; this decides whether the pages offer to author them.',
     options: [
       ['off', 'Off', 'Types, events, projections, commands and the consistency boundary'],
-      ['on', 'On', 'Also scripted projections, guarded emissions, optional reads '
-        + 'and the overview pages'],
+      ['on', 'On', 'Also scripted projections, optional reads and the overview pages'],
     ],
     get: () => (experimental() ? 'on' : 'off'),
     set: (value) => setExperimental(value === 'on'),
@@ -4803,7 +4802,7 @@ function draftFromOperand(draft, key, operand) {
   return draft;
 }
 
-// The draft a stored rule or guard opens as. An `equalsAny` right-hand
+// The draft a stored rule opens as. An `equalsAny` right-hand
 // side is a literal list; its entries seed the membership widget, not
 // the picker. And a `contains` whose list is the payload's and whose
 // one value is read is opened the way the wizard writes it – "is one
@@ -5399,7 +5398,7 @@ const FORM_KEYS = [
   'namingCommand', 'newFeature', 'renamingFeature', 'newEmission', 'newGroup', 'groupProjection', 'moveIntoGroup', 'addingMember',
   'renamingGroup', 'groupIconPicker', 'eventIconPicker', 'commandIconPicker', 'confirmRemove', 'newType', 'renamingType',
   'newProjection', 'renamingProjection', 'projDraft', 'newEvent', 'renamingEvent',
-  'renamingCommand', 'editMember', 'editRule', 'editGuard', 'editBinding',
+  'renamingCommand', 'editMember', 'editRule', 'editBinding',
   'scenarioDraft', 'sandboxDraft',
   'projectionScenarioDraft',
   'pendingImport',
@@ -6604,10 +6603,7 @@ function readCard(model, slice, binding, index, waitsFor) {
   const names = (condition) => conditionOperands(condition)
     .some((operand) => operandSource(operand) === 'alias-property'
       && operand.alias === binding.alias);
-  const usingRules = [
-    ...(slice.body.conditions || []),
-    ...(slice.body.publishes || []).flatMap((e) => (e && e.when) || []),
-  ].filter((c) => c && names(c)).length;
+  const usingRules = (slice.body.conditions || []).filter((c) => c && names(c)).length;
 
   return h('div', { class: 'card projection', 'data-src': 'alias:' + binding.alias },
     qrow('div', { cls: 'row', key: 'read:' + binding.alias },
@@ -6640,7 +6636,7 @@ function readCard(model, slice, binding, index, waitsFor) {
             render();
           },
         }, 'Edit'),
-        // Removing a read takes the rules and guards that use it with
+        // Removing a read takes the rules that use it with
         // it: a rule whose subject is gone is not a rule. They sit in
         // the rules card below rather than in this one, so the button
         // says how many it takes. What it does *not* take is a
@@ -6656,11 +6652,6 @@ function readCard(model, slice, binding, index, waitsFor) {
           onclick: () => patchSlice((b) => {
             b.boundary = (b.boundary || []).filter((x) => !(x && x.alias === binding.alias));
             b.conditions = (b.conditions || []).filter((c) => !(c && names(c)));
-            for (const emission of b.publishes || []) {
-              if (!emission || !emission.when) continue;
-              emission.when = emission.when.filter((c) => !(c && names(c)));
-              if (!emission.when.length) delete emission.when;
-            }
           }),
         }, '×'))),
     state.editBinding === binding.alias ? bindingEditor(model, slice, binding, index) : null,
@@ -6819,7 +6810,7 @@ function rejectionMark(condition) {
 // The rule adder writes a projection read in place and asks for no
 // name: an "as" field in the middle of the first question was one more
 // thing to answer before the rule was even written. A read is named
-// afterwards, on the selected rule or guard – "Add alias" swaps the
+// afterwards, on the selected rule – "Add alias" swaps the
 // read's name in the sentence for a field, and Enter binds it under the
 // alias, every spelling of it in the command at once
 // (`aliasInlineRead`). `state.aliasing` is that field: the row it is in
@@ -6827,7 +6818,7 @@ function rejectionMark(condition) {
 
 const readSpelling = (operand) => JSON.stringify(canonicalOperand(operand));
 
-// The reads in place a rule or guard names itself – not one inside
+// The reads in place a rule names itself – not one inside
 // another read's tags, which has no sentence position to rename in.
 function inlineReadsOf(condition) {
   const sides = [condition.leftHandSide,
@@ -6874,7 +6865,7 @@ function addAliasButtons(condition, row) {
   }, reads.length > 1 ? 'Add alias: ' + readable(read.projection) : 'Add alias'));
 }
 
-// One side of a rule or guard sentence – the alias field in place of
+// One side of a rule sentence – the alias field in place of
 // the read's name while that read is being named.
 function ruleOperandRef(slice, row, operand, text) {
   const naming = state.aliasing;
@@ -6965,7 +6956,7 @@ function ruleRow(model, slice, condition, i, draggable) {
 //
 // "To decide, it looks at" and "It is only allowed if" were two steps
 // and are one. The reason is not screen space: a read was never a
-// thing anyone wanted to declare. It is what some rule, guard,
+// thing anyone wanted to declare. It is what some rule,
 // emission or chain *needs*, and asking for it separately made the
 // modeller answer a question about storage before they had finished
 // the question about the domain.
@@ -7138,16 +7129,7 @@ function inlineReadOf(binding) {
 // declared anywhere, so it has to be typeable. A unary predicate takes
 // no right-hand side at all, so that half of the form goes away when
 // one is chosen rather than being ignored.
-//
-// `target` says which condition list the row belongs to: the command's
-// own rules by default, or one emission's guard (`when`) – a guard is
-// a condition in every respect this form cares about, so it is the
-// same form, writing somewhere else.
-function ruleEditor(model, slice, index, target) {
-  const targetList = target ? target.list : (b) => b.conditions;
-  const addLabel = target && target.addLabel ? target.addLabel : 'Add rule';
-  // A rule refuses, a guard skips: only a rule carries a message.
-  const refuses = !target;
+function ruleEditor(model, slice, index) {
   // A rule being edited always has a draft; a rule about to be created
   // grows one the first time it is painted, and keeps it across every
   // repaint a keystroke causes from then on.
@@ -7158,8 +7140,7 @@ function ruleEditor(model, slice, index, target) {
   // Progressive on purpose: the property picker's choices depend on the
   // read, and the tag values depend on what is read, so a row
   // that painted all of them at once would be offering answers to
-  // questions not yet asked. A rule opened for editing, or a guard
-  // (which is written against reads that already exist), skips this
+  // questions not yet asked. A rule opened for editing skips this
   // entirely.
   const editingExisting = index !== null;
   const alreadyRead = new Set((slice.reads || []).filter(Boolean).map((b) => b.group || b.projection).filter(Boolean));
@@ -7208,7 +7189,7 @@ function ruleEditor(model, slice, index, target) {
     ...projectionRows,
     [NEW_DEFINITION, NEW_PROJECTION_LABEL],
   ];
-  const chooseTarget = !editingExisting && !target;
+  const chooseTarget = !editingExisting;
   // Deliberately not defaulted. The row advances when the author
   // answers a question, so the first question has to be unanswered –
   // a pre-picked target would either advance on its own (putting
@@ -7392,7 +7373,6 @@ function ruleEditor(model, slice, index, target) {
 
   const close = () => {
     state.editRule = null;
-    state.editGuard = null;
     state.ruleDraft = null;
     state.adder = null;
     render();
@@ -7439,9 +7419,8 @@ function ruleEditor(model, slice, index, target) {
   // a row `ready()` already vouched for.
   const record = () => {
     const { condition, binding } = drafted();
-    if (refuses) condition.rejection = typedMessage() || derivedMessage();
+    condition.rejection = typedMessage() || derivedMessage();
     state.editRule = null;
-    state.editGuard = null;
     state.adder = null;
     const inputs = pending ? newReadInputs(model, slice, draft) : [];
     patchSlice((b) => {
@@ -7452,7 +7431,7 @@ function ruleEditor(model, slice, index, target) {
       // that names it, with any input it needs a value from.
       for (const { tag, ...input } of inputs) (b.properties = b.properties || []).push(input);
       if (binding) (b.boundary = b.boundary || []).push(binding);
-      const list = targetList(b);
+      const list = b.conditions = b.conditions || [];
       if (index === null) list.push(condition);
       else list[index] = condition;
     });
@@ -7464,7 +7443,7 @@ function ruleEditor(model, slice, index, target) {
   // silent leave-commit holds out for at least one entry, while an
   // explicit save is taken at its word.
   draft.ready = () => !!draft.touched
-    && (!refuses || !typedMessage() || !rejectionProblem(typedMessage()))
+    && (!typedMessage() || !rejectionProblem(typedMessage()))
     && (!draft.newRead || !!pending)
     && draftOperand(draft, 'left') !== undefined
     && (unary || fromData || (membership ? entryOperands().length > 0 : draftOperand(draft, 'right') !== undefined));
@@ -7483,7 +7462,7 @@ function ruleEditor(model, slice, index, target) {
     if (!unary && !membership && draftOperand(draft, 'right') === undefined) {
       return toast('Pick a value to compare it with.', true);
     }
-    const problem = refuses && typedMessage() && rejectionProblem(typedMessage());
+    const problem = typedMessage() && rejectionProblem(typedMessage());
     if (problem) return toast(`That message ${problem}.`, true);
     state.ruleDraft = null;
     record();
@@ -7603,7 +7582,7 @@ function ruleEditor(model, slice, index, target) {
   // vanish under a pick. Answered, never assumed: a left side still
   // unset keeps the question on screen rather than strand the row.
   const isProjectionRead = (alias) => reads.some((b) => b && b.alias === alias && b.projection);
-  const storedLeft = editingExisting ? ((targetList(slice.body) || [])[index] || {}).leftHandSide : null;
+  const storedLeft = editingExisting ? ((slice.body.conditions || [])[index] || {}).leftHandSide : null;
   // A read in place is one value too, stored or being edited.
   const leftNow = draft.left ? (() => { try { return JSON.parse(draft.left); } catch { return null; } })() : null;
   const oneValue = (aboutAlias && isProjectionRead(aboutAlias))
@@ -7675,12 +7654,11 @@ function ruleEditor(model, slice, index, target) {
   // empty, the rule is refused with what it requires, said from the
   // rule (`derivedRejection`) – shown as the placeholder, so what an
   // empty field saves is never a surprise. The messages the command
-  // already has are offered, so two rules can be one outcome. A guard
-  // never refuses, so it is never asked.
+  // already has are offered, so two rules can be one outcome.
   const knownMessages = uniq((slice.body.conditions || [])
     .map((c) => c && c.rejection).filter((m) => typeof m === 'string' && m));
   const messageList = 'rejections-' + slice.name;
-  const rejectionStage = !refuses || stage < TEST_STAGE ? null
+  const rejectionStage = stage < TEST_STAGE ? null
     : stageRow('Refused with',
         h('input', {
           type: 'text', class: 'rejection',
@@ -7712,71 +7690,10 @@ function ruleEditor(model, slice, index, target) {
       // scold is worse than no button.
       stage < TEST_STAGE
         ? h('span', { class: 'muted tiny' }, 'Pick one to go on.')
-        : h('button', { class: 'btn primary', onclick: submit }, index === null ? addLabel : 'Save'),
+        : h('button', { class: 'btn primary', onclick: submit }, index === null ? 'Add rule' : 'Save'),
       h('button', { class: 'btn ghost tiny', onclick: close }, 'Cancel')));
 
   return row;
-}
-
-// The guard rows of one emission – each `when` condition as the same
-// sentence a rule renders as, plus the same editor, writing into this
-// emission's own list. Always visible on the card rather than folded
-// behind "Fields": a guard changes what the command records, which is
-// the one thing a reader of this step is here for.
-function emissionGuardRows(model, slice, emission, emissionIndex) {
-  const target = {
-    list: (b) => (b.publishes[emissionIndex].when = b.publishes[emissionIndex].when || []),
-    addLabel: 'Add guard',
-  };
-  const editingAt = (j) => state.editGuard
-    && state.editGuard.at === emissionIndex && state.editGuard.index === j;
-
-  const rows = (emission.when || []).map((condition, j) => {
-    if (editingAt(j)) return h('div', { class: 'card rule' }, ruleEditor(model, slice, j, target));
-    const p = conditionParts(condition, model, slice.body);
-    const quantifier = quantifierWords(model, slice.body, condition);
-    return h('div', {},
-      qrow('div', { cls: 'row wraps', key: `guard:${emissionIndex}:${j}` },
-        h('span', { class: 'sentence tiny' },
-          h('span', { class: 'verb' }, 'only while '),
-          quantifier ? h('span', { class: 'verb' }, quantifier + ', ') : null,
-          ruleOperandRef(slice, `guard:${emissionIndex}:${j}`, condition.leftHandSide, p.left),
-          ' ', h('span', { class: 'verb' }, p.verb),
-          p.right ? h('span', {}, ' ',
-            ruleOperandRef(slice, `guard:${emissionIndex}:${j}`, condition.rightHandSide, p.right)) : null),
-        h('span', { class: 'grow' }),
-        reveal(
-          ...addAliasButtons(condition, `guard:${emissionIndex}:${j}`),
-          h('button', {
-            class: 'btn tiny',
-            onclick: () => {
-              closeForms();
-              state.editGuard = { at: emissionIndex, index: j };
-              state.ruleDraft = draftFromCondition(condition);
-              render();
-            },
-          }, 'Edit'),
-          h('button', {
-            class: 'btn tiny danger', title: 'Drop this guard – the event publishes unconditionally again',
-            onclick: () => patchSlice((b) => {
-              b.publishes[emissionIndex].when.splice(j, 1);
-              if (!b.publishes[emissionIndex].when.length) delete b.publishes[emissionIndex].when;
-            }),
-          }, '×'))));
-  });
-
-  if (state.editGuard && state.editGuard.at === emissionIndex && state.editGuard.index === null) {
-    rows.push(h('div', { class: 'card rule' }, ruleEditor(model, slice, null, target)));
-  } else if (experimental()) {
-    // Not an `adderSlot` – a guard opens through `state.editGuard`, not
-    // `state.adder` – but it folds and reveals exactly like one.
-    rows.push(h('div', { class: 'adder quiet' }, h('button', {
-      class: 'btn ghost tiny',
-      title: 'Publish this event only under a condition – failing it skips the event, never the command',
-      onclick: () => { closeForms(); state.editGuard = { at: emissionIndex, index: null }; render(); },
-    }, '+ only while'), h('span', { class: 'slot' })));
-  }
-  return h('div', { style: 'margin-left:8px' }, ...rows);
 }
 
 function stepEmits(model, slice) {
@@ -7807,7 +7724,6 @@ function stepEmits(model, slice) {
               + 'page once no command records it.',
             onclick: () => patchSlice((b) => { b.publishes.splice(i, 1); }),
           }, '×'))),
-      emissionGuardRows(model, slice, emission, i),
       open ? eventFields(model, emission, event) : null);
   });
   if (!cards.length) cards.push(h('div', { class: 'empty' }, '–'));
@@ -12170,9 +12086,7 @@ function renderOverview(model, main) {
       for (const projection of inPlace) reads.push(projectionRef(model, projection));
 
       const rules = (body.conditions || []).length;
-      const guards = sum((body.publishes || []).map((p) => (p && p.when ? p.when.length : 0)));
-      const ruleWords = [rules ? plural(rules, 'rule') : null, guards ? plural(guards, 'guard') : null]
-        .filter(Boolean).join(' · ');
+      const ruleWords = rules ? plural(rules, 'rule') : '';
 
       const emits = (body.publishes || []).filter((p) => p && p.name);
 
@@ -12538,10 +12452,7 @@ function renderEventModel(model, main) {
           ? column.payload.map((p) => h('div', { class: 'field', title: typeLabel(p) }, p.name))
           : h('div', { class: 'line' }, '–')));
     } else if (card.kind === 'command') {
-      const ruleWords = [
-        column.rules ? column.rules + (column.rules === 1 ? ' rule' : ' rules') : null,
-        column.guards ? column.guards + (column.guards === 1 ? ' guard' : ' guards') : null,
-      ].filter(Boolean).join(' · ');
+      const ruleWords = column.rules ? column.rules + (column.rules === 1 ? ' rule' : ' rules') : '';
       band.appendChild(h('div', { class: 'em-card command', style: place(card) },
         h('div', { class: 'title', title: column.command, onclick: () => goToCommand(column.command) },
           iconPrefix(commandIcon(model, column.command)) + readable(column.command)),
@@ -12563,7 +12474,7 @@ function renderEventModel(model, main) {
         h('div', { class: 'title', title: event.name, onclick: () => goToEvent(event.name) },
           iconPrefix(eventIcon(model, event.name)) + readable(event.name)),
         h('div', { class: 'line' },
-          (event.tags.length ? event.tags.join(' + ') : 'untagged') + (event.guarded ? ' · guarded' : ''))));
+          (event.tags.length ? event.tags.join(' + ') : 'untagged'))));
     }
   }
   main.appendChild(h('div', { class: 'em-scroll' }, band));

@@ -1744,7 +1744,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
           "description": "One thing the command reads. Distinguished by which of `group`\nor `projection` it carries.\n",
           "oneOf": [
             {
-              "description": "One instance of a group the command reads – or, `each`, many – under a\nlocal alias: `alias course = Course(courseId)`. It gives the group's one\ntag a value and reads nothing by itself. Each projection of the group a\nrule, a guard or an emission reads through the alias – `{alias:\ncourse, property: capacity}` – is a read of its own, made with that\nprojection's arguments (`AliasPropertyValue.arguments`), and only those\nreads are in the command's query: a group is a name, not a boundary.\n",
+              "description": "One instance of a group the command reads – or, `each`, many – under a\nlocal alias: `alias course = Course(courseId)`. It gives the group's one\ntag a value and reads nothing by itself. Each projection of the group a\nrule or an emission reads through the alias – `{alias:\ncourse, property: capacity}` – is a read of its own, made with that\nprojection's arguments (`AliasPropertyValue.arguments`), and only those\nreads are in the command's query: a group is a name, not a boundary.\n",
               "type": "object",
               "additionalProperties": false,
               "properties": {
@@ -2343,7 +2343,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                       "default": false
                     },
                     "rejection": {
-                      "description": "The message a refusal by this condition carries. Required on a\ncommand's rule (`Rule`); an emission's `when` guard never\nrejects, so it has none.\n",
+                      "description": "The message a refusal by this condition carries. Required on a\ncommand's rule (`Rule`).\n",
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 200,
@@ -2626,7 +2626,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                       "default": false
                     },
                     "rejection": {
-                      "description": "The message a refusal by this condition carries. Required on a\ncommand's rule (`Rule`); an emission's `when` guard never\nrejects, so it has none.\n",
+                      "description": "The message a refusal by this condition carries. Required on a\ncommand's rule (`Rule`).\n",
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 200,
@@ -2654,7 +2654,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         "type": "array",
         "minItems": 1,
         "items": {
-          "description": "A command's emission of one event, plus bindings supplying the\nevent's property values.\n\nAn emission may be **guarded** (6.0): `when` holds conditions –\nthe same shape and operands as the command's `conditions` – and\nthe event is published only while every one of them holds. A\nguard that does not hold *skips* the emission silently; it never\nrejects the command. That is the whole difference between the\ntwo lists: `conditions` decide whether the command happens,\n`when` decides what it records – the decision is made at write\ntime and the log carries its outcome as a distinct event type.\nGuards on sibling emissions are independent: any subset may\nfire, every guard failing publishes nothing, and a command that\nmust always record something leaves one emission unguarded.\n",
+          "description": "A command's emission of one event, plus bindings supplying the\nevent's property values. It is published whenever its command is.\n",
           "type": "object",
           "additionalProperties": false,
           "properties": {

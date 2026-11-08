@@ -125,7 +125,8 @@ was decided, why, and what was tried and reverted:
 - groups, the projections list's sections, moving in and out — _Groups_
 - the projection editor's layout, its Advanced switch, the new-projection
   wizard, the Lifecycle tab — _The projection editor_
-- guards, rejection messages, derived projections — _Guarded emissions…_
+- rejection messages, derived projections, what became of guards —
+  _Guarded emissions…_
 - creating or editing a definition from a command page, the definition
   modals — _Inline definitions from a command_
 - wording on any page — _The interface register_
@@ -243,10 +244,6 @@ was decided, why, and what was tried and reverted:
   A major reaches `main` together with the website's pin bump: the skill
   installs from `main`, so its language would otherwise differ from the
   one dcb.events documents.
-- **Anything walking a command's conditions must walk each emission's
-  `when` too**: guard reads count toward the derived DCB like condition
-  reads (both flow through `forEachCommandOperand`; see `allConditions`
-  in `validateCommandBody`).
 - **The code view's language is a spelling of the wire format**: print
   and parse are each other's inverse, and a definition that does not
   survive the round trip is printed as JSON. So a new wire-format

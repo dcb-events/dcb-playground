@@ -545,8 +545,8 @@ function createScriptEditorEntry(key) {
 //
 // Everything that is DCB is always on screen: types, events, projections,
 // the consistency boundary each command derives. What the examples on
-// dcb.events never need – scripted projections, guarded emissions,
-// optional reads, the overview pages
+// dcb.events never need – scripted projections, optional reads, the
+// overview pages
 // (`EXPERIMENTAL_FEATURES`, model.js) – waits behind this flag.
 //
 // It gates *authoring*, never reading: a model that already uses an
@@ -1371,13 +1371,10 @@ function lifecycleConstraint(conditions, body, projectionName, states) {
 
 // Why a command cannot be placed on the machine, or null when it can:
 // it reads two instances of the projection (which one moves?), reads it
-// through `each`, or guards it in a way `lifecycleAllowedStates` cannot
+// through `each`, or has a rule over it `lifecycleAllowedStates` cannot
 // read.
 function lifecycleUnplaced(body, projectionName, states) {
-  const conditions = [
-    ...(body.conditions || []),
-    ...(body.publishes || []).flatMap((emission) => (emission && emission.when) || []),
-  ];
+  const conditions = body.conditions || [];
   const instances = new Set();
   let each = false;
   for (const condition of conditions) {
@@ -1399,8 +1396,7 @@ function lifecycleUnplaced(body, projectionName, states) {
 //
 //   transitions  `{event, target, sources, conventional, unguarded,
 //                unpublished}` – `sources` the union of where its
-//                publishers may emit it (an emission's `when` narrowing
-//                its own); with none to read, it is drawn from the
+//                publishers may emit it; with none to read, it is drawn from the
 //                initial state (`conventional`), and `unguarded` names
 //                the publishers nothing guards;
 //   opaque       events whose handler sets a state this cannot read;
@@ -1440,8 +1436,7 @@ function lifecycleMachine(model, projectionName, body = projectionsOf(model)[pro
     const unguarded = [];
     for (const { command, emission } of publishers) {
       if (!isPlaced(command)) continue;
-      const constraint = lifecycleConstraint(
-        [...(commands[command].conditions || []), ...(emission.when || [])], commands[command], projectionName, states);
+      const constraint = lifecycleConstraint(commands[command].conditions || [], commands[command], projectionName, states);
       if (constraint.states === null) {
         if (!unguarded.includes(command)) unguarded.push(command);
       } else {
@@ -1480,8 +1475,7 @@ function lifecycleMachine(model, projectionName, body = projectionsOf(model)[pro
       movesTo: [...new Set(transitions
         .filter((t) => moving.some((emission) => emission.name === t.event)).map((t) => t.target))],
       unguarded: !!moving.length && lifecycleConstraint(
-        [...(commandBody.conditions || []), ...moving.flatMap((emission) => emission.when || [])],
-        commandBody, projectionName, states).states === null,
+        commandBody.conditions || [], commandBody, projectionName, states).states === null,
     };
     for (const slot of perState) {
       if (constraint.states === null || constraint.states.includes(slot.state)) slot.commands.push(entry);
@@ -1517,9 +1511,8 @@ function lifecycleRulesOver(conditions, body, projectionName) {
 //
 //   initial    its initial value, as stored;
 //   handlers   `{event, operation, value, appendedBy: [{command,
-//              rules}]}` – a command's rules over the value are its
-//              conditions and the guards of the emissions appending
-//              that event;
+//              rules}]}` – a command appending that event, with its
+//              rules over the value;
 //   readers    `{command, rules}` – commands with a rule over it that
 //              append nothing moving it: where the value matters.
 //
@@ -1544,9 +1537,7 @@ function lifecycleMovements(model, projectionName, body = projectionsOf(model)[p
         const emissions = ((commandBody && commandBody.publishes) || [])
           .filter((emission) => emission && emission.name === handler.event);
         if (!emissions.length) return [];
-        const rules = lifecycleRulesOver(
-          [...(commandBody.conditions || []), ...emissions.flatMap((emission) => emission.when || [])],
-          commandBody, projectionName);
+        const rules = lifecycleRulesOver(commandBody.conditions || [], commandBody, projectionName);
         return [{ command, rules }];
       }),
     })),
@@ -1554,9 +1545,7 @@ function lifecycleMovements(model, projectionName, body = projectionsOf(model)[p
       if (!commandBody) return [];
       const publishes = (commandBody.publishes || []).filter(Boolean);
       if (publishes.some((emission) => handled.has(emission.name))) return [];
-      const rules = lifecycleRulesOver(
-        [...(commandBody.conditions || []), ...publishes.flatMap((emission) => emission.when || [])],
-        commandBody, projectionName);
+      const rules = lifecycleRulesOver(commandBody.conditions || [], commandBody, projectionName);
       return rules.length ? [{ command, rules }] : [];
     }),
   };
@@ -1610,7 +1599,7 @@ function eventModel(model) {
     const emits = (body.publishes || []).filter((emission) => emission && emission.name);
     const events = emits.map((emission) => {
       const tags = tagsOf(emission.name);
-      const event = { name: emission.name, tags, guarded: !!(emission.when && emission.when.length), lanes: tags.map(laneOf) };
+      const event = { name: emission.name, tags, lanes: tags.map(laneOf) };
       if (!tags.length) untagged.push(event);
       return event;
     });
@@ -1618,7 +1607,6 @@ function eventModel(model) {
       kind: 'command', command: name,
       payload: body.properties || [],
       rules: (body.conditions || []).length,
-      guards: emits.reduce((n, emission) => n + (emission.when ? emission.when.length : 0), 0),
       reads: (body.boundary || []).map((binding) => binding.alias),
       events,
     });
@@ -2169,9 +2157,6 @@ function guardedMonotoneBooleans(model, body, entityName, alias) {
     if (isMonotoneBoolean(model, entityName, operand.property)) found.add(operand.property);
   };
   for (const condition of body.conditions || []) walk(condition);
-  for (const emission of body.publishes || []) {
-    for (const condition of emission.when || []) walk(condition);
-  }
   return orderedMonotoneBooleans(model, entityName, found);
 }
 

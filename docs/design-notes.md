@@ -34,7 +34,7 @@ and prune what no longer holds.
   What DCB is made of — types, events, projections, commands, the
   derived boundary — is always on screen; what the examples on
   dcb.events do not need is behind the flag: scripted projections,
-  guarded emissions, optional reads, and the Coupling /
+  optional reads, and the Coupling /
   Rule map / Event model / Metro map views. Groups are not on the list: a naming
   device with no consistency meaning has nothing to hide. Entities,
   lifecycles and `excluding` were on it until 11.0 removed them. A model that uses any of
@@ -78,7 +78,7 @@ and prune what no longer holds.
 
 - **A read is never authored** — the merged step ("Rules")
   is one step where there were two, because a boundary binding is not a
-  thing anyone wants to declare: it is what a rule, a guard, an emission
+  thing anyone wants to declare: it is what a rule, an emission
   field, an emitted tag or another read *needs*. Since 8.0 a projection
   read need not be a binding at all: an operand may be a read in place
   (`{projection, tags, arguments}`, `require CourseStatus(courseId)
@@ -88,14 +88,14 @@ and prune what no longer holds.
   a name field in the middle of the first question was one more thing
   to answer before the rule existed, and since the right side reads
   projections in place too, a name is rarely needed. A read is named
-  afterwards instead: a selected rule or guard offers "Add alias" (one
+  afterwards instead: a selected rule offers "Add alias" (one
   button per read in place it names, labelled with the read when there
   are two), which swaps the read's name in the sentence for a field
   (`state.aliasing`); Enter binds the read under the name and points
   every spelling of it in the command at the alias (`aliasInlineRead`,
   model.js), since those are one read already. The read card's "Remove
   alias" goes back (`inlineAliasedRead`), offered only while every use
-  is the read's whole value in a rule, guard or emission field
+  is the read's whole value in a rule or emission field
   (`aliasInlinable`). The pages never pick an alias for a projection
   themselves. A name the command already uses for a read or an input
   is refused in the field (`aliasNameProblem`), not left to an
@@ -120,15 +120,15 @@ and prune what no longer holds.
   (`projectionReadChoices`): with no bindings to put a second projection
   in scope, two projections could otherwise never be compared
   (`DeveloperSeniority(developerId) >= RequiredSeniority(projectId)`).
-  `bindingReferences` / `unreferencedBindings` (model.js) name the five
-  reasons a read is consulted — rule, guard, emission, chain,
-  serialisation —
+  `bindingReferences` / `unreferencedBindings` (model.js) name the four
+  reasons a read is consulted — rule, emission, chain, serialisation
+  (a guard was a fifth until 11.0) —
   and `updateDefinitions` prunes what nothing consults, transitively, in
   the same append: deleting the last rule about `theirs` takes the
   `students` hop with it. Pruning is deliberately *not* in
   `addDefinition`: a body arriving whole, from a file or a WebMCP tool,
   keeps what it came with and earns an advisory instead, and the next
-  edit to that command is what drops it. All five reasons are
+  edit to that command is what drops it. All four reasons are
   load-bearing in the shipped models, and a test holds them free of
   unreferenced reads. Serialisation is the one that names no alias: a
   binding to a projection that takes no tags reads every event that
@@ -143,9 +143,8 @@ and prune what no longer holds.
   The rule adder is itself staged (`ruleEditor`): what it is about,
   which of that thing's values, what must be true of it — because a
   rule now spans what used to be two steps, and asking it all at once
-  put five pickers in a row nobody could read as a sentence. Every
-  guard starts at the second question; a rule opened for editing opens
-  whole. There is no Next
+  put five pickers in a row nobody could read as a sentence. A rule
+  opened for editing opens whole. There is no Next
   button: **which questions are on screen is derived from what has been
   answered**, never accumulated by the act of answering. That is the
   row's correctness, not a style choice — gate a question on a change
@@ -179,7 +178,7 @@ and prune what no longer holds.
   exists" as one pick) went with lifecycles: `student.exists is true`
   is an ordinary rule about a boolean.
 - **Reads split by their reason** (`decisionAliases`, model.js): a read
-  a rule or guard names, and every hop it was reached through, belongs
+  a rule names, and every hop it was reached through, belongs
   to the decide step; everything else is read in order to *record*
   something — a projection whose value becomes an id, an instance whose
   tag the event writes — and is shown under the emission instead. So
@@ -188,7 +187,7 @@ and prune what no longer holds.
   never tests where the tag that demands it is. The split is
   presentation only: both halves are one `boundary`, and the derived
   DCB is their union. Reads stay removable, and removing one takes the
-  rules and guards about it while leaving reads further down the chain
+  rules about it while leaving reads further down the chain
   to dangle with an advisory — narrowing the boundary is never silent.
 - **No write coverage** (gone with entities, 11.0). It flagged an
   emitted tag whose value was read off an entity instance the command
@@ -543,8 +542,7 @@ on Projections, inside a group's section, and in the definition modals.
   members or `false`/`true` (`null` first when it starts or can be set
   there); a handler setting
   a member is an arrow, starting where its publishers' rules allow
-  (`require` and the emission's own `when`, read as a direct read or a
-  group alias alike). A command nothing guards gets the pink dot, and
+  (`require`, read as a direct read or a group alias alike). A command nothing guards gets the pink dot, and
   its arrow starts at the initial state, dashed – or, when it leads
   back there, at every other state reached. What cannot be read
   is said under the machine, not drawn: a state taken from event data,
@@ -567,15 +565,13 @@ on Projections, inside a group's section, and in the definition modals.
 
 ## Guarded emissions, rejection messages, derived projections
 
-- **Guarded emissions (6.0)**: a `publishes` entry may carry
-  `when: [conditions]` — same operand and predicate vocabulary as
-  `conditions`, evaluated in the same scope. A failing guard _skips_
-  its emission, never rejects the command; every guard failing
-  publishes nothing, which is still a `published` outcome. Guard reads
-  count toward the derived DCB like condition reads (both flow through
-  `forEachCommandOperand` — anything walking a command's conditions
-  must walk each emission's `when` too, see `allConditions` in
-  `validateCommandBody`).
+- **Guarded emissions are gone (11.0).** From 6.0 a `publishes` entry
+  could carry `when: [conditions]`, under which it was published or
+  silently skipped. 11.0 removed them (issue #104): an emission is
+  published whenever its command is. An imported command that
+  guards an emission is left out, and said (`refuseRemovedConstructs`,
+  model.js): publishing it every time would change what it decides.
+  The `content-decisions-guarded` model went with them.
 - **Every rule says what it is refused with (7.0)**: a command's
   conditions carry `rejection`, static one-line text (`rejectionProblem`,
   model.js), and a refusal is known by it and nothing else — a
@@ -589,8 +585,7 @@ on Projections, inside a group's section, and in the definition modals.
   there) and `then rejected "…"`. A rule without one is an *advisory*, not a
   write-path refusal: it still evaluates — a run reports its condition
   text instead — but a scenario cannot name its refusal, so `deriveThen`
-  reports it broken, and the printer falls back to JSON. A guard never
-  rejects, so a message on one is an advisory too. The set of a
+  reports it broken, and the printer falls back to JSON. The set of a
   command's messages is derived (`commandRejections`), never declared;
   scenario coverage counts by it (`uncoveredRejections`). The Rules
   step used to list the set as well ("Can be refused with"); it was
@@ -764,7 +759,7 @@ A use case is designed on its command's page, start to finish. The
 custom type an input needs and the projection a rule or a change reads
 are created, and corrected, from the picker that noticed they were
 missing: "+ New custom type…" in the payload's type pickers, "+ New
-projection…" in a rule's (or guard's) first question and in the change
+projection…" in a rule's first question and in the change
 adder, a pencil beside every referenced projection a command page
 shows, and "Edit the type …" in an input's (or an event field's) edit
 mode (`openDefinitionModal`, index.html). Events keep the inline forms
@@ -1304,8 +1299,8 @@ Artboards: `design/dcb-queries/` (2026-10).
   the round before – which `deriveDcb` describes but does not compute.
   Computing it beside the evaluator would be a second copy of its
   operand semantics, so the evaluator answers it itself: a dry run
-  (`evDecide` collecting) reads through every rule, instance, guard
-  and emission without stopping at a refusal, records what nothing
+  (`evDecide` collecting) reads through every rule, instance and
+  emission without stopping at a refusal, records what nothing
   fetched yet answers, and gets nothing back for it. The records,
   merged by tag set (types are ORed within an item, so that is
   exact), are one call; the next dry run sees the round they unlock.

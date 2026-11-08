@@ -367,7 +367,7 @@
       ]
     },
     "DerivedValue": {
-      "description": "One predicate or one computation over other projections' values –\nthe whole of a derived projection (6.0; computations 9.0). This is\ndecision logic stated once, as data: a command rule or guard may read\nit, a group may own it, and a real application's read\nside can interpret the same declaration, where a script would have\nburied it in code.\n\n**Compare** with `predicate`: the binary half of `Condition`'s\nvocabulary – `equalsAny` excepted, since its literal-list spelling\nbelongs to command rules – and `negate` flips it the same way. The\noutcome is one boolean, which is what the owning projection's\n`valueType` must declare.\n\n**Compute** with `operator` (9.0): `add`, `subtract`, `multiply`,\n`min` or `max` over two single numbers – projection reads or number\nliterals. It yields an integer from two integers and a number\notherwise, which the owning projection's `valueType` must hold; a null\nside yields null, and a rule ordering against that null is an\nevaluation error. There is no `divide`, and no `negate`. A longer\nexpression is a chain of derived projections, each one value.\n\nA `{parameterName}` names one of the *owning* projection's own\nparameters (10.0): as a side, its value is compared or computed with\n– `Free(courseId) >= seats`; among an operand's `tags` or `arguments`,\nit is passed on – the partition flows down, so reading the derived\nprojection reads its operands at the same instance. Operands may themselves be derived; a cycle is a defect\nthe advisories point out and evaluation refuses.\n",
+      "description": "One predicate or one computation over other projections' values –\nthe whole of a derived projection (6.0; computations 9.0). This is\ndecision logic stated once, as data: a command rule may read\nit, a group may own it, and a real application's read\nside can interpret the same declaration, where a script would have\nburied it in code.\n\n**Compare** with `predicate`: the binary half of `Condition`'s\nvocabulary – `equalsAny` excepted, since its literal-list spelling\nbelongs to command rules – and `negate` flips it the same way. The\noutcome is one boolean, which is what the owning projection's\n`valueType` must declare.\n\n**Compute** with `operator` (9.0): `add`, `subtract`, `multiply`,\n`min` or `max` over two single numbers – projection reads or number\nliterals. It yields an integer from two integers and a number\notherwise, which the owning projection's `valueType` must hold; a null\nside yields null, and a rule ordering against that null is an\nevaluation error. There is no `divide`, and no `negate`. A longer\nexpression is a chain of derived projections, each one value.\n\nA `{parameterName}` names one of the *owning* projection's own\nparameters (10.0): as a side, its value is compared or computed with\n– `Free(courseId) >= seats`; among an operand's `tags` or `arguments`,\nit is passed on – the partition flows down, so reading the derived\nprojection reads its operands at the same instance. Operands may themselves be derived; a cycle is a defect\nthe advisories point out and evaluation refuses.\n",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -669,7 +669,7 @@
       ]
     },
     "GroupBinding": {
-      "description": "One instance of a group the command reads – or, `each`, many – under a\nlocal alias: `alias course = Course(courseId)`. It gives the group's one\ntag a value and reads nothing by itself. Each projection of the group a\nrule, a guard or an emission reads through the alias – `{alias:\ncourse, property: capacity}` – is a read of its own, made with that\nprojection's arguments (`AliasPropertyValue.arguments`), and only those\nreads are in the command's query: a group is a name, not a boundary.\n",
+      "description": "One instance of a group the command reads – or, `each`, many – under a\nlocal alias: `alias course = Course(courseId)`. It gives the group's one\ntag a value and reads nothing by itself. Each projection of the group a\nrule or an emission reads through the alias – `{alias:\ncourse, property: capacity}` – is a read of its own, made with that\nprojection's arguments (`AliasPropertyValue.arguments`), and only those\nreads are in the command's query: a group is a name, not a boundary.\n",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -769,31 +769,12 @@
       ]
     },
     "EventEmission": {
-      "description": "A command's emission of one event, plus bindings supplying the\nevent's property values.\n\nAn emission may be **guarded** (6.0): `when` holds conditions –\nthe same shape and operands as the command's `conditions` – and\nthe event is published only while every one of them holds. A\nguard that does not hold *skips* the emission silently; it never\nrejects the command. That is the whole difference between the\ntwo lists: `conditions` decide whether the command happens,\n`when` decides what it records – the decision is made at write\ntime and the log carries its outcome as a distinct event type.\nGuards on sibling emissions are independent: any subset may\nfire, every guard failing publishes nothing, and a command that\nmust always record something leaves one emission unguarded.\n",
+      "description": "A command's emission of one event, plus bindings supplying the\nevent's property values. It is published whenever its command is.\n",
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "name": {
           "$ref": "#/$defs/EventName"
-        },
-        "when": {
-          "description": "Conditions under which this emission is published, ANDed –\nabsent or empty means always. Boundary reads inside a guard\ncount toward the command's query exactly as `conditions`\nreads do: a guard may hide nothing from the derived DCB.\n",
-          "type": "array",
-          "items": {
-            "allOf": [
-              {
-                "$ref": "#/$defs/Condition"
-              },
-              {
-                "not": {
-                  "required": [
-                    "rejection"
-                  ]
-                }
-              }
-            ]
-          },
-          "default": []
         },
         "parameters": {
           "description": "Keys are the event's property names; each value is a\n`CommandOperand` describing where the value comes from at\nexecution time. An *optional* event property's entry may be\nomitted; the published event then carries the explicit `null`\nthere – and writes no tag for it, when the property is\ntag-marked.\n",
@@ -858,7 +839,7 @@
           "default": false
         },
         "rejection": {
-          "description": "The message a refusal by this condition carries. Required on a\ncommand's rule (`Rule`); an emission's `when` guard never\nrejects, so it has none.\n",
+          "description": "The message a refusal by this condition carries. Required on a\ncommand's rule (`Rule`).\n",
           "$ref": "#/$defs/RejectionMessage"
         }
       },
@@ -908,7 +889,7 @@
           "default": false
         },
         "rejection": {
-          "description": "The message a refusal by this condition carries. Required on a\ncommand's rule (`Rule`); an emission's `when` guard never\nrejects, so it has none.\n",
+          "description": "The message a refusal by this condition carries. Required on a\ncommand's rule (`Rule`).\n",
           "$ref": "#/$defs/RejectionMessage"
         }
       },

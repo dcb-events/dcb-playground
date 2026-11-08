@@ -1410,9 +1410,8 @@ function parseModelSourceText(text, options) {
         const emission = { name: eventToken.v };
         mark(emission, 'name', eventToken);
         if (accept('{')) emission.parameters = argumentList('}', commandOperand);
-        if (accept('when')) {
-          emission.when = [condition(commandOperand)];
-          while (accept('and')) emission.when.push(condition(commandOperand));
+        if (is('when')) {
+          fail('"when" on an emission is gone – 11.0 has no guarded emissions: an emission is published whenever its command is.');
         }
         body.publishes.push(emission);
       } else if (is('scenarios')) {
@@ -2601,8 +2600,6 @@ function printCommand(name, body, names) {
         : inline.length <= 88 ? inline
           : `${text} {\n${fields.map((f) => '  ' + f + ',').join('\n')}\n}`;
     }
-    const guards = emission.when || [];
-    if (guards.length) text += `\n  when ${guards.map((c) => sourceCondition(c, operand)).join('\n   and ')}`;
     return text;
   });
   const groups = [reads, rules, emits].filter((group) => group.length);
@@ -2984,7 +2981,7 @@ function sourceAdvisories(model, parsed) {
 
 // What each `alias` adds to its command's append condition, as the text
 // stands. `alias course = Course(courseId)` names an instance, not what
-// is queried of it: only the projections a rule, guard or emission
+// is queried of it: only the projections a rule or emission
 // actually uses put their projections' events in the query
 // (`deriveDcb`), so a command testing `course.status` never conflicts
 // with a `CourseCapacityChanged`. The line says the opposite at a
@@ -3760,7 +3757,6 @@ function sourceSymbols(parsed) {
       add(sourceSymbol('event', emission.name), slotsOf(emission).name);
       keyed(emission.parameters, (key) => sourceSymbol('eventProperty', emission.name, key),
         (arg, key) => commandOperand(name, body, arg, eventPropertyType(emission.name, key)));
-      for (const rule of list(emission.when)) condition(name, body, rule);
     }
   }
 
@@ -3991,7 +3987,7 @@ function sourceApplyEdits(text, edits) {
 // ---------- introduce alias ----------
 
 // Edits that name a read written in place – `CourseStatus(courseId)` in
-// a rule, a guard, an emission or another read – with an alias:
+// a rule, an emission or another read – with an alias:
 // `{ name, title, edits }`, or `{ error }`. The innermost read under
 // the cursor is the one named; it is declared after the command's last
 // alias, or first in its block, and every equal read in the command is
@@ -4031,7 +4027,7 @@ function sourceIntroduceAlias(text, line, col) {
     const hit = all.filter(covers).pop();
     if (hit) { command = name; target = hit; reads = all; break; }
   }
-  if (!target) return { error: 'There is no read in place here – put the cursor on one in a rule, a guard or an emission.' };
+  if (!target) return { error: 'There is no read in place here – put the cursor on one in a rule or an emission.' };
 
   const body = parsed.collections['command-definition'][command];
   const key = JSON.stringify(target);
@@ -4099,7 +4095,7 @@ function sourceIntroduceAlias(text, line, col) {
 
 // ---------- completion ----------
 
-const SOURCE_CONDITION_STARTS = ['require', 'when', 'and'];
+const SOURCE_CONDITION_STARTS = ['require'];
 const SOURCE_COMPARISONS = ['==', '!=', '<', '<=', '>', '>=', ...SOURCE_WORD_PREDICATES];
 // How each predicate is written after an operand, in the order a rule
 // editor offers them.
@@ -4161,7 +4157,7 @@ function sourceOffset(text, line, col) {
 // whole text's parse, with `model`'s definitions filling in for any
 // that fail to parse while being typed.
 // `experimental: false` leaves out what the experimental flag keeps off
-// the pages – scripted projections and guards. A text using them still
+// the pages – scripted projections. A text using them still
 // reads. Groups are not among them: a name is nothing to hide.
 // A group's projections complete as top-level ones do, by their
 // qualified names (`Course.capacity`), with the group's tag among a
@@ -4837,8 +4833,7 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     }
     return done(false);
   }
-  // Where a condition being written began: after its last `require`,
-  // `when`, `and` or `by`.
+  // Where a condition being written began: after its last `require`.
   const conditionTail = (tokensOf) => {
     let at = -1;
     tokensOf.forEach((t, i) => { if (SOURCE_CONDITION_STARTS.includes(t.v)) at = i; });
@@ -4866,8 +4861,6 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
         definitionItems('event-definition', { sort: 0, detail: (n, b) => list(b.properties).map((p) => p.name).join(', ') });
         return done();
       }
-      if (s.some((t) => t.v === 'when')) return conditionItems(scope, conditionTail(s));
-      if ((prev === '}' || s.length === 2) && experimental) { keywords([['when', 'when ']]); return done(false); }
       return done(false);
     }
     if (first === 'require') {
@@ -5076,22 +5069,14 @@ function sourceExperimentalMarks(text) {
     line: token.line, col: token.col, endLine: token.endLine, endCol: token.endCol,
     message: `${what} is experimental – turn experimental features on in Settings to author it on the pages.`,
   });
-  // Which blocks are scenarios: `when` there is a scenario's, not a guard.
-  const frames = [];
-  let scenarioNext = false;
   tokens.forEach((token, i) => {
     const v = token.v;
-    const prev = tokens[i - 1];
     const next = tokens[i + 1];
-    if (token.t === 'punct' && v === '{') { frames.push(scenarioNext); scenarioNext = false; return; }
-    if (token.t === 'punct' && v === '}') { frames.pop(); return; }
     if (token.t === 'punct' && v === '?' && tokens[i - 2] && tokens[i - 2].v === 'alias') { said(token, 'An optional read'); return; }
     if (token.t !== 'ident') return;
-    if (v === 'scenario') { scenarioNext = true; return; }
     // A group is not marked: a name is nothing to hide. A scripted
     // projection is, in a group as anywhere.
     if (v === 'scripted' && next && (next.v === 'projection' || next.v === 'untagged')) said(token, 'A scripted projection');
-    else if (v === 'when' && !frames.includes(true)) said(token, 'A guarded emission');
   });
   return out;
 }
@@ -5460,7 +5445,7 @@ const SOURCE_REFERENCE_GOTCHAS = `## Gotchas
 `;
 
 const SOURCE_REFERENCE_UNOFFERED = 'Not offered to agents: scripted projections, '
-  + 'guarded emissions (emit … when …), optional reads (alias x? = …), arguments on a group\'s projection '
+  + 'optional reads (alias x? = …), arguments on a group\'s projection '
   + 'read through an alias (x.p(a: …)). A text or '
   + 'definition that adds one is refused. A model that already uses them shows them in get_model_source; keep those parts as they are.';
 

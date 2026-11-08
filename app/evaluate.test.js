@@ -743,19 +743,16 @@ function openSchedules() {
     eq(sandbox.modelAdvisories(model()).some((a) => /has no rejection message/.test(a.message)), true, 'and it is advised');
   });
 
-  check('a rejection message is advised where it is missing, malformed, or on a guard', () => {
+  check('a rejection message is advised where it is missing or malformed', () => {
     const { id, model } = open_(GROUPED);
     const command = deepClone(model()['command-definitions'].SubscribeStudentToCourse);
     command.conditions[1].rejection = '';
     command.conditions[2].rejection = 'two\nlines';
-    command.publishes[0].when = [{ leftHandSide: { alias: 'course', property: 'subscriptionCount' },
-      predicate: 'lessThan', rightHandSide: 5, rejection: 'Never shown' }];
     updateDefinition('command-definition', id, 'SubscribeStudentToCourse', command);
     const found = sandbox.modelAdvisories(model()).filter((a) => a.name === 'SubscribeStudentToCourse')
       .map((a) => a.message);
     eq(found.some((m) => /rejection message of "student.exists isTrue" is empty/.test(m)), true, 'empty: ' + found);
     eq(found.some((m) => /spans several lines/.test(m)), true, 'several lines');
-    eq(found.some((m) => /a guard never rejects/.test(m)), true, 'on a guard');
   });
 
   check('a scenario never stops you deleting what it tests', () => {
@@ -2595,81 +2592,9 @@ check('every predefined model ships advisory-clean', () => {
 }
 
 // ---------------------------------------------------------------
-// Guarded emissions (6.0). A guard decides what an accepted command
-// *records*, never whether it happens: a failing guard skips its
-// emission silently, and every guard failing publishes nothing at all
-// – still a `published` outcome. Exercised against the shipped
-// guarded-emissions variant of the content-decisions family, whose
-// UpdateText carries the complementary pair.
-// ---------------------------------------------------------------
-{
-  const GUARDED = PREDEFINED_INDEX('content-decisions-guarded');
-  const added = { type: 'DocumentAdded', data: { id: 'd1' } };
-  const changed = (text) => ({ type: 'TextChanged', data: { docId: 'd1', text } });
-  const published = (text) => ({ type: 'DocumentPublished', data: { docId: 'd1', text } });
-
-  check('complementary guards fire exactly one of the two emissions', () => {
-    const model = build(GUARDED);
-    const differs = evaluateCommand(model, [added], 'UpdateText', { docId: 'd1', text: 'x' });
-    eq(differs.outcome, 'published', 'accepted');
-    eq(differs.events.map((e) => e.type), ['TextChanged'], 'the text differs from the published one');
-
-    const reverts = evaluateCommand(
-      model, [added, changed('a'), published('a'), changed('b')],
-      'UpdateText', { docId: 'd1', text: 'a' });
-    eq(reverts.outcome, 'published', 'accepted');
-    eq(reverts.events.map((e) => e.type), ['TextRevertedToPublished'],
-      're-typing the published text is recorded as the fact it is');
-  });
-
-  check('every guard failing publishes nothing – an accepted command, not a rejection', () => {
-    const { id, model } = openBlank('Guarded');
-    addTaggedEvent(id, 'Pinged', { properties: [] });
-    addDefinition('command-definition', id, 'Ping', {
-      properties: [{ name: 'loud', propertyType: 'boolean', isOptional: false, isList: false }],
-      boundary: [],
-      conditions: [],
-      publishes: [{
-        name: 'Pinged',
-        when: [{ leftHandSide: { parameterName: 'loud' }, predicate: 'isTrue' }],
-        parameters: {},
-      }],
-    });
-    const quiet = evaluateCommand(model(), [], 'Ping', { loud: false });
-    eq(quiet.outcome, 'published', 'accepted either way');
-    eq(quiet.events, [], 'nothing recorded');
-    eq(evaluateCommand(model(), [], 'Ping', { loud: true }).events.map((e) => e.type),
-      ['Pinged'], 'and the guard holding publishes');
-  });
-
-  check('a guard read joins the derived DCB – it may hide nothing from the query', () => {
-    const model = build(GUARDED);
-    const dcb = sandbox.deriveDcb(model, model['command-definitions'].UpdateText);
-    const published = dcb.items.find((item) => item.projection === 'DocumentPublishedText');
-    eq(!!published, true, 'the projection only the guards read is a read');
-    eq(published.types.includes('DocumentPublished'), true,
-      'so its events are in the query');
-  });
-
-  check('renaming an enum member rewrites emission guards too', () => {
-    const { id, model } = open_(GUARDED);
-    const body = deepClone(model()['command-definitions'].PublishDocument);
-    body.publishes[0].when = [{
-      leftHandSide: { projection: 'DocumentStatus', tags: { documentId: { parameterName: 'docId' } } },
-      predicate: 'equals',
-      rightHandSide: { enumMember: 'PendingChanges' },
-    }];
-    updateDefinition('command-definition', id, 'PublishDocument', body);
-    renameMember('custom-type-definition', id, 'DocumentStatus', 'member', 'PendingChanges', 'Dirty');
-    const guard = model()['command-definitions'].PublishDocument.publishes[0].when[0];
-    eq(guard.rightHandSide.enumMember, 'Dirty', 'the guard moved with the member');
-  });
-}
-
-// ---------------------------------------------------------------
 // Derived projections (6.0). One predicate over other projections –
 // no handlers, no initial value, one boolean – declared once, read by
-// command guards, and contributing its
+// command rules, and contributing its
 // operands' queries to any boundary that binds it. Exercised against
 // the shipped derived variant of the content-decisions family.
 // ---------------------------------------------------------------
@@ -4474,6 +4399,31 @@ function modelsWithScenarios() {
     eq(refusal(envelope), 'Projection "CourseCapacity" sets a value from currentValue – 11.0 has no currentValue, '
       + 'so this model cannot be imported.', 'named, with the definition');
     eq(Object.keys(sandbox.projectState()).length, 0, 'nothing loaded');
+  });
+
+  check('a guarded emission keeps its command out of the import, and says so', () => {
+    const envelope = current();
+    const subscribe = envelope.commandDefinitions.find((c) => c.name === 'SubscribeStudentToCourse');
+    subscribe.publishes[0].when = [{ leftHandSide: { parameterName: 'courseId' }, predicate: 'equals', rightHandSide: 'c1' }];
+    resetStore();
+    const { modelId, converted } = importModelFromEnvelope(envelope);
+    const model = sandbox.projectState()[modelId];
+    eq(converted.filter((c) => c.name === 'SubscribeStudentToCourse').map((c) => c.note),
+      ['Its emission of "StudentSubscribedToCourse" was guarded (when …), which nothing can say any more – the command '
+        + 'was not imported, since publishing it every time would change what the command decides.'],
+      'the note says what was refused, and why');
+    eq(model['command-definitions'].SubscribeStudentToCourse, undefined, 'the command stays out');
+    eq(!!model['command-definitions'].DefineCourse, true, 'the rest of the model loads');
+  });
+
+  check('the write path refuses a guarded emission', () => {
+    const { id, model } = open_(SIMPLE);
+    const subscribe = deepClone(model()['command-definitions'].SubscribeStudentToCourse);
+    subscribe.publishes[0].when = [{ leftHandSide: { parameterName: 'courseId' }, predicate: 'equals', rightHandSide: 'c1' }];
+    let refused = null;
+    try { updateDefinition('command-definition', id, 'SubscribeStudentToCourse', subscribe); } catch (error) { refused = error.message; }
+    eq(refused, 'Command "SubscribeStudentToCourse" guards its emission of "StudentSubscribedToCourse" (when …) – '
+      + '11.0 has no guarded emissions.', 'named');
   });
 
   check('the write path refuses currentValue', () => {

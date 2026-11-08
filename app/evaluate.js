@@ -1118,7 +1118,7 @@ function evaluateCommand(model, events, commandName, args) {
 // One decision over `events` – a log, or the fold-by-fold port
 // `evDecideThroughPort` serves. `collect` is that driver's dry run: it
 // only wants to see which reads the decision makes, so it reads all of
-// them – every rule, every instance of a quantified one, every guard and
+// them – every rule, every instance of a quantified one, every
 // emission – and steps over whatever fails. Its outcome is discarded.
 function evDecide(model, events, commandName, args, collect) {
   const body = evOwn(model['command-definitions'], commandName);
@@ -1193,17 +1193,6 @@ function evDecide(model, events, commandName, args, collect) {
     if (!definition) {
       fail(`"${commandName}" publishes "${emission.name}", which this model does not define.`);
     }
-    // A guarded emission fires only while every guard holds. A guard
-    // that does not hold *skips* the emission and nothing else – the
-    // command has already been accepted; `when` decides what it
-    // records, never whether it happens.
-    let held = true;
-    for (const condition of emission.when || []) {
-      if (!condition) continue;
-      const guard = attempt(() => evCheckCondition(model, body, condition, scope));
-      if (!collect && !guard.held) { held = false; break; }
-    }
-    if (!held) continue;
     const data = {};
     for (const property of definition.properties || []) {
       const operand = evOwn(emission.parameters, property.name);

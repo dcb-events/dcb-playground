@@ -1589,7 +1589,6 @@ function derivedResultBase(model, derived, owner = null) {
 // projection that is scripted is found under its qualified name.
 const EXPERIMENTAL_FEATURES = {
   scripted: 'scripted projections',
-  guards: 'guarded emissions',
   optional: 'optional reads',
 };
 
@@ -1610,9 +1609,6 @@ function experimentalFeatures(model) {
     for (const binding of body.boundary || []) {
       if (!binding) continue;
       if (binding.isOptional) note('optional', name);
-    }
-    if ((body.publishes || []).some((emission) => emission && (emission.when || []).length)) {
-      note('guards', name);
     }
   }
   const order = Object.keys(EXPERIMENTAL_FEATURES);
@@ -1807,12 +1803,6 @@ function forEachCommandOperand(body, outerVisit) {
   }
   for (const emission of body.publishes || []) {
     if (!emission) continue;
-    // An emission guard is a condition in every respect a walker cares
-    // about – the same operand set, read from the same scope.
-    for (const condition of emission.when || []) {
-      if (!condition) continue;
-      visitCondition(condition, `guard "${conditionText(condition)}" on "${emission.name}"`);
-    }
     for (const [key, operand] of Object.entries(emission.parameters || {})) {
       visit(operand, { where: `emission "${emission.name}.${key}"` });
     }
@@ -1827,7 +1817,7 @@ function forEachCommandOperand(body, outerVisit) {
 // tags it declares, with the values the read gives them – none at all
 // for an untagged one – and the event types it handles. A group
 // binding contributes exactly what its members are read for: each
-// projection of the group a rule, a guard or an emission reads is that
+// projection of the group a rule or an emission reads is that
 // read (`groupMemberRead`), and one nobody reads is no part of the
 // query – the group is a name, not a boundary.
 //
@@ -2384,7 +2374,7 @@ function aliasInlineRead(body, key, alias) {
 
 // Whether a projection alias can be read in place again: only while
 // every use is the read's whole value, written where a read in place
-// may stand – a rule, a guard, an emission field. A property of it
+// may stand – a rule or an emission field. A property of it
 // (`alias.field`) or a use inside another read has no in-place
 // spelling to go back to.
 function aliasInlinable(body, alias) {
@@ -2413,7 +2403,7 @@ function inlineAliasedRead(body, alias) {
   return body;
 }
 
-// Replaces the top-level operands of every rule, guard and emission
+// Replaces the top-level operands of every rule and emission
 // field with what `replace` returns for each – the places a read in
 // place or an alias's whole value can stand.
 function mapConditionOperands(body, replace) {
@@ -2426,7 +2416,6 @@ function mapConditionOperands(body, replace) {
   for (const condition of body.conditions || []) mapCondition(condition);
   for (const emission of body.publishes || []) {
     if (!emission) continue;
-    for (const condition of emission.when || []) mapCondition(condition);
     for (const key of Object.keys(emission.parameters || {})) {
       emission.parameters[key] = replace(emission.parameters[key]);
     }
@@ -2615,8 +2604,8 @@ function projectionPlan(model, projectionName) {
 // ---------- what consults a read ----------
 //
 // A boundary binding is no longer authored. It comes into existence as
-// the side-effect of a gesture that needs it – a rule, a guard, an
-// emission field, a tag the emission writes, or another binding's
+// the side-effect of a gesture that needs it – a rule, an emission
+// field, a tag the emission writes, or another binding's
 // identifier – and it goes when the last of those goes. The list is
 // still stored, and still authoritative: a rule names its alias and
 // nothing else records the path that alias stands for, so the boundary
@@ -2624,7 +2613,7 @@ function projectionPlan(model, projectionName) {
 // the invariant that every binding is consulted by something, which
 // reference counting gives exactly.
 //
-// The first four reasons are the four places an alias can be named, all
+// The first three reasons are the three places an alias can be named, all
 // of them operands (`forEachCommandOperand` walks the same set). Write
 // coverage was a fifth while entities named the instance an emitted tag
 // wrote; a group names nothing of the kind, so it went with them.
@@ -2635,7 +2624,7 @@ function projectionPlan(model, projectionName) {
 // no conditions is made strictly serial, which the schema promises.
 // Nothing else need consult it for it to matter, so it is never pruned
 // as unreferenced.
-const REFERENCE_REASONS = ['rule', 'guard', 'emission', 'chain', 'serialisation'];
+const REFERENCE_REASONS = ['rule', 'emission', 'chain', 'serialisation'];
 
 function bindingReferences(model, body) {
   const found = new Map();
@@ -2662,7 +2651,6 @@ function bindingReferences(model, body) {
   for (const condition of body.conditions || []) noteCondition(condition, 'rule');
   for (const emission of body.publishes || []) {
     if (!emission) continue;
-    for (const condition of emission.when || []) noteCondition(condition, 'guard');
     for (const operand of Object.values(emission.parameters || {})) {
       noteOperand(operand, 'emission');
     }
@@ -2704,7 +2692,7 @@ function unreferencedBindings(model, body) {
 }
 
 // Which reads the *decision* walks, as against the ones an emission
-// causes. A read a rule or guard names is tested; so is every read it
+// causes. A read a rule names is tested; so is every read it
 // had to be reached through, because a hop exists only to get to the
 // thing being tested.
 //
@@ -2731,7 +2719,7 @@ function decisionAliases(model, body) {
     for (const operand of bindingOperands(binding)) walk(operand);
   };
   for (const [alias, reasons] of references) {
-    if (reasons.has('rule') || reasons.has('guard')) visit(alias);
+    if (reasons.has('rule')) visit(alias);
   }
   return kept;
 }
@@ -2931,8 +2919,7 @@ function rejectionProblem(text) {
   return '';
 }
 
-// Required on every rule and absent from every guard – but only ever
-// advised, never refused: a rule without one still evaluates, and a
+// Required on every rule – but only ever advised, never refused: a rule without one still evaluates, and a
 // refusal by it is what a scenario cannot name (`deriveThen`).
 function rejectionAdvisories(body) {
   const messages = [];
@@ -2945,14 +2932,6 @@ function rejectionAdvisories(body) {
     }
     const problem = rejectionProblem(condition.rejection);
     if (problem) messages.push(`The rejection message of "${conditionText(condition)}" ${problem}.`);
-  }
-  for (const emission of body.publishes || []) {
-    for (const guard of (emission && emission.when) || []) {
-      if (guard && guard.rejection !== undefined) {
-        messages.push(`The guard "${conditionText(guard)}" on "${emission.name}" carries a rejection `
-          + 'message, but a guard never rejects – it skips the emission.');
-      }
-    }
   }
   return messages;
 }
@@ -4062,19 +4041,7 @@ function validateCommandBody(model, body) {
     throw new DomainError(`Boundary binding "${binding.alias}" reads neither a projection nor a group.`);
   }
 
-  // An emission guard is a condition in every respect the checks below
-  // care about – same operands, same predicates, same quantification –
-  // so each one reads this combined list rather than `conditions`
-  // alone. The one structural demand is that `when` is a list at all.
-  for (const emission of body.publishes || []) {
-    if (emission && emission.when !== undefined && !Array.isArray(emission.when)) {
-      throw new DomainError(`"${emission.name}"'s guard ("when") must be a list of conditions.`);
-    }
-  }
-  const allConditions = [
-    ...(body.conditions || []),
-    ...(body.publishes || []).flatMap((e) => (e && e.when) || []),
-  ];
+  const allConditions = body.conditions || [];
 
   // A plural alias cannot supply a single value, so it may be read by a
   // condition – which quantifies over it – but never emitted. Nor may a
@@ -4650,6 +4617,7 @@ const STORABLE_LIST_FIELDS = [
 // importer refuses, or leaves out, what says one (`removedConstructNote`).
 const REMOVED_CONSTRUCTS = {
   currentValue: '11.0 has no currentValue',
+  guard: '11.0 has no guarded emissions',
 };
 
 function removedConstructIn(kind, body) {
@@ -4668,6 +4636,11 @@ function removedConstructIn(kind, body) {
     if (list(body.handlers).some((h) => h && mentions(h.value, 'currentValue'))) {
       return { construct: 'currentValue', what: 'sets a value from currentValue' };
     }
+  }
+  if (kind === 'command-definition') {
+    const guarded = list(body.publishes).find((e) => e && e.when !== undefined
+      && !(Array.isArray(e.when) && !e.when.length));
+    if (guarded) return { construct: 'guard', what: `guards its emission of "${guarded.name}" (when …)`, emission: guarded.name };
   }
   return null;
 }
@@ -5310,14 +5283,9 @@ const MEMBER_REWRITES = {
     // A command condition compares a read's enum-typed value against a
     // member by value – resolved through the boundary rather than
     // assumed, since what is read is whichever the alias names.
-    // An emission guard is the same comparison in the same scope.
     out.push(...rewriteCommands(model, (command) => {
       let touched = false;
-      const guarded = [
-        ...(command.conditions || []),
-        ...(command.publishes || []).flatMap((e) => (e && e.when) || []),
-      ];
-      for (const condition of guarded) {
+      for (const condition of command.conditions || []) {
         if (!condition) continue;
         // In an `equalsAny` list every entry sits opposite the left-hand
         // side; the entry objects are mutated in place like any operand.
@@ -5844,8 +5812,8 @@ function reorderDefinitions(kind, modelId, order) {
 }
 
 // Two bodies that say the same thing. Stored bodies spell their
-// defaults inconsistently – `isList: false` here, absent there, `when:
-// []` on one emission and nothing on the next – and a writer that
+// defaults inconsistently – `isList: false` here, absent there, an
+// empty list on one body and nothing on the next – and a writer that
 // compared them literally would rewrite half a model to change one
 // rule. So the defaults the schema names are dropped before comparing,
 // as are key order and empty containers.
@@ -6755,7 +6723,10 @@ function refuseRemovedConstructs({ groups, projections, commands }) {
   return notes;
 }
 
-const REMOVED_COMMAND_NOTES = {};
+const REMOVED_COMMAND_NOTES = {
+  guard: ({ emission }) => `Its emission of "${emission}" was guarded (when …), which nothing can say any more – `
+    + 'the command was not imported, since publishing it every time would change what the command decides.',
+};
 
 // The synthesizer: rebuilds a shared model into a brand-new one by
 // replaying it through the same commands manual editing uses, so an
@@ -7398,7 +7369,7 @@ function seedProductPricing(modelId) {
 }
 
 // ============================================================
-// Content based decisions – one domain, five spellings.
+// Content based decisions – one domain, four spellings.
 //
 // A document's Published/PendingChanges distinction depends on whether
 // its current text equals the last published one: a decision made from
@@ -7407,10 +7378,10 @@ function seedProductPricing(modelId) {
 // compare the ways out: a scripted projection (the baseline below),
 // the comparison moved into command conditions over two plain text
 // projections (`seedDocumentAuthoring`), the client echoing the text
-// it saw for the command to verify (`seedVerifiedPublish`), the
-// decision made at write time and recorded as distinct events through
-// guarded emissions (`seedGuardedAuthoring`), and the comparison
-// declared once as a derived projection (`seedDerivedPending`).
+// it saw for the command to verify (`seedVerifiedPublish`), and the
+// comparison declared once as a derived projection
+// (`seedDerivedPending`). A fifth, the decision made at write time
+// through guarded emissions, left with them in 11.0.
 // docs/research/2026-09-19-content-based-decision-alternatives.md
 // holds the primary sources; the comparison note beside it holds the
 // verdict.
@@ -7930,126 +7901,6 @@ function seedDeveloperHours(modelId) {
   });
 }
 
-// The decision made at write time and recorded. `UpdateText` carries
-// two guarded emissions – `TextChanged` while the new text differs
-// from the published one, `TextRevertedToPublished` while it does not
-// – so the log *says* a revert happened and the five-state status is
-// fully declarative again: one plain handler per event type, no
-// comparison anywhere downstream of the command. This is the decider
-// pattern's shape (decide: state and command in, one of several event
-// types out), which the DCB canon itself never exercises.
-function seedGuardedAuthoring(modelId) {
-  const prop = seedProp;
-  const handler = seedHandler;
-  const param = seedParam;
-  const status = (parameter) => seedDocument('DocumentStatus', parameter);
-
-  addDefinition('custom-type-definition', modelId, 'DocumentStatus', seedEnumType('DocumentStatus',
-    ['NonExistent', 'Draft', 'Published', 'PendingChanges', 'Archived']));
-  addDefinition('custom-type-definition', modelId, 'DocumentId', seedTagType());
-
-  const event = (name, properties) =>
-    addDefinition('event-definition', modelId, name, { properties, tags: seedTags(modelId, properties) });
-
-  event('DocumentAdded', [prop('id', 'DocumentId')]);
-  event('TextChanged', [prop('docId', 'DocumentId'), prop('text', 'string')]);
-  event('TextRevertedToPublished', [prop('docId', 'DocumentId'), prop('text', 'string')]);
-  event('DocumentPublished', [prop('docId', 'DocumentId'), prop('text', 'string')]);
-  event('DocumentArchived', [prop('docId', 'DocumentId')]);
-
-  const projection = (name, body) =>
-    addDefinition('projection-definition', modelId, name, body);
-
-  // The five states, every transition a plain `set` – the split events
-  // carry the distinction the scripted baseline computed.
-  projection('DocumentStatus', seedThingProjection('Document', 'DocumentStatus',
-    { enumMember: 'NonExistent' }, [
-      handler('DocumentAdded', 'set', { enumMember: 'Draft' }),
-      handler('TextChanged', 'set', { enumMember: 'PendingChanges' }),
-      handler('TextRevertedToPublished', 'set', { enumMember: 'Published' }),
-      handler('DocumentPublished', 'set', { enumMember: 'Published' }),
-      handler('DocumentArchived', 'set', { enumMember: 'Archived' }),
-    ]));
-  projection('DocumentCurrentText', seedThingProjection('Document', 'string', null, [
-    handler('DocumentAdded', 'set', ''),
-    handler('TextChanged', 'set', { eventProperty: 'text' }),
-    handler('TextRevertedToPublished', 'set', { eventProperty: 'text' }),
-  ]));
-  projection('DocumentPublishedText', seedThingProjection('Document', 'string', null, [
-    handler('DocumentPublished', 'set', { eventProperty: 'text' }),
-  ]));
-
-  const command = (name, body) => addDefinition('command-definition', modelId, name, body);
-
-  command('AddDocument', {
-    properties: [prop('id', 'DocumentId')],
-    boundary: [],
-    conditions: [
-      { leftHandSide: status('id'), predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' },
-        rejection: 'Document already exists' },
-    ],
-    publishes: [{ name: 'DocumentAdded', parameters: { id: param('id') } }],
-  });
-
-  command('UpdateText', {
-    properties: [prop('docId', 'DocumentId'), prop('text', 'string')],
-    boundary: [],
-    conditions: [
-      { leftHandSide: status(), predicate: 'equalsAny',
-        rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }, { enumMember: 'PendingChanges' }],
-        rejection: 'Document is not editable' },
-      { leftHandSide: seedDocument('DocumentCurrentText'), predicate: 'equals',
-        rightHandSide: param('text'), negate: true,
-        rejection: 'Text is unchanged' },
-    ],
-    // The guards are complements, so exactly one emission fires and
-    // the accepted command always records which fact it was. Guard
-    // reads count toward the query like any condition's, so the
-    // comparison hides nothing from the derived DCB.
-    publishes: [
-      {
-        name: 'TextChanged',
-        when: [{ leftHandSide: param('text'), predicate: 'equals',
-          rightHandSide: seedDocument('DocumentPublishedText'), negate: true }],
-        parameters: { docId: param('docId'), text: param('text') },
-      },
-      {
-        name: 'TextRevertedToPublished',
-        when: [{ leftHandSide: param('text'), predicate: 'equals',
-          rightHandSide: seedDocument('DocumentPublishedText') }],
-        parameters: { docId: param('docId'), text: param('text') },
-      },
-    ],
-  });
-
-  command('PublishDocument', {
-    properties: [prop('docId', 'DocumentId')],
-    boundary: [],
-    conditions: [
-      // The stored status is trustworthy again, so the five-state
-      // guard the scripted baseline used works verbatim.
-      { leftHandSide: status(), predicate: 'equalsAny',
-        rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'PendingChanges' }],
-        rejection: 'Document cannot be published' },
-    ],
-    publishes: [{
-      name: 'DocumentPublished',
-      parameters: { docId: param('docId'), text: seedDocument('DocumentCurrentText') },
-    }],
-  });
-
-  command('ArchiveDocument', {
-    properties: [prop('docId', 'DocumentId')],
-    boundary: [],
-    conditions: [
-      { leftHandSide: status(), predicate: 'equalsAny',
-        rightHandSide: [{ enumMember: 'Draft' }, { enumMember: 'Published' }, { enumMember: 'PendingChanges' }],
-        rejection: 'Document cannot be archived' },
-    ],
-    publishes: [{ name: 'DocumentArchived', parameters: { docId: param('docId') } }],
-  });
-}
-
 // `experimental` marks the entries that use what the experimental flag
 // keeps off the pages (scripts, guards…); the model list shows those
 // only with the flag on. A test holds the mark to the built model's own
@@ -8110,15 +7961,6 @@ const PREDEFINED_MODELS = [
       + 'one – the optimistic check OrderProducts applies to prices, made a domain rule. A stale '
       + 'echo is rejected; the published event carries the proven text.',
     build: (modelId) => { seedDocumentAuthoring(modelId); seedVerifiedPublish(modelId); },
-  },
-  {
-    name: 'Content based decisions (guarded emissions)',
-    slug: 'content-decisions-guarded',
-    experimental: true,
-    description: 'The decision made at write time and recorded: UpdateText emits TextChanged or '
-      + 'TextRevertedToPublished under complementary guards, so the log says a revert happened '
-      + 'and the five-state status folds from plain handlers again.',
-    build: (modelId) => { seedGuardedAuthoring(modelId); },
   },
   {
     name: 'Content based decisions (derived projection)',
@@ -9268,7 +9110,7 @@ function evaluateCommand(model, events, commandName, args) {
 // One decision over `events` – a log, or the fold-by-fold port
 // `evDecideThroughPort` serves. `collect` is that driver's dry run: it
 // only wants to see which reads the decision makes, so it reads all of
-// them – every rule, every instance of a quantified one, every guard and
+// them – every rule, every instance of a quantified one, every
 // emission – and steps over whatever fails. Its outcome is discarded.
 function evDecide(model, events, commandName, args, collect) {
   const body = evOwn(model['command-definitions'], commandName);
@@ -9343,17 +9185,6 @@ function evDecide(model, events, commandName, args, collect) {
     if (!definition) {
       fail(`"${commandName}" publishes "${emission.name}", which this model does not define.`);
     }
-    // A guarded emission fires only while every guard holds. A guard
-    // that does not hold *skips* the emission and nothing else – the
-    // command has already been accepted; `when` decides what it
-    // records, never whether it happens.
-    let held = true;
-    for (const condition of emission.when || []) {
-      if (!condition) continue;
-      const guard = attempt(() => evCheckCondition(model, body, condition, scope));
-      if (!collect && !guard.held) { held = false; break; }
-    }
-    if (!held) continue;
     const data = {};
     for (const property of definition.properties || []) {
       const operand = evOwn(emission.parameters, property.name);
@@ -11303,9 +11134,8 @@ function parseModelSourceText(text, options) {
         const emission = { name: eventToken.v };
         mark(emission, 'name', eventToken);
         if (accept('{')) emission.parameters = argumentList('}', commandOperand);
-        if (accept('when')) {
-          emission.when = [condition(commandOperand)];
-          while (accept('and')) emission.when.push(condition(commandOperand));
+        if (is('when')) {
+          fail('"when" on an emission is gone – 11.0 has no guarded emissions: an emission is published whenever its command is.');
         }
         body.publishes.push(emission);
       } else if (is('scenarios')) {
@@ -12494,8 +12324,6 @@ function printCommand(name, body, names) {
         : inline.length <= 88 ? inline
           : `${text} {\n${fields.map((f) => '  ' + f + ',').join('\n')}\n}`;
     }
-    const guards = emission.when || [];
-    if (guards.length) text += `\n  when ${guards.map((c) => sourceCondition(c, operand)).join('\n   and ')}`;
     return text;
   });
   const groups = [reads, rules, emits].filter((group) => group.length);
@@ -12877,7 +12705,7 @@ function sourceAdvisories(model, parsed) {
 
 // What each `alias` adds to its command's append condition, as the text
 // stands. `alias course = Course(courseId)` names an instance, not what
-// is queried of it: only the projections a rule, guard or emission
+// is queried of it: only the projections a rule or emission
 // actually uses put their projections' events in the query
 // (`deriveDcb`), so a command testing `course.status` never conflicts
 // with a `CourseCapacityChanged`. The line says the opposite at a
@@ -13653,7 +13481,6 @@ function sourceSymbols(parsed) {
       add(sourceSymbol('event', emission.name), slotsOf(emission).name);
       keyed(emission.parameters, (key) => sourceSymbol('eventProperty', emission.name, key),
         (arg, key) => commandOperand(name, body, arg, eventPropertyType(emission.name, key)));
-      for (const rule of list(emission.when)) condition(name, body, rule);
     }
   }
 
@@ -13884,7 +13711,7 @@ function sourceApplyEdits(text, edits) {
 // ---------- introduce alias ----------
 
 // Edits that name a read written in place – `CourseStatus(courseId)` in
-// a rule, a guard, an emission or another read – with an alias:
+// a rule, an emission or another read – with an alias:
 // `{ name, title, edits }`, or `{ error }`. The innermost read under
 // the cursor is the one named; it is declared after the command's last
 // alias, or first in its block, and every equal read in the command is
@@ -13924,7 +13751,7 @@ function sourceIntroduceAlias(text, line, col) {
     const hit = all.filter(covers).pop();
     if (hit) { command = name; target = hit; reads = all; break; }
   }
-  if (!target) return { error: 'There is no read in place here – put the cursor on one in a rule, a guard or an emission.' };
+  if (!target) return { error: 'There is no read in place here – put the cursor on one in a rule or an emission.' };
 
   const body = parsed.collections['command-definition'][command];
   const key = JSON.stringify(target);
@@ -13992,7 +13819,7 @@ function sourceIntroduceAlias(text, line, col) {
 
 // ---------- completion ----------
 
-const SOURCE_CONDITION_STARTS = ['require', 'when', 'and'];
+const SOURCE_CONDITION_STARTS = ['require'];
 const SOURCE_COMPARISONS = ['==', '!=', '<', '<=', '>', '>=', ...SOURCE_WORD_PREDICATES];
 // How each predicate is written after an operand, in the order a rule
 // editor offers them.
@@ -14054,7 +13881,7 @@ function sourceOffset(text, line, col) {
 // whole text's parse, with `model`'s definitions filling in for any
 // that fail to parse while being typed.
 // `experimental: false` leaves out what the experimental flag keeps off
-// the pages – scripted projections and guards. A text using them still
+// the pages – scripted projections. A text using them still
 // reads. Groups are not among them: a name is nothing to hide.
 // A group's projections complete as top-level ones do, by their
 // qualified names (`Course.capacity`), with the group's tag among a
@@ -14730,8 +14557,7 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     }
     return done(false);
   }
-  // Where a condition being written began: after its last `require`,
-  // `when`, `and` or `by`.
+  // Where a condition being written began: after its last `require`.
   const conditionTail = (tokensOf) => {
     let at = -1;
     tokensOf.forEach((t, i) => { if (SOURCE_CONDITION_STARTS.includes(t.v)) at = i; });
@@ -14759,8 +14585,6 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
         definitionItems('event-definition', { sort: 0, detail: (n, b) => list(b.properties).map((p) => p.name).join(', ') });
         return done();
       }
-      if (s.some((t) => t.v === 'when')) return conditionItems(scope, conditionTail(s));
-      if ((prev === '}' || s.length === 2) && experimental) { keywords([['when', 'when ']]); return done(false); }
       return done(false);
     }
     if (first === 'require') {
@@ -14969,22 +14793,14 @@ function sourceExperimentalMarks(text) {
     line: token.line, col: token.col, endLine: token.endLine, endCol: token.endCol,
     message: `${what} is experimental – turn experimental features on in Settings to author it on the pages.`,
   });
-  // Which blocks are scenarios: `when` there is a scenario's, not a guard.
-  const frames = [];
-  let scenarioNext = false;
   tokens.forEach((token, i) => {
     const v = token.v;
-    const prev = tokens[i - 1];
     const next = tokens[i + 1];
-    if (token.t === 'punct' && v === '{') { frames.push(scenarioNext); scenarioNext = false; return; }
-    if (token.t === 'punct' && v === '}') { frames.pop(); return; }
     if (token.t === 'punct' && v === '?' && tokens[i - 2] && tokens[i - 2].v === 'alias') { said(token, 'An optional read'); return; }
     if (token.t !== 'ident') return;
-    if (v === 'scenario') { scenarioNext = true; return; }
     // A group is not marked: a name is nothing to hide. A scripted
     // projection is, in a group as anywhere.
     if (v === 'scripted' && next && (next.v === 'projection' || next.v === 'untagged')) said(token, 'A scripted projection');
-    else if (v === 'when' && !frames.includes(true)) said(token, 'A guarded emission');
   });
   return out;
 }
@@ -15353,7 +15169,7 @@ const SOURCE_REFERENCE_GOTCHAS = `## Gotchas
 `;
 
 const SOURCE_REFERENCE_UNOFFERED = 'Not offered to agents: scripted projections, '
-  + 'guarded emissions (emit … when …), optional reads (alias x? = …), arguments on a group\'s projection '
+  + 'optional reads (alias x? = …), arguments on a group\'s projection '
   + 'read through an alias (x.p(a: …)). A text or '
   + 'definition that adds one is refused. A model that already uses them shows them in get_model_source; keep those parts as they are.';
 
