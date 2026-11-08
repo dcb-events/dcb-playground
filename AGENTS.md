@@ -140,6 +140,8 @@ was decided, why, and what was tried and reverted:
 - how evaluation gets its events, the read port — _The read port_
 - JSON Schemas of arguments and payloads — _Value schemas_
 - `datetime`, `duration`, a command's arithmetic — _Time_
+- descriptions, `@assumption` / `@external` / `@unresolved`, `@deprecated`,
+  `@sensitive` — _Descriptions and notes_
 - the Metro map view, the command map, `metroLayout` — _The metro map_
 - comparing two models, the Compare view — _Comparing models_
 - undo, redo, the per-model history — _History and undo_

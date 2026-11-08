@@ -4,7 +4,8 @@
 // own code (playground-core.js), so what passes here is what the
 // playground and dcb.events accept. Plain Node, nothing to install.
 //
-//   node dcb.js check <file> [--cover A,B]   # problems, then each command's boundary
+//   node dcb.js check <file> [--cover A,B] [--strict]
+//                                            # problems, notes, then each command's boundary
 //   node dcb.js conflicts <file>             # for each command, which commands can invalidate it
 //   node dcb.js replay <file> <export> [--map Old=New,…] [--read Projection=value,…]
 //                                            # stored events (NDJSON) against the model
@@ -17,6 +18,11 @@
 // here anything left to fix is a problem and exits 1. `--cover` narrows
 // one check only: scenario coverage is required of the commands it names,
 // so an edit answers for what it changed, and gaps elsewhere are listed.
+// Notes (11.0) are documentation and never a problem: `check` counts the
+// `@unresolved` ones ("Model is incomplete: N unresolved", exit 0 –
+// `--strict` makes it a problem) and lists each command's `@assumption`
+// and `@external` notes for the hand-over. `replay` masks the values of
+// a `@sensitive` type it prints.
 // ============================================================
 'use strict';
 
@@ -125,6 +131,38 @@ function checkProblems(playground, file, { model, parsed }, cover) {
   const required = gaps.filter(({ name }) => !cover || cover.includes(name));
   problems.push(...required.map(({ name, gap }) => `command ${name}: ${gap}`));
   return { problems, otherGaps: gaps.filter((gap) => !required.includes(gap)) };
+}
+
+// Every `@unresolved` note (11.0), as `kind name: text`, the model's
+// definitions in order – grouped projections under their group.
+function unresolvedNotes(model) {
+  const out = [];
+  const kinds = [['custom-type-definitions', 'type'], ['event-definitions', 'event'], ['group-definitions', 'group'],
+    ['projection-definitions', 'projection'], ['command-definitions', 'command']];
+  for (const [collection, label] of kinds) {
+    for (const [name, body] of Object.entries(model[collection] || {})) {
+      for (const note of (body && body.unresolved) || []) out.push(`${label} ${name}: ${note}`);
+      for (const inner of (label === 'group' && body.projections) || []) {
+        for (const note of (inner && inner.unresolved) || []) out.push(`projection ${name}.${inner.name}: ${note}`);
+      }
+    }
+  }
+  return out;
+}
+
+// Each command's notes for the hand-over: what was assumed and what the
+// layer around the commands checks, then what is open.
+function commandNotes(model) {
+  const lines = [];
+  for (const [name, body] of Object.entries(model['command-definitions'])) {
+    const notes = [
+      ...(body.assumptions || []).map((note) => `assumption: ${note}`),
+      ...(body.externalRules || []).map((note) => `external: ${note}`),
+      ...(body.unresolved || []).map((note) => `unresolved: ${note}`),
+    ];
+    if (notes.length) lines.push(`${name}:`, ...notes.map((note) => `  ${note}`));
+  }
+  return lines;
 }
 
 function boundaryLines(playground, model) {
@@ -238,6 +276,23 @@ function valueProblem(model, property, value) {
   return null;
 }
 
+// A value as `replay` prints it: what a `@sensitive` type holds (11.0)
+// masked – personal data has no business in a terminal – a list's
+// elements and a record's fields included.
+function masked(model, typeName, value) {
+  if (value === null || value === undefined) return value;
+  const types = model['custom-type-definitions'] || {};
+  const type = types[typeName];
+  if (Array.isArray(value)) return value.map((element) => masked(model, typeName, element));
+  if (type && type.isSensitive === true) return '•••';
+  if (type && Array.isArray(type.properties) && typeof value === 'object') {
+    const out = { ...value };
+    for (const field of type.properties) if (field && field.name in out) out[field.name] = masked(model, field.propertyType, out[field.name]);
+    return out;
+  }
+  return value;
+}
+
 function replay(playground, model, exportFile, map, reads) {
   const definitions = model['event-definitions'];
   const counts = {};
@@ -292,7 +347,8 @@ function replay(playground, model, exportFile, map, reads) {
     const given = values ? values.split(',') : [];
     if (given.length !== params.length) { reported.push(`  ${spec}: needs ${params.length} tag value(s)`); continue; }
     const tags = Object.fromEntries(params.map((param, at) => [param.name, given[at]]));
-    reported.push(`  ${spec}: ${JSON.stringify(playground.foldProjection(model, events, projection, { tags }))}`);
+    const value = playground.foldProjection(model, events, projection, { tags });
+    reported.push(`  ${spec}: ${JSON.stringify(masked(model, definition.valueType, value))}`);
   }
   console.log([...out, ...reported].join('\n'));
   return Object.keys(unknown).length || Object.keys(mismatches).length || unreadable ? 1 : 0;
@@ -309,12 +365,15 @@ function main() {
   const args = process.argv.slice(2);
   const reads = takeOption(args, '--read');
   const map = Object.fromEntries(takeOption(args, '--map').flatMap((pairs) => pairs.split(',')).map((pair) => pair.split('=')));
+  const strictAt = args.indexOf('--strict');
+  const strict = strictAt >= 0;
+  if (strict) args.splice(strictAt, 1);
   const coverAt = args.indexOf('--cover');
   const cover = coverAt < 0 ? null : (args.splice(coverAt, 2)[1] || '').split(',').filter(Boolean);
   const [verb, file, ...rest] = args;
   const replaying = verb === 'replay';
   if (!['check', 'print', 'json', 'link', 'conflicts', 'replay'].includes(verb) || !file || rest.length !== (replaying ? 1 : 0) || (cover && !cover.length)) {
-    console.error('usage: dcb.js check <file> [--cover Command,…] | print|json|link|conflicts <file> | replay <file> <export> [--map Old=New,…] [--read Projection=value,…]');
+    console.error('usage: dcb.js check <file> [--cover Command,…] [--strict] | print|json|link|conflicts <file> | replay <file> <export> [--map Old=New,…] [--read Projection=value,…]');
     return 2;
   }
   const playground = loadPlayground(fs.readFileSync(file, 'utf8'));
@@ -340,11 +399,16 @@ function main() {
       + (playground.experimentalFeatures(model).length ? '&experimental' : ''));
   } else {
     const { problems: found, otherGaps } = checkProblems(playground, file, loaded, cover);
-    const problems = [...loaded.problems, ...found];
+    const unresolved = unresolvedNotes(model);
+    const incomplete = unresolved.length ? [`Model is incomplete: ${unresolved.length} unresolved`, ...unresolved.map((note) => `  ${note}`)] : [];
+    const problems = [...loaded.problems, ...found, ...(strict && incomplete.length ? [incomplete.join('\n')] : [])];
     if (problems.length) console.error(problems.join('\n') + `\n\n${problems.length} problem(s)\n`);
     if (otherGaps.length) console.log('Not covered, outside --cover:\n' + otherGaps.map(({ name, gap }) => `  command ${name}: ${gap}`).join('\n') + '\n');
     const notes = vocabularyNotes(model);
     if (notes.length) console.log('Worth a look:\n' + notes.map((note) => `  ${note}`).join('\n') + '\n');
+    if (incomplete.length && !strict) console.log(incomplete.join('\n') + '\n');
+    const handOver = commandNotes(model);
+    if (handOver.length) console.log('Notes per command:\n' + handOver.map((line) => `  ${line}`).join('\n') + '\n');
     const scenarios = Object.keys(model['scenario-definitions']).length + Object.keys(model['projection-scenario-definitions']).length;
     if (!problems.length) console.log(`${scenarios} scenario(s) hold\n`);
     console.log(boundaryLines(playground, model).join('\n'));

@@ -28,11 +28,17 @@ loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js'], {
     + ' globalThis.DEF_COLLECTIONS = DEF_COLLECTIONS; globalThis.DomainError = DomainError;'
     + ' globalThis.SOURCE_KEYWORDS = SOURCE_KEYWORDS; globalThis.SOURCE_BASE_TYPES = SOURCE_BASE_TYPES;'
     + ' globalThis.SOURCE_REFERENCE_TOUR = SOURCE_REFERENCE_TOUR; globalThis.SOURCE_REFERENCE_FORMS = SOURCE_REFERENCE_FORMS;'
-    + ' globalThis.SOURCE_REFERENCE_EXAMPLE = SOURCE_REFERENCE_EXAMPLE;'
+    + ' globalThis.SOURCE_REFERENCE_EXAMPLE = SOURCE_REFERENCE_EXAMPLE; globalThis.SOURCE_ANNOTATIONS = SOURCE_ANNOTATIONS;'
     + ' globalThis.SOURCE_REFERENCE_EXAMPLE_SLUG = SOURCE_REFERENCE_EXAMPLE_SLUG; globalThis.SOURCE_MONARCH = SOURCE_MONARCH;'
     + '',
 });
 const { check, eq, finish } = makeChecker();
+
+// Many fixtures here record events by hand that no command of theirs
+// emits, so the advisory saying so (11.0) is left out where a check is
+// about something else; the shipped models are held to it whole.
+const UNEMITTED = /^No command emits it\./;
+const advisedOtherwise = (model) => sandbox.modelAdvisories(model).filter((a) => !UNEMITTED.test(a.message));
 const {
   loadPredefinedModel, projectState, modelToSource, parseModelSource, applyModelSource,
   importModelFromEnvelope, sameDefinition, loadEvents, onAppend,
@@ -368,7 +374,7 @@ check('every predefined model prints without a JSON fallback and parses back equ
 check('a text with groups prints back exactly as written, and applies again as nothing', () => {
   for (const text of [GROUPS, GROUPS_MORE]) {
     const { id, model } = buildText(text);
-    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+    eq(advisedOtherwise(model()), [], 'advisory-clean');
     eq(modelToSource(model()), text, 'printed as written');
     const parsed = parseModelSource(text);
     eq(parsed.diagnostics, [], 'it reads');
@@ -785,7 +791,7 @@ check('a name defined twice is an error on the second', () => {
 });
 
 check('annotations go only where they mean something', () => {
-  eq(parseModelSource('@feature("x")\nevent A {}').diagnostics[0].message, 'A event carries no @feature.', 'misplaced');
+  eq(parseModelSource('@feature("x")\nevent A {}').diagnostics[0].message, 'An event carries no @feature.', 'misplaced');
   eq(parseModelSource('@colour("x")\nevent A {}').diagnostics[0].message.startsWith('There is no @colour'), true, 'unknown');
 });
 
@@ -1146,7 +1152,9 @@ check('the draft is advised on before it is applied', () => {
   const { model } = buildText();
   const text = swap(modelToSource(model()), 'emit CourseArchived { courseId }', 'emit CourseBurnt { courseId }');
   const parsed = parseModelSource(text);
-  const found = sourceAdvisories(model(), parsed);
+  const all = sourceAdvisories(model(), parsed);
+  eq(all.filter((a) => UNEMITTED.test(a.message)).map((a) => a.name), ['CourseArchived'], 'nothing emits CourseArchived now');
+  const found = all.filter((a) => !UNEMITTED.test(a.message));
   eq(found.length, 1, JSON.stringify(found));
   eq(found[0].name, 'ArchiveCourse', 'on the command');
   const span = sourceSpanAt(parsed, text.split('\n').findIndex((l) => l.includes('CourseBurnt')) + 1);
@@ -1607,7 +1615,7 @@ check('a read fans out where it says so – each, paired by index with its list'
   const id = sandbox.createDcbModel('Fan');
   applyModelSource(id, text);
   const model = () => projectState()[id];
-  eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+  eq(advisedOtherwise(model()), [], 'advisory-clean');
   const printed = modelToSource(model());
   eq(printed.includes('alias exists = ProductExists(each items.productId)'), true, 'printed as written');
   eq(printed.includes('require ProductPrice(each items.productId) == items.price'), true, 'in place too');
@@ -1627,12 +1635,12 @@ check('a read fans out where it says so – each, paired by index with its list'
     'the query says it fans out');
   const bad = sandbox.createDcbModel('Bad');
   applyModelSource(bad, swap(text, 'require ProductPrice(each items.productId)', 'require ProductPrice(each orderId)'));
-  eq(sandbox.modelAdvisories(projectState()[bad]).some((a) => /orderId is one value – "each" fans out over a list/.test(a.message)),
-    true, 'each over one value is advised: ' + sandbox.modelAdvisories(projectState()[bad]).map((a) => a.message).join('; '));
+  eq(advisedOtherwise(projectState()[bad]).some((a) => /orderId is one value – "each" fans out over a list/.test(a.message)),
+    true, 'each over one value is advised: ' + advisedOtherwise(projectState()[bad]).map((a) => a.message).join('; '));
   const mistyped = sandbox.createDcbModel('Mistyped');
   applyModelSource(mistyped, swap(text, 'require ProductPrice(each items.productId)', 'require ProductPrice(orderId)'));
-  eq(sandbox.modelAdvisories(projectState()[mistyped]).some((a) => /orderId, an OrderId – but its "productId" tag is a ProductId/.test(a.message)),
-    true, 'a value of another tag type is advised: ' + sandbox.modelAdvisories(projectState()[mistyped]).map((a) => a.message).join('; '));
+  eq(advisedOtherwise(projectState()[mistyped]).some((a) => /orderId, an OrderId – but its "productId" tag is a ProductId/.test(a.message)),
+    true, 'a value of another tag type is advised: ' + advisedOtherwise(projectState()[mistyped]).map((a) => a.message).join('; '));
 });
 
 check('the code view says what is experimental, and offers none of it with the flag off', () => {
@@ -1654,7 +1662,7 @@ check('the code view says what is experimental, and offers none of it with the f
   const groupBody = 'tag type XId = string\ngroup X (tag xId: XId) {\n  |\n}\n';
   eq(at(groupBody, { experimental: false }), ['projection', 'derived projection'], 'and its projections');
   eq(at(groupBody, { experimental: true }), ['projection', 'derived projection'], 'the same with the flag on');
-  eq(at('@|', { experimental: false }), ['icon', 'feature', 'tagSchema'], 'no annotation is experimental');
+  eq(at('@|', { experimental: false }), ['icon', 'feature', 'tagSchema', 'sensitive', 'deprecated', 'assumption', 'external', 'unresolved'], 'no annotation is experimental');
   eq(at('|', { experimental: false }).includes('derived projection'), true, 'derived projections are offered');
   eq(at('|', { experimental: true }).includes('scripted projection'), false, 'and nothing scripted, flag or not');
   const head = 'tag type CourseId = string\nprojection Cap (tag courseId: CourseId): integer = 0 {}\n';
@@ -2008,7 +2016,7 @@ check('completion knows scenarios, declarations, and when to stay quiet', () => 
   const untagged = completeAt(swap(modelToSource(sequence), 'then CourseNumbering() == "c1"', 'then CourseNumbering() == |'),
     { model: sequence }).items[0];
   eq(untagged && untagged.insert, '"c1"', 'an untagged one');
-  eq(completeAt(swap(text, '// Commands', '// Commands\n@|')).labels, ['icon', 'feature', 'tagSchema'], 'annotations');
+  eq(completeAt(swap(text, '// Commands', '// Commands\n@|')).labels, ['icon', 'feature', 'tagSchema', 'sensitive', 'deprecated', 'assumption', 'external', 'unresolved'], 'annotations');
   eq(completeAt(swap(text, 'command DefineCourse(courseId: CourseId', 'command DefineCourse(courseId: |')).labels
     .slice(0, 3), ['boolean', 'integer', 'string'], 'a type');
   eq(completeAt(swap(text, '// Commands', '// Commands |')).labels, [], 'in a comment');
@@ -2138,6 +2146,9 @@ check('every keyword outside the experimental ones is shown to an agent', () => 
   const shown = new Set((sandbox.SOURCE_REFERENCE_TOUR + '\n' + sandbox.SOURCE_REFERENCE_FORMS).match(/[A-Za-z]+/g));
   eq(sandbox.SOURCE_KEYWORDS.filter((word) => !experimental.includes(word) && !shown.has(word)), [],
     'add each to the tour or the forms in dsl.js');
+  const reference = sandbox.sourceLanguageReference();
+  eq(Object.keys(sandbox.SOURCE_ANNOTATIONS).filter((name) => !reference.includes('@' + name)), [], 'every annotation');
+  eq(sandbox.SOURCE_REFERENCE_TOUR.includes('///'), true, 'a doc comment, in the tour');
 });
 
 // Errors never stop the read – nesting included. Past a depth no model
@@ -2396,6 +2407,43 @@ event SeatsReserved { tag courseId: CourseId, expiresAt: datetime, hold: duratio
     eq(result.stdout.includes('not of type'), false, 'a time is a string');
   });
 
+  check('the skill\'s check counts what is unresolved, fails it with --strict, and lists notes per command', () => {
+    const noted = write('noted.dcb', swap(swap(MODEL, 'command ClaimUsername(',
+      '@assumption("A username is never released")\n@external("The username is not on the block list")\n'
+      + '@unresolved("Are usernames case-sensitive?")\ncommand ClaimUsername('),
+    'event UsernameClaimed', '@unresolved("Should claims expire?")\nevent UsernameClaimed'));
+    const plain = spawnSync(process.execPath, [CLI, 'check', noted], { encoding: 'utf8' });
+    eq(plain.status, 0, plain.stderr);
+    eq(plain.stdout.includes('Model is incomplete: 2 unresolved'), true, plain.stdout);
+    eq(plain.stdout.includes('Notes per command:\n  ClaimUsername:\n    assumption: A username is never released\n    external: The username is not on the block list'), true, plain.stdout);
+    eq(plain.stdout.includes('unresolved: Are usernames case-sensitive?'), true, 'each unresolved note');
+    const strict = spawnSync(process.execPath, [CLI, 'check', noted, '--strict'], { encoding: 'utf8' });
+    eq(strict.status, 1, strict.stdout);
+    eq(strict.stderr.includes('Model is incomplete: 2 unresolved'), true, strict.stderr);
+    const clean = spawnSync(process.execPath, [CLI, 'check', write('clean.dcb', MODEL), '--strict'], { encoding: 'utf8' });
+    eq([clean.status, clean.stdout.includes('incomplete')], [0, false], 'nothing unresolved');
+  });
+
+  check('the skill\'s replay masks a sensitive value it folds', () => {
+    const model = write('sensitive.dcb', `model "Sensitive"
+tag type CustomerId = string
+@sensitive
+tag type EmailAddress = string
+event EmailClaimed { tag customerId: CustomerId, tag email: EmailAddress }
+projection CustomerEmail (tag customerId: CustomerId): EmailAddress = null {
+  on EmailClaimed => set event.data.email
+}
+command Claim(customerId: CustomerId, email: EmailAddress) {
+  emit EmailClaimed { customerId, email }
+}
+`);
+    const lines = write('sensitive.ndjson', JSON.stringify({ type: 'EmailClaimed', data: { customerId: 'c1', email: 'a@x.test' } }) + '\n');
+    const result = spawnSync(process.execPath, [CLI, 'replay', model, lines, '--read', 'CustomerEmail=c1'], { encoding: 'utf8' });
+    eq(result.status, 0, result.stdout);
+    eq(result.stdout.includes('a@x.test'), false, result.stdout);
+    eq(result.stdout.includes('CustomerEmail=c1: "•••"'), true, result.stdout);
+  });
+
   check('the skill\'s JSON is stable, round trips and keeps a sandbox', () => {
     const notation = write('m.dcb', MODEL);
     const json = run('json', notation).stdout;
@@ -2482,7 +2530,7 @@ command RenameShare(shareId?: ShareId, note: string) {
 
   check('a command with branches prints as written and parses back equal', () => {
     const { model } = buildText(SHARES);
-    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+    eq(advisedOtherwise(model()), [], 'advisory-clean');
     const text = modelToSource(model());
     eq(text.includes('// Written as JSON'), false, text);
     eq(text.slice(text.indexOf('// Commands')), SHARES.slice(SHARES.indexOf('// Commands')), 'printed as written');
@@ -2662,7 +2710,7 @@ projection Moves (tag accountId: AccountId): integer = 0 {
 
   check('a conditional handler prints as written and parses back equal', () => {
     const { model } = buildText(BANK);
-    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+    eq(advisedOtherwise(model()), [], 'advisory-clean');
     const text = modelToSource(model());
     eq(text.slice(text.indexOf('// Projections')), BANK.slice(BANK.indexOf('// Projections')), 'printed as written');
     const parsed = parseModelSource(text);
@@ -2818,7 +2866,7 @@ command SendParcel(customerId: CustomerId, courseId: CourseId, city: string, lea
 
   check('open reads, collection functions and record fields print as written and parse back equal', () => {
     const { model } = buildText(SEATS);
-    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+    eq(advisedOtherwise(model()), [], 'advisory-clean');
     const text = modelToSource(model());
     eq(text.slice(text.indexOf('// Projections')), SEATS.slice(SEATS.indexOf('// Projections')), 'printed as written');
     const parsed = parseModelSource(text);
@@ -2971,7 +3019,7 @@ command EndShares(customerId: CustomerId, note: string, locked: ContractId) {
 
   check('a for each prints as written and parses back equal', () => {
     const { model } = buildText(PORTAL);
-    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+    eq(advisedOtherwise(model()), [], 'advisory-clean');
     const text = modelToSource(model());
     eq(text.slice(text.indexOf('// Commands')), PORTAL.slice(PORTAL.indexOf('// Commands')), 'printed as written');
     const parsed = parseModelSource(text);
@@ -3131,7 +3179,7 @@ command ConfirmSignUp(token: OptInToken, now: datetime) {
 
   check('time prints as written and parses back equal', () => {
     const { model } = buildText(TIME);
-    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+    eq(advisedOtherwise(model()), [], 'advisory-clean');
     const text = modelToSource(model());
     eq(text, TIME, 'printed as written');
     const parsed = parseModelSource(text);
@@ -3231,7 +3279,7 @@ command Start(shareId: ShareId, owner: CustomerId, invitee: CustomerId, held: Ho
 `;
   const advised = (text) => {
     const { model } = buildText(text);
-    return sandbox.modelAdvisories(model()).map((a) => `${a.name}: ${a.message}`);
+    return advisedOtherwise(model()).map((a) => `${a.name}: ${a.message}`);
   };
 
   check('a handler writing its own type, or a literal, is advisory-clean', () => {
@@ -3335,7 +3383,7 @@ command SetLabels(contractId: ContractId, labels?: string[]) {
 
   check('a scenario leaves out what its outcome does not depend on', () => {
     const { model } = buildText(PARTIAL);
-    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean, an optional list included');
+    eq(advisedOtherwise(model()), [], 'advisory-clean, an optional list included');
     const printed = modelToSource(model());
     eq(printed.includes('given CustomerWasAdded { customerId: "cu1" }'), true, 'printed as written');
     eq(printed.includes('when SetInstallment { contractId: "co1", actor: "cu2" }'), true, 'a partial when');
@@ -3381,6 +3429,150 @@ command SetLabels(contractId: ContractId, labels?: string[]) {
       + '      then LabelsSet { contractId: "co1", labels: null }\n    }\n\n    scenario {\n      when SetLabels { contractId: "co1", labels: ["a"] }\n'
       + '      then LabelsSet { contractId: "co1", labels: ["a"] }\n    }');
     eq(statuses(labels).slice(2), ['current', 'current'], 'both hold');
+  });
+}
+
+// ---------------------------------------------------------------
+// Descriptions, notes and @sensitive (11.0, package 10): a /// doc
+// comment above a definition or the model line is its stored
+// description; @assumption, @unresolved and @external are repeatable
+// notes on any definition, @deprecated marks an event, @sensitive a
+// type. Documentation only: none changes a boundary.
+// ---------------------------------------------------------------
+{
+  const NOTES = `/// The customer portal.
+/// Second line.
+model "Notes"
+
+// Types
+/// An email address, lower case.
+@sensitive
+tag type EmailAddress = string { pattern: "^[^A-Z]*$" }
+
+tag type CustomerId = string
+
+@sensitive
+type FullName = string
+
+// Events
+/// A customer's sign-up.
+event CustomerSignedUp {
+  tag customerId: CustomerId
+  tag email: EmailAddress
+  name: FullName
+}
+
+/// Stored before 2024. Replaced by CustomerSignedUp.
+@deprecated
+event EmailAddressWasRegistered { tag customerId: CustomerId, tag email: EmailAddress }
+
+// Groups
+/// Everything about one customer.
+@unresolved("Does a deleted customer keep the group?")
+group Customer (tag customerId: CustomerId) {
+  /// Whether the customer exists.
+  @assumption("A deleted customer counts as existing")
+  projection exists: boolean = false {
+    on CustomerSignedUp => set true
+    on EmailAddressWasRegistered => set true
+  }
+}
+
+// Projections
+/// Whether an email address is taken.
+projection EmailTaken (tag email: EmailAddress): boolean = false {
+  on CustomerSignedUp => set true
+  on EmailAddressWasRegistered => set true
+}
+
+/// Free when not taken.
+derived projection EmailFree (tag email: EmailAddress): boolean {
+  EmailTaken(email) == false
+}
+
+// Commands
+/// A customer's sign-up, confirmed later.
+@feature("Sign-up")
+@assumption("A deleted customer's email can be reused at once")
+@assumption("Names are not unique")
+@external("Email domain is not on the block list")
+@unresolved("Sign-up after deletion should restore the old customer?")
+command SignUp(customerId: CustomerId, email: EmailAddress, name: FullName) {
+  require EmailFree(email) is true
+    else reject "Email address is taken"
+
+  emit CustomerSignedUp { customerId, email, name }
+}
+`;
+
+  check('descriptions and notes print as written and parse back equal', () => {
+    const { model } = buildText(NOTES);
+    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+    eq(modelToSource(model()), NOTES, 'printed as written');
+    const parsed = parseModelSource(NOTES);
+    eq(parsed.diagnostics, [], 'it reads');
+    assertSameModel(model(), parsed, 'package 10');
+    eq(model().description, 'The customer portal.\nSecond line.', 'the model\'s description');
+    const types = model()['custom-type-definitions'];
+    eq([types.EmailAddress.description, types.EmailAddress.isSensitive, types.FullName.isSensitive, types.CustomerId.isSensitive],
+      ['An email address, lower case.', true, true, undefined], 'types');
+    const events = model()['event-definitions'];
+    eq([events.EmailAddressWasRegistered.isDeprecated, events.CustomerSignedUp.isDeprecated], [true, undefined], 'deprecated');
+    const command = model()['command-definitions'].SignUp;
+    eq([command.description, command.assumptions, command.externalRules, command.unresolved],
+      ['A customer\'s sign-up, confirmed later.', ['A deleted customer\'s email can be reused at once', 'Names are not unique'],
+        ['Email domain is not on the block list'], ['Sign-up after deletion should restore the old customer?']], 'a command\'s notes');
+    const group = model()['group-definitions'].Customer;
+    eq([group.description, group.unresolved, group.projections[0].description, group.projections[0].assumptions],
+      ['Everything about one customer.', ['Does a deleted customer keep the group?'], 'Whether the customer exists.', ['A deleted customer counts as existing']], 'a group and its projection');
+    eq(model()['projection-definitions'].EmailFree.description, 'Free when not taken.', 'a derived projection');
+  });
+
+  check('notes change no boundary', () => {
+    const plain = buildText(NOTES.split('\n').filter((line) => !/^\s*(\/\/\/|@(assumption|unresolved|external|deprecated|sensitive))/.test(line)).join('\n'));
+    const before = sandbox.deriveDcb(plain.model(), plain.model()['command-definitions'].SignUp);
+    const noted = buildText(NOTES);
+    eq(sandbox.deriveDcb(noted.model(), noted.model()['command-definitions'].SignUp), before, 'the same query');
+  });
+
+  check('descriptions and notes travel in the JSON document', () => {
+    const { model } = buildText(NOTES);
+    const envelope = JSON.parse(JSON.stringify(sandbox.buildShareEnvelope(model(), [])));
+    eq(envelope.description, 'The customer portal.\nSecond line.', 'the model\'s');
+    eq(envelope.customTypeDefinitions.find((t) => t.name === 'EmailAddress').isSensitive, true, 'isSensitive');
+    eq(envelope.eventDefinitions.find((e) => e.name === 'EmailAddressWasRegistered').isDeprecated, true, 'isDeprecated');
+    eq(envelope.commandDefinitions[0].externalRules, ['Email domain is not on the block list'], 'externalRules');
+    fresh();
+    const { modelId } = importModelFromEnvelope(envelope);
+    eq(modelToSource(projectState()[modelId]), NOTES, 'imported back whole');
+  });
+
+  check('an annotation where it does not belong is a positioned error', () => {
+    const errorOf = (from, to) => parseModelSource(swap(NOTES, from, to)).diagnostics.map((d) => d.message);
+    eq(errorOf('@feature("Sign-up")', '@deprecated'), ['A command carries no @deprecated.'], 'deprecated is an event\'s');
+    eq(errorOf('/// A customer\'s sign-up.\nevent', '@sensitive\nevent'), ['An event carries no @sensitive.'], 'sensitive is a type\'s');
+    eq(errorOf('@deprecated\nevent', '@deprecated\n@deprecated\nevent'), ['@deprecated is given twice.'], 'once');
+    eq(errorOf('@feature("Sign-up")', '@note("x")')[0].startsWith('There is no @note'), true, 'unknown');
+    eq(errorOf('@deprecated\nevent', '@deprecated("x")\nevent'), ['@deprecated takes nothing: @deprecated.'], 'a flag takes no text');
+    eq(errorOf('@assumption("Names are not unique")', '@assumption'), ['@assumption takes its text: @assumption("…").'], 'a note takes text');
+  });
+
+  check('a /// line anywhere else is an ordinary comment', () => {
+    const { model } = buildText(swap(NOTES, '  require EmailFree(email) is true', '  /// not stored\n  require EmailFree(email) is true'));
+    eq(JSON.stringify(model()['command-definitions'].SignUp).includes('not stored'), false, 'not stored');
+  });
+
+  check('a deprecated event a command emits is advised, and an event nothing emits is advised unless deprecated', () => {
+    const advised = (text) => { const { model } = buildText(text); return sandbox.modelAdvisories(model()).map((a) => `${a.name}: ${a.message}`); };
+    eq(advised(swap(NOTES, '@deprecated\nevent', 'event')),
+      ['EmailAddressWasRegistered: No command emits it. Mark it @deprecated if it is only stored, or emit it from the command that records it.'], 'never emitted');
+    eq(advised(swap(NOTES, '  emit CustomerSignedUp { customerId, email, name }', '  emit CustomerSignedUp { customerId, email, name }\n  emit EmailAddressWasRegistered { customerId, email }')),
+      ['SignUp: Emits EmailAddressWasRegistered, which is @deprecated – it is stored, but no longer recorded. Emit what replaced it.'], 'deprecated, emitted');
+  });
+
+  check('the language reference covers descriptions, notes and @sensitive', () => {
+    const reference = sandbox.sourceLanguageReference();
+    for (const word of ['///', '@assumption', '@unresolved', '@external', '@deprecated', '@sensitive']) eq(reference.includes(word), true, word);
   });
 }
 

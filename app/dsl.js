@@ -198,6 +198,15 @@
 // clock is a parameter, `now: datetime`. `type Deadline = datetime`
 // stores the string format, `{type: 'string', format: 'date-time'}`.
 //
+// **A `///` line is stored, a `//` line is not** (11.0): doc comments
+// right above a definition or the `model "…"` line are its
+// description, one line each. Annotations in front of a definition are
+// the notes – `@assumption("…")`, `@external("…")`, `@unresolved("…")`,
+// repeatable – and the marks `@deprecated` (an event) and `@sensitive`
+// (a type), beside `@icon`, `@feature` and `@tagSchema`; one table,
+// `SOURCE_ANNOTATIONS`, says where each goes and what it fills. None
+// is read by evaluation.
+//
 // **A few spellings are the schema's own tokens**, matching the
 // interface's technical register: `successor(x)`, `event.data.x`, and
 // the predicate words `contains` / `containsAny` / `startsWith` /
@@ -357,12 +366,28 @@ const SOURCE_BASE_TYPES = ['string', 'number', 'integer', 'boolean', 'object', '
 // JSON Schema format of the string it is.
 const SOURCE_TIME_FORMATS = { datetime: 'date-time', duration: 'duration' };
 
-// Which annotation goes on which kind, and the body field it fills.
+// Which annotation goes on which kind, and the body field it fills –
+// in the order they print. A `flag` takes no text and stores true; a
+// `repeat` is a note (11.0), given once per line and stored as a list.
+// Notes go on every definition and say nothing a run reads: an
+// assumption taken where the brief was silent, a rule the layer around
+// the commands checks, a question still open (dcb-events.github.io#109).
+const SOURCE_NOTE_KINDS = ['custom-type-definition', 'event-definition', 'group-definition', 'projection-definition', 'command-definition'];
 const SOURCE_ANNOTATIONS = {
-  icon: ['group-definition', 'event-definition', 'command-definition'],
-  feature: ['command-definition'],
-  tagSchema: ['custom-type-definition'],
+  icon: { kinds: ['group-definition', 'event-definition', 'command-definition'], field: 'icon' },
+  feature: { kinds: ['command-definition'], field: 'feature' },
+  tagSchema: { kinds: ['custom-type-definition'], field: 'tagSchema' },
+  sensitive: { kinds: ['custom-type-definition'], field: 'isSensitive', flag: true },
+  deprecated: { kinds: ['event-definition'], field: 'isDeprecated', flag: true },
+  assumption: { kinds: SOURCE_NOTE_KINDS, field: 'assumptions', repeat: true },
+  external: { kinds: SOURCE_NOTE_KINDS, field: 'externalRules', repeat: true },
+  unresolved: { kinds: SOURCE_NOTE_KINDS, field: 'unresolved', repeat: true },
 };
+// What a grouped projection may carry: its notes, never a mark of its own.
+const SOURCE_GROUPED_ANNOTATIONS = ['assumption', 'external', 'unresolved'];
+// The fields a description and the notes fill, which every printer
+// writes in front of what it prints (`sourceAnnotations`).
+const SOURCE_NOTE_FIELDS = ['description', ...Object.values(SOURCE_ANNOTATIONS).filter((a) => a.flag || a.repeat).map((a) => a.field)];
 
 const SOURCE_IDENT_RE = /^[\p{L}_][\p{L}\p{M}\p{Nd}_]*$/u;
 const SOURCE_MEMBER_RE = /^\p{Lu}[\p{L}\p{M}\p{Nd}_]*$/u;
@@ -409,6 +434,7 @@ function lexSource(text) {
   let line = 1;
   let col = 1;
   let lastLine = 0;
+  let doc = [];
   const advanceTo = (stop) => {
     while (i < stop) {
       if (text[i] === '\n') { line += 1; col = 1; } else col += 1;
@@ -424,6 +450,13 @@ function lexSource(text) {
     const start = { line, col };
     if (text.startsWith('//', i)) {
       const end = text.indexOf('\n', i);
+      // A doc comment (11.0), `/// …`, rides on the token after it: the
+      // declaration that token starts stores it as its description, and
+      // anywhere else it is an ordinary comment.
+      if (text.startsWith('///', i) && !text.startsWith('////', i)) {
+        const line = text.slice(i + 3, end < 0 ? text.length : end).replace(/\r$/, '');
+        doc.push(line.startsWith(' ') ? line.slice(1) : line);
+      }
       advanceTo(end < 0 ? text.length : end);
       continue;
     }
@@ -500,6 +533,7 @@ function lexSource(text) {
     token.endLine = line;
     token.endCol = col;
     token.first = start.line !== lastLine;
+    if (doc.length) { token.doc = doc; doc = []; }
     lastLine = line;
     tokens.push(token);
   }
@@ -633,7 +667,8 @@ function parseModelSourceText(text, options) {
   const startsDeclaration = (inner = false) => {
     const token = peek();
     if (!token.first) return false;
-    if (token.t === 'punct') return token.v === '@' && peek(1).t === 'ident';
+    // In a group, a note goes on the projection below it (11.0).
+    if (token.t === 'punct') return token.v === '@' && peek(1).t === 'ident' && !(inner && SOURCE_GROUPED_ANNOTATIONS.includes(peek(1).v));
     // `tag courseId: CourseId` is an event's property, marked.
     if (token.v === 'tag') return ['type', 'enum', 'record'].includes(peek(1).v);
     let k = 0;
@@ -1396,15 +1431,39 @@ function parseModelSourceText(text, options) {
     return body;
   };
 
-  const annotate = (kind, body, annotations) => {
-    for (const { name, value, token } of annotations) {
-      const allowed = Object.prototype.hasOwnProperty.call(SOURCE_ANNOTATIONS, name) ? SOURCE_ANNOTATIONS[name] : null;
-      if (!allowed) fail(`There is no @${name} – the annotations are @icon, @feature and @tagSchema.`, token);
-      if (!allowed.includes(kind)) fail(`A ${SOURCE_KEYWORD[kind]} carries no @${name}.`, token);
-      if (body[name] !== undefined) fail(`@${name} is given twice.`, token);
-      body[name] = value;
+  // `annotations` are what `declaration` read before the keyword, with
+  // the doc comment above them as `{doc}` (11.0), stored as the
+  // description.
+  const annotate = (kind, body, annotations, { grouped = false } = {}) => {
+    for (const { name, value, token, doc } of annotations) {
+      if (doc !== undefined) { body.description = doc; continue; }
+      const spec = Object.prototype.hasOwnProperty.call(SOURCE_ANNOTATIONS, name) ? SOURCE_ANNOTATIONS[name] : null;
+      if (!spec) fail(`There is no @${name} – the annotations are ${Object.keys(SOURCE_ANNOTATIONS).map((a) => '@' + a).join(', ')}.`, token);
+      if (grouped && !SOURCE_GROUPED_ANNOTATIONS.includes(name)) fail(`A projection in a group carries no @${name} – only its notes.`, token);
+      if (!spec.kinds.includes(kind)) fail(`${/^[aeiou]/.test(SOURCE_KEYWORD[kind]) ? 'An' : 'A'} ${SOURCE_KEYWORD[kind]} carries no @${name}.`, token);
+      if (spec.flag && value !== undefined) fail(`@${name} takes nothing: @${name}.`, token);
+      if (!spec.flag && value === undefined) fail(`@${name} takes its text: @${name}("…").`, token);
+      if (spec.repeat) { (body[spec.field] = body[spec.field] || []).push(value); continue; }
+      if (body[spec.field] !== undefined) fail(`@${name} is given twice.`, token);
+      body[spec.field] = spec.flag ? true : value;
     }
     return body;
+  };
+
+  // A doc comment and the annotations in front of a declaration, the
+  // doc comment first: `[{doc}, {name, value, token}, …]`.
+  const leadingAnnotations = () => {
+    const annotations = peek().doc ? [{ doc: peek().doc.join('\n') }] : [];
+    while (accept('@')) {
+      const token = ident('an annotation name');
+      let value;
+      if (accept('(')) {
+        value = string('a string');
+        expect(')');
+      }
+      annotations.push({ name: token.v, value, token });
+    }
+    return annotations;
   };
 
   const customType = (start, annotations, isTag) => {
@@ -1562,7 +1621,7 @@ function parseModelSourceText(text, options) {
             : `A projection in a group is named in lowerCamel, letters and digits – it is read as ${nameToken.v}(…).name.`,
           line: named.line, col: named.col, endLine: named.endLine, endCol: named.endCol,
         });
-      } else guardBlock('}');
+      } else guardBlock('}', is('@'));
       const at = peek();
       if (is('lifecycle')) {
         fail('A group has no lifecycle – a lifecycle is an ordinary projection its rules read: projection status: … { … }.');
@@ -1573,7 +1632,7 @@ function parseModelSourceText(text, options) {
       if (is('scenarios') || is('scenario')) {
         fail('Scenarios sit in the block of the projection they are about, inside the group.');
       }
-      if (is('@')) fail('A projection in a group carries no annotations.');
+      const annotations = leadingAnnotations();
       const untagged = is('untagged') ? next() : null;
       if (untagged) fail(`A group's projections are read by its tag, ${tagName.v} – an untagged projection stays outside it.`, untagged);
       if (is('scripted')) fail('"scripted" is gone – 11.0 runs no code: a projection is folded by its handlers\' operations, or derived.');
@@ -1581,7 +1640,7 @@ function parseModelSourceText(text, options) {
       if (!is('projection')) {
         fail(`Expected projection or derived projection, found ${describeToken(peek())}.`);
       }
-      projectionDecl(at, [], null, kind, group);
+      projectionDecl(at, annotations, null, kind, group);
     }
     expect('}');
     return define('group-definition', nameToken, body, start);
@@ -1622,8 +1681,7 @@ function parseModelSourceText(text, options) {
       if (kind) fail(`A json body says what it is – drop "${kind.v}".`, kind);
       return define('projection-definition', nameToken, annotate('projection-definition', jsonBody(), annotations), start);
     }
-    annotate('projection-definition', {}, annotations);
-    const body = {};
+    const body = annotate('projection-definition', {}, annotations, { grouped: !!group });
     // What a read gives besides the tags is an argument (10.0): a derived
     // projection compares or computes with it. A declared one's handlers
     // cannot, which is the advisories' to say.
@@ -2279,18 +2337,13 @@ function parseModelSourceText(text, options) {
 
   const declaration = () => {
     const start = peek();
-    const annotations = [];
-    while (accept('@')) {
-      const token = ident('an annotation name');
-      expect('(');
-      const value = string('a string');
-      expect(')');
-      annotations.push({ name: token.v, value, token });
-    }
+    const all = leadingAnnotations();
+    const annotations = all.filter((a) => a.doc === undefined);
     if (accept('model')) {
       if (annotations.length) fail('A model carries no annotations.', annotations[0].token);
       if (result.name !== null) fail('The model is named once.', last());
       result.name = string('the model\'s name, in quotes');
+      if (all.length) result.description = all[0].doc;
       return;
     }
     if (is('scenarios')) {
@@ -2301,6 +2354,10 @@ function parseModelSourceText(text, options) {
       if (annotations.length) fail('A scenario carries no annotations.', annotations[0].token);
       return topLevelBare.push(scenarioDecl(start, null));
     }
+    return definitionAfter(start, all);
+  };
+
+  const definitionAfter = (start, annotations) => {
     const isTag = !!accept('tag');
     if (isTag && !is('type') && !is('enum') && !is('record')) {
       fail(`Expected type, enum or record after "tag", found ${describeToken(peek())}.`);
@@ -2732,14 +2789,39 @@ function sourceProperty(property) {
     + `${sourceRef(property.propertyType, 'type')}${property.isList ? '[]' : ''}`;
 }
 
+// What goes in front of a declaration: its description as `///`
+// lines (11.0), then its annotations – those of `names` it carries, in
+// SOURCE_ANNOTATIONS' order, a note once per entry. Every printer
+// writes this, so a description or a note never falls back to JSON.
 function sourceAnnotations(body, names) {
-  return names
-    .filter((name) => body[name] !== undefined)
+  const notes = Object.keys(SOURCE_ANNOTATIONS).filter((name) => {
+    const spec = SOURCE_ANNOTATIONS[name];
+    return names.includes(name) || spec.flag || spec.repeat;
+  });
+  if (body.description !== undefined && typeof body.description !== 'string') unprintable('its description is not text');
+  return sourceDocComment(body.description) + notes
+    .filter((name) => body[SOURCE_ANNOTATIONS[name].field] !== undefined)
     .map((name) => {
-      if (typeof body[name] !== 'string') unprintable(`its ${name} is not a string`);
-      return `@${name}(${JSON.stringify(body[name])})\n`;
+      const spec = SOURCE_ANNOTATIONS[name];
+      const held = body[spec.field];
+      if (spec.flag) {
+        if (held !== true) unprintable(`its ${spec.field} is not true`);
+        return `@${name}\n`;
+      }
+      if (spec.repeat) {
+        if (!Array.isArray(held) || !held.length || held.some((v) => typeof v !== 'string')) unprintable(`its ${spec.field} is not a list of text`);
+        return held.map((v) => `@${name}(${JSON.stringify(v)})\n`).join('');
+      }
+      if (typeof held !== 'string') unprintable(`its ${name} is not a string`);
+      return `@${name}(${JSON.stringify(held)})\n`;
     })
     .join('');
+}
+
+// A description as `///` lines, one per line of it – or nothing.
+function sourceDocComment(description) {
+  if (typeof description !== 'string' || !description) return '';
+  return description.split('\n').map((line) => (line ? `/// ${line}` : '///')).join('\n') + '\n';
 }
 
 // Fields one per line once they stop fitting on one.
@@ -3054,8 +3136,7 @@ function sourceDerivedOperand(names, siblings = null) {
 }
 
 function printCustomType(name, body) {
-  const tagSchema = body.tagSchema !== undefined && body.tagSchema !== '{type}:{value}'
-    ? sourceAnnotations(body, ['tagSchema']) : '';
+  const tagSchema = sourceAnnotations(body, body.tagSchema !== undefined && body.tagSchema !== '{type}:{value}' ? ['tagSchema'] : []);
   const tag = body.isTag === true ? 'tag ' : '';
   const declared = sourceDeclName(name);
   if (body.properties !== undefined) {
@@ -3110,7 +3191,7 @@ function printEvent(name, body) {
 // scenarios to put in its block; the round trip a definition is held to
 // is the group's without them, as for a command.
 function printGroup(name, body, names, nest = null) {
-  if (Object.keys(body).some((k) => !['icon', 'tag', 'projections'].includes(k))) unprintable('it carries fields the code form does not know');
+  if (Object.keys(body).some((k) => !['icon', 'tag', 'projections', ...SOURCE_NOTE_FIELDS].includes(k))) unprintable('it carries fields the code form does not know');
   const tag = groupTagOf(body);
   if (!tag) unprintable('it declares no tag');
   if (Object.keys(tag).some((k) => k !== 'name' && k !== 'tagType')) unprintable('its tag is not { name, tagType }');
@@ -3139,6 +3220,7 @@ function printGroup(name, body, names, nest = null) {
 // names of its projections) there are no tags to give and no
 // `untagged` to say: the group's tag is its.
 function printProjection(name, body, names, inGroup = null) {
+  const lead = sourceAnnotations(body, []);
   const tags = body.tags === undefined ? [] : body.tags;
   if (!Array.isArray(tags)) unprintable('its tags are not a list');
   if (inGroup && tags.length) unprintable('it is in a group and declares tags of its own');
@@ -3162,11 +3244,11 @@ function printProjection(name, body, names, inGroup = null) {
   if (body.derived !== undefined) {
     if (body.initialValue !== undefined) unprintable('it is derived and states an initial value');
     if (body.handlers !== undefined) unprintable('it is derived and states handlers');
-    return `${head} {\n  ${sourceDerived(body.derived, sourceDerivedOperand(names, inGroup && inGroup.siblings))}\n}`;
+    return `${lead}${head} {\n  ${sourceDerived(body.derived, sourceDerivedOperand(names, inGroup && inGroup.siblings))}\n}`;
   }
   if (body.initialValue !== undefined) head += ` = ${sourceLiteral(body.initialValue)}`;
   const lines = [head];
-  if (body.handlers === undefined) return lines.join('\n');
+  if (body.handlers === undefined) return lead + lines.join('\n');
   const items = [];
   const tagNames = inGroup ? (inGroup.tag ? [inGroup.tag.name] : []) : tags.map((tag) => tag && tag.name);
   const operation = (holder) => {
@@ -3183,7 +3265,7 @@ function printProjection(name, body, names, inGroup = null) {
   }
   const tail = lines.length - 1;
   lines[tail] += items.length ? ` {\n${items.map((i) => i.split('\n').map((line) => '  ' + line).join('\n')).join('\n')}\n}` : ' {}';
-  return lines.join('\n');
+  return lead + lines.join('\n');
 }
 
 // How a command writes an operand – the inverse of `resolveCommandNames`,
@@ -3620,7 +3702,7 @@ function modelToSource(model) {
       nested[into].set(key, list);
     }
   }
-  const out = [`model ${JSON.stringify(model.name)}`];
+  const out = [`${sourceDocComment(model.description)}model ${JSON.stringify(model.name)}`];
   const names = sourceNamesOf(model);
   for (const kind of SOURCE_KINDS) {
     const entries = Object.entries(model[DEF_COLLECTIONS[kind]] || {});
@@ -4133,6 +4215,7 @@ function applyModelSource(modelId, text, options = {}) {
   }
   const summary = replaceDefinitions(modelId, {
     name: parsed.name,
+    description: parsed.description === undefined ? null : parsed.description,
     collections: { ...parsed.collections, ...scenarios.collections },
     refuseRemovals: !!options.refuseRemovals,
   });
@@ -5634,8 +5717,9 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
       return done(false);
     }
     if (prev === '@') {
-      for (const [name, kinds] of Object.entries(SOURCE_ANNOTATIONS)) {
-        push(name, 'keyword', kinds.map((x) => SOURCE_KEYWORD[x]).join(', '), { insert: `${name}("$1")`, snippet: true, sort: 0 });
+      for (const [name, spec] of Object.entries(SOURCE_ANNOTATIONS)) {
+        push(name, 'keyword', spec.kinds.map((x) => SOURCE_KEYWORD[x]).join(', '),
+          spec.flag ? { sort: 0 } : { insert: `${name}("$1")`, snippet: true, sort: 0 });
       }
       return done();
     }
@@ -6047,7 +6131,10 @@ The text get_model_source returns, apply_model_source applies and start_model ta
 - A text with any error is refused whole, with each error's line and column; fix them and send it again. What does not stop it (an event nothing emits, a read of a projection nobody declared) comes back as advisories with the result; fix those as well.
 - DCB in brief: events are tagged by identifier values; a projection folds the events that carry its tags into one value; a command reads projections, checks its rules and emits events. Its consistency boundary is exactly what it reads – derived, never declared (derive_boundary shows it).
 - A capitalised name is a declaration you can name from anywhere: types, events, groups, top-level projections, commands, enum members. A lowercase one is reached through something in scope: properties, parameters, tags, aliases, and the projections of a group (course.capacity). A name has at least two characters.
-- // and /* */ are comments. They are not stored.
+- // and /* */ are comments. They are not stored. A /// line right above a definition, or above the model line, is its description and is stored; several lines make one description.
+- Notes go on the lines before any definition and are documentation only – they never change a boundary: @assumption("…") a reading taken where the brief was silent, @external("…") a rule the layer around the commands checks (not a require), @unresolved("…") an open question. Each may repeat, one note per line. check counts the unresolved ones ("Model is incomplete: 2 unresolved").
+- @deprecated on the line before an event marks it as stored but no longer emitted: nothing has to emit it, and a command emitting it is advised. An event that is neither emitted nor @deprecated is advised.
+- @sensitive on the line before a type or a tag type marks its values as personal data. On a tag type the store must not show the plain value as a tag – the adapter hashes it or uses an HMAC. Nothing in the model changes: values match as before. Normalise (lower case, trim) in the layer around the commands and state the format as a pattern.
 - @tagSchema("{type}={value}") on the line before a tag type changes how its values render as tags; "{type}:{value}" is the default.
 - @icon("📦") on the line before an event, a group or a command gives it the mark the pages show it with – one emoji or short glyph.
 - A group names projections that share one tag. It owns them – they are declared inside it, without a tag header – and means nothing for consistency: reading course.capacity queries only capacity's events. Read one in place as Course(courseId).capacity, or name the group once with alias course = Course(courseId) and read course.capacity. Projections tagged by several tags, or untagged, stay top-level.
@@ -6157,6 +6244,10 @@ type HoldTime = duration
 tag type BookId = string
 tag type MemberId = string
 tag type LoanId = string { pattern: "^l[0-9]+$" }
+// @sensitive: its values are personal data. On a tag type the store
+// never shows the plain value as a tag – the adapter hashes it.
+@sensitive
+tag type EmailAddress = string { pattern: "^[^A-Z]*$" }
 enum BookStatus { Unknown, Available, Lent, Withdrawn }
 // A record is a composite value; every field is one required value.
 record Copy { bookId: BookId, isbn: Isbn }
@@ -6173,6 +6264,11 @@ event BookReturned { tag bookId: BookId, tag memberId: MemberId }
 event BookPassedOn { tag bookId: BookId, tag fromMemberId: MemberId, tag toMemberId: MemberId }
 event BookDamaged { tag bookId: BookId, damage: string }
 event BookWithdrawn { tag bookId: BookId }
+// "///" above a definition (or the model line) is its stored
+// description. @deprecated marks an event still stored but no longer
+// emitted; nothing has to emit it.
+/// Recorded by the old catalogue, before shelving was a command.
+@deprecated
 event BookShelved { tag bookId: BookId, room: string, row: integer }
 event MemberJoined { tag memberId: MemberId, name: string }
 // datetime is an RFC 3339 date-time with an offset, duration a length.
@@ -6307,6 +6403,12 @@ derived projection MemberBooksHeld (tag memberId: MemberId): integer {
 // "emit" lists each event property: "name" alone takes the parameter
 // of that name, "name: <operand>" anything else.
 // The consistency boundary is derived from the reads; never declare it.
+// Notes are documentation, one per line, on any definition, and change
+// no boundary: @assumption what the brief left open, @external a rule
+// the layer around the commands checks, @unresolved an open question.
+@assumption("A subtitle is never required")
+@external("The ISBN is checked against the national catalogue")
+@unresolved("May a withdrawn book be added again?")
 command AddBook(bookId: BookId, isbn: Isbn, title: string, subtitle?: string) {
   require BookStatus(bookId) == Unknown
     else reject "Book already exists"
@@ -6559,6 +6661,8 @@ const SOURCE_REFERENCE_GOTCHAS = `## Gotchas
 - A projection holding a record is set whole by every handler. One that would set its fields one at a time is several projections, one per fact.
 - A scenario gives only what its outcome depends on: given CustomerWasAdded { customerId: "cu1" } where the name and email do not matter. Tags are always given. Reading a property the scenario left out is an error naming it, which is how a scenario reveals what it depends on; a then compares only the fields it lists. The values it does give are held to their types' constraints, so a value outside a pattern cannot be given at all – a require on it is shown with a value the type admits.
 - Time is data, never a clock: a command that needs the time takes now: datetime, and what expires stores its end – emit SeatsWereReserved { …, expiresAt: now + 15m } – so a rule reads it against now: sum(Reservation(courseId, *).seats where value.expiresAt > now). Expiring something at a time is a job outside the model calling a command, not a construct. A datetime needs its offset; one without is no value.
+- A rule on data the model does not hold – a block list, a payment provider, what the caller may do – is checked by the layer around the commands before it dispatches: write it as @external("…") on the command, not as a require on a parameter carrying the result. What the brief left open is @assumption("…"), or @unresolved("…") while nobody has answered; check counts the unresolved.
+- An event still stored but no longer emitted is @deprecated; any other event no command emits is advised. Personal data is marked on its type, @sensitive – never on a property – and the store hashes a sensitive tag; there are no hash or string functions.
 - A cascade – deleting a customer ends each of its shares, marking notifications read marks each one – is one command with a for each, not a reaction chain or one command per element: for each shareId in ShareActiveAsOwner(customerId, *) => emit ContractShareEnded { … }. Skip an element with if, rather than refusing the command over it.
 `;
 

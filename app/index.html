@@ -1060,6 +1060,19 @@
   }
   .advisory .what { font-weight: 600; }
   .diag-mark { flex: none; }
+  /* A definition's description and notes (11.0): documentation, so
+     quiet – no kind colour, no alarm. */
+  .notes { display: grid; gap: 4px; margin: 0 0 10px; font-size: 12px; }
+  .notes .row { gap: 6px; }
+  .note-description { color: var(--muted); white-space: pre-wrap; }
+  textarea.note-description {
+    width: 100%; box-sizing: border-box; resize: vertical; font: inherit; color: inherit;
+    border: 1px dashed var(--border); border-radius: 6px; background: transparent; padding: 4px 7px;
+  }
+  textarea.note-description:focus { border-style: solid; border-color: var(--accent); outline: none; }
+  .note .pk { color: var(--muted); }
+  .note-unresolved .pk { color: var(--danger); }
+  .chip.note-mark { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
   body.f-dark .issue, body.f-dark .advisory { border-color: #7f1d1d; color: #fecaca; }
   body.f-dark .issue:hover { border-color: var(--danger); }
 
@@ -3800,6 +3813,53 @@ function advisoryBanner(model, kind, name) {
       a.message)));
 }
 
+// A definition's description and notes (11.0), as the pages show
+// them: the markers (@deprecated, @sensitive), the description as plain
+// text – an editable one where `onDescribe` is given – and each note
+// under its kind's word. Documentation only, so read-only past the
+// description: the code view writes the notes. Null when there is
+// nothing to show and nothing to edit.
+const NOTE_WORDS = [['assumptions', 'Assumed'], ['externalRules', 'Checked outside the model'], ['unresolved', 'Unresolved']];
+function definitionNotes(body, { onDescribe } = {}) {
+  if (!body || typeof body !== 'object') return null;
+  const marks = [];
+  if (body.isDeprecated === true) {
+    marks.push(h('span', { class: 'chip note-mark', title: 'Still stored, but no longer recorded by any command' }, 'deprecated'));
+  }
+  if (body.isSensitive === true) {
+    marks.push(h('span', { class: 'chip note-mark', title: 'Personal data – a store never shows the plain value as a tag; the adapter hashes it' }, 'sensitive'));
+  }
+  const description = typeof body.description === 'string' ? body.description : '';
+  const rows = [];
+  if (onDescribe) {
+    rows.push(h('textarea', {
+      class: 'note-description', rows: description.includes('\n') ? 3 : 1, value: description,
+      placeholder: 'Describe it – a sentence or two, kept with the model', 'aria-label': 'Description',
+      onchange: (e) => onDescribe(e.target.value),
+    }));
+  } else if (description) {
+    rows.push(h('div', { class: 'note-description' }, description));
+  }
+  for (const [field, word] of NOTE_WORDS) {
+    for (const note of Array.isArray(body[field]) ? body[field] : []) {
+      rows.push(h('div', { class: 'note note-' + field }, h('span', { class: 'pk' }, word + ' '), String(note)));
+    }
+  }
+  if (!marks.length && !rows.length) return null;
+  return h('div', { class: 'notes' }, marks.length ? h('div', { class: 'row' }, ...marks) : null, ...rows);
+}
+
+// A definition's description, from the page: plain text, trailing
+// space trimmed, and empty takes it away. A grouped projection by its
+// qualified name, as everywhere.
+function describeDefinition(kind, name, text) {
+  const trimmed = String(text || '').replace(/\s+$/, '');
+  patch(kind, name, (b) => {
+    if (trimmed.trim()) b.description = trimmed;
+    else delete b.description;
+  });
+}
+
 // A model may use what the flag keeps off the pages – it was imported,
 // shared, or written before the flag was turned off. It still loads and
 // renders whole (the flag gates authoring, never reading), and this is
@@ -6165,6 +6225,9 @@ function paintView(model, main) {
 
   const commandAdvisories = advisoryBanner(model, 'command-definition', slice.name);
   if (commandAdvisories) main.appendChild(commandAdvisories);
+  const commandNotes = definitionNotes(model['command-definitions'][slice.name],
+    { onDescribe: (text) => describeDefinition('command-definition', slice.name, text) });
+  if (commandNotes) main.appendChild(commandNotes);
 
   main.appendChild(scenarioTabs(model, slice));
 
@@ -9357,6 +9420,8 @@ function customTypeEditor(model, name, { inModal = false, onRenamed = null } = {
             label: 'Remove', title: 'Remove this custom type',
             onRemove: () => run(() => removeDefinition('custom-type-definition', model.id, name)),
           }))));
+    const notes = definitionNotes(body, inModal ? {} : { onDescribe: (text) => describeDefinition('custom-type-definition', name, text) });
+    if (notes) card.appendChild(notes);
   }
 
   if (composite) {
@@ -9773,6 +9838,14 @@ function projectionDraftFrom(body) {
 // order this happens to build them, so a model that goes out and comes
 // back in is the same file rather than a reshuffled one.
 function cleanProjectionBody(draft) {
+  // Its description and notes (11.0) lead, as the schema declares them;
+  // the editor changes only the description.
+  const notes = {};
+  for (const field of DEFINITION_NOTE_FIELDS) if (draft[field] !== undefined) notes[field] = draft[field];
+  return { ...notes, ...cleanProjectionShape(draft) };
+}
+
+function cleanProjectionShape(draft) {
   const handlers = (draft.handlers || []).filter((handler) => handler && handler.event);
   // The tags, always stated – an empty list is an untagged projection,
   // and a draft that has not decided yet stores as one.
@@ -10725,6 +10798,16 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
         title: 'Show derived projections, and where it is used',
         onclick: () => setProjectionAdvanced(!advanced),
       }, h('span', { class: 'track' }, h('span', { class: 'knob' })), 'Advanced')),
+    // Its description, edited on the draft and saved with it, and its
+    // notes (11.0) – not while the wizard asks its first questions.
+    wizard ? null : definitionNotes(draft, savedName ? {
+      onDescribe: (text) => {
+        const trimmed = String(text || '').replace(/\s+$/, '');
+        if (trimmed.trim()) draft.description = trimmed;
+        else delete draft.description;
+        scheduleProjectionAutosave();
+      },
+    } : {}),
     ...wizardSections([
       ['kind', wizard ? projectionKindSection(model, draft) : null],
       ['partition', tagsSection],
@@ -11039,6 +11122,8 @@ function groupSection(model, name) {
   const section = h('section', { class: 'pgroup' + (open ? ' open' : '') }, head);
   if (state.groupIconPicker === name) section.appendChild(groupIconPicker(model, name, group));
   if (!open) return section;
+  const notes = definitionNotes(group, { onDescribe: (text) => describeDefinition('group-definition', name, text) });
+  if (notes) section.appendChild(notes);
   section.appendChild(projectionLedger(model, {
     owner: name,
     nameHead: 'projection',
@@ -11924,6 +12009,8 @@ function eventCard(model, name) {
       }))));
 
   if (pickingIcon) card.appendChild(eventIconPicker(model, name, event));
+  const notes = definitionNotes(event, open ? { onDescribe: (text) => describeDefinition('event-definition', name, text) } : {});
+  if (notes) card.appendChild(notes);
 
   if (open) {
     card.appendChild(h('div', { class: 'card event' },
@@ -11962,6 +12049,9 @@ function eventCard(model, name) {
 // page answers is what the model does, not how a call is spelled.
 function renderOverview(model, main) {
   main.appendChild(h('header', {}, h('div', { class: 'name' }, 'Overview')));
+  // What the whole model is about (11.0), the code view's `///` above
+  // its `model "…"` line.
+  main.appendChild(definitionNotes(model, { onDescribe: (text) => run(() => describeDcbModel(model.id, text)) }));
 
   const commands = model['command-definitions'];
   const bodies = Object.values(commands);

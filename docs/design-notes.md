@@ -1761,6 +1761,62 @@ Artboards: `design/dcb-queries/` (2026-10).
   and says why it refuses anything else; a duration and arithmetic read
   as the code view writes them, read-only with the way to the code view.
 
+## Descriptions and notes
+
+- **A description is a `///` doc comment** (11.0,
+  dcb-events.github.io#109): above a definition – a type, an event, a
+  group, a projection grouped or derived, a command – or above the
+  `model "…"` line, it is stored as `description`, several lines one
+  text. `//` stays an ordinary comment, and so does a `///` anywhere
+  else: the lexer hangs doc lines on the next token
+  (`token.doc`), and only a declaration's first token is read for
+  one. The model's own is a log event of its own,
+  `dcb-model-described` (`describeDcbModel`), as its name is – a new
+  event type, so no `EVENT_LOG_KEY` bump: an old log simply has none.
+- **Notes are annotations, documentation only**: `@assumption("…")`
+  (a reading taken where the brief was silent), `@external("…")` (a
+  rule the layer around the commands checks before it dispatches –
+  never a `require`, so it cannot be mistaken for an executable rule)
+  and `@unresolved("…")` (a known gap), repeatable, stored as
+  `assumptions`, `externalRules` and `unresolved`; `@deprecated` on an
+  event (`isDeprecated`), still stored and no longer emitted, which
+  replaced the proposed `@legacy` since long-lived greenfield systems
+  have such events too. They go on definitions, never on a rule or a
+  statement: a note about a rule names it in its text. Nothing
+  evaluates them and no boundary changes – a test holds a command's
+  derivation equal with and without them. `SOURCE_ANNOTATIONS` (dsl.js)
+  is the one table for every annotation – kinds, field, flag or
+  repeat – which the parser, the printer and completion read. A
+  grouped projection carries a description and notes, never a mark.
+- **`check`**: "Model is incomplete: N unresolved" is informational
+  (exit 0) and `--strict` makes it fail; each command's `@assumption`
+  and `@external` notes are listed for the hand-over. Two advisories:
+  a command emitting a `@deprecated` event, and – listed in language.md
+  long before it was reported – an event no command emits, which
+  `@deprecated` silences. The shipped models emit every event they
+  declare. Many test fixtures record events by hand that none of their
+  commands emit; their checks leave that one advisory out
+  (`advisedOtherwise`), while the predefined models and the reference
+  tour are held to it whole. Excluding events a scenario gives was
+  weighed and dropped: a scenario's given always holds events other
+  commands should emit, so it would hide exactly the gap.
+- **`@sensitive` goes on a type**, a tag type or a value type
+  (`isSensitive`, dcb-events.github.io#101) – never on a property: a
+  value is personal data because of what it is. On a tag type the
+  store must not render the plain value as a tag; the adapter hashes
+  it or uses an HMAC with a deployment secret, so the algorithm is not
+  in the model, and equal values still match. There are no hash or
+  normalisation functions: normalising changes what matches, so it is
+  the outer layer's, and the model states the contract as a `pattern`.
+  `replay` masks a sensitive value it prints; protection beyond that
+  is the store's and the outer layers'.
+- **The pages show them** (`definitionNotes`, index.html): the markers,
+  the description – edited in place as plain text on the command page,
+  an event, a type, a group, the projection editor's draft and the
+  Overview for the model – and each note, read-only; the code view
+  writes notes. An editor that rebuilds a body carries them over
+  (`DEFINITION_NOTE_FIELDS`, `cleanProjectionBody`).
+
 ## The metro map
 
 - **A line per command.** A metro map is good at one thing – which

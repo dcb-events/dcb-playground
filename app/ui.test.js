@@ -40,6 +40,12 @@ loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js', 'shared.js'], {
 });
 const { check, eq, finish } = makeChecker();
 
+// Many fixtures here record events by hand that no command of theirs
+// emits, so the advisory saying so (11.0) is left out where a check is
+// about something else; the shipped models are held to it whole.
+const UNEMITTED = /^No command emits it\./;
+const advisedOtherwise = (model) => sandbox.modelAdvisories(model).filter((a) => !UNEMITTED.test(a.message));
+
 const {
   loadPredefinedModel, projectState,
   projectionDraftFrom, cleanProjectionBody, blankProjectionDraft,
@@ -3804,7 +3810,7 @@ check('importing an older model with entities says what became of them', () => {
       leftHandSide: { projection: 'Label', tags: { documentId: { parameterName: 'documentId' } } },
       predicate: 'equals', rightHandSide: 'foo', rejection: 'Label is not foo',
     }], 'the rule reads Label by the command\'s own document id');
-    eq(sandbox.modelAdvisories(model()).length, 0, 'advisory-clean');
+    eq(advisedOtherwise(model()).length, 0, 'advisory-clean');
   });
 
   check('a tag nothing in scope can fill brings a new input with the rule', () => {
@@ -6699,7 +6705,7 @@ command ChangeHold(courseId: CourseId, hold: duration) {
   sandbox.setActiveModelId(id);
 
   check('the type pickers offer datetime and duration among the built-ins', () => {
-    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+    eq(advisedOtherwise(model()), [], 'advisory-clean');
     const rows = sandbox.typeOptions(model());
     for (const type of ['datetime', 'duration']) {
       const row = rows.find((r) => r[0] === type);
@@ -6772,6 +6778,123 @@ command ChangeHold(courseId: CourseId, hold: duration) {
     sandbox.updateDefinition('projection-definition', id, 'Ends', cleanProjectionBody(projectionDraftFrom(derived)));
     eq(model()['projection-definitions'].Ends, derived, 'kept whole');
     sandbox.applyModelSource(id, TIME);
+  });
+
+  sandbox.clearActiveModelId();
+}
+
+// ---------------------------------------------------------------
+// Descriptions and notes (11.0): every page shows a definition's
+// description, its notes and its markers; a description is edited as
+// plain text; and an edit on a page keeps them all.
+// ---------------------------------------------------------------
+{
+  const NOTED = `/// The portal.
+model "Noted"
+
+@sensitive
+tag type EmailAddress = string
+
+tag type CustomerId = string
+
+/// A sign-up.
+event CustomerSignedUp { tag customerId: CustomerId, tag email: EmailAddress }
+
+/// Stored before 2024.
+@deprecated
+event EmailRegistered { tag customerId: CustomerId, tag email: EmailAddress }
+
+/// About a customer.
+group Customer (tag customerId: CustomerId) {
+  /// Whether the customer exists.
+  @unresolved("Does deletion end it?")
+  projection exists: boolean = false {
+    on CustomerSignedUp => set true
+  }
+}
+
+/// Whether an email address is taken.
+@assumption("Case does not matter")
+projection EmailTaken (tag email: EmailAddress): boolean = false {
+  on CustomerSignedUp => set true
+}
+
+/// A customer signs up.
+@external("The domain is not blocked")
+@unresolved("Sign-up after deletion?")
+command SignUp(customerId: CustomerId, email: EmailAddress) {
+  require EmailTaken(email) is false
+    else reject "Taken"
+
+  emit CustomerSignedUp { customerId, email }
+}
+`;
+  store.clear();
+  sandbox.bumpLogRevision();
+  const id = sandbox.createDcbModel('Noted');
+  sandbox.applyModelSource(id, NOTED);
+  const model = () => projectState()[id];
+  sandbox.setActiveModelId(id);
+  const page = (view, prepare = () => {}) => {
+    const main = sandbox.document.createElement('div');
+    sandbox.state.view = view;
+    prepare();
+    sandbox.paintView(model(), main);
+    return main;
+  };
+
+  check('every page shows a definition\'s description, notes and markers', () => {
+    const command = textOf(page('slice', () => { sandbox.state.slice = 'SignUp'; sandbox.state.tab = 'definition'; }));
+    for (const text of ['The domain is not blocked', 'Sign-up after deletion?']) eq(command.includes(text), true, `${text}: ${command.slice(0, 500)}`);
+    const events = textOf(page('events', () => { sandbox.state.openEvent = null; }));
+    for (const text of ['A sign-up.', 'Stored before 2024.', 'deprecated']) eq(events.includes(text), true, text);
+    const types = textOf(page('types'));
+    eq(types.includes('sensitive'), true, types.slice(0, 400));
+    const projections = textOf(page('projections', () => {
+      sandbox.state.projDraft = { name: 'EmailTaken', body: projectionDraftFrom(sandbox.projectionsOf(model()).EmailTaken) };
+      sandbox.state.projTab = 'definition';
+    }));
+    eq(projections.includes('Case does not matter'), true, projections.slice(0, 500));
+    const grouped = textOf(page('projections', () => {
+      sandbox.state.groupOpen = { Customer: true };
+      sandbox.state.projDraft = { name: 'Customer.exists', body: projectionDraftFrom(sandbox.projectionsOf(model())['Customer.exists']) };
+    }));
+    eq(grouped.includes('Does deletion end it?'), true, 'a grouped projection\'s note');
+    sandbox.state.projDraft = null;
+    const described = findAll(page('overview'), (n) => n.tag === 'textarea' && n.className === 'note-description');
+    eq(described.map((n) => n.value), ['The portal.'], 'the model\'s description, editable');
+    const onCommand = findAll(page('slice', () => { sandbox.state.slice = 'SignUp'; }), (n) => n.tag === 'textarea' && n.className === 'note-description');
+    eq(onCommand.map((n) => n.value), ['A customer signs up.'], 'a command\'s, editable');
+    onCommand[0].onchange({ target: { value: 'Signs a customer up.' } });
+    eq(model()['command-definitions'].SignUp.description, 'Signs a customer up.', 'edited from the page');
+    sandbox.applyModelSource(id, NOTED);
+  });
+
+  check('a description is edited as plain text, and empty takes it away', () => {
+    sandbox.describeDefinition('command-definition', 'SignUp', 'A customer signs up, once.\nThen confirms.');
+    eq(model()['command-definitions'].SignUp.description, 'A customer signs up, once.\nThen confirms.', 'set');
+    sandbox.describeDefinition('event-definition', 'EmailRegistered', '   ');
+    eq(model()['event-definitions'].EmailRegistered.description, undefined, 'removed');
+    sandbox.describeDefinition('projection-definition', 'Customer.exists', 'Exists.');
+    eq(model()['group-definitions'].Customer.projections[0].description, 'Exists.', 'a grouped projection');
+    sandbox.describeDcbModel(id, 'The whole portal.');
+    eq(model().description, 'The whole portal.', 'the model');
+    sandbox.applyModelSource(id, NOTED);
+    eq(model().description, 'The portal.', 'the text says it again');
+  });
+
+  check('editing on the pages keeps descriptions and notes', () => {
+    for (const name of ['EmailTaken', 'Customer.exists']) {
+      const body = sandbox.projectionsOf(model())[name];
+      sandbox.updateDefinition('projection-definition', id, name, cleanProjectionBody(projectionDraftFrom(body)));
+      eq(sandbox.projectionsOf(model())[name], body, name);
+    }
+    const before = model()['command-definitions'].SignUp;
+    sandbox.state.slice = 'SignUp';
+    sandbox.patch('command-definition', 'SignUp', (b) => { b.conditions[0].rejection = 'Already taken'; });
+    const after = model()['command-definitions'].SignUp;
+    eq([after.description, after.externalRules, after.unresolved], [before.description, before.externalRules, before.unresolved], 'a command');
+    sandbox.applyModelSource(id, NOTED);
   });
 
   sandbox.clearActiveModelId();

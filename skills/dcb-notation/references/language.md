@@ -16,7 +16,10 @@ The text get_model_source returns, apply_model_source applies and start_model ta
 - A text with any error is refused whole, with each error's line and column; fix them and send it again. What does not stop it (an event nothing emits, a read of a projection nobody declared) comes back as advisories with the result; fix those as well.
 - DCB in brief: events are tagged by identifier values; a projection folds the events that carry its tags into one value; a command reads projections, checks its rules and emits events. Its consistency boundary is exactly what it reads – derived, never declared (derive_boundary shows it).
 - A capitalised name is a declaration you can name from anywhere: types, events, groups, top-level projections, commands, enum members. A lowercase one is reached through something in scope: properties, parameters, tags, aliases, and the projections of a group (course.capacity). A name has at least two characters.
-- // and /* */ are comments. They are not stored.
+- // and /* */ are comments. They are not stored. A /// line right above a definition, or above the model line, is its description and is stored; several lines make one description.
+- Notes go on the lines before any definition and are documentation only – they never change a boundary: @assumption("…") a reading taken where the brief was silent, @external("…") a rule the layer around the commands checks (not a require), @unresolved("…") an open question. Each may repeat, one note per line. check counts the unresolved ones ("Model is incomplete: 2 unresolved").
+- @deprecated on the line before an event marks it as stored but no longer emitted: nothing has to emit it, and a command emitting it is advised. An event that is neither emitted nor @deprecated is advised.
+- @sensitive on the line before a type or a tag type marks its values as personal data. On a tag type the store must not show the plain value as a tag – the adapter hashes it or uses an HMAC. Nothing in the model changes: values match as before. Normalise (lower case, trim) in the layer around the commands and state the format as a pattern.
 - @tagSchema("{type}={value}") on the line before a tag type changes how its values render as tags; "{type}:{value}" is the default.
 - @icon("📦") on the line before an event, a group or a command gives it the mark the pages show it with – one emoji or short glyph.
 - A group names projections that share one tag. It owns them – they are declared inside it, without a tag header – and means nothing for consistency: reading course.capacity queries only capacity's events. Read one in place as Course(courseId).capacity, or name the group once with alias course = Course(courseId) and read course.capacity. Projections tagged by several tags, or untagged, stay top-level.
@@ -128,6 +131,8 @@ Leave it as it is, or rewrite it in the language.
 - A projection holding a record is set whole by every handler. One that would set its fields one at a time is several projections, one per fact.
 - A scenario gives only what its outcome depends on: given CustomerWasAdded { customerId: "cu1" } where the name and email do not matter. Tags are always given. Reading a property the scenario left out is an error naming it, which is how a scenario reveals what it depends on; a then compares only the fields it lists. The values it does give are held to their types' constraints, so a value outside a pattern cannot be given at all – a require on it is shown with a value the type admits.
 - Time is data, never a clock: a command that needs the time takes now: datetime, and what expires stores its end – emit SeatsWereReserved { …, expiresAt: now + 15m } – so a rule reads it against now: sum(Reservation(courseId, *).seats where value.expiresAt > now). Expiring something at a time is a job outside the model calling a command, not a construct. A datetime needs its offset; one without is no value.
+- A rule on data the model does not hold – a block list, a payment provider, what the caller may do – is checked by the layer around the commands before it dispatches: write it as @external("…") on the command, not as a require on a parameter carrying the result. What the brief left open is @assumption("…"), or @unresolved("…") while nobody has answered; check counts the unresolved.
+- An event still stored but no longer emitted is @deprecated; any other event no command emits is advised. Personal data is marked on its type, @sensitive – never on a property – and the store hashes a sensitive tag; there are no hash or string functions.
 - A cascade – deleting a customer ends each of its shares, marking notifications read marks each one – is one command with a for each, not a reaction chain or one command per element: for each shareId in ShareActiveAsOwner(customerId, *) => emit ContractShareEnded { … }. Skip an element with if, rather than refusing the command over it.
 
 
@@ -146,6 +151,10 @@ type HoldTime = duration
 tag type BookId = string
 tag type MemberId = string
 tag type LoanId = string { pattern: "^l[0-9]+$" }
+// @sensitive: its values are personal data. On a tag type the store
+// never shows the plain value as a tag – the adapter hashes it.
+@sensitive
+tag type EmailAddress = string { pattern: "^[^A-Z]*$" }
 enum BookStatus { Unknown, Available, Lent, Withdrawn }
 // A record is a composite value; every field is one required value.
 record Copy { bookId: BookId, isbn: Isbn }
@@ -162,6 +171,11 @@ event BookReturned { tag bookId: BookId, tag memberId: MemberId }
 event BookPassedOn { tag bookId: BookId, tag fromMemberId: MemberId, tag toMemberId: MemberId }
 event BookDamaged { tag bookId: BookId, damage: string }
 event BookWithdrawn { tag bookId: BookId }
+// "///" above a definition (or the model line) is its stored
+// description. @deprecated marks an event still stored but no longer
+// emitted; nothing has to emit it.
+/// Recorded by the old catalogue, before shelving was a command.
+@deprecated
 event BookShelved { tag bookId: BookId, room: string, row: integer }
 event MemberJoined { tag memberId: MemberId, name: string }
 // datetime is an RFC 3339 date-time with an offset, duration a length.
@@ -296,6 +310,12 @@ derived projection MemberBooksHeld (tag memberId: MemberId): integer {
 // "emit" lists each event property: "name" alone takes the parameter
 // of that name, "name: <operand>" anything else.
 // The consistency boundary is derived from the reads; never declare it.
+// Notes are documentation, one per line, on any definition, and change
+// no boundary: @assumption what the brief left open, @external a rule
+// the layer around the commands checks, @unresolved an open question.
+@assumption("A subtitle is never required")
+@external("The ISBN is checked against the national catalogue")
+@unresolved("May a withdrawn book be added again?")
 command AddBook(bookId: BookId, isbn: Isbn, title: string, subtitle?: string) {
   require BookStatus(bookId) == Unknown
     else reject "Book already exists"

@@ -25,6 +25,12 @@ loadApp(sandbox, ['model.js', 'evaluate.js'], {
 });
 const { check, eq, finish } = makeChecker();
 
+// Many fixtures here record events by hand that no command of theirs
+// emits, so the advisory saying so (11.0) is left out where a check is
+// about something else; the shipped models are held to it whole.
+const UNEMITTED = /^No command emits it\./;
+const advisedOtherwise = (model) => sandbox.modelAdvisories(model).filter((a) => !UNEMITTED.test(a.message));
+
 // Clearing the store is a write `appendEvents` never sees, so the
 // projection cache is told the world moved underneath it.
 function resetStore() {
@@ -1938,7 +1944,7 @@ check('an import missing the definition arrays is refused, not silently accepted
     });
     eq(fine.outcome, 'published', 's3\'s one course, cA (10), meets s3\'s 5 – s2 holds none');
     eq(fine.reads.course.instances.map((i) => i.id), ['cA'], 'a group fanned off a group, one instance per course');
-    eq(sandbox.modelAdvisories(model()), [], 'and the model is clean');
+    eq(advisedOtherwise(model()), [], 'and the model is clean');
   });
 }
 
@@ -2629,7 +2635,7 @@ check('every predefined model ships advisory-clean', () => {
     eq(has([], 3), true, 'three free, three asked');
     eq(has([subscribe('s1')], 3), false, 'two free, three asked');
     eq(has([subscribe('s1')], 2), true, 'the argument is the read\'s to give');
-    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+    eq(advisedOtherwise(model()), [], 'advisory-clean');
   });
 
   check('a command reads it with an argument from its payload, and its boundary is the operand\'s', () => {
@@ -2677,7 +2683,7 @@ check('every predefined model ships advisory-clean', () => {
         courseId: { parameterName: 'courseId' }, studentId: { parameterName: 'studentId' } } },
       predicate: 'equals', rightHandSide: true },
     });
-    eq(sandbox.modelAdvisories(model()).map((a) => a.message), [], 'advisory-clean');
+    eq(advisedOtherwise(model()).map((a) => a.message), [], 'advisory-clean');
     eq(foldProjection(model(), [], 'FreeAfterTwice', { tags: { courseId: 'c1' }, args: { each: 1 } }), 1, 'passed on and computed with');
     const is = (studentId) => foldProjection(model(), [subscribe('s1')], 'IsSubscribed',
       { tags: { courseId: 'c1' }, args: { studentId } });
@@ -2842,7 +2848,7 @@ check('every predefined model ships advisory-clean', () => {
     return { id, model };
   };
   const prop = (name, type, isList = false) => ({ name, propertyType: type, isOptional: false, isList });
-  const advised = (model, name) => sandbox.modelAdvisories(model)
+  const advised = (model, name) => advisedOtherwise(model)
     .filter((a) => a.kind === 'event-definition' && a.name === name).map((a) => a.message);
 
   check('an event carries the tags it lists, and only those', () => {
@@ -3129,6 +3135,18 @@ check('every predefined model ships advisory-clean', () => {
     eq(sandbox.loadEvents().length, 1 + definitionCount(model), 'a creation and one add per definition');
     eq(sandbox.loadEvents().length < length, true, 'shorter than the history it replaced');
     eq(sandbox.loadEvents().map((e) => e.sequence), sandbox.loadEvents().map((_, i) => i), 'numbered afresh');
+  });
+
+  check('compaction keeps a model\'s description', () => {
+    const { id } = open_(GROUPED);
+    sandbox.describeDcbModel(id, 'Courses and students.');
+    sandbox.setLogCompactionThreshold(1);
+    try {
+      renameDefinition('event-definition', id, 'CourseDefined', 'CourseCreated');
+    } finally {
+      sandbox.setLogCompactionThreshold(1000 * 1000);
+    }
+    eq(sandbox.projectState()[id].description, 'Courses and students.', 'still described');
   });
 
   check('compaction keeps the events from the floor on, as they were, and says how far they moved', () => {
@@ -4372,7 +4390,7 @@ function modelsWithScenarios() {
     const log = [transfer('a1', 'a2', 30), transfer('a2', 'a1', 5)];
     eq([balance(model(), log, 'a1'), balance(model(), log, 'a2')], [-25, 25], 'each side by its own branch');
     eq(balance(model(), [transfer('a1', 'a1', 40)], 'a1'), 0, 'decremented, then incremented');
-    eq(sandbox.modelAdvisories(model()), [], 'the double tag is cleared by the conditions');
+    eq(advisedOtherwise(model()), [], 'the double tag is cleared by the conditions');
   });
 
   check('an else chain applies its first match only', () => {
@@ -4403,7 +4421,7 @@ function modelsWithScenarios() {
     const moved = (city) => ({ type: 'AccountMoved', data: { accountId: 'a1', address: { city } } });
     eq(foldProjection(model(), [moved('Berlin'), moved('Paris'), moved('Hamburg')], 'Moves', { tags: { accountId: 'a1' } }), 2,
       'Berlin and Hamburg, not Paris');
-    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+    eq(advisedOtherwise(model()), [], 'advisory-clean');
   });
 
   check('a condition filters the fold, never the query', () => {
@@ -4468,7 +4486,7 @@ function modelsWithScenarios() {
     eq(steps[1].branches[0].condition.rightHandSide, tag('account'), 'every chain');
     eq(model()['projection-definitions'].Moves.handlers[0].steps[0].branches[0].condition.leftHandSide,
       eventField('address', 'town'), 'the record field');
-    eq(sandbox.modelAdvisories(model()), [], 'still advisory-clean');
+    eq(advisedOtherwise(model()), [], 'still advisory-clean');
     eq(foldProjection(model(), [{ type: 'MoneyTransferred', data: { source: 'a1', to: 'a2', amount: 7 } }], 'Balance',
       { tags: { account: 'a1' } }), -7, 'and still folds');
   });
@@ -4502,7 +4520,7 @@ function modelsWithScenarios() {
     eq(probe.boundary[0].tags, { account: tag('accountId') }, 'a group binding');
     eq(probe.steps[1].condition.leftHandSide.tags, { account: tag('accountId') }, 'a read in place');
     eq(model()['projection-scenario-definitions']['net-1'].tags, { account: 'a1' }, 'a projection scenario');
-    eq(sandbox.modelAdvisories(model()), [], 'nothing left dangling');
+    eq(advisedOtherwise(model()), [], 'nothing left dangling');
     eq(foldProjection(model(), [transfer('a1', 'a2', 7)], 'Account.net', { tags: { account: 'a1' } }), -7, 'and it still folds');
   });
 
@@ -4516,7 +4534,7 @@ function modelsWithScenarios() {
     renameMember('custom-type-definition', id, 'State', 'member', 'booked', 'taken');
     eq(model()['projection-definitions'].Booked.handlers[0].steps[0].branches[0].condition.rightHandSide,
       { enumMember: 'taken' }, 'the member follows');
-    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+    eq(advisedOtherwise(model()), [], 'advisory-clean');
     eq(foldProjection(model(), [{ type: 'StateSet', data: { accountId: 'a1', state: 'taken' } }], 'Booked',
       { tags: { accountId: 'a1' } }), 1, 'and it still matches');
   });
@@ -4587,7 +4605,7 @@ function modelsWithScenarios() {
 
   check('an open read sums every present instance, and its boundary keeps only the bound tags', () => {
     const { model } = openCourses();
-    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+    eq(advisedOtherwise(model()), [], 'advisory-clean');
     eq(foldProjection(model(), courseLog, 'CourseSeatsReserved', { tags: { courseId: 'c1' } }), 2, 'r2 alone, r1 cancelled');
     eq(foldProjection(model(), courseLog, 'CourseSeatsReserved', { tags: { courseId: 'c3' } }), 0, 'an empty sum is 0');
     const items = sandbox.deriveDcb(model(), model()['command-definitions'].ReserveSeats).items;
@@ -4621,7 +4639,7 @@ function modelsWithScenarios() {
     const ev = (type, shareId) => ({ type, data: { contractId: 'k1', shareId } });
     const log = [ev('ShareStarted', 's1'), ev('ShareStarted', 's2'), ev('ShareEnded', 's1')];
     eq(foldProjection(model(), log, 'ActiveShares', { tags: { contractId: 'k1' } }), 1, 'started twice, ended once');
-    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+    eq(advisedOtherwise(model()), [], 'advisory-clean');
   });
 
   check('an event without the open tag\'s value belongs to no instance', () => {
@@ -4650,7 +4668,7 @@ function modelsWithScenarios() {
     derive('AnyAtAll', 'boolean', { leftHandSide: collect('any', seatsRead()) });
     derive('AllAtAll', 'boolean', { leftHandSide: collect('all', seatsRead()) });
     derive('SumBig', 'integer', { leftHandSide: collect('sum', seatsRead(), big) });
-    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+    eq(advisedOtherwise(model()), [], 'advisory-clean');
     const log = [reserve('r1', 3), reserve('r2', 2), reserve('r3', 5)];
     const at = (name, courseId = 'c1', events = log) => foldProjection(model(), events, name, { tags: { courseId } });
     eq(['Count', 'Min', 'Max', 'Average', 'AnyBig', 'AllBig', 'AnyAtAll', 'AllAtAll', 'SumBig'].map((n) => at(n)),
@@ -4707,7 +4725,7 @@ function modelsWithScenarios() {
 
   check('a record value is set whole, and a rule and an emission read one of its fields', () => {
     const { id, model } = openAddresses();
-    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+    eq(advisedOtherwise(model()), [], 'advisory-clean');
     const log = [{ type: 'CustomerMoved', data: { customerId: 'u1', address: { street: 'Main 1', city: 'Berlin' } } }];
     eq(foldProjection(model(), log, 'CustomerAddress', { tags: { customerId: 'u1' } }), { street: 'Main 1', city: 'Berlin' }, 'whole');
     const relocated = [...log, { type: 'CustomerRelocated', data: { customerId: 'u1', street: 'Elm 2', city: 'Hamburg' } }];
@@ -4724,7 +4742,7 @@ function modelsWithScenarios() {
       derived: { leftHandSide: { projection: 'CustomerAddress', tags: { customerId: param('customerId') }, field: 'city' } },
     });
     eq(foldProjection(model(), log, 'CustomerCity', { tags: { customerId: 'u1' } }), 'Berlin', 'and a derived projection');
-    eq(sandbox.modelAdvisories(model()), [], 'still advisory-clean');
+    eq(advisedOtherwise(model()), [], 'still advisory-clean');
   });
 
   check('a record value set by parts is refused, saying it is set whole', () => {
@@ -4856,7 +4874,7 @@ function modelsWithScenarios() {
 
   check('a fan-out over an open read emits once per present instance, in first-event order', () => {
     const { model } = openPortal();
-    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+    eq(advisedOtherwise(model()), [], 'advisory-clean');
     const result = evaluateCommand(model(), sharesLog, 'DeleteCustomer', { customerId: 'u1' });
     eq(result.outcome, 'published', 'published');
     eq(sharesOf(result), [['CustomerWasDeleted', 'u1', undefined], ['ContractShareEnded', 's3', 'k3'], ['ContractShareEnded', 's2', 'k2']],
@@ -5115,7 +5133,7 @@ function modelsWithScenarios() {
 
   check('a model using datetime, duration and arithmetic is advisory-clean', () => {
     const { model } = openTime();
-    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+    eq(advisedOtherwise(model()), [], 'advisory-clean');
   });
 
   check('datetimes compare as instants, whatever their offsets', () => {
@@ -5265,7 +5283,7 @@ function modelsWithScenarios() {
     sandbox.renameMember('command-definition', id, 'ReserveSeats', 'property', 'now', 'at');
     const emission = sandbox.commandEmissions(model()['command-definitions'].ReserveSeats)[0];
     eq(emission.parameters.expiresAt.leftHandSide, param('at'), 'inside the arithmetic');
-    eq(sandbox.modelAdvisories(model()), [], 'still advisory-clean');
+    eq(advisedOtherwise(model()), [], 'still advisory-clean');
   });
 }
 

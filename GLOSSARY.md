@@ -99,3 +99,21 @@ A property a scenario leaves out of a given event, a when or a then event,
 because its outcome does not depend on it. Reading one during the run is an
 error naming it; a then ignores it. Tags are never unspecified.
 _Avoid_: missing field, default value
+
+**Description**:
+Free text stored with a definition or the model, written as `///` lines above
+it. `//` comments are not stored.
+
+**Note**:
+Documentation on a definition that never changes a boundary: an assumption
+(`@assumption`), a rule checked outside the model (`@external`) or an open
+question (`@unresolved`).
+_Avoid_: comment (unstored), rule (for an external check)
+
+**Deprecated event**:
+An event still stored but no longer emitted, marked `@deprecated`.
+_Avoid_: legacy event
+
+**Sensitive type**:
+A type whose values are personal data, marked `@sensitive`. On a tag type the
+store renders a hash, never the plain value.

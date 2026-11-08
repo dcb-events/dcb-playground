@@ -406,6 +406,7 @@ function compactedLog(events, keepFrom) {
   const head = [];
   for (const model of Object.values(projectEvents(events.slice(0, keepFrom)))) {
     head.push({ type: 'dcb-model-created', data: { 'dcb-model-id': model.id, name: model.name } });
+    if (model.description) head.push({ type: 'dcb-model-described', data: { 'dcb-model-id': model.id, description: model.description } });
     for (const kind of DEF_KINDS) {
       for (const [name, body] of Object.entries(model[DEF_COLLECTIONS[kind]])) {
         head.push({ type: `${kind}-added`, data: { 'dcb-model-id': model.id, name, body } });
@@ -693,6 +694,14 @@ function apply(models, event) {
   // header changed, and by `renameDcbModel` from the bar's name field.
   if (type === 'dcb-model-renamed') {
     if (models[modelId]) models[modelId].name = data.name;
+    return;
+  }
+  // The model's description (11.0), the doc comment above the code
+  // view's `model "…"` line; null takes it away.
+  if (type === 'dcb-model-described') {
+    if (!models[modelId]) return;
+    if (typeof data.description === 'string' && data.description) models[modelId].description = data.description;
+    else delete models[modelId].description;
     return;
   }
   if (type === 'dcb-model-deleted') {
@@ -3835,6 +3844,23 @@ function renameDcbModel(id, name) {
   appendEvents([{ type: 'dcb-model-renamed', data: { 'dcb-model-id': id, name: trimmed } }]);
 }
 
+// The model's description (11.0): free text about the whole model,
+// documentation only. Empty or null takes it away; one the model
+// already has appends nothing.
+function describeDcbModel(id, description) {
+  const model = getCtxOrThrow(id);
+  const next = normalizedDescription(description);
+  if (next === (model.description === undefined ? null : model.description)) return;
+  appendEvents([{ type: 'dcb-model-described', data: { 'dcb-model-id': id, description: next } }]);
+}
+
+// A description as stored: text, or null for none.
+function normalizedDescription(description) {
+  if (description === undefined || description === null) return null;
+  if (typeof description !== 'string') throw new DomainError('A description is text.');
+  return description.trim() ? description.replace(/\s+$/, '') : null;
+}
+
 // Definitions ------------------------------------------------------------
 
 // The stored definitions of one kind – refused for a kind this build
@@ -4017,10 +4043,27 @@ function definitionAdvisories(model, kind, name, body) {
   // an agent writing a whole body. It still bounds the append, so it is
   // never dropped behind anyone's back; it is reported here and pruned
   // by the next edit to this command, which is what the message says.
-  if (kind === 'event-definition') messages.push(...eventTagAdvisories(model, body));
+  messages.push(...noteAdvisories(kind, body));
+  if (kind === 'event-definition') {
+    messages.push(...eventTagAdvisories(model, body));
+    // An event no command emits (11.0): a definition the model can
+    // never record – unless it says it is only stored (`@deprecated`).
+    if (body && body.isDeprecated !== true && !emittedEvents(model).has(name)) {
+      messages.push('No command emits it. Mark it @deprecated if it is only stored, or emit it from the command that records it.');
+    }
+  }
   if (kind === 'projection-definition') messages.push(...handlerAdvisories(`Projection "${name}"`, body));
   if (kind === 'command-definition') {
     messages.push(...rejectionAdvisories(body));
+    const deprecated = [];
+    forEachStep(commandSteps(body), (step) => {
+      if (stepKind(step) !== 'emit' || deprecated.includes(step.name)) return;
+      const event = model['event-definitions'][step.name];
+      if (event && event.isDeprecated === true) deprecated.push(step.name);
+    });
+    for (const event of deprecated) {
+      messages.push(`Emits ${event}, which is @deprecated – it is stored, but no longer recorded. Emit what replaced it.`);
+    }
     const stranded = unreferencedBindings(model, body);
     if (stranded.length) {
       messages.push(`Reads nothing consults: ${stranded.join(', ')}. `
@@ -4033,6 +4076,44 @@ function definitionAdvisories(model, kind, name, body) {
 }
 
 let advisoriesCache = null;
+
+// The events some command emits, anywhere in its steps. Not cached:
+// a model's collections are folded into in place.
+function emittedEvents(model) {
+  const found = new Set();
+  for (const body of Object.values(model['command-definitions'] || {})) {
+    forEachStep(commandSteps(body), (step) => { if (stepKind(step) === 'emit') found.add(step.name); });
+  }
+  return found;
+}
+
+// The fields a definition's description and notes fill (11.0), in the
+// order the schema declares them – what an editor that rebuilds a body
+// carries over untouched.
+const DEFINITION_NOTE_FIELDS = ['description', 'assumptions', 'externalRules', 'unresolved', 'isDeprecated', 'isSensitive'];
+
+// A definition's description and notes (11.0) are documentation: they
+// are only advised on when they are not what they say – text, lists of
+// text, a marker that is true – or sit where they mean nothing.
+const NOTE_LISTS = ['assumptions', 'externalRules', 'unresolved'];
+function noteAdvisories(kind, body) {
+  const out = [];
+  if (!body || typeof body !== 'object') return out;
+  if (body.description !== undefined && typeof body.description !== 'string') out.push('Its description is not text.');
+  for (const field of NOTE_LISTS) {
+    const held = body[field];
+    if (held !== undefined && (!Array.isArray(held) || held.some((note) => typeof note !== 'string' || !note.trim()))) {
+      out.push(`Its ${field} are not a list of text.`);
+    }
+  }
+  if (body.isDeprecated !== undefined && (kind !== 'event-definition' || body.isDeprecated !== true)) {
+    out.push('Only an event is @deprecated, and isDeprecated is true when it is.');
+  }
+  if (body.isSensitive !== undefined && (kind !== 'custom-type-definition' || body.isSensitive !== true)) {
+    out.push('Only a type is @sensitive, and isSensitive is true when it is.');
+  }
+  return out;
+}
 
 function modelAdvisories(model) {
   if (advisoriesCache && advisoriesCache.revision === logRevisionNow() && advisoriesCache.model === model) {
@@ -7775,6 +7856,14 @@ function replaceDefinitions(modelId, next) {
       summary.renamed = name;
     }
   }
+  // A text is the whole model, its description included: said only by
+  // a caller that passes `description` (null for none).
+  if (next.description !== undefined) {
+    const description = normalizedDescription(next.description);
+    if (description !== (model.description === undefined ? null : model.description)) {
+      events.push({ type: 'dcb-model-described', data: { 'dcb-model-id': modelId, description } });
+    }
+  }
   // The two scenario kinds are written only when asked for – a caller
   // that says nothing about them leaves them as they are.
   const kinds = [...ADVISORY_KINDS, ...ID_KEYED_KINDS.filter((kind) => next.collections[kind] !== undefined)];
@@ -8148,6 +8237,7 @@ function buildShareEnvelope(model, sandboxSteps) {
     $schema: MODEL_SCHEMA_URL,
     dcbModelVersion: MODEL_VERSION,
     name: model.name,
+    ...(model.description ? { description: model.description } : {}),
     ...definitionsToSchema(model),
   };
   const propertyScenarios = definitionsToSchemaArray(
@@ -8506,6 +8596,7 @@ function importModelFromEnvelope(envelope) {
   }
 
   const modelId = createDcbModel(envelope.name);
+  if (typeof envelope.description === 'string') describeDcbModel(modelId, envelope.description);
 
   const skipped = [];
   const attempt = (kind, name, write) => {

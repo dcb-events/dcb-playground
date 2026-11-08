@@ -20,6 +20,74 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         ],
         "description": "What this group is called – PascalCase, unique among groups and\namong top-level projections, since outside the group both are read\nby their name. A command binds it by this name, and a grouped\nprojection is qualified by it.\n"
       },
+      "description": {
+        "description": "Free text about what it describes (11.0), written as `///` lines\nabove it in the notation. Documentation only: nothing reads it.\n",
+        "type": "string",
+        "minLength": 1
+      },
+      "assumptions": {
+        "type": [
+          "string",
+          "number",
+          "boolean",
+          "array",
+          "object",
+          "null"
+        ],
+        "description": "`@assumption(\"…\")` (11.0): readings taken where the brief was\nsilent. Documentation only: never evaluated, never part of a\nboundary.\n",
+        "allOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          }
+        ]
+      },
+      "externalRules": {
+        "type": [
+          "string",
+          "number",
+          "boolean",
+          "array",
+          "object",
+          "null"
+        ],
+        "description": "`@external(\"…\")` (11.0): rules checked outside the model, by the\nlayer around the commands before it dispatches. Documentation\nonly: never evaluated, never part of a boundary.\n",
+        "allOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          }
+        ]
+      },
+      "unresolved": {
+        "type": [
+          "string",
+          "number",
+          "boolean",
+          "array",
+          "object",
+          "null"
+        ],
+        "description": "`@unresolved(\"…\")` (11.0): known gaps and open questions. A model\nwith any is incomplete, whatever else its checks say.\n",
+        "allOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          }
+        ]
+      },
       "icon": {
         "description": "A short glyph – one emoji, or a character or two – that stands\nfor this group wherever it is named. Presentation only: no\npart of the model reads it, and two groups may share one.\nAbsent means an authoring tool picks its own placeholder.\n",
         "type": "string",
@@ -91,6 +159,74 @@ const WEBMCP_DEFINITION_SCHEMAS = {
               "examples": [
                 "capacity",
                 "subscriptionCount"
+              ]
+            },
+            "description": {
+              "description": "Free text about what it describes (11.0), written as `///` lines\nabove it in the notation. Documentation only: nothing reads it.\n",
+              "type": "string",
+              "minLength": 1
+            },
+            "assumptions": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "array",
+                "object",
+                "null"
+              ],
+              "description": "`@assumption(\"…\")` (11.0): readings taken where the brief was\nsilent. Documentation only: never evaluated, never part of a\nboundary.\n",
+              "allOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1
+                }
+              ]
+            },
+            "externalRules": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "array",
+                "object",
+                "null"
+              ],
+              "description": "`@external(\"…\")` (11.0): rules checked outside the model, by the\nlayer around the commands before it dispatches. Documentation\nonly: never evaluated, never part of a boundary.\n",
+              "allOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1
+                }
+              ]
+            },
+            "unresolved": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "array",
+                "object",
+                "null"
+              ],
+              "description": "`@unresolved(\"…\")` (11.0): known gaps and open questions. A model\nwith any is incomplete, whatever else its checks say.\n",
+              "allOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1
+                }
               ]
             },
             "arguments": {
@@ -1536,6 +1672,74 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         ],
         "description": "What this event type is called – PascalCase, past tense by\nconvention, unique among events. Handlers, emissions and\nscenarios refer to it by this name, and it is the `type` every\nrecorded instance carries.\n"
       },
+      "description": {
+        "description": "Free text about what it describes (11.0), written as `///` lines\nabove it in the notation. Documentation only: nothing reads it.\n",
+        "type": "string",
+        "minLength": 1
+      },
+      "assumptions": {
+        "type": [
+          "string",
+          "number",
+          "boolean",
+          "array",
+          "object",
+          "null"
+        ],
+        "description": "`@assumption(\"…\")` (11.0): readings taken where the brief was\nsilent. Documentation only: never evaluated, never part of a\nboundary.\n",
+        "allOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          }
+        ]
+      },
+      "externalRules": {
+        "type": [
+          "string",
+          "number",
+          "boolean",
+          "array",
+          "object",
+          "null"
+        ],
+        "description": "`@external(\"…\")` (11.0): rules checked outside the model, by the\nlayer around the commands before it dispatches. Documentation\nonly: never evaluated, never part of a boundary.\n",
+        "allOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          }
+        ]
+      },
+      "unresolved": {
+        "type": [
+          "string",
+          "number",
+          "boolean",
+          "array",
+          "object",
+          "null"
+        ],
+        "description": "`@unresolved(\"…\")` (11.0): known gaps and open questions. A model\nwith any is incomplete, whatever else its checks say.\n",
+        "allOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          }
+        ]
+      },
       "icon": {
         "description": "A short glyph – one emoji, or a character or two – that stands\nfor this event wherever it is named. Presentation only: no\npart of the model reads it, and two events may share one.\nAbsent means an authoring tool picks its own placeholder –\nconventionally the icon of the one command that publishes\nthis event, when exactly one does, and otherwise a neutral\nmark of its own.\n",
         "type": "string",
@@ -1619,6 +1823,20 @@ const WEBMCP_DEFINITION_SCHEMAS = {
             "items.productId"
           ]
         ]
+      },
+      "isDeprecated": {
+        "type": [
+          "string",
+          "number",
+          "boolean",
+          "array",
+          "object",
+          "null"
+        ],
+        "description": "`@deprecated` (11.0): the event is still stored but no longer\nemitted. No command has to emit it, and one that does is advised\nagainst. Documentation only.\n",
+        "enum": [
+          true
+        ]
       }
     },
     "required": [
@@ -1641,6 +1859,74 @@ const WEBMCP_DEFINITION_SCHEMAS = {
           "TenantCourseNumbering"
         ],
         "description": "What this projection is called – PascalCase, unique among\nprojections and among groups. Command reads, derived operands and\nprojection scenarios refer to it by this name. A grouped projection is named qualified, `<Group>.<localName>` (`Course.capacity`): that adds it to, or edits it in, its group."
+      },
+      "description": {
+        "description": "Free text about what it describes (11.0), written as `///` lines\nabove it in the notation. Documentation only: nothing reads it.\n",
+        "type": "string",
+        "minLength": 1
+      },
+      "assumptions": {
+        "type": [
+          "string",
+          "number",
+          "boolean",
+          "array",
+          "object",
+          "null"
+        ],
+        "description": "`@assumption(\"…\")` (11.0): readings taken where the brief was\nsilent. Documentation only: never evaluated, never part of a\nboundary.\n",
+        "allOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          }
+        ]
+      },
+      "externalRules": {
+        "type": [
+          "string",
+          "number",
+          "boolean",
+          "array",
+          "object",
+          "null"
+        ],
+        "description": "`@external(\"…\")` (11.0): rules checked outside the model, by the\nlayer around the commands before it dispatches. Documentation\nonly: never evaluated, never part of a boundary.\n",
+        "allOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          }
+        ]
+      },
+      "unresolved": {
+        "type": [
+          "string",
+          "number",
+          "boolean",
+          "array",
+          "object",
+          "null"
+        ],
+        "description": "`@unresolved(\"…\")` (11.0): known gaps and open questions. A model\nwith any is incomplete, whatever else its checks say.\n",
+        "allOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          }
+        ]
       },
       "tags": {
         "description": "The tags this projection is read by, in the order a read gives\nthem – each a name, which is how a read refers to it,\nand a tag type, which is the key its value is rendered under.\nEmpty is an untagged projection, which folds the whole log;\nrequired, so that saying so is a decision rather than an\nomission (`untagged projection …` in the notation). Required for a top-level projection; a grouped one has none of its own – it is read by its group's tag, and whatever is given here is dropped.",
@@ -3122,6 +3408,74 @@ const WEBMCP_DEFINITION_SCHEMAS = {
           "SubscribeStudentToCourse"
         ],
         "description": "What this command is called – PascalCase, imperative by\nconvention, unique among commands. Scenarios refer to it by this\nname.\n"
+      },
+      "description": {
+        "description": "Free text about what it describes (11.0), written as `///` lines\nabove it in the notation. Documentation only: nothing reads it.\n",
+        "type": "string",
+        "minLength": 1
+      },
+      "assumptions": {
+        "type": [
+          "string",
+          "number",
+          "boolean",
+          "array",
+          "object",
+          "null"
+        ],
+        "description": "`@assumption(\"…\")` (11.0): readings taken where the brief was\nsilent. Documentation only: never evaluated, never part of a\nboundary.\n",
+        "allOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          }
+        ]
+      },
+      "externalRules": {
+        "type": [
+          "string",
+          "number",
+          "boolean",
+          "array",
+          "object",
+          "null"
+        ],
+        "description": "`@external(\"…\")` (11.0): rules checked outside the model, by the\nlayer around the commands before it dispatches. Documentation\nonly: never evaluated, never part of a boundary.\n",
+        "allOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          }
+        ]
+      },
+      "unresolved": {
+        "type": [
+          "string",
+          "number",
+          "boolean",
+          "array",
+          "object",
+          "null"
+        ],
+        "description": "`@unresolved(\"…\")` (11.0): known gaps and open questions. A model\nwith any is incomplete, whatever else its checks say.\n",
+        "allOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          }
+        ]
       },
       "icon": {
         "description": "A short glyph – one emoji, or a character or two – that stands\nfor this command wherever it is named. Presentation only: no\npart of the model reads it, and two commands may share one.\nAbsent means an authoring tool picks its own placeholder. The\nevent this command publishes on success takes this same icon\nby default (see `EventDefinition.icon`), which is why setting\none here is usually enough to mark both.\n",
@@ -5560,6 +5914,74 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         ],
         "description": "What this value type is called – PascalCase, unique among value\ntypes. Properties, parameters and fields name it wherever they name a type.\n"
       },
+      "description": {
+        "description": "Free text about what it describes (11.0), written as `///` lines\nabove it in the notation. Documentation only: nothing reads it.\n",
+        "type": "string",
+        "minLength": 1
+      },
+      "assumptions": {
+        "type": [
+          "string",
+          "number",
+          "boolean",
+          "array",
+          "object",
+          "null"
+        ],
+        "description": "`@assumption(\"…\")` (11.0): readings taken where the brief was\nsilent. Documentation only: never evaluated, never part of a\nboundary.\n",
+        "allOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          }
+        ]
+      },
+      "externalRules": {
+        "type": [
+          "string",
+          "number",
+          "boolean",
+          "array",
+          "object",
+          "null"
+        ],
+        "description": "`@external(\"…\")` (11.0): rules checked outside the model, by the\nlayer around the commands before it dispatches. Documentation\nonly: never evaluated, never part of a boundary.\n",
+        "allOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          }
+        ]
+      },
+      "unresolved": {
+        "type": [
+          "string",
+          "number",
+          "boolean",
+          "array",
+          "object",
+          "null"
+        ],
+        "description": "`@unresolved(\"…\")` (11.0): known gaps and open questions. A model\nwith any is incomplete, whatever else its checks say.\n",
+        "allOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          }
+        ]
+      },
       "schema": {
         "type": "object",
         "description": "The scalar form – an opaque JSON Schema for a single value. A JSON Schema object (draft 2020-12) describing one value, e.g. {\"type\": \"string\"}."
@@ -5622,6 +6044,20 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         "description": "Template rendering this type's value into its tag, when\n`isTag` is true. Interpolates `{type}` (this type's name) and\n`{value}` (the value); both are required, in either order,\nand nothing else is. `{type}:{value}` – the default – is what\nevery earlier example in this document assumes; rearranging\nit (`{type}={value}`) or restyling it changes what an event\nconsulting this type writes as its tag, everywhere.\n",
         "type": "string",
         "default": "{type}:{value}"
+      },
+      "isSensitive": {
+        "type": [
+          "string",
+          "number",
+          "boolean",
+          "array",
+          "object",
+          "null"
+        ],
+        "description": "`@sensitive` (11.0): values of this type are personal data. On a\ntag type, the store must not render the plain value as a tag – the\nadapter hashes it, or uses an HMAC with a deployment secret; the\nalgorithm is not part of the model. Matching is unaffected, since\nequal values give equal hashes. How the data is protected beyond\nthat is the store's and the outer layers' concern. Tools may mask\nsuch values in their output.\n",
+        "enum": [
+          true
+        ]
       }
     },
     "required": [
