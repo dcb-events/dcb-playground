@@ -3984,7 +3984,7 @@ function completeScenario(draft, record) {
     return { body, status: 'recorded', actual };
   }
   if (reason) return { body, status: 'broken', reason };
-  const holds = record.kind === 'scenario-definition' ? evThenHolds(actual, body.then) : evSameOutcome(actual, body.then);
+  const holds = record.kind === 'scenario-definition' ? evThenHolds(actual, body.then, draft) : evSameOutcome(actual, body.then);
   return { body, status: holds ? 'current' : 'drifted', actual };
 }
 

@@ -11584,18 +11584,29 @@ function scenarioArguments(model, scenario) {
 // Whether a command scenario's Then holds of what was derived (11.0):
 // the same outcome – a refusal by its message – and, published, the
 // same events in order, each comparing the fields its Then lists and
-// ignoring those it leaves out. A Then recorded from a run lists them
-// all, and so compares the whole payload.
-function evThenHolds(actual, expected) {
+// ignoring those it leaves out – into a record's value too, by the
+// model's types: a record's listed fields compared, the rest ignored.
+// An opaque object, and a list, compare whole. A Then recorded from a
+// run lists them all, and so compares the whole payload.
+function evThenHolds(actual, expected, model = null) {
   if (!actual || !expected || actual.outcome !== expected.outcome) return false;
   if (expected.outcome !== 'published') return evSameOutcome(actual, expected);
   const want = expected.events || [];
   const got = actual.events || [];
   if (want.length !== got.length) return false;
+  const isRecord = (value) => !!value && typeof value === 'object' && !Array.isArray(value);
+  const listedHold = (listed, have, properties) => Object.keys(listed).every((key) => {
+    const property = (properties || []).find((p) => p && p.name === key);
+    const held = isRecord(have) && evOwn(have, key) !== undefined ? have[key] : null;
+    const fields = model && property && !property.isList ? compositeFieldsOf(model, property.propertyType) : null;
+    if (fields && isRecord(listed[key]) && isRecord(held)) return listedHold(listed[key], held, fields);
+    return evSameOutcome(listed[key], held);
+  });
   return want.every((event, i) => {
     if (!event || !got[i] || event.type !== got[i].type) return false;
     const listed = event.data && typeof event.data === 'object' ? event.data : {};
-    return Object.keys(listed).every((key) => evSameOutcome(listed[key], evOwn(got[i].data, key) === undefined ? null : got[i].data[key]));
+    const definition = model ? evOwn(model['event-definitions'], event.type) : null;
+    return listedHold(listed, got[i].data, definition ? definition.properties : null);
   });
 }
 
@@ -11694,7 +11705,7 @@ function runScenario(model, scenario) {
     return { status: 'broken', expected, actual: null, reason: evaluationFailure(error) };
   }
   return {
-    status: evThenHolds(actual, expected) ? 'current' : 'drifted',
+    status: evThenHolds(actual, expected, model) ? 'current' : 'drifted',
     expected,
     actual,
   };
@@ -15948,7 +15959,7 @@ function completeScenario(draft, record) {
     return { body, status: 'recorded', actual };
   }
   if (reason) return { body, status: 'broken', reason };
-  const holds = record.kind === 'scenario-definition' ? evThenHolds(actual, body.then) : evSameOutcome(actual, body.then);
+  const holds = record.kind === 'scenario-definition' ? evThenHolds(actual, body.then, draft) : evSameOutcome(actual, body.then);
   return { body, status: holds ? 'current' : 'drifted', actual };
 }
 

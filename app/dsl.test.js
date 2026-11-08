@@ -3802,6 +3802,42 @@ command Check(userId: UserId) {
     eq(advisedOtherwise(buildText(text).model()).map((a) => a.message)
       .filter((m) => /a where reads value, parameters, aliases and literals, never a projection/.test(m)).length, 1, 'a group\'s projection');
   });
+
+  // D5: a partial then compares a nested record's listed fields, and
+  // ignores the ones it leaves out.
+  const SIGNUPS = `model "Signups"
+
+// Types
+tag type CustomerId = string
+tag type EmailAddress = string
+type Meta = object
+record SignUp { emailAddress: EmailAddress, name: string }
+
+// Events
+event SignedUp { tag customerId: CustomerId, signUp: SignUp tag emailAddress, meta: Meta }
+
+// Commands
+command SignUpCustomer(customerId: CustomerId, signUp: SignUp, meta: Meta) {
+  emit SignedUp { customerId, signUp, meta }
+
+  scenarios {
+    scenario {
+      when SignUpCustomer { customerId: "c1", signUp: { emailAddress: "a@x.test", name: "Ann" }, meta: { a: 1, b: 2 } }
+      then SignedUp { customerId: "c1", signUp: { emailAddress: "a@x.test" } }
+    }
+  }
+}
+`;
+
+  check('D5: a partial then compares a nested record by the fields it lists', () => {
+    eq(runAll(SIGNUPS), ['current'], 'the name left out is ignored');
+    eq(runAll(swap(SIGNUPS, 'then SignedUp { customerId: "c1", signUp: { emailAddress: "a@x.test" } }',
+      'then SignedUp { customerId: "c1", signUp: { emailAddress: "b@x.test" } }')), ['drifted'], 'a listed field differs');
+    eq(runAll(swap(SIGNUPS, 'then SignedUp { customerId: "c1", signUp: { emailAddress: "a@x.test" } }',
+      'then SignedUp { customerId: "c1", signUp: { emailAddress: "a@x.test" }, meta: { a: 1 } }')), ['drifted'], 'an opaque object is compared whole');
+    eq(runAll(swap(SIGNUPS, 'then SignedUp { customerId: "c1", signUp: { emailAddress: "a@x.test" } }',
+      'then SignedUp { customerId: "c1", signUp: { emailAddress: "a@x.test" }, meta: { b: 2, a: 1 } }')), ['current'], 'whole, in any key order');
+  });
 }
 
 finish();
