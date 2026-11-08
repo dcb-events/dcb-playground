@@ -2659,7 +2659,13 @@ function parseModelSourceText(text, options) {
     if (!body || typeof body !== 'object') continue;
     if (Array.isArray(body.steps)) body.steps = settle(body.steps);
     const projections = new Set((body.boundary || []).filter((b) => b && b.projection !== undefined).map((b) => b.alias));
-    if (projections.size) aliasFields(body.steps, projections);
+    if (!projections.size) continue;
+    aliasFields(body.steps, projections);
+    // A binding's own values too: `Residents(address.city)`.
+    for (const binding of body.boundary || []) {
+      if (binding && binding.tags) aliasFields(binding.tags, projections);
+      if (binding && binding.arguments) aliasFields(binding.arguments, projections);
+    }
   }
   const settleProjection = (body, group) => {
     if (!body || !body.derived || typeof body.derived !== 'object') return;

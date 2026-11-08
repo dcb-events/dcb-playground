@@ -3652,6 +3652,68 @@ command AddThing(id: ThingId, items: Items, meta: Meta) {
       ['id: is no string', 'items: is no array', 'meta: is no object', 'counts: is no list'], 'base types');
     eq(problems({ id: 't1', items: [1], meta: {}, counts: [0, 1.5] }), ['counts: is below 1', 'counts: is no integer'], 'a list\'s elements');
   });
+
+  // D2: an alias may read by another alias's record field, as a read
+  // in place does.
+  const ADDRESS = `model "Shipping"
+
+// Types
+tag type UserId = string
+tag type City = string
+record Address { city: City, zip: string }
+
+// Events
+event Moved { tag userId: UserId, address: Address tag city }
+event Shipped { tag userId: UserId }
+
+// Projections
+projection AddressOf (tag userId: UserId): Address = null {
+  on Moved => set event.data.address
+}
+
+projection Residents (tag city: City): integer = 0 {
+  on Moved => increment 1
+}
+
+// Commands
+command Move(userId: UserId, address: Address) {
+  emit Moved { userId, address }
+}
+
+command Ship(userId: UserId) {
+  alias address = AddressOf(userId)
+  alias residents = Residents(address.city)
+
+  require residents < 2
+    else reject "Crowded"
+
+  emit Shipped { userId }
+
+  scenarios {
+    scenario "room" {
+      given Moved { userId: "u1", address: { city: "c1", zip: "1" } }
+      when Ship { userId: "u1" }
+      then Shipped { userId: "u1" }
+    }
+
+    scenario "crowded" {
+      given Moved { userId: "u1", address: { city: "c1", zip: "1" } }
+      and Moved { userId: "u2", address: { city: "c1", zip: "2" } }
+      when Ship { userId: "u1" }
+      then rejected "Crowded"
+    }
+  }
+}
+`;
+
+  check('D2: an alias reads by another alias\'s record field', () => {
+    eq(runAll(ADDRESS), ['current', 'current'], 'both hold');
+    const { model } = buildText(ADDRESS);
+    eq(advisedOtherwise(model()), [], 'advisory-clean');
+    eq(model()['command-definitions'].Ship.boundary[1].tags, { city: { alias: 'address', field: 'city' } }, 'stored as a field');
+    eq(modelToSource(model()), ADDRESS, 'printed as written');
+    assertSameModel(model(), parseModelSource(ADDRESS), 'round trip');
+  });
 }
 
 finish();
