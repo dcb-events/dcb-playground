@@ -997,8 +997,10 @@ function lifecycleUnplaced(body, projectionName, states) {
 // The machine, or null when the projection has no lifecycle. `body` is
 // the projection as it is being edited – the stored one by default.
 //
-//   transitions  `{event, target, sources, conventional, unguarded,
-//                unpublished}` – `sources` the union of where its
+//   transitions  `{event, guard, target, sources, conventional,
+//                unguarded, unpublished}` – one per handler, or per
+//                arm of a branched one (`guard` its `if …` / `else`,
+//                '' for none); `sources` the union of where its
 //                publishers may emit it; with none to read, it is drawn from the
 //                initial state (`conventional`), and `unguarded` names
 //                the publishers nothing guards;
@@ -1017,8 +1019,11 @@ function lifecycleMachine(model, projectionName, body = projectionsOf(model)[pro
   const initial = body.initialValue === undefined ? null : lifecycleStateOperand(body.initialValue, members);
   const start = initial === undefined ? null : initial;
   const handlers = (body.handlers || []).filter((handler) => handler && handler.event);
-  const targetOf = (handler) => (handler.operation === 'set' ? lifecycleStateOperand(handler.value, members) : undefined);
-  const states = start === null || handlers.some((handler) => targetOf(handler) === null)
+  // A branched handler (11.0) is an arrow per arm that sets a state,
+  // labelled with what it is applied under.
+  const arms = handlers.flatMap(handlerArms);
+  const targetOf = (arm) => (arm.operation === 'set' ? lifecycleStateOperand(arm.value, members) : undefined);
+  const states = start === null || arms.some((arm) => targetOf(arm) === null)
     ? [null, ...members] : members;
   const commands = model['command-definitions'] || {};
 
@@ -1031,9 +1036,12 @@ function lifecycleMachine(model, projectionName, body = projectionsOf(model)[pro
 
   const transitions = [];
   const opaque = [];
-  for (const handler of handlers) {
+  for (const handler of arms) {
     const target = targetOf(handler);
-    if (target === undefined) { opaque.push(handler.event); continue; }
+    if (target === undefined) {
+      if (!opaque.includes(handler.event)) opaque.push(handler.event);
+      continue;
+    }
     const publishers = publishersOf(model, handler.event);
     const sources = new Set();
     const unguarded = [];
@@ -1049,6 +1057,7 @@ function lifecycleMachine(model, projectionName, body = projectionsOf(model)[pro
     const conventional = !sources.size;
     transitions.push({
       event: handler.event,
+      guard: handler.guard,
       target,
       sources: conventional ? [start] : states.filter((state) => sources.has(state)),
       conventional,
@@ -1112,9 +1121,11 @@ function lifecycleRulesOver(conditions, body, projectionName) {
 // when it has a machine (or no lifecycle at all).
 //
 //   initial    its initial value, as stored;
-//   handlers   `{event, operation, value, appendedBy: [{command,
-//              rules}]}` – a command appending that event, with its
-//              rules over the value;
+//   handlers   `{event, guard, operation, value, appendedBy:
+//              [{command, rules}]}` – one per handler, or per arm of a
+//              branched one, `guard` what it is applied under; a
+//              command appending that event, with its rules over the
+//              value;
 //   readers    `{command, rules}` – commands with a rule over it that
 //              append nothing moving it: where the value matters.
 //
@@ -1131,8 +1142,9 @@ function lifecycleMovements(model, projectionName, body = projectionsOf(model)[p
     projection: projectionName,
     kind: lifecycle.kind,
     initial: body.initialValue === undefined ? null : body.initialValue,
-    handlers: handlers.map((handler) => ({
+    handlers: handlers.flatMap(handlerArms).map((handler) => ({
       event: handler.event,
+      guard: handler.guard,
       operation: handler.operation,
       value: handler.value,
       appendedBy: Object.entries(commands).flatMap(([command, commandBody]) => {
@@ -2073,6 +2085,11 @@ function effectParts(effect) {
     // _The interface register_ in docs/design-notes.md.
     verb: effect.handler.operation,
     object: operandWords(effect.handler.value),
+    // A branched handler (11.0): each arm, what it is applied under and
+    // what it does – shown, and edited in the code view.
+    arms: isConditionalHandler(effect.handler)
+      ? handlerArms(effect.handler).map((arm) => ({ guard: arm.guard, verb: arm.operation, object: operandWords(arm.value), value: arm.value }))
+      : null,
   };
 }
 

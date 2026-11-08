@@ -634,6 +634,8 @@
   .peditor .phandler { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; padding: 4px 6px; margin-bottom: 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
   .peditor .phandler > .pk, .peditor .phandler > .pop, .peditor .phandler > .btn { flex: none; }
   .peditor .phandler > .btn.danger { margin-left: auto; }
+  .peditor .phandler-branched { align-items: flex-start; flex-wrap: wrap; }
+  .peditor .phandler-branched > .pbranches { flex: 1 1 14em; min-width: 0; display: grid; gap: 2px; }
   .peditor .phandler > select { flex: 0 1 auto; min-width: 4.5em; }
   /* The event's name gives way first: the value is a path whose end is
      the part that says anything. */
@@ -7979,8 +7981,16 @@ function stepChanges(model, slice) {
               : h('span', { class: 'muted' }, 'by no tag'),
           ]),
           reads.length ? ' ' : null,
-          h('span', { class: 'verb tok' }, p.verb), ' ',
-          opRef(effect.handler.value, emission.name, p.object),
+          // A branched handler (11.0) says each arm – what it is
+          // applied under, then what it does.
+          ...(p.arms
+            ? p.arms.flatMap((arm, i) => [
+                i ? h('span', { class: 'muted' }, ' · ') : null,
+                h('span', { class: 'muted' }, arm.guard + ' → '),
+                h('span', { class: 'verb tok' }, arm.verb), ' ',
+                opRef(arm.value, emission.name, arm.object),
+              ])
+            : [h('span', { class: 'verb tok' }, p.verb), ' ', opRef(effect.handler.value, emission.name, p.object)]),
           // A read the event cannot reach is said, never hidden – it is
           // an advisory on the read, and this is where it shows.
           unreached.length ? h('span', { class: 'muted tiny' },
@@ -7988,7 +7998,7 @@ function stepChanges(model, slice) {
             + `${readable(emission.name)} is tagged by none`) : null),
         h('span', { class: 'grow' }),
         reveal(
-          h('button', {
+          p.arms ? codeViewButton('A handler\'s branches are edited in the code view') : h('button', {
             class: 'btn tiny',
             onclick: () => {
               closeForms();
@@ -8080,6 +8090,9 @@ function changeAdder(model, eventName, emission) {
   const settable = (name) => {
     const projection = projectionsOf(model)[name];
     if (!projection || derivedOf(projection)) return false;
+    // A handler that branches on this event (11.0) is the code view's
+    // to edit; writing one operation here would replace its branches.
+    if ((projection.handlers || []).some((x) => x && x.event === eventName && isConditionalHandler(x))) return false;
     if (!emission) return true;
     const { reads, unreached } = changeArguments(model, emission, name);
     return reads.length > 0 || !unreached.length;
@@ -8799,6 +8812,8 @@ let lifecycleBandCount = 0;
 function lifecycleEventLabel(model, transition) {
   return [
     lifecycleChip('event', model, transition.event),
+    // An arm of a branched handler (11.0) says what it is applied under.
+    transition.guard ? h('span', { class: 'muted tiny lc-guard' }, ' ' + transition.guard) : null,
     transition.unguarded.length
       ? lifecycleDot(transition.unguarded.map(readable).join(', ') + ': no rule over this projection')
       : null,
@@ -8871,7 +8886,7 @@ function lifecycleNotes(machine) {
     notes.push(h('span', {}, lifecycleDot(''),
       ' no rule over this projection guards the command, so it runs in any state.'));
   }
-  const unpublished = machine.transitions.filter((t) => t.unpublished).map((t) => t.event);
+  const unpublished = uniq(machine.transitions.filter((t) => t.unpublished).map((t) => t.event));
   if (unpublished.length) notes.push(`No command appends ${list(unpublished)}.`);
   if (machine.transitions.some((t) => t.conventional)) {
     notes.push('A dashed arrow has no state its commands are known to run in: it starts at the initial state, or, leading back there, at every other state reached.');
@@ -8909,7 +8924,7 @@ function projectionMovements(model, movements) {
     ...rules.map((rule) => h('div', { class: 'lc-mrule' }, ruleSentence(model, commandsBody[command], rule))));
   const notes = [];
   if (!movements.handlers.length) notes.push('No handler moves it yet.');
-  const unpublished = movements.handlers.filter((handler) => !handler.appendedBy.length).map((handler) => handler.event);
+  const unpublished = uniq(movements.handlers.filter((handler) => !handler.appendedBy.length).map((handler) => handler.event));
   if (unpublished.length) notes.push(`No command appends ${unpublished.map(readable).join(', ')}.`);
   return h('div', { class: 'lc-machine lc-moves' },
     h('div', { class: 'muted tiny lc-lead' },
@@ -8920,6 +8935,7 @@ function projectionMovements(model, movements) {
       ...movements.handlers.map((handler) => h('div', { class: 'lc-move' },
         h('div', { class: 'lc-mhead' },
           lifecycleChip('event', model, handler.event),
+          handler.guard ? h('span', { class: 'muted tiny lc-guard' }, handler.guard) : null,
           h('span', { class: 'lc-effect' }, handler.operation, ' ', operandWords(handler.value))),
         ...handler.appendedBy.map(commandRow)))),
     movements.readers.length
@@ -9706,10 +9722,13 @@ function unhandledEventChoices(eventNames, handlers, current) {
   return (eventNames || []).filter((name) => !taken.has(name));
 }
 
+// A branched handler (11.0) stays in the draft as it is stored: the
+// editor shows it and leaves it to the code view, so a save never
+// flattens or drops it.
 function projectionDraftFrom(body) {
   const draft = deepClone(body);
-  draft.handlers = (draft.handlers || []).map((handler) =>
-    draftFromOperand({ event: handler.event, operation: handler.operation }, 'value', handler.value));
+  draft.handlers = (draft.handlers || []).map((handler) => (isConditionalHandler(handler) ? handler
+    : draftFromOperand({ event: handler.event, operation: handler.operation }, 'value', handler.value)));
   return draft;
 }
 
@@ -9779,12 +9798,14 @@ function cleanProjectionBody(draft) {
     // through here, including the one between picking the event and
     // picking the value.
     handlers: handlers
-      .filter((handler) => draftOperand(handler, 'value') !== undefined)
-      .map((handler) => ({
-        event: handler.event,
-        operation: handler.operation,
-        value: draftOperand(handler, 'value'),
-      })),
+      .filter((handler) => isConditionalHandler(handler) || draftOperand(handler, 'value') !== undefined)
+      .map((handler) => (isConditionalHandler(handler)
+        ? { event: handler.event, steps: handler.steps }
+        : {
+            event: handler.event,
+            operation: handler.operation,
+            value: draftOperand(handler, 'value'),
+          })),
   };
 }
 
@@ -10355,7 +10376,9 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
     // Everything scoped by the type goes with it: the operand picker
     // is built from it, and a value of the old type is not a value
     // of the new one.
-    for (const handler of draft.handlers || []) { handler.value = ''; handler.valueText = ''; }
+    for (const handler of draft.handlers || []) {
+      if (!isConditionalHandler(handler)) { handler.value = ''; handler.valueText = ''; }
+    }
     draft.initialValue = defaultInitialValue(model, draft);
   };
   const advanced = projectionAdvanced();
@@ -10402,7 +10425,7 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
       draft.initialValue = defaultInitialValue(model, draft);
       const allowed = operationsFor(model, draft);
       for (const handler of draft.handlers || []) {
-        if (!allowed.includes(handler.operation)) handler.operation = 'set';
+        if (!isConditionalHandler(handler) && !allowed.includes(handler.operation)) handler.operation = 'set';
       }
       render();
     });
@@ -10483,6 +10506,7 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
   };
 
   const declaredHandlerRows = (draft.handlers || []).map((handler, i) => {
+    if (isConditionalHandler(handler)) return branchedHandlerRow(model, draft, handler, i);
     const event = model['event-definitions'][handler.event];
     const operations = operationsFor(model, draft);
     if (!operations.includes(handler.operation)) handler.operation = operations[0];
@@ -10523,9 +10547,29 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
       }, '×'));
   });
 
+  // A branched handler (11.0): its event, then a line per arm – what it
+  // is applied under and what it does – shown, never edited here. The
+  // code view edits it; this row can still remove it.
+  function branchedHandlerRow(model, draft, handler, i) {
+    return h('div', { class: 'phandler phandler-branched' },
+      h('span', { class: 'pk' }, 'on'),
+      eventRef(model, handler.event),
+      h('div', { class: 'pbranches' },
+        ...handlerArms(handler).map((arm) => h('div', { class: 'sentence' },
+          h('span', { class: 'verb' }, arm.guard),
+          h('span', { class: 'pk' }, ' ⇒ '),
+          h('span', { class: 'verb tok' }, arm.operation || '?'), ' ',
+          operandWords(arm.value)))),
+      codeViewButton('A handler\'s branches are edited in the code view'),
+      h('button', {
+        class: 'btn tiny danger', title: 'Remove this handler',
+        onclick: () => { draft.handlers.splice(i, 1); render(); },
+      }, '×'));
+  }
+
   const handlersSection = draft.derived ? null : projectionSection('handlers',
     hint('proj-handlers', 'Handlers', [
-      'Events that move the value – one handler per event type.',
+      'Events that move the value – one handler per event type. One may branch on the event (if … ⇒ …), written in the code view.',
       'Without any, it keeps its initial value forever.',
     ]),
     null,

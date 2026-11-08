@@ -6300,6 +6300,119 @@ command MoveThing(thingId: ThingId, status: Status) {
   });
 }
 
+// ---------------------------------------------------------------
+// Branched handlers (11.0): every page shows them, the Lifecycle tab
+// draws an arm as an arrow under its condition, and an edit on the
+// page never flattens or drops one.
+// ---------------------------------------------------------------
+{
+  const BRANCHES = `model "Branches"
+
+tag type AccountId = string
+enum State { Released, Booked }
+
+event MoneyTransferred { tag from: AccountId, tag to: AccountId, amount: integer }
+event SeatsMarked { tag accountId: AccountId, seats: integer }
+event AccountOpened { tag accountId: AccountId }
+
+projection Balance (tag accountId: AccountId): integer = 0 {
+  on MoneyTransferred {
+    if event.data.from == accountId => decrement event.data.amount
+    if event.data.to == accountId => increment event.data.amount
+  }
+  on AccountOpened => set 0
+}
+
+projection Reservation (tag accountId: AccountId): State = null {
+  on SeatsMarked {
+    if event.data.seats == 0 => set Released
+    else => set Booked
+  }
+}
+
+command Transfer(from: AccountId, to: AccountId, amount: integer) {
+  require Balance(from) >= amount
+    else reject "Not enough"
+
+  emit MoneyTransferred { from, to, amount }
+}
+
+command Mark(accountId: AccountId, seats: integer) {
+  emit SeatsMarked { accountId, seats }
+}
+
+command Open(accountId: AccountId) {
+  emit AccountOpened { accountId }
+}
+`;
+  store.clear();
+  sandbox.bumpLogRevision();
+  const id = sandbox.createDcbModel('Branches');
+  sandbox.applyModelSource(id, BRANCHES);
+  const model = () => projectState()[id];
+  sandbox.setActiveModelId(id);
+  const page = (name, tab = 'definition') => {
+    const main = sandbox.document.createElement('div');
+    sandbox.state.view = 'projections';
+    sandbox.state.projDraft = { name, body: projectionDraftFrom(model()['projection-definitions'][name]) };
+    sandbox.state.projTab = tab;
+    sandbox.renderProjections(model(), main);
+    return textOf(main);
+  };
+
+  check('the projection page shows a branched handler, each arm, and the way to edit it', () => {
+    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+    const text = page('Balance');
+    eq(text.includes('if event.data.from == accountId') && text.includes('if event.data.to == accountId'), true, text.slice(0, 400));
+    eq(text.includes('Edit in code'), true, 'and the way to edit it');
+    eq(cleanProjectionBody(sandbox.state.projDraft.body).handlers, model()['projection-definitions'].Balance.handlers,
+      'painting it changed nothing');
+    sandbox.state.projDraft = null;
+  });
+
+  check('an unrelated edit on the page keeps the branches as they were', () => {
+    const before = model()['projection-definitions'].Balance.handlers;
+    const draft = projectionDraftFrom(model()['projection-definitions'].Balance);
+    draft.initialValue = 100;
+    draft.handlers.find((handler) => handler.event === 'AccountOpened').value = '5';
+    draft.handlers.find((handler) => handler.event === 'AccountOpened').valueText = '5';
+    sandbox.updateDefinition('projection-definition', id, 'Balance', cleanProjectionBody(draft));
+    const after = model()['projection-definitions'].Balance;
+    eq([after.initialValue, after.handlers[0]], [100, before[0]], 'the branched handler untouched');
+    eq(after.handlers.length, 2, 'nothing dropped');
+  });
+
+  check('the Lifecycle tab draws each arm as an arrow under its condition', () => {
+    const machine = sandbox.lifecycleMachine(model(), 'Reservation');
+    eq(machine.transitions.map((t) => [t.event, t.guard, t.target]),
+      [['SeatsMarked', 'if event.data.seats == 0', 'Released'], ['SeatsMarked', 'else', 'Booked']], 'one arrow per arm');
+    const moves = sandbox.lifecycleMovements(model(), 'Balance');
+    eq(moves.handlers.map((h) => [h.event, h.guard, h.operation]), [
+      ['MoneyTransferred', 'if event.data.from == accountId', 'decrement'],
+      ['MoneyTransferred', 'if event.data.to == accountId', 'increment'],
+      ['AccountOpened', '', 'set'],
+    ], 'one movement per arm');
+    eq(page('Reservation', 'lifecycle').includes('if event.data.seats == 0'), true, 'drawn with its condition');
+    eq(page('Balance', 'lifecycle').includes('if event.data.to == accountId'), true, 'listed with its condition');
+    sandbox.state.projDraft = null;
+    sandbox.state.projTab = 'definition';
+  });
+
+  check('the command page says what each arm of a handler does, and every view paints', () => {
+    sandbox.state.slice = 'Transfer';
+    const slice = sandbox.sliceOf(model(), 'Transfer');
+    const changes = textOf(sandbox.stepChanges(model(), slice));
+    eq(changes.includes('if event.data.from == accountId') && changes.includes('decrement'), true, changes);
+    eq(changes.includes('Edit in code'), true, 'edited in the code view');
+    for (const fn of ['renderEvents', 'renderOverview', 'renderCoupling', 'renderRuleMap', 'renderEventModel', 'renderMetro']) {
+      sandbox[fn](model(), sandbox.document.createElement('div'));
+    }
+    eq(sandbox.modelToSource(model()).includes('on MoneyTransferred {'), true, 'the code view prints it');
+  });
+
+  sandbox.clearActiveModelId();
+}
+
 // A share link or a fetched file is unpacked under a cap: a few hundred
 // kilobytes of gzip can stand for gigabytes of whitespace, and the
 // link is unpacked the moment it is opened.
