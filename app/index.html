@@ -4671,6 +4671,9 @@ function memberEditor(model, {
 // silent coercion.
 function literalOfType(model, typeName, text) {
   const trimmed = (text || '').trim();
+  // A time is a string of its format (11.0): a datetime with its
+  // offset, a duration in ISO 8601.
+  if (timeBaseOf(model, typeName)) return timeValueProblem(model, typeName, trimmed) ? undefined : trimmed;
   const schema = underlyingSchema(model, typeName);
   const kind = schema && schema.type;
   if (kind === 'integer' || kind === 'number') {
@@ -13073,6 +13076,9 @@ function identifiersInUse(model, body, typeName) {
   return [...found].sort();
 }
 
+// What a time's field shows while empty (11.0): the form it takes.
+const TIME_PLACEHOLDERS = { datetime: '2026-01-01T10:00:00Z', duration: 'PT15M' };
+
 // One value of one declared type, at one place in the draft. Lists
 // repeat it, composites nest it, and everything else is a field with
 // the type's own vocabulary behind it.
@@ -13098,7 +13104,7 @@ function valueEditor(model, property, path, where) {
     return h('span', { class: 'vwrap' },
       h('input', {
         class: 'vin', value: held === undefined || held === null ? '' : String(held),
-        placeholder: readable(property.propertyType), list: listId,
+        placeholder: TIME_PLACEHOLDERS[timeBaseOf(model, property.propertyType)] || readable(property.propertyType), list: listId,
         // Rebuilt as the field is reached, not as it is drawn: an
         // identifier typed a moment ago is offered here without a
         // repaint having to carry it over.
@@ -13111,7 +13117,8 @@ function valueEditor(model, property, path, where) {
         onchange: (e) => {
           const parsed = literalOfType(model, property.propertyType, e.target.value);
           if (parsed === undefined) {
-            return toast('That is not a ' + readable(property.propertyType) + '.', true);
+            const untimely = timeValueProblem(model, property.propertyType, e.target.value.trim());
+            return toast(untimely || 'That is not a ' + readable(property.propertyType) + '.', true);
           }
           setAtPath(draft(), at, parsed);
         },

@@ -1958,7 +1958,12 @@ function operandWords(operand) {
     case 'open':
     case 'instance-value':
     case 'record':
+    // A duration and arithmetic (11.0) too: `15m`, `now + 15m`, each
+    // side in words.
+    case 'duration':
       return operandText(operand);
+    case 'arithmetic':
+      return `${operandWords(operand.leftHandSide)} ${operand.operator === 'subtract' ? '-' : '+'} ${operandWords(operand.rightHandSide)}`;
     default:
       if (typeof operand === 'string') return `"${operand}"`;
       // A record is a static value with no operand shape – it reads as
@@ -2003,12 +2008,13 @@ const PREDICATE_WORDS = {
 };
 
 // Whether an operand is one only the code view writes (11.0): a
-// collection function, a record value's field, a record set whole –
+// collection function, a record value's field, a record set whole,
+// a duration, arithmetic –
 // shown on the pages, edited in the code view, never dropped by them.
 function operandBeyondEditors(operand) {
   if (Array.isArray(operand)) return operand.some(operandBeyondEditors);
   const source = operandSource(operand);
-  if (['collection', 'open', 'instance-value', 'record'].includes(source)) return true;
+  if (['collection', 'open', 'instance-value', 'record', 'arithmetic', 'duration'].includes(source)) return true;
   if (operand && typeof operand === 'object' && operand.field !== undefined) return true;
   if (source === 'projection-read') return readTagOperands(operand).some(operandBeyondEditors);
   return false;

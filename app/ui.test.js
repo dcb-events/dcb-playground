@@ -6639,6 +6639,119 @@ command Relocate(customerId: CustomerId, street: string, city: string) {
   sandbox.clearActiveModelId();
 }
 
+// ---------------------------------------------------------------
+// Time (11.0): the type pickers offer datetime and duration, a payload
+// field refuses a datetime without its offset, and every page shows a
+// duration and arithmetic as written, read-only, keeping them through
+// an edit.
+// ---------------------------------------------------------------
+{
+  const TIME = `model "Time"
+
+tag type CourseId = string
+tag type ReservationId = string
+record ReservationInfo { seats: integer, expiresAt: datetime }
+
+event CourseDefined { tag courseId: CourseId, capacity: integer }
+event SeatsWereReserved { tag courseId: CourseId, tag reservationId: ReservationId, seats: integer, expiresAt: datetime }
+event HoldChanged { tag courseId: CourseId, hold: duration }
+
+projection CourseCapacity (tag courseId: CourseId): integer = 0 {
+  on CourseDefined => set event.data.capacity
+}
+
+projection Reservation (tag courseId: CourseId, tag reservationId: ReservationId): ReservationInfo = null {
+  on SeatsWereReserved => set { seats: event.data.seats, expiresAt: event.data.expiresAt }
+}
+
+projection LastExpiry (tag courseId: CourseId): datetime = null {
+  on SeatsWereReserved => set event.data.expiresAt
+}
+
+derived projection GraceEnds (tag courseId: CourseId): datetime {
+  LastExpiry(courseId) + 1h
+}
+
+command ReserveSeats(courseId: CourseId, reservationId: ReservationId, seats: integer, now: datetime) {
+  require CourseCapacity(courseId) - sum(Reservation(courseId, *).seats where value.expiresAt > now) >= seats
+    else reject "Not enough seats"
+  require seats > 0
+    else reject "No seats"
+
+  emit SeatsWereReserved { courseId, reservationId, seats, expiresAt: now + 15m }
+}
+
+command ChangeHold(courseId: CourseId, hold: duration) {
+  require hold <= 1h
+    else reject "Too long"
+
+  emit HoldChanged { courseId, hold }
+}
+`;
+  store.clear();
+  sandbox.bumpLogRevision();
+  const id = sandbox.createDcbModel('Time');
+  sandbox.applyModelSource(id, TIME);
+  const model = () => projectState()[id];
+  sandbox.setActiveModelId(id);
+
+  check('the type pickers offer datetime and duration among the built-ins', () => {
+    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+    const rows = sandbox.typeOptions(model());
+    for (const type of ['datetime', 'duration']) {
+      const row = rows.find((r) => r[0] === type);
+      eq(!!row && row[3] && row[3].section, 'Built-in', type);
+    }
+  });
+
+  check('a payload field takes a datetime with its offset and a duration in ISO 8601, and nothing else', () => {
+    eq(sandbox.literalOfType(model(), 'datetime', ' 2026-01-01T10:00:00+02:00 '), '2026-01-01T10:00:00+02:00', 'with an offset');
+    eq(sandbox.literalOfType(model(), 'datetime', '2026-01-01T10:00:00'), undefined, 'without one');
+    eq(sandbox.literalOfType(model(), 'duration', 'PT15M'), 'PT15M', 'a duration');
+    eq(sandbox.literalOfType(model(), 'duration', '15m'), undefined, 'the notation\'s spelling is no stored value');
+  });
+
+  check('the pages show a duration and arithmetic as written, with the way to edit them', () => {
+    sandbox.state.slice = 'ReserveSeats';
+    const slice = sandbox.sliceOf(model(), 'ReserveSeats');
+    const decision = textOf(sandbox.stepDecision(model(), slice));
+    eq(decision.includes('- sum(Reservation(courseId, *).seats where value.expiresAt > now)'), true, decision.slice(0, 600));
+    eq(decision.includes('Edit in code'), true, 'edited in the code view');
+    sandbox.state.openEvent = 'SeatsWereReserved';
+    const emits = textOf(sandbox.stepEmits(model(), slice));
+    eq(emits.includes('+ 15m') && emits.includes('Edit in code'), true, emits.slice(0, 600));
+    sandbox.state.openEvent = null;
+    sandbox.state.slice = 'ChangeHold';
+    const hold = textOf(sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'ChangeHold')));
+    eq(hold.includes('1h'), true, hold.slice(0, 400));
+    const main = sandbox.document.createElement('div');
+    sandbox.state.view = 'projections';
+    sandbox.state.projDraft = { name: 'GraceEnds', body: projectionDraftFrom(model()['projection-definitions'].GraceEnds) };
+    sandbox.state.projTab = 'definition';
+    sandbox.renderProjections(model(), main);
+    eq(textOf(main).includes('1h'), true, textOf(main).slice(0, 400));
+    sandbox.state.projDraft = null;
+    sandbox.state.slice = 'ReserveSeats';
+    for (const fn of ['renderEvents', 'renderOverview', 'renderCoupling', 'renderRuleMap', 'renderEventModel', 'renderMetro']) {
+      sandbox[fn](model(), sandbox.document.createElement('div'));
+    }
+  });
+
+  check('editing on the pages keeps a duration and arithmetic', () => {
+    sandbox.state.slice = 'ReserveSeats';
+    const before = model()['command-definitions'].ReserveSeats.steps;
+    sandbox.patch('command-definition', 'ReserveSeats', (b) => { b.conditions.splice(1, 1); });
+    const steps = model()['command-definitions'].ReserveSeats.steps;
+    eq([steps[0], steps[steps.length - 1]], [before[0], before[before.length - 1]], 'the arithmetic rule and emission unchanged');
+    const derived = model()['projection-definitions'].GraceEnds;
+    sandbox.updateDefinition('projection-definition', id, 'GraceEnds', cleanProjectionBody(projectionDraftFrom(derived)));
+    eq(model()['projection-definitions'].GraceEnds, derived, 'the derived computation kept');
+    sandbox.applyModelSource(id, TIME);
+  });
+
+  sandbox.clearActiveModelId();
+}
+
 // A share link or a fetched file is unpacked under a cap: a few hundred
 // kilobytes of gzip can stand for gigabytes of whitespace, and the
 // link is unpacked the moment it is opened.
