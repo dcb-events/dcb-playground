@@ -522,7 +522,8 @@ and prune what no longer holds.
   the last one wins. Everything that reads a handler's operations goes
   through `handlerArms` (model.js), so renames, enum members, the
   Lifecycle tab and the command page see every arm. `<` / `>` wait
-  for a case.
+  for a case. The projection editor writes them too (_The projection
+  editor_).
 - **A handler's value may be a record's field one hop in** (the 11.0
   acceptance, G2): `set event.data.signUp.emailAddress`, stored as
   the condition's shape, `{eventProperty, property}`, for `set`,
@@ -845,17 +846,30 @@ on Projections, inside a group's section, and in the definition modals.
 - **`+ handler` sits under the handlers**, not in the section's
   heading: with a few rows the heading's button read as belonging to
   none of them, and the next handler goes at the bottom anyway.
-- **A branched handler is shown, not edited, here** (11.0,
-  `branchedHandlerRow`): its event, then a line per arm – `if
-  event.data.from == accountId ⇒ decrement event.data.amount` – with
-  `Edit in code` and `×`, as a command's branches are on its page. The
-  draft carries it as stored (`projectionDraftFrom`) and
+- **A branched handler is edited in its row** (11.0). `+ if` on a
+  handler row makes it one `if` whose arm is the row's operation, under
+  a proposed comparison – the event's field of a tag's type against
+  that tag, `if event.data.from == accountId`, the common case. The
+  draft holds it as `chains` (`handlerChainsDraft`, `handlerFromChains`):
+  one per separate `if`, each its arms and its `else`, every arm a
+  handler row's draft with its comparisons and what joins them. A
+  comparison is three pickers – a field (or a record's field one hop
+  in), `==` / `!=`, a tag of the projection, a member of the field's
+  enum or a typed value – which is everything the code view's
+  `handlerComparison` reads, so there is nothing to stage and the rule
+  adder's questions would only ask what has one answer. `+ and` / `+
+  or`, `+ else if`, `+ else` and `+ separate if` add; × on the last
+  arm of the last `if` takes the handler back to one operation. An arm
+  that cannot be said this way – a group inside a group, a value the
+  row's pickers do not offer – keeps the handler as it is stored,
+  shown with `Edit in code` (`branchedHandlerRow`), and
   `cleanProjectionBody` writes it back untouched, so an edit elsewhere
-  on the projection never flattens or drops it. A visual editor for
-  arms was left out: conditions are rare, short and read best as text.
-  The command page's change rows say each arm the same way, and the
-  change adder does not offer a projection whose handler for that event
-  branches – writing one operation would replace the branches.
+  never flattens or drops it. Buttons are no change event, so they ask
+  for the save themselves (`scheduleProjectionAutosave`). The command
+  page's change rows say each arm and leave editing to the projection's
+  pencil; the change adder still does not offer a projection whose
+  handler for that event branches – writing one operation would
+  replace the branches.
 - **A projection with handlers has a Lifecycle tab** (`projectionLifecycle`
   and `projectionMovements`, index.html; `lifecycleOf`, shared.js),
   beside Definition and Checks: how its value moves. Nothing is stored

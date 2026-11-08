@@ -6624,13 +6624,62 @@ command Open(accountId: AccountId) {
     return textOf(main);
   };
 
-  check('the projection page shows a branched handler, each arm, and the way to edit it', () => {
+  check('the projection page edits a branched handler in place, each arm, and loses nothing', () => {
     eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
-    const text = page('Balance');
-    eq(text.includes('if event.data.from == accountId') && text.includes('if event.data.to == accountId'), true, text.slice(0, 400));
-    eq(text.includes('Edit in code'), true, 'and the way to edit it');
-    eq(cleanProjectionBody(sandbox.state.projDraft.body).handlers, model()['projection-definitions'].Balance.handlers,
-      'painting it changed nothing');
+    for (const name of ['Balance', 'Reservation']) {
+      const text = page(name);
+      eq(['if', '+ else if', '+ separate if', '⇒'].every((word) => text.includes(word)), true, text.slice(0, 600));
+      eq(text.includes('Edit in code'), false, name + ': edited here');
+      eq(cleanProjectionBody(sandbox.state.projDraft.body).handlers, model()['projection-definitions'][name].handlers,
+        name + ': painting it changed nothing');
+    }
+    eq(sandbox.state.projDraft.body.handlers[0].chains.length, 1, 'one chain');
+    sandbox.state.projDraft = null;
+  });
+
+  check('a handler is made conditional, joined, given an else and a second if, all on the page', () => {
+    const paintDraft = () => {
+      const main = sandbox.document.createElement('div');
+      sandbox.renderProjections(model(), main);
+      return main;
+    };
+    const original = sandbox.deepClone(model()['projection-definitions'].Reservation);
+    page('Reservation');
+    const draft = sandbox.state.projDraft.body;
+    // Start over from a plain handler: the arm's operation is the row's.
+    draft.handlers = [sandbox.draftFromOperand({ event: 'SeatsMarked', operation: 'set' }, 'value', { enumMember: 'Booked' })];
+    findAll(paintDraft(), (n) => n.tag === 'button' && textOf(n) === '+ if')[0].onclick();
+    const handler = draft.handlers[0];
+    eq(handler.chains[0].arms[0].comparisons[0], { left: JSON.stringify({ eventProperty: 'accountId' }), negate: false,
+      right: JSON.stringify({ parameterName: 'accountId' }) }, 'proposed: the field of the tag\'s type, against the tag');
+    // Compare seats with 0 instead, and not equal.
+    Object.assign(handler.chains[0].arms[0].comparisons[0], { left: JSON.stringify({ eventProperty: 'seats' }), right: ' literal', rightText: '0', negate: true });
+    findAll(paintDraft(), (n) => n.tag === 'button' && textOf(n) === '+ and')[0].onclick();
+    eq(handler.chains[0].arms[0].joiner, 'all', 'joined by and');
+    findAll(paintDraft(), (n) => n.tag === 'button' && textOf(n) === '+ else')[0].onclick();
+    handler.chains[0].otherwise.value = JSON.stringify({ enumMember: 'Released' });
+    const stored = cleanProjectionBody(draft).handlers[0];
+    eq(stored, { event: 'SeatsMarked', steps: [{
+      branches: [{ condition: { all: [
+        { leftHandSide: { eventProperty: 'seats' }, predicate: 'equals', rightHandSide: 0, negate: true },
+        { leftHandSide: { eventProperty: 'accountId' }, predicate: 'equals', rightHandSide: { parameterName: 'accountId' } },
+      ] }, operation: 'set', value: { enumMember: 'Booked' } }],
+      otherwise: { operation: 'set', value: { enumMember: 'Released' } },
+    }] }, 'the handler as built');
+    findAll(paintDraft(), (n) => n.tag === 'button' && textOf(n) === '+ separate if')[0].onclick();
+    eq(cleanProjectionBody(draft).handlers[0].steps.length, 2, 'a second if, a chain of its own');
+    sandbox.updateDefinition('projection-definition', id, 'Reservation', cleanProjectionBody(draft));
+    const text = sandbox.modelToSource(model());
+    eq(text.includes('if event.data.seats != 0 and event.data.accountId == accountId => set Booked\n    else => set Released\n    if event.data.accountId == accountId => set Booked'),
+      true, text.slice(text.indexOf('projection Reservation'), text.indexOf('projection Reservation') + 400));
+    eq(sandbox.parseModelSource(text).diagnostics, [], 'and it parses back');
+    eq(projectionDraftFrom(model()['projection-definitions'].Reservation).handlers[0].chains.length, 2, 'reopened as chains');
+    // Removing every arm takes the handler back to one operation.
+    const again = projectionDraftFrom(model()['projection-definitions'].Reservation);
+    sandbox.state.projDraft = { name: 'Reservation', body: again };
+    for (let k = 0; k < 2; k++) findAll(paintDraft(), (n) => n.tag === 'button' && n.attributes.title === 'Remove this if')[0].onclick();
+    eq(cleanProjectionBody(again).handlers, [{ event: 'SeatsMarked', operation: 'set', value: { enumMember: 'Booked' } }], 'plain again');
+    sandbox.updateDefinition('projection-definition', id, 'Reservation', original);
     sandbox.state.projDraft = null;
   });
 
@@ -6667,7 +6716,7 @@ command Open(accountId: AccountId) {
     const slice = sandbox.sliceOf(model(), 'Transfer');
     const changes = textOf(sandbox.stepChanges(model(), slice));
     eq(changes.includes('if event.data.from == accountId') && changes.includes('decrement'), true, changes);
-    eq(changes.includes('Edit in code'), true, 'edited in the code view');
+    eq(changes.includes('Edit in code'), false, 'edited on its projection, behind the pencil');
     for (const fn of ['renderEvents', 'renderOverview', 'renderCoupling', 'renderRuleMap', 'renderEventModel', 'renderMetro']) {
       sandbox[fn](model(), sandbox.document.createElement('div'));
     }

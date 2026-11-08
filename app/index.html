@@ -655,6 +655,16 @@
   .peditor .phandler-branched { align-items: flex-start; flex-wrap: wrap; }
   .peditor .phandler-branched > .pbranches { flex: 1 1 14em; min-width: 0; display: grid; gap: 2px; }
   .peditor .phandler > select { flex: 0 1 auto; min-width: 4.5em; }
+  /* A handler's chains (11.0): one per separate if, each arm a line
+     that wraps where it must – a comparison or two, the arrow, the
+     operation. */
+  .peditor .phandler-chained > .pbranches { order: 1; flex-basis: 100%; padding-left: 1.4em; }
+  .peditor .pchain { display: grid; gap: 3px; padding-bottom: 3px; }
+  .peditor .pchain + .pchain { border-top: 1px dashed var(--border); padding-top: 3px; }
+  .peditor .parm { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+  .peditor .parm > select { flex: 0 1 auto; min-width: 4em; max-width: 100%; }
+  .peditor .parm > input { flex: 0 1 7em; min-width: 3em; }
+  .peditor .pchain > .adder.quiet, .peditor .pbranches > .adder.quiet { margin-top: 0; padding-top: 0; }
   /* The event's name gives way first: the value is a path whose end is
      the part that says anything. */
   .peditor .phandler > select:first-of-type { flex-shrink: 4; }
@@ -8577,7 +8587,11 @@ function stepChanges(model, slice) {
             + `${readable(emission.name)} is tagged by none`) : null),
         h('span', { class: 'grow' }),
         reveal(
-          p.arms ? codeViewButton('A handler\'s branches are edited in the code view') : h('button', {
+          // A handler that branches is edited on its projection – the
+          // pencil beside it – or, where the chains cannot hold it, in
+          // the code view.
+          p.arms ? (conditionalHandlerEditable(effect.handler) ? null
+            : codeViewButton('This handler\'s branches are edited in the code view')) : h('button', {
             class: 'btn tiny',
             onclick: () => {
               closeForms();
@@ -10308,7 +10322,7 @@ function unhandledEventChoices(eventNames, handlers, current) {
 // editor shows it and leaves it to the code view, so a save never
 // flattens or drops it.
 function handlerInCode(handler) {
-  if (!handler) return false;
+  if (!handler || handler.chains) return false;
   if (isConditionalHandler(handler)) return true;
   const value = operandSource(handler.value) === 'successor' ? handler.value.successor : handler.value;
   // A record set whole, and a record's field one hop into the event
@@ -10319,10 +10333,123 @@ function handlerInCode(handler) {
 
 function projectionDraftFrom(body) {
   const draft = deepClone(body);
-  draft.handlers = (draft.handlers || []).map((handler) => (handlerInCode(handler) ? handler
-    : draftFromOperand({ event: handler.event, operation: handler.operation }, 'value', handler.value)));
+  draft.handlers = (draft.handlers || []).map((handler) => (conditionalHandlerEditable(handler)
+    ? { event: handler.event, chains: handlerChainsDraft(handler) }
+    : handlerInCode(handler) ? handler
+      : draftFromOperand({ event: handler.event, operation: handler.operation }, 'value', handler.value)));
   return draft;
 }
+
+// ---------- a handler that branches, as a draft (11.0) ----------
+//
+// A conditional handler the page can write – each condition one list of
+// comparisons, `event.data.<field>` (or one record field in) `==` / `!=`
+// a tag of the projection, an enum member or a literal, each arm one
+// operation with a value the row's pickers offer – is edited as
+// `chains`: one per separate `if`, each its arms and its `else`, every
+// arm a handler row's draft (`operation`, `value`, `valueText`) with its
+// `comparisons` and `joiner`. Anything else that branches stays as it
+// is stored, read-only with the way to the code view (`handlerInCode`).
+function handlerComparisonEditable(leaf) {
+  if (!leaf || typeof leaf !== 'object' || isCompoundCondition(leaf)) return false;
+  if (leaf.predicate !== 'equals' || operandSource(leaf.leftHandSide) !== 'event-property') return false;
+  const right = leaf.rightHandSide;
+  if (right === null || ['string', 'number', 'boolean'].includes(typeof right)) return true;
+  return ['parameter', 'enum-member'].includes(operandSource(right)) && right.property === undefined;
+}
+
+function handlerArmValueEditable(value) {
+  const inner = operandSource(value) === 'successor' ? value.successor : value;
+  return operandSource(inner) !== 'record' && !(operandSource(inner) === 'event-property' && inner.property !== undefined);
+}
+
+function conditionalHandlerEditable(handler) {
+  if (!isConditionalHandler(handler) || !Array.isArray(handler.steps) || !handler.steps.length) return false;
+  return handler.steps.every((step) => step && typeof step === 'object' && Array.isArray(step.branches) && step.branches.length
+    && step.branches.every((arm) => {
+      const flat = arm && flatCondition(arm.condition);
+      return flat && flat.members.every(handlerComparisonEditable) && handlerArmValueEditable(arm.value);
+    })
+    && (step.otherwise === undefined || (step.otherwise && handlerArmValueEditable(step.otherwise.value))));
+}
+
+function handlerComparisonDraft(leaf) {
+  const draft = draftFromOperand({ left: JSON.stringify(leaf.leftHandSide), negate: !!leaf.negate }, 'right', leaf.rightHandSide);
+  return draft;
+}
+
+function handlerComparisonFrom(draft) {
+  if (!draft.left) return undefined;
+  const right = draft.right === LITERAL && (draft.rightText || '') === '' ? '' : draftOperand(draft, 'right');
+  if (right === undefined) return undefined;
+  const leaf = { leftHandSide: JSON.parse(draft.left), predicate: 'equals', rightHandSide: right };
+  if (draft.negate) leaf.negate = true;
+  return leaf;
+}
+
+function handlerChainsDraft(handler) {
+  const arm = (stored, event) => draftFromOperand({ event, operation: stored.operation }, 'value', stored.value);
+  return handler.steps.map((step) => ({
+    arms: step.branches.map((stored) => {
+      const flat = flatCondition(stored.condition);
+      return { ...arm(stored, handler.event), joiner: flat.joiner, comparisons: flat.members.map(handlerComparisonDraft) };
+    }),
+    otherwise: step.otherwise === undefined ? null : arm(step.otherwise, handler.event),
+  }));
+}
+
+// The stored handler, or null while any part of it is unanswered – a
+// row still being filled in, as a plain handler without its value is.
+function handlerFromChains(handler) {
+  const steps = [];
+  for (const chain of handler.chains) {
+    const branches = [];
+    for (const arm of chain.arms) {
+      const members = arm.comparisons.map(handlerComparisonFrom);
+      const value = draftOperand(arm, 'value');
+      if (!members.length || members.some((m) => m === undefined) || value === undefined) return null;
+      branches.push({ condition: joinedCondition(arm.joiner, members), operation: arm.operation, value });
+    }
+    if (!branches.length) continue;
+    const step = { branches };
+    if (chain.otherwise) {
+      const value = draftOperand(chain.otherwise, 'value');
+      if (value === undefined) return null;
+      step.otherwise = { operation: chain.otherwise.operation, value };
+    }
+    steps.push(step);
+  }
+  return steps.length ? { event: handler.event, steps } : null;
+}
+
+// A first comparison for a new arm: the event's first field one of the
+// projection's tags has the type of, compared with that tag – what
+// `if event.data.from == accountId` says – or else its first field,
+// compared with a value still to type.
+function proposedHandlerComparison(model, draft, eventName) {
+  const event = model['event-definitions'][eventName];
+  const fields = (event && event.properties) || [];
+  const tags = (draft.tags || []).filter((tag) => tag && tag.name);
+  for (const field of fields) {
+    const tag = tags.find((t) => t.tagType === field.propertyType);
+    if (tag) return { left: JSON.stringify({ eventProperty: field.name }), negate: false, right: JSON.stringify({ parameterName: tag.name }) };
+  }
+  return { left: fields.length ? JSON.stringify({ eventProperty: fields[0].name }) : '', negate: false, right: LITERAL, rightText: '' };
+}
+
+// A plain handler row turned into one `if`: its operation goes into the
+// arm, under a first comparison.
+function branchHandlerDraft(model, draft, handler) {
+  return {
+    event: handler.event,
+    chains: [{
+      arms: [{ event: handler.event, operation: handler.operation, value: handler.value, valueText: handler.valueText,
+        joiner: null, comparisons: [proposedHandlerComparison(model, draft, handler.event)] }],
+      otherwise: null,
+    }],
+  };
+}
+
 
 // Fields are written in the order the schema declares them, not the
 // order this happens to build them, so a model that goes out and comes
@@ -10405,8 +10532,9 @@ function cleanProjectionShape(draft) {
     // through here, including the one between picking the event and
     // picking the value.
     handlers: handlers
-      .filter((handler) => handlerInCode(handler) || draftOperand(handler, 'value') !== undefined)
-      .map((handler) => (handlerInCode(handler)
+      .filter((handler) => (handler.chains ? !!handlerFromChains(handler)
+        : handlerInCode(handler) || draftOperand(handler, 'value') !== undefined))
+      .map((handler) => (handler.chains ? handlerFromChains(handler) : handlerInCode(handler)
         ? (isConditionalHandler(handler) ? { event: handler.event, steps: handler.steps }
           : { event: handler.event, operation: handler.operation, value: handler.value })
         : {
@@ -11113,9 +11241,10 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
     return select;
   };
 
-  const declaredHandlerRows = (draft.handlers || []).map((handler, i) => {
-    if (handlerInCode(handler)) return branchedHandlerRow(model, draft, handler, i);
-    const event = model['event-definitions'][handler.event];
+  // The verb and the value of one row or one arm: what the held type
+  // admits, the value reset to the first offer when the verb no longer
+  // takes it.
+  const operationAndValue = (handler, event) => {
     const operations = operationsFor(model, draft);
     if (!operations.includes(handler.operation)) handler.operation = operations[0];
     const values = handlerValueChoices(model, draft, event, handler.operation);
@@ -11137,28 +11266,149 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
       && !values.some(([v]) => v === handler.value)) {
       handler.value = values.length ? values[0][0] : (enumMembers ? '' : LITERAL);
     }
-    return h('div', { class: 'phandler' },
-      h('span', { class: 'pk' }, 'on'),
-      eventPick(pick(eventChoicesFor(handler), handler.event,
-        (v) => { handler.event = v; handler.value = ''; handler.valueText = ''; render(); },
-        'event')),
-      h('span', { class: 'pk' }, '⇒'),
+    return [
       // The verb is a word or two and keeps its width; the names
       // beside it are what give way.
       h('span', { class: 'pop' }, operationControl(operations, handler)),
       ...(event
         ? operandPicker(values, handler, 'value', { allowLiteral: !enumMembers })
         : [pick([], '', () => {}, 'pick an event first')]),
+    ];
+  };
+
+  // One comparison of a handler's condition (11.0): a field of the
+  // event – or a record field of one, one hop in – `==` or `!=`, and a
+  // tag of this projection, a member of the field's enum, or a typed
+  // value. Exactly what the code view's `handlerComparison` reads.
+  const comparisonControls = (event, comparison) => {
+    const fields = (event && event.properties) || [];
+    const fieldRows = fields.flatMap((p) => [
+      [JSON.stringify({ eventProperty: p.name }), p.name, null, { group: 'event', before: 'event.data.' }],
+      ...(compositeFieldsOf(model, p.propertyType) || []).map((f) =>
+        [JSON.stringify({ eventProperty: p.name, property: f.name }), p.name + '.' + f.name, null, { group: 'event', before: 'event.data.' }]),
+    ]);
+    if (!fieldRows.some(([v]) => v === comparison.left)) comparison.left = fieldRows.length ? fieldRows[0][0] : '';
+    const left = comparison.left ? JSON.parse(comparison.left) : null;
+    const field = left && fields.find((p) => p.name === left.eventProperty);
+    const fieldType = !field ? null : left.property === undefined ? field.propertyType
+      : ((compositeFieldsOf(model, field.propertyType) || []).find((f) => f.name === left.property) || {}).propertyType;
+    const members = fieldType ? enumMembersFor(model, fieldType) : null;
+    const rightRows = [
+      ...(draft.tags || []).filter((tag) => tag && tag.name && tag.tagType === fieldType)
+        .map((tag) => [JSON.stringify({ parameterName: tag.name }), tag.name, null, { group: 'tag' }]),
+      ...(members || []).map((m) => [JSON.stringify({ enumMember: m }), String(m)]),
+      ...(fieldType === 'boolean' ? [[LITERAL + 'true', 'true'], [LITERAL + 'false', 'false']] : []),
+    ];
+    // A boolean's two values are rows of their own, stored as literals.
+    const selected = comparison.right === LITERAL && fieldType === 'boolean' && ['true', 'false'].includes(comparison.rightText)
+      ? LITERAL + comparison.rightText : undefined;
+    return [
+      pick(fieldRows, comparison.left, (v) => { comparison.left = v; comparison.right = ''; comparison.rightText = ''; render(); }, 'field'),
+      pick([['==', '=='], ['!=', '!=']], comparison.negate ? '!=' : '==', (v) => { comparison.negate = v === '!='; render(); }),
+      ...operandPicker(rightRows, comparison, 'right', {
+        allowLiteral: !members && fieldType !== 'boolean', selected,
+        intercept: (v) => {
+          if (!v.startsWith(LITERAL) || v === LITERAL) return false;
+          comparison.right = LITERAL; comparison.rightText = v.slice(LITERAL.length); render();
+          return true;
+        },
+      }),
+    ];
+  };
+
+  // A handler that branches, edited as chains of arms: each `if` a
+  // chain of its own (all apply, in order), each chain's first arm
+  // that holds applying its one operation, `else` when none does.
+  function chainedHandlerRow(model, draft, handler, i) {
+    const event = model['event-definitions'][handler.event];
+    // A button is no change event the detail listens to, so it asks
+    // for the save itself.
+    const button = (label, title, onclick, cls = 'btn tiny') => h('button', { class: cls, title,
+      onclick: () => { onclick(); render(); scheduleProjectionAutosave(); } }, label);
+    const chainRows = handler.chains.map((chain, c) => h('div', { class: 'pchain' },
+      ...chain.arms.map((arm, a) => h('div', { class: 'parm' },
+        h('span', { class: 'pk' }, a ? 'else if' : 'if'),
+        ...arm.comparisons.flatMap((comparison, k) => [
+          k ? h('span', { class: 'pk' }, arm.joiner === 'any' ? 'or' : 'and') : null,
+          ...comparisonControls(event, comparison),
+          arm.comparisons.length > 1 ? button('×', 'Remove this comparison', () => {
+            arm.comparisons.splice(k, 1);
+            if (arm.comparisons.length === 1) arm.joiner = null;
+          }, 'btn tiny ghost') : null,
+        ]),
+        ...(arm.joiner ? [arm.joiner] : ['all', 'any']).map((joiner) => button(joiner === 'all' ? '+ and' : '+ or',
+          joiner === 'all' ? 'Add a comparison that must hold as well' : 'Add a comparison that may hold instead', () => {
+            arm.joiner = joiner;
+            arm.comparisons.push(proposedHandlerComparison(model, draft, handler.event));
+          }, 'btn tiny ghost')),
+        h('span', { class: 'pk' }, '⇒'),
+        ...operationAndValue(arm, event),
+        a > 0 ? button('↑', 'Move this arm up', () => { chain.arms.splice(a - 1, 0, ...chain.arms.splice(a, 1)); }) : null,
+        button('×', chain.arms.length > 1 ? 'Remove this arm' : 'Remove this if', () => {
+          chain.arms.splice(a, 1);
+          if (chain.arms.length) return;
+          handler.chains.splice(c, 1);
+          // The last if gone, the handler applies its operation always.
+          if (!handler.chains.length) {
+            const { comparisons, joiner, ...plain } = arm;
+            draft.handlers[i] = plain;
+          }
+        }, 'btn tiny danger'))),
+      chain.otherwise ? h('div', { class: 'parm' },
+        h('span', { class: 'pk' }, 'else'),
+        h('span', { class: 'pk' }, '⇒'),
+        ...operationAndValue(chain.otherwise, event),
+        button('×', 'Remove else', () => { chain.otherwise = null; }, 'btn tiny danger')) : null,
+      h('div', { class: 'adder quiet' },
+        button('+ else if', 'Another arm, tried when the ones above do not hold', () => {
+          const last = chain.arms[chain.arms.length - 1];
+          chain.arms.push({ event: handler.event, operation: last.operation, value: last.value, valueText: last.valueText,
+            joiner: null, comparisons: [proposedHandlerComparison(model, draft, handler.event)] });
+        }, 'btn ghost tiny'),
+        chain.otherwise ? null : button('+ else', 'What applies when no arm holds', () => {
+          const last = chain.arms[chain.arms.length - 1];
+          chain.otherwise = { event: handler.event, operation: last.operation, value: last.value, valueText: last.valueText };
+        }, 'btn ghost tiny'))));
+    return h('div', { class: 'phandler phandler-branched phandler-chained' },
+      h('span', { class: 'pk' }, 'on'),
+      eventRef(model, handler.event),
+      h('div', { class: 'pbranches' }, ...chainRows,
+        h('div', { class: 'adder quiet' }, button('+ separate if', 'A second if – applied too, after the one above, whatever it did', () => {
+          handler.chains.push(branchHandlerDraft(model, draft, { ...handler.chains[0].arms[0], event: handler.event }).chains[0]);
+        }, 'btn ghost tiny'))),
+      h('button', {
+        class: 'btn tiny danger', title: 'Remove this handler',
+        onclick: () => { draft.handlers.splice(i, 1); render(); },
+      }, '×'));
+  }
+
+  const declaredHandlerRows = (draft.handlers || []).map((handler, i) => {
+    if (handler.chains) return chainedHandlerRow(model, draft, handler, i);
+    if (handlerInCode(handler)) return branchedHandlerRow(model, draft, handler, i);
+    const event = model['event-definitions'][handler.event];
+    return h('div', { class: 'phandler' },
+      h('span', { class: 'pk' }, 'on'),
+      eventPick(pick(eventChoicesFor(handler), handler.event,
+        (v) => { handler.event = v; handler.value = ''; handler.valueText = ''; render(); },
+        'event')),
+      h('span', { class: 'pk' }, '⇒'),
+      ...operationAndValue(handler, event),
+      // Applied only when the event says so (11.0): the row becomes an
+      // `if` whose arm is this operation.
+      event ? h('button', {
+        class: 'btn tiny ghost', title: 'Apply this only when the event says so – if event.data.… == …',
+        onclick: () => { draft.handlers[i] = branchHandlerDraft(model, draft, handler); render(); scheduleProjectionAutosave(); },
+      }, '+ if') : null,
       h('button', {
         class: 'btn tiny danger', title: 'Remove this handler',
         onclick: () => { draft.handlers.splice(i, 1); render(); },
       }, '×'));
   });
 
-  // A branched handler (11.0): its event, then a line per arm – what it
-  // is applied under and what it does – shown, never edited here; so is
-  // one that sets a record whole. The code view edits it; this row can
-  // still remove it.
+  // A branched handler (11.0) the chains cannot hold – a group inside a
+  // group, a value beyond the row's pickers – and one that sets a record
+  // whole: its event, then a line per arm, what it is applied under and
+  // what it does. The code view edits it; this row can still remove it.
   function branchedHandlerRow(model, draft, handler, i) {
     return h('div', { class: 'phandler phandler-branched' },
       h('span', { class: 'pk' }, 'on'),
@@ -11180,7 +11430,7 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
 
   const handlersSection = draft.derived ? null : projectionSection('handlers',
     hint('proj-handlers', 'Handlers', [
-      'Events that move the value – one handler per event type. One may branch on the event (if … ⇒ …), written in the code view.',
+      'Events that move the value – one handler per event type. One may apply only when the event says so: + if (if event.data.… == … ⇒ …).',
       'Without any, it keeps its initial value forever.',
     ]),
     null,
