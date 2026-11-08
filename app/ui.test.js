@@ -6552,6 +6552,25 @@ command Relocate(customerId: CustomerId, street: string, city: string) {
     eq(map.includes('ReservationSeats'), true, 'the rule map names the projection an open read reads');
   });
 
+  check('the sandbox runs a command reading an open read, and every tab paints it', () => {
+    const session = sandbox.session;
+    session.reset();
+    sandbox.sessionRun(model(), 'ReserveSeats', { courseId: 'c1', reservationId: 'r1', seats: 3 });
+    sandbox.sessionRun(model(), 'ReserveSeats', { courseId: 'c1', reservationId: 'r2', seats: 4 });
+    eq(session.log.length, 2, 'both reserved');
+    const replay = sandbox.stepReplay(model(), session.stepAt(session.position()));
+    eq(replay.outcome.outcome, 'published', 'decided through the store');
+    const read = Object.values(replay.outcome.reads).find((r) => r.open);
+    eq([read && read.projection, read && read.value], ['ReservationSeats', [3]], 'the open read, reported with what it collected');
+    eq(Object.keys(replay.outcome.reads).includes('ReservationSeats(CourseId("c1"), *)'), true, Object.keys(replay.outcome.reads).join(', '));
+    for (const tab of ['watched', 'decision', 'store']) {
+      sandbox.state.sandboxTab = tab;
+      eq(textOf(sandbox.sandboxPanel(model())).length > 0, true, `the ${tab} tab paints`);
+    }
+    sandbox.state.sandboxTab = 'watched';
+    session.reset();
+  });
+
   check('editing the rules on the command page keeps a collection function', () => {
     sandbox.state.slice = 'ReserveSeats';
     const before = model()['command-definitions'].ReserveSeats.steps[0];
