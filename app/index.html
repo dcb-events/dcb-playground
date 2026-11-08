@@ -222,6 +222,21 @@
   .rule-stage > .adder { padding-top: 0; }
   .rejection-msg { font-style: italic; }
   .card > .adder.quiet { margin-left: 12px; }
+  /* A branch or a loop (11.0): its condition lines, then each arm's
+     steps indented under them – the code view's shape, so the two read
+     alike. The rule editor opens in place, in a card of its own, so
+     what it is being written into stays in view around it. */
+  .arm-line { gap: 6px; }
+  .arm-body { margin-left: 1.2em; padding-left: 8px; border-left: 1px dashed var(--border); margin-bottom: 4px; }
+  .arm-body > .adder.quiet { padding-top: 0; margin-top: 0; }
+  .nested-branch { border-left: 2px solid var(--rule); padding-left: 8px; margin: 2px 0; }
+  .card.arm-editor { margin: 4px 0; }
+  .card.arm-editor > .q { font-family: var(--mono, monospace); color: var(--muted); font-size: 12px; }
+  .rule-lines { display: flex; flex-direction: column; gap: 2px; }
+  input.loop-name { width: 14ch; }
+  @media (max-width: 760px) {
+    .arm-body { margin-left: .4em; padding-left: 6px; }
+  }
   .step.emits > .dot { background: var(--event); }
   .step > .shead { display: flex; align-items: baseline; gap: 8px; margin-bottom: 7px; }
 
@@ -277,7 +292,10 @@
      and a card with an editor open inside gets the whole line back:
      forms need the room, and a card resizing under a half-filled form
      would be worse than the whitespace ever was. */
-  .step .card { width: fit-content; min-width: 380px; max-width: 100%; }
+  .step .card { width: fit-content; min-width: min(380px, 100%); max-width: 100%; }
+  /* A card inside a card (the rule editor open in a branch) takes the
+     width it is given. */
+  .step .card .card { min-width: 0; }
   .step .card:has(input, select, textarea) { width: auto; }
   .adder.quiet .slot { min-width: 48px; }
   .card.event { border-left: 3px solid var(--event); }
@@ -2035,6 +2053,10 @@ const state = {
   renamingCommand: null,
   editMember: null,         // { where, name } – the member being edited
   editRule: null,           // index of the condition being edited
+  editStep: null,           // key of the comparison or step being edited inside a branch or loop
+  openStepEvent: null,      // key of the emission inside a branch or loop whose fields are open
+  newStepEvent: false,      // naming a new event for an emission inside a branch or loop
+  loopDraft: null,          // the for each being added: { source, tags, names }
   editBinding: null,        // alias of the boundary binding being edited
   bindingDraft: null,       // in-progress edits to that binding
   ruleDraft: null,          // in-progress edits to a condition
@@ -5394,7 +5416,7 @@ const FORM_KEYS = [
   'namingCommand', 'newFeature', 'renamingFeature', 'newEmission', 'newGroup', 'groupProjection', 'moveIntoGroup', 'addingMember',
   'renamingGroup', 'groupIconPicker', 'eventIconPicker', 'commandIconPicker', 'confirmRemove', 'newType', 'renamingType',
   'newProjection', 'renamingProjection', 'projDraft', 'newEvent', 'renamingEvent',
-  'renamingCommand', 'editMember', 'editRule', 'editBinding',
+  'renamingCommand', 'editMember', 'editRule', 'editBinding', 'editStep', 'newStepEvent',
   'scenarioDraft', 'sandboxDraft',
   'projectionScenarioDraft',
   'aliasing',
@@ -5404,7 +5426,7 @@ const FORM_KEYS = [
 // that filled them – a folded-away adder leaves its half-written row
 // behind – so they are cleared with the forms but never taken as
 // evidence that one is open.
-const DRAFT_KEYS = ['bindingDraft', 'ruleDraft', 'changeDraft',
+const DRAFT_KEYS = ['bindingDraft', 'ruleDraft', 'changeDraft', 'loopDraft',
   'watchDraft', 'fieldDraft'];
 
 // The projection a definition modal edits holds `projDraft` for as
@@ -5822,7 +5844,7 @@ const WIZARD_STEPS = [
   // answering the rule. The skip reading covers both halves, because a
   // command can look at nothing *and* have no rules – and, the other
   // way round, can look at something with no rule at all.
-  { key: 'decide', paint: (m, s) => stepDecision(m, s), empty: (s) => !s.rules.length && !s.reads.length && !s.branches.length, skipWords: 'always allowed' },
+  { key: 'decide', paint: (m, s) => stepDecision(m, s), empty: (s) => !s.rules.length && !s.reads.length && !s.branches.some((b) => stepKind(b) === 'branch'), skipWords: 'always allowed' },
   { key: 'emits', paint: (m, s) => stepEmits(m, s), empty: () => false },
   { key: 'changes', paint: (m, s) => stepChanges(m, s), empty: () => false },
 ];
@@ -6874,10 +6896,25 @@ function ruleOperandRef(slice, row, operand, text) {
 // One rule, as a row of the rules card. More than one, and each can be
 // dragged into the order they are checked in.
 function ruleRow(model, slice, condition, i, draggable) {
-  // Comparisons joined by and / or (11.0) are not something the rule
-  // editor writes, nor is a collection function or a record's field:
-  // shown as a sentence, edited in the code view, and still removable
-  // and reorderable here.
+  // Joined by and / or (11.0): a line per comparison, each edited
+  // through the rule adder's questions, the message the rule's.
+  const { rejection: message, ...bare } = condition;
+  if (isCompoundCondition(condition) && flatCondition(bare) && !conditionBeyondEditors(condition)) {
+    return h('div', { class: 'rule-row', 'data-rule': draggable ? i : null },
+      draggable ? ruleGrip(slice, i) : null,
+      h('div', { class: 'rule-lines' }, ...conditionRows(model, slice, {
+        condition: bare, key: 'rule:' + i, lead: 'require', rejection: message || '',
+        after: rejectionMark(condition),
+        write: (b, c) => {
+          const { rejection, ...next } = c;
+          b.conditions[i] = { ...next, rejection: rejection === undefined ? message : rejection };
+        },
+        remove: (b) => { b.conditions.splice(i, 1); }, removeTitle: 'Remove this rule',
+      })));
+  }
+  // A group inside a group, a collection function or a record's field
+  // is no answer the questions give: shown as a sentence, edited in the
+  // code view, and still removable and reorderable here.
   if (isCompoundCondition(condition) || conditionBeyondEditors(condition)) {
     return h('div', { class: 'rule-row', 'data-rule': draggable ? i : null },
       draggable ? ruleGrip(slice, i) : null,
@@ -6897,6 +6934,7 @@ function ruleRow(model, slice, condition, i, draggable) {
   if (state.editRule === i) return h('div', { class: 'rule-row' }, ruleEditor(model, slice, i));
   const p = conditionParts(condition, model, slice.body);
   const quantifier = quantifierWords(model, slice.body, condition);
+  const joining = ['all', 'any'].find((joiner) => state.adder === 'rule:' + i + ':' + joiner) || null;
   return h('div', {
       class: 'rule-row',
       'data-rule': draggable ? i : null,
@@ -6930,10 +6968,24 @@ function ruleRow(model, slice, condition, i, draggable) {
         // is also how a read goes away. There is no button for that on
         // the read itself, because a read is not a thing anyone
         // declared.
+        // A second comparison joins this one (11.0) – asked by the same
+        // questions, under the same message.
+        ...['all', 'any'].map((joiner) => h('button', {
+          class: 'btn tiny',
+          title: joiner === 'all' ? 'Add a comparison that must hold as well' : 'Add a comparison that may hold instead',
+          onclick: () => { closeForms(); state.adder = 'rule:' + i + ':' + joiner; render(); },
+        }, joiner === 'all' ? '+ and' : '+ or')),
         h('button', {
           class: 'btn tiny danger',
           onclick: () => patchSlice((b) => { b.conditions.splice(i, 1); }),
-        }, '×'))));
+        }, '×'))),
+    joining ? h('div', { class: 'card arm-editor' }, ruleEditor(model, slice, null, {
+      stored: null, addLabel: joining === 'all' ? 'Add and' : 'Add or',
+      write: (b, c) => {
+        const { rejection, ...leaf } = c;
+        b.conditions[i] = { ...withConditionMember(bare, null, leaf, joining), rejection: message };
+      },
+    })) : null);
 }
 
 // The way to the code view, from something a page shows but does not
@@ -6945,59 +6997,458 @@ function codeViewButton(title) {
   }, 'Edit in code');
 }
 
-// ---------- branches ----------
+// ---------- branches and loops ----------
 //
 // A command's branches (11.0) – `if … => … else if … => … else => …` –
-// and its loops – `for each x in … => …` – are shown as they run and
-// edited in the code view: the visual editors write the rules and
-// emissions at the top, and never flatten or drop a branch or a loop
-// they do not show (`patch`). Each arm is a line per step, its
-// condition and its message read the way a rule's are.
-function branchCard(model, slice, step, n) {
-  const stepLines = (steps, depth) => steps.flatMap((inner) => {
-    const pad = { style: `padding-left:${depth * 1.2}em` };
-    switch (stepKind(inner)) {
+// and its loops – `for each x in … => …` – are edited where they sit,
+// each edit naming its place by a step path (`stepListAt`, model.js)
+// and changing that place only, so nothing around it is flattened or
+// reordered. A condition is the rule adder's three questions pointed at
+// the arm (`ruleEditor`'s `target`), and `and` / `or` add one more
+// comparison through the same questions: a condition is edited as one
+// list of comparisons and what joins them (`flatCondition`), which is
+// what the pages and nearly every model write; a group inside a group
+// stays the code view's. An arm holds steps like the command does –
+// `emit` with the emission's own field editor, `reject` with its
+// message, and, outside a loop, `require` and another `if`. Inside a
+// loop an arm is one `emit` or one `reject`, so its adders go once it
+// has one. What no editor here writes – a collection function in a
+// condition, a loop's source once made – shows as the code view
+// writes it, with the way there.
+const stepPathKey = (path) => path.join('/');
+
+// ↑ / ↓ for a step or an arm among `count` siblings, and its ×.
+function stepMoveButtons(index, count, move, what) {
+  return [
+    index > 0 ? h('button', { class: 'btn tiny', title: 'Move this ' + what + ' up', onclick: () => patchSlice((b) => move(b, -1)) }, '↑') : null,
+    index < count - 1 ? h('button', { class: 'btn tiny', title: 'Move this ' + what + ' down', onclick: () => patchSlice((b) => move(b, 1)) }, '↓') : null,
+  ];
+}
+
+// A button that opens the rule editor in place, at `key`, aimed at
+// `target` – or the editor itself while it is open.
+function conditionAdder(model, slice, key, label, target) {
+  if (state.adder === key) {
+    return h('div', { class: 'card arm-editor' }, ruleEditor(model, slice, null, target));
+  }
+  return h('button', {
+    class: 'btn ghost tiny flow-adder',
+    onclick: () => { closeForms(); state.adder = key; render(); },
+  }, label);
+}
+
+// A condition's lines – the first led by `lead` (`if`, `else if`,
+// `require`), each joined one by `and` / `or` – each with Edit and ×,
+// then `+ and` / `+ or`. × on the last comparison left is `remove`
+// (the arm, the step). `write(body, condition)` stores the condition.
+//
+// `rejection` is the message of a rule (`require`), asked again while
+// it is one comparison; null for an arm, which has none.
+function conditionRows(model, slice, { condition, key, lead, write, remove, removeTitle, loop, extra = [], after = null, rejection = null }) {
+  const flat = flatCondition(condition);
+  const asks = rejection !== null;
+  if (!flat) {
+    return [qrow('div', { cls: 'row wraps arm-line', key: key + ':c' },
+      h('span', { class: 'sentence' }, h('span', { class: 'verb' }, lead + ' '), ruleSentence(model, slice.body, condition)),
+      after,
+      h('span', { class: 'grow' }),
+      reveal(...extra, codeViewButton('A condition nesting and / or in each other is edited in the code view'),
+        h('button', { class: 'btn tiny danger', title: removeTitle, onclick: () => patchSlice(remove) }, '×')))];
+  }
+  const joinWord = flat.joiner === 'any' ? 'or' : 'and';
+  // `+ and` / `+ or` wait in the last line's reveal, as a rule's Add
+  // alias does, and the questions open under the condition.
+  const joiners = flat.joiner ? [flat.joiner] : ['all', 'any'];
+  const joining = joiners.find((joiner) => state.adder === key + ':' + joiner) || null;
+  const joinButtons = joiners.map((joiner) => h('button', {
+    class: 'btn tiny',
+    title: joiner === 'all' ? 'Add a comparison that must hold as well' : 'Add a comparison that may hold instead',
+    onclick: () => { closeForms(); state.adder = key + ':' + joiner; render(); },
+  }, joiner === 'all' ? '+ and' : '+ or'));
+  const rows = flat.members.map((member, i) => {
+    const rowKey = key + ':m' + i;
+    const verb = i === 0 ? lead : joinWord;
+    if (state.editStep === rowKey) {
+      return h('div', { class: 'card arm-editor' }, ruleEditor(model, slice, null, {
+        stored: member, loop, rejection: asks && flat.members.length === 1,
+        write: (b, c) => {
+          if (asks && flat.members.length === 1) { write(b, c); return; }
+          const { rejection: dropped, ...leaf } = c;
+          write(b, withConditionMember(condition, i, leaf));
+        },
+      }));
+    }
+    const beyond = conditionBeyondEditors(member);
+    return qrow('div', { cls: 'row wraps arm-line', key: rowKey },
+      h('span', { class: 'sentence' }, h('span', { class: 'verb' }, verb + ' '), ruleSentence(model, slice.body, member)),
+      i === flat.members.length - 1 ? after : null,
+      h('span', { class: 'grow' }),
+      reveal(
+        ...(i === 0 ? extra : []),
+        ...(i === flat.members.length - 1 ? joinButtons : []),
+        beyond ? codeViewButton('This comparison is edited in the code view – the rule editor writes no collection function or record field')
+          : h('button', {
+            class: 'btn tiny',
+            onclick: () => {
+              closeForms();
+              state.editStep = rowKey;
+              state.ruleDraft = draftFromCondition(asks && flat.members.length === 1 ? { ...member, rejection } : member);
+              render();
+            },
+          }, 'Edit'),
+        h('button', {
+          class: 'btn tiny danger',
+          title: flat.members.length > 1 ? 'Remove this comparison' : removeTitle,
+          onclick: () => patchSlice((b) => {
+            if (flat.members.length > 1) write(b, withoutConditionMember(condition, i));
+            else remove(b);
+          }),
+        }, '×')));
+  });
+  if (joining) {
+    rows.push(h('div', { class: 'card arm-editor' }, ruleEditor(model, slice, null, {
+      stored: null, loop, addLabel: joining === 'all' ? 'Add and' : 'Add or',
+      write: (b, c) => {
+        const { rejection: dropped, ...leaf } = c;
+        write(b, withConditionMember(condition, null, leaf, joining));
+      },
+    })));
+  }
+  return rows;
+}
+
+// One branch, its arms in order, each with the steps it runs.
+function branchEditor(model, slice, branch, path, { loop = null, count = 1 } = {}) {
+  const key = 'br:' + stepPathKey(path);
+  const arms = stepArms(branch);
+  const conditional = arms.filter((arm) => arm.index !== 'otherwise');
+  const out = [h('div', { class: 'row' },
+    h('span', { class: 'muted tiny' }, loop ? 'Branch – per element, the first arm that holds runs' : 'Branch – the first arm that holds runs'),
+    h('span', { class: 'grow' }),
+    ...stepMoveButtons(path[path.length - 1], count, (b, d) => moveStepAt(b, path, d), 'branch'),
+    h('button', {
+      class: 'btn tiny danger', title: 'Remove this branch, every arm with it',
+      onclick: () => patchSlice((b) => removeStepAt(b, path)),
+    }, '×'))];
+  for (const arm of arms) {
+    if (arm.index === 'otherwise') {
+      out.push(qrow('div', { cls: 'row arm-line', key: key + ':else' },
+        h('span', { class: 'sentence' }, h('span', { class: 'verb' }, 'else')),
+        h('span', { class: 'grow' }),
+        reveal(h('button', {
+          class: 'btn tiny danger', title: 'Remove else – when no arm holds, nothing happens',
+          onclick: () => patchSlice((b) => setBranchOtherwise(b, path, false)),
+        }, '×'))));
+    } else {
+      out.push(...conditionRows(model, slice, {
+        condition: arm.condition, key: key + ':' + arm.index, loop,
+        lead: arm.index === 0 ? 'if' : 'else if',
+        write: (b, c) => setArmCondition(b, path, arm.index, c),
+        remove: (b) => removeBranchArm(b, path, arm.index),
+        removeTitle: conditional.length > 1 ? 'Remove this arm' : 'Remove this branch – its one arm goes',
+        extra: stepMoveButtons(arm.index, conditional.length, (b, d) => moveBranchArm(b, path, arm.index, d), 'arm'),
+      }));
+    }
+    out.push(h('div', { class: 'arm-body' }, ...stepsEditor(model, slice, arm.steps, [...path, arm.index], { loop, inArm: true })));
+  }
+  out.push(h('div', { class: 'adder quiet' },
+    conditionAdder(model, slice, key + ':elseif', '+ else if', {
+      stored: null, loop, addLabel: 'Add else if',
+      write: (b, c) => { const { rejection, ...condition } = c; addBranchArm(b, path, condition); },
+    }),
+    branch.otherwise === undefined && state.adder !== key + ':elseif' ? h('button', {
+      class: 'btn ghost tiny flow-adder',
+      onclick: () => patchSlice((b) => setBranchOtherwise(b, path, true)),
+    }, '+ else') : null));
+  return out;
+}
+
+// A loop: what it runs over, under which names, and its steps. Its head
+// is set when it is made; changing the source or a name afterwards is
+// the code view's, since every step inside names them.
+function loopEditor(model, slice, loop, path, { count = 1 } = {}) {
+  return [
+    h('div', { class: 'row' },
+      h('span', { class: 'muted tiny' }, 'For each – once per element, in order'),
+      h('span', { class: 'grow' }),
+      ...stepMoveButtons(path[path.length - 1], count, (b, d) => moveStepAt(b, path, d), 'loop'),
+      h('button', {
+        class: 'btn tiny danger', title: 'Remove this for each and what it emits',
+        onclick: () => patchSlice((b) => removeStepAt(b, path)),
+      }, '×')),
+    qrow('div', { cls: 'row wraps arm-line', key: 'loop:' + stepPathKey(path) },
+      h('span', { class: 'sentence' }, h('span', { class: 'verb' }, loopWords(loop))),
+      h('span', { class: 'grow' }),
+      reveal(codeViewButton('A for each’s names and source are changed in the code view – the steps inside name them'))),
+    h('div', { class: 'arm-body' }, ...stepsEditor(model, slice, loopSteps(loop), [...path, 'each'], { loop })),
+  ];
+}
+
+// The steps of an arm or a loop, each editable where it is, then what
+// may be added there.
+function stepsEditor(model, slice, steps, listPath, { loop = null, inArm = false } = {}) {
+  const key = 'steps:' + stepPathKey(listPath);
+  const rows = steps.map((step, j) => {
+    const path = [...listPath, j];
+    const rowKey = 'step:' + stepPathKey(path);
+    const moves = stepMoveButtons(j, steps.length, (b, d) => moveStepAt(b, path, d), 'step');
+    const removeButton = h('button', { class: 'btn tiny danger', onclick: () => patchSlice((b) => removeStepAt(b, path)) }, '×');
+    switch (stepKind(step)) {
       case 'rule':
-        return [h('div', { class: 'sentence', ...pad }, h('span', { class: 'verb' }, 'require '),
-          ruleSentence(model, slice.body, inner.condition), rejectionMark(inner))];
+        return h('div', {}, ...conditionRows(model, slice, {
+          condition: step.condition,
+          key: rowKey, lead: 'require', loop, rejection: step.rejection || '',
+          after: rejectionMark(step),
+          // A message comes back only from the one-comparison editor;
+          // joining or removing a comparison keeps the one it had.
+          write: (b, c) => {
+            const { rejection, ...condition } = c;
+            replaceStepAt(b, path, { condition, rejection: rejection === undefined ? step.rejection : rejection });
+          },
+          remove: (b) => removeStepAt(b, path), removeTitle: 'Remove this rule',
+          extra: moves,
+        }));
       case 'reject':
-        return [h('div', { class: 'sentence', ...pad }, h('span', { class: 'verb' }, 'reject '), rejectionQuote(inner.reject))];
-      case 'emit':
-        return [h('div', { class: 'sentence', ...pad }, h('span', { class: 'verb' }, 'emit '), eventRef(model, inner.name))];
+        if (state.editStep === rowKey) {
+          return inlineForm({
+            question: 'Reject with', value: step.reject, submitLabel: 'Save',
+            onSubmit: (v) => { state.editStep = null; patchSlice((b) => replaceStepAt(b, path, { reject: v })); },
+            onCancel: () => { state.editStep = null; render(); },
+          });
+        }
+        return qrow('div', { cls: 'row arm-line', key: rowKey },
+          h('span', { class: 'sentence' }, h('span', { class: 'verb' }, 'reject '), rejectionQuote(step.reject)),
+          h('span', { class: 'grow' }),
+          reveal(...moves,
+            h('button', { class: 'btn tiny', onclick: () => { closeForms(); state.editStep = rowKey; render(); } }, 'Edit'),
+            removeButton));
+      case 'emit': {
+        const event = model['event-definitions'][step.name] || null;
+        const open = state.openStepEvent === rowKey;
+        return h('div', {},
+          qrow('div', { cls: 'row arm-line', key: rowKey },
+            h('span', { class: 'verb' }, 'emit '),
+            eventRef(model, step.name),
+            h('span', { class: 'muted tiny' }, (n => n + ' field' + (n === 1 ? '' : 's'))(((event && event.properties) || []).length)),
+            h('span', { class: 'grow' }),
+            reveal(...moves,
+              h('button', { class: 'btn tiny', onclick: () => { state.openStepEvent = open ? null : rowKey; render(); } }, open ? 'Hide fields' : 'Fields'),
+              removeButton)),
+          open ? eventFields(model, step, event, { loop, edit: (b, fn) => fn(stepAtPath(b, path)) }) : null);
+      }
       case 'branch':
-        return armLines(inner, depth);
+        return h('div', { class: 'nested-branch' }, ...branchEditor(model, slice, step, path, { loop, count: steps.length }));
       case 'loop':
-        return loopLines(inner, depth);
+        return h('div', { class: 'nested-branch' }, ...loopEditor(model, slice, step, path, { count: steps.length }));
       default:
-        return [];
+        return null;
     }
   });
-  const loopLines = (loop, depth) => [
-    h('div', { class: 'sentence', style: `padding-left:${depth * 1.2}em` }, h('span', { class: 'verb' }, loopWords(loop))),
-    ...(loopSteps(loop).length ? stepLines(loopSteps(loop), depth + 1)
-      : [h('div', { class: 'muted tiny', style: `padding-left:${(depth + 1) * 1.2}em` }, 'nothing')]),
-  ];
-  const armLines = (branch, depth) => stepArms(branch).flatMap((arm, i) => [
-    h('div', { class: 'sentence', style: `padding-left:${depth * 1.2}em` },
-      h('span', { class: 'verb' }, arm.condition === undefined ? 'else' : i ? 'else if ' : 'if '),
-      arm.condition === undefined ? null : ruleSentence(model, slice.body, arm.condition)),
-    ...(arm.steps.length ? stepLines(arm.steps, depth + 1)
-      : [h('div', { class: 'muted tiny', style: `padding-left:${(depth + 1) * 1.2}em` }, 'nothing')]),
-  ]);
-  if (stepKind(step) === 'loop') {
-    return h('div', { class: 'card rule branch-card', 'data-src': 'branch:' + n },
-      h('div', { class: 'row' },
-        h('span', { class: 'muted tiny' }, 'For each – once per element, in order'),
-        h('span', { class: 'grow' }),
-        codeViewButton('A for each is edited in the code view')),
-      ...loopLines(step, 0));
+  if (!steps.length) rows.push(h('div', { class: 'muted tiny' }, 'nothing'));
+  // Inside a loop an arm is one emit or one reject; elsewhere an arm
+  // or a loop takes steps until it is done.
+  const full = !!loop && inArm && steps.length >= 1;
+  if (full) return rows;
+  const offers = [
+    ['emit', '+ emit'],
+    inArm ? ['reject', '+ reject'] : null,
+    inArm && !loop ? ['require', '+ require'] : null,
+    !(loop && inArm) ? ['branch', '+ if'] : null,
+  ].filter(Boolean);
+  const adding = typeof state.adder === 'string' && state.adder.startsWith(key + ':') ? state.adder.slice(key.length + 1) : null;
+  const insert = (b, step) => insertStepAt(b, listPath, step);
+  let form = null;
+  if (adding === 'emit') form = emitAdder(model, slice, loop, (b, step) => insert(b, step));
+  if (adding === 'reject') {
+    form = inlineForm({
+      question: 'Reject with', placeholder: 'e.g. Share is locked', submitLabel: 'Add reject',
+      onSubmit: (v) => { state.adder = null; patchSlice((b) => insert(b, { reject: v })); },
+      onCancel: () => { state.adder = null; render(); },
+    });
   }
-  return h('div', { class: 'card rule branch-card', 'data-src': 'branch:' + n },
-    h('div', { class: 'row' },
-      h('span', { class: 'muted tiny' }, 'Branch – the first arm that holds runs'),
-      h('span', { class: 'grow' }),
-      codeViewButton('Branches are edited in the code view')),
-    ...armLines(step, 0));
+  if (adding === 'require') {
+    form = h('div', { class: 'card arm-editor' }, ruleEditor(model, slice, null, {
+      stored: null, loop, rejection: true, addLabel: 'Add rule',
+      write: (b, c) => { const { rejection, ...condition } = c; insert(b, { condition, rejection }); },
+    }));
+  }
+  if (adding === 'branch') {
+    form = h('div', { class: 'card arm-editor' }, h('div', { class: 'q' }, 'if'), ruleEditor(model, slice, null, {
+      stored: null, loop, addLabel: 'Add if',
+      write: (b, c) => { const { rejection, ...condition } = c; insert(b, { branches: [{ condition, steps: [] }] }); },
+    }));
+  }
+  rows.push(form || h('div', { class: 'adder quiet' }, ...offers.map(([what, label]) => h('button', {
+    class: 'btn ghost tiny flow-adder',
+    onclick: () => { closeForms(); state.adder = key + ':' + what; render(); },
+  }, label))));
+  return rows;
+}
+
+// Which event an arm or a loop emits: one already known, or a new
+// one. Its fields are filled from what is in scope under the field's
+// own name and type – `emit E { courseId }` – and the rest is the
+// emission's field editor's, as for any emission.
+function emitAdder(model, slice, loop, insert) {
+  const scope = loop ? commandScopeProperties(model, slice.body, loop) : (slice.body.properties || []);
+  const emission = (name) => ({ name, parameters: sameNamedParameters(model, name, scope) });
+  const existing = Object.keys(model['event-definitions']).sort();
+  let chosen = existing[0] || '';
+  if (state.newStepEvent) {
+    return inlineForm({
+      question: 'New event (past tense)', placeholder: readable(suggestEventName(slice.name)),
+      onSubmit: (v) => {
+        const name = toPascal(v);
+        state.newStepEvent = false;
+        state.adder = null;
+        run(() => {
+          if (!activeModel()['event-definitions'][name]) addDefinition('event-definition', model.id, name, { properties: [] });
+          patchSlice((b) => insert(b, emission(name)));
+        });
+      },
+      onCancel: () => { state.newStepEvent = false; render(); },
+    });
+  }
+  const add = () => { if (!chosen) return; state.adder = null; patchSlice((b) => insert(b, emission(chosen))); };
+  return h('div', { class: 'adder', onkeydown: (e) => { if (e.key === 'Enter' && e.target.tagName !== 'BUTTON') { e.preventDefault(); add(); } } },
+    existing.length ? pick(existing.map((n) => [n, readable(n)]), chosen, (v) => { chosen = v; }) : null,
+    existing.length ? h('button', { class: 'btn', onclick: add }, 'Add emit') : null,
+    h('button', { class: 'btn primary', onclick: () => { state.newStepEvent = true; render(); } }, '+ New event'),
+    h('button', { class: 'btn ghost tiny', onclick: () => { state.adder = null; render(); } }, 'Cancel'));
+}
+
+// An event's fields that something in scope holds under the same name
+// and type – what `emit E { courseId }` says.
+function sameNamedParameters(model, eventName, scope) {
+  const event = model['event-definitions'][eventName];
+  const out = {};
+  for (const field of (event && event.properties) || []) {
+    const held = scope.find((p) => p && p.name === field.name);
+    if (held && held.propertyType === field.propertyType && !!held.isList === !!field.isList) out[field.name] = { parameterName: field.name };
+  }
+  return out;
+}
+
+// A new `for each`, staged like the rule adder – what it runs over,
+// which instances when that is an open read, and the names – each
+// question on screen once the one before it is answered, never by a
+// Next. The sources are the three a loop takes: a list parameter or a
+// list projection in scope, and an open read of a top-level folded
+// projection tagged by several, one tag at least bound and one left
+// open (`*`). The names default to the open tags' and to the list's
+// name made singular; one the command uses already is refused here.
+function loopSourceChoices(model, slice) {
+  const scope = operandChoicesAbove(model, slice);
+  const typeScope = { boundary: slice.reads, commandProperties: slice.payload, model };
+  const lists = [...scope, ...projectionReadChoices(model, slice, scope)].filter(([v]) => {
+    const resolved = resolveOperandType(JSON.parse(v), typeScope);
+    return resolved && resolved.isList;
+  }).map(([v, label, ...rest]) => ['list:' + v, label, ...rest])
+    // A read the command makes already is offered once, as made.
+    .filter(([v], i, all) => all.findIndex(([w]) => w === v) === i);
+  const open = Object.keys(model['projection-definitions']).sort()
+    .filter((name) => {
+      const projection = projectionsOf(model)[name];
+      return projection && !derivedOf(projection) && projectionTagParams(projection).length >= 2;
+    })
+    .map((name) => ['open:' + name, 'every instance' + GROUP_SEP + readable(name) + '(…, *)']);
+  return [...lists, ...open];
+}
+
+function loopAdder(model, slice) {
+  const draft = state.loopDraft || (state.loopDraft = { source: '', tags: {}, names: {} });
+  const rows = loopSourceChoices(model, slice);
+  if (draft.source && !rows.some(([v]) => v === draft.source)) draft.source = '';
+  const scope = operandChoicesAbove(model, slice);
+  const taken = [...(slice.payload || []).map((p) => p && p.name), ...(slice.reads || []).map((b) => b && b.alias)].filter(Boolean);
+  const close = () => { state.loopDraft = null; state.adder = null; render(); };
+
+  // The source as it would be stored, and the names it asks for.
+  let source = null;
+  let slots = [];
+  let tagRows = [];
+  if (draft.source.startsWith('list:')) {
+    source = JSON.parse(draft.source.slice('list:'.length));
+    const base = source.parameterName || source.alias || source.projection || 'item';
+    const singular = defaultAlias(base).replace(/Ids$/, 'Id').replace(/ies$/, 'y').replace(/s$/, '');
+    slots = [{ key: '_', proposed: uniqueAlias(singular === defaultAlias(base) ? 'item' : singular, taken) }];
+  } else if (draft.source.startsWith('open:')) {
+    const name = draft.source.slice('open:'.length);
+    const tags = projectionTagParams(projectionsOf(model)[name]);
+    tagRows = tags.map((tag) => {
+      const values = choicesOfType(model, slice, scope, tag.tagType);
+      const options = [['*', '* every ' + propertyWords(tag.name)], ...values];
+      // The first tag something in scope can fill is bound, the rest
+      // open – the usual reading of "each of its …".
+      if (!options.some(([v]) => v === draft.tags[tag.name])) {
+        const boundYet = tags.slice(0, tags.indexOf(tag)).some((t) => draft.tags[t.name] && draft.tags[t.name] !== '*');
+        draft.tags[tag.name] = !boundYet && values.length ? values[0][0] : '*';
+      }
+      return { tag, options };
+    });
+    const open = tags.filter((tag) => draft.tags[tag.name] === '*');
+    if (open.length && open.length < tags.length) {
+      source = { projection: name, tags: Object.fromEntries(tags.map((tag) =>
+        [tag.name, draft.tags[tag.name] === '*' ? { open: true } : JSON.parse(draft.tags[tag.name])])) };
+    }
+    const names = [];
+    slots = open.map((tag) => {
+      const proposed = uniqueAlias(tag.name, [...taken, ...names]);
+      names.push(proposed);
+      return { key: tag.name, proposed };
+    });
+  }
+  const names = slots.map((slot) => toCamel((draft.names[slot.key] || '').trim()) || slot.proposed);
+  const problem = !source ? null
+    : names.find((n) => taken.includes(n)) ? `"${names.find((n) => taken.includes(n))}" is already a name in this command.`
+    : uniq(names).length !== names.length ? 'Each name is its own.'
+    : null;
+  const submit = () => {
+    if (!source) return toast(draft.source ? 'Leave at least one tag open (*) and one bound.' : 'Pick what it runs over.', true);
+    if (problem) return toast(problem, true);
+    state.loopDraft = null;
+    state.adder = null;
+    patchSlice((b) => insertStepAt(b, [], { forEach: names, in: source, steps: [] }, newStepIndex(b, 'loop')));
+  };
+  const stageRow = (label, ...controls) => h('div', { class: 'rule-stage' },
+    h('div', { class: 'q' }, label), h('div', { class: 'adder' }, ...controls));
+  return h('div', {
+    class: 'rule-wizard',
+    onkeydown: (e) => {
+      if (e.key !== 'Enter' || e.target.tagName === 'BUTTON') return;
+      e.preventDefault();
+      submit();
+    },
+  },
+    stageRow('For each element of',
+      rows.length ? pick(rows, draft.source, (v) => { draft.source = v; draft.tags = {}; draft.names = {}; render(); }, 'what?')
+        : h('span', { class: 'muted tiny' }, 'nothing here is a list – a list parameter, a list projection or a projection tagged by several')),
+    tagRows.length ? stageRow('Which instances',
+      ...tagRows.flatMap(({ tag, options }) => [
+        h('span', { class: 'muted tiny' }, propertyWords(tag.name)),
+        pick(options, draft.tags[tag.name], (v) => { draft.tags[tag.name] = v; render(); }),
+      ]),
+      source ? null : h('span', { class: 'muted tiny' }, 'leave at least one open (*) and one bound')) : null,
+    source ? stageRow('Named',
+      ...slots.map((slot) => h('input', {
+        type: 'text', class: 'loop-name', placeholder: slot.proposed, value: draft.names[slot.key] || '',
+        'aria-label': 'Name for each ' + (slot.key === '_' ? 'element' : propertyWords(slot.key)),
+        oninput: (e) => { draft.names[slot.key] = e.target.value; },
+      }))) : null,
+    h('div', { class: 'adder' },
+      source ? h('button', { class: 'btn primary', onclick: submit }, 'Add for each')
+        : h('span', { class: 'muted tiny' }, 'Pick one to go on.'),
+      h('button', { class: 'btn ghost tiny', onclick: close }, 'Cancel')));
+}
+
+// A top-level branch or loop, as a card of its own.
+function branchCard(model, slice, step, n) {
+  const steps = commandSteps(slice.body);
+  const path = [steps.indexOf(step)];
+  const inner = stepKind(step) === 'loop'
+    ? loopEditor(model, slice, step, path, { count: steps.length })
+    : branchEditor(model, slice, step, path, { count: steps.length });
+  return h('div', { class: 'card rule branch-card', 'data-src': 'branch:' + n }, ...inner);
 }
 
 // ---------- the merged step ----------
@@ -7054,17 +7505,30 @@ function stepDecision(model, slice) {
     cards.push(h('div', { class: 'card rule' },
       ...slice.rules.map((condition, i) => ruleRow(model, slice, condition, i, slice.rules.length > 1))));
   }
-  slice.branches.forEach((branch, n) => cards.push(branchCard(model, slice, branch, n)));
+  slice.branches.forEach((branch, n) => {
+    if (stepKind(branch) === 'branch') cards.push(branchCard(model, slice, branch, n));
+  });
 
   const body = [h('div', {}, cards)];
 
   body.push(adderSlot('rule', 'rules', '+ rule', () =>
     h('div', { class: 'card' }, ruleEditor(model, slice, null))));
+  // A branch starts as its first arm's condition – the rule adder's
+  // questions without a message – and goes after the rules, before
+  // what the command records.
+  body.push(adderSlot('branch', 'rules', '+ branch', () =>
+    h('div', { class: 'card arm-editor' }, h('div', { class: 'q' }, 'if'), ruleEditor(model, slice, null, {
+      stored: null, addLabel: 'Add branch',
+      write: (b, c) => {
+        const { rejection, ...condition } = c;
+        insertStepAt(b, [], { branches: [{ condition, steps: [] }] }, newStepIndex(b, 'branch'));
+      },
+    }))));
 
   // Nothing tested is nothing decided. `DefineCourse` really is always
   // allowed: the numbering it reads is read in order to *record* the
   // course's id, which is said beside the event that records it.
-  if (!slice.rules.length && !slice.branches.length) {
+  if (!slice.rules.length && !slice.branches.some((b) => stepKind(b) === 'branch')) {
     body.unshift(h('div', { class: 'empty' }, 'Always allowed.'));
   }
 
@@ -7178,7 +7642,21 @@ function inlineReadOf(binding) {
 // declared anywhere, so it has to be typeable. A unary predicate takes
 // no right-hand side at all, so that half of the form goes away when
 // one is chosen rather than being ignored.
-function ruleEditor(model, slice, index) {
+//
+// `target` (11.0) points the same three questions at a condition that
+// is not a top-level rule: an arm's (`if` / `else if`), a comparison
+// joined to another by `and` / `or`, or a `require` inside an arm. It
+// carries the comparison being edited (`stored`, none for a new one),
+// whether a message is asked (`rejection`), the loop the condition sits
+// in (its names are in scope there), and `write(body, condition)`, which
+// puts the result where it belongs in the same append as any read or
+// input the rule brought.
+function ruleEditor(model, sliceIn, index, target = null) {
+  // Inside a loop its names come first: the element is what a read
+  // there is nearly always tagged by.
+  const slice = target && target.loop
+    ? { ...sliceIn, payload: [...loopVariables(model, sliceIn.body, target.loop), ...(sliceIn.payload || [])] }
+    : sliceIn;
   // A rule being edited always has a draft; a rule about to be created
   // grows one the first time it is painted, and keeps it across every
   // repaint a keystroke causes from then on.
@@ -7191,7 +7669,7 @@ function ruleEditor(model, slice, index) {
   // that painted all of them at once would be offering answers to
   // questions not yet asked. A rule opened for editing skips this
   // entirely.
-  const editingExisting = index !== null;
+  const editingExisting = target ? !!target.stored : index !== null;
   const alreadyRead = new Set((slice.reads || []).filter(Boolean).map((b) => b.group || b.projection).filter(Boolean));
   // Only what this command could actually reach. A group is offered
   // with each of its projections behind it: the rule binds the group
@@ -7422,6 +7900,7 @@ function ruleEditor(model, slice, index) {
 
   const close = () => {
     state.editRule = null;
+    state.editStep = null;
     state.ruleDraft = null;
     state.adder = null;
     render();
@@ -7468,8 +7947,9 @@ function ruleEditor(model, slice, index) {
   // a row `ready()` already vouched for.
   const record = () => {
     const { condition, binding } = drafted();
-    condition.rejection = typedMessage() || derivedMessage();
+    if (!target || target.rejection) condition.rejection = typedMessage() || derivedMessage();
     state.editRule = null;
+    state.editStep = null;
     state.adder = null;
     const inputs = pending ? newReadInputs(model, slice, draft) : [];
     patchSlice((b) => {
@@ -7480,6 +7960,7 @@ function ruleEditor(model, slice, index) {
       // that names it, with any input it needs a value from.
       for (const { tag, ...input } of inputs) (b.properties = b.properties || []).push(input);
       if (binding) (b.boundary = b.boundary || []).push(binding);
+      if (target) { target.write(b, condition); return; }
       const list = b.conditions = b.conditions || [];
       if (index === null) list.push(condition);
       else list[index] = condition;
@@ -7572,7 +8053,7 @@ function ruleEditor(model, slice, index) {
   // course, tagged by the course id" is a single thought, and an
   // existing read skips it entirely.
   const readStage = !chooseTarget ? null
-    : stageRow('What is this rule about?',
+    : stageRow(target && !target.rejection ? 'What is this condition about?' : 'What is this rule about?',
         pick(targetRows, chosenTarget, (v) => {
           if (v === NEW_DEFINITION) {
             return openDefinitionModal(model, {
@@ -7631,7 +8112,7 @@ function ruleEditor(model, slice, index) {
   // vanish under a pick. Answered, never assumed: a left side still
   // unset keeps the question on screen rather than strand the row.
   const isProjectionRead = (alias) => reads.some((b) => b && b.alias === alias && b.projection);
-  const storedLeft = editingExisting ? (slice.rules[index] || {}).leftHandSide : null;
+  const storedLeft = editingExisting ? ((target ? target.stored : slice.rules[index]) || {}).leftHandSide : null;
   // A read in place is one value too, stored or being edited.
   const leftNow = draft.left ? (() => { try { return JSON.parse(draft.left); } catch { return null; } })() : null;
   const oneValue = (aboutAlias && isProjectionRead(aboutAlias))
@@ -7707,7 +8188,7 @@ function ruleEditor(model, slice, index) {
   const knownMessages = uniq(commandRejectionSteps(slice.body)
     .map((c) => c.rejection).filter((m) => typeof m === 'string' && m));
   const messageList = 'rejections-' + slice.name;
-  const rejectionStage = stage < TEST_STAGE ? null
+  const rejectionStage = stage < TEST_STAGE || (target && !target.rejection) ? null
     : stageRow('Refused with',
         h('input', {
           type: 'text', class: 'rejection',
@@ -7739,7 +8220,8 @@ function ruleEditor(model, slice, index) {
       // scold is worse than no button.
       stage < TEST_STAGE
         ? h('span', { class: 'muted tiny' }, 'Pick one to go on.')
-        : h('button', { class: 'btn primary', onclick: submit }, index === null ? 'Add rule' : 'Save'),
+        : h('button', { class: 'btn primary', onclick: submit },
+          target ? (target.stored ? 'Save' : target.addLabel || 'Add') : index === null ? 'Add rule' : 'Save'),
       h('button', { class: 'btn ghost tiny', onclick: close }, 'Cancel')));
 
   return row;
@@ -7775,25 +8257,22 @@ function stepEmits(model, slice) {
           }, '×'))),
       open ? eventFields(model, emission, event) : null);
   });
-  // What the branches record (11.0) is edited in the code view, but it
-  // is still what this command appends – said here, by name, rather than
-  // a "–" that reads as "records nothing".
-  // So is what a loop records, once per element (11.0).
+  // What the branches record (11.0) is edited in their branch, under
+  // Rules, but it is still what this command appends – said here, by
+  // name, rather than a "–" that reads as "records nothing".
   const inBranches = uniq(slice.allEmits.map(({ emission }) => emission && emission.name).filter(Boolean)
     .filter((name) => !slice.emits.some((e) => e.emission.name === name) && !slice.loopEmits.includes(name)));
-  const inLoops = slice.loopEmits.filter((name) => !slice.emits.some((e) => e.emission.name === name));
-  for (const [names, label, why] of [
-    [inBranches, 'in branches:', 'What a branch emits is edited in the code view'],
-    [inLoops, 'for each element:', 'What a for each emits is edited in the code view'],
-  ]) {
-    if (!names.length) continue;
+  if (inBranches.length) {
     cards.push(h('div', { class: 'card event' },
       h('div', { class: 'row wraps' },
-        h('span', { class: 'muted tiny' }, label),
-        ...names.map((name) => eventRef(model, name)),
-        h('span', { class: 'grow' }),
-        codeViewButton(why))));
+        h('span', { class: 'muted tiny' }, 'in branches:'),
+        ...inBranches.map((name) => eventRef(model, name)))));
   }
+  // A loop is how a command records a variable number of events, so it
+  // is edited here, with the emissions.
+  slice.branches.forEach((branch, n) => {
+    if (stepKind(branch) === 'loop') cards.push(branchCard(model, slice, branch, n));
+  });
   if (!cards.length) cards.push(h('div', { class: 'empty' }, '–'));
 
   const existing = Object.keys(model['event-definitions']).sort()
@@ -7849,6 +8328,7 @@ function stepEmits(model, slice) {
           onclick: () => { closeForms(); state.newEmission = true; render(); },
         }, '+ New event')))));
   }
+  body.push(adderSlot('loop', 'emits', '+ for each', () => h('div', { class: 'card arm-editor' }, loopAdder(model, slice))));
   // The reads an emission causes, shown where their reason is. A
   // projection whose value becomes the event's id, and an instance the
   // event writes a tag for, are both read in order to *record*
@@ -7931,14 +8411,20 @@ function removeEventField(model, eventName, index, propertyName) {
 // This stays specific to *this* binding for the same reason
 // `copyFromCommand` below has to: only this command knows what it was
 // given.
-function eventFields(model, emission, event) {
+//
+// An emission inside a branch or a loop (11.0) is the same editor:
+// `edit(body, fn)` hands `fn` that emission in the body being written,
+// and inside a loop the loop's names are values too.
+function eventFields(model, emission, event, { edit, loop = null } = {}) {
   if (!event) return h('div', { class: 'fields empty' }, 'This event no longer exists.');
+  const write = edit || ((b, fn) => fn(b.publishes.find((x) => x.name === emission.name)));
   const command = activeModel()['command-definitions'][state.slice];
   const boundary = command.boundary || [];
-  const commandProperties = command.properties || [];
+  const own = command.properties || [];
+  const commandProperties = loop ? commandScopeProperties(model, command, loop) : own;
   const options = [
     ...commandProperties.map((q) =>
-      [JSON.stringify({ parameterName: q.name }), 'given · ' + propertyWords(q.name)]),
+      [JSON.stringify({ parameterName: q.name }), (own.includes(q) ? 'given · ' : 'each · ') + propertyWords(q.name)]),
     // Everything the command reads is bound, so everything it can emit
     // comes off an alias – a projection's value included.
     ...boundary.flatMap((b) => {
@@ -7985,14 +8471,13 @@ function eventFields(model, emission, event) {
       operandBeyondEditors(bound) ? h('span', {}, h('span', { class: 'op' }, operandWords(bound)), ' ',
         codeViewButton('This value is edited in the code view')) :
       pick([['', 'unset'], ...fieldOptions], bound === undefined ? '' : JSON.stringify(bound),
-        (v) => patchSlice((b) => {
-          const e = b.publishes.find((x) => x.name === emission.name);
+        (v) => patchSlice((b) => write(b, (e) => {
           e.parameters = e.parameters || {};
           // '' is unset, not an operand – a choice like any other, so a
           // bound property can be unbound again.
           if (v === '') delete e.parameters[p.name];
           else e.parameters[p.name] = JSON.parse(v);
-        })));
+        }))));
   });
 
   // What the command was given but this event does not yet carry. A
@@ -8012,11 +8497,10 @@ function eventFields(model, emission, event) {
         });
       }
     });
-    patchSlice((b) => {
-      const e = b.publishes.find((x) => x.name === emission.name);
+    patchSlice((b) => write(b, (e) => {
       e.parameters = e.parameters || {};
       for (const property of properties) e.parameters[property.name] = { parameterName: property.name };
-    });
+    }));
   };
 
   return h('div', { class: 'fields' },

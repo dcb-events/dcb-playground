@@ -626,8 +626,8 @@ function sliceOf(model, commandName) {
     reads: body.boundary || [],
     // The rules and emissions written at the top, as the pages edit
     // them (`commandLists`) – a rule flat, its message beside its
-    // condition – and the branches and loops apart (11.0), shown as
-    // they are and edited in the code view. `allEmits` is every
+    // condition – and the branches and loops apart (11.0), edited in
+    // place by step path. `allEmits` is every
     // emission any run may reach, the branches' and loops' too – what
     // the command records; `loopEmits` the names a loop emits.
     rules: commandLists(body).conditions,

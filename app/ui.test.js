@@ -2575,7 +2575,7 @@ check('importing an older model with entities says what became of them', () => {
     steps: [{ condition: { leftHandSide: { parameterName: 'courseId' }, predicate: 'isNotEmpty' }, rejection: 'No course' }, branch],
   });
 
-  check('a branch shows on the command page, the rule map and the overview, read-only', () => {
+  check('a branch shows on the command page, the rule map and the overview, editable in place', () => {
     const current = model();
     sandbox.state.slice = 'ArchiveCourse';
     const slice = sandbox.sliceOf(current, 'ArchiveCourse');
@@ -2583,8 +2583,10 @@ check('importing an older model with entities says what became of them', () => {
       'one rule and one branch on top, its emission inside');
     const decision = textOf(sandbox.stepDecision(current, slice));
     eq(decision.includes('Branch – the first arm that holds runs'), true, decision);
-    eq(decision.includes('Course is gone') && decision.includes('Edit in code'), true, 'its reject, and the way to edit it');
-    eq(decision.includes(' or '), true, 'its condition joined with or');
+    eq(decision.includes('Course is gone') && !decision.includes('Edit in code'), true, 'its reject, edited in place: ' + decision);
+    eq(/if .*Archived.*or .*Non existent|or /.test(decision), true, 'its condition joined with or');
+    eq(['+ or', '+ else if', '+ reject', '+ require', '+ if', '+ branch'].every((label) => decision.includes(label)), true,
+      'what may be added: ' + decision);
     const append = textOf(sandbox.stepEmits(current, slice));
     eq(append.includes('in branches') && append.includes('Course archived'), true,
       'the append step names what the branches record, not "–": ' + append);
@@ -2629,7 +2631,7 @@ check('importing an older model with entities says what became of them', () => {
     steps: [{ condition: { leftHandSide: { parameterName: 'courseIds' }, predicate: 'isNotEmpty' }, rejection: 'No course' }, loop],
   });
 
-  check('a for each shows on the command page, the rule map and the overview, read-only', () => {
+  check('a for each shows on the command page, the rule map and the overview, editable in place', () => {
     const current = model();
     eq(sandbox.modelAdvisories(current).filter((a) => a.name === 'ArchiveCourses'), [], 'advisory-clean');
     sandbox.state.slice = 'ArchiveCourses';
@@ -2637,11 +2639,11 @@ check('importing an older model with entities says what became of them', () => {
     eq([slice.rules.length, slice.branches.length, slice.emits.length, slice.allEmits.length], [1, 1, 0, 1],
       'one rule and the loop on top, its emission inside');
     const decision = textOf(sandbox.stepDecision(current, slice));
-    eq(/For each – once per element/.test(decision) && decision.includes('for each courseId in'), true, decision);
-    eq(decision.includes('Edit in code') && decision.includes('emit'), true, 'what it does, and the way to edit it');
+    eq(/For each/.test(decision), false, 'a loop is not a rule: ' + decision);
     const append = textOf(sandbox.stepEmits(current, slice));
-    eq(append.includes('for each element') && append.includes('Course archived'), true,
-      'the append step names what the loop records: ' + append);
+    eq(/For each – once per element/.test(append) && append.includes('for each courseId in'), true, append);
+    eq(append.includes('emit') && append.includes('Course archived') && append.includes('+ for each'), true,
+      'the append step holds the loop and what it records: ' + append);
     const paint = (fn) => { const main = sandbox.document.createElement('div'); fn(current, main); return textOf(main); };
     const map = paint(sandbox.renderRuleMap);
     eq(/for each courseId in .* → if .* → emit Course archived/.test(map), true, 'the rule map says the loop and its arm: ' + map);
@@ -2659,6 +2661,200 @@ check('importing an older model with entities says what became of them', () => {
     sandbox.patch('command-definition', 'ArchiveCourses', (b) => { b.publishes.push({ name: 'CourseArchived', parameters: { courseId: { tagType: 'CourseId', tagValue: 'c9' } } }); });
     const steps = model()['command-definitions'].ArchiveCourses.steps;
     eq([steps[0], sandbox.stepKind(steps[1])], [loop, 'emit'], 'an emission added goes last, the loop kept');
+  });
+
+  sandbox.clearActiveModelId();
+}
+
+// ---------------------------------------------------------------
+// Branches and loops authored on the page (11.0): every arm, its
+// condition and its steps through the editors, the code view printing
+// what was built, and nothing else in the command moved.
+// ---------------------------------------------------------------
+{
+  const { id, model } = build('course-simple');
+  sandbox.setActiveModelId(id);
+  const cmd = (name) => model()['command-definitions'][name];
+  const paintAll = (name) => {
+    const slice = sandbox.sliceOf(model(), name);
+    const root = sandbox.document.createElement('div');
+    root.appendChild(sandbox.stepDecision(model(), slice));
+    root.appendChild(sandbox.stepEmits(model(), slice));
+    return root;
+  };
+  const button = (name, label, nth = 0) => {
+    const found = findAll(paintAll(name), (n) => n.tag === 'button' && textOf(n) === label);
+    if (!found[nth]) throw new Error(`no button "${label}" (${found.length}) in ${textOf(paintAll(name))}`);
+    return found[nth];
+  };
+  const firstSelect = (name) => findAll(paintAll(name), (n) => n.tag === 'select')[0];
+  const course = { projection: 'CourseStatus', tags: { courseId: { parameterName: 'courseId' } } };
+  const status = (member) => ({ leftHandSide: course, predicate: 'equals', rightHandSide: { enumMember: member } });
+  const pickRight = (member) => Object.assign(sandbox.state.ruleDraft, { right: JSON.stringify({ enumMember: member }) });
+  const printed = (name) => {
+    const text = sandbox.modelToSource(model());
+    const start = text.indexOf('command ' + name);
+    return text.slice(start, text.indexOf('\n}\n', start) + 2);
+  };
+  const roundTrips = () => {
+    const parsed = sandbox.parseModelSource(sandbox.modelToSource(model()));
+    eq(parsed.diagnostics.filter((d) => d.severity === 'error'), [], 'the printed text parses');
+    eq(sandbox.modelToSource(model()).includes(' json {'), false, 'and no definition falls back to JSON');
+  };
+
+  check('a branch is started from Rules by its first condition, before what is recorded', () => {
+    sandbox.closeForms();
+    sandbox.state.slice = 'ArchiveCourse';
+    button('ArchiveCourse', '+ branch').onclick();
+    eq(sandbox.state.adder, 'branch', 'the adder is open');
+    firstSelect('ArchiveCourse').onchange({ target: { value: 'projection:CourseStatus' } });
+    pickRight('Archived');
+    button('ArchiveCourse', 'Add branch').onclick();
+    const steps = cmd('ArchiveCourse').steps;
+    eq(steps.map((s) => sandbox.stepKind(s)), ['rule', 'branch', 'emit'], 'after the rule, before the emission');
+    eq(steps[1], { branches: [{ condition: status('Archived'), steps: [] }] }, 'one arm, nothing in it yet, no message');
+  });
+
+  check('an arm takes a reject, a second comparison joined by or, and an else that emits', () => {
+    sandbox.closeForms();
+    sandbox.state.slice = 'ArchiveCourse';
+    button('ArchiveCourse', '+ reject').onclick();
+    const form = paintAll('ArchiveCourse');
+    findAll(form, (n) => n.tag === 'input' && n.attributes.type === 'text')[0].oninput({ target: { value: 'Course is gone' } });
+    findAll(form, (n) => n.tag === 'button' && textOf(n) === 'Add reject')[0].onclick();
+    // The rule above offers + and / + or too; the arm's come second.
+    button('ArchiveCourse', '+ or', 1).onclick();
+    firstSelect('ArchiveCourse').onchange({ target: { value: 'projection:CourseStatus' } });
+    pickRight('NonExistent');
+    button('ArchiveCourse', 'Add or').onclick();
+    button('ArchiveCourse', '+ else').onclick();
+    // The else arm's adders are the second set.
+    button('ArchiveCourse', '+ emit', 1).onclick();
+    const eventPicker = findAll(paintAll('ArchiveCourse'), (n) => n.tag === 'select').find((n) =>
+      findAll(n, (o) => o.tag === 'option').some((o) => o.value === 'CourseArchived'));
+    eventPicker.onchange({ target: { value: 'CourseArchived' } });
+    button('ArchiveCourse', 'Add emit').onclick();
+    const branch = cmd('ArchiveCourse').steps[1];
+    eq(branch, {
+      branches: [{ condition: { any: [status('Archived'), status('NonExistent')] }, steps: [{ reject: 'Course is gone' }] }],
+      otherwise: [{ name: 'CourseArchived', parameters: { courseId: { parameterName: 'courseId' } } }],
+    }, 'the branch as built, the emission filled from the same-named input');
+    eq(printed('ArchiveCourse').includes(
+      'if CourseStatus(courseId) == Archived or CourseStatus(courseId) == NonExistent => reject "Course is gone"\n  else => emit CourseArchived { courseId }'),
+    true, printed('ArchiveCourse'));
+    roundTrips();
+  });
+
+  check('a comparison is edited, removed, and the arm reordered and removed in place', () => {
+    sandbox.state.slice = 'ArchiveCourse';
+    // Edit the second comparison: NonExistent → Existent.
+    button('ArchiveCourse', 'Edit', 2).onclick();
+    eq(sandbox.state.editStep, 'br:1:0:m1', 'the second comparison is open');
+    pickRight('Existent');
+    button('ArchiveCourse', 'Save').onclick();
+    eq(cmd('ArchiveCourse').steps[1].branches[0].condition, { any: [status('Archived'), status('Existent')] }, 'edited in place');
+    // Add an else if, then move it up.
+    button('ArchiveCourse', '+ else if').onclick();
+    firstSelect('ArchiveCourse').onchange({ target: { value: 'projection:CourseStatus' } });
+    pickRight('NonExistent');
+    button('ArchiveCourse', 'Add else if').onclick();
+    eq(cmd('ArchiveCourse').steps[1].branches.map((arm) => arm.condition), [{ any: [status('Archived'), status('Existent')] }, status('NonExistent')], 'a second arm, before else');
+    sandbox.patch('command-definition', 'ArchiveCourse', (b) => sandbox.moveBranchArm(b, [1], 1, -1));
+    eq(cmd('ArchiveCourse').steps[1].branches[0].condition, status('NonExistent'), 'moved up');
+    sandbox.patch('command-definition', 'ArchiveCourse', (b) => sandbox.removeBranchArm(b, [1], 0));
+    // Removing one of two comparisons leaves the other alone.
+    sandbox.patch('command-definition', 'ArchiveCourse', (b) => sandbox.setArmCondition(b, [1], 0,
+      sandbox.withoutConditionMember(b.steps[1].branches[0].condition, 1)));
+    eq(cmd('ArchiveCourse').steps[1].branches, [{ condition: status('Archived'), steps: [{ reject: 'Course is gone' }] }], 'one arm, one comparison');
+    eq(cmd('ArchiveCourse').steps[0].rejection, 'Course is not active', 'the top-level rule untouched');
+    roundTrips();
+  });
+
+  check('a block arm takes a require and a nested if; removing the last arm removes the branch', () => {
+    sandbox.closeForms();
+    sandbox.state.slice = 'ArchiveCourse';
+    button('ArchiveCourse', '+ require').onclick();
+    firstSelect('ArchiveCourse').onchange({ target: { value: 'projection:CourseSubscriptionCount' } });
+    Object.assign(sandbox.state.ruleDraft, { predicate: 'equals', right: ' literal', rightText: '0', rejection: 'Course has subscribers' });
+    button('ArchiveCourse', 'Add rule').onclick();
+    const arm = cmd('ArchiveCourse').steps[1].branches[0];
+    eq(arm.steps.map((s) => sandbox.stepKind(s)), ['reject', 'rule'], 'the rule after the reject');
+    eq(arm.steps[1].rejection, 'Course has subscribers', 'with its message');
+    eq(printed('ArchiveCourse').includes('require CourseSubscriptionCount(courseId) == 0\n      else reject "Course has subscribers"'), true, printed('ArchiveCourse'));
+    roundTrips();
+    sandbox.patch('command-definition', 'ArchiveCourse', (b) => sandbox.removeBranchArm(b, [1], 0));
+    eq(cmd('ArchiveCourse').steps.map((s) => sandbox.stepKind(s)), ['rule', 'emit'], 'the branch went with its last arm');
+  });
+
+  check('a for each over a list parameter is added from Append, and its body emits per element', () => {
+    sandbox.addDefinition('command-definition', id, 'ArchiveCourses', {
+      properties: [{ name: 'courseIds', propertyType: 'CourseId', isOptional: false, isList: true }], boundary: [], steps: [],
+    });
+    sandbox.closeForms();
+    sandbox.state.slice = 'ArchiveCourses';
+    button('ArchiveCourses', '+ for each').onclick();
+    const sourcePicker = firstSelect('ArchiveCourses');
+    const values = findAll(sourcePicker, (n) => n.tag === 'option').map((n) => n.value);
+    eq(values.includes('list:' + JSON.stringify({ parameterName: 'courseIds' })), true, 'the list parameter is offered: ' + values);
+    sourcePicker.onchange({ target: { value: 'list:' + JSON.stringify({ parameterName: 'courseIds' }) } });
+    const name = findAll(paintAll('ArchiveCourses'), (n) => n.tag === 'input' && /loop-name/.test(n.className || ''))[0];
+    eq(name.attributes.placeholder, 'courseId', 'the element named after the list');
+    button('ArchiveCourses', 'Add for each').onclick();
+    eq(cmd('ArchiveCourses').steps, [{ forEach: ['courseId'], in: { parameterName: 'courseIds' }, steps: [] }], 'the loop, empty');
+    // Its body: an if whose arm emits.
+    button('ArchiveCourses', '+ if').onclick();
+    firstSelect('ArchiveCourses').onchange({ target: { value: 'projection:CourseStatus' } });
+    const target = findAll(paintAll('ArchiveCourses'), (n) => n.tag === 'select')[1];
+    eq(findAll(target, (n) => n.tag === 'option').some((n) => n.value === JSON.stringify({ parameterName: 'courseId' })), true,
+      'the loop’s name tags the read');
+    pickRight('Existent');
+    button('ArchiveCourses', 'Add if').onclick();
+    eq(textOf(paintAll('ArchiveCourses')).includes('+ require'), false, 'a loop arm takes no rule');
+    button('ArchiveCourses', '+ emit').onclick();
+    findAll(paintAll('ArchiveCourses'), (n) => n.tag === 'select').find((n) =>
+      findAll(n, (o) => o.tag === 'option').some((o) => o.value === 'CourseArchived')).onchange({ target: { value: 'CourseArchived' } });
+    button('ArchiveCourses', 'Add emit').onclick();
+    eq(textOf(paintAll('ArchiveCourses')).includes('+ reject'), false, 'one emit fills a loop arm');
+    eq(printed('ArchiveCourses').includes('for each courseId in courseIds {\n    if CourseStatus(courseId) == Existent => emit CourseArchived { courseId }\n  }'),
+      true, printed('ArchiveCourses'));
+    eq(advisedOtherwise(model()).filter((a) => a.name === 'ArchiveCourses'), [], 'advisory-clean');
+    roundTrips();
+  });
+
+  check('a for each over an open read names each open tag', () => {
+    sandbox.applyModelSource(id, swap(sandbox.modelToSource(model()), '// Commands', [
+      'projection Seat (tag courseId: CourseId, tag studentId: StudentId): boolean = false {',
+      '  on StudentSubscribedToCourse => set true',
+      '  on StudentUnsubscribedFromCourse => set false',
+      '}',
+      '',
+      '// Commands',
+    ].join('\n')));
+    sandbox.closeForms();
+    sandbox.state.slice = 'ArchiveCourse';
+    button('ArchiveCourse', '+ for each').onclick();
+    firstSelect('ArchiveCourse').onchange({ target: { value: 'open:Seat' } });
+    const pickers = findAll(paintAll('ArchiveCourse'), (n) => n.tag === 'select');
+    eq(sandbox.state.loopDraft.tags, { courseId: JSON.stringify({ parameterName: 'courseId' }), studentId: '*' }, 'the course bound, the student open');
+    eq(pickers.length >= 3, true, 'a picker per tag');
+    button('ArchiveCourse', 'Add for each').onclick();
+    const loop = cmd('ArchiveCourse').steps[cmd('ArchiveCourse').steps.length - 1];
+    eq(loop, { forEach: ['studentId'], in: { projection: 'Seat', tags: { courseId: { parameterName: 'courseId' }, studentId: { open: true } } }, steps: [] }, 'one name, the open tag’s');
+    eq(printed('ArchiveCourse').includes('for each studentId in Seat(courseId, *) {}'), true, printed('ArchiveCourse'));
+    roundTrips();
+  });
+
+  check('a top-level rule joined with and is edited a comparison at a time', () => {
+    sandbox.closeForms();
+    sandbox.state.slice = 'ArchiveCourse';
+    button('ArchiveCourse', '+ and', 0).onclick();
+    firstSelect('ArchiveCourse').onchange({ target: { value: 'projection:CourseSubscriptionCount' } });
+    Object.assign(sandbox.state.ruleDraft, { predicate: 'equals', right: ' literal', rightText: '0' });
+    button('ArchiveCourse', 'Add and').onclick();
+    const rule = cmd('ArchiveCourse').steps[0];
+    eq(rule.rejection, 'Course is not active', 'the message kept');
+    eq(rule.condition.all.length, 2, 'two comparisons, joined by and');
+    roundTrips();
   });
 
   sandbox.clearActiveModelId();

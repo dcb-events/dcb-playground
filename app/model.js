@@ -2405,6 +2405,166 @@ function withCommandLists(steps, conditions, publishes) {
   return out;
 }
 
+// ---------- editing steps where they sit ----------
+//
+// The pages edit a branch, its arms and a loop in place (11.0): each
+// edit names where it acts by a *path* – a step's, `[2]` or `[2, 0, 1]`
+// (the first arm of step 2, its step 1), or a list's, the same path
+// without the last index (`[]` the top, `[2, 'otherwise']`, `[3,
+// 'each']`), which is how `forEachStep` names them – and changes that
+// one place in a body the caller already cloned. Everything else stays
+// as it was, so an edit never flattens or reorders what it did not
+// touch. These are the editors' half; the write is `updateDefinition`,
+// one append like any edit.
+
+// The list of steps `listPath` names, created where a list was missing
+// – or null where the path leads nowhere.
+function stepListAt(body, listPath) {
+  if (!Array.isArray(body.steps)) body.steps = [];
+  let list = body.steps;
+  for (let k = 0; k < listPath.length; k += 2) {
+    const step = list[listPath[k]];
+    const arm = listPath[k + 1];
+    const kind = stepKind(step);
+    if (arm === 'each' && kind === 'loop') {
+      if (!Array.isArray(step.steps)) step.steps = [];
+      list = step.steps;
+    } else if (arm === 'otherwise' && kind === 'branch' && step.otherwise !== undefined) {
+      if (!Array.isArray(step.otherwise)) step.otherwise = [];
+      list = step.otherwise;
+    } else if (typeof arm === 'number' && kind === 'branch' && step.branches[arm]) {
+      if (!Array.isArray(step.branches[arm].steps)) step.branches[arm].steps = [];
+      list = step.branches[arm].steps;
+    } else {
+      return null;
+    }
+  }
+  return list;
+}
+
+function stepAtPath(body, path) {
+  const list = stepListAt(body, path.slice(0, -1));
+  return list ? list[path[path.length - 1]] || null : null;
+}
+
+// Adds `step` to the list at `listPath`, at `index` (the end without
+// one).
+function insertStepAt(body, listPath, step, index) {
+  const list = stepListAt(body, listPath);
+  if (!list) return;
+  list.splice(index === undefined ? list.length : Math.max(0, Math.min(index, list.length)), 0, step);
+}
+
+function replaceStepAt(body, path, step) {
+  const list = stepListAt(body, path.slice(0, -1));
+  if (list && list[path[path.length - 1]] !== undefined) list[path[path.length - 1]] = step;
+}
+
+function removeStepAt(body, path) {
+  const list = stepListAt(body, path.slice(0, -1));
+  if (list) list.splice(path[path.length - 1], 1);
+}
+
+// One place earlier (`delta` -1) or later (+1) in its own list.
+function moveStepAt(body, path, delta) {
+  const list = stepListAt(body, path.slice(0, -1));
+  const from = path[path.length - 1];
+  const to = from + delta;
+  if (!list || to < 0 || to >= list.length) return;
+  const [step] = list.splice(from, 1);
+  list.splice(to, 0, step);
+}
+
+// The arms of the branch at `path`: a condition and the steps it
+// runs. Added before `else`, which stays last; the last conditional
+// arm removed takes the branch with it – an `else` alone is no branch.
+function addBranchArm(body, path, condition, steps = []) {
+  const branch = stepAtPath(body, path);
+  if (stepKind(branch) !== 'branch') return;
+  branch.branches.push({ condition, steps });
+}
+
+function setArmCondition(body, path, arm, condition) {
+  const branch = stepAtPath(body, path);
+  if (stepKind(branch) === 'branch' && branch.branches[arm]) branch.branches[arm].condition = condition;
+}
+
+function removeBranchArm(body, path, arm) {
+  const branch = stepAtPath(body, path);
+  if (stepKind(branch) !== 'branch') return;
+  if (arm === 'otherwise') { delete branch.otherwise; return; }
+  branch.branches.splice(arm, 1);
+  if (!branch.branches.length) removeStepAt(body, path);
+}
+
+function moveBranchArm(body, path, arm, delta) {
+  const branch = stepAtPath(body, path);
+  if (stepKind(branch) !== 'branch') return;
+  const to = arm + delta;
+  if (to < 0 || to >= branch.branches.length) return;
+  const [moved] = branch.branches.splice(arm, 1);
+  branch.branches.splice(to, 0, moved);
+}
+
+// `else` added with nothing in it yet, or taken away.
+function setBranchOtherwise(body, path, present) {
+  const branch = stepAtPath(body, path);
+  if (stepKind(branch) !== 'branch') return;
+  if (present && branch.otherwise === undefined) branch.otherwise = [];
+  if (!present) delete branch.otherwise;
+}
+
+// Where a new branch or loop goes at the top: after every step that
+// decides – before the first emission written after them – so it reads
+// in the order the code view prints: rules, then branches, then what
+// is recorded.
+function newStepIndex(body, kind) {
+  const steps = commandSteps(body);
+  if (kind === 'loop') return steps.length;
+  let at = steps.length;
+  for (let i = steps.length - 1; i >= 0; i--) {
+    if (stepKind(steps[i]) === 'emit') at = i; else break;
+  }
+  return at;
+}
+
+// A condition as the pages edit it: its comparisons in one list, and
+// what joins them – `all` (and), `any` (or), null for one comparison.
+// Null for a condition that nests a group in a group, which only the
+// code view writes.
+function flatCondition(condition) {
+  if (!condition || typeof condition !== 'object') return null;
+  if (!isCompoundCondition(condition)) return { joiner: null, members: [condition] };
+  const members = conditionMembers(condition);
+  if (members.some(isCompoundCondition)) return null;
+  return { joiner: Array.isArray(condition.all) ? 'all' : 'any', members };
+}
+
+// And back: one comparison stands alone, more are joined. A joiner is
+// given whenever there is more than one.
+function joinedCondition(joiner, members) {
+  const kept = members.filter(Boolean);
+  if (kept.length === 1) return kept[0];
+  return { [joiner || 'all']: kept };
+}
+
+// The condition with one comparison replaced, added (with `joiner`
+// when it was one comparison) or removed.
+function withConditionMember(condition, index, member, joiner) {
+  const flat = flatCondition(condition);
+  if (!flat) return condition;
+  const members = [...flat.members];
+  if (index === null || index >= members.length) members.push(member);
+  else members[index] = member;
+  return joinedCondition(flat.joiner || joiner, members);
+}
+
+function withoutConditionMember(condition, index) {
+  const flat = flatCondition(condition);
+  if (!flat || flat.members.length < 2) return condition;
+  return joinedCondition(flat.joiner, flat.members.filter((_, i) => i !== index));
+}
+
 // ---------- conditions ----------
 
 function isCompoundCondition(condition) {

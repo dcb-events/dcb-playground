@@ -231,14 +231,39 @@ and prune what no longer holds.
   arm that emits. A scenario shows an arm when it holds and its run
   took it (`arms`, `commandCoverageGaps`, evaluate.js) – the command
   page's gaps card and the skill's `check` both read that one function.
-- **Branches are edited in the code view – a follow-up.** The pages
-  edit the top-level rules and emissions as two lists (`commandLists`)
-  and put them back into the slots they came from
-  (`withCommandLists`, through `patch` in index.html), so an edit never
-  flattens or drops a branch. A branch shows as a read-only card with
-  a way to the code view; a rule joined with and / or likewise. Visual
-  editing of branches (arms, their conditions, a block's steps) is
-  still to do.
+- **Branches and loops are edited where they sit.** The pages edit
+  the top-level rules and emissions as two lists (`commandLists`) and
+  put them back into the slots they came from (`withCommandLists`,
+  through `patch` in index.html), so an edit never flattens or drops a
+  branch. Everything inside a branch or a loop is edited by *path*
+  (`stepListAt`, `insertStepAt`, `moveStepAt`, `addBranchArm`,
+  `removeBranchArm`, `setBranchOtherwise`, model.js – `[2, 0, 1]` is
+  step 1 of the first arm of step 2, the same paths `forEachStep`
+  gives), each changing that one place in the body `patch` cloned;
+  the write is the one `updateDefinition` append. **A condition is the
+  rule adder pointed elsewhere** (`ruleEditor`'s `target`: the
+  comparison edited, whether a message is asked, the loop it sits in,
+  and where the result is written), not a second widget: an arm's
+  `if`, a `+ and` / `+ or`, a `require` inside a block arm and a new
+  branch's first arm all ask the same three questions, staged the same
+  way, and a read the condition brings lands in the same append. A
+  condition is edited as one list of comparisons and what joins them
+  (`flatCondition`, `withConditionMember`): a line per comparison, the
+  first led by `if` / `else if` / `require`, the rest by `and` or `or`,
+  each with Edit and ×, `+ and` / `+ or` in the last line's reveal;
+  `×` on the last comparison removes the arm (the last arm the branch).
+  A top-level rule takes `and` / `or` the same way. A group inside a
+  group (`a and (b or c)`) is the code view's – nearly nothing writes
+  one, and a tree editor would cost more than every other question
+  here. **Arms hold steps**: `emit` (the emission's own field editor,
+  `eventFields` given where to write), `reject` with its message, and
+  outside a loop `require` and a nested `if`; `↑` / `↓` order steps,
+  arms and branches. `+ branch` (Rules) starts one by its first
+  condition and puts it after the rules, before what is recorded
+  (`newStepIndex`); `+ else` adds an empty `else`. Moving an existing
+  top-level rule or emission into an arm was left out: removing it and
+  adding it in the arm is two gestures, and a drag between lists would
+  need a drop target per arm.
 - **No write coverage** (gone with entities, 11.0). It flagged an
   emitted tag whose value was read off an entity instance the command
   had not bound; a group names no instance an event writes, so there is
@@ -359,10 +384,19 @@ and prune what no longer holds.
   are owed one each, like a command's (`commandSuccessesOwed`); a loop
   without arms is part of plain success. `then A and B and C` lists the
   events in order and is compared in that order – no construct for "a
-  variable number of events". **Pages**: a loop is a read-only card
-  with *Edit in code* (`branchCard`), the Append step names what it
-  records per element, and `withCommandLists` keeps it through edits,
-  as branches are.
+  variable number of events". **Pages**: a loop is a card in the
+  Append step, where what a command records is (`branchCard`),
+  added by `+ for each` (`loopAdder`): what it runs over – a list in
+  scope or an open read of a projection tagged by several, a picker per
+  tag with `*` beside the values in scope, the first one in scope bound
+  and the rest open – then its names, proposed from the open tags or
+  the list made singular. The questions follow the rule adder's:
+  derived from what is answered, no Next. Its body takes `emit` and
+  `if`; an arm inside it is one `emit` or one `reject`, so its adders
+  go once it has one, and a condition there has the loop's names first
+  in scope. A loop's source and names, once made, are changed in the
+  code view: every step inside names them, and renaming them is the
+  language service's F2.
 
 ## Tags: events, projections, handlers
 
