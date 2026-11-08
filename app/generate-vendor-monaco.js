@@ -2,12 +2,12 @@
 // Rewrites app/vendor/monaco/ – the one vendored dependency.
 //
 // The code view's editor is Monaco, pinned to the version below and
-// trimmed to the editor core and the worker that runs it, plus the
-// TypeScript language support the scripted-handler editor used until
-// 11.0 removed scripts – nothing loads it any more, and it goes at the
-// next version bump, the one time this runs. Everything else in the
-// distribution – other languages, other workers, translations,
-// source maps – is deliberately not vendored.
+// trimmed to the editor core and the worker that runs it. The code
+// view's language is registered by the app itself (`dsl.js`), so no
+// language support from the distribution is needed: the TypeScript
+// support the scripted-handler editor used went with scripts (11.0).
+// Everything else in the distribution – languages, other workers,
+// translations, source maps – is deliberately not vendored.
 //
 // 0.52.2 is the last release with the classic AMD `min/vs` layout,
 // which is why it is the pin: the app is classic scripts with no
@@ -36,10 +36,6 @@ const KEEP = [
   'min/vs/editor/editor.main.css',
   'min/vs/base/worker/workerMain.js',
   'min/vs/base/browser/ui/codicons/codicon/codicon.ttf',
-  'min/vs/language/typescript/tsMode.js',
-  'min/vs/language/typescript/tsWorker.js',
-  'min/vs/basic-languages/typescript/typescript.js',
-  'min/vs/basic-languages/javascript/javascript.js',
 ];
 
 const fs = require('fs');
