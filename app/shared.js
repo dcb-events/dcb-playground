@@ -2037,15 +2037,15 @@ function simpleSide(operand) {
 // A collection function the rule editor's collection questions write:
 // a read of a top-level projection, each tag open or a value in scope,
 // a record's field for the numeric ones, and a `where` of comparisons
-// of `value` (or `value.field`) joined one way.
+// of `value` (or `value.field`), joined and bracketed at any depth.
 function collectionEditable(operand) {
   if (operandSource(operand) !== 'collection' || !COLLECTION_FUNCTIONS.includes(operand.collect)) return false;
   const read = operand.read;
   if (operandSource(read) !== 'projection-read' || read.arguments) return false;
   if (!readTagOperands(read).every((tag) => operandSource(tag) === 'open' || !operandBeyondEditors(tag))) return false;
   if (operand.where === undefined) return true;
-  const flat = flatCondition(operand.where);
-  return !!flat && flat.members.every((leaf) => WHERE_PREDICATES.includes(leaf.predicate)
+  const leaves = conditionLeaves(operand.where);
+  return leaves.length > 0 && leaves.every((leaf) => WHERE_PREDICATES.includes(leaf.predicate)
     && operandSource(leaf.leftHandSide) === 'instance-value' && simpleSide(leaf.rightHandSide));
 }
 

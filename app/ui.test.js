@@ -2857,6 +2857,97 @@ check('importing an older model with entities says what became of them', () => {
     roundTrips();
   });
 
+  check('a condition as a tree: a comparison joins the whole, is bracketed with one, or joins its group', () => {
+    const [a, b, c] = [status('Existent'), status('Archived'), status('NonExistent')];
+    eq(sandbox.withConditionJoined(a, [], 'all', b), { all: [a, b] }, 'one comparison joined');
+    eq(sandbox.withConditionJoined({ all: [a, b] }, [1], 'any', c), { all: [a, { any: [b, c] }] }, 'bracketed with the comparison');
+    eq(sandbox.withConditionJoined({ all: [a, { any: [b, c] }] }, [1], 'any', a), { all: [a, { any: [b, c, a] }] }, 'added to its group');
+    eq(sandbox.withConditionJoined({ any: [a, b] }, [], 'all', c), { all: [{ any: [a, b] }, c] }, 'the whole bracketed');
+    eq(sandbox.withConditionNode({ all: [a, { any: [b, c] }] }, [1, 0], null), { all: [a, c] }, 'a group of one is its member');
+    eq(sandbox.withConditionNode({ all: [a, b] }, [0], null), b, 'one left stands alone');
+    eq(sandbox.conditionNodeAt({ all: [a, { any: [b, c] }] }, [1, 1]), c, 'found by its path');
+    eq(sandbox.conditionLines({ all: [a, { any: [b, { all: [c, a] }] }] }).map((l) => [l.path.join('.'), l.joiner, l.opens, l.closing.length, l.indent]),
+      [['0', null, 0, 0, 0], ['1.0', 'all', 1, 0, 0], ['1.1.0', 'any', 1, 0, 1], ['1.1.1', 'all', 0, 2, 2]], 'laid out as lines');
+  });
+
+  check('a rule brackets a comparison with one joined the other way, at any depth, and loses nothing', () => {
+    sandbox.closeForms();
+    sandbox.state.slice = 'ArchiveCourse';
+    const course = (projection) => ({ projection, tags: { courseId: { parameterName: 'courseId' } } });
+    const none = { leftHandSide: course('CourseSubscriptionCount'), predicate: 'equals', rightHandSide: 0 };
+    const capacity = { leftHandSide: course('CourseCapacity'), predicate: 'greaterThan', rightHandSide: 0 };
+    // `Existent and none`: bracket the second with an or.
+    button('ArchiveCourse', '+ (… or …)', 1).onclick();
+    firstSelect('ArchiveCourse').onchange({ target: { value: 'projection:CourseStatus' } });
+    pickRight('Archived');
+    button('ArchiveCourse', 'Add or').onclick();
+    eq(cmd('ArchiveCourse').steps[0].condition, { all: [status('Existent'), { any: [none, status('Archived')] }] }, 'a group in the and');
+    eq(cmd('ArchiveCourse').steps[0].rejection, 'Course is not active', 'the message kept');
+    eq(printed('ArchiveCourse').includes('require CourseStatus(courseId) == Existent and (CourseSubscriptionCount(courseId) == 0 or CourseStatus(courseId) == Archived)'),
+      true, printed('ArchiveCourse'));
+    const page = textOf(sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'ArchiveCourse')));
+    eq(page.includes('Edit in code'), false, 'edited on the page: ' + page);
+    eq(/and \(.*or .*\)/.test(page), true, 'the group bracketed on the page: ' + page);
+    // One deeper: bracket the group's second comparison with an and.
+    button('ArchiveCourse', '+ (… and …)', 1).onclick();
+    firstSelect('ArchiveCourse').onchange({ target: { value: 'projection:CourseCapacity' } });
+    Object.assign(sandbox.state.ruleDraft, { predicate: 'greaterThan', right: ' literal', rightText: '0' });
+    button('ArchiveCourse', 'Add and').onclick();
+    eq(cmd('ArchiveCourse').steps[0].condition, { all: [status('Existent'), { any: [none, { all: [status('Archived'), capacity] }] }] }, 'a group in the group');
+    roundTrips();
+    // Add to the outer group from its last line.
+    button('ArchiveCourse', '+ or in (…)').onclick();
+    firstSelect('ArchiveCourse').onchange({ target: { value: 'projection:CourseStatus' } });
+    pickRight('NonExistent');
+    button('ArchiveCourse', 'Add or').onclick();
+    eq(cmd('ArchiveCourse').steps[0].condition.all[1].any.length, 3, 'three in the or');
+    // Edit the innermost comparison: its path names it.
+    sandbox.state.editStep = null;
+    const editKey = 'rule:0:m1.1.1';
+    const edits = findAll(paintAll('ArchiveCourse'), (n) => n.tag === 'button' && textOf(n) === 'Edit');
+    edits[3].onclick();
+    eq(sandbox.state.editStep, editKey, 'the innermost comparison is open');
+    Object.assign(sandbox.state.ruleDraft, { rightText: '5' });
+    button('ArchiveCourse', 'Save').onclick();
+    eq(cmd('ArchiveCourse').steps[0].condition.all[1].any[1].all[1].rightHandSide, 5, 'edited in place');
+    // Removing a comparison of the inner group leaves its other one.
+    sandbox.patch('command-definition', 'ArchiveCourse', (body) => {
+      body.steps[0].condition = sandbox.withConditionNode(body.steps[0].condition, [1, 1, 1], null);
+    });
+    eq(cmd('ArchiveCourse').steps[0].condition, { all: [status('Existent'), { any: [none, status('Archived'), status('NonExistent')] }] },
+      'the inner group of one is its comparison');
+    // The whole bracketed: (… ) or …
+    button('ArchiveCourse', '+ or', 0).onclick();
+    firstSelect('ArchiveCourse').onchange({ target: { value: 'projection:CourseCapacity' } });
+    Object.assign(sandbox.state.ruleDraft, { predicate: 'greaterThan', right: ' literal', rightText: '0' });
+    button('ArchiveCourse', 'Add or').onclick();
+    eq(Object.keys(cmd('ArchiveCourse').steps[0].condition), ['any'], 'the whole or-ed');
+    roundTrips();
+  });
+
+  check('an arm\'s condition takes a bracketed group the same way', () => {
+    sandbox.closeForms();
+    sandbox.state.slice = 'ArchiveCourse';
+    button('ArchiveCourse', '+ branch').onclick();
+    firstSelect('ArchiveCourse').onchange({ target: { value: 'projection:CourseStatus' } });
+    pickRight('Archived');
+    button('ArchiveCourse', 'Add branch').onclick();
+    const at = cmd('ArchiveCourse').steps.findIndex((s) => sandbox.stepKind(s) === 'branch');
+    sandbox.patch('command-definition', 'ArchiveCourse', (body) => {
+      body.steps[at].branches[0].condition = { all: [status('Archived'), status('Existent')] };
+    });
+    sandbox.state.adder = 'br:' + at + ':0:g1:any';
+    firstSelect('ArchiveCourse').onchange({ target: { value: 'projection:CourseStatus' } });
+    pickRight('NonExistent');
+    button('ArchiveCourse', 'Add or').onclick();
+    eq(cmd('ArchiveCourse').steps[at].branches[0].condition,
+      { all: [status('Archived'), { any: [status('Existent'), status('NonExistent')] }] }, 'bracketed in the arm');
+    eq(printed('ArchiveCourse').includes('if CourseStatus(courseId) == Archived and (CourseStatus(courseId) == Existent or CourseStatus(courseId) == NonExistent) =>'),
+      true, printed('ArchiveCourse'));
+    roundTrips();
+    sandbox.patch('command-definition', 'ArchiveCourse', (body) => sandbox.removeStepAt(body, [at]));
+  });
+
   sandbox.clearActiveModelId();
 }
 
@@ -6683,6 +6774,42 @@ command Open(accountId: AccountId) {
     sandbox.state.projDraft = null;
   });
 
+  check('a handler arm brackets a comparison with one joined the other way, and opens again whole', () => {
+    const paintDraft = () => {
+      const main = sandbox.document.createElement('div');
+      sandbox.renderProjections(model(), main);
+      return main;
+    };
+    const buttonOf = (label, nth = 0) => findAll(paintDraft(), (n) => n.tag === 'button' && textOf(n) === label)[nth];
+    const original = sandbox.deepClone(model()['projection-definitions'].Reservation);
+    page('Reservation');
+    const draft = sandbox.state.projDraft.body;
+    const arm = draft.handlers[0].chains[0].arms[0];
+    buttonOf('+ and').onclick();
+    buttonOf('+ (… or …)', 1).onclick();
+    eq(arm.comparisons.length === 2 && Array.isArray(arm.comparisons[1].comparisons), true, 'the second bracketed');
+    Object.assign(arm.comparisons[1].comparisons[1], { left: JSON.stringify({ eventProperty: 'seats' }), right: ' literal', rightText: '5', negate: false });
+    const seats = (n) => ({ leftHandSide: { eventProperty: 'seats' }, predicate: 'equals', rightHandSide: n });
+    const account = { leftHandSide: { eventProperty: 'accountId' }, predicate: 'equals', rightHandSide: { parameterName: 'accountId' } };
+    const stored = cleanProjectionBody(draft).handlers[0];
+    eq(stored.steps[0].branches[0].condition, { all: [seats(0), { any: [account, seats(5)] }] }, 'stored as a group in the and');
+    eq(textOf(paintDraft()).includes('Edit in code'), false, 'edited on the page');
+    sandbox.updateDefinition('projection-definition', id, 'Reservation', cleanProjectionBody(draft));
+    const text = sandbox.modelToSource(model());
+    eq(text.includes('if event.data.seats == 0 and (event.data.accountId == accountId or event.data.seats == 5) => set Released'), true,
+      text.slice(text.indexOf('projection Reservation'), text.indexOf('projection Reservation') + 300));
+    eq(sandbox.parseModelSource(text).diagnostics, [], 'and it parses back');
+    const again = projectionDraftFrom(model()['projection-definitions'].Reservation);
+    eq(!!again.handlers[0].chains, true, 'opens as chains again');
+    eq(cleanProjectionBody(again).handlers, model()['projection-definitions'].Reservation.handlers, 'no loss');
+    // Removing a comparison of the group leaves its other one in its place.
+    sandbox.state.projDraft = { name: 'Reservation', body: again };
+    findAll(paintDraft(), (n) => n.tag === 'button' && n.attributes.title === 'Remove this comparison')[1].onclick();
+    eq(cleanProjectionBody(again).handlers[0].steps[0].branches[0].condition, { all: [seats(0), seats(5)] }, 'the group of one is its comparison');
+    sandbox.updateDefinition('projection-definition', id, 'Reservation', original);
+    sandbox.state.projDraft = null;
+  });
+
   check('an unrelated edit on the page keeps the branches as they were', () => {
     const before = model()['projection-definitions'].Balance.handlers;
     const draft = projectionDraftFrom(model()['projection-definitions'].Balance);
@@ -7040,6 +7167,40 @@ command ChangeHold(courseId: CourseId, hold: duration) {
     const text = sandbox.modelToSource(model());
     eq(text.includes('require sum(Reservation(courseId, *).seats where value.expiresAt > now) < 20'), true, text.slice(text.indexOf('command ReserveSeats'), text.indexOf('command ReserveSeats') + 500));
     // Opened again: the collection's questions, answered.
+    const draft = sandbox.draftFromCondition(rule.condition);
+    eq(draft.left, ' collect', 'opens as a collection');
+    eq(sandbox.collectionFromDraft(draft.leftCollect), rule.condition.leftHandSide, 'no loss');
+    sandbox.applyModelSource(id, TIME);
+  });
+
+  check('a where brackets a comparison with one joined the other way, and opens again whole', () => {
+    sandbox.closeForms();
+    sandbox.state.slice = 'ReserveSeats';
+    sandbox.state.adder = 'rule';
+    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' };
+    const paint = () => sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'ReserveSeats'));
+    const selects = () => findAll(paint(), (n) => n.tag === 'select');
+    const wizard = () => findAll(paint(), (n) => /rule-wizard/.test(n.className || ''))[0];
+    const buttonOf = (label, nth = 0) => findAll(wizard(), (n) => n.tag === 'button' && textOf(n) === label)[nth];
+    selects()[0].onchange({ target: { value: 'collect:count' } });
+    const collect = sandbox.state.ruleDraft.leftCollect;
+    selects().find((n) => findAll(n, (o) => o.tag === 'option').some((o) => o.value === 'Reservation')).onchange({ target: { value: 'Reservation' } });
+    buttonOf('+ where').onclick();
+    Object.assign(collect.where[0], { left: JSON.stringify({ instanceValue: true, field: 'expiresAt' }), predicate: 'greaterThan', right: JSON.stringify({ parameterName: 'now' }) });
+    buttonOf('+ and').onclick();
+    Object.assign(collect.where[1], { left: JSON.stringify({ instanceValue: true, field: 'seats' }), predicate: 'greaterThan', right: ' literal', rightText: '2' });
+    buttonOf('+ (… or …)', 1).onclick();
+    Object.assign(collect.where[1].where[1], { left: JSON.stringify({ instanceValue: true, field: 'seats' }), predicate: 'lessThan', right: ' literal', rightText: '1' });
+    Object.assign(sandbox.state.ruleDraft, { predicate: 'lessThan', right: ' literal', rightText: '3', rejection: 'Too many' });
+    buttonOf('Add rule').onclick();
+    const rule = model()['command-definitions'].ReserveSeats.steps.filter((s) => sandbox.stepKind(s) === 'rule').pop();
+    const field = (name, predicate, right) => ({ leftHandSide: { instanceValue: true, field: name }, predicate, rightHandSide: right });
+    eq(rule.condition.leftHandSide.where, { all: [field('expiresAt', 'greaterThan', { parameterName: 'now' }),
+      { any: [field('seats', 'greaterThan', 2), field('seats', 'lessThan', 1)] }] }, 'a group in the where');
+    const text = sandbox.modelToSource(model());
+    eq(text.includes('require count(Reservation(courseId, *) where value.expiresAt > now and (value.seats > 2 or value.seats < 1)) < 3'), true,
+      text.slice(text.indexOf('command ReserveSeats'), text.indexOf('command ReserveSeats') + 600));
+    eq(sandbox.parseModelSource(text).diagnostics, [], 'and it parses back');
     const draft = sandbox.draftFromCondition(rule.condition);
     eq(draft.left, ' collect', 'opens as a collection');
     eq(sandbox.collectionFromDraft(draft.leftCollect), rule.condition.leftHandSide, 'no loss');

@@ -247,15 +247,32 @@ and prune what no longer holds.
   `if`, a `+ and` / `+ or`, a `require` inside a block arm and a new
   branch's first arm all ask the same three questions, staged the same
   way, and a read the condition brings lands in the same append. A
-  condition is edited as one list of comparisons and what joins them
-  (`flatCondition`, `withConditionMember`): a line per comparison, the
-  first led by `if` / `else if` / `require`, the rest by `and` or `or`,
-  each with Edit and ×, `+ and` / `+ or` in the last line's reveal;
-  `×` on the last comparison removes the arm (the last arm the branch).
-  A top-level rule takes `and` / `or` the same way. A group inside a
-  group (`a and (b or c)`) is the code view's – nearly nothing writes
-  one, and a tree editor would cost more than every other question
-  here. **Arms hold steps**: `emit` (the emission's own field editor,
+  condition is edited as a tree of comparisons, a line each
+  (`conditionLines`, index.html): the first led by `if` / `else if` /
+  `require`, the rest by the `and` or `or` that joins them, a bracketed
+  group opening on its first comparison's line and closing on its last,
+  indented a step per group it sits in – the code view's brackets,
+  not a nested widget. Each line has Edit and ×, and a comparison is
+  named by its path of member indices (`conditionNodeAt`,
+  `withConditionNode`, `withConditionJoined`, model.js – `[1, 0]` is the
+  first member of the second). Joining has three gestures, all the
+  rule adder's questions: `+ and` / `+ or` on the last line join the
+  whole (added when it is joined that way, else the whole bracketed,
+  `(a or b) and c`); `+ (… or …)` beside a comparison of a joined
+  condition brackets it with a new one joined the other way (`a and (b
+  or c)`); `+ or in (…)` on a group's last line adds to that group. So
+  any depth the wire format holds is reached a comparison at a time.
+  `×` on a comparison removes it, a group left with one member becoming
+  that member (`(b)` is unprintable, and says nothing `b` does not);
+  on the last comparison it removes the arm (the last arm the branch).
+  Nothing is normalised otherwise: a group stays the group it was
+  written as. A top-level rule takes the same lines. A group inside a
+  group was the code view's at first; the lines cost less than feared
+  once a line is a path. The handler row and a collection's `where`
+  are one row of pickers rather than lines, and draft the same tree
+  inline (`draftTreeControls`, `joinDraftTree`, `draftTreeFrom`,
+  index.html): the same three gestures, brackets as text between the
+  pickers. **Arms hold steps**: `emit` (the emission's own field editor,
   `eventFields` given where to write), `reject` with its message, and
   outside a loop `require` and a nested `if`; `↑` / `↓` order steps,
   arms and branches. `+ branch` (Rules) starts one by its first
@@ -316,16 +333,16 @@ and prune what no longer holds.
   or a value in scope per tag (the first one in scope bound, the rest
   open), the numeric field of a record – and `+ where`, comparisons of
   `value` / `value.field` with a parameter, an alias's value, a member
-  or a typed value, joined one way (`collectionStages`, index.html).
+  or a typed value, joined and bracketed as a command's condition is
+  (`collectionStages`, index.html).
   The draft holds it beside the side's picker under a sentinel
   (`COLLECT`; `ARITH` for `a + b` on the right) that `draftOperand`
   reads through, so every reader of a draft side sees the operand
   built, or nothing while it is unfinished, and no stage needs a Next.
   A record value's field and a list's count are rows of the pickers
   beside the value (`valueRowsBeyondReads`), rules and emission fields
-  alike. What the editors cannot say – a collection on the right, a
-  `where` nesting and / or, arithmetic on the left or over three values
-  – is shown as the code view writes it with *Edit in code*
+  alike. What the editors cannot say – a collection on the right,
+  arithmetic on the left or over three values – is shown as the code view writes it with *Edit in code*
   (`collectionEditable`, `arithmeticEditable`, `conditionBeyondEditors`,
   shared.js) and kept through every other edit.
   **Over nothing**: `count` and `sum` 0, `min` / `max` / `average`
@@ -875,9 +892,11 @@ on Projections, inside a group's section, and in the definition modals.
   `handlerComparison` reads, so there is nothing to stage and the rule
   adder's questions would only ask what has one answer. `+ and` / `+
   or`, `+ else if`, `+ else` and `+ separate if` add; × on the last
-  arm of the last `if` takes the handler back to one operation. An arm
-  that cannot be said this way – a group inside a group, a value the
-  row's pickers do not offer – keeps the handler as it is stored,
+  arm of the last `if` takes the handler back to one operation. A
+  comparison may be bracketed with another at any depth, drafted as a
+  tree in the row (`draftTreeControls`). An arm that cannot be said
+  this way – a value the row's pickers do not offer – keeps the
+  handler as it is stored,
   shown with `Edit in code` (`branchedHandlerRow`), and
   `cleanProjectionBody` writes it back untouched, so an edit elsewhere
   never flattens or drops it. Buttons are no change event, so they ask

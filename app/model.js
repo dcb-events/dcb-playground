@@ -2530,8 +2530,8 @@ function newStepIndex(body, kind) {
 
 // A condition as the pages edit it: its comparisons in one list, and
 // what joins them – `all` (and), `any` (or), null for one comparison.
-// Null for a condition that nests a group in a group, which only the
-// code view writes.
+// Null for a condition that nests a group in a group – the tree
+// helpers below (`withConditionNode`) edit that.
 function flatCondition(condition) {
   if (!condition || typeof condition !== 'object') return null;
   if (!isCompoundCondition(condition)) return { joiner: null, members: [condition] };
@@ -2563,6 +2563,56 @@ function withoutConditionMember(condition, index) {
   const flat = flatCondition(condition);
   if (!flat || flat.members.length < 2) return condition;
   return joinedCondition(flat.joiner, flat.members.filter((_, i) => i !== index));
+}
+
+// A condition as a tree, for the editors that write a group inside a
+// group (`a and (b or c)`): a node is named by the member indices
+// leading to it – `[]` the whole, `[1, 0]` the first member of its
+// second. Each returns a new condition and leaves the one given alone.
+// The tree is never normalised behind the author's back: a group stays
+// the group it was written as, and only a group left with one member
+// becomes that member – `(b)` says nothing `b` does not, and the code
+// view cannot print it.
+function conditionJoiner(node) {
+  return isCompoundCondition(node) ? (Array.isArray(node.all) ? 'all' : 'any') : null;
+}
+
+function conditionNodeAt(condition, path) {
+  let node = condition;
+  for (const index of path) {
+    if (!isCompoundCondition(node)) return null;
+    node = conditionMembers(node)[index];
+    if (node === undefined) return null;
+  }
+  return node;
+}
+
+// The node at `path` replaced by `node`, or removed with null – a group
+// left with one member becomes it, one left with none goes too.
+function withConditionNode(condition, path, node) {
+  if (!path.length) return node === undefined ? null : node;
+  if (!isCompoundCondition(condition)) return condition;
+  const [head, ...rest] = path;
+  const members = [...conditionMembers(condition)];
+  if (members[head] === undefined) return condition;
+  const replaced = withConditionNode(members[head], rest, node);
+  if (replaced === null) members.splice(head, 1); else members[head] = replaced;
+  if (!members.length) return null;
+  if (members.length === 1) return members[0];
+  return { [conditionJoiner(condition)]: members };
+}
+
+// A comparison joined to the node at `path` by `joiner`: added to it
+// when it is a group joined that way, else bracketed with it in a new
+// group – `[]` joins the whole condition, a comparison's path brackets
+// that comparison (`a and (b or c)`).
+function withConditionJoined(condition, path, joiner, leaf) {
+  const node = conditionNodeAt(condition, path);
+  if (node === null || node === undefined) return condition;
+  const joined = conditionJoiner(node) === joiner
+    ? { [joiner]: [...conditionMembers(node), leaf] }
+    : { [joiner]: [node, leaf] };
+  return withConditionNode(condition, path, joined);
 }
 
 // ---------- conditions ----------

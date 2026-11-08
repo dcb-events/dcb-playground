@@ -227,6 +227,7 @@
      alike. The rule editor opens in place, in a card of its own, so
      what it is being written into stays in view around it. */
   .arm-line { gap: 6px; }
+  .cbracket { font-family: var(--mono); color: var(--muted); padding: 0 1px; }
   .arm-body { margin-left: 1.2em; padding-left: 8px; border-left: 1px dashed var(--border); margin-bottom: 4px; }
   .arm-body > .adder.quiet { padding-top: 0; margin-top: 0; }
   .nested-branch { border-left: 2px solid var(--rule); padding-left: 8px; margin: 2px 0; }
@@ -4916,17 +4917,18 @@ const RECORD = ' record';
 
 function collectionDraftFrom(operand) {
   const read = operand.read;
-  const flat = operand.where === undefined ? null : flatCondition(operand.where);
+  const where = operand.where === undefined ? { joiner: null, where: [] }
+    : draftTreeFrom(operand.where, 'where', (leaf) => draftFromOperand({
+      left: JSON.stringify(leaf.leftHandSide), predicate: leaf.predicate, negate: !!leaf.negate,
+    }, 'right', leaf.rightHandSide));
   return {
     fn: operand.collect,
     projection: read.projection,
     tags: Object.fromEntries(readTagEntries(read).map(([name, value]) =>
       [name, operandSource(value) === 'open' ? '*' : JSON.stringify(value)])),
     field: read.field || '',
-    joiner: flat ? flat.joiner : null,
-    where: flat ? flat.members.map((leaf) => draftFromOperand({
-      left: JSON.stringify(leaf.leftHandSide), predicate: leaf.predicate, negate: !!leaf.negate,
-    }, 'right', leaf.rightHandSide)) : [],
+    joiner: where.joiner,
+    where: where.where,
   };
 }
 
@@ -4939,17 +4941,113 @@ function collectionFromDraft(draft) {
   if (draft.field) read.field = draft.field;
   const operand = { collect: draft.fn, read };
   if ((draft.where || []).length) {
-    const members = draft.where.map((comparison) => {
+    const where = conditionFromDraftTree(draft, 'where', (comparison) => {
       const right = draftOperand(comparison, 'right');
       if (!comparison.left || right === undefined) return undefined;
       const leaf = { leftHandSide: JSON.parse(comparison.left), predicate: comparison.predicate, rightHandSide: right };
       if (comparison.negate) leaf.negate = true;
       return leaf;
     });
-    if (members.some((member) => member === undefined)) return undefined;
-    operand.where = joinedCondition(draft.joiner, members);
+    if (where === undefined) return undefined;
+    operand.where = where;
   }
   return operand;
+}
+
+// ---------- a condition drafted in one row, as a tree ----------
+//
+// A collection's `where` and a handler's arm are asked in one row of
+// pickers, so their condition is drafted there too: a node is
+// `{ joiner, [key]: members }` – the draft itself at the top (`where`,
+// `comparisons`), a member a comparison's draft or a bracketed group of
+// the same shape (`a and (b or c)`), at any depth. The gestures are the
+// command lines' (`conditionRows`): `+ and` / `+ or` at the end join
+// the whole, `+ (… or …)` beside a comparison brackets it with a new
+// one, and `+ or in (…)` adds to a group.
+const isDraftGroup = (member, key) => !!member && typeof member === 'object' && Array.isArray(member[key]);
+
+function draftTreeFrom(condition, key, leafDraft) {
+  if (!isCompoundCondition(condition)) return { joiner: null, [key]: [leafDraft(condition)] };
+  return {
+    joiner: conditionJoiner(condition),
+    [key]: conditionMembers(condition).map((member) =>
+      (isCompoundCondition(member) ? draftTreeFrom(member, key, leafDraft) : leafDraft(member))),
+  };
+}
+
+// The condition a tree drafts, or undefined while a comparison in it is
+// unanswered.
+function conditionFromDraftTree(node, key, leafFrom) {
+  const members = (node[key] || []).map((member) =>
+    (isDraftGroup(member, key) ? conditionFromDraftTree(member, key, leafFrom) : leafFrom(member)));
+  if (!members.length || members.some((member) => member === undefined)) return undefined;
+  return joinedCondition(node.joiner, members);
+}
+
+// A comparison joined to the whole tree: added when it is joined that
+// way (or is one comparison), else the whole bracketed.
+function joinDraftTree(root, key, joiner, member) {
+  if (root[key].length < 2 || root.joiner === joiner) {
+    root.joiner = joiner;
+    root[key].push(member);
+    return;
+  }
+  const inner = { joiner: root.joiner, [key]: root[key] };
+  root.joiner = joiner;
+  root[key] = [inner, member];
+}
+
+// The row's controls for the tree below the top: each comparison's own
+// (`leaf`), the words that join them, the brackets of a group, and
+// beside each comparison of a joined condition its × and its
+// `+ (… or …)`; a group's `+ or in (…)` before it closes. The top's
+// `+ and` / `+ or` are the caller's (`joinDraftTree`), since what a
+// tree with nothing in it offers differs – a `where` starts with
+// `+ where`. `emptyable`: the top may lose its last comparison.
+function draftTreeControls(root, key, { leaf, propose, changed, emptyable = false, button }) {
+  const word = (joiner) => (joiner === 'any' ? 'or' : 'and');
+  const other = (joiner) => (joiner === 'any' ? 'all' : 'any');
+  const make = button || ((label, title, onclick) => h('button', { class: 'btn tiny ghost', title, onclick: () => { onclick(); changed(); } }, label));
+  const out = [];
+  const remove = (node, parent, at, k) => {
+    node[key].splice(k, 1);
+    if (parent && node[key].length === 1) { parent[key][at] = node[key][0]; return; }
+    if (parent) return;
+    if (node[key].length === 1 && isDraftGroup(node[key][0], key)) {
+      const only = node[key][0];
+      node.joiner = only.joiner;
+      node[key] = only[key];
+    } else if (node[key].length < 2) {
+      node.joiner = null;
+    }
+  };
+  const walk = (node, parent, at) => {
+    const members = node[key];
+    members.forEach((member, k) => {
+      if (k) out.push(h('span', { class: 'pk' }, word(node.joiner)));
+      if (isDraftGroup(member, key)) {
+        out.push(h('span', { class: 'cbracket' }, '('));
+        walk(member, node, k);
+        out.push(h('span', { class: 'cbracket' }, ')'));
+        return;
+      }
+      out.push(...leaf(member, k));
+      const joined = members.length > 1 || !!parent;
+      if (joined || emptyable) out.push(make('×', 'Remove this comparison', () => remove(node, parent, at, k)));
+      if (joined) {
+        const joiner = other(node.joiner || 'all');
+        out.push(make('+ (… ' + word(joiner) + ' …)',
+          `Bracket this comparison with one that ${joiner === 'all' ? 'must hold as well' : 'may hold instead'}`,
+          () => { members[k] = { joiner, [key]: [member, propose()] }; }));
+      }
+    });
+    if (parent) {
+      out.push(make('+ ' + word(node.joiner) + ' in (…)', 'Add a comparison to this bracketed group, joined by ' + word(node.joiner),
+        () => { members.push(propose()); }));
+    }
+  };
+  walk(root, null, null);
+  return out;
 }
 
 function arithmeticDraftFrom(operand) {
@@ -5011,7 +5109,7 @@ function collectionStages(model, slice, values, typeScope, collect, stageRow) {
     [JSON.stringify({ instanceValue: true }), 'value', null, { group: 'value' }],
     ...fields.map((f) => [JSON.stringify({ instanceValue: true, field: f.name }), 'value.' + f.name, null, { group: 'value' }]),
   ];
-  const comparisonControls = (comparison, k) => {
+  const comparisonControls = (comparison) => {
     if (!leftRows.some(([v]) => v === comparison.left)) comparison.left = leftRows.length ? leftRows[0][0] : '';
     const left = comparison.left ? JSON.parse(comparison.left) : null;
     const leftType = !left ? null : left.field === undefined ? valueType : recordFieldType(model, valueType.propertyType, left.field);
@@ -5028,7 +5126,6 @@ function collectionStages(model, slice, values, typeScope, collect, stageRow) {
       ...(ordered ? [['lessThan', '<'], ['lessThanOrEquals', '<='], ['greaterThan', '>'], ['greaterThanOrEquals', '>=']] : [])];
     const shown = comparison.predicate === 'equals' && comparison.negate ? ' notEquals' : comparison.predicate;
     return [
-      k ? h('span', { class: 'pk' }, collect.joiner === 'any' ? 'or' : 'and') : null,
       pick(leftRows, comparison.left, (v) => { comparison.left = v; comparison.right = ''; changed(); }),
       pick(predicateRows, shown, (v) => {
         comparison.negate = v === ' notEquals';
@@ -5036,21 +5133,15 @@ function collectionStages(model, slice, values, typeScope, collect, stageRow) {
         changed();
       }),
       ...operandPicker(rows, comparison, 'right', { allowLiteral: !members }),
-      h('button', { class: 'btn tiny ghost', title: 'Remove this comparison', onclick: () => {
-        collect.where.splice(k, 1);
-        if (collect.where.length < 2) collect.joiner = null;
-        changed();
-      } }, '×'),
     ];
   };
-  const addComparison = (joiner) => {
-    if (collect.where.length) collect.joiner = joiner;
-    // A record's instances are compared by a field, so the first one is
-    // proposed rather than the whole value.
+  // A record's instances are compared by a field, so the first one is
+  // proposed rather than the whole value.
+  const proposed = () => {
     const first = leftRows[fields.length ? 1 : 0];
-    collect.where.push({ left: first ? first[0] : '', predicate: 'equals', negate: false, right: '' });
-    changed();
+    return { left: first ? first[0] : '', predicate: 'equals', negate: false, right: '' };
   };
+  const addComparison = (joiner) => { joinDraftTree(collect, 'where', joiner, proposed()); changed(); };
   const fnRows = COLLECTION_FUNCTIONS.map((fn) => [fn, fn]);
   return [
     stageRow('Over which instances?',
@@ -5060,8 +5151,8 @@ function collectionStages(model, slice, values, typeScope, collect, stageRow) {
       fieldRows.length ? pick(fieldRows, collect.field, (v) => { collect.field = v; changed(); }) : null,
       shapeNote),
     projection ? stageRow('Where',
-      ...collect.where.flatMap(comparisonControls),
-      ...(collect.where.length ? (collect.joiner ? [collect.joiner] : ['all', 'any']) : ['all']).map((joiner) =>
+      ...draftTreeControls(collect, 'where', { leaf: comparisonControls, propose: proposed, changed, emptyable: true }),
+      ...(collect.where.length ? ['all', 'any'] : ['all']).map((joiner) =>
         h('button', { class: 'btn ghost tiny', onclick: () => addComparison(joiner) },
           !collect.where.length ? '+ where' : joiner === 'all' ? '+ and' : '+ or'))) : null,
   ];
@@ -7203,7 +7294,7 @@ function ruleRow(model, slice, condition, i, draggable) {
   // Joined by and / or (11.0): a line per comparison, each edited
   // through the rule adder's questions, the message the rule's.
   const { rejection: message, ...bare } = condition;
-  if (isCompoundCondition(condition) && flatCondition(bare) && !conditionBeyondEditors(condition)) {
+  if (isCompoundCondition(condition)) {
     return h('div', { class: 'rule-row', 'data-rule': draggable ? i : null },
       draggable ? ruleGrip(slice, i) : null,
       h('div', { class: 'rule-lines' }, ...conditionRows(model, slice, {
@@ -7216,10 +7307,9 @@ function ruleRow(model, slice, condition, i, draggable) {
         remove: (b) => { b.conditions.splice(i, 1); }, removeTitle: 'Remove this rule',
       })));
   }
-  // A group inside a group, a collection function or a record's field
-  // is no answer the questions give: shown as a sentence, edited in the
-  // code view, and still removable and reorderable here.
-  if (isCompoundCondition(condition) || conditionBeyondEditors(condition)) {
+  // A comparison the questions do not write is shown as a sentence,
+  // edited in the code view, and still removable and reorderable here.
+  if (conditionBeyondEditors(condition)) {
     return h('div', { class: 'rule-row', 'data-rule': draggable ? i : null },
       draggable ? ruleGrip(slice, i) : null,
       qrow('div', { cls: 'row wraps', key: 'rule:' + i },
@@ -7227,9 +7317,7 @@ function ruleRow(model, slice, condition, i, draggable) {
         rejectionMark(condition),
         h('span', { class: 'grow' }),
         reveal(
-          codeViewButton(isCompoundCondition(condition)
-            ? 'Edit this rule in the code view – the rule editor writes one comparison'
-            : 'Edit this rule in the code view – the rule editor writes no collection function or record field'),
+          codeViewButton('Edit this rule in the code view – the rule editor writes no collection function or record field'),
           h('button', {
             class: 'btn tiny danger',
             onclick: () => patchSlice((b) => { b.conditions.splice(i, 1); }),
@@ -7309,10 +7397,9 @@ function codeViewButton(title) {
 // and changing that place only, so nothing around it is flattened or
 // reordered. A condition is the rule adder's three questions pointed at
 // the arm (`ruleEditor`'s `target`), and `and` / `or` add one more
-// comparison through the same questions: a condition is edited as one
-// list of comparisons and what joins them (`flatCondition`), which is
-// what the pages and nearly every model write; a group inside a group
-// stays the code view's. An arm holds steps like the command does –
+// comparison through the same questions: a condition is edited as a
+// tree of comparisons, a line each, bracketed groups at any depth
+// (`conditionRows`). An arm holds steps like the command does –
 // `emit` with the emission's own field editor, `reject` with its
 // message, and, outside a loop, `require` and another `if`. Inside a
 // loop an arm is one `emit` or one `reject`, so its adders go once it
@@ -7341,84 +7428,147 @@ function conditionAdder(model, slice, key, label, target) {
   }, label);
 }
 
-// A condition's lines – the first led by `lead` (`if`, `else if`,
-// `require`), each joined one by `and` / `or` – each with Edit and ×,
-// then `+ and` / `+ or`. × on the last comparison left is `remove`
-// (the arm, the step). `write(body, condition)` stores the condition.
+// A condition's lines, one per comparison – the first led by `lead`
+// (`if`, `else if`, `require`), each other by the `and` / `or` that
+// joins it – a bracketed group (`a and (b or c)`) opening on its first
+// comparison's line and closing on its last, indented one step per
+// group it sits in (`conditionLines`). Each line has Edit and ×; × on
+// the last comparison left is `remove` (the arm, the step), and a
+// group left with one comparison is that comparison. What may be
+// joined, and where:
+// - `+ and` / `+ or` on the last line join the whole condition – a
+//   comparison added to it when it is joined that way, else the whole
+//   bracketed (`(a or b) and c`);
+// - `+ (… or …)` on a line of a joined condition brackets that
+//   comparison with a new one joined the other way (`a and (b or c)`);
+// - `+ or in (…)` on a group's last line adds to that group.
+// Every one is the rule adder's questions, and any depth the wire
+// format holds is reached this way. `write(body, condition)` stores
+// the condition.
 //
 // `rejection` is the message of a rule (`require`), asked again while
 // it is one comparison; null for an arm, which has none.
 function conditionRows(model, slice, { condition, key, lead, write, remove, removeTitle, loop, extra = [], after = null, rejection = null }) {
-  const flat = flatCondition(condition);
   const asks = rejection !== null;
-  if (!flat) {
-    return [qrow('div', { cls: 'row wraps arm-line', key: key + ':c' },
-      h('span', { class: 'sentence' }, h('span', { class: 'verb' }, lead + ' '), ruleSentence(model, slice.body, condition)),
-      after,
-      h('span', { class: 'grow' }),
-      reveal(...extra, codeViewButton('A condition nesting and / or in each other is edited in the code view'),
-        h('button', { class: 'btn tiny danger', title: removeTitle, onclick: () => patchSlice(remove) }, '×')))];
-  }
-  const joinWord = flat.joiner === 'any' ? 'or' : 'and';
-  // `+ and` / `+ or` wait in the last line's reveal, as a rule's Add
-  // alias does, and the questions open under the condition.
-  const joiners = flat.joiner ? [flat.joiner] : ['all', 'any'];
-  const joining = joiners.find((joiner) => state.adder === key + ':' + joiner) || null;
-  const joinButtons = joiners.map((joiner) => h('button', {
-    class: 'btn tiny',
-    title: joiner === 'all' ? 'Add a comparison that must hold as well' : 'Add a comparison that may hold instead',
-    onclick: () => { closeForms(); state.adder = key + ':' + joiner; render(); },
-  }, joiner === 'all' ? '+ and' : '+ or'));
-  const rows = flat.members.map((member, i) => {
-    const rowKey = key + ':m' + i;
-    const verb = i === 0 ? lead : joinWord;
-    if (state.editStep === rowKey) {
-      return h('div', { class: 'card arm-editor' }, ruleEditor(model, slice, null, {
-        stored: member, loop, rejection: asks && flat.members.length === 1,
+  const single = !isCompoundCondition(condition);
+  const lines = conditionLines(condition);
+  const joinWord = (joiner) => (joiner === 'any' ? 'or' : 'and');
+  const other = (joiner) => (joiner === 'any' ? 'all' : 'any');
+  const pathKey = (path) => path.join('.');
+  // A comparison joined somewhere, through the rule adder's questions.
+  const joinEditor = (adderKey, label, apply) => (state.adder === adderKey
+    ? h('div', { class: 'card arm-editor' }, ruleEditor(model, slice, null, {
+        stored: null, loop, addLabel: label,
         write: (b, c) => {
-          if (asks && flat.members.length === 1) { write(b, c); return; }
           const { rejection: dropped, ...leaf } = c;
-          write(b, withConditionMember(condition, i, leaf));
+          write(b, apply(leaf));
         },
-      }));
+      }))
+    : null);
+  const joinButton = (adderKey, label, title) => h('button', {
+    class: 'btn tiny', title,
+    onclick: () => { closeForms(); state.adder = adderKey; render(); },
+  }, label);
+  const rootJoiners = ['all', 'any'];
+  const rows = [];
+  lines.forEach((line, i) => {
+    const rowKey = key + ':m' + pathKey(line.path);
+    const lastLine = i === lines.length - 1;
+    const member = line.leaf;
+    if (state.editStep === rowKey) {
+      rows.push(h('div', { class: 'card arm-editor' }, ruleEditor(model, slice, null, {
+        stored: member, loop, rejection: asks && single,
+        write: (b, c) => {
+          if (asks && single) { write(b, c); return; }
+          const { rejection: dropped, ...leaf } = c;
+          write(b, withConditionNode(condition, line.path, leaf));
+        },
+      })));
+      return;
     }
+    // A comparison bracketed with a new one, joined the other way from
+    // the group it is in.
+    const container = line.path.length ? conditionNodeAt(condition, line.path.slice(0, -1)) : null;
+    const groupJoiner = container ? other(conditionJoiner(container)) : null;
+    const groupKey = groupJoiner ? key + ':g' + pathKey(line.path) + ':' + groupJoiner : null;
+    // The groups closing on this line, each offered one more of its own.
+    const appends = line.closing.map((groupPath) => {
+      const joiner = conditionJoiner(conditionNodeAt(condition, groupPath));
+      return { groupPath, joiner, adderKey: key + ':a' + pathKey(groupPath) + ':' + joiner };
+    });
     const beyond = conditionBeyondEditors(member);
-    return qrow('div', { cls: 'row wraps arm-line', key: rowKey },
-      h('span', { class: 'sentence' }, h('span', { class: 'verb' }, verb + ' '), ruleSentence(model, slice.body, member)),
-      i === flat.members.length - 1 ? after : null,
+    rows.push(qrow('div', { cls: 'row wraps arm-line', key: rowKey },
+      h('span', { class: 'sentence', style: line.indent ? `margin-left:${line.indent * 1.25}em` : null },
+        h('span', { class: 'verb' }, (line.joiner ? joinWord(line.joiner) : lead) + ' '),
+        line.opens ? h('span', { class: 'cbracket' }, '('.repeat(line.opens)) : null,
+        ruleSentence(model, slice.body, member),
+        line.closing.length ? h('span', { class: 'cbracket' }, ')'.repeat(line.closing.length)) : null),
+      lastLine ? after : null,
       h('span', { class: 'grow' }),
       reveal(
         ...(i === 0 ? extra : []),
-        ...(i === flat.members.length - 1 ? joinButtons : []),
+        groupKey ? joinButton(groupKey, '+ (… ' + joinWord(groupJoiner) + ' …)',
+          `Bracket this comparison with one that ${groupJoiner === 'all' ? 'must hold as well' : 'may hold instead'} – a ${joinWord(other(groupJoiner))} (b ${joinWord(groupJoiner)} c)`) : null,
+        ...appends.map(({ adderKey, joiner }) => joinButton(adderKey, '+ ' + joinWord(joiner) + ' in (…)',
+          `Add a comparison to this bracketed group, joined by ${joinWord(joiner)}`)),
+        ...(lastLine ? rootJoiners.map((joiner) => joinButton(key + ':' + joiner, '+ ' + joinWord(joiner),
+          joiner === 'all' ? 'Add a comparison that must hold as well' : 'Add a comparison that may hold instead')) : []),
         beyond ? codeViewButton('This comparison is edited in the code view – the rule editor writes no collection function or record field')
           : h('button', {
             class: 'btn tiny',
             onclick: () => {
               closeForms();
               state.editStep = rowKey;
-              state.ruleDraft = draftFromCondition(asks && flat.members.length === 1 ? { ...member, rejection } : member);
+              state.ruleDraft = draftFromCondition(asks && single ? { ...member, rejection } : member);
               render();
             },
           }, 'Edit'),
         h('button', {
           class: 'btn tiny danger',
-          title: flat.members.length > 1 ? 'Remove this comparison' : removeTitle,
+          title: single ? removeTitle : 'Remove this comparison',
           onclick: () => patchSlice((b) => {
-            if (flat.members.length > 1) write(b, withoutConditionMember(condition, i));
-            else remove(b);
+            if (single) remove(b);
+            else write(b, withConditionNode(condition, line.path, null));
           }),
-        }, '×')));
+        }, '×'))));
+    if (groupKey) rows.push(joinEditor(groupKey, 'Add ' + joinWord(groupJoiner), (leaf) => withConditionJoined(condition, line.path, groupJoiner, leaf)));
+    for (const { groupPath, joiner, adderKey } of appends) {
+      rows.push(joinEditor(adderKey, 'Add ' + joinWord(joiner), (leaf) => withConditionJoined(condition, groupPath, joiner, leaf)));
+    }
   });
-  if (joining) {
-    rows.push(h('div', { class: 'card arm-editor' }, ruleEditor(model, slice, null, {
-      stored: null, loop, addLabel: joining === 'all' ? 'Add and' : 'Add or',
-      write: (b, c) => {
-        const { rejection: dropped, ...leaf } = c;
-        write(b, withConditionMember(condition, null, leaf, joining));
-      },
-    })));
+  for (const joiner of rootJoiners) {
+    rows.push(joinEditor(key + ':' + joiner, 'Add ' + joinWord(joiner), (leaf) => withConditionJoined(condition, [], joiner, leaf)));
   }
-  return rows;
+  return rows.filter(Boolean);
+}
+
+// A condition laid out as lines, one per comparison, in written order:
+// its path, the joiner leading it (null on the first line), how many
+// bracketed groups open on it, the paths of those closing on it
+// (innermost first), and its indent – one step per group it sits in
+// that did not open on its own line. The whole condition is no group:
+// it has no brackets.
+function conditionLines(condition) {
+  const out = [];
+  const walk = (node, path) => {
+    if (!isCompoundCondition(node)) { out.push({ path, leaf: node }); return; }
+    conditionMembers(node).forEach((member, k) => walk(member, [...path, k]));
+  };
+  walk(condition, []);
+  return out.map(({ path, leaf }) => {
+    // The groups this comparison is in, outermost first, the whole left out.
+    const groups = path.slice(1).map((_, k) => path.slice(0, k + 1));
+    let joiner = null;
+    for (let k = path.length - 1; k >= 0; k--) {
+      if (path[k] !== 0) { joiner = conditionJoiner(conditionNodeAt(condition, path.slice(0, k))); break; }
+    }
+    const firstOf = (group) => path.slice(group.length).every((index) => index === 0);
+    const lastOf = (group) => path.slice(group.length).every((index, k) =>
+      index === conditionMembers(conditionNodeAt(condition, path.slice(0, group.length + k))).length - 1);
+    const opens = groups.filter(firstOf).length;
+    const closing = groups.filter(lastOf).reverse();
+    return { path, leaf, joiner, opens, closing, indent: groups.length - opens };
+  });
 }
 
 // One branch, its arms in order, each with the steps it runs.
@@ -10712,13 +10862,14 @@ function projectionDraftFrom(body) {
 
 // ---------- a handler that branches, as a draft (11.0) ----------
 //
-// A conditional handler the page can write – each condition one list of
-// comparisons, `event.data.<field>` (or one record field in) `==` / `!=`
+// A conditional handler the page can write – each condition a tree of
+// comparisons (`draftTreeFrom`), `event.data.<field>` (or one record field in) `==` / `!=`
 // a tag of the projection, an enum member or a literal, each arm one
 // operation with a value the row's pickers offer – is edited as
 // `chains`: one per separate `if`, each its arms and its `else`, every
 // arm a handler row's draft (`operation`, `value`, `valueText`) with its
-// `comparisons` and `joiner`. Anything else that branches stays as it
+// `comparisons` and `joiner`, a bracketed group a member of the same
+// shape. Anything else that branches stays as it
 // is stored, read-only with the way to the code view (`handlerInCode`).
 function handlerComparisonEditable(leaf) {
   if (!leaf || typeof leaf !== 'object' || isCompoundCondition(leaf)) return false;
@@ -10745,8 +10896,8 @@ function conditionalHandlerEditable(handler) {
   if (!isConditionalHandler(handler) || !Array.isArray(handler.steps) || !handler.steps.length) return false;
   return handler.steps.every((step) => step && typeof step === 'object' && Array.isArray(step.branches) && step.branches.length
     && step.branches.every((arm) => {
-      const flat = arm && flatCondition(arm.condition);
-      return flat && flat.members.every(handlerComparisonEditable) && handlerArmValueEditable(arm.value);
+      const leaves = arm && arm.condition && typeof arm.condition === 'object' ? conditionLeaves(arm.condition) : [];
+      return leaves.length > 0 && leaves.every(handlerComparisonEditable) && handlerArmValueEditable(arm.value);
     })
     && (step.otherwise === undefined || (step.otherwise && handlerArmValueEditable(step.otherwise.value))));
 }
@@ -10768,10 +10919,9 @@ function handlerComparisonFrom(draft) {
 function handlerChainsDraft(handler) {
   const arm = (stored, event) => draftFromOperand({ event, operation: stored.operation }, 'value', stored.value);
   return handler.steps.map((step) => ({
-    arms: step.branches.map((stored) => {
-      const flat = flatCondition(stored.condition);
-      return { ...arm(stored, handler.event), joiner: flat.joiner, comparisons: flat.members.map(handlerComparisonDraft) };
-    }),
+    arms: step.branches.map((stored) => ({
+      ...arm(stored, handler.event), ...draftTreeFrom(stored.condition, 'comparisons', handlerComparisonDraft),
+    })),
     otherwise: step.otherwise === undefined ? null : arm(step.otherwise, handler.event),
   }));
 }
@@ -10783,10 +10933,10 @@ function handlerFromChains(handler) {
   for (const chain of handler.chains) {
     const branches = [];
     for (const arm of chain.arms) {
-      const members = arm.comparisons.map(handlerComparisonFrom);
+      const condition = conditionFromDraftTree(arm, 'comparisons', handlerComparisonFrom);
       const value = draftOperand(arm, 'value');
-      if (!members.length || members.some((m) => m === undefined) || value === undefined) return null;
-      branches.push({ condition: joinedCondition(arm.joiner, members), operation: arm.operation, value });
+      if (condition === undefined || value === undefined) return null;
+      branches.push({ condition, operation: arm.operation, value });
     }
     if (!branches.length) continue;
     const step = { branches };
@@ -11748,18 +11898,14 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
     const chainRows = handler.chains.map((chain, c) => h('div', { class: 'pchain' },
       ...chain.arms.map((arm, a) => h('div', { class: 'parm' },
         h('span', { class: 'pk' }, a ? 'else if' : 'if'),
-        ...arm.comparisons.flatMap((comparison, k) => [
-          k ? h('span', { class: 'pk' }, arm.joiner === 'any' ? 'or' : 'and') : null,
-          ...comparisonControls(event, comparison),
-          arm.comparisons.length > 1 ? button('×', 'Remove this comparison', () => {
-            arm.comparisons.splice(k, 1);
-            if (arm.comparisons.length === 1) arm.joiner = null;
-          }, 'btn tiny ghost') : null,
-        ]),
-        ...(arm.joiner ? [arm.joiner] : ['all', 'any']).map((joiner) => button(joiner === 'all' ? '+ and' : '+ or',
+        ...draftTreeControls(arm, 'comparisons', {
+          leaf: (comparison) => comparisonControls(event, comparison),
+          propose: () => proposedHandlerComparison(model, draft, handler.event),
+          button: (label, title, onclick) => button(label, title, onclick, 'btn tiny ghost'),
+        }),
+        ...['all', 'any'].map((joiner) => button(joiner === 'all' ? '+ and' : '+ or',
           joiner === 'all' ? 'Add a comparison that must hold as well' : 'Add a comparison that may hold instead', () => {
-            arm.joiner = joiner;
-            arm.comparisons.push(proposedHandlerComparison(model, draft, handler.event));
+            joinDraftTree(arm, 'comparisons', joiner, proposedHandlerComparison(model, draft, handler.event));
           }, 'btn tiny ghost')),
         h('span', { class: 'pk' }, '⇒'),
         ...operationAndValue(arm, event),
@@ -11825,8 +11971,8 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
       }, '×'));
   });
 
-  // A branched handler (11.0) the chains cannot hold – a group inside a
-  // group, a value beyond the row's pickers – and one that sets a record
+  // A branched handler (11.0) the chains cannot hold – a value beyond
+  // the row's pickers – and one that sets a record
   // whole: its event, then a line per arm, what it is applied under and
   // what it does. The code view edits it; this row can still remove it.
   function branchedHandlerRow(model, draft, handler, i) {
